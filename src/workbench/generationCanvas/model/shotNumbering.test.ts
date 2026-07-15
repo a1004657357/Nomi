@@ -10,6 +10,7 @@ function makeNode(input: {
   x?: number
   y?: number
   shotIndex?: number
+  meta?: GenerationCanvasNode['meta']
 }): GenerationCanvasNode {
   return {
     id: input.id,
@@ -20,7 +21,7 @@ function makeNode(input: {
     references: [],
     history: [],
     status: 'idle',
-    meta: {},
+    meta: input.meta ?? {},
     categoryId: input.categoryId ?? 'shots',
     ...(input.shotIndex != null ? { shotIndex: input.shotIndex } : {}),
   } as GenerationCanvasNode
@@ -45,6 +46,15 @@ describe('shotNumbering（镜头编号 = 存储身份，审计 A2）', () => {
       makeNode({ id: 'c', kind: 'video', shotIndex: 7 }),
     ]
     expect(nextShotIndex(nodes)).toBe(8)
+  })
+
+  it('nextShotIndex 忽略旧数据里误写到参考卡/非镜头节点上的 shotIndex', () => {
+    const nodes = [
+      makeNode({ id: 'character-card', kind: 'character', categoryId: 'shots', shotIndex: 99 }),
+      makeNode({ id: 'prop-card', kind: 'image', categoryId: 'shots', shotIndex: 100, meta: { referenceSheet: true } }),
+      makeNode({ id: 'shot', kind: 'image', categoryId: 'shots', shotIndex: 2 }),
+    ]
+    expect(nextShotIndex(nodes)).toBe(3)
   })
 
   it('backfill 幂等：已有编号原样保留，缺号按 (y,x,id) 确定性续编', () => {

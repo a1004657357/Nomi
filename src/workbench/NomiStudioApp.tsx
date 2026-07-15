@@ -287,9 +287,12 @@ export default function NomiStudioApp(): JSX.Element {
         async (projectId: string, options: { replaceUrl?: boolean } = {}) => {
             const { module, service } = await ensureProjectPersistenceService();
             hydratingProjectRef.current = true;
+            const previousDesktopProjectId = activeProjectIdRef.current;
+            setDesktopActiveProjectId(null);
             try {
                 const hydrated = await service.hydrateProject(projectId);
                 if (!hydrated) {
+                    setDesktopActiveProjectId(previousDesktopProjectId);
                     toast("找不到项目文件，可能已被删除，请刷新项目库", "error");
                     refreshProjects();
                     return false;
@@ -324,6 +327,9 @@ export default function NomiStudioApp(): JSX.Element {
                 navigate(buildStudioUrl(hydrated.id), {
                     replace: options.replaceUrl ?? false,
                 });
+            } catch (error) {
+                setDesktopActiveProjectId(previousDesktopProjectId);
+                throw error;
             } finally {
                 hydratingProjectRef.current = false;
             }
@@ -696,7 +702,7 @@ export default function NomiStudioApp(): JSX.Element {
                     <React.Suspense fallback={<GenerationCanvasLoading />}>
                         {/* relative 包一层:S2b 计划 overlay 与画布同坐标系,且不喂巨壳 */}
                         <div className={cn("relative w-full h-full")}>
-                            <GenerationCanvas />
+                            <GenerationCanvas projectName={activeProject?.name} />
                             {hasPendingSpendConfirm ? (
                                 <React.Suspense fallback={null}>
                                     <SpendConfirmDialog />

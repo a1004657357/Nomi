@@ -9,9 +9,12 @@ import {
   listAllProjects,
   listAvailableModels,
   readProjectCanvas,
+  renderDirectorOnProject,
   setProjectNodePrompt,
+  type DirectorRenderInput,
   type FetchTaskResultFn,
   type GenerateInput,
+  type RunDirectorFn,
   type RunTaskFn,
 } from './core'
 import type { ProjectGateway } from './gateway'
@@ -33,6 +36,8 @@ export function projectIdOf(params: Record<string, unknown>): string {
 export type DispatchContext = {
   runTask: RunTaskFn
   fetchTaskResult?: FetchTaskResultFn
+  /** 仅运行中的桌面 app 注入；headless 路明确拒绝 Blender 导演预演。 */
+  runDirector?: RunDirectorFn
   makeGateway: (projectId: string) => ProjectGateway
 }
 
@@ -63,6 +68,9 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
       return deleteProjectNodes(ctx.makeGateway(projectIdOf(params)), Array.isArray(params.nodeIds) ? (params.nodeIds as string[]) : [])
     case 'generate':
       return generateOnProject(params as unknown as GenerateInput, ctx.makeGateway(projectIdOf(params)), ctx.runTask, ctx.fetchTaskResult)
+    case 'director.render':
+      if (!ctx.runDirector) throw new RpcError('Blender 导演预演需要在已打开的 Nomi 桌面应用中运行', 503)
+      return renderDirectorOnProject(params as unknown as DirectorRenderInput, ctx.makeGateway(projectIdOf(params)), ctx.runDirector)
     default:
       throw new RpcError(`未知方法: ${method}`, 404)
   }

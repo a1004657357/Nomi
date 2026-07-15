@@ -17,6 +17,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const codexImagegenRunnerMock = vi.hoisted(() => ({
+  runCodexImageGeneration: vi.fn(),
+}));
+
 let mockedUserDataRoot = "";
 const tempRoots: string[] = [];
 
@@ -30,6 +34,10 @@ vi.mock("electron", () => ({
     encryptString: (s: string) => Buffer.from(s),
     decryptString: (b: Buffer) => b.toString(),
   },
+}));
+
+vi.mock("./ai/codexImagegenRunner", () => ({
+  runCodexImageGeneration: codexImagegenRunnerMock.runCodexImageGeneration,
 }));
 
 function makeTempDir(prefix: string): string {
@@ -46,6 +54,7 @@ const stubFetch = (impl: () => Promise<Response> | Response) => {
 
 beforeEach(() => {
   mockedUserDataRoot = makeTempDir("nomi-runtime-fallback-");
+  codexImagegenRunnerMock.runCodexImageGeneration.mockReset();
   vi.resetModules();
 });
 
@@ -70,6 +79,25 @@ async function seedFallbackImageVendor(): Promise<void> {
   });
   store.upsertModelCatalogVendorApiKey("relay", { apiKey: "sk-relay" });
   store.upsertModelCatalogModel({ vendorKey: "relay", modelKey: "some-image-model", kind: "image", enabled: true });
+}
+
+async function seedCodexImg2Model(): Promise<void> {
+  const store = await import("./catalog/catalogStore");
+  store.upsertModelCatalogVendor({
+    key: "codex",
+    name: "Codex",
+    enabled: true,
+    authType: "none",
+    baseUrlHint: null,
+  });
+  store.upsertModelCatalogModel({
+    vendorKey: "codex",
+    modelKey: "codex-img2",
+    labelZh: "Codex Img2（GPT Image 2）",
+    kind: "image",
+    enabled: true,
+    meta: { archetypeId: "gpt-image-2" },
+  });
 }
 
 describe("runTask fallback 路径 — 结构化错误 + extraHeaders", () => {
@@ -126,6 +154,83 @@ describe("runTask fallback 路径 — 结构化错误 + extraHeaders", () => {
   });
 });
 
+describe("runTask · Codex Img2 本地入口", () => {
+  it("缺项目上下文时给出明确提示，不走 fallback HTTP 请求", async () => {
+    await seedCodexImg2Model();
+    const fetchFn = stubFetch(() =>
+      new Response(JSON.stringify({ data: [{ url: "https://should-not-be-called.example/out.png" }] }), { status: 200 }),
+    );
+    const { runTask } = await import("./runtime");
+
+    await expect(runTask({
+      vendor: "codex",
+      request: { kind: "text_to_image", prompt: "a cat", extras: { modelKey: "codex-img2" } },
+    })).rejects.toThrow(/需要先打开并保存到本地项目/);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(codexImagegenRunnerMock.runCodexImageGeneration).not.toHaveBeenCalled();
+  });
+
+  it("调用本机 Codex runner 生成图片并落到项目 assets，不走 fallback HTTP", async () => {
+    await seedCodexImg2Model();
+    const fetchFn = stubFetch(() =>
+      new Response(JSON.stringify({ data: [{ url: "https://should-not-be-called.example/out.png" }] }), { status: 200 }),
+    );
+    const outputTempDir = makeTempDir("nomi-codex-img2-output-");
+    const outputPath = path.join(outputTempDir, "result.png");
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    fs.writeFileSync(outputPath, pngBytes);
+    codexImagegenRunnerMock.runCodexImageGeneration.mockResolvedValue({
+      outputPath,
+      tempDir: outputTempDir,
+      lastMessage: '{"ok":true,"path":"result.png"}',
+      timings: {
+        referenceMs: 1,
+        promptBuildMs: 2,
+        codexExecMs: 3,
+        outputVerifyMs: 4,
+        totalMs: 10,
+        referenceCount: 0,
+        cwd: path.join(outputTempDir, "cwd"),
+      },
+      threadId: "codex-thread-1",
+    });
+    const { createProject, runTask } = await import("./runtime");
+    const { mintSpendGrant } = await import("./spendGrant");
+    const projectRoot = makeTempDir("nomi-codex-img2-project-");
+    const project = createProject({ rootPath: projectRoot, name: "Codex Project", payload: {} });
+
+    const result = await runTask({
+      vendor: "codex",
+      request: {
+        kind: "text_to_image",
+        prompt: "a cat",
+        extras: { modelKey: "codex-img2", projectId: project.id, nodeId: "node-1", grantId: mintSpendGrant({ nodeIds: ["node-1"] }) },
+      },
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.id).toBe("codex-thread-1");
+    expect(result.assets).toHaveLength(1);
+    expect(result.assets[0]).toMatchObject({ type: "image", thumbnailUrl: result.assets[0]?.url });
+    expect(result.assets[0]?.url).toContain(`nomi-local://asset/${encodeURIComponent(project.id)}/assets/generated/`);
+    const relativePath = String(result.assets[0]?.url || "").replace(`nomi-local://asset/${encodeURIComponent(project.id)}/`, "");
+    const savedPath = path.join(projectRoot, relativePath);
+    expect(fs.existsSync(savedPath)).toBe(true);
+    expect(fs.readFileSync(savedPath)).toEqual(pngBytes);
+    expect(fs.existsSync(outputTempDir)).toBe(false);
+    expect(result.raw).toMatchObject({
+      codex: {
+        threadId: "codex-thread-1",
+        lastMessage: '{"ok":true,"path":"result.png"}',
+        timings: { referenceMs: 1, promptBuildMs: 2, codexExecMs: 3, outputVerifyMs: 4, totalMs: 10, referenceCount: 0, assetWriteMs: expect.any(Number), runtimeTotalMs: expect.any(Number) },
+      },
+    });
+    expect(result.provenance).toMatchObject({ provider: "codex", modelKey: "codex-img2", vendorRequestId: "codex-thread-1" });
+    expect(codexImagegenRunnerMock.runCodexImageGeneration).toHaveBeenCalledWith({ request: expect.objectContaining({ prompt: "a cat" }) });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
 // 建一个**异步**供应商（有 create+query mapping），create 返回 taskId 但无 asset → 进 pending(queued)。
 async function seedAsyncVideoVendorWithMapping(): Promise<void> {
   const store = await import("./catalog/catalogStore");
@@ -143,7 +248,7 @@ async function seedAsyncVideoVendorWithMapping(): Promise<void> {
     taskKind: "text_to_video",
     name: "t2v",
     create: { method: "POST", path: "/create", body: { prompt: "{{request.prompt}}" }, response_mapping: { task_id: "data.taskId" } },
-    query: { method: "GET", path: "/query", query: { taskId: "{{providerMeta.task_id}}" } },
+    query: { method: "GET", path: "/query", query: { video_id: "{{providerMeta.video_id}}" } },
   });
 }
 
@@ -192,6 +297,7 @@ describe("fetchTaskResult — 缓存 miss 无状态重建续查（重启/驱逐�
     });
     // 真发了 query GET（无状态重建跑了上游查询），不是直接合成失败。
     expect(fetchFn).toHaveBeenCalled();
+    expect(String(fetchFn.mock.calls[0]?.[0] || "")).toContain("video_id=upstream-live-123");
     expect(recovered.result.status).toBe("succeeded");
     expect(recovered.result.assets.length).toBeGreaterThan(0);
     expect((recovered.result.raw as { code?: string }).code).not.toBe("task_unknown");

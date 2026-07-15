@@ -283,6 +283,26 @@ export const LITTERBOX_INGESTION: AssetIngestion = {
 };
 
 /**
+ * Uguu：Agnes 本地图生视频的首选匿名图片中转。
+ * Catbox 的上传接口可能成功，但 Agnes 后端所在网络访问 litter.catbox.moe 会稳定读超时；
+ * Uguu 返回 *.uguu.se 直链，真实 2.9MB PNG 上传/下载已验证，不需要二次页面解析。
+ */
+export const UGUU_INGESTION: AssetIngestion = {
+  strategy: "upload-multipart",
+  endpoint: "https://uguu.se/upload.php",
+  fileField: "files[]",
+  urlPath: "files.0.url",
+  accepts: ["image"],
+};
+
+/** Agnes 官方只接收公网图片 URL；优先使用其后端可下载的 Uguu，上传失败再退回 Catbox。 */
+export const AGNES_UPLOAD_CHAIN: AssetIngestion = {
+  strategy: "anon-chain",
+  chain: [UGUU_INGESTION, LITTERBOX_INGESTION],
+  accepts: ["image"],
+};
+
+/**
  * tmpfiles.org：第二个零配置兜底 host——无 key、无账号、收任意文件。
  * POST https://tmpfiles.org/api/v1/upload，multipart：file=<二进制>。无 Authorization（匿名）。
  * 响应 JSON：{"status":"success","data":{"url":"https://tmpfiles.org/<id>/<name>"}}。
@@ -385,8 +405,11 @@ export function resolveAssetIngestionWithFallback(
   //    (litterbox → tmpfiles)，单 host 限速/宕机时自动切下一个。走到这里说明上面更优的通道都没命中
   //    （图片几乎总有 apimart；视频缺 KIE 时此处接住）。NET：上传零配置"开箱即用"，诚实错误
   //    只在链里**所有** host 都不可达时才触发。
-  if (ingestionAccepts(ANON_UPLOAD_CHAIN, mediaKind)) {
-    return { ingestion: ANON_UPLOAD_CHAIN, uploadApiKey: "" };
+  const anonymousIngestion = targetVendor?.key === "agnes" && ingestionAccepts(AGNES_UPLOAD_CHAIN, mediaKind)
+    ? AGNES_UPLOAD_CHAIN
+    : ANON_UPLOAD_CHAIN;
+  if (ingestionAccepts(anonymousIngestion, mediaKind)) {
+    return { ingestion: anonymousIngestion, uploadApiKey: "" };
   }
   return null;
 }

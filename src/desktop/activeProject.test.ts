@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getDesktopActiveProjectId, setDesktopActiveProjectId } from './activeProject'
+import {
+  getDesktopActiveProjectId,
+  getDesktopHydratedProjectId,
+  setDesktopActiveProjectId,
+  subscribeDesktopHydratedProjectId,
+} from './activeProject'
 
 const KEY = 'nomi-workbench-last-active-project-v1'
 
@@ -42,5 +47,22 @@ describe('getDesktopActiveProjectId（projectId 缺失窗口的兜底）', () =>
 
   it('两者都空时返回空字符串（不抛错）', () => {
     expect(getDesktopActiveProjectId()).toBe('')
+  })
+
+  it('恢复完成 ID 不读取 last-active 的旧项目兜底', () => {
+    store.set(KEY, 'proj-stale')
+    expect(getDesktopActiveProjectId()).toBe('proj-stale')
+    expect(getDesktopHydratedProjectId()).toBe('')
+  })
+
+  it('内存项目变化时通知订阅者，同值写入不重复通知', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeDesktopHydratedProjectId(listener)
+    setDesktopActiveProjectId('proj-A')
+    setDesktopActiveProjectId('proj-A')
+    setDesktopActiveProjectId('proj-B')
+    unsubscribe()
+    setDesktopActiveProjectId('proj-C')
+    expect(listener).toHaveBeenCalledTimes(2)
   })
 })

@@ -6,6 +6,7 @@
  */
 import React from 'react'
 import { IconLink } from '@tabler/icons-react'
+import { localAssetThumbnailUrl } from '../../../../design/localAssetThumbnail'
 import { cn } from '../../../../utils/cn'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { readPropMeta } from '../../model/nodeMetaFields'
@@ -14,6 +15,8 @@ import { STRIPED_BG_CLASS, UsageDot, UploadFallback } from './CardCommon'
 import { useNodeImageUpload } from '../../adapters/useNodeImageUpload'
 import { EditableNodeTitle } from './EditableNodeTitle'
 import { DeferredNodeImage } from '../DeferredNodeMedia'
+
+const CARD_IMAGE_PREVIEW_SIZE = { width: 256, height: 256 } as const
 
 type Props = {
   node: GenerationCanvasNode
@@ -35,6 +38,7 @@ function PropCardNodeImpl({ node }: Props): JSX.Element {
         {hasImage ? (
           <DeferredNodeImage
             src={node.result!.url!}
+            thumbnailSrc={localAssetThumbnailUrl(node.result!.thumbnailUrl || node.result!.url!, CARD_IMAGE_PREVIEW_SIZE)}
             alt={node.title || ''}
             className="w-full h-full object-contain object-center select-none pointer-events-none"
           />

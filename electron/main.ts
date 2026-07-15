@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, session, shell } from "electron";
 import type { Rectangle, WebContents } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -45,6 +46,10 @@ import { registerOnboardingIpc } from "./ai/onboarding/onboardingIpc";
 import { registerUpdaterIpc } from "./update/autoUpdater";
 import { setRendererTarget } from "./capabilityCore/rendererBridge";
 import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfig";
+import {
+  cachedLocalAssetThumbnail,
+  parseLocalAssetThumbnailSize,
+} from "./assets/localAssetThumbnail";
 
 // 尽早安装：捕获引导阶段起的 uncaughtException / unhandledRejection，落盘到 app logs（P0-8）。
 installCrashHandlers();
@@ -108,6 +113,7 @@ const devRemoteDebuggingPort = process.env.NOMI_DESKTOP_REMOTE_DEBUGGING_PORT;
 const DEV_RENDERER_LOAD_ATTEMPTS = 20;
 const DEV_RENDERER_LOAD_RETRY_MS = 500;
 let mainWindowRef: BrowserWindow | null = null;
+let cancelBlenderRendersOnQuit: (() => number) | null = null;
 let isRecreatingMainWindow = false;
 const lowMemoryMode = process.env.NOMI_LOW_MEMORY_MODE === "1";
 const capabilityCoreDisabled =
@@ -153,6 +159,11 @@ async function startDesktopCapabilityCore(): Promise<void> {
     async (payload) => {
       const { fetchTaskResult } = await loadRuntimeModule();
       return fetchTaskResult(payload);
+    },
+    async (payload) => {
+      const director = await import("./blender/directorCli");
+      cancelBlenderRendersOnQuit = director.cancelAllDirectorBlenderRenders;
+      return director.runDirectorBlenderRender(payload);
     },
   );
   capabilityPortCache = core.getCapabilityPort();
@@ -520,6 +531,26 @@ function registerIpc(): void {
     const { dreaminaInstall } = await import("./catalog/dreaminaLoginIpc");
     return dreaminaInstall();
   });
+  ipcMain.handle("nomi:jimeng-web:status", async () => {
+    const { jimengWebStatus } = await import("./jimengWeb/ipc");
+    return jimengWebStatus();
+  });
+  ipcMain.handle("nomi:jimeng-web:open-login", async () => {
+    const { jimengWebOpenLogin } = await import("./jimengWeb/ipc");
+    return jimengWebOpenLogin();
+  });
+  ipcMain.handle("nomi:jimeng-web:open-admin", async (_event, baseUrl: unknown) => {
+    const { jimengWebOpenAdmin } = await import("./jimengWeb/ipc");
+    return jimengWebOpenAdmin(baseUrl);
+  });
+  ipcMain.handle("nomi:jimeng-web:start-runner", async () => {
+    const { jimengWebStartExtensionRunner } = await import("./jimengWeb/ipc");
+    return jimengWebStartExtensionRunner();
+  });
+  ipcMain.handle("nomi:jimeng-web:stop-runner", async () => {
+    const { jimengWebStopExtensionRunner } = await import("./jimengWeb/ipc");
+    return jimengWebStopExtensionRunner();
+  });
   ipcMain.handle("nomi:workspace:select-folder", async () => {
     const selection = await selectWorkspaceFolder({ showOpenDialog: (options) => dialog.showOpenDialog(options) });
     if (!selection.canceled) selectedWorkspaceRoots.add(selection.rootPath);
@@ -583,6 +614,10 @@ function registerIpc(): void {
     const { importLocalFile } = await import("./assets/localFileImport");
     return importLocalFile(payload);
   });
+  ipcMain.handle("nomi:assets:import-local-path", async (_event, payload) => {
+    const { importLocalPath } = await import("./assets/localFileImport");
+    return importLocalPath(payload);
+  });
   ipcMain.handle("nomi:assets:list", async (_event, payload) => {
     const { listProjectAssets } = await loadRuntimeModule();
     return listProjectAssets(payload);
@@ -603,6 +638,72 @@ function registerIpc(): void {
     const { framesToVideoAsset } = await import("./video/framesToVideo");
     return framesToVideoAsset(payload);
   });
+  ipcMain.handle("nomi:scene3d:render-blender", async (_event, payload) => {
+    const blender = await import("./blender/blenderRunner");
+    const director = await import("./blender/directorCli");
+    cancelBlenderRendersOnQuit = () => blender.cancelAllBlenderSceneRenders() + director.cancelAllDirectorBlenderRenders();
+    return blender.runBlenderSceneRender(payload);
+  });
+  ipcMain.handle("nomi:scene3d:render-director-blender", async (_event, payload) => {
+    const blender = await import("./blender/blenderRunner");
+    const director = await import("./blender/directorCli");
+    cancelBlenderRendersOnQuit = () => blender.cancelAllBlenderSceneRenders() + director.cancelAllDirectorBlenderRenders();
+    return director.runDirectorBlenderRender(payload);
+  });
+  ipcMain.handle("nomi:scene3d:cancel-blender", async (_event, jobId) => {
+    const blender = await import("./blender/blenderRunner");
+    const director = await import("./blender/directorCli");
+    const normalizedJobId = String(jobId || "");
+    return { cancelled: blender.cancelBlenderSceneRender(normalizedJobId) || director.cancelDirectorBlenderRender(normalizedJobId) };
+  });
+  ipcMain.handle("nomi:vibing-director:apply-blender-plan", async (_event, payload) => {
+    const director = await import("./blender/vibingDirectorRunner");
+    const blender = await import("./blender/blenderRunner");
+    const legacyDirector = await import("./blender/directorCli");
+    cancelBlenderRendersOnQuit = () => (
+      blender.cancelAllBlenderSceneRenders()
+      + legacyDirector.cancelAllDirectorBlenderRenders()
+      + director.cancelAllVibingDirectorBlenderPlans()
+    );
+    return director.runVibingDirectorBlenderPlan(payload as Parameters<typeof director.runVibingDirectorBlenderPlan>[0]);
+  });
+  ipcMain.handle("nomi:vibing-director:cancel-blender-plan", async (_event, jobId) => {
+    const director = await import("./blender/vibingDirectorRunner");
+    return { cancelled: director.cancelVibingDirectorBlenderPlan(String(jobId || "").trim()) };
+  });
+  ipcMain.handle("nomi:vibing-director:import-asset", async (_event, payload) => {
+    const raw = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    const selection = await dialog.showOpenDialog({
+      title: "导入 Blender 资产",
+      buttonLabel: "导入到 Director 资产库",
+      properties: ["openFile"],
+      filters: [{ name: "Blender 资产", extensions: ["blend", "glb", "gltf", "fbx", "obj"] }],
+    });
+    if (selection.canceled || !selection.filePaths[0]) return { canceled: true };
+    const assets = await import("./blender/vibingDirectorAssets");
+    return assets.importVibingDirectorAsset({
+      projectId: String(raw.projectId || ""),
+      directorNodeId: String(raw.directorNodeId || ""),
+      sourcePath: selection.filePaths[0],
+      source: raw.source as Parameters<typeof assets.importVibingDirectorAsset>[0]["source"],
+      ...(typeof raw.license === "string" ? { license: raw.license } : {}),
+    });
+  });
+  ipcMain.handle("nomi:vibing-director:open-blender", async (_event, payload) => {
+    const director = await import("./blender/vibingDirectorRunner");
+    return director.openVibingDirectorBlend(payload as Parameters<typeof director.openVibingDirectorBlend>[0]);
+  });
+  ipcMain.handle("nomi:vibing-director:open-asset-source", async (_event, source) => {
+    const urls = {
+      polyhaven: "https://polyhaven.com/models",
+      quaternius: "https://quaternius.com/packs.html",
+      blenderkit: "https://www.blenderkit.com/asset-base/",
+    } as const;
+    const key = String(source || "") as keyof typeof urls;
+    if (!urls[key]) throw new Error("不支持的 Director 资产来源");
+    await shell.openExternal(urls[key]);
+    return { opened: true };
+  });
   registerExportJobIpc();
   // 付费守卫铸令牌：仅由渲染层「真人确认」事件链调用（务实纵深：铸造面小而审计过 + 主进程硬闸兜底）。
   ipcMain.handle("nomi:tasks:grant-spend", (_event, payload) => {
@@ -621,6 +722,15 @@ function registerIpc(): void {
     const { fetchTaskResult } = await loadRuntimeModule();
     return fetchTaskResult(payload);
   }));
+  ipcMain.handle("nomi:tasks:cancel", async (_event, payload) => {
+    const raw = (payload || {}) as { runId?: unknown; vendor?: unknown };
+    const runId = String(raw.runId || "").trim();
+    const vendor = String(raw.vendor || "").trim().toLowerCase();
+    if (!runId) return { cancelled: false, remoteCancelled: false };
+    if (vendor && vendor !== "codex") return { cancelled: false, remoteCancelled: false };
+    const { cancelCodexImageGeneration } = await import("./ai/codexImagegenRunner");
+    return { cancelled: cancelCodexImageGeneration(runId), remoteCancelled: false };
+  });
   // 能力核 A/B 守卫：renderer 在打开/切换/关闭项目时上报当前打开的 projectId，
   // 让外部调用拒绝直写「正在窗口里编辑」的工程（防内存 store 回盘覆盖，见 capabilityCore/rpcServer）。
   ipcMain.on("nomi:capability:active-project", (_event, projectId: unknown) => setActiveCapabilityProject(String(projectId || "")));
@@ -719,6 +829,30 @@ function registerLocalProtocol(): void {
       const [projectId, ...relativeParts] = segments;
       const relativePath = relativeParts.join("/");
       const filePath = resolveProjectRelativePath(projectId, relativePath);
+      const thumbnailSize = parseLocalAssetThumbnailSize(url);
+      if (thumbnailSize) {
+        const stat = await fs.promises.stat(filePath);
+        const cacheKey = `${filePath}:${stat.mtimeMs}:${stat.size}:${thumbnailSize.width}x${thumbnailSize.height}`;
+        const thumbnail = await cachedLocalAssetThumbnail(cacheKey, async () => {
+          const image = await nativeImage.createThumbnailFromPath(filePath, thumbnailSize);
+          return image.isEmpty() ? null : image.toJPEG(78);
+        });
+        if (thumbnail) {
+          const thumbnailBody = thumbnail.buffer.slice(
+            thumbnail.byteOffset,
+            thumbnail.byteOffset + thumbnail.byteLength,
+          ) as ArrayBuffer;
+          return new Response(thumbnailBody, {
+            status: 200,
+            headers: {
+              "Access-Control-Allow-Origin": "*",
+              "Cache-Control": "private, max-age=86400",
+              "Content-Type": "image/jpeg",
+              "Cross-Origin-Resource-Policy": "cross-origin",
+            },
+          });
+        }
+      }
       const fileResponse = await net.fetch(pathToFileURL(filePath).toString());
       // canvas.toDataURL() 需要 CORS 头，否则 crossOrigin='anonymous' 加载的图片会污染画布
       // 导致九宫格/裁切等操作静默失败（SecurityError 被吞掉）。
@@ -786,10 +920,23 @@ app.on("before-quit", () => {
   // 能力核退出清理：清实例广告 + 关 RPC，让外部探测立刻知道「app 已关」。同步、不抛。
   stopDesktopCapabilityCore();
   try {
+    const { terminateAllCodexImagegenProcesses } = require("./ai/codexImagegenRunner") as typeof import("./ai/codexImagegenRunner");
+    const terminated = terminateAllCodexImagegenProcesses();
+    if (terminated > 0) console.log(`[nomi:desktop] terminated ${terminated} Codex Img2 process group(s) on quit`);
+  } catch (error) {
+    console.error("[nomi:desktop] failed to terminate Codex Img2 processes on quit:", error);
+  }
+  try {
     const { abortAllActiveExports } = require("./export/exportJobs") as typeof import("./export/exportJobs");
     const aborted = abortAllActiveExports();
     if (aborted > 0) console.log(`[nomi:desktop] aborted ${aborted} in-flight export(s) on quit`);
   } catch (error) {
     console.error("[nomi:desktop] failed to abort exports on quit:", error);
+  }
+  try {
+    const cancelled = cancelBlenderRendersOnQuit?.() || 0;
+    if (cancelled > 0) console.log(`[nomi:desktop] cancelled ${cancelled} Blender render(s) on quit`);
+  } catch (error) {
+    console.error("[nomi:desktop] failed to cancel Blender renders on quit:", error);
   }
 });

@@ -8,12 +8,25 @@ import { endpoint } from "../vendorEndpoint";
 import { extractVendorExtraHeaders, normalizeProviderKind } from "../catalog/catalogStore";
 import type { Model, Vendor } from "../catalog/types";
 
+function readOpenAiCompatibleBasePath(vendor: Vendor): string {
+  const meta = vendor.meta;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return "/v1";
+  const raw = (meta as Record<string, unknown>).openAiCompatibleBasePath;
+  if (typeof raw !== "string") return "/v1";
+  return raw.trim();
+}
+
+export function resolveLanguageModelBaseURL(vendor: Vendor): string {
+  const providerKind = normalizeProviderKind(vendor.providerKind);
+  if (providerKind === "anthropic") return (vendor.baseUrlHint || "").trim();
+  const basePath = readOpenAiCompatibleBasePath(vendor);
+  if (!basePath) return (vendor.baseUrlHint || "").trim().replace(/\/+$/, "");
+  return endpoint(vendor, basePath.startsWith("/") ? basePath : `/${basePath}`);
+}
+
 export function buildLanguageModelForVendor(vendor: Vendor, model: Model, apiKey: string): LanguageModelV1 {
   const providerKind = normalizeProviderKind(vendor.providerKind);
-  // anthropic 系认 baseUrlHint 原样;其余 provider 统一补 /v1（openai-compatible 形状）。
-  const baseURL = providerKind === "anthropic"
-    ? (vendor.baseUrlHint || "").trim()
-    : endpoint(vendor, "/v1");
+  const baseURL = resolveLanguageModelBaseURL(vendor);
   const headers = extractVendorExtraHeaders(vendor);
   return buildAiSdkModel({
     kind: providerKind,

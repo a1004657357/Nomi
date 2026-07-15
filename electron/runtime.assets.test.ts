@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProject, importRemoteAsset } from "./runtime";
-import { importLocalFile } from "./assets/localFileImport";
+import { importLocalFile, importLocalPath } from "./assets/localFileImport";
 
 type AssetRecord = {
   data: {
@@ -87,6 +87,25 @@ describe("runtime workspace asset storage", () => {
     expect(asset.data.relativePath).toBe("assets/imported/2026-05-31/photo.png");
     expect(asset.data.absolutePath).toBe(path.join(workspace.rootPath, "assets", "imported", "2026-05-31", "photo.png"));
     expect([...fs.readFileSync(asset.data.absolutePath)]).toEqual([1, 2, 3]);
+  });
+
+  it("imports a generated local path under assets/generated/YYYY-MM-DD", async () => {
+    const workspace = createWorkspace();
+    const sourcePath = path.join(makeTempDir("nomi-codex-source-"), "codex-output.png");
+    fs.writeFileSync(sourcePath, Buffer.from([4, 5, 6]));
+
+    const asset = (await importLocalPath({
+      projectId: workspace.id,
+      path: sourcePath,
+      fileName: "codex-output.png",
+      kind: "generated",
+      ownerNodeId: "node-1",
+    })) as AssetRecord;
+
+    expect(asset.data.relativePath).toBe("assets/generated/2026-05-31/codex-output.png");
+    expect(asset.data.absolutePath).toBe(path.join(workspace.rootPath, "assets", "generated", "2026-05-31", "codex-output.png"));
+    expect([...fs.readFileSync(asset.data.absolutePath)]).toEqual([4, 5, 6]);
+    expect(asset.data.contentType).toBe("image/png");
   });
 
   it("dedupes colliding generated asset filenames", async () => {

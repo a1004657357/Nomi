@@ -30,7 +30,7 @@ const WIDTH = "{{request.params.width}}"; // paramMap 派生
 const HEIGHT = "{{request.params.height}}"; // paramMap 派生
 const NUM_FRAMES = "{{request.params.num_frames}}"; // paramMap 派生
 const NEGATIVE_PROMPT = "{{request.params.negative_prompt}}"; // 可选，未填丢弃
-const IMAGE = "{{request.params.image}}"; // i2v 首帧链接（档案 slot inputKey=image，单图字符串）
+const IMAGE = "{{request.params.image_url}}"; // i2v 顶层 image 要单图字符串；多图/关键帧才走 extra_body.image 数组。
 
 /** 异步视频 create op 工厂。提交抓 video_id 进 providerMeta（轮询 query 用）。 */
 function videoCreateOp(i2v: boolean): HttpOperation {

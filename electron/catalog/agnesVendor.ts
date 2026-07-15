@@ -9,13 +9,13 @@
 //   status: queued | in_progress | completed | failed
 //
 // 两个必处理坑（live + mock 盯死）：
-//   ① 轮询是 /agnesapi（非 /v1/...）+ query 参数 → 用 op.path="/agnesapi" + op.query.video_id。
+//   ① 轮询是 /agnesapi（非 /v1/...）+ query 参数 → 用绝对 URL + op.query.video_id。
 //   ② 成品 mp4 URL 在 **remixed_from_video_id**（不是 video_url，官方文档自己写错）；此字段不在
 //      runtime 防御式 extractAssetUrl 的兜底路径里 → 必须显式 response_mapping.video_url 取。
 //
 // baseUrl/path 约定（避 joinUrl 双前缀，见 apimartVendor.ts:12-14）：
 //   vendor.baseUrl = "https://apihub.agnes-ai.com"（**裸**，不带 /v1）
-//   op.path = 完整 "/v1/images/generations" / "/v1/videos"；轮询 "/agnesapi"（裸根，非 /v1）。
+//   op.path = 完整 "/v1/images/generations" / "/v1/videos"；轮询固定官方根路径（非 /v1）。
 
 import type { HttpOperation } from "./types";
 
@@ -42,7 +42,7 @@ export const AGNES_STATUS_MAPPING: Record<string, string[]> = {
  */
 export const AGNES_VIDEO_QUERY_OP: HttpOperation = {
   method: "GET",
-  path: "/agnesapi",
+  path: "https://apihub.agnes-ai.com/agnesapi",
   headers: { Authorization: "Bearer {{user_api_key}}" },
   query: { video_id: "{{providerMeta.video_id}}" },
   response_mapping: {

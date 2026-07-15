@@ -15,6 +15,8 @@ export type WorkbenchAiRequest = {
   projectName?: string
   skillKey: string
   skillName: string
+  /** Request a structured text response without provider-native function tools. */
+  disableTools?: boolean
   mode?: 'chat' | 'auto'
   /** 助手模型偏好（用户选的）：透传给后端 chooseTextModel 优先用。 */
   agentModelKey?: string
@@ -29,7 +31,7 @@ export type WorkbenchAiStreamHandlers = {
   onSession?: (session: AgentChatV2Session) => void
 }
 
-function buildWorkbenchAiPayload(input: WorkbenchAiRequest) {
+export function buildWorkbenchAiPayload(input: WorkbenchAiRequest) {
   return {
     vendor: 'agents',
     prompt: input.prompt,
@@ -46,6 +48,7 @@ function buildWorkbenchAiPayload(input: WorkbenchAiRequest) {
     },
     mode: input.mode || 'auto',
     temperature: 0.7,
+    ...(input.disableTools ? { disableTools: true } : {}),
     ...(input.agentModelKey ? { agentModelKey: input.agentModelKey, agentVendorKey: input.agentVendorKey } : {}),
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),
   }

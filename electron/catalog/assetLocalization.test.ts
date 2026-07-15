@@ -8,6 +8,8 @@ import {
   resolveAssetIngestionWithFallback,
   isLocalAssetUrl,
   LITTERBOX_INGESTION,
+  UGUU_INGESTION,
+  AGNES_UPLOAD_CHAIN,
   TMPFILES_INGESTION,
   ANON_UPLOAD_CHAIN,
   type LocalAsset,
@@ -111,6 +113,19 @@ describe("resolveLocalAsset (per strategy)", () => {
     await resolveLocalAsset(localUrl("a.png"), ingestion, "", read, vi.fn(), postMultipart);
     const headers = postMultipart.mock.calls[0][1] as Record<string, string>;
     expect("Authorization" in headers).toBe(false);
+  });
+
+  it("upload-multipart reads Uguu's direct image URL for Agnes", async () => {
+    const postMultipart = vi.fn().mockResolvedValue({
+      success: true,
+      files: [{ url: "https://n.uguu.se/frame.png" }],
+    });
+
+    const out = await resolveLocalAsset(localUrl("frame.png"), UGUU_INGESTION, "", read, vi.fn(), postMultipart);
+
+    expect(out).toBe("https://n.uguu.se/frame.png");
+    expect(postMultipart.mock.calls[0][0]).toBe("https://uguu.se/upload.php");
+    expect(postMultipart.mock.calls[0][6]).toBe("files[]");
   });
 
   it("upload-multipart plain-text url (litterbox): no auth header, posts reqtype/time/fileToUpload, returns trimmed body", async () => {
@@ -350,6 +365,19 @@ describe("resolveAssetIngestionWithFallback (跨 vendor 上传优先级链)", ()
     const out = resolveAssetIngestionWithFallback({ key: "openai" }, [{ key: "openai" }], keysOf("openai"));
     expect(out?.ingestion.strategy).toBe("anon-chain");
     expect(out?.uploadApiKey).toBe("");
+  });
+
+  it("Agnes 无专用上传 API 时使用可被其后端下载的 Uguu 优先链", () => {
+    const out = resolveAssetIngestionWithFallback({ key: "agnes" }, [{ key: "agnes" }], keysOf("agnes"), "image");
+    expect(out?.ingestion).toBe(AGNES_UPLOAD_CHAIN);
+    expect(out?.uploadApiKey).toBe("");
+    if (out?.ingestion.strategy === "anon-chain") {
+      const endpoints = out.ingestion.chain.map((item) => item.strategy === "upload-multipart" ? item.endpoint : "");
+      expect(endpoints).toEqual([
+        "https://uguu.se/upload.php",
+        "https://litterbox.catbox.moe/resources/internals/api.php",
+      ]);
+    }
   });
 
   it("配了 KIE 但没填 key → 不选 KIE，落到匿名链（key 缺失视为不可用）", () => {

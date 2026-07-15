@@ -116,6 +116,8 @@ type WorkbenchState = {
   storyboardPlanCommitted: boolean
   /** 主列是否展开全宽编辑器（UI 瞬态，不持久化；重开项目默认收起成卡片）。 */
   storyboardEditorOpen: boolean
+  /** 主列是否展开分镜脚本视图（UI 瞬态，不持久化；从 storyboardPlan + 画布节点派生）。 */
+  storyboardScriptOpen: boolean
   /**
    * 「请画布适应视图」一次性信号（nonce，仿 createCategoryNonce）。bump 一次 = 请生成画布
    * 平滑 fit 到全部节点一次。用于落画布等「批量加节点到已加载画布」的场景——useAutoFitOnLoad
@@ -160,6 +162,8 @@ type WorkbenchState = {
   setStoryboardPlan: (plan: StoryboardPlan | null) => void
   /** 卡片「打开编辑」/「收起」：仅切主列编辑器显隐，不动方案。 */
   setStoryboardEditorOpen: (open: boolean) => void
+  /** 卡片「查看脚本」/「收起」：仅切主列脚本视图显隐，不动方案。 */
+  setStoryboardScriptOpen: (open: boolean) => void
   /** 确认落画布后：方案保留、转「已落画布」、收起编辑器（卡片留痕）。 */
   commitStoryboardPlan: () => void
   /** 请生成画布平滑 fit 一次（落画布后揭示新镜头）。bump canvasFitNonce。 */
@@ -307,6 +311,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   storyboardPlan: null,
   storyboardPlanCommitted: false,
   storyboardEditorOpen: false,
+  storyboardScriptOpen: false,
   canvasFitNonce: 0,
   creationAssistantAutoOpen: false,
   timeline: createDefaultTimeline(),
@@ -364,12 +369,15 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
     set((state) => ({
       storyboardPlan,
       storyboardPlanCommitted: false,
-      ...(storyboardPlan === null ? { storyboardEditorOpen: false } : {}),
+      ...(storyboardPlan === null ? { storyboardEditorOpen: false, storyboardScriptOpen: false } : {}),
       persistRevision: state.persistRevision + 1,
     }))
   },
   setStoryboardEditorOpen: (storyboardEditorOpen) => {
-    set({ storyboardEditorOpen })
+    set({ storyboardEditorOpen, ...(storyboardEditorOpen ? { storyboardScriptOpen: false } : {}) })
+  },
+  setStoryboardScriptOpen: (storyboardScriptOpen) => {
+    set({ storyboardScriptOpen, ...(storyboardScriptOpen ? { storyboardEditorOpen: false } : {}) })
   },
   commitStoryboardPlan: () => {
     // 确认落画布:方案保留(卡片留痕)、转已落画布、收起编辑器。bump 落盘 committed 状态。
@@ -384,6 +392,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
       storyboardPlan: null,
       storyboardPlanCommitted: false,
       storyboardEditorOpen: false,
+      storyboardScriptOpen: false,
       persistRevision: state.persistRevision + 1,
     }))
   },
@@ -393,7 +402,12 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   },
   hydrateStoryboardPlan: (storyboardPlan, storyboardPlanCommitted) => {
     // 载入态:一次性设三字段、编辑器收起、不 bump persistRevision(restore 非用户编辑,别标脏触发回存)。
-    set({ storyboardPlan, storyboardPlanCommitted: storyboardPlan ? storyboardPlanCommitted : false, storyboardEditorOpen: false })
+    set({
+      storyboardPlan,
+      storyboardPlanCommitted: storyboardPlan ? storyboardPlanCommitted : false,
+      storyboardEditorOpen: false,
+      storyboardScriptOpen: false,
+    })
   },
   setCreationAssistantAutoOpen: (creationAssistantAutoOpen) => {
     set({ creationAssistantAutoOpen })

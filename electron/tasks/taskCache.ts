@@ -49,6 +49,10 @@ export class TtlLruCache<V> {
     return this.map.delete(key);
   }
 
+  clear(): void {
+    this.map.clear();
+  }
+
   get size(): number {
     return this.map.size;
   }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { convertImageShotToVideo } from './convertShotToVideo'
+import { convertImageShotToVideo, convertImageShotsToVideos } from './convertShotToVideo'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { isShotNumberedNode } from '../model/shotNumbering'
 import { __resetCanvasUndoJournalForTests } from '../events/canvasUndoJournal'
@@ -44,6 +44,44 @@ describe('convertImageShotToVideo（image-first 桥）', () => {
     expect(again.nodeId).toBe(first.nodeId)
     const videos = useGenerationCanvasStore.getState().nodes.filter((n) => n.kind === 'video')
     expect(videos).toHaveLength(1)
+  })
+
+  it('普通 reference 边不是已转换标记，仍创建带 first_frame 的视频节点', () => {
+    const image = seedImageShot()
+    const unrelatedVideo = useGenerationCanvasStore.getState().addNode({ kind: 'video', title: '参考目标' })
+    useGenerationCanvasStore.getState().connectNodes(image.id, unrelatedVideo.id, 'reference')
+
+    const result = convertImageShotToVideo(image)
+    const state = useGenerationCanvasStore.getState()
+    expect(result.existed).toBe(false)
+    expect(result.nodeId).not.toBe(unrelatedVideo.id)
+    expect(state.edges).toContainEqual(expect.objectContaining({
+      source: image.id,
+      target: result.nodeId,
+      mode: 'first_frame',
+    }))
+  })
+
+  it('批量转视频：跳过非镜头节点，复用已有视频，并选中新视频集合', () => {
+    const imageA = seedImageShot()
+    const imageB = seedImageShot()
+    useGenerationCanvasStore.getState().updateNode(imageB.id, { shotIndex: 4, title: '镜头 4' })
+    const reference = useGenerationCanvasStore.getState().addNode({ kind: 'image', title: '参考卡', meta: { referenceSheet: true } })
+    useGenerationCanvasStore.getState().updateNode(reference.id, { shotIndex: 99 })
+    const first = convertImageShotToVideo(imageA)
+
+    const result = convertImageShotsToVideos([
+      useGenerationCanvasStore.getState().nodes.find((n) => n.id === imageA.id)!,
+      useGenerationCanvasStore.getState().nodes.find((n) => n.id === imageB.id)!,
+      useGenerationCanvasStore.getState().nodes.find((n) => n.id === reference.id)!,
+    ])
+
+    expect(result).toMatchObject({ created: 1, existing: 1, skipped: 1 })
+    expect(result.nodeIds).toHaveLength(2)
+    expect(result.nodeIds).toContain(first.nodeId)
+    const videos = useGenerationCanvasStore.getState().nodes.filter((n) => n.kind === 'video')
+    expect(videos).toHaveLength(2)
+    expect([...useGenerationCanvasStore.getState().selectedNodeIds].sort()).toEqual([...result.nodeIds].sort())
   })
 })
 

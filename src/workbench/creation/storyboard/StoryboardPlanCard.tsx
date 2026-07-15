@@ -1,8 +1,9 @@
 import React from 'react'
-import { IconArrowRight, IconCircleCheck, IconMovie } from '@tabler/icons-react'
+import { IconArrowRight, IconCircleCheck, IconFileText, IconMovie } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import { WorkbenchButton, confirmDialog } from '../../../design'
 import { useWorkbenchStore } from '../../workbenchStore'
+import { storyboardShotPromptForKind } from '../../generationCanvas/agent/storyboardPlan'
 
 /**
  * 分镜方案卡片（回看链路）：拆镜头的产出在创作区对话流里的可收起/可重开卡片。
@@ -14,7 +15,9 @@ export default function StoryboardPlanCard(): JSX.Element | null {
   const plan = useWorkbenchStore((s) => s.storyboardPlan)
   const committed = useWorkbenchStore((s) => s.storyboardPlanCommitted)
   const editorOpen = useWorkbenchStore((s) => s.storyboardEditorOpen)
+  const scriptOpen = useWorkbenchStore((s) => s.storyboardScriptOpen)
   const setStoryboardEditorOpen = useWorkbenchStore((s) => s.setStoryboardEditorOpen)
+  const setStoryboardScriptOpen = useWorkbenchStore((s) => s.setStoryboardScriptOpen)
   const discardStoryboardPlan = useWorkbenchStore((s) => s.discardStoryboardPlan)
   const setWorkspaceMode = useWorkbenchStore((s) => s.setWorkspaceMode)
 
@@ -41,6 +44,8 @@ export default function StoryboardPlanCard(): JSX.Element | null {
   // gray/blue/green，非品牌色 → 这里保留手写品牌 chip(2026-06-22 回归核对:别让品牌色被压成通用灰蓝)。
   const badge = editorOpen
     ? { label: '编辑中', cls: 'bg-nomi-accent-soft text-nomi-accent' }
+    : scriptOpen
+      ? { label: '脚本', cls: 'bg-nomi-accent-soft text-nomi-accent' }
     : committed
       ? { label: '已落画布', cls: 'bg-workbench-success-soft text-workbench-success' }
       : { label: '草稿', cls: 'bg-nomi-accent-soft text-nomi-accent' }
@@ -73,6 +78,17 @@ export default function StoryboardPlanCard(): JSX.Element | null {
         <>
           <span className="text-caption text-nomi-ink-60">{shotCount} 个镜头已建成画布节点</span>
           <div className="flex items-center gap-2">
+            <WorkbenchButton
+              variant="default"
+              size="sm"
+              onClick={() => {
+                setWorkspaceMode('creation')
+                setStoryboardScriptOpen(true)
+              }}
+            >
+              <IconFileText size={13} stroke={1.7} />
+              查看脚本
+            </WorkbenchButton>
             <WorkbenchButton variant="default" size="sm" onClick={() => setStoryboardEditorOpen(true)}>再次编辑</WorkbenchButton>
             <WorkbenchButton variant="default" size="sm" className="ml-auto" onClick={() => setWorkspaceMode('generation')}>
               去生成区<IconArrowRight size={13} stroke={1.6} />
@@ -86,7 +102,7 @@ export default function StoryboardPlanCard(): JSX.Element | null {
             {plan.shots.slice(0, 2).map((shot) => (
               <div key={shot.index} className="flex gap-2 py-1 border-t border-nomi-line-soft text-caption text-nomi-ink-60">
                 <span className="shrink-0 tabular-nums text-nomi-ink-40">{String(shot.index).padStart(2, '0')}</span>
-                <span className="min-w-0 flex-1 truncate">{shot.prompt.trim() || '（未写提示词）'}</span>
+                <span className="min-w-0 flex-1 truncate">{storyboardShotPromptForKind(shot) || '（未写提示词）'}</span>
               </div>
             ))}
             {shotCount > 2 ? (

@@ -1,0 +1,186 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { BLENDER_RENDER_SCRIPT } from "./blenderRenderScript";
+import { writeAsset } from "../runtime";
+
+type BlenderAssetRef = { url: string; assetId?: string };
+
+export type BlenderSceneRenderRequest = {
+  jobId: string;
+  projectId: string;
+  ownerNodeId?: string | null;
+  blenderPath?: string;
+  scene: unknown;
+  timeoutMs?: number;
+};
+
+export type BlenderSceneRenderResult = {
+  jobId: string;
+  blenderVersion?: string;
+  preview: BlenderAssetRef;
+  blend: BlenderAssetRef;
+  model: BlenderAssetRef;
+};
+
+type ActiveBlenderJob = {
+  child: ChildProcess;
+  cancelled: boolean;
+  forceKillTimer?: NodeJS.Timeout;
+};
+
+const activeJobs = new Map<string, ActiveBlenderJob>();
+const OUTPUT_LIMIT = 64 * 1024;
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+
+export function buildBlenderCommandArgs(scriptPath: string, inputPath: string, outputDir: string): string[] {
+  return [
+    "--background",
+    "--factory-startup",
+    "--disable-autoexec",
+    "--python-exit-code",
+    "1",
+    "--python",
+    scriptPath,
+    "--",
+    inputPath,
+    outputDir,
+  ];
+}
+
+function executableCandidates(explicitPath?: string): string[] {
+  const candidates = [explicitPath, process.env.NOMI_BLENDER_PATH];
+  if (process.platform === "darwin") candidates.push("/Applications/Blender.app/Contents/MacOS/Blender");
+  if (process.platform === "win32") {
+    candidates.push(
+      "C:\\Program Files\\Blender Foundation\\Blender 4.3\\blender.exe",
+      "C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe",
+      "C:\\Program Files\\Blender Foundation\\Blender 4.1\\blender.exe",
+      "C:\\Program Files\\Blender Foundation\\Blender 4.0\\blender.exe",
+    );
+  }
+  candidates.push("blender");
+  return candidates.filter((candidate): candidate is string => Boolean(candidate?.trim()));
+}
+
+export function resolveBlenderExecutable(explicitPath?: string): string {
+  for (const candidate of executableCandidates(explicitPath)) {
+    if (candidate === "blender" || fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error("未找到 Blender。请安装 Blender，或设置 NOMI_BLENDER_PATH。");
+}
+
+function appendCapped(current: string, chunk: unknown): string {
+  const next = current + String(chunk ?? "");
+  return next.length > OUTPUT_LIMIT ? next.slice(next.length - OUTPUT_LIMIT) : next;
+}
+
+function readOutputFile(outputDir: string, fileName: string): Buffer {
+  const filePath = path.join(outputDir, fileName);
+  const bytes = fs.readFileSync(filePath);
+  if (bytes.byteLength === 0) throw new Error(`Blender 没有生成有效的 ${fileName}`);
+  return bytes;
+}
+
+function asAssetRef(value: unknown): BlenderAssetRef {
+  const record = value as { id?: unknown; data?: { url?: unknown } };
+  const url = typeof record?.data?.url === "string" ? record.data.url : "";
+  if (!url) throw new Error("Blender 产物写入项目素材失败");
+  return { url, ...(typeof record.id === "string" ? { assetId: record.id } : {}) };
+}
+
+function persistOutputs(request: BlenderSceneRenderRequest, outputDir: string, stdout: string): BlenderSceneRenderResult {
+  const meta = { kind: "blender", ownerNodeId: request.ownerNodeId || null, blenderJobId: request.jobId };
+  const preview = asAssetRef(writeAsset(request.projectId, readOutputFile(outputDir, "preview.png"), "blender-preview.png", "image/png", meta));
+  const blend = asAssetRef(writeAsset(request.projectId, readOutputFile(outputDir, "scene.blend"), "blender-scene.blend", "application/x-blender", meta));
+  const model = asAssetRef(writeAsset(request.projectId, readOutputFile(outputDir, "scene.glb"), "blender-scene.glb", "model/gltf-binary", meta));
+  const version = stdout.match(/NOMI_BLENDER_VERSION=([^\r\n]+)/)?.[1]?.trim();
+  return { jobId: request.jobId, ...(version ? { blenderVersion: version } : {}), preview, blend, model };
+}
+
+export async function runBlenderSceneRender(request: BlenderSceneRenderRequest): Promise<BlenderSceneRenderResult> {
+  const jobId = String(request.jobId || "").trim();
+  const projectId = String(request.projectId || "").trim();
+  if (!jobId) throw new Error("Blender jobId 不能为空");
+  if (!projectId) throw new Error("Blender projectId 不能为空");
+  if (activeJobs.has(jobId)) throw new Error(`Blender 任务 ${jobId} 已在运行`);
+
+  let tempDir = "";
+  try {
+    const blenderPath = resolveBlenderExecutable(request.blenderPath);
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-blender-"));
+    const outputDir = path.join(tempDir, "output");
+    const inputPath = path.join(tempDir, "scene.json");
+    const scriptPath = path.join(tempDir, "render_scene.py");
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(inputPath, JSON.stringify({ scene: request.scene }), "utf8");
+    fs.writeFileSync(scriptPath, BLENDER_RENDER_SCRIPT, "utf8");
+    return await new Promise<BlenderSceneRenderResult>((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const child = spawn(blenderPath, buildBlenderCommandArgs(scriptPath, inputPath, outputDir), {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      const job: ActiveBlenderJob = { child, cancelled: false };
+      activeJobs.set(jobId, job);
+      const finish = (error?: Error, result?: BlenderSceneRenderResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (job.forceKillTimer) clearTimeout(job.forceKillTimer);
+        activeJobs.delete(jobId);
+        if (error) reject(error);
+        else resolve(result as BlenderSceneRenderResult);
+      };
+      const timeout = setTimeout(() => {
+        job.cancelled = true;
+        child.kill("SIGKILL");
+        finish(new Error(`Blender 渲染超时（${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} 秒）`));
+      }, request.timeoutMs || DEFAULT_TIMEOUT_MS);
+      timeout.unref?.();
+
+      child.stdout?.on("data", (chunk) => { stdout = appendCapped(stdout, chunk); });
+      child.stderr?.on("data", (chunk) => { stderr = appendCapped(stderr, chunk); });
+      child.once("error", (error) => finish(new Error(`Blender 启动失败：${error.message}`)));
+      child.once("close", (code, signal) => {
+        if (job.cancelled) {
+          finish(new Error("Blender 渲染已取消"));
+          return;
+        }
+        if (code !== 0) {
+          const detail = stderr.trim() || stdout.trim() || `signal=${signal || "none"}`;
+          finish(new Error(`Blender 渲染失败（退出码 ${String(code)}）：${detail}`));
+          return;
+        }
+        try {
+          finish(undefined, persistOutputs(request, outputDir, stdout));
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    });
+  } finally {
+    if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+export function cancelBlenderSceneRender(jobId: string): boolean {
+  const job = activeJobs.get(String(jobId || ""));
+  if (!job) return false;
+  job.cancelled = true;
+  job.child.kill("SIGTERM");
+  job.forceKillTimer = setTimeout(() => {
+    if (activeJobs.has(jobId)) job.child.kill("SIGKILL");
+  }, 3000);
+  job.forceKillTimer.unref?.();
+  return true;
+}
+
+export function cancelAllBlenderSceneRenders(): number {
+  const jobIds = [...activeJobs.keys()];
+  for (const jobId of jobIds) cancelBlenderSceneRender(jobId);
+  return jobIds.length;
+}

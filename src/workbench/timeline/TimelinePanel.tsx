@@ -283,8 +283,8 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
               {primaryMediaClip ? (
                 <WorkbenchIconButton
                   className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-accent)] shadow-none cursor-pointer hover:bg-[var(--workbench-accent-soft)]')}
-                  label="重新生成这个镜头"
-                  title="重新生成这个镜头（就地重出、贴回原位；改 prompt/参数请去画布节点）"
+                  label="生成并替换当前片段"
+                  title="生成并替换当前时间轴片段（旧结果仍保留在画布节点的结果历史中）"
                   icon={<IconSparkles size={14} />}
                   onClick={() => {
                     void import('../generationCanvas/runner/generationRunController')

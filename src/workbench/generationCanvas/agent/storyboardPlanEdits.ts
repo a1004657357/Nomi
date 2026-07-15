@@ -1,4 +1,11 @@
-import type { PlanAnchor, PlanAnchorCarrier, PlanAnchorKind, PlanShot, StoryboardPlan } from './storyboardPlan'
+import {
+  storyboardShotPromptForKind,
+  type PlanAnchor,
+  type PlanAnchorCarrier,
+  type PlanAnchorKind,
+  type PlanShot,
+  type StoryboardPlan,
+} from './storyboardPlan'
 
 /**
  * 分镜方案的**纯编辑 + 校验**层（S3 字段编辑器的领域逻辑，与渲染解耦、可单测）。
@@ -82,6 +89,8 @@ export function addShot(plan: StoryboardPlan): StoryboardPlan {
     durationSec: lastKind === 'image' ? 0 : 5,
     anchorIds: [],
     prompt: '',
+    imagePrompt: '',
+    videoPrompt: '',
   }
   return { ...plan, shots: [...plan.shots, shot] }
 }
@@ -136,7 +145,7 @@ export function validatePlan(plan: StoryboardPlan): PlanIssue[] {
   }
 
   for (const shot of plan.shots) {
-    if (!shot.prompt.trim()) issues.push({ kind: 'empty-shot-prompt', shotIndex: shot.index })
+    if (!storyboardShotPromptForKind(shot)) issues.push({ kind: 'empty-shot-prompt', shotIndex: shot.index })
     for (const id of shot.anchorIds) {
       if (!anchorIds.has(id)) issues.push({ kind: 'dangling-ref', shotIndex: shot.index, anchorId: id })
     }

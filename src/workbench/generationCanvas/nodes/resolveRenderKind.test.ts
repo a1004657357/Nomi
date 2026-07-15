@@ -18,6 +18,11 @@ describe("resolveNodeRenderKind — 渲染分发优先级（kind > categoryId）
     expect(resolveNodeRenderKind(node({ kind: "asset", categoryId: "cast" }))).toBeUndefined();
   });
 
+  it("3D 导演工作区落 scene 分类时仍保留自己的编辑器，而不是被场景卡截获", () => {
+    expect(resolveNodeRenderKind(node({ kind: "scene3d", categoryId: "scene" }))).toBeUndefined();
+    expect(resolveNodeRenderKind(node({ kind: "vibingDirector", categoryId: "scene" }))).toBeUndefined();
+  });
+
   it("显式 node.renderKind 覆盖一切", () => {
     expect(resolveNodeRenderKind(node({ kind: "character", renderKind: "shot-frame" }))).toBe("shot-frame");
   });

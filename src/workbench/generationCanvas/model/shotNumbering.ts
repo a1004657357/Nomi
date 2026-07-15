@@ -37,7 +37,7 @@ export function isShotNumberedNode(
 export function nextShotIndex(nodes: readonly GenerationCanvasNode[]): number {
   let max = 0
   for (const node of nodes) {
-    if (typeof node.shotIndex === 'number' && node.shotIndex > max) max = node.shotIndex
+    if (isShotNumberedNode(node) && typeof node.shotIndex === 'number' && node.shotIndex > max) max = node.shotIndex
   }
   return max + 1
 }

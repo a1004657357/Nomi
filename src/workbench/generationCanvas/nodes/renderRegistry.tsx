@@ -42,6 +42,7 @@ const NODE_ICONS: Record<GenerationNodeIconKey, GenerationNodeIcon> = {
   output: IconFlag,
   panorama: Icon360,
   scene3d: IconCube,
+  vibingDirector: IconCube,
   model3d: Icon3dCubeSphere,
   whiteboard: IconBrush,
   audio: IconWaveSine,

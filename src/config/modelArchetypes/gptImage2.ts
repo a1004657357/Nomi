@@ -25,7 +25,7 @@ export const GPT_IMAGE_2_ARCHETYPE: ModelArchetype = {
   defaultModeId: "t2i",
   transportTaskKind: "text_to_image",
   // 含旧的两个独立 model key → 老节点按身份自动套上档案（无需数据迁移）。
-  identifierPatterns: ["gpt-image-2", "gpt-image-2-text-to-image", "gpt-image-2-image-to-image", "gpt-4o-image"],
+  identifierPatterns: ["gpt-image-2", "gpt-image-2-text-to-image", "gpt-image-2-image-to-image", "gpt-4o-image", "codex-img2", "codex-imagegen-img2"],
   modes: [
     {
       id: "t2i",

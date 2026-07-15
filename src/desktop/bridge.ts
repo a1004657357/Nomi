@@ -136,6 +136,14 @@ export type DesktopBridge = {
       bytes: ArrayBuffer
       kind?: string
     }) => Promise<DesktopAssetDto>
+    importLocalPath?: (payload: {
+      projectId: string
+      path: string
+      kind?: string
+      fileName?: string
+      contentType?: string
+      ownerNodeId?: string | null
+    }) => Promise<DesktopAssetDto>
     download: (payload: {
       url: string
       suggestedName?: string
@@ -171,6 +179,77 @@ export type DesktopBridge = {
       fps: number
       frames: string[]
     }) => Promise<{ url: string; assetId?: string }>
+    /** 结构化导演台场景 → Blender 后台渲染 → PNG、BLEND 与 GLB 项目素材。 */
+    renderWithBlender: (payload: {
+      jobId: string
+      projectId: string
+      ownerNodeId?: string | null
+      blenderPath?: string
+      scene: unknown
+      timeoutMs?: number
+    }) => Promise<{
+      jobId: string
+      blenderVersion?: string
+      preview: { url: string; assetId?: string }
+      blend: { url: string; assetId?: string }
+      model: { url: string; assetId?: string }
+    }>
+    /** 受约束的导演 manifest → 本地 Blender 预演 → PNG、BLEND 与 GLB 项目素材。 */
+    renderDirectorWithBlender: (payload: {
+      jobId: string
+      projectId: string
+      ownerNodeId?: string | null
+      title?: string
+      stagePreset?: 'empty' | 'studio' | 'coffee_shop' | 'city_street' | 'interior_room'
+      scene: unknown
+      timeoutMs?: number
+    }) => Promise<{
+      jobId: string
+      blenderVersion?: string
+      preview: { url: string; assetId?: string }
+      blend: { url: string; assetId?: string }
+      model: { url: string; assetId?: string }
+    }>
+    cancelBlender: (jobId: string) => Promise<{ cancelled: boolean }>
+  }
+  vibingDirector: {
+    applyBlenderPlan: (payload: {
+      jobId: string
+      projectId: string
+      directorNodeId: string
+      plan: unknown
+      assets: Array<{ id: string; fileName: string }>
+      existingBlendRelativePath?: string
+      timeoutMs?: number
+    }) => Promise<{
+      jobId: string
+      blenderVersion?: string
+      preview: { url: string; assetId?: string }
+      blend: { url: string; assetId?: string }
+      model: { url: string; assetId?: string }
+      blendRelativePath: string
+    }>
+    importAsset: (payload: {
+      projectId: string
+      directorNodeId: string
+      source: 'local' | 'polyhaven' | 'quaternius' | 'blenderkit'
+      license?: string
+    }) => Promise<{
+      canceled?: boolean
+      asset?: {
+        id: string
+        name: string
+        fileName: string
+        format: 'blend' | 'glb' | 'gltf' | 'fbx' | 'obj'
+        source: 'local' | 'polyhaven' | 'quaternius' | 'blenderkit'
+        license: string
+        importedAt: number
+      }
+      relativePath?: string
+    }>
+    openBlender: (payload: { projectId: string; directorNodeId: string; blendRelativePath: string }) => Promise<{ opened: boolean }>
+    cancelBlenderPlan: (jobId: string) => Promise<{ cancelled: boolean }>
+    openAssetSource: (source: 'polyhaven' | 'quaternius' | 'blenderkit') => Promise<{ opened: boolean }>
   }
   exports: {
     startJob: (payload: DesktopExportJobStartPayload) => Promise<DesktopExportJobStartResult>
@@ -184,6 +263,7 @@ export type DesktopBridge = {
   tasks: {
     run: (payload: unknown) => Promise<unknown>
     result: (payload: unknown) => Promise<unknown>
+    cancel: (payload: { runId: string; taskId?: string; nodeId?: string; vendor?: string }) => Promise<{ cancelled: boolean; remoteCancelled: boolean }>
     grantSpend: (payload: { nodeIds: string[]; maxAttemptsPerNode?: number }) => Promise<{ grantId: string }>
     runTextStream: (payload: unknown) => Promise<{ streamId: string }>
     cancelTextStream: (streamId: string) => Promise<unknown>
@@ -326,6 +406,72 @@ export type DesktopBridge = {
     loginPoll: (deviceCode: string) => Promise<{ status: 'success' | 'pending' | 'error'; message: string }>
     logout: () => Promise<{ ok: boolean }>
     install: () => Promise<{ ok: boolean; message: string }>
+  }
+  /** 即梦 Web（实验）：本机 Seedance 扩展桥 + Electron 持久网页登录窗口。 */
+  jimengWeb?: {
+    status: () => Promise<{
+      server: { ok: boolean; serverUrl: string; error?: string; version?: string; sseClients?: number; taskTotal?: number }
+      runner: {
+        available: boolean
+        running: boolean
+        browserOpen: boolean
+        serverManaged: boolean
+        clientOnline: boolean
+        engine: 'electron'
+        drawerReady: boolean
+        fallbackPanelOpen: boolean
+        extensionDir?: string
+        userDataDir?: string
+        serverPid?: number
+        extensionId?: string
+        panelUrl?: string
+        jimengUrl: string
+        error?: string
+        lastLog?: string
+      }
+      loginWindowOpen: boolean
+      cookieCount: number
+      likelyLoggedIn: boolean
+      loginUrl: string
+    }>
+    openLogin: () => Promise<{ ok: boolean; url: string }>
+    openAdmin: (baseUrl?: string) => Promise<{ ok: boolean; url: string }>
+    startRunner: () => Promise<{
+      available: boolean
+      running: boolean
+      browserOpen: boolean
+      serverManaged: boolean
+      clientOnline: boolean
+      engine: 'electron'
+      drawerReady: boolean
+      fallbackPanelOpen: boolean
+      extensionDir?: string
+      userDataDir?: string
+      serverPid?: number
+      extensionId?: string
+      panelUrl?: string
+      jimengUrl: string
+      error?: string
+      lastLog?: string
+    }>
+    stopRunner: () => Promise<{
+      available: boolean
+      running: boolean
+      browserOpen: boolean
+      serverManaged: boolean
+      clientOnline: boolean
+      engine: 'electron'
+      drawerReady: boolean
+      fallbackPanelOpen: boolean
+      extensionDir?: string
+      userDataDir?: string
+      serverPid?: number
+      extensionId?: string
+      panelUrl?: string
+      jimengUrl: string
+      error?: string
+      lastLog?: string
+    }>
   }
   /** 能力核：上报当前打开项目，供外部调用的 A/B 守卫（可选——老 preload 无此口）。 */
   capability?: {

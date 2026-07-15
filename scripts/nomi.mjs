@@ -14,6 +14,7 @@
 //   node scripts/nomi.mjs canvas connect <projectId> <sourceId> <targetId> [mode]
 //   node scripts/nomi.mjs canvas prompt <projectId> <nodeId> "<prompt>"
 //   node scripts/nomi.mjs canvas delete <projectId> <nodeId> [nodeId...]
+//   node scripts/nomi.mjs director render <projectId> <scene3dNodeId> [stagePreset]
 //   node scripts/nomi.mjs generate <projectId> <vendor> <modelKey> <intent> "<prompt>"
 import { invoke, readLiveInstance, readToken } from './lib/nomiClient.mjs'
 
@@ -43,6 +44,16 @@ function parseArgs(argv) {
       if (sub === 'connect') return { method: 'canvas.connect', params: { projectId, connections: [{ source: args[0], target: args[1], mode: args[2] }] } }
       if (sub === 'prompt') return { method: 'canvas.setPrompt', params: { projectId, nodeId: args[0], prompt: args[1] } }
       if (sub === 'delete') return { method: 'canvas.deleteNodes', params: { projectId, nodeIds: args } }
+      break
+    }
+    case 'director': {
+      const [sub, projectId, sourceNodeId, stagePreset] = rest
+      if (sub === 'render') {
+        return {
+          method: 'director.render',
+          params: { projectId, sourceNodeId, ...(stagePreset ? { stagePreset } : {}) },
+        }
+      }
       break
     }
     case 'generate': {

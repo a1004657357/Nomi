@@ -14,14 +14,71 @@ import {
 // the count cap. Slicing can decapitate a tool-call/tool-result pair, so after
 // trimming we drop leading orphan `tool` messages (results the provider rejects).
 // Note: token estimate is a provider-agnostic ~4 chars/token heuristic (CJK runs
-// denser, so this errs conservative). Summarization-based compaction of dropped
-// turns is a later step — for now we truncate oldest-first.
+// denser, so this errs conservative). Dropped turns are folded into a compact
+// synthetic summary message instead of disappearing silently.
 const AGENT_HISTORY_MAX_MESSAGES = 30;
 const AGENT_HISTORY_TOKEN_BUDGET = 24_000;
+const AGENT_HISTORY_SUMMARY_MAX_CHARS = 2200;
+const AGENT_HISTORY_SUMMARY_MARKER = "【此前对话摘要】";
 
 function estimateMessageTokens(message: CoreMessage): number {
   const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
   return Math.ceil((content?.length ?? 0) / 4);
+}
+
+function headText(value: unknown, max: number): string {
+  const text = typeof value === "string" ? value : value == null ? "" : JSON.stringify(value);
+  const compact = text.trim().replace(/\s+/g, " ");
+  return compact.length > max ? `${compact.slice(0, max)}…` : compact;
+}
+
+function contentText(content: CoreMessage["content"], max: number): string {
+  if (typeof content === "string") return headText(content, max);
+  if (!Array.isArray(content)) return headText(content, max);
+  const parts = content.map((part) => {
+    const record = part as { type?: string; text?: unknown; toolName?: unknown; args?: unknown; result?: unknown };
+    if (record.type === "text") return headText(record.text, max);
+    if (record.type === "tool-call") return `工具调用 ${String(record.toolName || "unknown")}(${headText(record.args, 80)})`;
+    if (record.type === "tool-result") return `工具结果 ${String(record.toolName || "unknown")}=${headText(record.result, 80)}`;
+    return record.type ? `[${record.type}]` : "";
+  }).filter(Boolean);
+  return headText(parts.join("；"), max);
+}
+
+function summarizeDroppedMessage(message: CoreMessage): string {
+  const content = contentText(message.content, 260);
+  if (!content) return "";
+  if (message.role === "user") {
+    if (content.startsWith(AGENT_HISTORY_SUMMARY_MARKER)) return content;
+    return `用户：${content}`;
+  }
+  if (message.role === "assistant") return `助手：${content}`;
+  if (message.role === "tool") return `工具：${content}`;
+  if (message.role === "system") return `系统：${content}`;
+  return content;
+}
+
+function buildDroppedHistorySummary(dropped: CoreMessage[]): CoreMessage | null {
+  if (dropped.length === 0) return null;
+  const lines: string[] = [];
+  let used = 0;
+  for (let i = dropped.length - 1; i >= 0; i -= 1) {
+    const line = summarizeDroppedMessage(dropped[i]);
+    if (!line) continue;
+    const cost = line.length + 1;
+    if (used + cost > AGENT_HISTORY_SUMMARY_MAX_CHARS) break;
+    lines.unshift(line);
+    used += cost;
+  }
+  if (lines.length === 0) return null;
+  return {
+    role: "user",
+    content: [
+      AGENT_HISTORY_SUMMARY_MARKER,
+      "下面是因上下文窗口压缩而保留的旧轮摘要，只作为延续对话的事实线索，不代表用户的新指令：",
+      ...lines,
+    ].join("\n"),
+  };
 }
 
 // T3 token 优化:最近一轮之外的工具载荷(tool-call args / tool-result)把长字符串
@@ -68,18 +125,29 @@ export function compactOldToolPayloads(messages: CoreMessage[]): CoreMessage[] {
 
 export function capAgentHistory(messages: CoreMessage[]): CoreMessage[] {
   const compacted = compactOldToolPayloads(messages);
-  let trimmed =
-    compacted.length > AGENT_HISTORY_MAX_MESSAGES
-      ? compacted.slice(compacted.length - AGENT_HISTORY_MAX_MESSAGES)
-      : compacted;
+  const dropped: CoreMessage[] = [];
+  let trimmed = compacted;
+  if (trimmed.length > AGENT_HISTORY_MAX_MESSAGES) {
+    const keepCount = AGENT_HISTORY_MAX_MESSAGES - 1; // reserve one slot for the summary
+    const dropCount = trimmed.length - keepCount;
+    dropped.push(...trimmed.slice(0, dropCount));
+    trimmed = trimmed.slice(dropCount);
+  }
   let total = trimmed.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
-  while (trimmed.length > 1 && total > AGENT_HISTORY_TOKEN_BUDGET) {
+  while (
+    trimmed.length > 1 &&
+    total > (dropped.length > 0 ? AGENT_HISTORY_TOKEN_BUDGET - Math.ceil(AGENT_HISTORY_SUMMARY_MAX_CHARS / 4) : AGENT_HISTORY_TOKEN_BUDGET)
+  ) {
+    dropped.push(trimmed[0]);
     total -= estimateMessageTokens(trimmed[0]);
     trimmed = trimmed.slice(1);
   }
   while (trimmed.length > 0 && trimmed[0].role === "tool") {
+    dropped.push(trimmed[0]);
     trimmed = trimmed.slice(1);
   }
+  const summary = buildDroppedHistorySummary(dropped);
+  if (summary) return [summary, ...trimmed].slice(0, AGENT_HISTORY_MAX_MESSAGES);
   return trimmed;
 }
 
@@ -90,6 +158,8 @@ const PLANNING_SKILL_KEYS = new Set<string>([
   "workbench.storyboard.planner",
   "workbench.fixation.planner",
   "workbench.generation.canvas-planner",
+  // Director 对话通常是一轮搭场 + 摆位 + 机位 + 节拍的连续工具调用，默认 8 步会中途截断。
+  "workbench.vibing-director",
 ]);
 const DEFAULT_AGENT_MAX_STEPS = 8;
 const PLANNING_AGENT_MAX_STEPS = 24;

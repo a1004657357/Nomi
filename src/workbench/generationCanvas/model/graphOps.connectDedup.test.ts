@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { connectNodes, nextEdgeOrderForTarget, sortEdgesByOrder } from './graphOps'
+import { changeEdgeMode, connectNodes, nextEdgeOrderForTarget, sortEdgesByOrder } from './graphOps'
 import type { GenerationCanvasEdge } from './generationCanvasTypes'
 
 describe('connectNodes — 去重按 (source,target,mode)（治「同两点连不了第二种参考」R2）', () => {
@@ -13,6 +13,7 @@ describe('connectNodes — 去重按 (source,target,mode)（治「同两点连�
     const next = connectNodes(base, 'a', 'b', 'last_frame')
     expect(next).toHaveLength(2)
     expect(next[1]).toMatchObject({ source: 'a', target: 'b', mode: 'last_frame' })
+    expect(new Set(next.map((edge) => edge.id)).size).toBe(2)
   })
 
   it('自连接 / 空端点 → no-op', () => {
@@ -46,6 +47,21 @@ describe('connectNodes — order 字段（数组参考 character1..N 的真相�
     expect(nextEdgeOrderForTarget(edges, 'dst')).toBe(1)
     expect(nextEdgeOrderForTarget(edges, 'other')).toBe(1)
     expect(nextEdgeOrderForTarget(edges, 'none')).toBe(0)
+  })
+})
+
+describe('changeEdgeMode — store and event replay share edge rekeying', () => {
+  it('rekeys changed semantics and merges an already-existing semantic edge', () => {
+    const reference: GenerationCanvasEdge = {
+      id: 'edge-a-b-reference', source: 'a', target: 'b', mode: 'reference',
+    }
+    const changed = changeEdgeMode([reference], reference.id, 'first_frame')
+    expect(changed).toEqual([expect.objectContaining({
+      id: 'edge-a-b-first_frame', source: 'a', target: 'b', mode: 'first_frame',
+    })])
+
+    const withReference = connectNodes(changed, 'a', 'b', 'reference')
+    expect(changeEdgeMode(withReference, 'edge-a-b-reference', 'first_frame')).toHaveLength(1)
   })
 })
 

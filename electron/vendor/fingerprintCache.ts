@@ -6,6 +6,7 @@
 // 纯内存(会话内),关闭即回(§8.1b 回滚阀);外挂模块,runtime.ts 巨壳每处只挂一行。
 import crypto from "node:crypto";
 import { traceVendorCached } from "../events/vendorCallTrace";
+import { TtlLruCache } from "../tasks/taskCache";
 import type { NormalizedRecipe } from "./provenance";
 
 /** 结构兼容 runtime.TaskResult(该类型 runtime 私有,这里按形状对齐)。 */
@@ -43,7 +44,10 @@ function markProvenanceAsCached(result: TaskResultLike): void {
   delete prov.vendorRequestId;
 }
 
-const cache = new Map<string, TaskResultLike>();
+const cache = new TtlLruCache<TaskResultLike>({
+  maxEntries: 200,
+  ttlMs: 2 * 60 * 60 * 1000,
+});
 
 export function recipeFingerprint(recipe: NormalizedRecipe): string {
   // params 在 buildNormalizedRecipe 已键排序;顶层字段按固定序列化,同配方恒同指纹。
@@ -93,4 +97,8 @@ export function rememberTaskResult(projectId: string, fingerprint: string | unde
 
 export function resetFingerprintCacheForTests(): void {
   cache.clear();
+}
+
+export function fingerprintCacheSizeForTests(): number {
+  return cache.size;
 }

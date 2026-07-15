@@ -59,6 +59,7 @@ export type GenerationErrorKind =
   | 'model-not-open'
   | 'account-gate'
   | 'content-policy'
+  | 'asset-fetch'
   | 'server'
   | 'input'
   | 'unknown'
@@ -84,6 +85,10 @@ const NARRATE_ERROR: Record<GenerationErrorKind, { reason: string; hint: string 
     hint: '这个模型需要更高的账号档位才能用——按下方「服务商原话」开通对应会员 / 换企业级 API Key / 先在服务商网页端完成授权；也可在「模型接入」换一个能用的模型。',
   },
   'content-policy': { reason: '提示词被拦截', hint: '提示词触发了安全策略，请修改后重试。' },
+  'asset-fetch': {
+    reason: '参考图下载失败',
+    hint: '服务商无法下载临时参考图。请点“重试”，Nomi 会重新上传图片；若仍失败，请换一张公网图片或配置 KIE 图片中转。',
+  },
   server: { reason: '服务商故障', hint: '服务商服务异常，请稍后重试，或换一个模型。' },
   input: { reason: '参数不被接受', hint: '服务商拒绝了请求参数，请检查比例/尺寸等设置，或换一个模型。' },
   unknown: { reason: '生成失败', hint: '可能是服务商临时故障或额度问题，建议稍等重试，或换一个模型。' },

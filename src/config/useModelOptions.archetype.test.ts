@@ -30,6 +30,18 @@ describe("toCatalogModelOptions — 认得的模型注入内置档案控件", ()
     ]);
   });
 
+  it("Codex Img2 → 注入 GPT Image 2 的比例/清晰度控件", () => {
+    const [opt] = toCatalogModelOptions([model({
+      modelKey: "codex-img2",
+      vendorKey: "codex",
+      labelZh: "Codex Img2（GPT Image 2）",
+      kind: "image",
+      meta: { archetypeId: "gpt-image-2" },
+    })]);
+    expect(opt.vendor).toBe("codex");
+    expect(parseModelParameterControls(opt.meta).map((c) => c.key)).toEqual(["aspect_ratio", "resolution"]);
+  });
+
   it("认不出的模型 → meta 不被注入（走现有通用解析，无控件）", () => {
     const [opt] = toCatalogModelOptions([model({ modelKey: "acme/unknown-video" })]);
     expect(parseModelParameterControls(opt.meta)).toEqual([]);

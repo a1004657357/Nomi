@@ -35,6 +35,7 @@ describe('分镜方案卡片 生命周期', () => {
     expect(after.storyboardPlan).toEqual(plan) // 关键:不再 setStoryboardPlan(null)
     expect(after.storyboardPlanCommitted).toBe(true)
     expect(after.storyboardEditorOpen).toBe(false)
+    expect(after.storyboardScriptOpen).toBe(false)
   })
 
   it('编辑已落画布的方案 → 回落草稿(与画布上旧节点视为不一致)', () => {
@@ -53,6 +54,7 @@ describe('分镜方案卡片 生命周期', () => {
     const after = useWorkbenchStore.getState()
     expect(after.storyboardPlan).toBeNull()
     expect(after.storyboardEditorOpen).toBe(false)
+    expect(after.storyboardScriptOpen).toBe(false)
   })
 
   it('hydrateStoryboardPlan 载入态:恢复 committed、编辑器收起', () => {
@@ -62,6 +64,7 @@ describe('分镜方案卡片 生命周期', () => {
     expect(after.storyboardPlan).toEqual(plan)
     expect(after.storyboardPlanCommitted).toBe(true)
     expect(after.storyboardEditorOpen).toBe(false)
+    expect(after.storyboardScriptOpen).toBe(false)
   })
 
   it('setStoryboardPlan(null) 顺手收起编辑器', () => {
@@ -69,6 +72,21 @@ describe('分镜方案卡片 生命周期', () => {
     s.setStoryboardPlan(plan)
     s.setStoryboardEditorOpen(true)
     s.setStoryboardPlan(null)
+    expect(useWorkbenchStore.getState().storyboardEditorOpen).toBe(false)
+    expect(useWorkbenchStore.getState().storyboardScriptOpen).toBe(false)
+  })
+
+  it('脚本视图和编辑器互斥', () => {
+    const s = useWorkbenchStore.getState()
+    s.setStoryboardPlan(plan)
+    s.setStoryboardScriptOpen(true)
+    expect(useWorkbenchStore.getState().storyboardScriptOpen).toBe(true)
+    expect(useWorkbenchStore.getState().storyboardEditorOpen).toBe(false)
+    s.setStoryboardEditorOpen(true)
+    expect(useWorkbenchStore.getState().storyboardEditorOpen).toBe(true)
+    expect(useWorkbenchStore.getState().storyboardScriptOpen).toBe(false)
+    s.setStoryboardScriptOpen(true)
+    expect(useWorkbenchStore.getState().storyboardScriptOpen).toBe(true)
     expect(useWorkbenchStore.getState().storyboardEditorOpen).toBe(false)
   })
 })

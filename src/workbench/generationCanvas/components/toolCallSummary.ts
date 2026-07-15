@@ -48,6 +48,14 @@ export function summarizeToolCall(toolName: string, args: unknown): string {
     const title = record.nodeId ? nodeTitleById(String(record.nodeId)) : null
     return title ? `改写「${title}」的提示词` : '改写节点提示词'
   }
+  if (toolName === 'update_storyboard_shot') {
+    const shotIndex = typeof record.shotIndex === 'number' ? record.shotIndex : null
+    return shotIndex ? `修改镜头 ${shotIndex} 的分镜提示词` : '修改分镜提示词'
+  }
+  if (toolName === 'batch_update_storyboard_shots') {
+    const shots = Array.isArray(record.shots) ? record.shots : []
+    return `批量填写 ${shots.length} 个分镜表镜头`
+  }
   if (toolName === 'delete_canvas_nodes') {
     const ids = Array.isArray(record.nodeIds) ? record.nodeIds : []
     return `删除 ${ids.length} 个节点`
@@ -55,6 +63,10 @@ export function summarizeToolCall(toolName: string, args: unknown): string {
   if (toolName === 'run_generation_batch') {
     const ids = Array.isArray(record.nodeIds) ? record.nodeIds : []
     return `批量生成 ${ids.length} 个节点（将产生生成费用）`
+  }
+  if (toolName === 'attach_external_image_to_node') {
+    const title = record.nodeId ? nodeTitleById(String(record.nodeId)) : null
+    return title ? `导入外部图片到「${title}」` : '导入外部图片到节点'
   }
   if (toolName === 'read_canvas_state') {
     return '读取画布当前状态'
@@ -167,9 +179,29 @@ export function describeToolCallDetail(toolName: string, args: unknown): string 
     const prompt = String(record.prompt || '')
     return prompt.length > 80 ? `${prompt.slice(0, 80)}…` : prompt
   }
+  if (toolName === 'update_storyboard_shot') {
+    const prompt = String(record.videoPrompt || record.imagePrompt || record.prompt || '')
+    return prompt.length > 80 ? `${prompt.slice(0, 80)}…` : prompt
+  }
+  if (toolName === 'batch_update_storyboard_shots') {
+    const shots = Array.isArray(record.shots) ? record.shots : []
+    const indices = shots
+      .map((shot) => (shot && typeof shot === 'object' ? (shot as Record<string, unknown>).shotIndex : undefined))
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+      .sort((a, b) => a - b)
+    if (indices.length === 0) return ''
+    const head = indices.slice(0, 8).map((index) => `镜头 ${index}`).join('、')
+    return indices.length > 8 ? `${head} 等 ${indices.length} 镜` : head
+  }
   if (toolName === 'delete_canvas_nodes' || toolName === 'run_generation_batch') {
     const ids = Array.isArray(record.nodeIds) ? record.nodeIds.map((id) => String(id)) : []
     return joinNodeTitles(ids)
+  }
+  if (toolName === 'attach_external_image_to_node') {
+    const source = String(record.source || '')
+    if (!source) return ''
+    const compact = source.length > 96 ? `${source.slice(0, 96)}…` : source
+    return compact
   }
   return ''
 }

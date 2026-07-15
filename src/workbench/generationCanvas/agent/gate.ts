@@ -31,12 +31,17 @@ const TOOL_META: Record<string, ToolMeta> = {
   // 产出分镜方案对象,只落创作 store 给用户审/改(不写画布投影、不花钱)——免费可改,直通放行(allow)。
   // 真正花钱/写画布的是用户确认后由方案转出的 create_canvas_nodes + run_generation_batch。
   propose_storyboard_plan: { writes: false },
+  // 改分镜方案源头（创作 store），不花钱但会改用户文稿/提示词 → 需要确认。
+  update_storyboard_shot: { writes: true },
+  batch_update_storyboard_shots: { writes: true },
   create_canvas_nodes: { writes: true },
   connect_canvas_edges: { writes: true },
   set_node_prompt: { writes: true },
   delete_canvas_nodes: { writes: true, destructive: true },
   // S6b 受理语义:不写画布投影,但花真钱——costy 必问,确认前零网络调用。
   run_generation_batch: { writes: false, costy: true },
+  // 外部图片写回节点 result:不花 Nomi 模型额度,但会复制文件并覆盖节点当前结果 → 必问。
+  attach_external_image_to_node: { writes: true },
   // 写时间轴(非画布投影,不花钱):非破坏、可撤销,但有可见副作用——按写操作走确认门(ask)。
   // 锁不变量只管画布节点,evaluateLock 对此工具名返回 null,自然放行到 ask。
   arrange_storyboard_to_timeline: { writes: true },
@@ -108,6 +113,11 @@ function evaluateLock(toolName: string, args: unknown, ctx: GateContext): GateDe
       const nodeId = resolve(String(raw || '').trim())
       if (locked.has(nodeId)) return denyFor(nodeId, '重新生成它(会覆盖已锁定的结果)')
     }
+    return null
+  }
+  if (toolName === 'attach_external_image_to_node') {
+    const nodeId = resolve(String(record.nodeId || '').trim())
+    if (locked.has(nodeId)) return denyFor(nodeId, '覆盖它的图片结果')
     return null
   }
   if (toolName === 'connect_canvas_edges') {

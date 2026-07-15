@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildAgentModelEntries, formatAvailableModelsForPrompt } from "./availableModels";
+import { buildAgentModelEntries, formatAvailableModelsForPrompt, selectStoryboardVideoDefault } from "./availableModels";
+import type { AgentModelEntry } from "./availableModels";
 import type { ModelOption } from "../../../config/models";
 
 // 用 meta.archetypeId 显式命中内置档案（resolveArchetypeForModel 优先看 archetypeId）。
@@ -35,6 +36,20 @@ describe("buildAgentModelEntries", () => {
       opt({ value: "imagen-4", label: "Imagen 4", meta: { archetypeId: "imagen-4" } }),
     ]);
     expect(entries[0].modes.every((m) => m.slots.length === 0)).toBe(true);
+  });
+
+  it("Codex Img2 出现在 agent 可选图片模型里，并继承 GPT Image 2 双模式", () => {
+    const entries = buildAgentModelEntries([
+      opt({ value: "codex-img2", modelKey: "codex-img2", label: "Codex Img2（GPT Image 2）", vendor: "codex", meta: { archetypeId: "gpt-image-2" } }),
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      modelKey: "codex-img2",
+      vendor: "codex",
+      kind: "image",
+      archetypeId: "gpt-image-2",
+    });
+    expect(entries[0].modes.map((m) => m.modeId)).toEqual(["t2i", "i2i"]);
   });
 
   it("无档案的模型被跳过", () => {
@@ -79,5 +94,32 @@ describe("formatAvailableModelsForPrompt", () => {
       opt({ value: "imagen-4", label: "Imagen 4", meta: { archetypeId: "imagen-4" } }),
     ]);
     expect(formatAvailableModelsForPrompt(entries)).toContain("纯文生,不接参考边");
+  });
+});
+
+describe("selectStoryboardVideoDefault", () => {
+  it("skips an earlier text-only video model in favor of a later reference-capable model", () => {
+    const entry = (modelKey: string, modes: AgentModelEntry["modes"]): AgentModelEntry => ({
+      modelKey,
+      modelAlias: null,
+      vendor: "test",
+      label: modelKey,
+      kind: "video",
+      archetypeId: modelKey,
+      defaultModeId: modes[0].modeId,
+      modes,
+    });
+    const textOnly = entry("text-only", [{
+      modeId: "t2v", vendorTerm: "文生视频", intent: "text", hint: "", params: [], slots: [],
+    }]);
+    const imageVideo = entry("image-video", [{
+      modeId: "i2v", vendorTerm: "图生视频", intent: "single", hint: "", params: [],
+      slots: [{ kind: "first_frame", label: "首帧", max: 1 }],
+    }]);
+
+    expect(selectStoryboardVideoDefault([textOnly, imageVideo])).toEqual({
+      modelKey: "image-video",
+      modeId: "i2v",
+    });
   });
 });

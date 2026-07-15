@@ -38,6 +38,7 @@ const LOG = "[nomi:proxy]";
 
 /** 当前生效代理的人类可读标签（供 describeNetworkError 的诊断提示用）；无代理/未生效为 null。 */
 let activeProxyLabel: string | null = null;
+let activeHttpProxyUrl: string | null = null;
 /**
  * 探到「检测到了代理、但本版不支持」（SOCKS-only / 未知协议）时的人话详情。
  * 与 activeProxyLabel 互斥：unsupported 时按直连跑，但用户其实**开了**代理——诊断必须如实说
@@ -53,15 +54,23 @@ let unsupportedProxyDetail: string | null = null;
  */
 function rememberProxyState(resolution: ProxyResolution): void {
   if (resolution.kind === "http") {
+    activeHttpProxyUrl = resolution.url;
     activeProxyLabel = `${resolution.url}（来源：${resolution.source === "env" ? "环境变量" : "系统设置"}）`;
     unsupportedProxyDetail = null;
   } else if (resolution.kind === "unsupported") {
+    activeHttpProxyUrl = null;
     activeProxyLabel = null;
     unsupportedProxyDetail = `${resolution.detail}，来源：${resolution.source === "env" ? "环境变量" : "系统设置"}`;
   } else {
+    activeHttpProxyUrl = null;
     activeProxyLabel = null;
     unsupportedProxyDetail = null;
   }
+}
+
+/** 当前已经应用到 Nomi 主进程的 HTTP(S) 代理，供需要独立网络栈的子进程继承。 */
+export function getActiveHttpProxyUrl(): string | null {
+  return activeHttpProxyUrl;
 }
 
 /**
@@ -317,6 +326,7 @@ export function rememberProxyStateForTests(resolution: ProxyResolution): void {
 
 /** 测试钩子：清空模块级代理诊断状态（生效标签 + unsupported 详情）。 */
 export function resetProxyStateForTests(): void {
+  activeHttpProxyUrl = null;
   activeProxyLabel = null;
   unsupportedProxyDetail = null;
 }

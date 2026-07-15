@@ -12,9 +12,10 @@ import { spawn } from "node:child_process";
 import { resolveFfmpegPath } from "../export/ffmpegRunner";
 import { ensureExecutable } from "../export/ensureExecutable";
 import { probeMediaMetadata } from "../export/mediaProbe";
+import { localAssetUrl } from "../assets/assetPaths";
 import { absolutePathFromLocalAssetUrl } from "../assets/localAssetFile";
 import { hardenedFetch } from "../hardenedFetch";
-import { writeAsset } from "../runtime";
+import { resolveProjectRelativePath } from "../projects/repository";
 
 export type VideoFrameWhich = "first" | "last" | number;
 
@@ -38,6 +39,60 @@ export class VideoFrameError extends Error {
 /** (projectId, videoUrl, which) → nomi-local URL。会话内内存缓存，避免同源同帧重复抽。 */
 const frameCache = new Map<string, string>();
 const cacheKey = (p: ExtractVideoFramePayload) => `${p.projectId}::${p.videoUrl}::${String(p.which)}`;
+const FRAME_CACHE_DIR = "assets/generated/video-frames";
+
+function frameLabel(which: VideoFrameWhich): string {
+  if (which === "first" || which === "last") return which;
+  return "at";
+}
+
+export function videoFrameCacheRelativePath(videoUrl: string, which: VideoFrameWhich): string {
+  const digest = crypto.createHash("sha256").update(`${videoUrl}\0${String(which)}`).digest("hex").slice(0, 24);
+  return `${FRAME_CACHE_DIR}/frame-${frameLabel(which)}-${digest}.png`;
+}
+
+function isUsableFrameFile(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() && stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function persistentFrameLocation(payload: ExtractVideoFramePayload): {
+  absolutePath: string;
+  url: string;
+} {
+  const relativePath = videoFrameCacheRelativePath(payload.videoUrl, payload.which);
+  return {
+    absolutePath: resolveProjectRelativePath(payload.projectId, relativePath),
+    url: localAssetUrl(payload.projectId, relativePath),
+  };
+}
+
+function writePersistentFrame(payload: ExtractVideoFramePayload, sourcePath: string): string {
+  const target = persistentFrameLocation(payload);
+  fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+  if (!payload.forceRerun && isUsableFrameFile(target.absolutePath)) return target.url;
+
+  const tempPath = `${target.absolutePath}.${crypto.randomUUID()}.tmp`;
+  fs.copyFileSync(sourcePath, tempPath);
+  try {
+    if (!payload.forceRerun && isUsableFrameFile(target.absolutePath)) return target.url;
+    if (payload.forceRerun) fs.rmSync(target.absolutePath, { force: true });
+    try {
+      fs.renameSync(tempPath, target.absolutePath);
+    } catch (error) {
+      // Another Nomi process may win the same deterministic cache write.
+      if (!payload.forceRerun && isUsableFrameFile(target.absolutePath)) return target.url;
+      throw error;
+    }
+    return target.url;
+  } finally {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch { /* non-fatal */ }
+  }
+}
 
 /** 把源视频 URL 解析成磁盘可读的绝对路径；https 下载到 temp（返回 cleanup 删临时文件）。 */
 async function resolveVideoLocalPath(
@@ -110,6 +165,11 @@ export async function extractVideoFrameToAsset(payload: ExtractVideoFramePayload
   if (!payload.forceRerun) {
     const cached = frameCache.get(key);
     if (cached) return { url: cached };
+    const persistent = persistentFrameLocation(payload);
+    if (isUsableFrameFile(persistent.absolutePath)) {
+      frameCache.set(key, persistent.url);
+      return { url: persistent.url };
+    }
   }
 
   const ffmpegPath = resolveFfmpegPath();
@@ -137,14 +197,7 @@ export async function extractVideoFrameToAsset(payload: ExtractVideoFramePayload
     if (!fs.existsSync(outPath) || fs.statSync(outPath).size === 0) {
       throw new VideoFrameError("ffmpeg 未产出有效帧图");
     }
-    const bytes = fs.readFileSync(outPath);
-    const label = which === "first" ? "first" : which === "last" ? "last" : `at-${which}s`;
-    const record = writeAsset(projectId, bytes, `frame-${label}-${crypto.randomUUID().slice(0, 8)}.png`, "image/png", {
-      kind: "generated",
-      source: "video-frame",
-    }) as { data?: { url?: string } };
-    const url = record?.data?.url;
-    if (!url) throw new VideoFrameError("抽出的帧图写盘失败");
+    const url = writePersistentFrame(payload, outPath);
     frameCache.set(key, url);
     return { url };
   } finally {

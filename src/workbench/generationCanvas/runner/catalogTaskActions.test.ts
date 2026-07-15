@@ -5,6 +5,7 @@ import { MODEL_ARCHETYPES } from '../../../config/modelArchetypes'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import type { TaskRequestDto, TaskResultDto } from '../../api/taskApi'
 import type { ModelCatalogModelDto, ModelCatalogVendorDto } from '../../api/modelCatalogApi'
+import type { RecoverableTimeoutError } from './recoverableTimeout'
 
 function textNode(): GenerationCanvasNode {
   return { id: 'n1', kind: 'text', title: '', position: { x: 0, y: 0 }, meta: { modelKey: 'gpt-x' } }
@@ -20,7 +21,10 @@ function chatResult(raw: unknown, status: TaskResultDto['status'] = 'succeeded')
 
 describe('normalizeCatalogTaskResult — C5 text branch', () => {
   it('extracts OpenAI choices[0].message.content', () => {
-    const result = normalizeCatalogTaskResult(chatResult({ choices: [{ message: { content: '  你好世界  ' } }] }), textNode())
+    const result = normalizeCatalogTaskResult(
+      chatResult({ choices: [{ message: { content: '  你好世界  ' } }] }),
+      textNode(),
+    )
     expect(result.type).toBe('text')
     expect(result.text).toBe('你好世界')
     expect(result.url).toBeUndefined()
@@ -30,21 +34,35 @@ describe('normalizeCatalogTaskResult — C5 text branch', () => {
 
   it('extracts OpenAI message.content as array of parts', () => {
     const result = normalizeCatalogTaskResult(
-      chatResult({ choices: [{ message: { content: [{ type: 'text', text: 'foo' }, { type: 'text', text: 'bar' }] } }] }),
+      chatResult({
+        choices: [
+          {
+            message: {
+              content: [
+                { type: 'text', text: 'foo' },
+                { type: 'text', text: 'bar' },
+              ],
+            },
+          },
+        ],
+      }),
       textNode(),
     )
     expect(result.text).toBe('foobar')
   })
 
   it('falls back to Anthropic-style content[].text', () => {
-    const result = normalizeCatalogTaskResult(chatResult({ content: [{ type: 'text', text: 'claude says hi' }] }), textNode())
+    const result = normalizeCatalogTaskResult(
+      chatResult({ content: [{ type: 'text', text: 'claude says hi' }] }),
+      textNode(),
+    )
     expect(result.text).toBe('claude says hi')
   })
 
   it('throws when the chat response carries no text', () => {
-    expect(() => normalizeCatalogTaskResult(chatResult({ choices: [{ message: { content: '' } }] }), textNode())).toThrow(
-      /没有返回文本/,
-    )
+    expect(() =>
+      normalizeCatalogTaskResult(chatResult({ choices: [{ message: { content: '' } }] }), textNode()),
+    ).toThrow(/没有返回文本/)
   })
 
   it('throws on a failed text task', () => {
@@ -56,9 +74,15 @@ describe('normalizeCatalogTaskResult — C5 text branch', () => {
 // lastFrameUrl，构建出的请求 extras 也不得带 last（M2 互斥发生在传输投影，避免上游 422）。
 function seedanceVideoNode(modeId: string, extraMeta: Record<string, unknown>): GenerationCanvasNode {
   return {
-    id: 'v1', kind: 'video', title: '', position: { x: 0, y: 0 }, prompt: '一只猫',
+    id: 'v1',
+    kind: 'video',
+    title: '',
+    position: { x: 0, y: 0 },
+    prompt: '一只猫',
     meta: {
-      modelKey: 'bytedance/seedance-2', modelVendor: 'kie', vendor: 'kie',
+      modelKey: 'bytedance/seedance-2',
+      modelVendor: 'kie',
+      vendor: 'kie',
       archetype: { id: 'seedance-2', modeId },
       ...extraMeta,
     },
@@ -70,12 +94,26 @@ function seedanceVideoNode(modeId: string, extraMeta: Record<string, unknown>): 
 // （reference_image_urls，全片身份参考），而不是被塞成 first_frame_url（只当第一帧→后面跑偏没角色）。
 describe('分镜参考投递：character_ref 边 → omni 镜头 → 角色图进 reference_image_urls', () => {
   const charNode = (): GenerationCanvasNode => ({
-    id: 'c1', kind: 'image', title: '林夏', position: { x: 0, y: 0 }, prompt: '',
-    meta: { modelKey: 'gpt-image-2' }, result: { id: 'r', type: 'image', url: 'nomi-local://char.png', createdAt: 0 },
+    id: 'c1',
+    kind: 'image',
+    title: '林夏',
+    position: { x: 0, y: 0 },
+    prompt: '',
+    meta: { modelKey: 'gpt-image-2' },
+    result: { id: 'r', type: 'image', url: 'nomi-local://char.png', createdAt: 0 },
   })
   const shotOmni = (): GenerationCanvasNode => ({
-    id: 'v1', kind: 'video', title: '镜头1', position: { x: 0, y: 0 }, prompt: '男孩说话',
-    meta: { modelKey: 'bytedance/seedance-2', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'seedance-2', modeId: 'omni' } },
+    id: 'v1',
+    kind: 'video',
+    title: '镜头1',
+    position: { x: 0, y: 0 },
+    prompt: '男孩说话',
+    meta: {
+      modelKey: 'bytedance/seedance-2',
+      modelVendor: 'kie',
+      vendor: 'kie',
+      archetype: { id: 'seedance-2', modeId: 'omni' },
+    },
   })
   const edge = { id: 'e', source: 'c1', target: 'v1', mode: 'character_ref' as const }
 
@@ -99,12 +137,26 @@ describe('分镜参考投递：character_ref 边 → omni 镜头 → 角色图�
 // 必须照样按 **order 顺序** 把图塞进 reference_image_urls（保 character1..N）。这是「绝不弄坏现有数组参考生成」的回归锁。
 describe('数组参考有序收口：多张 character_ref 边 → omni 镜头 → image_urls 按 order', () => {
   const img = (id: string, url: string): GenerationCanvasNode => ({
-    id, kind: 'image', title: id, position: { x: 0, y: 0 }, prompt: '',
-    meta: { modelKey: 'gpt-image-2' }, result: { id: `${id}-r`, type: 'image', url, createdAt: 0 },
+    id,
+    kind: 'image',
+    title: id,
+    position: { x: 0, y: 0 },
+    prompt: '',
+    meta: { modelKey: 'gpt-image-2' },
+    result: { id: `${id}-r`, type: 'image', url, createdAt: 0 },
   })
   const shotOmni = (): GenerationCanvasNode => ({
-    id: 'v1', kind: 'video', title: '镜头1', position: { x: 0, y: 0 }, prompt: '三人同框',
-    meta: { modelKey: 'bytedance/seedance-2', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'seedance-2', modeId: 'omni' } },
+    id: 'v1',
+    kind: 'video',
+    title: '镜头1',
+    position: { x: 0, y: 0 },
+    prompt: '三人同框',
+    meta: {
+      modelKey: 'bytedance/seedance-2',
+      modelVendor: 'kie',
+      vendor: 'kie',
+      archetype: { id: 'seedance-2', modeId: 'omni' },
+    },
   })
 
   it('三条边按 order 0,1,2 → reference_image_urls = [a,b,c]（顺序稳定，不靠 edges 数组序）', () => {
@@ -141,11 +193,13 @@ describe('buildCatalogTaskRequest — 档案驱动 input（extras.archetypeInput
   })
 
   it('全能参考模式：角色图数组进（按序），残留的 firstFrameUrl 不进（互斥含数组）', () => {
-    const ai = archetypeInput(seedanceVideoNode('omni', {
-      referenceImageUrls: ['c1.png', 'c2.png'],
-      referenceVideoUrls: ['v1.mp4'],
-      firstFrameUrl: 'stale.png',
-    }))
+    const ai = archetypeInput(
+      seedanceVideoNode('omni', {
+        referenceImageUrls: ['c1.png', 'c2.png'],
+        referenceVideoUrls: ['v1.mp4'],
+        firstFrameUrl: 'stale.png',
+      }),
+    )
     expect(ai.reference_image_urls).toEqual(['c1.png', 'c2.png'])
     expect(ai.reference_video_urls).toEqual(['v1.mp4'])
     expect(ai.first_frame_url).toBeUndefined()
@@ -155,34 +209,72 @@ describe('buildCatalogTaskRequest — 档案驱动 input（extras.archetypeInput
 describe('buildCatalogTaskRequest — 档案 mapping 桶由 transportTaskKind 显式决定（修 omni 误路由）', () => {
   function videoNode(modelKey: string, modeId: string, extra: Record<string, unknown> = {}): GenerationCanvasNode {
     return {
-      id: 'r1', kind: 'video', title: '', position: { x: 0, y: 0 }, prompt: 'x',
+      id: 'r1',
+      kind: 'video',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: 'x',
       // 变体（fast/mini）不改 archetype id —— 仍是 'seedance-2'（变体是正交轴 meta.variantId，非独立档案）。
-      meta: { modelKey, modelVendor: 'kie', vendor: 'kie', archetype: { id: modelKey.includes('happyhorse') ? 'happyhorse' : 'seedance-2', modeId }, ...extra },
+      meta: {
+        modelKey,
+        modelVendor: 'kie',
+        vendor: 'kie',
+        archetype: { id: modelKey.includes('happyhorse') ? 'happyhorse' : 'seedance-2', modeId },
+        ...extra,
+      },
     }
   }
   it('Seedance omni（无首帧）→ image_to_video，不再误判 text_to_video 撞 HappyHorse mapping', () => {
-    expect(buildCatalogTaskRequest(videoNode('bytedance/seedance-2', 'omni', { referenceImageUrls: ['c1'] })).request.kind).toBe('image_to_video')
+    expect(
+      buildCatalogTaskRequest(videoNode('bytedance/seedance-2', 'omni', { referenceImageUrls: ['c1'] })).request.kind,
+    ).toBe('image_to_video')
   })
   it('Seedance 首帧 → image_to_video', () => {
-    expect(buildCatalogTaskRequest(videoNode('bytedance/seedance-2', 'first', { firstFrameUrl: 'F' })).request.kind).toBe('image_to_video')
+    expect(
+      buildCatalogTaskRequest(videoNode('bytedance/seedance-2', 'first', { firstFrameUrl: 'F' })).request.kind,
+    ).toBe('image_to_video')
   })
   it('Seedance Fast → 复用 image_to_video 桶', () => {
-    expect(buildCatalogTaskRequest(videoNode('bytedance/seedance-2-fast', 'first', { firstFrameUrl: 'F' })).request.kind).toBe('image_to_video')
+    expect(
+      buildCatalogTaskRequest(videoNode('bytedance/seedance-2-fast', 'first', { firstFrameUrl: 'F' })).request.kind,
+    ).toBe('image_to_video')
   })
   it('HappyHorse 任意模式 → text_to_video 桶', () => {
     expect(buildCatalogTaskRequest(videoNode('happyhorse', 't2v')).request.kind).toBe('text_to_video')
-    expect(buildCatalogTaskRequest(videoNode('happyhorse', 'i2v', { firstFrameUrl: 'F' })).request.kind).toBe('text_to_video')
+    expect(buildCatalogTaskRequest(videoNode('happyhorse', 'i2v', { firstFrameUrl: 'F' })).request.kind).toBe(
+      'text_to_video',
+    )
   })
 })
 
 // 根因回归（2026-06-08）：断开 kie、连 apimart 后，钉死在 kie 的老节点运行时必须自动迁到
 // apimart 的同款模型，而不是抛 `API key missing: kie`。
 describe('runCatalogGenerationTask — 断开 kie 后老节点自动迁移到已连接供应商', () => {
-  const vendorDto = (key: string, hasApiKey: boolean): ModelCatalogVendorDto => ({ key, name: key, enabled: true, hasApiKey, createdAt: '', updatedAt: '' })
-  const apimartSeedream: ModelCatalogModelDto = { modelKey: 'doubao-seedream-4.5', vendorKey: 'apimart', labelZh: 'Seedream 4.5', kind: 'image', enabled: true, meta: { archetypeId: 'seedream' }, createdAt: '', updatedAt: '' }
+  const vendorDto = (key: string, hasApiKey: boolean): ModelCatalogVendorDto => ({
+    key,
+    name: key,
+    enabled: true,
+    hasApiKey,
+    createdAt: '',
+    updatedAt: '',
+  })
+  const apimartSeedream: ModelCatalogModelDto = {
+    modelKey: 'doubao-seedream-4.5',
+    vendorKey: 'apimart',
+    labelZh: 'Seedream 4.5',
+    kind: 'image',
+    enabled: true,
+    meta: { archetypeId: 'seedream' },
+    createdAt: '',
+    updatedAt: '',
+  }
 
   const staleKieNode: GenerationCanvasNode = {
-    id: 'n1', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: '画只猫',
+    id: 'n1',
+    kind: 'image',
+    title: '',
+    position: { x: 0, y: 0 },
+    prompt: '画只猫',
     meta: { modelKey: 'seedream', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'seedream', modeId: 't2i' } },
   }
 
@@ -193,7 +285,13 @@ describe('runCatalogGenerationTask — 断开 kie 后老节点自动迁移到已
       listCatalogModels: async () => [apimartSeedream],
       runTask: async (vendor: string, request: TaskRequestDto) => {
         calls.push({ vendor, request })
-        return { id: 't1', kind: request.kind, status: 'succeeded' as const, assets: [{ type: 'image' as const, url: 'https://x/out.png' }], raw: {} }
+        return {
+          id: 't1',
+          kind: request.kind,
+          status: 'succeeded' as const,
+          assets: [{ type: 'image' as const, url: 'https://x/out.png' }],
+          raw: {},
+        }
       },
     }
     return { calls, options }
@@ -211,33 +309,166 @@ describe('runCatalogGenerationTask — 断开 kie 后老节点自动迁移到已
   it('没有任何已连接供应商提供该款 → 抛清晰可行动错误，而非 cryptic key missing', async () => {
     const { options } = harness()
     await expect(
-      runCatalogGenerationTask(staleKieNode, { ...options, listCatalogVendors: async () => [vendorDto('kie', false)], listCatalogModels: async () => [] }),
+      runCatalogGenerationTask(staleKieNode, {
+        ...options,
+        listCatalogVendors: async () => [vendorDto('kie', false)],
+        listCatalogModels: async () => [],
+      }),
     ).rejects.toThrow(/没有已连接的供应商提供/)
+  })
+})
+
+describe('runCatalogGenerationTask — 视频节点被图片模型元数据污染时自愈', () => {
+  const vendorDto = (key: string, extra: Partial<ModelCatalogVendorDto> = {}): ModelCatalogVendorDto => ({
+    key,
+    name: key,
+    enabled: true,
+    hasApiKey: true,
+    createdAt: '',
+    updatedAt: '',
+    ...extra,
+  })
+  const agnesVideo: ModelCatalogModelDto = {
+    modelKey: 'agnes-video-v2.0',
+    vendorKey: 'agnes',
+    labelZh: 'Agnes Video V2.0',
+    kind: 'video',
+    enabled: true,
+    meta: { archetypeId: 'agnes-video' },
+    createdAt: '',
+    updatedAt: '',
+  }
+
+  function pollutedVideoNode(withHistory = true): GenerationCanvasNode {
+    return {
+      id: 'v-polluted',
+      kind: 'video',
+      title: '镜头 4 · 视频',
+      position: { x: 0, y: 0 },
+      prompt: '人物看向镜头',
+      meta: {
+        modelKey: 'codex-img2',
+        modelAlias: 'codex-img2',
+        modelVendor: 'codex',
+        vendor: 'codex',
+        videoModel: 'codex-img2',
+        videoModelVendor: 'codex',
+        archetype: { id: 'gpt-image-2', modeId: 'i2i' },
+        aspect_ratio: '16:9',
+        resolution: '2K',
+        duration: 0,
+      },
+      ...(withHistory
+        ? {
+            result: {
+              id: 'old-video',
+              type: 'video' as const,
+              url: 'nomi-local://old.mp4',
+              model: 'agnes-video-v2.0',
+              createdAt: 1,
+              provenance: {
+                timestamp: 1,
+                provider: 'agnes',
+                modelKey: 'agnes-video-v2.0',
+                params: {
+                  extras: {
+                    aspect_ratio: '16:9',
+                    resolution: '720p',
+                    duration: 5,
+                    negative_prompt: '闪烁',
+                    archetype: { id: 'agnes-video', modeId: 't2v' },
+                  },
+                },
+              },
+            },
+          }
+        : {}),
+    }
+  }
+
+  it('即使 codex 免鉴权可用，也不会让视频节点走 GPT Image 2；从成功历史恢复 Agnes 图生视频', async () => {
+    const calls: Array<{ vendor: string; request: TaskRequestDto }> = []
+    const resolved: GenerationCanvasNode[] = []
+    await runCatalogGenerationTask(pollutedVideoNode(), {
+      references: { firstFrameUrl: 'https://x/first.png', referenceImages: ['https://x/first.png'] },
+      listCatalogVendors: async () => [vendorDto('codex', { hasApiKey: false, authType: 'none' }), vendorDto('agnes')],
+      listCatalogModels: async () => [agnesVideo],
+      onResolvedNode: (node) => {
+        resolved.push(node)
+      },
+      runTask: async (vendor, request) => {
+        calls.push({ vendor, request })
+        return {
+          id: 'v-new',
+          kind: request.kind,
+          status: 'succeeded',
+          assets: [{ type: 'video', url: 'https://x/new.mp4' }],
+          raw: {},
+        }
+      },
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].vendor).toBe('agnes')
+    expect(calls[0].request.kind).toBe('image_to_video')
+    expect(calls[0].request.extras).toMatchObject({
+      modelKey: 'agnes-video-v2.0',
+      modelVendor: 'agnes',
+      resolution: '720p',
+      duration: 5,
+      archetype: { id: 'agnes-video', modeId: 'i2v' },
+    })
+    expect(resolved).toHaveLength(1)
+    expect(resolved[0].meta?.modelKey).toBe('agnes-video-v2.0')
+  })
+
+  it('没有同类型成功历史时明确报告模型类型串线，不再报 GPT Image 2 供应商断开', async () => {
+    await expect(
+      runCatalogGenerationTask(pollutedVideoNode(false), {
+        listCatalogVendors: async () => [vendorDto('codex', { hasApiKey: false, authType: 'none' })],
+        listCatalogModels: async () => [],
+        runTask: async () => {
+          throw new Error('不应提交')
+        },
+      }),
+    ).rejects.toThrow(/视频节点错误绑定了图片模型/)
   })
 })
 
 describe('runCatalogGenerationTask — 轮询硬超时抛 RecoverableTimeoutError（可找回，非普通失败）', () => {
   const videoNode: GenerationCanvasNode = {
-    id: 'v1', kind: 'video', title: '', position: { x: 0, y: 0 }, prompt: '一只猫跑过草地',
+    id: 'v1',
+    kind: 'video',
+    title: '',
+    position: { x: 0, y: 0 },
+    prompt: '一只猫跑过草地',
     meta: { modelKey: 'vid', vendor: 'asyncv' },
   }
 
   it('超时抛 RecoverableTimeoutError，detail 带 taskId/vendor/taskKind，且软超时后回报 still-generating', async () => {
-    const { isRecoverableTimeoutError, RecoverableTimeoutError } = await import('./recoverableTimeout')
+    const { isRecoverableTimeoutError } = await import('./recoverableTimeout')
     const phases: string[] = []
     const error = await runCatalogGenerationTask(videoNode, {
       // 首发拿到 taskId、非终态 → 进轮询
       runTask: async (_v, req) => ({ id: 'up-task-9', kind: req.kind, status: 'queued' as const, assets: [], raw: {} }),
       // 始终非终态 → 必定走到硬超时
-      fetchTaskResult: async () => ({ vendor: 'asyncv', result: { id: 'up-task-9', kind: 'text_to_video' as const, status: 'queued' as const, assets: [], raw: {} } }),
+      fetchTaskResult: async () => ({
+        vendor: 'asyncv',
+        result: { id: 'up-task-9', kind: 'text_to_video' as const, status: 'queued' as const, assets: [], raw: {} },
+      }),
       pollIntervalMs: 1,
       pollTimeoutMs: 4, // soft=hard=4ms（覆盖时收敛），几个 tick 即超时
-      onProgress: (p) => { if (p.phase) phases.push(p.phase) },
+      onProgress: (p) => {
+        if (p.phase) phases.push(p.phase)
+      },
     }).catch((e) => e)
 
     expect(isRecoverableTimeoutError(error)).toBe(true)
-    expect((error as InstanceType<typeof RecoverableTimeoutError>).detail).toMatchObject({
-      taskId: 'up-task-9', vendor: 'asyncv', taskKind: 'text_to_video', modelKey: 'vid',
+    expect((error as RecoverableTimeoutError).detail).toMatchObject({
+      taskId: 'up-task-9',
+      vendor: 'asyncv',
+      taskKind: 'text_to_video',
+      modelKey: 'vid',
     })
   })
 })
@@ -248,7 +479,11 @@ describe('runCatalogGenerationTask — 轮询硬超时抛 RecoverableTimeoutErro
 // 查结果是免费的：抖动就免费重试查询；持续失败 → 落 RecoverableTimeoutError(可找回，不重发)。
 describe('runCatalogGenerationTask — 轮询查询失败绝不重新提交付费任务（钱安全回归）', () => {
   const videoNode: GenerationCanvasNode = {
-    id: 'v1', kind: 'video', title: '', position: { x: 0, y: 0 }, prompt: '一只猫跑过草地',
+    id: 'v1',
+    kind: 'video',
+    title: '',
+    position: { x: 0, y: 0 },
+    prompt: '一只猫跑过草地',
     meta: { modelKey: 'vid', vendor: 'asyncv' },
   }
 
@@ -256,11 +491,23 @@ describe('runCatalogGenerationTask — 轮询查询失败绝不重新提交付�
     let submitCount = 0
     let fetchCount = 0
     const result = await runCatalogGenerationTask(videoNode, {
-      runTask: async (_v, req) => { submitCount += 1; return { id: 'up-1', kind: req.kind, status: 'queued' as const, assets: [], raw: {} } },
+      runTask: async (_v, req) => {
+        submitCount += 1
+        return { id: 'up-1', kind: req.kind, status: 'queued' as const, assets: [], raw: {} }
+      },
       fetchTaskResult: async () => {
         fetchCount += 1
         if (fetchCount === 1) throw new TypeError('Failed to fetch') // 第一次查结果网络抖动
-        return { vendor: 'asyncv', result: { id: 'up-1', kind: 'text_to_video' as const, status: 'succeeded' as const, assets: [{ type: 'video' as const, url: 'https://x/out.mp4' }], raw: {} } }
+        return {
+          vendor: 'asyncv',
+          result: {
+            id: 'up-1',
+            kind: 'text_to_video' as const,
+            status: 'succeeded' as const,
+            assets: [{ type: 'video' as const, url: 'https://x/out.mp4' }],
+            raw: {},
+          },
+        }
       },
       pollIntervalMs: 1,
       pollTimeoutMs: 5000, // 充足，确保走的是「重试查询」而非「超时」路径
@@ -273,8 +520,13 @@ describe('runCatalogGenerationTask — 轮询查询失败绝不重新提交付�
     const { isRecoverableTimeoutError } = await import('./recoverableTimeout')
     let submitCount = 0
     const error = await runCatalogGenerationTask(videoNode, {
-      runTask: async (_v, req) => { submitCount += 1; return { id: 'up-2', kind: req.kind, status: 'queued' as const, assets: [], raw: {} } },
-      fetchTaskResult: async () => { throw new TypeError('Failed to fetch') }, // 查结果一直失败
+      runTask: async (_v, req) => {
+        submitCount += 1
+        return { id: 'up-2', kind: req.kind, status: 'queued' as const, assets: [], raw: {} }
+      },
+      fetchTaskResult: async () => {
+        throw new TypeError('Failed to fetch')
+      }, // 查结果一直失败
       pollIntervalMs: 1,
       pollTimeoutMs: 4, // hard=4ms → 几个 tick 即落 recoverable，不重发
     }).catch((e) => e)
@@ -287,12 +539,36 @@ describe('runCatalogGenerationTask — 轮询查询失败绝不重新提交付�
 // 否则 electron 侧台账拿不到键、去重失效（= 提交幂等整条链断在最后一跳）。
 describe('buildCatalogTaskRequest — idempotencyKey 穿透到 request.extras', () => {
   it('options.idempotencyKey → request.extras.idempotencyKey', () => {
-    const node: GenerationCanvasNode = { id: 'n1', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: '画只猫', meta: { modelKey: 'gpt-image-2-image-to-image', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'gpt-image-2', modeId: 't2i' } } }
+    const node: GenerationCanvasNode = {
+      id: 'n1',
+      kind: 'image',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: '画只猫',
+      meta: {
+        modelKey: 'gpt-image-2-image-to-image',
+        modelVendor: 'kie',
+        vendor: 'kie',
+        archetype: { id: 'gpt-image-2', modeId: 't2i' },
+      },
+    }
     const built = buildCatalogTaskRequest(node, { idempotencyKey: 'run-abc-123' })
     expect((built.request.extras as Record<string, unknown>).idempotencyKey).toBe('run-abc-123')
   })
   it('未给 idempotencyKey → extras 不带该键（无键时 runTask 不介入，向后兼容）', () => {
-    const node: GenerationCanvasNode = { id: 'n1', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: '画只猫', meta: { modelKey: 'gpt-image-2-image-to-image', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'gpt-image-2', modeId: 't2i' } } }
+    const node: GenerationCanvasNode = {
+      id: 'n1',
+      kind: 'image',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: '画只猫',
+      meta: {
+        modelKey: 'gpt-image-2-image-to-image',
+        modelVendor: 'kie',
+        vendor: 'kie',
+        archetype: { id: 'gpt-image-2', modeId: 't2i' },
+      },
+    }
     const built = buildCatalogTaskRequest(node, {})
     expect((built.request.extras as Record<string, unknown>).idempotencyKey).toBeUndefined()
   })
@@ -301,18 +577,55 @@ describe('buildCatalogTaskRequest — idempotencyKey 穿透到 request.extras', 
 describe('normalizeCatalogTaskResult — image path unaffected', () => {
   it('still returns an image result from an asset', () => {
     const result = normalizeCatalogTaskResult(
-      { id: 't2', kind: 'text_to_image', status: 'succeeded', assets: [{ type: 'image', url: 'https://x/y.png' }], raw: {} },
+      {
+        id: 't2',
+        kind: 'text_to_image',
+        status: 'succeeded',
+        assets: [{ type: 'image', url: 'https://x/y.png' }],
+        raw: {},
+      },
       imageNode(),
     )
     expect(result.type).toBe('image')
     expect(result.url).toBe('https://x/y.png')
   })
+
+  it('keeps every returned image as a selectable alternative', () => {
+    const result = normalizeCatalogTaskResult(
+      {
+        id: 't-multi',
+        kind: 'text_to_image',
+        status: 'succeeded',
+        assets: [
+          { type: 'image', url: 'https://x/1.png', assetId: 'asset-1' },
+          { type: 'image', url: 'https://x/2.png', assetId: 'asset-2' },
+          { type: 'image', url: 'https://x/3.png', assetId: 'asset-3' },
+        ],
+        raw: { requestId: 'req-1' },
+      },
+      imageNode(),
+    )
+
+    expect(result.url).toBe('https://x/1.png')
+    expect(result.alternatives?.map((entry) => entry.url)).toEqual(['https://x/2.png', 'https://x/3.png'])
+    expect(new Set([result.id, ...(result.alternatives || []).map((entry) => entry.id)]).size).toBe(3)
+  })
 })
 
 describe('GPT Image 2 档案（图像，2 模式打不同 taskKind 桶 + input_urls）', () => {
   const gptNode = (modeId: string, extra: Record<string, unknown> = {}): GenerationCanvasNode => ({
-    id: 'g1', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: '画只猫',
-    meta: { modelKey: 'gpt-image-2-image-to-image', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'gpt-image-2', modeId }, ...extra },
+    id: 'g1',
+    kind: 'image',
+    title: '',
+    position: { x: 0, y: 0 },
+    prompt: '画只猫',
+    meta: {
+      modelKey: 'gpt-image-2-image-to-image',
+      modelVendor: 'kie',
+      vendor: 'kie',
+      archetype: { id: 'gpt-image-2', modeId },
+      ...extra,
+    },
   })
   it('文生图模式：taskKind=text_to_image，model=t2i enum，无 input_urls', () => {
     const built = buildCatalogTaskRequest(gptNode('t2i'))
@@ -322,7 +635,9 @@ describe('GPT Image 2 档案（图像，2 模式打不同 taskKind 桶 + input_u
     expect(ai).not.toHaveProperty('input_urls')
   })
   it('图生图模式：taskKind=image_edit，model=i2i enum，输入图进 input_urls（不是 reference_image_urls）', () => {
-    const built = buildCatalogTaskRequest(gptNode('i2i', { referenceImageUrls: ['https://x/a.png', 'https://x/b.png'] }))
+    const built = buildCatalogTaskRequest(
+      gptNode('i2i', { referenceImageUrls: ['https://x/a.png', 'https://x/b.png'] }),
+    )
     expect(built.request.kind).toBe('image_edit')
     const ai = built.request.extras?.archetypeInput as Record<string, unknown>
     expect(ai.model).toBe('gpt-image-2-image-to-image')
@@ -333,7 +648,11 @@ describe('GPT Image 2 档案（图像，2 模式打不同 taskKind 桶 + input_u
 
 describe('Seedream 档案（图像，改图输入图走 image_urls，与 GPT 同桶不同键）', () => {
   const sdNode = (modeId: string, extra: Record<string, unknown> = {}): GenerationCanvasNode => ({
-    id: 's1', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: '改图',
+    id: 's1',
+    kind: 'image',
+    title: '',
+    position: { x: 0, y: 0 },
+    prompt: '改图',
     meta: { modelKey: 'seedream', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'seedream', modeId }, ...extra },
   })
   it('文生图：taskKind=text_to_image，model=4.5 t2i enum', () => {
@@ -342,7 +661,9 @@ describe('Seedream 档案（图像，改图输入图走 image_urls，与 GPT 同
     expect((built.request.extras?.archetypeInput as Record<string, unknown>).model).toBe('seedream/4.5-text-to-image')
   })
   it('改图：taskKind=image_edit，输入图进 image_urls（不是 input_urls / reference_image_urls）', () => {
-    const built = buildCatalogTaskRequest(sdNode('edit', { referenceImageUrls: ['https://x/1.png', 'https://x/2.png'] }))
+    const built = buildCatalogTaskRequest(
+      sdNode('edit', { referenceImageUrls: ['https://x/1.png', 'https://x/2.png'] }),
+    )
     expect(built.request.kind).toBe('image_edit')
     const ai = built.request.extras?.archetypeInput as Record<string, unknown>
     expect(ai.model).toBe('seedream/4.5-edit')
@@ -371,7 +692,8 @@ describe('接入即验证（零额度）：每个档案/模式声明的参考槽
   const flattenValues = (value: unknown): string[] => {
     if (typeof value === 'string') return /^https?:\/\//i.test(value) ? [value] : []
     if (Array.isArray(value)) return value.flatMap(flattenValues)
-    if (value && typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap(flattenValues)
+    if (value && typeof value === 'object')
+      return Object.values(value as Record<string, unknown>).flatMap(flattenValues)
     return []
   }
 
@@ -381,21 +703,105 @@ describe('接入即验证（零额度）：每个档案/模式声明的参考槽
       it(`${archetype.id} / ${mode.id}：${refSlots.length} 个参考槽的值都进请求（不静默丢）`, () => {
         const meta: Record<string, unknown> = {
           modelKey: archetype.identifierPatterns[0],
-          modelVendor: 'kie', vendor: 'kie',
+          modelVendor: 'kie',
+          vendor: 'kie',
           archetype: { id: archetype.id, modeId: mode.id },
         }
         for (const s of refSlots) meta[SLOT_FILL[s.kind].key] = SLOT_FILL[s.kind].value
         const nodeKind = archetype.kind === 'image' ? 'image' : 'video'
-        const node: GenerationCanvasNode = { id: 'g1', kind: nodeKind, title: '', position: { x: 0, y: 0 }, prompt: 'p', meta }
+        const node: GenerationCanvasNode = {
+          id: 'g1',
+          kind: nodeKind,
+          title: '',
+          position: { x: 0, y: 0 },
+          prompt: 'p',
+          meta,
+        }
         const ai = buildCatalogTaskRequest(node).request.extras?.archetypeInput as Record<string, unknown>
         expect(ai, '档案模型必须产出 archetypeInput').toBeTruthy()
         const present = new Set(flattenValues(ai))
         for (const s of refSlots) {
           for (const v of SLOT_FILL[s.kind].flat) {
-            expect(present.has(v), `${archetype.id}/${mode.id} 的槽 ${s.kind} 值未进请求体（会像 omni 参考图那样静默丢）`).toBe(true)
+            expect(
+              present.has(v),
+              `${archetype.id}/${mode.id} 的槽 ${s.kind} 值未进请求体（会像 omni 参考图那样静默丢）`,
+            ).toBe(true)
           }
         }
       })
     }
   }
+})
+
+describe('runCatalogGenerationTask — 同步生成等待心跳', () => {
+  it('runTask 长时间未返回时持续回报已等待状态', async () => {
+    const phases: string[] = []
+    const node: GenerationCanvasNode = {
+      id: 'slow-image',
+      kind: 'image',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: '咖啡杯',
+      meta: { modelKey: 'slow-model', vendor: 'slow-vendor' },
+    }
+
+    const result = await runCatalogGenerationTask(node, {
+      requestHeartbeatMs: 5,
+      onProgress: (progress) => phases.push(progress.phase),
+      runTask: async (_vendor, request) => {
+        await new Promise((resolve) => setTimeout(resolve, 18))
+        return {
+          id: 'slow-task',
+          kind: request.kind,
+          status: 'succeeded',
+          assets: [{ type: 'image', url: 'https://x/out.png' }],
+          raw: {},
+        }
+      },
+    })
+
+    expect(result.url).toBe('https://x/out.png')
+    expect(phases).toContain('generating')
+  })
+
+  it('提交 IPC 尚未返回时也能立即响应取消', async () => {
+    const controller = new AbortController()
+    let release!: (value: TaskResultDto) => void
+    let started!: () => void
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const pending = new Promise<TaskResultDto>((resolve) => {
+      release = resolve
+    })
+    const node: GenerationCanvasNode = {
+      id: 'cancel-image',
+      kind: 'image',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: '咖啡杯',
+      meta: { modelKey: 'slow-model', vendor: 'slow-vendor' },
+    }
+
+    const running = runCatalogGenerationTask(node, {
+      signal: controller.signal,
+      runTask: async () => {
+        started()
+        return pending
+      },
+    })
+    await didStart
+    controller.abort()
+    try {
+      await expect(running).rejects.toMatchObject({ name: 'AbortError' })
+    } finally {
+      release({
+        id: 'late-task',
+        kind: 'text_to_image',
+        status: 'succeeded',
+        assets: [{ type: 'image', url: 'https://x/late.png' }],
+        raw: {},
+      })
+    }
+  })
 })

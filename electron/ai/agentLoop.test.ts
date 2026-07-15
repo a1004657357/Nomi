@@ -43,4 +43,47 @@ describe("runAgentLoop", () => {
     expect(seenA).toEqual([1]);
     expect(seenB).toEqual([1]);
   });
+
+  it("兼容协议返回 Blender 计划文本，并让 SDK 的 JSON schema 与该计划一致", async () => {
+    const model = new MockLanguageModelV1({
+      doGenerate: async () => ({
+          finishReason: "stop" as const,
+          usage: { promptTokens: 1, completionTokens: 1 },
+          text: '{"directorNodeId":"director-1","summary":"创建 Blender 场景","plan":{"mode":"replace","actions":[{"op":"set_stage","preset":"coffee_shop"}]}}',
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        }),
+    });
+
+    const result = await runAgentLoop(
+      { model, messages: userMessage("搭一个咖啡店"), tools: {}, structuredJson: true },
+      {},
+      { mode: "oneshot" },
+    );
+
+    expect(result.text).toContain('"directorNodeId"');
+    expect(result.experimental_output).toMatchObject({
+      directorNodeId: 'director-1',
+      plan: { mode: 'replace' },
+    });
+  });
+
+  it("兼容协议保留非旧 schema 的 JSON 文本，让调用方执行方言迁移", async () => {
+    const model = new MockLanguageModelV1({
+      doGenerate: async () => ({
+        finishReason: "stop" as const,
+        usage: { promptTokens: 1, completionTokens: 1 },
+        text: '{"directorNodeId":"director-1","summary":"创建 Blender 场景","plan":{"mode":"replace","actions":[{"op":"set_stage","preset":"coffee_shop"}]}}',
+        rawCall: { rawPrompt: null, rawSettings: {} },
+      }),
+    });
+
+    const result = await runAgentLoop(
+      { model, messages: userMessage("搭一个咖啡店"), tools: {}, structuredJson: true },
+      {},
+      { mode: "oneshot" },
+    );
+
+    expect(result.text).toContain('"plan"');
+    expect(result.text).toContain('"set_stage"');
+  });
 });

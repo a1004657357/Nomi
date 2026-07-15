@@ -1,0 +1,341 @@
+import React from 'react'
+import { createPortal } from 'react-dom'
+import {
+  IconBrandBlender,
+  IconCube,
+  IconExternalLink,
+  IconFolderPlus,
+  IconLayoutGrid,
+  IconMovie,
+  IconPhoto,
+  IconRefresh,
+  IconX,
+} from '@tabler/icons-react'
+import { NomiLoadingMark, WorkbenchIconButton } from '../../../../design'
+import { toast } from '../../../../ui/toast'
+import { cn } from '../../../../utils/cn'
+import Model3DViewer from '../model3d/Model3DViewer'
+import VibingDirectorAssistantPanel from './VibingDirectorAssistantPanel'
+import {
+  createCoffeeConversationLayoutPlan,
+  normalizeVibingDirectorState,
+  type BlenderDirectorAsset,
+  type BlenderDirectorAssetSource,
+  type VibingDirectorPlan,
+  type VibingDirectorPlanResult,
+  type VibingDirectorState,
+} from './vibingDirectorState'
+
+type VibingDirectorFullscreenProps = {
+  directorNodeId: string
+  nodeTitle: string
+  initialState: VibingDirectorState
+  readOnly?: boolean
+  onClose: () => void
+  onStateChange: (state: VibingDirectorState) => void
+  onApplyPlan: (state: VibingDirectorState, plan: VibingDirectorPlan) => Promise<VibingDirectorPlanResult>
+  onImportAsset: (source: BlenderDirectorAssetSource, license?: string) => Promise<BlenderDirectorAsset | null>
+  onOpenBlender: (state: VibingDirectorState) => void
+  onCancelBlender?: () => void
+  onOpenAssetSource: (source: Exclude<BlenderDirectorAssetSource, 'local'>) => void
+}
+
+const ASSET_SOURCE_LABEL: Record<BlenderDirectorAssetSource, string> = {
+  local: '本地已授权文件',
+  polyhaven: 'Poly Haven',
+  quaternius: 'Quaternius',
+  blenderkit: 'BlenderKit',
+}
+
+function stateSummary(state: VibingDirectorState): string {
+  if (state.output?.blenderVersion) return `Blender ${state.output.blenderVersion}`
+  if (state.output) return 'Blender 预览已回传'
+  return '等待首个 Blender 计划'
+}
+
+function ArtifactPreview({ state }: { state: VibingDirectorState }): JSX.Element {
+  const output = state.output
+  const hasSceneModel = Boolean(output?.modelUrl)
+  const [mode, setMode] = React.useState<'scene' | 'render'>(() => hasSceneModel ? 'scene' : 'render')
+  const [sceneViewKey, setSceneViewKey] = React.useState(0)
+
+  React.useEffect(() => {
+    setMode(hasSceneModel ? 'scene' : 'render')
+    setSceneViewKey((value) => value + 1)
+  }, [hasSceneModel, output?.jobId])
+
+  if (output?.previewUrl) {
+    return (
+      <div className="relative h-full w-full">
+        {mode === 'scene' && output.modelUrl ? (
+          <Model3DViewer
+            key={`${output.modelUrl}:${sceneViewKey}`}
+            url={output.modelUrl}
+            autoRotate={false}
+            enablePan
+          />
+        ) : (
+          <img
+            className="h-full w-full object-contain"
+            src={output.previewUrl}
+            alt="Blender 相机渲染预览"
+            draggable={false}
+          />
+        )}
+        {hasSceneModel ? (
+          <div className="absolute left-3 top-3 z-10 flex items-center gap-1 rounded-nomi-sm border border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] p-1 shadow-nomi-sm">
+            <WorkbenchIconButton
+              label="检查 Blender 场景"
+              icon={<IconCube size={16} />}
+              aria-pressed={mode === 'scene'}
+              className={cn(mode === 'scene' && 'bg-[var(--workbench-hover)] text-[var(--workbench-ink)]')}
+              onClick={() => setMode('scene')}
+            />
+            <WorkbenchIconButton
+              label="查看 Blender 相机渲染"
+              icon={<IconPhoto size={16} />}
+              aria-pressed={mode === 'render'}
+              className={cn(mode === 'render' && 'bg-[var(--workbench-hover)] text-[var(--workbench-ink)]')}
+              onClick={() => setMode('render')}
+            />
+            {mode === 'scene' ? (
+              <WorkbenchIconButton
+                label="重置场景视角"
+                icon={<IconRefresh size={16} />}
+                onClick={() => setSceneViewKey((value) => value + 1)}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+  return (
+    <div className="flex h-full min-h-[260px] flex-col items-center justify-center gap-3 text-[var(--workbench-muted)]">
+      <IconBrandBlender size={52} stroke={1.25} />
+      <span className="text-caption">等待 Blender 回传预览</span>
+    </div>
+  )
+}
+
+export default function VibingDirectorFullscreen({
+  directorNodeId,
+  nodeTitle,
+  initialState,
+  readOnly = false,
+  onClose,
+  onStateChange,
+  onApplyPlan,
+  onImportAsset,
+  onOpenBlender,
+  onCancelBlender,
+  onOpenAssetSource,
+}: VibingDirectorFullscreenProps): JSX.Element | null {
+  const [state, setState] = React.useState(() => normalizeVibingDirectorState(initialState))
+  const [assetSource, setAssetSource] = React.useState<BlenderDirectorAssetSource>('local')
+  const [assetLicense, setAssetLicense] = React.useState('')
+  const [assetBusy, setAssetBusy] = React.useState(false)
+  const [planApplying, setPlanApplying] = React.useState(false)
+  const stateRef = React.useRef(state)
+
+  const commit = React.useCallback((next: VibingDirectorState) => {
+    const normalized = normalizeVibingDirectorState(next)
+    stateRef.current = normalized
+    setState(normalized)
+    onStateChange(normalized)
+  }, [onStateChange])
+
+  React.useEffect(() => {
+    const normalized = normalizeVibingDirectorState(initialState)
+    stateRef.current = normalized
+    setState(normalized)
+  }, [initialState])
+
+  React.useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  const applyPlan = React.useCallback(async (plan: VibingDirectorPlan): Promise<VibingDirectorPlanResult> => {
+    setPlanApplying(true)
+    try {
+      const result = await onApplyPlan(stateRef.current, plan)
+      commit(result.state)
+      return result
+    } finally {
+      setPlanApplying(false)
+    }
+  }, [commit, onApplyPlan])
+
+  const importAsset = React.useCallback(async () => {
+    if (assetBusy || readOnly) return
+    setAssetBusy(true)
+    try {
+      const asset = await onImportAsset(assetSource, assetLicense.trim() || undefined)
+      if (!asset || stateRef.current.assets.some((candidate) => candidate.id === asset.id)) return
+      commit({
+        ...stateRef.current,
+        assets: [...stateRef.current.assets, asset],
+        updatedAt: Date.now(),
+      })
+      setAssetLicense('')
+      toast(`已导入资产「${asset.name}」`, 'success')
+    } catch (error: unknown) {
+      toast(error instanceof Error ? error.message : '导入 Blender 资产失败', 'error')
+    } finally {
+      setAssetBusy(false)
+    }
+  }, [assetBusy, assetLicense, assetSource, commit, onImportAsset, readOnly])
+
+  const rebuildCoffeeConversation = React.useCallback(() => {
+    if (readOnly || planApplying) return
+    void applyPlan(createCoffeeConversationLayoutPlan(stateRef.current))
+      .then(() => toast('已按双人对话关系重建 Blender 摆位', 'success'))
+      .catch((error: unknown) => toast(error instanceof Error ? error.message : '重建 Blender 摆位失败', 'error'))
+  }, [applyPlan, planApplying, readOnly])
+
+  const canRebuildCoffeeConversation = state.stagePreset === 'coffee_shop' || /咖啡|coffee/i.test(state.brief)
+
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
+    <div
+      className="workbench-shell fixed inset-0 isolate flex h-[100dvh] w-screen flex-col overflow-hidden bg-[var(--workbench-bg)] text-[var(--workbench-ink)] font-[var(--nomi-font-sans)]"
+      style={{ zIndex: 9999 }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${nodeTitle} Blender 导演台`}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      <header className="relative z-[2] flex min-h-[52px] shrink-0 items-center gap-3 border-b border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] px-4 shadow-nomi-sm">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <IconBrandBlender size={18} className="shrink-0 text-[var(--workbench-muted)]" />
+          <div className="min-w-0">
+            <div className="truncate text-body-sm font-medium">{nodeTitle}</div>
+            <div className="truncate text-micro text-[var(--workbench-muted)]">{stateSummary(state)}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          {!readOnly && canRebuildCoffeeConversation ? (
+            <WorkbenchIconButton
+              label="按双人咖啡桌关系重建摆位"
+              icon={<IconLayoutGrid size={17} />}
+              disabled={planApplying}
+              onClick={rebuildCoffeeConversation}
+            />
+          ) : null}
+          {state.output ? (
+            <WorkbenchIconButton
+              label="在 Blender 中打开当前工程"
+              icon={<IconBrandBlender size={17} />}
+              onClick={() => onOpenBlender(stateRef.current)}
+            />
+          ) : null}
+          <WorkbenchIconButton label="关闭 Director" icon={<IconX size={17} />} onClick={onClose} />
+        </div>
+      </header>
+
+      <main className="grid min-h-0 flex-1 grid-cols-1 overflow-auto xl:grid-cols-[minmax(280px,0.76fr)_minmax(0,1.5fr)_minmax(280px,0.76fr)] xl:overflow-hidden">
+        <aside className="min-h-[360px] border-b border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] xl:min-h-0 xl:border-b-0 xl:border-r">
+          <VibingDirectorAssistantPanel
+            directorNodeId={directorNodeId}
+            state={state}
+            applying={planApplying}
+            onApplyPlan={applyPlan}
+            onCancelBlender={onCancelBlender}
+          />
+        </aside>
+
+        <section className="flex min-h-[560px] min-w-0 flex-col bg-[var(--workbench-bg)] xl:min-h-0">
+          <div className="min-h-0 flex-1 p-4">
+            <div className="relative h-full min-h-[360px] overflow-hidden border border-[var(--workbench-border)] bg-[var(--nomi-ink-05)]">
+              <ArtifactPreview state={state} />
+              {planApplying ? (
+                <div className="absolute inset-0 grid place-items-center bg-[var(--nomi-ink)]/45 text-[var(--nomi-paper)]">
+                  <div className="flex items-center gap-2 text-caption"><NomiLoadingMark size={17} />Blender 正在执行导演计划</div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <section className="shrink-0 border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)]">
+            <div className="grid grid-cols-2 divide-x divide-[var(--workbench-border)] md:grid-cols-4">
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">场景</div><div className="mt-1 truncate text-caption font-medium">{state.stagePreset}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">资产</div><div className="mt-1 text-caption font-medium">{state.assets.length}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">摆位对象</div><div className="mt-1 text-caption font-medium">{state.objects.length}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">镜头节拍</div><div className="mt-1 text-caption font-medium">{state.beats.length}</div></div>
+            </div>
+          </section>
+
+          <section className="shrink-0 border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)]">
+            <div className="flex items-center gap-2 px-4 py-2.5"><IconMovie size={15} className="text-[var(--workbench-muted)]" /><span className="text-caption font-medium">镜头节拍</span></div>
+            <div className="max-h-48 overflow-y-auto border-t border-[var(--workbench-border)]">
+              {state.beats.length ? state.beats.map((beat, index) => (
+                <div key={beat.id} className="grid grid-cols-[32px_minmax(0,1fr)_72px] items-center gap-2 border-b border-[var(--workbench-border)] px-4 py-2.5 last:border-b-0">
+                  <span className="text-micro text-[var(--workbench-muted)]">{String(index + 1).padStart(2, '0')}</span>
+                  <div className="min-w-0"><div className="truncate text-caption font-medium">{beat.title}</div><div className="truncate text-micro text-[var(--workbench-muted)]">{beat.action || beat.cameraNote || '待补充表演与机位'}</div></div>
+                  <span className="text-right text-micro text-[var(--workbench-muted)]">{beat.durationSec}s</span>
+                </div>
+              )) : <div className="px-4 py-5 text-caption text-[var(--workbench-muted)]">Director Agent 会把镜头节拍随 Blender 计划一起写入这里。</div>}
+            </div>
+          </section>
+        </section>
+
+        <aside className="min-h-[400px] border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] xl:min-h-0 xl:border-l xl:border-t-0">
+          <header className="flex items-center gap-2 border-b border-[var(--workbench-border)] px-3 py-2.5">
+            <IconFolderPlus size={16} className="text-[var(--workbench-muted)]" />
+            <span className="min-w-0 flex-1 text-body-sm font-medium">Blender 资产库</span>
+            {assetSource !== 'local' ? (
+              <WorkbenchIconButton
+                label={`打开 ${ASSET_SOURCE_LABEL[assetSource]}`}
+                icon={<IconExternalLink size={15} />}
+                onClick={() => onOpenAssetSource(assetSource)}
+              />
+            ) : null}
+          </header>
+          {!readOnly ? (
+            <div className="space-y-2 border-b border-[var(--workbench-border)] p-3">
+              <select
+                className="h-8 w-full rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] px-2 text-caption text-[var(--workbench-ink)]"
+                aria-label="资产来源"
+                value={assetSource}
+                onChange={(event) => setAssetSource(event.target.value as BlenderDirectorAssetSource)}
+              >
+                {Object.entries(ASSET_SOURCE_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <input
+                className="h-8 w-full rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] px-2 text-caption text-[var(--workbench-ink)] placeholder:text-[var(--workbench-muted)]"
+                aria-label="资产许可证"
+                placeholder="许可证（可选，导入时记录）"
+                value={assetLicense}
+                onChange={(event) => setAssetLicense(event.target.value)}
+              />
+              <button
+                type="button"
+                className="flex h-8 w-full items-center justify-center gap-1.5 rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-transparent px-2 text-caption text-[var(--workbench-ink)] hover:bg-[var(--nomi-ink-05)] disabled:opacity-40"
+                disabled={assetBusy}
+                onClick={() => { void importAsset() }}
+              >
+                {assetBusy ? <NomiLoadingMark size={14} /> : <IconFolderPlus size={14} />}
+                导入本地模型
+              </button>
+            </div>
+          ) : null}
+          <div className="min-h-0 overflow-y-auto">
+            {state.assets.length ? state.assets.map((asset) => (
+              <div key={asset.id} className="border-b border-[var(--workbench-border)] px-3 py-2.5 last:border-b-0">
+                <div className="truncate text-caption font-medium">{asset.name}</div>
+                <div className="mt-1 flex items-center gap-1.5 text-micro text-[var(--workbench-muted)]"><IconPhoto size={12} />{asset.format} · {ASSET_SOURCE_LABEL[asset.source]}</div>
+                <div className="mt-1 truncate text-micro text-[var(--workbench-muted)]">{asset.license}</div>
+              </div>
+            )) : <div className="px-3 py-5 text-caption leading-5 text-[var(--workbench-muted)]">导入已授权的本地模型后，Agent 才能在计划里摆放它们。</div>}
+          </div>
+        </aside>
+      </main>
+    </div>,
+    document.body,
+  )
+}

@@ -1,12 +1,13 @@
 import React from 'react'
 import type { Editor } from '@tiptap/react'
+import { IconPlayerStopFilled } from '@tabler/icons-react'
 import { NomiLoadingMark } from '../../../design'
 import { cn } from '../../../utils/cn'
 import PromptEditor from '../../assets/PromptEditor'
 import { resolveReferenceSlots } from '../runner/referenceSlots'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
-import { canRunGenerationNode, confirmAndRunNode, regenerateNodeInPlace } from '../runner/generationRunController'
+import { cancelGenerationNode, canRunGenerationNode, confirmAndRunNode } from '../runner/generationRunController'
 import { collectUngeneratedReferenceAncestors } from '../runner/referenceAncestors'
 import { buildDependencyWaves } from '../runner/dependencyWaves'
 import { useBatchPlanPreviewStore } from '../components/batchPlanPreview'
@@ -15,6 +16,8 @@ import { GENERATE_BUTTON_CLASS } from './nodeComposerStyles'
 import { NodeLockBadge } from './NodeLockBadge'
 import { NodePromptOptimizer } from './NodePromptOptimizer'
 import { useNodeAssetDrop } from './useNodeAssetDrop'
+import { NODE_FLOATING_TOOLBAR_SELECTOR } from './nodeFloatingToolbarLayout'
+import { resolveFloatingComposerPlacement } from './nodeComposerPlacement'
 import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
 import {
   getGenerationNodeExecutionKind,
@@ -42,7 +45,7 @@ const TEXT_MODE_PLACEHOLDER: Record<TextGenMode, string> = {
 // 翻转滞回带（屏幕 px）：已翻上后要等下方明显够放才切回朝下，杜绝边界反复横跳（用户反馈①）。
 const FLIP_HYSTERESIS = 48
 
-// 生成节点的浮动 composer：references + 提示词 + 参数 + 生成/重新生成按钮。
+// 生成节点的浮动 composer：references + 提示词 + 参数 + 生成/生成新版本按钮。
 // 从 BaseGenerationNode 抽出（A1.5 接缝）：只有「生成类」节点挂它，素材节点不挂。
 // 所有生成相关依赖（runner / NodeParameterControls / 布局计算）都收在这里，壳保持 kind 无关。
 
@@ -73,7 +76,7 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const status = node.status || 'idle'
   const isGenerating = status === 'queued' || status === 'running'
-  const hasResult = Boolean(node.result?.url)
+  const hasResult = Boolean(node.result)
   const nodeExecutionKind = getGenerationNodeExecutionKind(node.kind)
   // v0.7.2 perf: 用 boolean primitive 订阅 canGenerate
   const canGenerate = useGenerationCanvasStore((state) =>
@@ -121,6 +124,10 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
 
   const handleGenerate = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
+    if (isGenerating) {
+      cancelGenerationNode(node.id)
+      return
+    }
     const state = useGenerationCanvasStore.getState()
     // 自动备齐参考：本节点有「连了线但还没出图」的上游 → 不裸跑，排依赖波次（参考先、本镜后）
     // 走批量确认条（确认前零调用零扣费；用户一眼看到先生成谁、再生成谁）。根治单节点生成绕过
@@ -128,13 +135,15 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
     const pendingRefs = collectUngeneratedReferenceAncestors(node.id, { nodes: state.nodes, edges: state.edges })
     if (pendingRefs.length > 0) {
       const plan = buildDependencyWaves([...pendingRefs, node.id], { nodes: state.nodes, edges: state.edges })
-      useBatchPlanPreviewStore.getState().open(plan)
+      useBatchPlanPreviewStore.getState().open(
+        plan,
+        hasResult ? { regenerationSourceNodeId: node.id } : undefined,
+      )
       return
     }
     if (!canRunGenerationNode(node, { nodes: state.nodes, edges: state.edges })) return
-    // 已有结果的「重新生成」原地回填：新图进当前节点堆叠并设为主图，不再复制新节点。
-    if (hasResult) await regenerateNodeInPlace(node.id)
-    else await confirmAndRunNode(node.id)
+    // 已有结果时永远长出新版本节点；旧节点、旧结果和旧下游关系保持不变。
+    await confirmAndRunNode(node.id, hasResult ? { rerun: true } : {})
   }
 
   // 遮挡防线（audit 2026-06-12 bug C）：composer 默认朝下展开时，靠近画布底部的节点
@@ -148,6 +157,10 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
   const canvasOffset = useGenerationCanvasStore((state) => state.canvasOffset)
   const anchorRef = React.useRef<HTMLDivElement>(null)
   const [flipUp, setFlipUp] = React.useState(false)
+  const flipUpRef = React.useRef(false)
+  const naturalHeightRef = React.useRef(0)
+  const placementNodeIdRef = React.useRef(node.id)
+  const [viewportMaxHeight, setViewportMaxHeight] = React.useState(composerLayout.maxHeight)
   // 翻上时要避让的「节点上方图片编辑工具条」高度（节点坐标系 px）。否则参数框会压住那条
   // 浮动工具条（用户反馈：浮动条看不见/遮挡）。无工具条（如未生成、视频节点）则为 0。
   const [aboveClearance, setAboveClearance] = React.useState(0)
@@ -160,21 +173,39 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
     const stage = anchor?.closest('.generation-canvas-v2__stage')
     const nodeEl = anchor?.parentElement
     if (!anchor || !stage || !nodeEl) return
+    if (placementNodeIdRef.current !== node.id) {
+      placementNodeIdRef.current = node.id
+      flipUpRef.current = false
+      naturalHeightRef.current = 0
+    }
     const recompute = () => {
       const stageRect = stage.getBoundingClientRect()
       const nodeRect = nodeEl.getBoundingClientRect()
-      const neededScreenHeight = (anchor.offsetHeight || 280) + composerLayout.gap * canvasZoom
       const spaceBelow = stageRect.bottom - nodeRect.bottom
       const spaceAbove = nodeRect.top - stageRect.top
-      setFlipUp((prev) =>
-        prev
-          ? !(spaceBelow > neededScreenHeight + FLIP_HYSTERESIS)
-          : spaceBelow < neededScreenHeight && spaceAbove > spaceBelow,
-      )
       // 工具条也恒定屏幕尺寸（counter-scaled）→ 实测其屏幕高换回节点坐标（/zoom）+ 它距节点的 18px。
-      const toolbarEl = nodeEl.querySelector('.generation-canvas-v2-node__panorama-toolbar')
+      const toolbarEl = nodeEl.querySelector(NODE_FLOATING_TOOLBAR_SELECTOR)
       const toolbarScreenH = toolbarEl ? toolbarEl.getBoundingClientRect().height : 0
       setAboveClearance(toolbarScreenH > 0 ? toolbarScreenH / (canvasZoom || 1) + 18 : 0)
+      const cardEl = anchor.querySelector('.generation-canvas-v2-node__composer-card') as HTMLElement | null
+      const measuredNaturalHeight = Math.min(
+        composerLayout.maxHeight,
+        Math.max(anchor.offsetHeight || 0, cardEl?.scrollHeight || 0, 150),
+      )
+      naturalHeightRef.current = Math.max(naturalHeightRef.current, measuredNaturalHeight)
+      const placement = resolveFloatingComposerPlacement({
+        previousFlipUp: flipUpRef.current,
+        naturalHeight: naturalHeightRef.current,
+        configuredMaxHeight: composerLayout.maxHeight,
+        spaceAbove,
+        spaceBelow,
+        gapScreen: composerLayout.gap * canvasZoom,
+        aboveObstructionScreen: toolbarScreenH > 0 ? toolbarScreenH + 18 * canvasZoom : 0,
+        hysteresis: FLIP_HYSTERESIS,
+      })
+      flipUpRef.current = placement.flipUp
+      setFlipUp(placement.flipUp)
+      setViewportMaxHeight(placement.maxHeight)
       // 横向夹取：卡净 scale=1（画布 scale(zoom)×卡 counter-scale(1/zoom)）→ 屏幕宽 = offsetWidth。
       // 默认锚在节点中心（left-1/2 + translateX(-50%)）。算越界，整体平移回视口内。
       const MARGIN = 12
@@ -194,7 +225,7 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
     const ro = new ResizeObserver(recompute)
     ro.observe(anchor)
     return () => ro.disconnect()
-  }, [canvasZoom, canvasOffset, node.position?.x, node.position?.y, visualSize.width, visualSize.height, composerLayout.gap, node.result?.url])
+  }, [canvasZoom, canvasOffset, node.id, node.position?.x, node.position?.y, visualSize.width, visualSize.height, composerLayout.gap, composerLayout.maxHeight, node.result?.url])
 
   // 卡宽 = **内容驱动**（用户拍板 2026-06-16，推翻 06-13 的「按最宽模型恒定宽」）：
   // 卡片 **w-max**（max-content）跟着当前模型的「底栏一行」(锁+参数+生成钮)自然撑开。参数已主次分层
@@ -235,7 +266,7 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
           'transition-[outline-color] duration-150',
           isDragOver && 'outline-2 outline-dashed outline-nomi-accent outline-offset-[-2px]',
         )}
-        style={{ maxHeight: composerLayout.maxHeight }}
+        style={{ maxHeight: Math.min(composerLayout.maxHeight, viewportMaxHeight) }}
       >
       {/* 参考区：图像/视频的参考槽，以及声音的「配音生成/转写」模式切换 + 转写的音频参考槽。 */}
       {isImageLikeGenerationNodeKind(node.kind) || isVideoLikeGenerationNodeKind(node.kind) || isAudioKind ? (
@@ -306,7 +337,7 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
                 : `「${node.kind}」类型暂不支持直接生成`
             : undefined
           const title = disabledReason
-            ?? (isGenerating ? '生成中…' : hasPendingRefs ? '先生成参考，再生成本镜' : hasResult ? '重新生成' : '生成')
+            ?? (isGenerating ? '停止生成' : hasPendingRefs ? '先生成参考，再生成本镜' : hasResult ? '生成新版本' : '生成')
           return (
             <span title={title} style={{ display: 'contents' }}>
               {/* 原生 button：避开 WorkbenchButton(Mantine)对 radius/bg 的覆盖,确保样张 v4 的深色圆形主行动钮。
@@ -314,11 +345,11 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
               <button
                 type="button"
                 className={cn(GENERATE_BUTTON_CLASS, 'ml-auto')}
-                aria-label={hasResult ? '重新生成' : '生成素材'}
-                disabled={!canGenerateNow}
+                aria-label={isGenerating ? '停止生成' : hasResult ? '生成新版本' : '生成素材'}
+                disabled={!canGenerateNow && !isGenerating}
                 onClick={handleGenerate}
               >
-                {isGenerating ? '···' : '↑'}
+                {isGenerating ? <IconPlayerStopFilled size={13} aria-hidden="true" /> : '↑'}
               </button>
             </span>
           )

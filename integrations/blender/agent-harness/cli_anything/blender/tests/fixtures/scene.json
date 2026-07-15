@@ -1,0 +1,52 @@
+{
+  "scene": {
+    "objects": [
+      {
+        "id": "subject",
+        "name": "主体",
+        "type": "mannequin",
+        "visible": true,
+        "position": [0, 1.25, 0],
+        "rotation": [0, 0, 0],
+        "scale": [2.5, 2.5, 2.5],
+        "color": "#ef4444",
+        "geometry": "box"
+      }
+    ],
+    "cameras": [
+      {
+        "id": "director-camera",
+        "name": "导演相机",
+        "visible": true,
+        "position": [4, 2.4, 5],
+        "rotation": [-0.36, 0.68, 0],
+        "target": [0, 0.8, 0],
+        "fov": 45,
+        "aspectRatio": "16:9",
+        "lensDepth": 0,
+        "near": 0.1,
+        "far": 200
+      }
+    ],
+    "trajectories": [],
+    "trajectoryBindings": [],
+    "sceneTimeline": { "totalDuration": 3 },
+    "environment": {
+      "preset": "city",
+      "showGrid": true,
+      "showAxes": true,
+      "showSky": false,
+      "darkMode": false,
+      "backgroundColor": "#f6f3ee",
+      "panoramaRotation": 0,
+      "environmentMode": "panorama",
+      "sphereRadius": 50
+    },
+    "editorCamera": {
+      "position": [-5, 3.2, 6],
+      "target": [0, 0.75, 0],
+      "rotation": [0, 0, 0],
+      "mode": "edit"
+    }
+  }
+}

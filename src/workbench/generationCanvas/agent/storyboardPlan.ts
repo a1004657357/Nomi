@@ -47,8 +47,32 @@ export type PlanShot = {
   durationSec: number
   /** 这镜用到哪些锚（按 anchor.id 引用）→ 视觉锚连参考边、文本锚拼 prompt。 */
   anchorIds: string[]
-  /** 可直接生成的提示词（运镜+动作演进，不复述锚的静态描述）。 */
+  /** 兼容旧项目的提示词字段；新方案优先使用 imagePrompt / videoPrompt。 */
   prompt: string
+  /** 关键帧/图片生成提示词：静态画面、构图、景别、主体姿态。 */
+  imagePrompt?: string
+  /** 视频生成提示词：动作演进、运镜、节奏、时长感，不复述静态锚描述。 */
+  videoPrompt?: string
+  /** 场景/地点：表格主列；可与 scene anchor 同名，也可写更具体的空间位置。 */
+  scene?: string
+  /** 景别：远景/全景/中景/近景/特写等。 */
+  shotSize?: string
+  /** 机位：正面/侧面/俯拍/仰拍/过肩/主观等。 */
+  cameraAngle?: string
+  /** 运镜：固定/推/拉/摇/移/跟拍/环绕/手持等。 */
+  cameraMove?: string
+  /** 出镜角色，逗号分隔或自然语言均可。 */
+  characters?: string
+  /** 人物表演/动作调度。 */
+  performance?: string
+  /** 角色对白；后续可接字幕/配音，不并入备注。 */
+  dialogue?: string
+  /** 道具/关键物件。 */
+  props?: string
+  /** 音乐/环境声/音效。 */
+  sound?: string
+  /** 不直接参与默认生成的补充说明。 */
+  notes?: string
   /** 用户在分镜编辑器为该镜选的视频模型 catalog key；没选 → 落画布用默认视频模型兜底。 */
   modelKey?: string
   /** 用户为该镜选的模型模式 id（随 modelKey 一起）；没选 → 默认模式。 */
@@ -62,6 +86,12 @@ export type StoryboardPlan = {
   anchors: PlanAnchor[]
   shots: PlanShot[]
 }
+
+export const SCREEN_VISIBILITY_PROMPT_RULE = [
+  '屏幕可见性硬规则：只有当镜头明确是屏幕面朝镜头、主观视角、过肩视角、屏幕特写或可见屏幕反射时，才允许描述手机/电脑/平板屏幕内容。',
+  '如果人物正面面对镜头，而手机/电脑背面或侧面朝向镜头，屏幕不可见；prompt 必须写背壳、边框、手持姿势和人物视线，禁止写「屏幕上显示…」、UI、文字或任何屏幕内容。',
+  '如果剧情必须交代屏幕内容，改成单独的屏幕特写/过肩镜头，或明确写「屏幕面朝镜头」。不要在同一镜头里同时写「设备背对镜头」和「屏幕内容可见」。',
+].join('\n')
 
 // ── 校验 schema：planner 产出/落库前的运行时守卫（也是 S3 激活时交给 LLM 的工具参数 schema）──
 //
@@ -93,6 +123,18 @@ export const planShotSchema = z.object({
   durationSec: z.number(),
   anchorIds: z.array(z.string()),
   prompt: z.string(),
+  imagePrompt: z.string().optional(),
+  videoPrompt: z.string().optional(),
+  scene: z.string().optional(),
+  shotSize: z.string().optional(),
+  cameraAngle: z.string().optional(),
+  cameraMove: z.string().optional(),
+  characters: z.string().optional(),
+  performance: z.string().optional(),
+  dialogue: z.string().optional(),
+  props: z.string().optional(),
+  sound: z.string().optional(),
+  notes: z.string().optional(),
   modelKey: z.string().optional(),
   modeId: z.string().optional(),
   params: z.record(z.unknown()).optional(),
@@ -131,6 +173,10 @@ export type PlanCreatedNode = {
   params?: Record<string, string | number | boolean>
   /** 参考卡身份（角色/场景/道具锚）：落画布写进 node.meta.referenceSheet → 永不占镜头编号（shotNumbering）。 */
   referenceSheet?: true
+  /** 分镜组总控卡：落画布写进 node.meta.storyboardGroup，用于把一组镜头标成同一脚本入口。 */
+  storyboardGroup?: true
+  /** 分镜表节点快照：让画布节点本身保留可恢复脚本数据。 */
+  storyboardPlanSnapshot?: StoryboardPlan
 }
 
 export type PlanCreatedEdge = {
@@ -195,6 +241,130 @@ function shotClientId(shot: PlanShot): string {
   return `shot-${shot.index}`
 }
 
+function firstNonEmptyText(...values: unknown[]): string {
+  for (const value of values) {
+    const text = typeof value === 'string' ? value.trim() : ''
+    if (text) return text
+  }
+  return ''
+}
+
+export function storyboardShotImagePrompt(shot: PlanShot): string {
+  return firstNonEmptyText(shot.imagePrompt, shot.prompt, buildStoryboardShotImagePrompt(shot))
+}
+
+export function storyboardShotVideoPrompt(shot: PlanShot): string {
+  return firstNonEmptyText(shot.videoPrompt, shot.prompt, shot.imagePrompt, buildStoryboardShotVideoPrompt(shot))
+}
+
+export function storyboardShotPromptForKind(shot: PlanShot): string {
+  return (shot.shotKind === 'image' ? storyboardShotImagePrompt(shot) : storyboardShotVideoPrompt(shot)).trim()
+}
+
+function compactShotField(label: string, value: unknown): string {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return text ? `${label}：${text}` : ''
+}
+
+function shotFieldText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function finitePositiveDuration(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+function shotKeywordLine(shot: PlanShot): string {
+  return [
+    compactShotField('场景', shot.scene),
+    compactShotField('景别', shot.shotSize),
+    compactShotField('机位', shot.cameraAngle),
+    compactShotField('运镜', shot.cameraMove),
+    compactShotField('角色', shot.characters),
+    compactShotField('表演', shot.performance),
+    compactShotField('对白', shot.dialogue),
+    compactShotField('道具', shot.props),
+    compactShotField('声音', shot.sound),
+    compactShotField('备注', shot.notes),
+  ].filter(Boolean).join('；')
+}
+
+export function buildDetailedStoryboardShotVideoPrompt(shot: PlanShot): string {
+  const duration = finitePositiveDuration(shot.durationSec)
+  const durationText = duration ? `${duration} 秒` : '约 5 秒'
+  const scene = shotFieldText(shot.scene)
+  const shotSize = shotFieldText(shot.shotSize)
+  const cameraAngle = shotFieldText(shot.cameraAngle)
+  const cameraMove = shotFieldText(shot.cameraMove)
+  const characters = shotFieldText(shot.characters)
+  const performance = shotFieldText(shot.performance)
+  const dialogue = shotFieldText(shot.dialogue)
+  const props = shotFieldText(shot.props)
+  const sound = shotFieldText(shot.sound)
+  const notes = shotFieldText(shot.notes)
+  const imagePrompt = shotFieldText(shot.imagePrompt)
+  const legacyPrompt = shotFieldText(shot.prompt)
+  const keywordLine = shotKeywordLine(shot)
+  const movement = cameraMove || '稳定自然运镜，保持主体连续清晰'
+  const framing = [shotSize || '清晰可读的电影构图', cameraAngle || '自然平视机位'].join('，')
+  const subject = characters || '画面主体'
+  const action = performance || legacyPrompt || imagePrompt || '按分镜意图完成一个清晰、连贯、可读的动作段落'
+  const opening = scene
+    ? `开场建立在「${scene}」中，先让环境、光线和主体位置清楚可见。`
+    : '开场先建立空间关系、光线方向和主体位置。'
+  const middle = `中段让「${subject}」执行动作：${action}。动作要有起势、停顿和细微反应，不要突然跳变。`
+  const ending = props
+    ? `结尾把注意力收束到「${props}」与主体动作的关系上，保留一瞬稳定画面作为剪辑点。`
+    : '结尾保留一瞬稳定画面作为剪辑点，主体姿态和视线保持连贯。'
+
+  const lines = [
+    `视频生成提示词：镜头 ${shot.index}，时长 ${durationText}，${framing}，${movement}。`,
+    keywordLine ? `关键词：${keywordLine}` : '',
+    imagePrompt ? `首帧基准：${imagePrompt}` : '',
+    legacyPrompt && legacyPrompt !== imagePrompt ? `原始分镜意图：${legacyPrompt}` : '',
+    scene
+      ? `场景画面：地点是「${scene}」，需要明确空间层次、前后景关系、光线来源和真实物理尺度。`
+      : '场景画面：明确空间层次、前后景关系、光线来源和真实物理尺度。',
+    `构图机位：使用「${framing}」，主体在画面中的位置稳定，边缘不要裁切关键肢体或关键道具。`,
+    `运镜节奏：${movement}；镜头运动要平滑、有重量感，速度随动作自然变化，不要机械漂移。`,
+    `动作时间线：0-1 秒，${opening} 1-${duration ? Math.max(2, Math.round(duration * 0.65)) : 3} 秒，${middle} 最后 1 秒，${ending}`,
+    props ? `道具细节：${props} 必须在正确位置出现，和角色手部、视线或动作发生明确关系，不能凭空变形或消失。` : '',
+    dialogue ? `对白处理：角色说「${dialogue}」，只表现自然口型和情绪，不要在画面中生成字幕、UI 或多余文字。` : '',
+    sound ? `声音氛围：${sound}；画面节奏要和声音情绪一致。` : '',
+    notes ? `导演备注：${notes}` : '',
+    '画面约束：保持角色外观、服装、道具、场景和光线连续一致；避免人物脸部漂移、手部畸形、道具穿帮、画面闪烁、无关文字、水印和突然切镜。',
+  ].filter(Boolean)
+  const prompt = lines.join('\n')
+  return needsScreenVisibilityRule(prompt) ? [prompt, SCREEN_VISIBILITY_PROMPT_RULE].join('\n') : prompt
+}
+
+function buildStoryboardShotImagePrompt(shot: PlanShot): string {
+  return [
+    compactShotField('场景', shot.scene),
+    compactShotField('景别', shot.shotSize),
+    compactShotField('机位', shot.cameraAngle),
+    compactShotField('角色', shot.characters),
+    compactShotField('表演', shot.performance),
+    compactShotField('道具', shot.props),
+    compactShotField('画面备注', shot.notes),
+  ].filter(Boolean).join('\n')
+}
+
+function buildStoryboardShotVideoPrompt(shot: PlanShot): string {
+  return [
+    compactShotField('场景', shot.scene),
+    compactShotField('景别', shot.shotSize),
+    compactShotField('机位', shot.cameraAngle),
+    compactShotField('运镜', shot.cameraMove),
+    compactShotField('角色', shot.characters),
+    compactShotField('表演与动作演进', shot.performance),
+    compactShotField('对白', shot.dialogue),
+    compactShotField('道具', shot.props),
+    compactShotField('声音', shot.sound),
+    compactShotField('节奏备注', shot.notes),
+  ].filter(Boolean).join('\n')
+}
+
 /**
  * 定妆卡/场景卡提示词构造（R6 调研落地：把图当「版面/网格」描述，先锁身份再列视图，
  * 中性背景+平光+小标签，多视图+多变体集中一张图，整张喂参考视频）。GPT Image 2 尤擅此类多面板版面。
@@ -234,13 +404,56 @@ export function buildAnchorSheetPrompt(anchor: PlanAnchor): string {
 
 /** 文本锚的描述拼进引用它的镜头 prompt（「能 prompt 说清的就别生成图」的落地：文本锚 = 写进 prompt）。 */
 function buildShotPrompt(shot: PlanShot, anchorById: Map<string, PlanAnchor>): string {
-  const textBits = shot.anchorIds
+  const textAnchors = shot.anchorIds
     .map((id) => anchorById.get(id))
     .filter((anchor): anchor is PlanAnchor => Boolean(anchor) && anchor!.carrier === 'text')
+  const textBits = textAnchors
     .map((anchor) => `${anchor.name}：${anchor.description}`.trim())
     .filter(Boolean)
-  const base = shot.prompt.trim()
-  return textBits.length ? [base, ...textBits].filter(Boolean).join('\n') : base
+  const base = storyboardShotPromptForKind(shot)
+  const prompt = textBits.length ? [base, ...textBits].filter(Boolean).join('\n') : base
+  const screenRuleProbe = [
+    base,
+    ...textAnchors
+      .filter((anchor) => anchor.kind !== 'style')
+      .map((anchor) => `${anchor.name}：${anchor.description}`.trim()),
+  ].join('\n')
+  return needsScreenVisibilityRule(screenRuleProbe) ? [prompt, SCREEN_VISIBILITY_PROMPT_RULE].filter(Boolean).join('\n') : prompt
+}
+
+function needsScreenVisibilityRule(prompt: string): boolean {
+  const normalized = prompt
+    .replace(/没有带?手机/g, '')
+    .replace(/没有(?:任何)?(?:手机|屏幕|电脑|显示器|笔记本|平板|界面|UI)/g, '')
+    .replace(/无(?:手机|屏幕|电脑|显示器|笔记本|平板|界面|UI)/g, '')
+    .replace(/\bno\s+(?:phone|screen|computer|monitor|laptop|tablet|ui)\b/gi, '')
+  return /手机|屏幕|电脑|显示器|笔记本|平板|界面|UI|phone|screen|computer|monitor|laptop|tablet/i.test(normalized)
+}
+
+function buildStoryboardGroupPrompt(plan: StoryboardPlan): string {
+  const lines = plan.shots
+    .slice()
+    .sort((a, b) => a.index - b.index)
+    .map((shot) => {
+      const image = storyboardShotImagePrompt(shot)
+      const video = storyboardShotVideoPrompt(shot)
+      return [
+        `镜头 ${shot.index}：${shot.shotKind === 'image' ? '图片' : '视频'}${shot.durationSec ? ` / ${shot.durationSec}s` : ''}`,
+        compactShotField('  场景', shot.scene),
+        compactShotField('  景别', shot.shotSize),
+        compactShotField('  机位', shot.cameraAngle),
+        compactShotField('  运镜', shot.cameraMove),
+        compactShotField('  角色', shot.characters),
+        compactShotField('  表演', shot.performance),
+        compactShotField('  对白', shot.dialogue),
+        compactShotField('  道具', shot.props),
+        compactShotField('  声音', shot.sound),
+        compactShotField('  备注', shot.notes),
+        image ? `  图片提示词：${image}` : '',
+        video ? `  视频提示词：${video}` : '',
+      ].filter(Boolean).join('\n')
+    })
+  return [`分镜组：${plan.title.trim() || '未命名分镜'}`, `共 ${plan.shots.length} 个镜头`, '', ...lines].join('\n')
 }
 
 /**
@@ -260,6 +473,15 @@ export function storyboardPlanToCreateNodesArgs(
   const nodes: PlanCreatedNode[] = []
   const edges: PlanCreatedEdge[] = []
 
+  nodes.push({
+    clientId: 'storyboard-group',
+    kind: 'text',
+    title: `分镜组：${plan.title.trim() || '未命名分镜'}`,
+    prompt: buildStoryboardGroupPrompt(plan),
+    storyboardGroup: true,
+    storyboardPlanSnapshot: plan,
+  })
+
   // 视觉锚 → 定妆卡/场景卡节点（clientId = anchor.id）。prompt 用「卡片大图」构造器：
   // 多视图+多变体集中一张图、整张喂参考（用户拍板）。图片模型锁 GPT Image 2（调用方传入）。
   for (const anchor of plan.anchors) {
@@ -276,7 +498,7 @@ export function storyboardPlanToCreateNodesArgs(
     })
   }
 
-  // 锚已全部 push 完，此刻节点数 = 参考卡数（镜头随后 push）→ 落画布布局的角色边界。
+  // 锚已全部 push 完，此刻节点数 = 分镜组总控卡 + 参考卡数（镜头随后 push）→ 落画布布局的角色边界。
   const anchorCount = nodes.length
 
   // 镜头 → video 节点（用户拍板 B-clean）+ 定妆卡参考边。时长写进 duration 参数。

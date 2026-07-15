@@ -1,4 +1,4 @@
-import { connectNodes, disconnectEdge, removeNodes } from '../model/graphOps'
+import { changeEdgeMode, connectNodes, disconnectEdge, removeNodes } from '../model/graphOps'
 import { archetypeForNode, resolveTargetModeForEdge, selectConnectionEdgeMode, validateReferenceEdge } from '../agent/referenceEdgeCapability'
 import { applyArchetypeModeSwitch } from '../nodes/controls/archetypeMeta'
 import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode, NodeGroup } from '../model/generationCanvasTypes'
@@ -99,15 +99,16 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
     }
   },
   updateEdgeMode: (edgeId, mode) => {
-    const existing = get().edges.find((candidate) => candidate.id === edgeId)
-    if (!existing || existing.mode === mode) return
+    const beforeEdges = get().edges
     set((state) => {
-      const edge = state.edges.find((candidate) => candidate.id === edgeId)
-      if (!edge || edge.mode === mode) return
-      edge.mode = mode
+      const nextEdges = changeEdgeMode(state.edges, edgeId, mode)
+      if (nextEdges === state.edges) return
+      state.edges = nextEdges
       bumpPersistRevision(state)
     })
-    emitCanvasGesture([{ type: 'canvas.edge.mode-changed', payload: { edgeId, mode } }])
+    if (get().edges !== beforeEdges) {
+      emitCanvasGesture([{ type: 'canvas.edge.mode-changed', payload: { edgeId, mode } }])
+    }
   },
   disconnectEdge: (edgeId) => {
     const beforeCount = get().edges.length

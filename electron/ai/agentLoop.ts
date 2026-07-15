@@ -5,13 +5,23 @@
 // ① 本模块零模块级可变状态——可重入,同一 model 并发多次互不污染(Subagents 预留);
 // ② repair 全仓唯一来源(agentChatHarness.createToolCallRepair),不许再复制;
 // ③ 确认门焊在工具层(makeAgentTool),对话历史归调用方——内核只负责"开一轮循环"。
-import { generateText, streamText, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
+import { generateText, Output, streamText, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
+import { z } from "zod";
 import { buildAgentPromptParts, createToolCallRepair, maxStepsForSkill } from "./agentChatHarness";
 import { describeAgentError } from "./agentError";
 
 // 显式 retry(SDK 默认 2):中转/代理偶发 429/5xx 不该杀掉整轮。两模式统一为 3
 // (oneshot 原默认 2,统一是有意的行为变化,见 S0 commit)。
 const AGENT_MAX_RETRIES = 3;
+const structuredDirectorResponseSchema = z.object({
+  directorNodeId: z.string().min(1),
+  summary: z.string().min(1),
+  plan: z.object({
+    mode: z.enum(["replace", "amend"]),
+    brief: z.string().optional(),
+    actions: z.array(z.record(z.unknown())).min(1),
+  }),
+});
 
 export type AgentLoopRequest = {
   model: LanguageModelV1;
@@ -25,6 +35,8 @@ export type AgentLoopRequest = {
   /** 显式步数上限;不传则按 skillKey 分档(planner 24 / 默认 8)。 */
   maxSteps?: number;
   skillKey?: string;
+  /** Ask OpenAI-compatible providers for a JSON object without native tools. */
+  structuredJson?: boolean;
   abortSignal?: AbortSignal;
 };
 
@@ -70,6 +82,9 @@ export function runAgentLoop(
     experimental_repairToolCall: createToolCallRepair(req.model, req.abortSignal),
     ...(typeof req.temperature === "number" ? { temperature: req.temperature } : {}),
     ...(typeof req.maxTokens === "number" ? { maxTokens: req.maxTokens } : {}),
+    ...(req.structuredJson
+      ? { experimental_output: Output.object({ schema: structuredDirectorResponseSchema }) }
+      : {}),
     ...(req.abortSignal ? { abortSignal: req.abortSignal } : {}),
     ...(onStepFinish ? { onStepFinish } : {}),
   };

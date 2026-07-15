@@ -1,6 +1,7 @@
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { isShotNumberedNode } from '../model/shotNumbering'
 
 /**
  * 图片镜头 → 视频镜头（image-first 桥，用户拍板 2026-07-02）：
@@ -20,7 +21,9 @@ export function convertImageShotToVideo(node: GenerationCanvasNode): { nodeId: s
   const existing = state.nodes.find(
     (candidate) =>
       getGenerationNodeExecutionKind(candidate.kind) === 'video' &&
-      state.edges.some((edge) => edge.source === node.id && edge.target === candidate.id),
+      state.edges.some((edge) => (
+        edge.source === node.id && edge.target === candidate.id && edge.mode === 'first_frame'
+      )),
   )
   if (existing) {
     state.selectNode(existing.id)
@@ -40,4 +43,39 @@ export function convertImageShotToVideo(node: GenerationCanvasNode): { nodeId: s
   }
   useGenerationCanvasStore.getState().connectNodes(node.id, video.id, 'first_frame')
   return { nodeId: video.id, existed: false }
+}
+
+export function isConvertibleImageShotNode(node: GenerationCanvasNode): boolean {
+  return node.kind === 'image' && typeof node.shotIndex === 'number' && isShotNumberedNode(node)
+}
+
+export type ConvertImageShotsToVideosResult = {
+  nodeIds: string[]
+  created: number
+  existing: number
+  skipped: number
+}
+
+export function convertImageShotsToVideos(nodes: readonly GenerationCanvasNode[]): ConvertImageShotsToVideosResult {
+  const nodeIds: string[] = []
+  let created = 0
+  let existing = 0
+  let skipped = 0
+  for (const node of nodes) {
+    if (!isConvertibleImageShotNode(node)) {
+      skipped += 1
+      continue
+    }
+    const result = convertImageShotToVideo(node)
+    nodeIds.push(result.nodeId)
+    if (result.existed) existing += 1
+    else created += 1
+  }
+  const uniqueNodeIds = Array.from(new Set(nodeIds))
+  if (uniqueNodeIds.length > 0) {
+    const state = useGenerationCanvasStore.getState()
+    state.selectNode(uniqueNodeIds[0])
+    for (const nodeId of uniqueNodeIds.slice(1)) state.selectNode(nodeId, true)
+  }
+  return { nodeIds: uniqueNodeIds, created, existing, skipped }
 }

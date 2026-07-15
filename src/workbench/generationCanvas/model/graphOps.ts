@@ -73,8 +73,12 @@ export function removeNodes(
   }
 }
 
-export function createEdgeId(source: string, target: string): string {
-  return `edge-${source}-${target}`
+export function createEdgeId(
+  source: string,
+  target: string,
+  mode: GenerationCanvasEdgeMode = 'reference',
+): string {
+  return `edge-${source}-${target}-${mode}`
 }
 
 export function connectNodes(
@@ -91,7 +95,27 @@ export function connectNodes(
   // order = 该 target 现有入边数：保住「放入顺序」= 数组参考 character1..N 的真相源（audit 2026-06-16 §1d）。
   // 全模式单调（不按 mode 分桶）→ 数组槽落槽用单调序、首尾帧用 mode 位置偏好，互不打架。
   const order = nextEdgeOrderForTarget(edges, target)
-  return [...edges, { id: createEdgeId(source, target), source, target, mode, order }]
+  return [...edges, { id: createEdgeId(source, target, mode), source, target, mode, order }]
+}
+
+export function changeEdgeMode(
+  edges: GenerationCanvasEdge[],
+  edgeId: string,
+  mode: GenerationCanvasEdgeMode | undefined,
+): GenerationCanvasEdge[] {
+  const nextMode = mode ?? 'reference'
+  const existing = edges.find((edge) => edge.id === edgeId)
+  if (!existing || (existing.mode ?? 'reference') === nextMode) return edges
+  const duplicate = edges.some((edge) => (
+    edge.id !== existing.id
+    && edge.source === existing.source
+    && edge.target === existing.target
+    && (edge.mode ?? 'reference') === nextMode
+  ))
+  if (duplicate) return edges.filter((edge) => edge.id !== existing.id)
+  return edges.map((edge) => edge.id === existing.id
+    ? { ...edge, id: createEdgeId(edge.source, edge.target, nextMode), mode: nextMode }
+    : edge)
 }
 
 /** 落入某 target 的下一个 order 序号 = 已有入边数（含无 order 的旧边，按存在即计数，保单调）。 */

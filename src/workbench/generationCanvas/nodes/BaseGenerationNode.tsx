@@ -1,4 +1,5 @@
 import React from 'react'
+import { localAssetThumbnailUrl } from '../../../design/localAssetThumbnail'
 import { IconCheck, IconCopy, IconDownload, IconInfoCircle, IconMaximize, IconUpload } from '@tabler/icons-react'
 import ProvenancePanel from './ProvenancePanel'
 import { ShotPreviewOverlays } from './ConvertShotToVideoButton'
@@ -54,11 +55,13 @@ import { useResultDownload } from './useResultDownload'
 import {
   STATUS_LABEL,
   RESIZE_DIRECTIONS,
-  getNodeSizeBounds,
+  getNodeSizeBoundsForNode,
   FOCUS_GENERATION_NODE_EVENT,
   computeMediaMetaPatch,
   resolveNodeVisualSize,
 } from './nodeSizing'
+
+const CANVAS_NODE_PREVIEW_SIZE = { width: 256, height: 256 } as const
 
 export type BaseGenerationNodeProps = {
   node: GenerationCanvasNode
@@ -68,8 +71,10 @@ export type BaseGenerationNodeProps = {
   appear?: boolean
 }
 const Scene3DEditor = lazyWithChunkBoundary('3D 场景编辑器', () => import('./Scene3DEditor')) // A5：chunk 失败只降级本卡
+const VibingDirectorEditor = lazyWithChunkBoundary('VIBING Director', () => import('./VibingDirectorEditor'))
 const Model3DViewer = lazyWithChunkBoundary('3D 模型预览', () => import('./model3d/Model3DViewer')) // 生成出的 .glb 卡内可旋转预览（R3F）
 const TextDocumentNode = lazyWithChunkBoundary('文本节点编辑器', () => import('./render/TextDocumentNode'))
+const StoryboardTableNode = lazyWithChunkBoundary('分镜表节点', () => import('./render/StoryboardTableNode'))
 const PanoramaViewer = lazyWithChunkBoundary('全景预览', () => import('./PanoramaViewer'))
 const NodeGenerationComposer = lazyWithChunkBoundary('节点生成面板', () => import('./NodeGenerationComposer'))
 
@@ -127,7 +132,7 @@ function BaseGenerationNodeImpl({
 
   // C5: 自由缩放边界按 kind 取（text 比媒体节点更大）。在拖拽/缩放闭包之前算好，
   // 让 handlePointerMove 与渲染期的尺寸计算用同一份 bounds。
-  const sizeBounds = getNodeSizeBounds(node.kind)
+  const sizeBounds = getNodeSizeBoundsForNode(node)
 
   const handleTimelineDragStart = (event: React.DragEvent<HTMLElement>) => {
     event.stopPropagation()
@@ -198,6 +203,7 @@ function BaseGenerationNodeImpl({
   const isCardKind = isCardRenderKind(renderKind)
   // C5: 文本节点走专属可编辑 body（TextDocumentNode），像 card 那样脱离图片预览。
   const isTextKind = node.kind === 'text'
+  const isStoryboardGroup = isTextKind && node.meta?.storyboardGroup === true
   const hasResult = Boolean(node.result?.url)
   const mediaPreviewPriority = selected || focusFlash
   const isRemoveBackgroundPending =
@@ -233,12 +239,21 @@ function BaseGenerationNodeImpl({
   const canSendToTimeline = canDragGenerationNodeToTimeline(node, {
     readOnly,
   })
+  const isDirectorWorkspace = node.kind === 'scene3d' || node.kind === 'vibingDirector'
   const showTimelineNotch =
-    canSendToTimeline && node.kind !== 'scene3d' && node.result?.type === 'image' && !imageStackOpen
-  const showSideTimelineDrag = canSendToTimeline && node.kind !== 'scene3d' && !showTimelineNotch
+    canSendToTimeline && !isDirectorWorkspace && node.result?.type === 'image' && !imageStackOpen
+  const showSideTimelineDrag = canSendToTimeline && !isDirectorWorkspace && !showTimelineNotch
   // 失败态不再显示文字徽标——错误信息已铺满节点正文（NodeErrorReport），
   // 顶部再写一遍「生成失败」是重复噪音（2026-06-03 6 角色评审）。
   const showStatusBadge = status === 'queued' || status === 'running'
+  const useLocalImagePreview = Boolean(
+    !selected
+    && node.result?.type === 'image'
+    && node.result.url?.startsWith('nomi-local://asset/'),
+  )
+  const localImagePreviewUrl = useLocalImagePreview
+    ? localAssetThumbnailUrl(node.result?.thumbnailUrl || node.result?.url || '', CANVAS_NODE_PREVIEW_SIZE)
+    : undefined
 
   // v0.7.2 perf: 用 primitive 订阅 sourceNodeTitle / categoryId / exists 重组 label
   const sourceNodeLabel =
@@ -526,7 +541,7 @@ function BaseGenerationNodeImpl({
       {isTextKind ? (
         <div className="w-full h-full">
           <React.Suspense fallback={<NodeBodyLoading />}>
-            <TextDocumentNode node={node} />
+            {isStoryboardGroup ? <StoryboardTableNode node={node} /> : <TextDocumentNode node={node} />}
           </React.Suspense>
         </div>
       ) : null}
@@ -549,7 +564,11 @@ function BaseGenerationNodeImpl({
         data-timeline-draggable={canSendToTimeline ? 'true' : 'false'}
         draggable={false}
       >
-        {node.kind === 'scene3d' ? (
+        {node.kind === 'vibingDirector' ? (
+          <React.Suspense fallback={<Scene3DEditorLoading />}>
+            <VibingDirectorEditor node={node} width={visualSize.width} height={previewHeight} readOnly={readOnly} />
+          </React.Suspense>
+        ) : node.kind === 'scene3d' ? (
           <React.Suspense fallback={<Scene3DEditorLoading />}>
             <Scene3DEditor node={node} width={visualSize.width} height={previewHeight} readOnly={readOnly} />
           </React.Suspense>
@@ -607,10 +626,13 @@ function BaseGenerationNodeImpl({
                 isRemoveBackgroundPending && '[animation:_remove-bg-pulse_1.5s_ease-in-out_infinite]',
               )}
               src={node.result.url}
+              thumbnailSrc={localImagePreviewUrl}
               priority={mediaPreviewPriority}
               alt=""
               onLoad={(event) => {
-                updateMediaDimensions(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
+                if (!useLocalImagePreview) {
+                  updateMediaDimensions(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
+                }
               }}
             />
           )
@@ -686,8 +708,9 @@ function BaseGenerationNodeImpl({
       !readOnly &&
       !imageStackOpen &&
       node.kind !== 'panorama' &&
-      node.kind !== 'scene3d' &&
+      !isDirectorWorkspace &&
       node.kind !== 'whiteboard' &&
+      !isStoryboardGroup &&
       !isAssetKind ? (
         <React.Suspense fallback={null}>
           <NodeGenerationComposer node={node} visualSize={visualSize} />

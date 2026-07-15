@@ -151,6 +151,15 @@ function detectBalance(upstream: string | undefined, raw: string): boolean {
   )
 }
 
+function detectAssetFetchFailure(upstream: string | undefined, raw: string): boolean {
+  const text = `${upstream || ''} ${raw}`.toLowerCase()
+  return (
+    text.includes('download image url failed') ||
+    text.includes('failed to download image') ||
+    (text.includes('image url') && text.includes('read timed out'))
+  )
+}
+
 export function classifyGenerationError(message: string): GenerationErrorReport {
   // S4-2:structured 优先(VendorRequestError 经 IPC 标记穿透,源头保留的事实,不是猜);
   // 老数据/非 vendor 错误退回 legacy 正则识别。两条路只产 kind,文案统一出自 narrate 词表。
@@ -173,6 +182,11 @@ export function classifyGenerationError(message: string): GenerationErrorReport 
   // 余额不足/欠费先于 category 判——RunningHub 605/1620 数值会被派生成 server/input 误导。
   if (detectBalance(structured?.upstreamMsg, cleanRaw)) {
     const { reason, hint } = narrateGenerationError('balance')
+    const providerMessage = pickProviderMessage(structured?.upstreamMsg ?? extractReadableErrorLine(cleanRaw), reason)
+    return { reason, hint, raw: cleanRaw, ...(providerMessage ? { providerMessage } : {}) }
+  }
+  if (detectAssetFetchFailure(structured?.upstreamMsg, cleanRaw)) {
+    const { reason, hint } = narrateGenerationError('asset-fetch')
     const providerMessage = pickProviderMessage(structured?.upstreamMsg ?? extractReadableErrorLine(cleanRaw), reason)
     return { reason, hint, raw: cleanRaw, ...(providerMessage ? { providerMessage } : {}) }
   }

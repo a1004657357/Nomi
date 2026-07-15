@@ -11,19 +11,20 @@
 // 无键则完全不介入（向后兼容 headless/测试路径）——这由调用方判断，本模块只处理「有键」。
 
 type LedgerEntry<T> = {
-  readonly promise: Promise<T>
+  readonly promise: Promise<T>;
   /** settle 后到点清理的绝对时间戳（ms）；未 settle 前为 null（进行中不过期）。 */
-  expiresAt: number | null
-}
+  expiresAt: number | null;
+};
 
-const DEFAULT_TTL_MS = 5 * 60 * 1000 // settle 后保留 5min：覆盖控制器 ~2s 重试 burst，再清理 bound 内存。
+const DEFAULT_TTL_MS = 5 * 60 * 1000; // settle 后保留 5min：覆盖控制器 ~2s 重试 burst，再清理 bound 内存。
+const DEFAULT_LEDGER_MAX_ENTRIES = 1000;
 
 export type DedupeOptions = {
   /** settle 后保留多久（ms）。期间同键重放，过后同键可重新执行。 */
-  ttlMs?: number
+  ttlMs?: number;
   /** 注入「现在」便于测试 TTL；默认 Date.now。 */
-  now?: () => number
-}
+  now?: () => number;
+};
 
 /**
  * 按 `key` memo 化提交内核 `fn`。同一个键在「进行中 + settle 后 ttl 内」只执行 fn 一次，
@@ -37,58 +38,72 @@ export function dedupeSubmission<T>(
   fn: () => Promise<T>,
   options: DedupeOptions = {},
 ): Promise<T> {
-  const now = options.now ?? Date.now
-  const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
+  const now = options.now ?? Date.now;
+  const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
 
-  const existing = ledger.get(key)
+  const existing = ledger.get(key);
   if (existing) {
     // 进行中(expiresAt=null) → 重放；已 settle 且未过期 → 重放；已过期 → 落到下面重新执行。
     if (existing.expiresAt == null || existing.expiresAt > now()) {
-      return existing.promise
+      return existing.promise;
     }
-    ledger.delete(key)
+    ledger.delete(key);
   }
 
   // 首次（或过期后重跑）：执行 fn，登记进行中（不过期），settle 后打 TTL 戳。
-  const promise = fn()
-  const entry: LedgerEntry<T> = { promise, expiresAt: null }
-  ledger.set(key, entry)
+  const promise = fn();
+  const entry: LedgerEntry<T> = { promise, expiresAt: null };
+  ledger.set(key, entry);
 
   const stamp = () => {
     // 仍是同一个 entry 才打戳（防过期重跑后被旧 settle 误伤）。
-    if (ledger.get(key) === entry) entry.expiresAt = now() + ttlMs
-  }
-  promise.then(stamp, stamp)
+    if (ledger.get(key) === entry) entry.expiresAt = now() + ttlMs;
+  };
+  promise.then(stamp, stamp);
 
-  return promise
+  return promise;
 }
 
 // 进程级默认台账 + 薄 helper：在 IPC 边界（main.ts 的 nomi:tasks:run）包住提交，
 // 避免把 Map 与包装逻辑塞进巨壳 runtime.ts。同键提交内核 at-most-once。
-const defaultLedger = new Map<string, LedgerEntry<unknown>>()
+const defaultLedger = new Map<string, LedgerEntry<unknown>>();
 
 function readIdempotencyKey(payload: unknown): string {
-  const key = (payload as { request?: { extras?: { idempotencyKey?: unknown } } })?.request?.extras?.idempotencyKey
-  return typeof key === 'string' ? key.trim() : ''
+  const key = (payload as { request?: { extras?: { idempotencyKey?: unknown } } })?.request?.extras?.idempotencyKey;
+  return typeof key === "string" ? key.trim() : "";
 }
 
 /**
  * 在提交入口包一层幂等：payload.request.extras.idempotencyKey 存在 → 同键的 `run` 最多执行一次
  * （重试重放第一次的 promise，绝不二次下单）；无键 → 原样执行（向后兼容 headless/旧路径）。
  */
-export function runTaskWithIdempotency<T>(payload: unknown, run: () => Promise<T>, options?: DedupeOptions): Promise<T> {
-  const key = readIdempotencyKey(payload)
-  if (!key) return run()
-  return dedupeSubmission(defaultLedger as Map<string, LedgerEntry<T>>, key, run, options)
+export function runTaskWithIdempotency<T>(
+  payload: unknown,
+  run: () => Promise<T>,
+  options?: DedupeOptions,
+): Promise<T> {
+  const key = readIdempotencyKey(payload);
+  if (!key) return run();
+  const now = options?.now ?? Date.now;
+  pruneExpiredSubmissions(defaultLedger, now);
+  if (!defaultLedger.has(key) && defaultLedger.size >= DEFAULT_LEDGER_MAX_ENTRIES) {
+    return Promise.reject(new Error("生成提交队列已达到安全上限，请稍后重试"));
+  }
+  return dedupeSubmission(defaultLedger as Map<string, LedgerEntry<T>>, key, run, options);
 }
 
 /** 清掉所有已过期条目（可选的主动 GC；不调也会在同键再次访问时惰性清理）。 */
-export function pruneExpiredSubmissions(
-  ledger: Map<string, LedgerEntry<unknown>>,
-  now: () => number = Date.now,
-): void {
-  const t = now()
+export function pruneExpiredSubmissions(ledger: Map<string, LedgerEntry<unknown>>, now: () => number = Date.now): void {
+  const t = now();
   for (const [key, entry] of ledger) {
-    if (entry.expiresAt != null && entry.expiresAt <= t) ledger.delete(key)
+    if (entry.expiresAt != null && entry.expiresAt <= t) ledger.delete(key);
   }
+}
+
+export function resetDefaultSubmissionLedgerForTests(): void {
+  defaultLedger.clear();
+}
+
+export function defaultSubmissionLedgerSizeForTests(): number {
+  return defaultLedger.size;
 }

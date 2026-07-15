@@ -25,6 +25,8 @@ export type ModelQuirks = {
   unreliableToolJson?: boolean;
   /** Whether this model is known to drop reasoning_content on tool-call assistants (blocks multi-round tool use). */
   requiresReasoningContentRoundtrip?: boolean;
+  /** Remove JSON Schema dialect metadata that some OpenAI-compatible tool endpoints reject. */
+  stripToolSchemaDialect?: boolean;
   /** Free-form note shown to UI / developer when picking this model as agent. */
   agentSuitability?: "good" | "acceptable" | "poor";
   agentNote?: string;
@@ -65,6 +67,19 @@ const PROFILES: ProfileEntry[] = [
     match: (id) => /^(gemini-|models\/gemini-)/i.test(id),
     defaultMaxTokens: 8192,
     agentSuitability: "good",
+  },
+
+  // ─── Zhipu GLM long-context family ───────────────────────────
+  // Official GLM-5.x / GLM-4.6+ APIs support much longer output than our
+  // unknown-model fallback. Keep storyboard/tool-call JSON away from the 4k cap.
+  {
+    description: "Zhipu GLM 5.x / 4.7 / 4.6 — long-output agent",
+    match: (id) => /(^|\/)glm-(5(?:[.-]|$)|4\.(?:6|7))/i.test(id),
+    defaultMaxTokens: 32768,
+    stripToolSchemaDialect: true,
+    agentSuitability: "good",
+    agentNote:
+      "GLM long-context models can handle large structured agent outputs; Nomi raises max_tokens so storyboard tool-call JSON is not cut at the fallback 4k limit.",
   },
 
   // ─── Moonshot Kimi K2 ──────────────────────────────────────

@@ -3,6 +3,11 @@
 import React from 'react'
 import { listWorkbenchModelCatalogModels, type ModelCatalogModelDto } from '../api/modelCatalogApi'
 import { getAssistantModelPref, setAssistantModelPref } from './assistantModelPref'
+import {
+  assistantModelOptionLabel,
+  assistantModelOptionValue,
+  resolveAssistantModelSelection,
+} from './assistantModelOptions'
 import { NomiSelect, NomiSkeleton } from '../../design'
 
 // 与后端 chooseTextModel 一致的"像通用对话模型"判定：vision/preview 等不可靠发 tool_use 的降权，
@@ -19,28 +24,49 @@ function pickDefaultModel(models: ModelCatalogModelDto[]): ModelCatalogModelDto 
 export default function AssistantModelPicker({ className }: { className?: string } = {}): JSX.Element | null {
   const [models, setModels] = React.useState<ModelCatalogModelDto[]>([])
   const [loaded, setLoaded] = React.useState(false)
-  const [modelKey, setModelKey] = React.useState<string>(() => getAssistantModelPref()?.modelKey || '')
+  const [selectedValue, setSelectedValue] = React.useState('')
+  const modelsRef = React.useRef<ModelCatalogModelDto[]>([])
 
   React.useEffect(() => {
     let alive = true
-    listWorkbenchModelCatalogModels({ kind: 'text', enabled: true })
-      .then((rows) => {
-        if (!alive) return
-        setModels(rows)
-        setLoaded(true)
-        // 无偏好时不再显示「自动选模型」：直接落一个具体默认模型（智能挑、能用），并显示其名。
-        if (!getAssistantModelPref()?.modelKey && rows.length > 0) {
-          const def = pickDefaultModel(rows)
-          if (def) {
-            setAssistantModelPref({ vendorKey: def.vendorKey, modelKey: def.modelKey })
-            setModelKey(def.modelKey)
+    const refreshModels = () => {
+      listWorkbenchModelCatalogModels({ kind: 'text', enabled: true })
+        .then((rows) => {
+          if (!alive) return
+          modelsRef.current = rows
+          setModels(rows)
+          setLoaded(true)
+          // 无偏好时不再显示「自动选模型」：直接落一个具体默认模型（智能挑、能用），并显示其名。
+          const pref = getAssistantModelPref()
+          if (!pref?.modelKey && rows.length > 0) {
+            const def = pickDefaultModel(rows)
+            if (def) {
+              setAssistantModelPref({ vendorKey: def.vendorKey, modelKey: def.modelKey })
+              setSelectedValue(assistantModelOptionValue(def))
+            }
+          } else {
+            setSelectedValue(resolveAssistantModelSelection(rows, pref))
           }
-        }
-      })
-      .catch(() => { if (alive) { setModels([]); setLoaded(true) } })
-    const sync = () => setModelKey(getAssistantModelPref()?.modelKey || '')
+        })
+        .catch(() => {
+          if (alive) {
+            modelsRef.current = []
+            setModels([])
+            setSelectedValue('')
+            setLoaded(true)
+          }
+        })
+    }
+    refreshModels()
+    const sync = () => setSelectedValue(resolveAssistantModelSelection(modelsRef.current, getAssistantModelPref()))
+    const refreshCatalog = () => refreshModels()
     window.addEventListener('nomi:assistant-model-changed', sync)
-    return () => { alive = false; window.removeEventListener('nomi:assistant-model-changed', sync) }
+    window.addEventListener('nomi-model-catalog-changed', refreshCatalog)
+    return () => {
+      alive = false
+      window.removeEventListener('nomi:assistant-model-changed', sync)
+      window.removeEventListener('nomi-model-catalog-changed', refreshCatalog)
+    }
   }, [])
 
   // pending 规范 #3:加载中给占位骨架,不再凭空消失(return null 让选择器闪现)。
@@ -51,8 +77,8 @@ export default function AssistantModelPicker({ className }: { className?: string
   if (models.length === 0) return null
 
   const handleChange = (next: string) => {
-    setModelKey(next)
-    const picked = models.find((m) => m.modelKey === next)
+    setSelectedValue(next)
+    const picked = models.find((m) => assistantModelOptionValue(m) === next)
     if (picked) setAssistantModelPref({ vendorKey: picked.vendorKey, modelKey: picked.modelKey })
   }
 
@@ -63,8 +89,11 @@ export default function AssistantModelPicker({ className }: { className?: string
       size="xs"
       className={className}
       triggerMaxWidth={160}
-      value={modelKey}
-      options={models.map((m) => ({ value: m.modelKey, label: m.labelZh || m.modelKey }))}
+      value={selectedValue}
+      options={models.map((m) => ({
+        value: assistantModelOptionValue(m),
+        label: assistantModelOptionLabel(m, models),
+      }))}
       onChange={handleChange}
     />
   )

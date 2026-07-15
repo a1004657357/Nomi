@@ -3,15 +3,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // availableModels 链路走 window.nomiDesktop IPC,node 测试环境不存在——mock 掉
 // (本测试的 case 不带 modelKey,真实代码路径也不会调它)。
 vi.mock('./availableModels', () => ({ listAvailableModelsForAgent: vi.fn(async () => []) }))
+vi.mock('../../../desktop/bridge', () => ({ getDesktopBridge: vi.fn() }))
 
 import { applyCanvasToolCall, parseCameraMoveSpec, parseStagingSpec, resetClientIdRegistry, resolveCanvasToolNodeId } from './applyCanvasToolCall'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { useWorkbenchStore } from '../../workbenchStore'
+import { setDesktopActiveProjectId } from '../../../desktop/activeProject'
+import { getDesktopBridge, type DesktopBridge } from '../../../desktop/bridge'
 import type { StoryboardPlan } from './storyboardPlan'
+import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
+
+const mockedGetDesktopBridge = vi.mocked(getDesktopBridge)
 
 function resetCanvas() {
   const state = useGenerationCanvasStore.getState()
   for (const node of [...state.nodes]) state.deleteNode(node.id)
+  setDesktopActiveProjectId(null)
+  mockedGetDesktopBridge.mockReset()
 }
 
 // 回归锁(评测 sb-001 抓出):agent 用 clientId(n1/n2)连边,渲染层曾不翻译直接
@@ -102,6 +110,41 @@ describe('applyCanvasToolCall clientId 翻译', () => {
     expect(cat(created.clientIdToNodeId.g3)).toBe('shots')
   })
 
+  it('分镜组节点透传 storyboardPlanSnapshot 到 meta，并使用表格节点初始尺寸', async () => {
+    const snapshot: StoryboardPlan = {
+      title: '咖啡广告',
+      anchors: [],
+      shots: [
+        {
+          index: 1,
+          shotKind: 'image',
+          durationSec: 0,
+          anchorIds: [],
+          prompt: '咖啡杯特写',
+          scene: '咖啡馆窗边',
+          shotSize: '特写',
+        },
+      ],
+    }
+    const created = (await applyCanvasToolCall('create_canvas_nodes', {
+      groupCategoryId: 'shots',
+      nodes: [
+        {
+          clientId: 'storyboard-group',
+          kind: 'text',
+          title: '分镜组：咖啡广告',
+          prompt: '分镜组',
+          storyboardGroup: true,
+          storyboardPlanSnapshot: snapshot,
+        },
+      ],
+    })) as { clientIdToNodeId: Record<string, string> }
+    const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === created.clientIdToNodeId['storyboard-group'])
+    expect(node?.meta?.storyboardGroup).toBe(true)
+    expect(node?.meta?.storyboardPlanSnapshot).toEqual(snapshot)
+    expect(node?.size).toEqual(STORYBOARD_TABLE_DEFAULT_SIZE)
+  })
+
   it('非法 mode 按通用参考处理（不抛、不静默改语义）', async () => {
     const created = (await applyCanvasToolCall('create_canvas_nodes', {
       nodes: [
@@ -138,6 +181,86 @@ describe('applyCanvasToolCall clientId 翻译', () => {
   })
 })
 
+describe('applyCanvasToolCall attach_external_image_to_node', () => {
+  beforeEach(() => {
+    resetCanvas()
+    resetClientIdRegistry()
+  })
+
+  it('导入本地 Codex/imagegen 图片路径并写回图片节点 result', async () => {
+    const created = (await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'shot1', kind: 'image', title: '咖啡镜头 1', prompt: '热咖啡产品图' }],
+    })) as { clientIdToNodeId: Record<string, string> }
+    const nodeId = created.clientIdToNodeId.shot1
+    const importLocalPath = vi.fn(async () => ({
+      id: 'asset-codex-1',
+      name: 'coffee.png',
+      userId: 'local',
+      projectId: 'project-1',
+      createdAt: '2026-07-04T00:00:00.000Z',
+      updatedAt: '2026-07-04T00:00:00.000Z',
+      data: {
+        url: 'nomi-local://asset/project-1/assets/generated/2026-07-04/coffee.png',
+        relativePath: 'assets/generated/2026-07-04/coffee.png',
+        contentType: 'image/png',
+      },
+    }))
+    mockedGetDesktopBridge.mockReturnValue({
+      assets: {
+        importLocalPath,
+        importRemoteUrl: vi.fn(),
+      },
+    } as unknown as DesktopBridge)
+    setDesktopActiveProjectId('project-1')
+
+    const result = (await applyCanvasToolCall('attach_external_image_to_node', {
+      nodeId: 'shot1',
+      sourceType: 'local_path',
+      source: '/tmp/codex-imagegen/coffee.png',
+      fileName: 'coffee.png',
+      prompt: 'cinematic coffee ad',
+      provider: 'codex-imagegen',
+      modelKey: 'gpt-image-2',
+    })) as { nodeId: string; assetId: string; relativePath: string }
+
+    expect(importLocalPath).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      kind: 'generated',
+      fileName: 'coffee.png',
+      ownerNodeId: nodeId,
+      path: '/tmp/codex-imagegen/coffee.png',
+    })
+    expect(result).toMatchObject({ nodeId, assetId: 'asset-codex-1', relativePath: 'assets/generated/2026-07-04/coffee.png' })
+    const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId)
+    expect(node?.status).toBe('success')
+    expect(node?.result).toMatchObject({
+      type: 'image',
+      url: 'nomi-local://asset/project-1/assets/generated/2026-07-04/coffee.png',
+      assetId: 'asset-codex-1',
+      provenance: {
+        provider: 'codex-imagegen',
+        modelKey: 'gpt-image-2',
+        prompt: 'cinematic coffee ad',
+      },
+    })
+    expect(node?.history?.[0]?.id).toBe(node?.result?.id)
+  })
+
+  it('拒绝把图片结果写到非图片类节点', async () => {
+    await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'copy', kind: 'text', title: '文案', prompt: 'p' }],
+    })
+    setDesktopActiveProjectId('project-1')
+    await expect(
+      applyCanvasToolCall('attach_external_image_to_node', {
+        nodeId: 'copy',
+        sourceType: 'url',
+        source: 'https://example.com/out.png',
+      }),
+    ).rejects.toThrow('target_node_not_image_like')
+  })
+})
+
 // S2:propose_storyboard_plan 不碰画布——把结构化方案落创作 store 并切回创作区(规划免费可改)。
 describe('applyCanvasToolCall propose_storyboard_plan', () => {
   const PLAN: StoryboardPlan = {
@@ -170,6 +293,152 @@ describe('applyCanvasToolCall propose_storyboard_plan', () => {
       applyCanvasToolCall('propose_storyboard_plan', { title: 't', anchors: [{ id: 'x', kind: 'bad' }], shots: [] }),
     ).rejects.toThrow()
     expect(useWorkbenchStore.getState().storyboardPlan).toBeNull()
+  })
+})
+
+describe('applyCanvasToolCall update_storyboard_shot', () => {
+  const PLAN: StoryboardPlan = {
+    title: '咖啡广告',
+    anchors: [],
+    shots: [
+      { index: 1, shotKind: 'video', durationSec: 5, anchorIds: [], prompt: '旧视频提示词', imagePrompt: '旧首帧', videoPrompt: '旧视频提示词' },
+      { index: 2, shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '旧图片提示词', imagePrompt: '旧图片提示词' },
+    ],
+  }
+
+  beforeEach(() => {
+    resetCanvas()
+    useWorkbenchStore.getState().setStoryboardPlan(PLAN)
+    useWorkbenchStore.getState().setWorkspaceMode('generation')
+  })
+
+  it('改视频提示词会更新分镜方案源头并镜像 prompt', async () => {
+    const result = (await applyCanvasToolCall('update_storyboard_shot', {
+      shotIndex: 1,
+      videoPrompt: '咖啡杯热气升腾，镜头缓慢推进到杯口',
+      modelKey: 'agnes-video-v2.0',
+      params: { duration: 5, aspect_ratio: '16:9' },
+    })) as { shotIndex: number; updated: string[] }
+
+    expect(result.shotIndex).toBe(1)
+    expect(result.updated).toContain('videoPrompt')
+    const shot = useWorkbenchStore.getState().storyboardPlan?.shots[0]
+    expect(shot?.videoPrompt).toBe('咖啡杯热气升腾，镜头缓慢推进到杯口')
+    expect(shot?.prompt).toBe('咖啡杯热气升腾，镜头缓慢推进到杯口')
+    expect(shot?.modelKey).toBe('agnes-video-v2.0')
+    expect(shot?.params).toEqual({ duration: 5, aspect_ratio: '16:9' })
+    expect(useWorkbenchStore.getState().workspaceMode).toBe('creation')
+  })
+
+  it('改图片镜头 prompt 会同步 imagePrompt', async () => {
+    await applyCanvasToolCall('update_storyboard_shot', { shotIndex: 2, prompt: '俯拍咖啡豆铺满桌面' })
+    const shot = useWorkbenchStore.getState().storyboardPlan?.shots[1]
+    expect(shot?.prompt).toBe('俯拍咖啡豆铺满桌面')
+    expect(shot?.imagePrompt).toBe('俯拍咖啡豆铺满桌面')
+  })
+
+  it('可直接更新分镜表结构化列', async () => {
+    const result = (await applyCanvasToolCall('update_storyboard_shot', {
+      shotIndex: 1,
+      scene: '咖啡馆窗边',
+      shotSize: '中近景',
+      cameraAngle: '正面平视',
+      cameraMove: '缓慢推进',
+      characters: '咖啡师',
+      performance: '端起咖啡闻香',
+      dialogue: '今天的第一杯，给自己。',
+      props: '白瓷咖啡杯',
+      sound: '轻柔爵士乐',
+      notes: '手机背面朝向镜头时不写屏幕内容',
+    })) as { updated: string[] }
+    expect(result.updated).toEqual(expect.arrayContaining(['scene', 'shotSize', 'cameraAngle', 'cameraMove', 'dialogue', 'sound']))
+    const shot = useWorkbenchStore.getState().storyboardPlan?.shots[0]
+    expect(shot).toMatchObject({
+      scene: '咖啡馆窗边',
+      shotSize: '中近景',
+      cameraAngle: '正面平视',
+      cameraMove: '缓慢推进',
+      characters: '咖啡师',
+      performance: '端起咖啡闻香',
+      dialogue: '今天的第一杯，给自己。',
+      props: '白瓷咖啡杯',
+      sound: '轻柔爵士乐',
+      notes: '手机背面朝向镜头时不写屏幕内容',
+    })
+  })
+
+  it('批量填表默认只补空字段，并确定性派生视频提示词同步到表格节点和视频节点', async () => {
+    const canvas = useGenerationCanvasStore.getState()
+    const group = canvas.addNode({
+      kind: 'text',
+      title: '分镜组：咖啡广告',
+      prompt: '旧分镜脚本',
+      meta: { storyboardGroup: true, storyboardPlanSnapshot: PLAN },
+    })
+    const videoNode = canvas.addNode({ kind: 'video', title: '镜头 1 视频', prompt: '旧视频节点提示词' })
+    canvas.updateNode(videoNode.id, { shotIndex: 1 })
+
+    const result = (await applyCanvasToolCall('batch_update_storyboard_shots', {
+      overwriteExisting: false,
+      deriveVideoPrompts: true,
+      shots: [
+        {
+          shotIndex: 1,
+          scene: '清晨咖啡馆吧台',
+          shotSize: '中近景',
+          cameraAngle: '吧台正面平视',
+          cameraMove: '缓慢推近到咖啡杯',
+          characters: '咖啡师',
+          performance: '把刚萃取的浓缩咖啡端到吧台中央',
+          dialogue: '您的拿铁好了。',
+          props: '白瓷咖啡杯、拉花钢杯、木质吧台',
+          sound: '轻柔爵士乐与咖啡机蒸汽声',
+          notes: '保持手部动作清楚',
+        },
+        {
+          shotIndex: 2,
+          imagePrompt: '不应覆盖旧图片提示词',
+          scene: '咖啡豆麻袋旁',
+        },
+      ],
+    })) as { updatedShotCount: number; updatedShotIndices: number[] }
+
+    expect(result.updatedShotCount).toBe(2)
+    expect(result.updatedShotIndices).toEqual([1, 2])
+    const nextPlan = useWorkbenchStore.getState().storyboardPlan
+    const shot1 = nextPlan?.shots[0]
+    const shot2 = nextPlan?.shots[1]
+    expect(shot1?.scene).toBe('清晨咖啡馆吧台')
+    expect(shot1?.videoPrompt).toContain('视频生成提示词：镜头 1，时长 5 秒')
+    expect(shot1?.videoPrompt).toContain('关键词：场景：清晨咖啡馆吧台')
+    expect(shot1?.prompt).toBe(shot1?.videoPrompt)
+    expect(shot2?.imagePrompt).toBe('旧图片提示词')
+    expect(shot2?.scene).toBe('咖啡豆麻袋旁')
+
+    const syncedGroup = useGenerationCanvasStore.getState().nodes.find((node) => node.id === group.id)
+    const syncedVideo = useGenerationCanvasStore.getState().nodes.find((node) => node.id === videoNode.id)
+    expect(syncedGroup?.meta?.storyboardPlanSnapshot).toEqual(nextPlan)
+    expect(syncedGroup?.prompt).toContain('镜头 1')
+    expect(syncedVideo?.prompt).toBe(shot1?.videoPrompt)
+  })
+
+  it('批量填表 overwriteExisting=true 时覆盖已有字段', async () => {
+    await applyCanvasToolCall('batch_update_storyboard_shots', {
+      overwriteExisting: true,
+      deriveVideoPrompts: false,
+      shots: [{ shotIndex: 1, videoPrompt: '覆盖后的视频提示词', scene: '新的咖啡馆外景' }],
+    })
+    const shot = useWorkbenchStore.getState().storyboardPlan?.shots[0]
+    expect(shot?.scene).toBe('新的咖啡馆外景')
+    expect(shot?.videoPrompt).toBe('覆盖后的视频提示词')
+    expect(shot?.prompt).toBe('覆盖后的视频提示词')
+  })
+
+  it('无当前方案或镜号不存在时抛错', async () => {
+    useWorkbenchStore.getState().setStoryboardPlan(null)
+    await expect(applyCanvasToolCall('update_storyboard_shot', { shotIndex: 1, prompt: 'x' })).rejects.toThrow('storyboard_plan_not_found')
+    useWorkbenchStore.getState().setStoryboardPlan(PLAN)
+    await expect(applyCanvasToolCall('update_storyboard_shot', { shotIndex: 9, prompt: 'x' })).rejects.toThrow('storyboard_shot_not_found')
   })
 })
 

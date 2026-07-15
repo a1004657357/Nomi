@@ -69,3 +69,9 @@ docs/feedback/sources.json
 docs/feedback/state.json
 docs/feedback/*-raw.json
 docs/feedback/*-digest.md
+# Local Python harness verification artifacts.
+integrations/blender/agent-harness/.venv/
+integrations/blender/agent-harness/.pytest_cache/
+integrations/blender/agent-harness/*.egg-info/
+integrations/blender/agent-harness/**/__pycache__/
+integrations/blender/agent-harness/**/*.pyc

@@ -3,8 +3,10 @@ import {
   canvasNodeKindSchema,
   canvasToolNames,
   canvasTools,
+  batchUpdateStoryboardShotsParamsSchema,
   plannedEdgeSchema,
   plannedNodeSchema,
+  updateStoryboardShotParamsSchema,
 } from "./canvasTools";
 
 const makeValidNode = (overrides: Partial<Record<string, unknown>> = {}) => ({
@@ -77,15 +79,18 @@ describe("canvasTools schemas", () => {
   });
 
   describe("canvasToolNames", () => {
-    it("enumerates all 11 tools", () => {
+    it("enumerates all tools", () => {
       expect(canvasToolNames).toEqual([
         "read_canvas_state",
         "propose_storyboard_plan", // 分镜方案：产出结构化方案对象落创作区，确认后才落画布
+        "update_storyboard_shot", // 改分镜方案源头里的单镜提示词/参数
+        "batch_update_storyboard_shots", // 批量填分镜表并派生视频提示词
         "create_canvas_nodes",
         "connect_canvas_edges",
         "set_node_prompt",
         "delete_canvas_nodes",
         "run_generation_batch", // S6b 受理语义
+        "attach_external_image_to_node", // 外部/Codex 图片导入并绑定节点结果
         "arrange_storyboard_to_timeline", // 按剧本镜序排片到时间轴
         "tidy_canvas", // 助手一键整理画布（复用 tidyCategory）
         "create_staging_reference", // 3D 站位参考图（站位+动作+机位）
@@ -150,6 +155,54 @@ describe("canvasTools schemas", () => {
     it("rejects empty nodeId or prompt", () => {
       expect(schema.safeParse({ nodeId: "", prompt: "x" }).success).toBe(false);
       expect(schema.safeParse({ nodeId: "n", prompt: "" }).success).toBe(false);
+    });
+  });
+
+  describe("update_storyboard_shot parameters", () => {
+    it("accepts prompt and model updates for one shot", () => {
+      expect(
+        updateStoryboardShotParamsSchema.safeParse({
+          shotIndex: 2,
+          imagePrompt: "静态首帧",
+          videoPrompt: "镜头缓慢推进",
+          scene: "咖啡馆窗边",
+          shotSize: "中近景",
+          cameraAngle: "正面平视",
+          cameraMove: "缓慢推进",
+          characters: "咖啡师",
+          performance: "端起咖啡闻香",
+          dialogue: "今天的第一杯，给自己。",
+          props: "白瓷杯",
+          sound: "轻柔爵士乐",
+          notes: "手机背面朝向镜头时不得写屏幕内容",
+          modelKey: "agnes-video-v2.0",
+          params: { duration: 5 },
+        }).success,
+      ).toBe(true);
+    });
+
+    it("requires a positive integer shotIndex", () => {
+      expect(updateStoryboardShotParamsSchema.safeParse({ shotIndex: 0, prompt: "x" }).success).toBe(false);
+      expect(updateStoryboardShotParamsSchema.safeParse({ shotIndex: 1.5, prompt: "x" }).success).toBe(false);
+    });
+  });
+
+  describe("batch_update_storyboard_shots parameters", () => {
+    it("accepts multiple storyboard-table shot patches and derive flags", () => {
+      expect(
+        batchUpdateStoryboardShotsParamsSchema.safeParse({
+          overwriteExisting: false,
+          deriveVideoPrompts: true,
+          shots: [
+            { shotIndex: 1, scene: "清晨咖啡馆吧台", shotSize: "中近景" },
+            { shotIndex: 2, cameraMove: "缓慢推近", performance: "拿起白瓷杯闻香" },
+          ],
+        }).success,
+      ).toBe(true);
+    });
+
+    it("requires at least one shot patch", () => {
+      expect(batchUpdateStoryboardShotsParamsSchema.safeParse({ shots: [] }).success).toBe(false);
     });
   });
 

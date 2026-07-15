@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { buildAnchorSheetPrompt, parseStoryboardPlan, storyboardPlanToCreateNodesArgs, type StoryboardPlan } from './storyboardPlan'
+import {
+  buildAnchorSheetPrompt,
+  buildDetailedStoryboardShotVideoPrompt,
+  parseStoryboardPlan,
+  storyboardPlanToCreateNodesArgs,
+  storyboardShotImagePrompt,
+  storyboardShotVideoPrompt,
+  type StoryboardPlan,
+} from './storyboardPlan'
 
 const PLAN: StoryboardPlan = {
   title: '雨夜追凶',
@@ -57,11 +65,13 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     expect(storyboardPlanToCreateNodesArgs(PLAN).groupCategoryId).toBe('shots')
   })
 
-  it('anchorCount = 视觉锚数（落画布布局据此分「参考行 / 镜头网格」）', () => {
+  it('anchorCount = 分镜组总控卡 + 视觉锚数（落画布布局据此分「参考行 / 镜头网格」）', () => {
     const { nodes, anchorCount } = storyboardPlanToCreateNodesArgs(PLAN)
-    // PLAN：3 视觉锚（角色/场景/道具）+ 2 镜头；文本锚（风格）不建节点
-    expect(anchorCount).toBe(3)
-    // 前 anchorCount 个是锚、其后是镜头（标题「镜头 N」）——布局角色边界的契约
+    // PLAN：1 个分镜组总控卡 + 3 视觉锚（角色/场景/道具）+ 2 镜头；文本锚（风格）不建节点
+    expect(anchorCount).toBe(4)
+    expect(nodes[0]).toMatchObject({ clientId: 'storyboard-group', kind: 'text', storyboardGroup: true })
+    expect(nodes[0].storyboardPlanSnapshot).toEqual(PLAN)
+    // 前 anchorCount 个是分镜组/锚、其后是镜头（标题「镜头 N」）——布局角色边界的契约
     expect(nodes.slice(0, anchorCount).every((n) => !n.title.startsWith('镜头'))).toBe(true)
     expect(nodes.slice(anchorCount).every((n) => n.title.startsWith('镜头'))).toBe(true)
   })
@@ -119,6 +129,153 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     expect(shot1.prompt).toContain('全片风格：冷色调、胶片颗粒') // style 文本锚拼入
     const shot2 = nodes.find((n) => n.clientId === 'shot-2')!
     expect(shot2.prompt).toBe('林夏背起书包向楼梯走，跟拍') // 镜2 没引用 style → prompt 不变
+  })
+
+  it('镜头提示词优先使用 imagePrompt / videoPrompt，prompt 只做旧字段兜底', () => {
+    const plan: StoryboardPlan = {
+      title: '提示词双轨',
+      anchors: [],
+      shots: [
+        { index: 1, shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '旧字段', imagePrompt: '静态关键帧' },
+        { index: 2, shotKind: 'video', durationSec: 5, anchorIds: [], prompt: '旧字段', imagePrompt: '首帧图', videoPrompt: '镜头缓慢推进' },
+      ],
+    }
+    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
+    expect(nodes.find((n) => n.clientId === 'shot-1')?.prompt).toBe('静态关键帧')
+    expect(nodes.find((n) => n.clientId === 'shot-2')?.prompt).toBe('镜头缓慢推进')
+    expect(nodes.find((n) => n.clientId === 'storyboard-group')?.prompt).toContain('图片提示词：首帧图')
+    expect(nodes.find((n) => n.clientId === 'storyboard-group')?.prompt).toContain('视频提示词：镜头缓慢推进')
+  })
+
+  it('imagePrompt / videoPrompt 为空字符串时，从结构化分镜列兜底生成提示词', () => {
+    const shot = {
+      index: 1,
+      shotKind: 'video' as const,
+      durationSec: 5,
+      anchorIds: [],
+      prompt: '',
+      imagePrompt: '',
+      videoPrompt: '',
+      scene: '咖啡馆窗边',
+      shotSize: '中近景',
+      cameraAngle: '正面平视',
+      cameraMove: '缓慢推进',
+      characters: '咖啡师',
+      performance: '端起咖啡闻香，微笑看向窗外',
+      dialogue: '今天的第一杯，给自己。',
+      props: '白瓷咖啡杯、木桌',
+      sound: '轻柔爵士乐',
+      notes: '手机背面朝向镜头时禁止写屏幕内容',
+    }
+    expect(storyboardShotImagePrompt(shot)).toContain('景别：中近景')
+    expect(storyboardShotImagePrompt(shot)).toContain('表演：端起咖啡闻香，微笑看向窗外')
+    expect(storyboardShotVideoPrompt(shot)).toContain('运镜：缓慢推进')
+    expect(storyboardShotVideoPrompt(shot)).toContain('对白：今天的第一杯，给自己。')
+
+    const { nodes } = storyboardPlanToCreateNodesArgs({ title: '结构化列', anchors: [], shots: [shot] })
+    const shotNode = nodes.find((n) => n.clientId === 'shot-1')!
+    expect(shotNode.prompt).toContain('运镜：缓慢推进')
+    expect(shotNode.prompt).toContain('声音：轻柔爵士乐')
+  })
+
+  it('可把表格列作为关键词润色成十分具体的视频生成提示词', () => {
+    const prompt = buildDetailedStoryboardShotVideoPrompt({
+      index: 4,
+      shotKind: 'image',
+      durationSec: 6,
+      anchorIds: [],
+      prompt: '咖啡师把刚做好的拿铁推到顾客面前',
+      imagePrompt: '暖色咖啡馆吧台，中近景，咖啡师双手推杯',
+      scene: '清晨咖啡馆吧台，窗外有柔和自然光',
+      shotSize: '中近景',
+      cameraAngle: '吧台正面平视',
+      cameraMove: '缓慢推近后轻微下摇到咖啡杯',
+      characters: '咖啡师、顾客的手部',
+      performance: '咖啡师双手稳稳推杯，顾客手指轻轻接住杯碟',
+      dialogue: '您的拿铁好了。',
+      props: '白瓷拿铁杯、杯碟、木质吧台、拉花',
+      sound: '轻柔爵士乐、咖啡机低频蒸汽声',
+      notes: '商业广告质感，动作干净，杯子不能变形',
+    })
+
+    expect(prompt).toContain('视频生成提示词：镜头 4，时长 6 秒')
+    expect(prompt).toContain('关键词：场景：清晨咖啡馆吧台')
+    expect(prompt).toContain('构图机位：使用「中近景，吧台正面平视」')
+    expect(prompt).toContain('运镜节奏：缓慢推近后轻微下摇到咖啡杯')
+    expect(prompt).toContain('动作时间线：0-1 秒')
+    expect(prompt).toContain('对白处理：角色说「您的拿铁好了。」')
+    expect(prompt).toContain('画面约束：保持角色外观、服装、道具、场景和光线连续一致')
+  })
+
+  it('涉及手机/电脑屏幕的镜头 prompt 自动附加屏幕朝向可见性规则', () => {
+    const plan: StoryboardPlan = {
+      title: '手机误朝向回归',
+      anchors: [],
+      shots: [
+        {
+          index: 1,
+          shotKind: 'image',
+          durationSec: 0,
+          anchorIds: [],
+          prompt: '正面中景拍摄林微，她低头看手机，手机背面朝向镜头，手机屏幕显示匿名消息。',
+        },
+      ],
+    }
+
+    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
+    const shot = nodes.find((n) => n.clientId === 'shot-1')!
+    expect(shot.prompt).toContain('屏幕可见性硬规则')
+    expect(shot.prompt).toContain('如果人物正面面对镜头，而手机/电脑背面或侧面朝向镜头，屏幕不可见')
+    expect(shot.prompt).toContain('改成单独的屏幕特写/过肩镜头')
+  })
+
+  it('只有全片风格提到屏幕冷光时，不给无设备镜头追加屏幕规则', () => {
+    const plan: StoryboardPlan = {
+      title: '屏幕风格词不误触发',
+      anchors: [
+        {
+          id: 'style',
+          kind: 'style',
+          name: '全片风格',
+          description: '城市夜景霓虹光感与屏幕冷光对比室内暖黄灯光。',
+          carrier: 'text',
+        },
+      ],
+      shots: [
+        {
+          index: 1,
+          shotKind: 'image',
+          durationSec: 0,
+          anchorIds: ['style'],
+          prompt: '清晨画室全景，两个人坐在地上看画，阳光从窗户照入。',
+        },
+      ],
+    }
+
+    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
+    const shot = nodes.find((n) => n.clientId === 'shot-1')!
+    expect(shot.prompt).toContain('全片风格：城市夜景霓虹光感与屏幕冷光对比室内暖黄灯光。')
+    expect(shot.prompt).not.toContain('屏幕可见性硬规则')
+  })
+
+  it('否定句里的手机/屏幕词不触发屏幕朝向规则', () => {
+    const plan: StoryboardPlan = {
+      title: '无设备镜头',
+      anchors: [],
+      shots: [
+        {
+          index: 1,
+          shotKind: 'image',
+          durationSec: 0,
+          anchorIds: [],
+          prompt: '门打开，两人面对面，没有手机、没有屏幕，只有走廊冷光与画室暖光。',
+        },
+      ],
+    }
+
+    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
+    const shot = nodes.find((n) => n.clientId === 'shot-1')!
+    expect(shot.prompt).not.toContain('屏幕可见性硬规则')
   })
 
   it('定妆卡 → 镜头参考边（角色 character_ref / 场景 style_ref / 道具 reference）；B-clean 不连 shot→shot 链', () => {

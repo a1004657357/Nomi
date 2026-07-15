@@ -77,6 +77,13 @@ type Scene3DFullscreenProps = {
   // 可选——未传则不出现「录 take」按钮（如样张/只读环境）。
   onRecordTake?: (recordedState: Scene3DState) => void
   referenceTarget?: Scene3DReferenceTargetSummary
+  /** Optional panel for a higher-level director workflow. Ordinary scene3d nodes omit it. */
+  sidecar?: {
+    label: string
+    content: React.ReactNode
+    width?: number
+  }
+  sidecarDefaultOpen?: boolean
 }
 
 export default function Scene3DFullscreen({
@@ -88,6 +95,8 @@ export default function Scene3DFullscreen({
   onScreenshot,
   onRecordTake,
   referenceTarget,
+  sidecar,
+  sidecarDefaultOpen = false,
 }: Scene3DFullscreenProps): JSX.Element {
   const [state, setState] = React.useState(() => cloneScene3DState(initialState))
   const [selection, setSelection] = React.useState<Scene3DSelection>(null)
@@ -97,6 +106,8 @@ export default function Scene3DFullscreen({
   const controlModeRef = React.useRef<Scene3DControlMode>(controlMode)
   const [flySpeed, setFlySpeed] = React.useState(5)
   const [leftPanelOpen, setLeftPanelOpen] = React.useState(true)
+  const [leftPanelTab, setLeftPanelTab] = React.useState<'scene' | 'sidecar'>(sidecarDefaultOpen ? 'sidecar' : 'scene')
+  const leftPanelWidth = sidecar?.width ?? 260
   const [rightPanelOpen, setRightPanelOpen] = React.useState(true)
   const canvasFocusMode = !leftPanelOpen || !rightPanelOpen
   const [focusId, setFocusId] = React.useState('')
@@ -130,6 +141,7 @@ export default function Scene3DFullscreen({
   const enterTrajectoryPanel = React.useCallback(() => {
     setRightPanelOpen(true)
     setRightPanelTab('trajectory')
+    setLeftPanelTab('scene')
   }, [])
   const enterTrajectoryMode = React.useCallback((showTimeline = true) => {
     trajectory.setTrajectoryEditMode(true)
@@ -579,7 +591,7 @@ export default function Scene3DFullscreen({
           {leftPanelOpen ? (
             <motion.aside
               key="scene-node-panel"
-              animate={{ opacity: 1, scale: 1, width: 260, x: 0 }}
+              animate={{ opacity: 1, scale: 1, width: leftPanelWidth, x: 0 }}
               className="relative z-[2] flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] shadow-workbench-pop"
               exit={{ opacity: 0, scale: 0.16, width: 0, x: -26 }}
               initial={{ opacity: 0, scale: 0.16, width: 0, x: -26 }}
@@ -596,6 +608,40 @@ export default function Scene3DFullscreen({
                   onAssignTrajectoryToGroup={assignTrajectoryToGroup}
                   onDeleteTrajectory={trajectory.deleteTrajectory}
                 />
+              ) : sidecar ? (
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="flex shrink-0 border-b border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] p-1">
+                    <button
+                      className={`min-w-0 flex-1 rounded-nomi-sm px-2 py-1.5 text-caption ${leftPanelTab === 'scene' ? 'bg-[var(--nomi-ink-05)] text-[var(--workbench-ink)]' : 'text-[var(--workbench-muted)] hover:bg-[var(--nomi-ink-05)]'}`}
+                      type="button"
+                      onClick={() => setLeftPanelTab('scene')}
+                    >
+                      场景
+                    </button>
+                    <button
+                      className={`min-w-0 flex-1 rounded-nomi-sm px-2 py-1.5 text-caption ${leftPanelTab === 'sidecar' ? 'bg-[var(--nomi-ink-05)] text-[var(--workbench-ink)]' : 'text-[var(--workbench-muted)] hover:bg-[var(--nomi-ink-05)]'}`}
+                      type="button"
+                      onClick={() => setLeftPanelTab('sidecar')}
+                    >
+                      {sidecar.label}
+                    </button>
+                  </div>
+                  {leftPanelTab === 'sidecar' ? (
+                    <div className="min-h-0 flex-1">{sidecar.content}</div>
+                  ) : (
+                    <SceneObjectList
+                      objects={state.objects}
+                      cameras={state.cameras}
+                      selection={selection}
+                      readOnly={readOnly}
+                      onSelect={selectSceneItem}
+                      onFocus={focusSceneItem}
+                      onObjectPatch={patchObject}
+                      onCameraPatch={patchCamera}
+                      onDelete={deleteSceneItem}
+                    />
+                  )}
+                </div>
               ) : (
                 <SceneObjectList
                   objects={state.objects}

@@ -32,6 +32,7 @@ export { default as IconBold } from '@tabler/icons-react/dist/esm/icons/IconBold
 export { default as IconBooks } from '@tabler/icons-react/dist/esm/icons/IconBooks.mjs'
 export { default as IconBox } from '@tabler/icons-react/dist/esm/icons/IconBox.mjs'
 export { default as IconBoxMultiple } from '@tabler/icons-react/dist/esm/icons/IconBoxMultiple.mjs'
+export { default as IconBrandBlender } from '@tabler/icons-react/dist/esm/icons/IconBrandBlender.mjs'
 export { default as IconBrain } from '@tabler/icons-react/dist/esm/icons/IconBrain.mjs'
 export { default as IconBrush } from '@tabler/icons-react/dist/esm/icons/IconBrush.mjs'
 export { default as IconBulb } from '@tabler/icons-react/dist/esm/icons/IconBulb.mjs'

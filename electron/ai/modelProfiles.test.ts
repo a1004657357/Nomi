@@ -21,6 +21,14 @@ describe("modelProfiles.getModelProfile", () => {
     expect(getModelProfile("models/gemini-3-pro").agentSuitability).toBe("good");
   });
 
+  it("matches Zhipu GLM long-output family", () => {
+    const p = getModelProfile("zai/glm-5.2");
+    expect(p.agentSuitability).toBe("good");
+    expect(p.defaultMaxTokens).toBe(32768);
+    expect(p.stripToolSchemaDialect).toBe(true);
+    expect(getModelProfile("glm-4.6").defaultMaxTokens).toBe(32768);
+  });
+
   it("flags Kimi K2 as poor + sets quirks", () => {
     const p = getModelProfile("kimi-k2.6");
     expect(p.agentSuitability).toBe("poor");

@@ -3,6 +3,8 @@ import { cn } from '../../utils/cn'
 import CreationAiPanel from './CreationAiPanel'
 import WorkbenchEditor from './WorkbenchEditor'
 import StoryboardPlanEditor from './storyboard/StoryboardPlanEditor'
+import StoryboardScriptPanel from './storyboard/StoryboardScriptPanel'
+import StoryboardScriptShortcutButton from './storyboard/StoryboardScriptShortcutButton'
 import { NomiAILabel, WorkbenchButton } from '../../design'
 import { useWorkbenchStore } from '../workbenchStore'
 
@@ -14,6 +16,7 @@ export default function CreationWorkspace(): JSX.Element {
   const setAutoOpen = useWorkbenchStore((s) => s.setCreationAssistantAutoOpen)
   // 编辑器「打开」时主列展开分镜方案编辑器，替换文档编辑器；收起则回文档、方案以卡片留在对话流（回看链路）。
   const storyboardEditorOpen = useWorkbenchStore((s) => s.storyboardEditorOpen)
+  const storyboardScriptOpen = useWorkbenchStore((s) => s.storyboardScriptOpen)
   React.useEffect(() => {
     if (autoOpen) {
       setCollapsed(false)
@@ -37,7 +40,10 @@ export default function CreationWorkspace(): JSX.Element {
       )}
       aria-label="创作区"
     >
-      {storyboardEditorOpen ? <StoryboardPlanEditor /> : <WorkbenchEditor />}
+      {storyboardEditorOpen ? <StoryboardPlanEditor /> : storyboardScriptOpen ? <StoryboardScriptPanel /> : <WorkbenchEditor />}
+      {!storyboardEditorOpen && !storyboardScriptOpen ? (
+        <StoryboardScriptShortcutButton className="absolute top-[22px] left-6 z-[20]" label="查看分镜脚本" />
+      ) : null}
       {collapsed ? (
         <WorkbenchButton
           className={cn(

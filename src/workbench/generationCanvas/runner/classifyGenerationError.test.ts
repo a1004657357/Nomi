@@ -18,6 +18,20 @@ describe('classifyGenerationError — 已知分类', () => {
     expect(r.reason).toBe('网络超时')
   })
 
+  it('Agnes 下载参考图超时不会误报为参数错误', () => {
+    const upstreamMsg = 'Download image URL failed: HTTPSConnectionPool(host=\'litter.catbox.moe\', port=443): Read timed out. (read timeout=30)'
+    const marker = 'NOMI_VENDOR_ERR_B64::' + Buffer.from(JSON.stringify({
+      category: 'input',
+      httpStatus: 400,
+      upstreamMsg,
+      vendorKey: 'agnes',
+    }), 'utf8').toString('base64') + ':: '
+    const report = classifyGenerationError(`${marker}Provider request failed (HTTP 400) at agnes: ${upstreamMsg}`)
+
+    expect(report.reason).toBe('参考图下载失败')
+    expect(report.hint).toMatch(/重新上传|重试/)
+  })
+
   it('余额不足（中文）与限流区分开', () => {
     const r = classifyGenerationError('Provider request failed (code 402) at kie: 余额不足，请充值')
     expect(r.reason).toBe('余额不足')
@@ -115,6 +129,7 @@ describe('classifyGenerationError — 已知分类', () => {
     expect(r.hint).toMatch(/下载到本地/)
     expect(r.hint).toMatch(/防盗链/)
   })
+
 })
 
 describe('classifyGenerationError — 未识别兜底（方案 B 改进）', () => {

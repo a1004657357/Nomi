@@ -4,6 +4,8 @@
   "description": "Generation-area AI assistant. Plans image/video canvas nodes with prompts; never auto-executes generation.",
   "tools": [
     "read_canvas_state",
+    "update_storyboard_shot",
+    "batch_update_storyboard_shots",
     "create_canvas_nodes",
     "connect_canvas_edges",
     "set_node_prompt"

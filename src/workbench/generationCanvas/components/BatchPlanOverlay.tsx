@@ -12,6 +12,7 @@ import { useBatchPlanPreviewStore } from './batchPlanPreview'
 
 export function BatchPlanOverlay() {
   const plan = useBatchPlanPreviewStore((state) => state.plan)
+  const regenerationSourceNodeId = useBatchPlanPreviewStore((state) => state.regenerationSourceNodeId)
   const cancel = useBatchPlanPreviewStore((state) => state.cancel)
   const confirm = useBatchPlanPreviewStore((state) => state.confirm)
   const nodes = useGenerationCanvasStore((state) => state.nodes)
@@ -61,6 +62,7 @@ export function BatchPlanOverlay() {
         </span>
         <span className={cn('text-caption text-nomi-ink-60 whitespace-nowrap')}>
           第 1 波 {firstWaveCount} 个并行,确认前不调用不扣费
+          {regenerationSourceNodeId ? ' · 确认后新建版本，旧结果保留' : ''}
           {plan.blocked.length > 0 ? ` · ${plan.blocked.length} 个被拦(看 ⚠)` : ''}
         </span>
         <WorkbenchButton className={cn('h-7 min-h-7 px-3 cursor-pointer')} onClick={cancel}>

@@ -1,10 +1,35 @@
-import { describe, expect, it } from 'vitest'
-import { describeBlockedNotice } from './batchPlanPreview'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { describeBlockedNotice, forkRegenerationPlan } from './batchPlanPreview'
 import type { DependencyWavePlan } from '../runner/dependencyWaves'
+import { buildDependencyWaves } from '../runner/dependencyWaves'
+import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 
 function plan(over: Partial<DependencyWavePlan>): DependencyWavePlan {
   return { waves: [], blocked: [], edgesUsed: [], ...over }
 }
+
+function imageNode(id: string, generated = false): GenerationCanvasNode {
+  return {
+    id,
+    kind: 'image',
+    title: id,
+    position: { x: 0, y: 0 },
+    prompt: `${id} prompt`,
+    ...(generated
+      ? { result: { id: `${id}-result`, type: 'image', url: `https://x/${id}.png`, createdAt: 1 } }
+      : {}),
+  }
+}
+
+beforeEach(() => {
+  useGenerationCanvasStore.getState().restoreSnapshot({
+    nodes: [],
+    edges: [],
+    groups: [],
+    selectedNodeIds: [],
+  })
+})
 
 describe('describeBlockedNotice — 批量「缺啥提示啥」', () => {
   it('无 blocked → null（不提示）', () => {
@@ -31,5 +56,35 @@ describe('describeBlockedNotice — 批量「缺啥提示啥」', () => {
     const msg = describeBlockedNotice(p)!
     expect(msg).toContain('1 个在等上游参考')
     expect(msg).toContain('1 个存在循环引用')
+  })
+})
+
+describe('regeneration dependency plan', () => {
+  it('replaces the generated target with a new version after confirmation planning', () => {
+    const nodes = [imageNode('pending-ref'), imageNode('shot-v1', true)]
+    const edges = [{
+      id: 'edge-pending-shot',
+      source: 'pending-ref',
+      target: 'shot-v1',
+      mode: 'reference' as const,
+      order: 0,
+    }]
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes, edges, groups: [], selectedNodeIds: [] })
+    const originalPlan = buildDependencyWaves(['pending-ref', 'shot-v1'], { nodes, edges })
+
+    const forked = forkRegenerationPlan(originalPlan, 'shot-v1')
+
+    expect(forked).toBeTruthy()
+    expect(forked?.plan.waves.flat()).toContain('pending-ref')
+    expect(forked?.plan.waves.flat()).toContain(forked?.variantNodeId)
+    expect(forked?.plan.waves.flat()).not.toContain('shot-v1')
+    const state = useGenerationCanvasStore.getState()
+    expect(state.nodes.find((node) => node.id === 'shot-v1')?.result?.id).toBe('shot-v1-result')
+    expect(state.nodes.find((node) => node.id === forked?.variantNodeId)?.regeneratedFrom).toBe('shot-v1')
+    expect(state.edges).toContainEqual(expect.objectContaining({
+      source: 'pending-ref',
+      target: forked?.variantNodeId,
+      mode: 'reference',
+    }))
   })
 })

@@ -54,6 +54,8 @@ export type RunWorkbenchAgentInput = {
   /** Selects the backend tool group + system prompt. */
   skillKey: string
   skillName: string
+  /** Provider compatibility path: ask for structured text and omit native tools. */
+  disableTools?: boolean
   projectId?: string
   mode?: 'auto'
   /** 待发附件（图片走原生多模态；文件 S4 抽文本）。 */
@@ -82,6 +84,7 @@ export async function runWorkbenchAgent(input: RunWorkbenchAgentInput): Promise<
     projectName: '',
     skillKey: input.skillKey,
     skillName: input.skillName,
+    ...(input.disableTools ? { disableTools: true } : {}),
     mode: input.mode || ('auto' as const),
     ...(pref ? { agentModelKey: pref.modelKey, agentVendorKey: pref.vendorKey } : {}),
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),

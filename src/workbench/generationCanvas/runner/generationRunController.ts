@@ -4,7 +4,7 @@ import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProject
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { useWorkbenchStore } from '../../workbenchStore'
 import { toast } from '../../../ui/toast'
-import { mintSpendGrant } from '../../api/taskApi'
+import { cancelWorkbenchTask, mintSpendGrant } from '../../api/taskApi'
 import { describeGenerationCost, useSpendConfirmStore } from '../spend/spendConfirm'
 import { generationNodeExecutor, type GenerationNodeExecutor } from './generationNodeExecutor'
 import { narrateProgress } from '../../observability/narrate'
@@ -14,8 +14,18 @@ import { isRecoverableTimeoutError } from './recoverableTimeout'
 export { classifyGenerationError, type GenerationErrorReport } from '../../observability/classifyError'
 import type { DependencyWavePlan } from './dependencyWaves'
 import { resolveGenerationReferences } from './generationReferenceResolver'
-import { currentArchetypeMode, hasArchetypeArrayReferences, resolveArchetypeForModel } from '../nodes/controls/archetypeMeta'
+import {
+  currentArchetypeMode,
+  hasArchetypeArrayReferences,
+  resolveArchetypeForModel,
+} from '../nodes/controls/archetypeMeta'
 import type { GenerationNodeKind } from '../model/generationCanvasTypes'
+import { generationBatchConcurrency } from './generationConcurrency'
+import {
+  generationProviderKey,
+  generationProviderLimit,
+  runWithGenerationProviderSlot,
+} from './generationProviderScheduler'
 
 /** 节点 kind → 付费预估用的产物口径（视频/配音/画面），喂给 describeGenerationCost 报对名词与时长。 */
 function spendCostKind(kind: GenerationNodeKind): 'image' | 'video' | 'audio' {
@@ -44,6 +54,8 @@ export type RunGenerationNodeOptions = {
   }
   /** 付费守卫令牌：真人确认后铸的 grantId，透传到 executor → request.extras 供主进程核验。 */
   grantId?: string
+  /** Optional external cancellation signal. */
+  signal?: AbortSignal
 }
 
 type GenerationRunContext = {
@@ -58,13 +70,81 @@ type RetryableGenerationError = Error & {
 
 const DEFAULT_MAX_ATTEMPTS = 3
 const DEFAULT_BASE_DELAY_MS = 350
+const activeGenerationRuns = new Map<string, { controller: AbortController; runId: string; taskId?: string }>()
+const activeGenerationBatchControllers = new Set<AbortController>()
+
+type GenerationBatchCancellation = {
+  controller: AbortController
+  dispose: () => void
+}
+
+function createGenerationBatchCancellation(externalSignal?: AbortSignal): GenerationBatchCancellation {
+  const controller = new AbortController()
+  const abortFromExternal = () => controller.abort()
+  if (externalSignal?.aborted) controller.abort()
+  else externalSignal?.addEventListener('abort', abortFromExternal, { once: true })
+  activeGenerationBatchControllers.add(controller)
+  return {
+    controller,
+    dispose: () => {
+      externalSignal?.removeEventListener('abort', abortFromExternal)
+      activeGenerationBatchControllers.delete(controller)
+    },
+  }
+}
+
+function generationAbortError(): DOMException {
+  return new DOMException('生成已取消', 'AbortError')
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError'
+}
+
+export function cancelGenerationNode(nodeId: string): boolean {
+  const id = String(nodeId || '').trim()
+  const active = activeGenerationRuns.get(id)
+  if (!active) return false
+  active.controller.abort()
+  useGenerationCanvasStore.getState().setNodeStatus(id, 'idle')
+  const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === id)
+  void cancelWorkbenchTask({
+    runId: active.runId,
+    ...(active.taskId ? { taskId: active.taskId } : {}),
+    nodeId: id,
+    ...(node ? { vendor: generationProviderKey(node) } : {}),
+  }).catch(() => {})
+  return true
+}
+
+export function cancelGenerationNodes(nodeIds: readonly string[]): number {
+  let cancelled = 0
+  for (const nodeId of nodeIds) {
+    if (cancelGenerationNode(nodeId)) cancelled += 1
+  }
+  return cancelled
+}
+
+/** Stop every active batch and node. Batch abort prevents queued work from starting. */
+export function cancelAllGenerationRuns(): number {
+  for (const controller of activeGenerationBatchControllers) controller.abort()
+  return cancelGenerationNodes([...activeGenerationRuns.keys()])
+}
 
 function isRetryableGenerationError(error: unknown): boolean {
   if (error instanceof TypeError) return true
   if (!(error instanceof Error)) return false
   const candidate = error as RetryableGenerationError
   if (typeof candidate.status === 'number') {
-    return candidate.status === 408 || candidate.status === 409 || candidate.status === 425 || candidate.status === 429 || candidate.status >= 500
+    return (
+      candidate.status === 408 ||
+      candidate.status === 409 ||
+      candidate.status === 425 ||
+      candidate.status === 429 ||
+      candidate.status >= 500
+    )
   }
   const message = candidate.message.trim().toLowerCase()
   return (
@@ -87,9 +167,23 @@ function normalizeBaseDelayMs(value: unknown): number {
   return Math.max(0, Math.min(3_000, Math.floor(value)))
 }
 
-async function waitForRetry(attempt: number, baseDelayMs: number): Promise<void> {
+async function waitForRetry(attempt: number, baseDelayMs: number, signal?: AbortSignal): Promise<void> {
   if (baseDelayMs <= 0) return
-  await new Promise((resolve) => globalThis.setTimeout(resolve, baseDelayMs * 2 ** Math.max(0, attempt - 1)))
+  if (signal?.aborted) throw generationAbortError()
+  await new Promise<void>((resolve, reject) => {
+    const timer = globalThis.setTimeout(
+      () => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve()
+      },
+      baseDelayMs * 2 ** Math.max(0, attempt - 1),
+    )
+    const onAbort = () => {
+      globalThis.clearTimeout(timer)
+      reject(generationAbortError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 export async function runGenerationNode(
@@ -103,16 +197,26 @@ export async function runGenerationNode(
   const initialNode = initialState.nodes.find((node) => node.id === id)
   if (!initialNode) throw new Error('node not found')
   if (!canRunGenerationNode(initialNode, { nodes: initialState.nodes, edges: initialState.edges })) {
-    throw new Error(initialNode.kind === 'video'
-      ? '视频节点缺少上游真实图片或视频资产 URL。请先生成或选择首帧/参考图后再生成视频。'
-      : `暂不支持「${initialNode.kind}」类型节点的生成`)
+    throw new Error(
+      initialNode.kind === 'video'
+        ? '视频节点缺少上游真实图片或视频资产 URL。请先生成或选择首帧/参考图后再生成视频。'
+        : `暂不支持「${initialNode.kind}」类型节点的生成`,
+    )
   }
+  if (activeGenerationRuns.has(id)) throw new Error('该节点已经在生成队列中')
+
+  const controller = new AbortController()
+  const abortFromExternal = () => controller.abort()
+  if (options.signal?.aborted) controller.abort()
+  else options.signal?.addEventListener('abort', abortFromExternal, { once: true })
 
   const run = initialState.appendNodeRun(id, {
     status: 'queued',
     startedAt: Date.now(),
     updatedAt: Date.now(),
   })
+  const activeRun = { controller, runId: run.id }
+  activeGenerationRuns.set(id, activeRun)
   useGenerationCanvasStore.getState().setNodeProgress(id, {
     runId: run.id,
     phase: 'queued',
@@ -129,23 +233,37 @@ export async function runGenerationNode(
       const state = useGenerationCanvasStore.getState()
       const node = state.nodes.find((candidate) => candidate.id === id) || initialNode
       try {
-        result = await executor(node, {
-          nodes: state.nodes,
-          edges: state.edges,
-          ...(options.grantId ? { grantId: options.grantId } : {}),
-          // 提交幂等键 = 本次 run.id：重试循环内每次 attempt 复用同一个 run.id，
-          // electron 侧台账据此认作「同一次意图提交」→ 重试绝不二次下单。新生成 = 新 run.id。
-          idempotencyKey: run.id,
-          // S2:catalog 任务各阶段回报 → 节点进度(人话已由 narrate 翻好)。
-          onProgress: (progress) => {
-            useGenerationCanvasStore.getState().setNodeProgress(id, {
-              runId: run.id,
-              phase: progress.phase,
-              message: progress.message,
-              ...(progress.taskId ? { taskId: progress.taskId } : {}),
-            })
-          },
-        })
+        result = await runWithGenerationProviderSlot(
+          node,
+          () =>
+            executor(node, {
+              nodes: state.nodes,
+              edges: state.edges,
+              ...(options.grantId ? { grantId: options.grantId } : {}),
+              // 提交幂等键 = 本次 run.id：重试循环内每次 attempt 复用同一个 run.id，
+              // electron 侧台账据此认作「同一次意图提交」→ 重试绝不二次下单。新生成 = 新 run.id。
+              idempotencyKey: run.id,
+              signal: controller.signal,
+              // S2:catalog 任务各阶段回报 → 节点进度(人话已由 narrate 翻好)。
+              onProgress: (progress) => {
+                useGenerationCanvasStore.getState().setNodeProgress(id, {
+                  runId: run.id,
+                  phase: progress.phase,
+                  message: progress.message,
+                  ...(progress.taskId ? { taskId: progress.taskId } : {}),
+                })
+                const active = activeGenerationRuns.get(id)
+                if (active === activeRun && progress.taskId) active.taskId = progress.taskId
+              },
+              // 旧项目若把图片模型元数据串到视频节点，catalog 会从最近一次同类型成功结果恢复。
+              // 在请求提交前写回 store，避免本次能跑、下次重启又回到错误模型。
+              onResolvedNode: async (resolvedNode) => {
+                useGenerationCanvasStore.getState().updateNode(id, { meta: resolvedNode.meta })
+                await persistActiveWorkbenchProjectNow().catch(() => {})
+              },
+            }),
+          { signal: controller.signal },
+        )
         break
       } catch (error: unknown) {
         if (attempt >= maxAttempts || !isRetryableGenerationError(error)) {
@@ -157,7 +275,7 @@ export async function runGenerationNode(
           // 文案走 narrate 注册表(S2 纪律:展示文案不许散落字面量)。
           message: narrateProgress('retrying', { attempt: attempt + 1, maxAttempts }),
         })
-        await waitForRetry(attempt, baseDelayMs)
+        await waitForRetry(attempt, baseDelayMs, controller.signal)
       }
     }
     if (!result) throw new Error('生成失败')
@@ -165,6 +283,10 @@ export async function runGenerationNode(
     await persistActiveWorkbenchProjectNow().catch(() => {})
     return result
   } catch (error: unknown) {
+    if (controller.signal.aborted || isAbortError(error)) {
+      useGenerationCanvasStore.getState().setNodeStatus(id, 'idle')
+      throw isAbortError(error) ? error : new DOMException('生成已取消', 'AbortError')
+    }
     // 可找回超时：上游可能仍在跑/已出片 → 落 recoverable（不进红色错误桶），给「重新拉取」入口。
     // taskId 已在 run 记录里持久化，recover 动作从节点重建续查（重启后也能拉）。
     if (isRecoverableTimeoutError(error)) {
@@ -177,17 +299,18 @@ export async function runGenerationNode(
     const rawMessage = error instanceof Error && error.message ? error.message : '生成失败'
     useGenerationCanvasStore.getState().setNodeStatus(id, 'error', rawMessage)
     throw error
+  } finally {
+    options.signal?.removeEventListener('abort', abortFromExternal)
+    if (activeGenerationRuns.get(id) === activeRun) activeGenerationRuns.delete(id)
   }
 }
 
 export type RunGenerationNodesBatchOptions = RunGenerationNodeOptions & {
-  /** Maximum concurrent runs. Defaults to 6（用户拍板：同一波内尽量并行，框选 6 个镜头能一起跑，
-   *  不再一个一个来）。有依赖的镜头仍按波次串行（锚先于镜头），这只调「同波内同时几个」。上限 8。 */
+  /** Maximum concurrent runs. Defaults to 6; dependency-ready nodes start as soon as their own inputs finish. */
   concurrency?: number
   /** Called whenever a node finishes (success or failure) so the UI can update progress. */
-  onNodeResult?: (event:
-    | { ok: true; nodeId: string; result: GenerationNodeResult }
-    | { ok: false; nodeId: string; error: Error }
+  onNodeResult?: (
+    event: { ok: true; nodeId: string; result: GenerationNodeResult } | { ok: false; nodeId: string; error: Error },
   ) => void
 }
 
@@ -195,11 +318,6 @@ export type RunGenerationNodesBatchResult = {
   totalCount: number
   successes: Array<{ nodeId: string; result: GenerationNodeResult }>
   failures: Array<{ nodeId: string; error: Error }>
-}
-
-function normalizeConcurrency(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 6
-  return Math.max(1, Math.min(8, Math.floor(value)))
 }
 
 /**
@@ -215,13 +333,15 @@ export async function runGenerationNodesBatch(
   const queue = nodeIds
     .map((value) => String(value || '').trim())
     .filter((value, index, array) => Boolean(value) && array.indexOf(value) === index)
-  const concurrency = normalizeConcurrency(options.concurrency)
+  const concurrency = generationBatchConcurrency(queue, useGenerationCanvasStore.getState().nodes, options.concurrency)
   const successes: RunGenerationNodesBatchResult['successes'] = []
   const failures: RunGenerationNodesBatchResult['failures'] = []
+  const batchCancellation = createGenerationBatchCancellation(options.signal)
+  const signal = batchCancellation.controller.signal
   let cursor = 0
 
   async function worker(): Promise<void> {
-    while (cursor < queue.length) {
+    while (!signal.aborted && cursor < queue.length) {
       const nextIndex = cursor
       cursor += 1
       const nodeId = queue[nextIndex]
@@ -230,6 +350,7 @@ export async function runGenerationNodesBatch(
           executor: options.executor,
           retry: options.retry,
           ...(options.grantId ? { grantId: options.grantId } : {}),
+          signal,
         })
         successes.push({ nodeId, result })
         options.onNodeResult?.({ ok: true, nodeId, result })
@@ -241,26 +362,46 @@ export async function runGenerationNodesBatch(
     }
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, () => worker())
-  await Promise.all(workers)
-  return { totalCount: queue.length, successes, failures }
+  try {
+    const workers = Array.from({ length: Math.min(concurrency, queue.length) }, () => worker())
+    await Promise.all(workers)
+    if (signal.aborted) {
+      for (const nodeId of queue.slice(cursor)) {
+        const error = generationAbortError()
+        useGenerationCanvasStore.getState().setNodeStatus(nodeId, 'idle')
+        failures.push({ nodeId, error })
+        options.onNodeResult?.({ ok: false, nodeId, error })
+      }
+    }
+    return { totalCount: queue.length, successes, failures }
+  } finally {
+    batchCancellation.dispose()
+  }
 }
 
 /**
- * 按拓扑波次执行批量生成(harness S2b,替代平铺 FIFO 的入口):
- * - 波内并行(沿用 runGenerationNodesBatch 的并发池/重试语义);
- * - 波间串行:依赖节点等到上游真完成才开跑——参考图不再"没出来就裸跑";
+ * 按拓扑依赖执行批量生成(harness S2b,替代平铺 FIFO 的入口):
+ * - 就绪即运行：一个节点自己的依赖完成后立即开跑，不再等待同层慢任务;
+ * - 依赖节点仍等到上游真完成才开跑——参考图不再"没出来就裸跑";
  * - blocked(上游缺果/环)与"上游本批失败"的下游 → **显式失败**,人话原因,可单独重试。
  */
 export async function runGenerationNodesByPlan(
   plan: DependencyWavePlan,
   options: RunGenerationNodesBatchOptions = {},
 ): Promise<RunGenerationNodesBatchResult> {
+  const batchCancellation = createGenerationBatchCancellation(options.signal)
+  const signal = batchCancellation.controller.signal
   const successes: RunGenerationNodesBatchResult['successes'] = []
   const failures: RunGenerationNodesBatchResult['failures'] = []
   const failNode = (nodeId: string, message: string) => {
     const error = new Error(message)
     useGenerationCanvasStore.getState().setNodeStatus(nodeId, 'error', message)
+    failures.push({ nodeId, error })
+    options.onNodeResult?.({ ok: false, nodeId, error })
+  }
+  const cancelNode = (nodeId: string) => {
+    const error = generationAbortError()
+    useGenerationCanvasStore.getState().setNodeStatus(nodeId, 'idle')
     failures.push({ nodeId, error })
     options.onNodeResult?.({ ok: false, nodeId, error })
   }
@@ -273,41 +414,112 @@ export async function runGenerationNodesByPlan(
     internalDeps.set(edge.target, [...(internalDeps.get(edge.target) ?? []), edge.source])
   }
 
+  const orderedIds = plan.waves.flat()
   const failedIds = new Set(plan.blocked.map((blocked) => blocked.nodeId))
-  for (const wave of plan.waves) {
-    // 上游本批失败 → 下游显式失败(不裸跑、不死等),其余照常并行。
-    const runnable: string[] = []
-    for (const nodeId of wave) {
-      const failedDep = (internalDeps.get(nodeId) ?? []).find((dep) => failedIds.has(dep))
-      if (failedDep) {
-        failedIds.add(nodeId)
-        const depTitle = useGenerationCanvasStore.getState().nodes.find((node) => node.id === failedDep)?.title || failedDep
-        failNode(nodeId, `上游「${depTitle}」本批生成失败,本节点未执行`)
-      } else {
-        runnable.push(nodeId)
+  const completedIds = new Set<string>()
+  const startedIds = new Set<string>()
+  const nodeById = new Map(useGenerationCanvasStore.getState().nodes.map((node) => [node.id, node]))
+  const localConcurrency = generationBatchConcurrency(orderedIds, [...nodeById.values()], options.concurrency)
+  const activeByProvider = new Map<string, number>()
+  let activeCount = 0
+  let settledCount = 0
+
+  try {
+    await new Promise<void>((resolve) => {
+      const schedule = () => {
+        if (signal.aborted) {
+          for (const nodeId of orderedIds) {
+            if (startedIds.has(nodeId) || completedIds.has(nodeId) || failedIds.has(nodeId)) continue
+            failedIds.add(nodeId)
+            settledCount += 1
+            cancelNode(nodeId)
+          }
+          if (activeCount === 0 || settledCount >= orderedIds.length) resolve()
+          return
+        }
+        let changed = true
+        while (changed) {
+          changed = false
+          for (const nodeId of orderedIds) {
+            if (startedIds.has(nodeId) || completedIds.has(nodeId) || failedIds.has(nodeId)) continue
+            const failedDep = (internalDeps.get(nodeId) ?? []).find((dep) => failedIds.has(dep))
+            if (!failedDep) continue
+            failedIds.add(nodeId)
+            settledCount += 1
+            const depTitle = nodeById.get(failedDep)?.title || failedDep
+            failNode(nodeId, `上游「${depTitle}」本批生成失败,本节点未执行`)
+            changed = true
+          }
+        }
+
+        for (const nodeId of orderedIds) {
+          if (activeCount >= localConcurrency) break
+          if (startedIds.has(nodeId) || completedIds.has(nodeId) || failedIds.has(nodeId)) continue
+          const deps = internalDeps.get(nodeId) ?? []
+          if (!deps.every((dep) => completedIds.has(dep))) continue
+          const node = nodeById.get(nodeId)
+          if (!node) {
+            failedIds.add(nodeId)
+            settledCount += 1
+            failNode(nodeId, '节点不存在，本节点未执行')
+            continue
+          }
+          const provider = generationProviderKey(node)
+          if ((activeByProvider.get(provider) || 0) >= generationProviderLimit(provider)) continue
+
+          startedIds.add(nodeId)
+          activeCount += 1
+          activeByProvider.set(provider, (activeByProvider.get(provider) || 0) + 1)
+          void runGenerationNode(nodeId, {
+            executor: options.executor,
+            retry: options.retry,
+            ...(options.grantId ? { grantId: options.grantId } : {}),
+            signal,
+          })
+            .then(
+              (result) => {
+                completedIds.add(nodeId)
+                successes.push({ nodeId, result })
+                options.onNodeResult?.({ ok: true, nodeId, result })
+              },
+              (error: unknown) => {
+                const normalizedError = error instanceof Error ? error : new Error(String(error))
+                failedIds.add(nodeId)
+                failures.push({ nodeId, error: normalizedError })
+                options.onNodeResult?.({ ok: false, nodeId, error: normalizedError })
+              },
+            )
+            .finally(() => {
+              activeCount = Math.max(0, activeCount - 1)
+              const providerActive = Math.max(0, (activeByProvider.get(provider) || 1) - 1)
+              if (providerActive === 0) activeByProvider.delete(provider)
+              else activeByProvider.set(provider, providerActive)
+              settledCount += 1
+              if (settledCount >= orderedIds.length) resolve()
+              else schedule()
+            })
+        }
+
+        if (settledCount >= orderedIds.length) resolve()
       }
-    }
-    if (runnable.length === 0) continue
-    const result = await runGenerationNodesBatch(runnable, options)
-    successes.push(...result.successes)
-    for (const failure of result.failures) {
-      failedIds.add(failure.nodeId)
-      failures.push(failure)
-    }
+      schedule()
+    })
+    return { totalCount: plan.waves.flat().length + plan.blocked.length, successes, failures }
+  } finally {
+    batchCancellation.dispose()
   }
-  return { totalCount: plan.waves.flat().length + plan.blocked.length, successes, failures }
 }
 
 /**
- * 单节点生成/重试/生成变体的轻确认 + 铸令牌 + 跑（付费守卫，务实纵深 A1）。
- * rerun=true 是「基于此生成变体」：先复制出新节点再绑令牌跑；普通重新生成走 regenerateNodeInPlace。
+ * 单节点生成/重试/生成新版本的轻确认 + 铸令牌 + 跑（付费守卫，务实纵深 A1）。
+ * rerun=true 时先复制出新节点再绑令牌跑，已生成的旧节点始终保留。
  */
 export async function confirmAndRunNode(nodeId: string, opts: { rerun?: boolean } = {}): Promise<void> {
   const node = useGenerationCanvasStore.getState().nodes.find((n) => n.id === nodeId)
   const ok = await useSpendConfirmStore.getState().requestConfirm({
-    title: opts.rerun ? '生成变体' : '开始生成',
+    title: opts.rerun ? '生成新版本' : '开始生成',
     message: describeGenerationCost(1, node ? spendCostKind(node.kind) : 'image'),
-    confirmLabel: opts.rerun ? '生成变体' : '生成',
+    confirmLabel: opts.rerun ? '生成新版本' : '生成',
     light: true,
   })
   if (!ok) return
@@ -342,21 +554,18 @@ export async function rerunGenerationNodeAsNewNode(
 }
 
 /**
- * In-place 重生成（C0）：同节点重出 —— **不 duplicate、不换 id、不动 shotIndex**。
- * `runGenerationNode` 本就原地（addNodeResult 把新 result 设为 node.result、旧的进 history），
- * 这里加「轻确认 + 铸令牌（不绕付费闸）+ 完成后回填时间轴」。产物贴回原节点后，
- * 时间轴里引用该节点的 clip 走回填闸（位置不变、URL providerUrl 优先、trim 越界夹取）。
- * 与「基于此生成变体」(confirmAndRunNode{rerun} / rerunGenerationNodeAsNewNode = duplicate) 分流，
- * 别共用一个口子（一个改这一镜、一个长出新镜）。
+ * 时间轴专用的“替换当前片段”操作。它必须保留 sourceNodeId 才能原位回填 clip，
+ * 但 `addNodeResult` 仍会把旧结果留在 history，可从节点结果栈切回。
+ * 画布节点的再次生成不得调用这里，统一走上面的新版本节点路径。
  */
 export async function regenerateNodeInPlace(nodeId: string): Promise<void> {
   const id = String(nodeId || '').trim()
   if (!id) return
   const node = useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)
   const ok = await useSpendConfirmStore.getState().requestConfirm({
-    title: '重新生成',
+    title: '替换当前时间轴片段',
     message: describeGenerationCost(1, node ? spendCostKind(node.kind) : 'image'),
-    confirmLabel: '重新生成',
+    confirmLabel: '生成并替换',
     light: true,
   })
   if (!ok) return

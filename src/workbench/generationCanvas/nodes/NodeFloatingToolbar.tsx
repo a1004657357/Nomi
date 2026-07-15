@@ -2,6 +2,7 @@ import React from 'react'
 import { IconChevronDown } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { NODE_FLOATING_TOOLBAR_MARKER } from './nodeFloatingToolbarLayout'
 
 // 节点浮动工具栏的**单一共享实现**（P1 收口）：图片编辑 / 视频抽帧 / 全景 / 下载三+条以前是三份
 // 几乎一字不差的拷贝、且各自带一堆 token 违规（rgba 硬编码 / gap-[7px] / 图标 16/1.8…）。这里一次性
@@ -16,6 +17,7 @@ export function FloatingToolbarShell({ ariaLabel, children }: { ariaLabel: strin
   const canvasZoom = useGenerationCanvasStore((state) => state.canvasZoom)
   return (
     <div
+      {...NODE_FLOATING_TOOLBAR_MARKER}
       className={cn(
         'absolute left-1/2 bottom-[calc(100%+16px)] z-[12]',
         'inline-flex items-center gap-1 min-h-9 px-1.5 py-1',

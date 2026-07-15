@@ -53,5 +53,20 @@ describe("compactOldToolPayloads — T3 旧轮工具载荷压缩", () => {
     const out = capAgentHistory(messages);
     expect(out.length).toBeLessThanOrEqual(30);
     expect(out[0].role).not.toBe("tool");
+    expect(out[0].role).toBe("user");
+    expect(String(out[0].content)).toContain("此前对话摘要");
+    expect(String(out[0].content)).toContain("工具调用 create_canvas_nodes");
+  });
+
+  it("capAgentHistory 超过消息数时用摘要保留被裁旧轮", () => {
+    const messages: CoreMessage[] = Array.from({ length: 36 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: index % 2 === 0 ? `第 ${index} 轮用户要求：保留咖啡广告主线` : `第 ${index} 轮助手回应：已拆镜头`,
+    }));
+    const out = capAgentHistory(messages);
+    expect(out).toHaveLength(30);
+    expect(out[0]).toMatchObject({ role: "user" });
+    expect(String(out[0].content)).toContain("此前对话摘要");
+    expect(String(out[0].content)).toContain("咖啡广告主线");
   });
 });

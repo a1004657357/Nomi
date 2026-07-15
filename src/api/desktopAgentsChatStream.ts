@@ -26,6 +26,8 @@ export type AgentsChatRequestDto = {
   mode?: 'chat' | 'auto' | string
   temperature?: number
   systemPrompt?: string
+  /** Provider compatibility path: omit native tools and request structured text. */
+  disableTools?: boolean
   attachments?: AgentAttachmentPayload[]
 }
 

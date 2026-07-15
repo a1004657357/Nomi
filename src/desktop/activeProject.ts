@@ -1,11 +1,25 @@
 let activeProjectId = ''
+const activeProjectListeners = new Set<() => void>()
 
 // 与 projectPersistenceService.LAST_ACTIVE_PROJECT_KEY 同一把钥匙：每次项目 hydrate/保存
 // 都会写入当前项目 id，是「当前打开的是哪个项目」的权威、同步、跨刷新可读的真相源。
 const LAST_ACTIVE_PROJECT_KEY = 'nomi-workbench-last-active-project-v1'
 
 export function setDesktopActiveProjectId(projectId: string | null | undefined): void {
-  activeProjectId = typeof projectId === 'string' ? projectId.trim() : ''
+  const nextProjectId = typeof projectId === 'string' ? projectId.trim() : ''
+  if (nextProjectId === activeProjectId) return
+  activeProjectId = nextProjectId
+  activeProjectListeners.forEach((listener) => listener())
+}
+
+/** 已完成项目恢复的内存 ID；刻意不读 last-active，避免恢复期间把旧项目误判为已就绪。 */
+export function getDesktopHydratedProjectId(): string {
+  return activeProjectId
+}
+
+export function subscribeDesktopHydratedProjectId(listener: () => void): () => void {
+  activeProjectListeners.add(listener)
+  return () => activeProjectListeners.delete(listener)
 }
 
 function readPersistedActiveProjectId(): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveNodeVisualSize } from "./nodeSizing";
+import { getNodeSizeBoundsForNode, resolveNodeVisualSize } from "./nodeSizing";
 import { CARD_FIXED_WIDTH } from "./nodeSizing";
 
 // 回归：连线「连不上」的根因是锚点用名义 node.size，而卡片类实际按固定宽渲染。
@@ -43,5 +43,19 @@ describe("resolveNodeVisualSize — 真实渲染尺寸（连线锚点单一真�
     );
     expect(v.height).toBe(236);
     expect(v.height).not.toBe(340);
+  });
+
+  it("分镜脚本表是 text 节点里的大表格视图，不套普通 text 的 680×800 上限", () => {
+    const bounds = getNodeSizeBoundsForNode(node({ kind: "text", meta: { storyboardGroup: true } }));
+    expect(bounds).toMatchObject({ maxWidth: 3600, maxHeight: 2400 });
+
+    const v = resolveNodeVisualSize(
+      node({
+        kind: "text",
+        size: { width: 2690, height: 1800 },
+        meta: { storyboardGroup: true },
+      }),
+    );
+    expect(v).toEqual({ width: 2690, height: 1800 });
   });
 });

@@ -2,7 +2,7 @@
 // 这就是"账本算余额"的那只手——S5-a 当 CI 安全网(replay≡snapshot 属性测试),
 // S5-b 翻正后当 hydrate/undo 的正式投影。复用 graphOps 纯算子保证与 store 同语义。
 // 未知事件类型原样跳过(前向兼容:老版本重放新日志不崩,§4.1 演进策略)。
-import { connectNodes, disconnectEdge, removeNodes, upsertNode } from '../model/graphOps'
+import { changeEdgeMode, connectNodes, disconnectEdge, removeNodes, upsertNode } from '../model/graphOps'
 import type { GenerationCanvasEdge, GenerationCanvasNode, NodeGroup } from '../model/generationCanvasTypes'
 
 export type CanvasProjection = {
@@ -104,7 +104,7 @@ export function applyCanvasEvent(projection: CanvasProjection, event: Replayable
       if (!edgeId) return projection
       return {
         ...projection,
-        edges: projection.edges.map((edge) => (edge.id === edgeId ? { ...edge, mode: payload.mode as GenerationCanvasEdge['mode'] } : edge)),
+        edges: changeEdgeMode(projection.edges, edgeId, payload.mode as GenerationCanvasEdge['mode']),
       }
     }
     case 'canvas.edge.disconnected': {

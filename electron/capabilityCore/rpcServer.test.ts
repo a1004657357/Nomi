@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { startRpcServer, type RpcServerHandle } from './rpcServer'
 import { ensureToken } from './security'
+import { readProject, saveProject } from '../projects/repository'
 
 const tempRoots: string[] = []
 let mockedDocumentsRoot = ''
@@ -18,6 +19,7 @@ let spendReply: { confirmed?: boolean } = { confirmed: true }
 let rendererOps: string[] = []
 // 捕获最后一次 runTask 请求,断言 grantId 是否随请求下传(=付费确认是否真路由+铸令牌)。
 let lastRunTaskReq: { extras?: Record<string, unknown> } | null = null
+let lastDirectorInput: Record<string, unknown> | null = null
 
 vi.mock('electron', () => ({
   app: {
@@ -60,11 +62,22 @@ beforeEach(async () => {
   spendReply = { confirmed: true }
   rendererOps = []
   lastRunTaskReq = null
+  lastDirectorInput = null
   token = ensureToken()
   server = await startRpcServer({
     runTask: async (req) => {
       lastRunTaskReq = req.request as { extras?: Record<string, unknown> }
       return { id: 't', status: 'succeeded', assets: [{ type: 'image', url: 'nomi-local://x' }] }
+    },
+    runDirector: async (input) => {
+      lastDirectorInput = input
+      return {
+        jobId: 'director-job',
+        blenderVersion: '4.0.1',
+        preview: { url: 'nomi-local://asset/p/director-preview.png', assetId: 'preview' },
+        blend: { url: 'nomi-local://asset/p/director-scene.blend', assetId: 'blend' },
+        model: { url: 'nomi-local://asset/p/director-scene.glb', assetId: 'model' },
+      }
     },
     isProjectOpen: (id) => Boolean(openProjectId) && id === openProjectId,
   })
@@ -111,6 +124,27 @@ describe('capabilityCore/rpcServer', () => {
     const gen = await rpc('generate', { projectId, intent: 'image', prompt: 'cat', vendor: 'v', modelKey: 'm' })
     expect(gen.body.ok).toBe(true)
     expect((gen.body.result as { status: string }).status).toBe('succeeded')
+  })
+
+  it('director.render 经 RPC 只接收已有 3D 节点并把 Blender 预演回写同一画布', async () => {
+    const created = await rpc('project.create', { name: 'director' })
+    const projectId = (created.body.result as { id: string }).id
+    const project = readProject(projectId)!
+    const payload = project.payload as Record<string, unknown>
+    payload.generationCanvas = {
+      nodes: [{
+        id: 'scene-node', kind: 'scene3d', title: '导演台', position: { x: 0, y: 0 },
+        meta: { scene3dState: { objects: [], cameras: [], trajectories: [], trajectoryBindings: [], sceneTimeline: { totalDuration: 3 }, environment: {}, editorCamera: {} } },
+      }],
+      edges: [], groups: [], selectedNodeIds: [],
+    }
+    saveProject(projectId, { ...project, payload })
+
+    const rendered = await rpc('director.render', { projectId, sourceNodeId: 'scene-node', stagePreset: 'studio' })
+    expect(rendered.body.ok).toBe(true)
+    expect(lastDirectorInput).toMatchObject({ projectId, ownerNodeId: 'scene-node', stagePreset: 'studio' })
+    const canvas = await rpc('canvas.read', { projectId })
+    expect((canvas.body.result as { nodes: unknown[] }).nodes).toHaveLength(3)
   })
 
   it('A 模式无渲染层（测试环境）：改打开中的项目 → 降级磁盘网关，照常落盘（不再硬 409）', async () => {

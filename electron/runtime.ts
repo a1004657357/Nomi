@@ -13,6 +13,8 @@ import { type AuthType, authHeaders as buildAuthHeaders, buildHttpRequest, build
 import { executeProcessOperation } from "./catalog/processOperation";
 import { executeTextTask } from "./textTaskRunner";
 import { runAudioTask } from "./audioTaskRunner";
+import { runCodexImageGeneration } from "./ai/codexImagegenRunner";
+import { submitJimengWebTask } from "./jimengWeb/seedanceBridge";
 import { firstString, isJsonRecord, nowIso, trim, type JsonRecord } from "./jsonUtils";
 import { collectAssetUrls, firstMappedString, providerMetaFromResponse, taskStatusFromResponse, valuesFromMapping } from "./tasks/responseParsing";
 import { extractAssetUrl } from "./tasks/assetUrlExtract";
@@ -52,6 +54,8 @@ import type {
 import { selectExecutableModel, selectTaskMapping } from "./catalog/types";
 import { applyHeadlessParamDefaults, taskTemplateParams } from "./catalog/taskParams";
 import { applyParamMap, type ParamMap } from "./catalog/paramTranslate";
+import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
+import { JIMENG_WEB_VENDOR_SEED } from "./catalog/jimengWeb";
 import { assertAndConsumeSpendGrant } from "./spendGrant";
 export type {
   AiSdkProviderKind,
@@ -533,6 +537,90 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   const nodeId = trim(request.extras?.nodeId);
   const grantId = trim(request.extras?.grantId);
   const taskId = `task-${crypto.randomUUID()}`;
+  if (vendor.key === CODEX_VENDOR_SEED.key) {
+    if (wantedKind !== "image") throw new Error("Codex Img2 只支持图片生成");
+    if (!projectId) throw new Error("Codex Img2 需要先打开并保存到本地项目后再生成");
+    const recipe = buildNormalizedRecipe({ vendor, model, request });
+    const fingerprint = recipeFingerprint(recipe);
+    const cachedHit = readCachedTaskResult({ projectId, fingerprint, nodeId, extras: request.extras });
+    if (cachedHit) return cachedHit as TaskResult;
+    assertAndConsumeSpendGrant(grantId, nodeId);
+    const runtimeStartedAt = Date.now();
+    const generated = await runCodexImageGeneration({ request });
+    try {
+      const assetWriteStartedAt = Date.now();
+      const contentType = contentTypeFromPath(generated.outputPath);
+      const ext = extensionFromMime(contentType, "png");
+      const saved = writeAsset(projectId, fs.readFileSync(generated.outputPath), `codex-img2-${Date.now()}.${ext}`, contentType, {
+        kind: "generated",
+        generator: "codex-img2",
+        originalPath: generated.outputPath,
+        ownerNodeId: nodeId || null,
+        codexThreadId: generated.threadId || null,
+      }) as { id?: string; name?: string; data?: { url?: string } };
+      const assetUrl = trim(saved.data?.url);
+      if (!assetUrl) throw new Error("Codex Img2 生成成功但资产落盘失败");
+      const timings = {
+        ...generated.timings,
+        assetWriteMs: Date.now() - assetWriteStartedAt,
+        runtimeTotalMs: Date.now() - runtimeStartedAt,
+      };
+      const runId = generated.threadId || taskId;
+      const asset: TaskResult["assets"][number] = {
+        type: "image",
+        url: assetUrl,
+        thumbnailUrl: assetUrl,
+        assetId: saved.id || null,
+        assetName: saved.name || null,
+      };
+      const finalResult: TaskResult = {
+        id: runId,
+        kind,
+        status: "succeeded",
+        assets: [asset],
+        raw: { codex: { threadId: generated.threadId || null, lastMessage: generated.lastMessage, timings } },
+        provenance: buildTaskProvenance({ vendor, model, request, vendorRequestId: runId }),
+      };
+      traceVendorRequested(projectId, { runId, nodeId, recipe });
+      traceVendorCompleted(projectId, { runId, nodeId, status: "succeeded", assetCount: 1 });
+      rememberTaskResult(projectId, fingerprint, finalResult);
+      console.info("[nomi:codex-img2]", JSON.stringify({ runId, nodeId, timings }));
+      return finalResult;
+    } finally {
+      try { fs.rmSync(generated.tempDir, { recursive: true, force: true }); } catch { /* non-fatal cleanup */ }
+    }
+  }
+  if (vendor.key === JIMENG_WEB_VENDOR_SEED.key) {
+    if (wantedKind !== "video") throw new Error("即梦 Web 目前只支持视频生成");
+    if (!projectId) throw new Error("即梦 Web 需要先打开并保存到本地项目后再生成");
+    const recipe = buildNormalizedRecipe({ vendor, model, request });
+    const fingerprint = recipeFingerprint(recipe);
+    const cachedHit = readCachedTaskResult({ projectId, fingerprint, nodeId, extras: request.extras });
+    if (cachedHit) return cachedHit as TaskResult;
+    assertAndConsumeSpendGrant(grantId, nodeId);
+    const submitted = await submitJimengWebTask({ request, vendorBaseUrl: vendor.baseUrlHint });
+    const queued: TaskResult = {
+      id: submitted.taskCode,
+      kind,
+      status: "queued",
+      assets: [],
+      raw: { jimengWeb: { taskCode: submitted.taskCode, serverUrl: submitted.serverUrl, payload: submitted.payload, submit: submitted.raw } },
+    };
+    traceVendorRequested(projectId, { runId: submitted.taskCode, nodeId, recipe });
+    admitTask(submitted.taskCode, {
+      vendor: vendorKey,
+      request,
+      raw: queued.raw,
+      mapping: null,
+      model,
+      providerMeta: { task_id: submitted.taskCode, taskCode: submitted.taskCode, serverUrl: submitted.serverUrl },
+      projectId,
+      nodeId,
+      wantedKind,
+      fingerprint,
+    });
+    return queued;
+  }
   const mapping = findTaskMapping(vendorKey, kind, modelKey);
   request.extras = applyHeadlessParamDefaults(request.extras, (model?.meta as { archetypeId?: string } | undefined)?.archetypeId, kind, vendorKey, mapping?.create?.defaultParams); // headless 缺参兜底(档案默认+mapping)
   // 第四路 audio：TTS/Whisper 同步收口（二进制/multipart）。付费守卫：必发 vendor，进来即校验消费令牌。

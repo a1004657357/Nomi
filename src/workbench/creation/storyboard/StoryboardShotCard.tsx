@@ -3,7 +3,12 @@ import { IconAlertTriangle, IconGripVertical, IconPlus, IconTrash, IconX } from 
 import { cn } from '../../../utils/cn'
 import { NomiSelect } from '../../../design'
 import { AutoGrowTextarea } from '../../ai/composer/AutoGrowTextarea'
-import type { PlanAnchor, PlanShot } from '../../generationCanvas/agent/storyboardPlan'
+import {
+  storyboardShotImagePrompt,
+  storyboardShotVideoPrompt,
+  type PlanAnchor,
+  type PlanShot,
+} from '../../generationCanvas/agent/storyboardPlan'
 import { DURATION_OPTIONS_SEC } from '../../generationCanvas/agent/storyboardPlanEdits'
 import type { ModelOption } from '../../../config/models'
 import { useDedupedModelSelect } from '../../common/useDedupedModelSelect'
@@ -244,17 +249,38 @@ export default function StoryboardShotCard(props: Props): JSX.Element {
         </div>
       )}
 
-      <AutoGrowTextarea
-        value={shot.prompt}
-        onChange={(event) => onUpdate({ prompt: event.target.value })}
-        aria-label={`镜 ${shot.index} 提示词`}
-        placeholder={isImageShot ? '这镜画什么：构图 + 景别 + 人物姿态/表情（静态画面，不写运镜）' : '这镜画什么：运镜 + 动作演进（不复述锚的静态描述）'}
-        className={cn(
-          'mt-2.5 px-2 py-2 rounded-nomi-sm border bg-nomi-paper',
-          'text-body-sm text-nomi-ink-80 leading-normal focus:border-nomi-accent',
-          promptInvalid ? 'border-workbench-danger' : 'border-nomi-line',
-        )}
-      />
+      <div className="mt-2.5 grid gap-2">
+        <label className="grid gap-1">
+          <span className="text-micro text-nomi-ink-40">图片提示词</span>
+          <AutoGrowTextarea
+            value={storyboardShotImagePrompt(shot)}
+            onChange={(event) => onUpdate({ imagePrompt: event.target.value, ...(isImageShot ? { prompt: event.target.value } : {}) })}
+            aria-label={`镜 ${shot.index} 图片提示词`}
+            placeholder="关键帧画什么：构图 + 景别 + 人物姿态/表情（静态画面，不写运镜）"
+            className={cn(
+              'px-2 py-2 rounded-nomi-sm border bg-nomi-paper',
+              'text-body-sm text-nomi-ink-80 leading-normal focus:border-nomi-accent',
+              promptInvalid && isImageShot ? 'border-workbench-danger' : 'border-nomi-line',
+            )}
+          />
+        </label>
+        {!isImageShot ? (
+          <label className="grid gap-1">
+            <span className="text-micro text-nomi-ink-40">视频生成提示词</span>
+            <AutoGrowTextarea
+              value={storyboardShotVideoPrompt(shot)}
+              onChange={(event) => onUpdate({ videoPrompt: event.target.value, prompt: event.target.value })}
+              aria-label={`镜 ${shot.index} 视频生成提示词`}
+              placeholder="视频怎么动：运镜 + 动作演进 + 节奏与时长感（不复述锚的静态描述）"
+              className={cn(
+                'px-2 py-2 rounded-nomi-sm border bg-nomi-paper',
+                'text-body-sm text-nomi-ink-80 leading-normal focus:border-nomi-accent',
+                promptInvalid ? 'border-workbench-danger' : 'border-nomi-line',
+              )}
+            />
+          </label>
+        ) : null}
+      </div>
     </div>
   )
 }

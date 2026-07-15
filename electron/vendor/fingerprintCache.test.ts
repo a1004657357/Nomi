@@ -8,6 +8,7 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  fingerprintCacheSizeForTests,
   readCachedTaskResult,
   recipeFingerprint,
   rememberTaskResult,
@@ -56,19 +57,25 @@ afterEach(() => {
 
 describe("fingerprintCache — S8 指纹缓存", () => {
   it("同配方恒同指纹;改任一参数指纹变(验收:改参数正常重跑)", () => {
-    const base = recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request() }))
-    expect(recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request() }))).toBe(base)
-    expect(recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request({ prompt: "改了" }) }))).not.toBe(base)
-    expect(recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request({ seed: 7 }) }))).not.toBe(base)
-    expect(recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request({ extras: { aspect_ratio: "9:16" } }) }))).not.toBe(base)
+    const base = recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request() }));
+    expect(recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request() }))).toBe(base);
+    expect(recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request({ prompt: "改了" }) }))).not.toBe(
+      base,
+    );
+    expect(recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request({ seed: 7 }) }))).not.toBe(base);
+    expect(
+      recipeFingerprint(
+        buildNormalizedRecipe({ vendor, model, request: request({ extras: { aspect_ratio: "9:16" } }) }),
+      ),
+    ).not.toBe(base);
   });
 
   it("路由旗标(projectId/nodeId/forceRerun)不进指纹", () => {
-    const base = recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request() }))
+    const base = recipeFingerprint(buildNormalizedRecipe({ vendor, model, request: request() }));
     const flagged = recipeFingerprint(
       buildNormalizedRecipe({ vendor, model, request: request({ extras: { forceRerun: true, nodeId: "n99" } }) }),
-    )
-    expect(flagged).toBe(base)
+    );
+    expect(flagged).toBe(base);
   });
 
   it("终态成功入缓存 → 同键命中秒回深拷贝 + vendor.call.cached 入日志", () => {
@@ -107,7 +114,9 @@ describe("fingerprintCache — S8 指纹缓存", () => {
     // 审计仍可追到原始来源（诚实：复用自哪次成功 run），但不冒充本节点的 vendor 请求。
     expect(prov?.cacheSourceRunId).toBe("task-A");
     // 缓存里的原始记录不被命中读取就地改坏（深拷贝隔离）。
-    const prov2 = readCachedTaskResult({ projectId: "p1", fingerprint: "fp-shared", nodeId: "nC" })?.provenance as Record<string, unknown> | undefined;
+    const prov2 = readCachedTaskResult({ projectId: "p1", fingerprint: "fp-shared", nodeId: "nC" })?.provenance as
+      | Record<string, unknown>
+      | undefined;
     expect(prov2?.fromCache).toBe(true);
     expect(prov2?.vendorRequestId).toBeUndefined();
   });
@@ -129,5 +138,15 @@ describe("fingerprintCache — S8 指纹缓存", () => {
     // 同指纹不同项目不串
     rememberTaskResult("p1", "fp-x", result());
     expect(readCachedTaskResult({ projectId: "p2", fingerprint: "fp-x" })).toBeNull();
+  });
+
+  it("LRU 上限淘汰最旧指纹，避免长会话缓存无界增长", () => {
+    for (let index = 0; index < 205; index += 1) {
+      rememberTaskResult("p1", `fp-${index}`, result(`task-${index}`));
+    }
+
+    expect(fingerprintCacheSizeForTests()).toBe(200);
+    expect(readCachedTaskResult({ projectId: "p1", fingerprint: "fp-0" })).toBeNull();
+    expect(readCachedTaskResult({ projectId: "p1", fingerprint: "fp-204" })?.id).toBe("task-204");
   });
 });

@@ -92,6 +92,19 @@ const storyboardAnchorSchema = z.object({
   scope: z.enum(["all", "selective"]).optional().describe("all = every shot (style/brand); selective = only named shots."),
 })
 
+const storyboardShotTextFieldSchemas = {
+  scene: z.string().optional().describe("Scene / location for this shot, e.g. 咖啡馆吧台 / 街角雨夜."),
+  shotSize: z.string().optional().describe("Shot size / framing, e.g. 远景 / 全景 / 中景 / 近景 / 特写."),
+  cameraAngle: z.string().optional().describe("Camera angle / position, e.g. 正面 / 侧面 / 俯拍 / 仰拍 / 过肩 / 主观."),
+  cameraMove: z.string().optional().describe("Camera movement for video, e.g. 固定 / 推 / 拉 / 摇 / 移 / 跟拍 / 环绕 / 手持."),
+  characters: z.string().optional().describe("Characters appearing in this shot."),
+  performance: z.string().optional().describe("Character performance, action blocking, expression and body language."),
+  dialogue: z.string().optional().describe("Spoken dialogue for this shot. Leave empty when there is no dialogue."),
+  props: z.string().optional().describe("Important props / objects visible or used in this shot."),
+  sound: z.string().optional().describe("Music, ambience, SFX, or sound notes for this shot."),
+  notes: z.string().optional().describe("Production notes / constraints that should stay visible in the storyboard table."),
+}
+
 const storyboardShotSchema = z.object({
   index: z.number().int().describe("1-based shot number in script order."),
   shotKind: z
@@ -102,7 +115,10 @@ const storyboardShotSchema = z.object({
     ),
   durationSec: z.number().describe("Shot duration in seconds (video shots only; for image shots emit 0). Clamped to the chosen model's max when it lands."),
   anchorIds: z.array(z.string()).describe("Which anchors this shot uses (by anchor.id) → visual anchors become reference edges, text anchors fold into the prompt."),
-  prompt: z.string().describe("Directly-generatable prompt: camera move + action progression; do NOT restate the anchors' static descriptions."),
+  prompt: z.string().describe("Backward-compatible prompt. For new plans, mirror the active prompt here: imagePrompt for image shots, videoPrompt for video shots."),
+  imagePrompt: z.string().optional().describe("Keyframe / image prompt: static composition, framing, subject pose and visual details. No camera movement."),
+  videoPrompt: z.string().optional().describe("Video generation prompt: camera movement, action progression, rhythm and duration feel. Do not restate static anchor descriptions."),
+  ...storyboardShotTextFieldSchemas,
   // P0-9:让 AI 一并产出每镜的模型/模式/参数(含负面词)。取值必须来自用户消息里的「可用模型」清单,
   // 不要编不存在的 modelKey/参数名;不确定就留空,落画布时系统用默认视频模型兜底。
   modelKey: z.string().optional().describe("Video model key for this shot, chosen from the 「可用模型」 list in the user message. Omit to use the default video model."),
@@ -114,6 +130,38 @@ export const storyboardPlanParamsSchema = z.object({
   title: z.string().describe("Short plan title in the user's language."),
   anchors: z.array(storyboardAnchorSchema).max(24),
   shots: z.array(storyboardShotSchema).min(1).max(24),
+})
+
+export const updateStoryboardShotParamsSchema = z.object({
+  shotIndex: z.number().int().min(1).describe("1-based shot number in the current storyboard plan."),
+  imagePrompt: z.string().optional().describe("Updated keyframe / image prompt for this shot."),
+  videoPrompt: z.string().optional().describe("Updated video generation prompt for this shot."),
+  prompt: z
+    .string()
+    .optional()
+    .describe("Backward-compatible prompt. If imagePrompt/videoPrompt are omitted, this updates the active prompt for the shot kind."),
+  ...storyboardShotTextFieldSchemas,
+  shotKind: z.enum(["image", "video"]).optional().describe("Optional change of this shot's kind."),
+  durationSec: z.number().optional().describe("Optional duration update, mainly for video shots."),
+  modelKey: z.string().optional().describe("Optional generation model key for this shot."),
+  modeId: z.string().optional().describe("Optional model mode id for this shot."),
+  params: z.record(z.unknown()).optional().describe("Optional generation params for this shot; replaces the shot params object."),
+})
+
+export const batchUpdateStoryboardShotsParamsSchema = z.object({
+  shots: z
+    .array(updateStoryboardShotParamsSchema)
+    .min(1)
+    .max(24)
+    .describe("Shot updates keyed by shotIndex. Prefer one batch call for storyboard-table autofill instead of many update_storyboard_shot calls."),
+  overwriteExisting: z
+    .boolean()
+    .optional()
+    .describe("When false/omitted, only empty storyboard-table fields are filled. Set true only when the user explicitly asks to overwrite existing table content."),
+  deriveVideoPrompts: z
+    .boolean()
+    .optional()
+    .describe("When true/omitted, Nomi deterministically rebuilds each updated shot's videoPrompt from the final table fields and syncs existing video nodes."),
 })
 
 // ── 站位参考 schema（create_staging_reference 的参数；镜像渲染层 stagingBuilder 的 StagingSpec，
@@ -249,14 +297,32 @@ export const cameraMoveParamsSchema = z.object({
     .describe("Optional individual gray-model props placed in the move's scene (a car beside the subject, a tree behind). Prefer sceneTemplate for a full backdrop."),
 });
 
+export const externalImageAttachmentParamsSchema = z.object({
+  nodeId: z
+    .string()
+    .min(1)
+    .describe("Real canvas node id, or a clientId from this turn's create_canvas_nodes result, that should receive the imported image result."),
+  sourceType: z
+    .enum(["local_path", "url", "data_url"])
+    .describe("local_path for a file created by Codex/imagegen on this machine; url for http(s) output; data_url for inline data:image/... output."),
+  source: z.string().min(1).describe("The absolute local file path, http(s) URL, or data:image/... URL to import into the Nomi project."),
+  fileName: z.string().optional().describe("Optional saved filename inside the Nomi project assets folder."),
+  prompt: z.string().optional().describe("Prompt used to create the image, if known. Stored as provenance on the node result."),
+  provider: z.string().optional().describe("Image provider name for provenance, e.g. codex-imagegen."),
+  modelKey: z.string().optional().describe("Image model key for provenance, e.g. gpt-image-2."),
+});
+
 export const canvasToolNames = [
   "read_canvas_state",
   "propose_storyboard_plan",
+  "update_storyboard_shot",
+  "batch_update_storyboard_shots",
   "create_canvas_nodes",
   "connect_canvas_edges",
   "set_node_prompt",
   "delete_canvas_nodes",
   "run_generation_batch",
+  "attach_external_image_to_node",
   "arrange_storyboard_to_timeline",
   "tidy_canvas",
   "create_staging_reference",
@@ -275,6 +341,16 @@ export const canvasTools = {
     description:
       "Produce a STRUCTURED storyboard plan (cross-shot anchors + shots) for the user to review and edit in the creation area BEFORE anything is created on the canvas. Does NOT touch the canvas and costs nothing — planning is free and editable; the user confirms later to land it. Use this (not create_canvas_nodes) when planning a story into a consistent multi-shot video. Emit exactly ONE call with the whole plan.",
     parameters: storyboardPlanParamsSchema,
+  }),
+  update_storyboard_shot: tool({
+    description:
+      "Update one shot inside the current storyboard plan, including storyboard-table fields (scene, shotSize, cameraAngle, cameraMove, characters, performance, dialogue, props, sound, notes), imagePrompt, videoPrompt and model params. Use this when the user asks the agent to fill the storyboard table, revise the storyboard script, or turn table keywords into a highly specific video-generation prompt. This edits the editable plan source-of-truth; it does not call a model.",
+    parameters: updateStoryboardShotParamsSchema,
+  }),
+  batch_update_storyboard_shots: tool({
+    description:
+      "Batch update multiple shots inside the current storyboard plan. Use this as the FIRST choice when the user asks to auto-fill a storyboard table or fill many shots. Fill storyboard-table fields only; set deriveVideoPrompts=true so Nomi deterministically creates highly specific video prompts from the table fields and syncs existing video nodes. Does not call generation models.",
+    parameters: batchUpdateStoryboardShotsParamsSchema,
   }),
   create_canvas_nodes: tool({
     description:
@@ -323,6 +399,11 @@ export const canvasTools = {
     parameters: z.object({
       nodeIds: z.array(z.string().min(1)).min(1).max(24),
     }),
+  }),
+  attach_external_image_to_node: tool({
+    description:
+      "Import an externally generated IMAGE (for example a Codex/imagegen result saved on disk) into the current Nomi project and attach it as the result of an existing image-like canvas node. This does not call an image model itself; it only persists and binds an already-created file/URL. Use after the user or a sidecar gives you a local path, http(s) URL, or data:image URL.",
+    parameters: externalImageAttachmentParamsSchema,
   }),
   // 把已生成的镜头视频按剧本时序排进时间轴媒体轨道,用户即可去预览区播放/导出成片。
   // 顺序由系统按镜号(shotIndex,拆镜头时定的剧本序)确定性排定——你不需要、也不应该自己

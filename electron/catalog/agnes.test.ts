@@ -81,14 +81,15 @@ describe("Agnes 视频（异步 create→poll，形状锁 + 两个 quirk）", ()
       expect(mp.create.provider_meta_mapping?.video_id).toBe("video_id");
       expect((mp.create.body as { frame_rate: unknown }).frame_rate).toBe(24); // 数字字面量，非模板
     }
-    // i2v 多一个顶层 image 字段（单图首帧）。
+    // i2v 多一个顶层 image 字段（官方要求单图 URL string；多图/关键帧数组才进 extra_body.image）。
     const i2v = model.mappings[1].create.body as Record<string, unknown>;
-    expect(i2v.image).toBe("{{request.params.image}}");
+    expect(i2v.image).toBe("{{request.params.image_url}}");
+    expect(Array.isArray(i2v.image)).toBe(false);
   });
 
-  it("quirk①：轮询 op 是 /agnesapi（非 /v1）+ video_id 走 query 参数", () => {
+  it("quirk①：轮询 op 是官方根路径 /agnesapi（非 /v1）+ video_id 走 query 参数", () => {
     expect(AGNES_VIDEO_QUERY_OP.method).toBe("GET");
-    expect(AGNES_VIDEO_QUERY_OP.path).toBe("/agnesapi");
+    expect(AGNES_VIDEO_QUERY_OP.path).toBe("https://apihub.agnes-ai.com/agnesapi");
     expect((AGNES_VIDEO_QUERY_OP.query as Record<string, unknown>)?.video_id).toBe("{{providerMeta.video_id}}");
   });
 

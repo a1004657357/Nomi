@@ -18,6 +18,10 @@ export type GenerationNodeExecutorContext = {
   grantId?: string
   /** 提交幂等键（= node run.id）：透传到 extras.idempotencyKey，让同一次意图提交在 electron 侧 at-most-once。 */
   idempotencyKey?: string
+  /** catalog 自愈模型选择后，把修复后的节点配置写回画布。 */
+  onResolvedNode?: CatalogTaskActionOptions['onResolvedNode']
+  /** 本地取消信号：停止排队、轮询和支持取消的子进程。 */
+  signal?: AbortSignal
 }
 
 export type GenerationNodeExecutor = (
@@ -33,6 +37,8 @@ export const generationNodeExecutor: GenerationNodeExecutor = async (node, conte
   const gate = {
     ...(grantId ? { grantId } : {}),
     ...(context?.idempotencyKey ? { idempotencyKey: context.idempotencyKey } : {}),
+    ...(context?.onResolvedNode ? { onResolvedNode: context.onResolvedNode } : {}),
+    ...(context?.signal ? { signal: context.signal } : {}),
   }
   if (executionKind === 'image') {
     const references = resolveGenerationReferences(node, context)

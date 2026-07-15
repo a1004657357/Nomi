@@ -2,11 +2,13 @@
 // 注意：这是 store 专用的深度归一化（过滤未知 kind、position 兜底、groups 走 zod、edges 校验端点），
 // 与 workbenchPersistence.ts 的轻量直通版 normalizeGenerationCanvasSnapshot 行为不同，故改名 normalizeStoreSnapshot。
 import { isGenerationNodeKind } from '../model/generationNodeKinds'
+import { createEdgeId } from '../model/graphOps'
 import { nodeGroupSchema } from '../model/generationCanvasSchema'
 import { isCategoryId } from './canvasGuards'
 import { createDefaultGenerationCanvasSnapshot } from './generationCanvasDefaults'
 import type {
   GenerationCanvasEdge,
+  GenerationCanvasEdgeMode,
   GenerationCanvasNode,
   GenerationCanvasSnapshot,
   GenerationNodeProgress,
@@ -67,15 +69,35 @@ export function normalizeStoreSnapshot(input: unknown): GenerationCanvasSnapshot
       })
     : []
   const nodeIds = new Set(nodes.map((node) => node.id))
+  const edgeModes = new Set<GenerationCanvasEdgeMode>([
+    'reference',
+    'first_frame',
+    'last_frame',
+    'style_ref',
+    'character_ref',
+    'composition_ref',
+  ])
+  const seenEdgeKeys = new Set<string>()
   const edges = Array.isArray(raw.edges)
     ? raw.edges.flatMap((item): GenerationCanvasEdge[] => {
         if (!item || typeof item !== 'object') return []
         const edge = item as Record<string, unknown>
-        const id = typeof edge.id === 'string' ? edge.id.trim() : ''
         const source = typeof edge.source === 'string' ? edge.source.trim() : ''
         const target = typeof edge.target === 'string' ? edge.target.trim() : ''
-        if (!id || !source || !target || !nodeIds.has(source) || !nodeIds.has(target)) return []
-        return [{ ...(edge as GenerationCanvasEdge), id, source, target }]
+        if (!source || !target || !nodeIds.has(source) || !nodeIds.has(target)) return []
+        const mode = edgeModes.has(edge.mode as GenerationCanvasEdgeMode)
+          ? edge.mode as GenerationCanvasEdgeMode
+          : 'reference'
+        const key = `${source}\u0000${target}\u0000${mode}`
+        if (seenEdgeKeys.has(key)) return []
+        seenEdgeKeys.add(key)
+        return [{
+          ...(edge as GenerationCanvasEdge),
+          id: createEdgeId(source, target, mode),
+          source,
+          target,
+          mode,
+        }]
       })
     : []
   const selectedNodeIds = Array.isArray(raw.selectedNodeIds)

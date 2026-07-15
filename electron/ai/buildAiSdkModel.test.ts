@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildAiSdkModel } from "./buildAiSdkModel";
+import { adaptToolSchemasForProfile, buildAiSdkModel } from "./buildAiSdkModel";
+import { getModelProfile } from "./modelProfiles";
 
 describe("buildAiSdkModel", () => {
   it("returns an openai-compatible language model for kind=openai-compatible", () => {
@@ -77,5 +78,34 @@ describe("buildAiSdkModel", () => {
       modelId: "gpt-4o-mini",
     });
     expect(model.modelId).toBe("gpt-4o-mini");
+  });
+
+  it("removes only JSON Schema dialect metadata for GLM tool calls", () => {
+    const body = {
+      tools: [{
+        type: "function",
+        function: {
+          name: "read_stage",
+          parameters: {
+            type: "object",
+            $schema: "http://json-schema.org/draft-07/schema#",
+            properties: {
+              nested: {
+                type: "object",
+                $schema: "https://json-schema.org/draft/2020-12/schema",
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+      }],
+    };
+
+    const adapted = adaptToolSchemasForProfile(body, getModelProfile("glm-5-turbo"));
+    const parameters = (adapted.tools as Array<{ function: { parameters: Record<string, unknown> } }>)[0].function.parameters;
+    expect(parameters.$schema).toBeUndefined();
+    expect((parameters.properties as Record<string, Record<string, unknown>>).nested.$schema).toBeUndefined();
+    expect(parameters.additionalProperties).toBe(false);
+    expect((body.tools[0].function.parameters as Record<string, unknown>).$schema).toContain("draft-07");
   });
 });

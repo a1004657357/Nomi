@@ -14,8 +14,11 @@ describe('summarizeToolCall — 时间线步骤标题(人话,无 toolName 原文
     expect(summarizeToolCall('create_canvas_nodes', { nodes: [1, 2, 3], summary: '海边三镜头' })).toBe('创建 3 个节点：海边三镜头')
     expect(summarizeToolCall('connect_canvas_edges', { edges: [1, 2] })).toBe('连接 2 条引用线')
     expect(summarizeToolCall('set_node_prompt', { nodeId: 'n1' })).toBe('改写「镜1」的提示词')
+    expect(summarizeToolCall('update_storyboard_shot', { shotIndex: 2 })).toBe('修改镜头 2 的分镜提示词')
+    expect(summarizeToolCall('batch_update_storyboard_shots', { shots: [{ shotIndex: 1 }, { shotIndex: 2 }] })).toBe('批量填写 2 个分镜表镜头')
     expect(summarizeToolCall('delete_canvas_nodes', { nodeIds: ['a'] })).toBe('删除 1 个节点')
     expect(summarizeToolCall('run_generation_batch', { nodeIds: ['a', 'b'] })).toContain('批量生成 2 个节点')
+    expect(summarizeToolCall('attach_external_image_to_node', { nodeId: 'n1' })).toBe('导入外部图片到「镜1」')
   })
 
   it('set_node_prompt 查不到节点 → 退回不带 id 的人话(不漏机器串)', () => {
@@ -56,11 +59,14 @@ describe('describeToolCallDetail — 副标题翻 args(杀 raw id/JSON)', () => 
     const detail = describeToolCallDetail('set_node_prompt', { prompt: long })
     expect(detail.length).toBeLessThan(90)
     expect(detail.endsWith('…')).toBe(true)
+    expect(describeToolCallDetail('update_storyboard_shot', { videoPrompt: long }).endsWith('…')).toBe(true)
+    expect(describeToolCallDetail('batch_update_storyboard_shots', { shots: [{ shotIndex: 2 }, { shotIndex: 1 }] })).toBe('镜头 1、镜头 2')
   })
 
   it('delete/batch 列节点标题(非 id);read 无 detail', () => {
     seedNodes([{ id: 'a', title: '镜A' }, { id: 'b', title: '镜B' }])
     expect(describeToolCallDetail('delete_canvas_nodes', { nodeIds: ['a', 'b'] })).toBe('「镜A」、「镜B」')
+    expect(describeToolCallDetail('attach_external_image_to_node', { source: '/tmp/codex-output.png' })).toBe('/tmp/codex-output.png')
     expect(describeToolCallDetail('read_canvas_state', {})).toBe('')
   })
 })

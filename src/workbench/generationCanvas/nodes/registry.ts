@@ -25,6 +25,7 @@ export type GenerationNodeIconKey =
     | "output"
     | "panorama"
     | "scene3d"
+    | "vibingDirector"
     | "model3d"
     | "whiteboard"
     | "audio";
@@ -203,16 +204,31 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
     {
         kind: "scene3d",
         label: "3D Scene",
-        menuLabel: "3D场景",
+        menuLabel: "3D导演台",
         component: loadBaseGenerationNode,
         icon: "scene3d",
-        defaultTitle: "3D场景",
+        defaultTitle: "3D导演台",
         defaultSize: { width: 480, height: 320 },
         catalogKind: "text",
         quickAdd: true,
         agentCreatable: false,
         providesImageReference: true,
-        promptPlaceholder: "在3D场景中摆放模型并截图...",
+        promptPlaceholder: "摆位、运镜并输出导演预演...",
+    },
+    {
+        // Blender 回传式导演台。它拥有 meta.vibingDirectorState 和本项目内的 Blender 产物，
+        // 不与旧 scene3d 节点共享 source-of-truth，也不维护独立 Three.js 场景。
+        kind: "vibingDirector",
+        label: "VIBING Director",
+        menuLabel: "VIBING Director",
+        component: loadBaseGenerationNode,
+        icon: "vibingDirector",
+        defaultTitle: "VIBING Director",
+        defaultSize: { width: 500, height: 340 },
+        catalogKind: "text",
+        quickAdd: true,
+        providesImageReference: true,
+        promptPlaceholder: "通过 Director Agent 在 Blender 中搭建场景、摆位、机位和镜头节拍...",
     },
     {
         kind: "whiteboard",

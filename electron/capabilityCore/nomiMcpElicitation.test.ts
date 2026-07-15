@@ -117,4 +117,24 @@ describe('nomi-mcp · 付费 elicitation 握手（B 模式）', () => {
     expect(result.content[0].text).toContain('Nomi 未打开')
     expect(harness.invoke).not.toHaveBeenCalled()
   })
+
+  it('director tool 直接路由到受约束的 director.render，不触发付费确认', async () => {
+    harness = new ProtocolHarness(true)
+    await harness.initialize(true)
+    harness.invoke.mockResolvedValueOnce({ jobId: 'director-job', previewNodeId: 'preview-node' })
+    harness.send({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'nomi_render_director', arguments: { projectId: 'p', sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' } },
+    })
+    const toolRes = await harness.next()
+    expect(harness.invoke).toHaveBeenCalledWith(
+      'director.render',
+      { projectId: 'p', sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' },
+    )
+    const result = toolRes.result as { content: Array<{ text: string }>; isError?: boolean }
+    expect(result.isError).toBeUndefined()
+    expect(result.content[0].text).toContain('director-job')
+  })
 })

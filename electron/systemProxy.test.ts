@@ -3,6 +3,7 @@ import type { Dispatcher } from "undici";
 // 从纯模块导入，避免触发 electron 运行时（CI 纯 Node 会失败）。Session 仅类型引用，已被擦除。
 import {
   describeNetworkError,
+  getActiveHttpProxyUrl,
   parseEnvProxy,
   parseResolveProxyString,
   rememberProxyStateForTests,
@@ -156,5 +157,12 @@ describe("describeNetworkError（把 fetch failed 翻成人话）", () => {
   it("生效 HTTP 代理后 → 诊断带出代理标签（回归既有行为）", () => {
     rememberProxyStateForTests({ kind: "http", url: "http://127.0.0.1:7897", source: "system" });
     expect(describeNetworkError(withCause("ETIMEDOUT"))).toMatch(/当前代理/);
+    expect(getActiveHttpProxyUrl()).toBe("http://127.0.0.1:7897");
+  });
+
+  it("无代理或不支持的代理不会暴露给子进程", () => {
+    expect(getActiveHttpProxyUrl()).toBeNull();
+    rememberProxyStateForTests({ kind: "unsupported", detail: "SOCKS only", source: "system" });
+    expect(getActiveHttpProxyUrl()).toBeNull();
   });
 });

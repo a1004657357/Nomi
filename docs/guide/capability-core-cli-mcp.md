@@ -1,6 +1,6 @@
 # 用户指南：用 Claude Code / Codex 在本地驱动 Nomi（CLI + MCP）
 
-> 让你电脑上的 AI 编程助手（Claude Code、Codex、Cursor…）直接操作你的 Nomi：建项目、往画布加镜头、改提示词、用你配好的模型**真生成图 / 视频 / 文本**，结果落进 Nomi 项目，打开就能看。
+> 让你电脑上的 AI 编程助手（Claude Code、Codex、Cursor…）直接操作你的 Nomi：建项目、往画布加镜头、改提示词、用你配好的模型**真生成图 / 视频 / 文本**，或把 3D 导演台交给本机 Blender 做预演；结果落进 Nomi 项目，打开就能看。
 >
 > 这份是「照着走得通」的完整使用指南。实现原理见 `docs/plan/2026-06-20-capability-core-headless-exposure.md`。
 
@@ -129,7 +129,7 @@ node scripts/nomi.mjs generate workspace-xxxx modelscope "Tongyi-MAI/Z-Image-Tur
 }
 ```
 
-**② 重启 Claude Code**，确认 `nomi` 这组工具出现了（`nomi_list_models` / `nomi_create_project` / `nomi_generate` 等 9 个）。
+**② 重启 Claude Code**，确认 `nomi` 这组工具出现了（`nomi_list_models` / `nomi_create_project` / `nomi_render_director` / `nomi_generate` 等 10 个）。
 
 **③ 直接说人话**，它自己挑工具完成：
 
@@ -141,14 +141,9 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 
 ## 4. 开着 vs 关着 —— 一条要知道的限制
 
-如果 Nomi **正开着、而且正打开着你要改的那个项目**，外部的「改画布」命令（加节点 / 连线 / 改提示词 / 删节点）会被**拒绝**并提示原因：
+Nomi **开着且目标项目正打开**时，画布读写会经渲染层网关实时应用，结果立刻出现在当前画布；未打开的项目仍安全地写入项目文件。这样外部 Codex 不会覆盖正在编辑的内存状态。
 
-> `该项目正在 Nomi 中打开；图变更请在 app 内操作，或关闭项目后再用外部调用`
-
-原因：那一刻 app 内存里的状态才是真相，外部直接改文件会被它防抖回盘覆盖掉（防止你的改动丢失）。
-
-**应对**：在 app 里手动改，或先关掉那个项目再用外部命令。**读取、列模型、生成不受此限制。**
-（「外部改动实时反映到打开着的画布」是后续切片。）
+`director render` 是例外：它需要正在运行的 Nomi 桌面进程来导入 Blender 资产并回写画布。若 Nomi 未打开，CLI 会返回清晰错误；先启动 Nomi 再重试。
 
 ---
 
@@ -167,6 +162,7 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 | `canvas connect <projectId> <源id> <目标id> [mode]` | 连线（mode 缺省 reference） |
 | `canvas prompt <projectId> <节点id> "新提示词"` | 改提示词 |
 | `canvas delete <projectId> <节点id> [更多...]` | 删节点（连带删边） |
+| `director render <projectId> <scene3dNodeId> [stagePreset]` | 用本机 Blender 预演已有 3D 导演台，并回写预览图、BLEND、GLB 和连接边。`stagePreset` 可为 `empty` / `studio` / `coffee_shop` / `city_street` / `interior_room`。Nomi 必须保持打开。 |
 | `generate <projectId> <vendor> <modelKey> <intent> "提示词"` | 真生成（intent=image/video/text/audio） |
 
 ### MCP 工具
@@ -178,7 +174,20 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 | `nomi_read_canvas` | 读画布 |
 | `nomi_add_nodes` / `nomi_connect_nodes` | 加节点 / 连线 |
 | `nomi_set_node_prompt` / `nomi_delete_nodes` | 改提示词 / 删节点 |
+| `nomi_render_director` | 用已有 `scene3d` 节点启动本机 Blender 导演预演，并把产物自动接回画布（要求 Nomi 已打开） |
 | `nomi_generate` | 真生成（含参考图 references、指定 nodeId） |
+
+### Blender 导演预演
+
+外部 Codex 可以先创建一个 `scene3d` 节点，再调用导演预演。空的 `scene3d` 节点会自动使用标准灰模、相机和 5 秒时间线；如果你已经在 Nomi 的 3D 导演台里摆过角色、道具或相机，则优先使用那份状态。
+
+```bash
+node scripts/nomi.mjs canvas add workspace-xxxx scene3d "咖啡广告：桌面咖啡杯，推近运镜"
+# 记下返回的 node id，例如 node-aaaa
+node scripts/nomi.mjs director render workspace-xxxx node-aaaa coffee_shop
+```
+
+成功后，画布会保留源 3D 节点，并自动新增并连接：`Blender 导演预演`（图片）和 `Blender 导演场景`（GLB）。同次导出的 `.blend` 也会作为项目素材保留，可在 Blender 里继续编辑。
 
 ---
 
@@ -189,7 +198,7 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 | `未找到 token` | 没生成过 token | 启动一次 Nomi（见 §1.2） |
 | `API key missing: <vendor>` | 该渠道没填 key，或 key 没解开 | 在 Nomi 里给该渠道填 API Key；确认用的是你平时启动的那个 Nomi（key 按 app 身份加密，换身份解不开） |
 | `Model is not enabled: <model>` | 模型没启用 | 先 `nomi models` 看可用列表，用列出来的 vendor/modelKey |
-| `该项目正在 Nomi 中打开` | 该项目正在 app 里开着 | 关掉那个项目，或在 app 内改（见 §4） |
+| `Blender 导演预演需要在已打开的 Nomi 桌面应用中运行` | Nomi 未运行 | 启动 Nomi 后重新执行 `director render` 或 `nomi_render_director` |
 | `headless host 未构建` | dev 下没 build | 先 `pnpm run build:electron` |
 | `vendor and request are required` | 命令参数不全 | 对照 §5 补齐 vendor / modelKey / intent / 提示词 |
 
@@ -207,5 +216,6 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 
 - **真实视频生成**：图、文已端到端验证；视频走同一条路、命令支持，但还没真跑过一次（更慢更贵）。
 - **打包安装版**：CLI 的「Nomi 关着自动拉后台」目前走 dev（仓库 + node_modules 里的 Electron）；打包版的等价入口是后续切片。
-- **app 开着时的实时反映**：现在是「拒绝改打开中的项目」（防覆盖）；「外部改动实时显示到画布」待做。
+- **app 开着时的实时反映**：目标项目打开时，画布操作经渲染层实时应用；未打开项目走磁盘网关。Blender 导演预演要求前者，因为它要由主进程导入本地产物。
+- **Blender 导演预演**：`director render` 只在 Nomi 已打开时可用；它依赖本机安装的 Blender 和 `python3`。目前验证的是 macOS Blender 4.0.1 的灰模预演，不是嵌入式 Blender 或实时双向同步。
 - **付费确认门**：外部生成只过 token，还没接 app 内「真人确认才花钱」的令牌机制。

@@ -1,7 +1,4 @@
-import {
-  type TaskKind,
-  type TaskResultDto,
-} from '../../api/taskApi'
+import { type TaskKind, type TaskResultDto } from '../../api/taskApi'
 import type {
   GenerationCanvasNode,
   GenerationNodeResult,
@@ -59,13 +56,7 @@ function generationTypeForTask(taskKind: TaskKind): GenerationResultType {
 function readFailureMessageFromRaw(raw: unknown): string {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ''
   const record = raw as Record<string, unknown>
-  const direct = [
-    record.message,
-    record.error,
-    record.errorMessage,
-    record.failureReason,
-    record.reason,
-  ]
+  const direct = [record.message, record.error, record.errorMessage, record.failureReason, record.reason]
   for (const value of direct) {
     const text = asTrimmedString(value)
     if (text) return text
@@ -80,10 +71,9 @@ function readFailureMessageFromRaw(raw: unknown): string {
 
 function describeTaskFailure(result: TaskResultDto): string {
   const rawMessage = readFailureMessageFromRaw(result.raw)
-  const suffix = [
-    result.id ? `taskId=${result.id}` : '',
-    result.kind ? `kind=${result.kind}` : '',
-  ].filter(Boolean).join(', ')
+  const suffix = [result.id ? `taskId=${result.id}` : '', result.kind ? `kind=${result.kind}` : '']
+    .filter(Boolean)
+    .join(', ')
   const prefix = rawMessage || '模型任务执行失败'
   return suffix ? `${prefix} (${suffix})` : prefix
 }
@@ -93,10 +83,7 @@ function readDurationSeconds(node: GenerationCanvasNode): number | undefined {
   return asFiniteNumber(meta.durationSeconds) ?? asFiniteNumber(meta.videoDuration)
 }
 
-export function normalizeCatalogTaskResult(
-  result: TaskResultDto,
-  node: GenerationCanvasNode,
-): GenerationNodeResult {
+export function normalizeCatalogTaskResult(result: TaskResultDto, node: GenerationCanvasNode): GenerationNodeResult {
   if (result.status === 'failed') {
     throw new Error(describeTaskFailure(result))
   }
@@ -122,27 +109,52 @@ export function normalizeCatalogTaskResult(
   const firstVideoAsset = result.assets.find((item) => item.type === 'video' && asTrimmedString(item.url))
   const firstImageAsset = result.assets.find((item) => item.type === 'image' && asTrimmedString(item.url))
   const firstAudioAsset = result.assets.find((item) => item.type === 'audio' && asTrimmedString(item.url))
-  const asset = firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
-  if (!asset) throw new Error(inferredType === 'video' ? '模型任务完成但没有返回视频地址' : inferredType === 'audio' ? '配音生成完成但没有返回音频' : '模型任务完成但没有返回图片地址')
-  const type = (asset.type === 'video' || asset.type === 'image' || asset.type === 'audio') ? asset.type : inferredType
+  const asset =
+    firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
+  if (!asset)
+    throw new Error(
+      inferredType === 'video'
+        ? '模型任务完成但没有返回视频地址'
+        : inferredType === 'audio'
+          ? '配音生成完成但没有返回音频'
+          : '模型任务完成但没有返回图片地址',
+    )
   // E11: propagate provenance from electron TaskResult into the node result.
   const provenance = extractProvenanceFromTaskResult(result)
-  return {
-    id: `${node.id}-${result.id || Date.now()}`,
-    type,
-    url: asset.url,
-    thumbnailUrl: asset.thumbnailUrl || undefined,
-    ...(asset.providerUrl ? { providerUrl: asset.providerUrl } : {}),
-    model: selectedModelKey(node) || undefined,
-    durationSeconds: type === 'video' ? readDurationSeconds(node) : undefined,
-    taskId: result.id,
-    taskKind: type,
-    assetId: asset.assetId || undefined,
-    assetRefId: asset.assetRefId || undefined,
-    raw: result.raw,
-    createdAt: Date.now(),
-    ...(provenance ? { provenance } : {}),
+  const createdAt = Date.now()
+  const baseId = `${node.id}-${result.id || createdAt}`
+  const buildAssetResult = (
+    candidate: (typeof result.assets)[number],
+    id: string,
+    includeRaw: boolean,
+  ): GenerationNodeResult => {
+    const candidateType =
+      candidate.type === 'video' || candidate.type === 'image' || candidate.type === 'audio'
+        ? candidate.type
+        : inferredType
+    return {
+      id,
+      type: candidateType,
+      url: candidate.url,
+      thumbnailUrl: candidate.thumbnailUrl || undefined,
+      ...(candidate.providerUrl ? { providerUrl: candidate.providerUrl } : {}),
+      model: selectedModelKey(node) || undefined,
+      durationSeconds: candidateType === 'video' ? readDurationSeconds(node) : undefined,
+      taskId: result.id,
+      taskKind: candidateType,
+      assetId: candidate.assetId || undefined,
+      assetRefId: candidate.assetRefId || undefined,
+      ...(includeRaw ? { raw: result.raw } : {}),
+      createdAt,
+      ...(provenance ? { provenance } : {}),
+    }
   }
+  const primary = buildAssetResult(asset, baseId, true)
+  const alternatives = result.assets
+    .map((candidate, index) => ({ candidate, index }))
+    .filter(({ candidate }) => candidate !== asset && Boolean(asTrimmedString(candidate.url)))
+    .map(({ candidate, index }) => buildAssetResult(candidate, `${baseId}-asset-${index + 1}`, false))
+  return alternatives.length ? { ...primary, alternatives } : primary
 }
 
 /**

@@ -1,11 +1,12 @@
 import React from 'react'
-import { IconCube, IconMaximize, IconMovie } from '@tabler/icons-react'
+import { IconBrandBlender, IconCube, IconMaximize, IconMovie, IconPlayerStopFilled } from '@tabler/icons-react'
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
 import { cn } from '../../../utils/cn'
+import { getDesktopBridge } from '../../../desktop/bridge'
 import { EmptyStateLauncher } from './render/CardCommon'
 import { NomiLoadingMark } from '../../../design'
 import { toast } from '../../../ui/toast'
-import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import { getActiveWorkbenchProjectId, persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
 import { useWorkbenchStore } from '../../workbenchStore'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
@@ -19,6 +20,12 @@ import {
   summarizeScene3DReferenceTarget,
 } from './scene3d/scene3dReferenceDirector'
 import type { Scene3DCaptureResult, Scene3DState } from './scene3d/scene3dTypes'
+import {
+  blenderOutputCategoryId,
+  buildBlenderOutputNodeSpecs,
+  shouldApplyBlenderResult,
+  type BlenderSceneRenderResult,
+} from './scene3d/scene3dBlenderResult'
 
 const loadScene3DFullscreen = () => import('./scene3d/Scene3DFullscreen')
 const Scene3DFullscreen = lazyWithChunkBoundary('3D 全屏编辑', loadScene3DFullscreen)
@@ -43,6 +50,18 @@ function imageNodeSize(width: number, height: number): { width: number; height: 
 
 function readScene3DState(node: GenerationCanvasNode): Scene3DState {
   return normalizeScene3DState(node.meta?.scene3dState)
+}
+
+type BlenderOutputSource = 'blender' | 'blender-director'
+type DirectorStagePreset = 'empty' | 'studio' | 'coffee_shop' | 'city_street' | 'interior_room'
+
+function directorStagePreset(state: Scene3DState): DirectorStagePreset {
+  const preset = state.environment.preset
+  if (preset === 'city' || preset === 'street') return 'city_street'
+  if (preset === 'interior' || preset === 'room') return 'interior_room'
+  if (preset === 'studio') return 'studio'
+  if (preset === 'coffee_shop') return 'coffee_shop'
+  return 'empty'
 }
 
 function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
@@ -127,13 +146,15 @@ function Scene3DTakeStatusOverlay({ status }: { status: 'generating' | 'done' })
 
 function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorProps): JSX.Element {
   const [fullscreen, setFullscreen] = React.useState(false)
+  const [blenderJobId, setBlenderJobId] = React.useState<string | null>(null)
+  const blenderJobIdRef = React.useRef<string | null>(null)
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const addNode = useGenerationCanvasStore((state) => state.addNode)
   const connectNodes = useGenerationCanvasStore((state) => state.connectNodes)
   const canvasNodes = useGenerationCanvasStore((state) => state.nodes)
   const canvasEdges = useGenerationCanvasStore((state) => state.edges)
   const requestCanvasFit = useWorkbenchStore((state) => state.requestCanvasFit)
-  const sceneState = React.useMemo(() => readScene3DState(node), [node.id, node.meta?.scene3dState])
+  const sceneState = React.useMemo(() => readScene3DState(node), [node])
   const sceneStateKey = React.useMemo(() => scene3DStateKey(sceneState), [sceneState])
   const referenceTarget = React.useMemo(
     () => summarizeScene3DReferenceTarget(node.id, canvasNodes, canvasEdges),
@@ -147,6 +168,11 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     persistedSceneStateKeyRef.current = sceneStateKey
     lastThumbnailRef.current = sceneState.lastThumbnail
   }, [sceneState.lastThumbnail, sceneStateKey])
+
+  React.useEffect(() => () => {
+    const activeJobId = blenderJobIdRef.current
+    if (activeJobId) void getDesktopBridge()?.scene3d.cancelBlender(activeJobId).catch(() => {})
+  }, [])
 
   const preloadFullscreenEditor = React.useCallback(() => {
     void loadScene3DFullscreen()
@@ -237,7 +263,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     // 闭环可见性（#1）：标记本次录过 take；真正的画布 fit 推迟到关闭编辑器后（handleCloseFullscreen），
     // 因为此刻全屏编辑器盖着画布、fit 是白跑。关掉后画布可见再 fit，把新「录制走位参考」节点带进视口。
     recordedTakeRef.current = true
-  }, [addNode, height, node.id, node.position.x, node.position.y, updateNode])
+  }, [addNode, height, node.categoryId, node.id, node.position.x, node.position.y, updateNode])
 
   const handleScreenshot = React.useCallback(async (capture: Scene3DCaptureResult) => {
     try {
@@ -306,6 +332,140 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     }
   }, [addNode, connectNodes, node.id, node.meta, node.position.x, node.position.y, referenceTarget, updateNode, width])
 
+  const applyBlenderOutput = React.useCallback(async (
+    projectId: string,
+    result: BlenderSceneRenderResult,
+    source: BlenderOutputSource,
+  ) => {
+    const store = useGenerationCanvasStore.getState()
+    if (!shouldApplyBlenderResult(
+      projectId,
+      getActiveWorkbenchProjectId(),
+      store.nodes.some((candidate) => candidate.id === node.id),
+    )) {
+      toast('Blender 已完成，但项目已切换；产物仅保存在原项目素材中', 'info')
+      return
+    }
+    const priorOutputCount = store.nodes.filter((candidate) => (
+      candidate.meta?.sourceNodeId === node.id && candidate.meta?.source === source
+    )).length
+    const specs = buildBlenderOutputNodeSpecs({
+      sourceNodeId: node.id,
+      sourcePosition: node.position,
+      sourceWidth: width,
+      result,
+      source,
+      runIndex: Math.ceil(priorOutputCount / 2),
+    })
+    for (const spec of specs) {
+      const created = addNode({
+        kind: spec.kind,
+        title: spec.title,
+        prompt: spec.prompt,
+        position: spec.position,
+        size: spec.size,
+        categoryId: blenderOutputCategoryId(node.categoryId),
+        exactPosition: true,
+      })
+      updateNode(created.id, {
+        result: spec.result,
+        history: spec.history,
+        status: spec.status,
+        meta: { ...(created.meta || {}), ...(spec.meta || {}) },
+      })
+      connectNodes(node.id, created.id, 'reference')
+    }
+
+    const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id)
+    const nextSceneState = persistableScene3DState({
+      ...normalizeScene3DState(current?.meta?.scene3dState),
+      lastThumbnail: result.preview.url,
+    })
+    lastThumbnailRef.current = result.preview.url
+    persistedSceneStateKeyRef.current = scene3DStateKey(nextSceneState)
+    updateNode(node.id, {
+      meta: {
+        ...(current?.meta || node.meta || {}),
+        scene3dState: nextSceneState,
+        blenderRender: {
+          source,
+          jobId: result.jobId,
+          blenderVersion: result.blenderVersion,
+          previewUrl: result.preview.url,
+          blendUrl: result.blend.url,
+          modelUrl: result.model.url,
+        },
+      },
+    })
+    await persistActiveWorkbenchProjectNow()
+    requestCanvasFit()
+    toast(source === 'blender-director' ? 'Blender 导演预演已回传画布' : 'Blender 场景已回传画布', 'success')
+  }, [addNode, connectNodes, node.categoryId, node.id, node.meta, node.position, requestCanvasFit, updateNode, width])
+
+  const runBlenderJob = React.useCallback(async (
+    source: BlenderOutputSource,
+    execute: (projectId: string, jobId: string) => Promise<BlenderSceneRenderResult>,
+  ) => {
+    const desktop = getDesktopBridge()
+    if (!desktop?.scene3d) {
+      toast('当前运行环境不支持 Blender 后台渲染', 'error')
+      return
+    }
+    const activeJobId = blenderJobIdRef.current
+    if (activeJobId) {
+      await desktop.scene3d.cancelBlender(activeJobId).catch(() => ({ cancelled: false }))
+      return
+    }
+    const projectId = getActiveWorkbenchProjectId()
+    if (!projectId) {
+      toast('请先打开一个本地项目', 'error')
+      return
+    }
+
+    const jobId = crypto.randomUUID()
+    blenderJobIdRef.current = jobId
+    setBlenderJobId(jobId)
+    try {
+      await applyBlenderOutput(projectId, await execute(projectId, jobId), source)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast(message.includes('已取消') ? 'Blender 渲染已取消' : message, message.includes('已取消') ? 'info' : 'error')
+    } finally {
+      if (blenderJobIdRef.current === jobId) blenderJobIdRef.current = null
+      setBlenderJobId(null)
+    }
+  }, [applyBlenderOutput])
+
+  const handleBlenderRender = React.useCallback(() => {
+    const desktop = getDesktopBridge()
+    if (!desktop?.scene3d?.renderWithBlender) {
+      toast('当前运行环境不支持 Blender 后台渲染', 'error')
+      return
+    }
+    return runBlenderJob('blender', (projectId, jobId) => desktop.scene3d.renderWithBlender({
+      jobId,
+      projectId,
+      ownerNodeId: node.id,
+      scene: persistableScene3DState(sceneState),
+    }))
+  }, [node.id, runBlenderJob, sceneState])
+
+  const handleBlenderDirectorRender = React.useCallback(() => {
+    const desktop = getDesktopBridge()
+    if (!desktop?.scene3d?.renderDirectorWithBlender) {
+      toast('当前运行环境尚未安装 Blender 导演预演', 'error')
+      return
+    }
+    return runBlenderJob('blender-director', (projectId, jobId) => desktop.scene3d.renderDirectorWithBlender({
+      jobId,
+      projectId,
+      ownerNodeId: node.id,
+      title: node.title || '3D 导演台',
+      stagePreset: directorStagePreset(sceneState),
+      scene: persistableScene3DState(sceneState),
+    }))
+  }, [node.id, node.title, runBlenderJob, sceneState])
+
   const takeCaptureStatus = readTakeCaptureStatus(node)
 
   return (
@@ -354,9 +514,9 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
           <div className={cn('flex h-full w-full items-center justify-center')}>
             <EmptyStateLauncher
               icon={<IconCube size={24} stroke={1.65} />}
-              label="点击进入 3D 编辑器"
-              hint="摆放模型、相机并输出截图"
-              activateAriaLabel="进入 3D 编辑器"
+              label="点击进入 3D 导演台"
+              hint="摆位、运镜并输出预演"
+              activateAriaLabel="进入 3D 导演台"
               onActivate={() => setFullscreen(true)}
               onPreload={preloadFullscreenEditor}
             />
@@ -382,13 +542,59 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
         >
           <IconMaximize size={16} stroke={1.9} />
         </button>
+        {!readOnly ? (
+          <button
+            className={cn(
+              'absolute right-14 top-3 grid size-8 place-items-center',
+              'rounded-nomi border border-nomi-line-soft',
+              'bg-nomi-paper/[0.82] text-nomi-ink-60 shadow-nomi-sm',
+              'backdrop-blur-[10px] transition hover:bg-nomi-paper hover:text-nomi-ink',
+              blenderJobId && 'text-nomi-accent',
+            )}
+            type="button"
+            aria-label={blenderJobId ? '停止 Blender 渲染' : '使用 Blender 渲染'}
+            title={blenderJobId ? '停止 Blender 渲染' : '使用 Blender 渲染'}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              void handleBlenderRender()
+            }}
+          >
+            {blenderJobId
+              ? <IconPlayerStopFilled size={15} />
+              : <IconBrandBlender size={17} stroke={1.9} />}
+          </button>
+        ) : null}
+        {!readOnly ? (
+          <button
+            className={cn(
+              'absolute right-24 top-3 grid size-8 place-items-center',
+              'rounded-nomi border border-nomi-line-soft',
+              'bg-nomi-paper/[0.82] text-nomi-ink-60 shadow-nomi-sm',
+              'backdrop-blur-[10px] transition hover:bg-nomi-paper hover:text-nomi-ink',
+              blenderJobId && 'text-nomi-accent',
+            )}
+            type="button"
+            aria-label={blenderJobId ? '停止 Blender 导演预演' : 'Blender 导演预演'}
+            title={blenderJobId ? '停止 Blender 导演预演' : 'Blender 导演预演'}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              void handleBlenderDirectorRender()
+            }}
+          >
+            {blenderJobId
+              ? <IconPlayerStopFilled size={15} />
+              : <IconMovie size={16} stroke={1.8} />}
+          </button>
+        ) : null}
       </div>
 
       {fullscreen ? (
         <React.Suspense fallback={null}>
           <Scene3DFullscreen
             initialState={sceneState}
-            nodeTitle={node.title || '3D场景'}
+            nodeTitle={node.title || '3D导演台'}
             readOnly={readOnly}
             onClose={handleCloseFullscreen}
             onScreenshot={(capture) => { void handleScreenshot(capture) }}

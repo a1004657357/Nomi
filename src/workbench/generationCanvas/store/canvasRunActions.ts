@@ -6,8 +6,12 @@ import { createProgress, getResultTaskKind, getRunDurationSeconds, mergeRunRecor
 import { emitCanvasGesture } from '../events/canvasEventEmitter'
 import type { CanvasRunActions, CanvasSliceCreator } from './canvasStoreTypes'
 
+const MAX_NODE_RESULT_HISTORY = 24
+const MAX_NODE_RUN_HISTORY = 50
+
 function mergeResultHistory(
   nextResult: GenerationNodeResult,
+  alternatives: GenerationNodeResult[],
   previousResult: GenerationNodeResult | undefined,
   previousHistory: GenerationNodeResult[] | undefined,
 ): GenerationNodeResult[] {
@@ -21,9 +25,10 @@ function mergeResultHistory(
     history.push(result)
   }
   add(nextResult)
+  alternatives.forEach(add)
   add(previousResult)
   ;(previousHistory || []).forEach(add)
-  return history
+  return history.slice(0, MAX_NODE_RESULT_HISTORY)
 }
 
 // S5-a3 run 域记账 = 终态收敛:setNodeProgress(每 1.5s 轮询 tick)不入日志(§4.3 瞬态),
@@ -35,138 +40,158 @@ export const createCanvasRunActions: CanvasSliceCreator<CanvasRunActions> = (set
     if (node) emitCanvasGesture([{ type: 'canvas.node.run-updated', payload: { node } }], { source: 'runtime' })
   }
   return {
-  setNodeStatus: (nodeId, status, error) => {
-    set((state) => {
-      const node = state.nodes.find((candidate) => candidate.id === nodeId)
-      if (!node) return
-      const nextError = status === 'error' ? error || node.error || 'Generation failed' : undefined
-      const latestRun = node.runs?.[0]
-      const runs = latestRun && latestRun.status !== 'success' && latestRun.status !== 'error' && latestRun.status !== 'cancelled'
-        ? [mergeRunRecord(latestRun, { status: status === 'idle' ? 'cancelled' : status, error: nextError }), ...(node.runs || []).slice(1)]
-        : node.runs
+    setNodeStatus: (nodeId, status, error) => {
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId)
+        if (!node) return
+        const nextError = status === 'error' ? error || node.error || 'Generation failed' : undefined
+        const latestRun = node.runs?.[0]
+        const runs =
+          latestRun &&
+          latestRun.status !== 'success' &&
+          latestRun.status !== 'error' &&
+          latestRun.status !== 'cancelled'
+            ? [
+                mergeRunRecord(latestRun, { status: status === 'idle' ? 'cancelled' : status, error: nextError }),
+                ...(node.runs || []).slice(1),
+              ]
+            : node.runs
 
-      node.status = status
-      node.error = nextError
-      node.progress = status === 'queued' || status === 'running' ? node.progress : undefined
-      node.runs = runs
-      bumpPersistRevision(state)
-    })
-    emitRunUpdated(nodeId)
-  },
-  setNodeProgress: (nodeId, progress) => {
-    set((state) => {
-      const node = state.nodes.find((candidate) => candidate.id === nodeId)
-      if (!node) return
-      if (!progress) {
-        node.progress = undefined
+        node.status = status
+        node.error = nextError
+        node.progress = status === 'queued' || status === 'running' ? node.progress : undefined
+        node.runs = runs?.slice(0, MAX_NODE_RUN_HISTORY)
         bumpPersistRevision(state)
-        return
+      })
+      emitRunUpdated(nodeId)
+    },
+    setNodeProgress: (nodeId, progress) => {
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId)
+        if (!node) return
+        if (!progress) {
+          node.progress = undefined
+          bumpPersistRevision(state)
+          return
+        }
+        const nextProgress = createProgress(progress, node.runs?.[0]?.id)
+        const runs = node.runs?.length
+          ? [
+              mergeRunRecord(
+                node.runs[0],
+                {
+                  status: node.runs[0].status === 'queued' ? 'running' : node.runs[0].status,
+                  progress: nextProgress,
+                  taskId: nextProgress.taskId ?? node.runs[0].taskId,
+                  taskKind: nextProgress.taskKind ?? node.runs[0].taskKind,
+                },
+                nextProgress.updatedAt,
+              ),
+              ...node.runs.slice(1),
+            ]
+          : node.runs
+        node.status = node.status === 'queued' ? 'running' : node.status || 'running'
+        node.error = undefined
+        node.progress = nextProgress
+        node.runs = runs
+        bumpPersistRevision(state)
+      })
+    },
+    appendNodeRun: (nodeId, run) => {
+      const now = Date.now()
+      const nextRun: GenerationNodeRunRecord = {
+        ...run,
+        id: run.id ?? createRunId(nodeId),
+        startedAt: run.startedAt ?? now,
+        updatedAt: run.updatedAt ?? now,
       }
-      const nextProgress = createProgress(progress, node.runs?.[0]?.id)
-      const runs = node.runs?.length
-        ? [
-            mergeRunRecord(node.runs[0], {
-              status: node.runs[0].status === 'queued' ? 'running' : node.runs[0].status,
-              progress: nextProgress,
-              taskId: nextProgress.taskId ?? node.runs[0].taskId,
-              taskKind: nextProgress.taskKind ?? node.runs[0].taskKind,
-            }, nextProgress.updatedAt),
-            ...node.runs.slice(1),
-          ]
-        : node.runs
-      node.status = node.status === 'queued' ? 'running' : node.status || 'running'
-      node.error = undefined
-      node.progress = nextProgress
-      node.runs = runs
-      bumpPersistRevision(state)
-    })
-  },
-  appendNodeRun: (nodeId, run) => {
-    const now = Date.now()
-    const nextRun: GenerationNodeRunRecord = {
-      ...run,
-      id: run.id ?? createRunId(nodeId),
-      startedAt: run.startedAt ?? now,
-      updatedAt: run.updatedAt ?? now,
-    }
-    const normalizedRun = {
-      ...nextRun,
-      durationSeconds: getRunDurationSeconds(nextRun),
-    }
-    set((state) => {
-      const node = state.nodes.find((candidate) => candidate.id === nodeId)
-      if (!node) return
-      node.status = normalizedRun.status === 'cancelled' ? 'idle' : normalizedRun.status
-      node.error = normalizedRun.status === 'error' ? normalizedRun.error || node.error || 'Generation failed' : undefined
-      node.progress = normalizedRun.progress
-      node.runs = [normalizedRun, ...(node.runs || []).filter((entry) => entry.id !== normalizedRun.id)]
-      bumpPersistRevision(state)
-    })
-    emitRunUpdated(nodeId)
-    return normalizedRun
-  },
-  trackNodeRun: (nodeId, runId, patch) => {
-    set((state) => {
-      const node = state.nodes.find((candidate) => candidate.id === nodeId)
-      if (!node) return
-      const runIndex = (node.runs || []).findIndex((entry) => entry.id === runId)
-      if (runIndex < 0) return
-      const nextRuns = [...(node.runs || [])]
-      const nextRun = mergeRunRecord(nextRuns[runIndex], patch)
-      nextRuns[runIndex] = nextRun
-      const isLatestRun = runIndex === 0
-      node.status = isLatestRun ? (nextRun.status === 'cancelled' ? 'idle' : nextRun.status) : node.status
-      node.error = isLatestRun && nextRun.status === 'error' ? nextRun.error || 'Generation failed' : undefined
-      node.progress = isLatestRun ? nextRun.progress : node.progress
-      node.runs = nextRuns
-      bumpPersistRevision(state)
-    })
-    emitRunUpdated(nodeId)
-  },
-  addNodeResult: (nodeId, result) => {
-    set((state) => {
-      const node = state.nodes.find((candidate) => candidate.id === nodeId)
-      if (!node) return
-      const previousResult = node.result
-      const latestRun = node.runs?.[0]
-      const completedAt = result.createdAt || Date.now()
-      const runs = latestRun
-        ? [
-            mergeRunRecord(latestRun, {
-              status: 'success',
-              taskId: result.taskId ?? latestRun.taskId,
-              taskKind: getResultTaskKind(result) ?? latestRun.taskKind,
-              assetId: result.assetId ?? latestRun.assetId,
-              assetRefId: result.assetRefId ?? latestRun.assetRefId,
-              resultId: result.id,
-              raw: result.raw ?? latestRun.raw,
-              completedAt,
-              durationSeconds: result.durationSeconds ?? latestRun.durationSeconds,
-              progress: undefined,
-              error: undefined,
-            }, completedAt),
-            ...(node.runs || []).slice(1),
-          ]
-        : node.runs
-      node.result = result
-      node.history = mergeResultHistory(result, previousResult, node.history)
-      node.status = 'success'
-      node.error = undefined
-      node.progress = undefined
-      node.runs = runs
-      bumpPersistRevision(state)
-    })
-    emitRunUpdated(nodeId)
-  },
-  rollbackHistory: (nodeId, resultId) => {
-    const before = get().nodes
-    set((state) => {
-      const nextNodes = rollbackNodeHistory(state.nodes, nodeId, resultId)
-      if (nextNodes === state.nodes) return
-      state.nodes = nextNodes
-      bumpPersistRevision(state)
-    })
-    if (get().nodes !== before) emitRunUpdated(nodeId)
-  },
+      const normalizedRun = {
+        ...nextRun,
+        durationSeconds: getRunDurationSeconds(nextRun),
+      }
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId)
+        if (!node) return
+        node.status = normalizedRun.status === 'cancelled' ? 'idle' : normalizedRun.status
+        node.error =
+          normalizedRun.status === 'error' ? normalizedRun.error || node.error || 'Generation failed' : undefined
+        node.progress = normalizedRun.progress
+        node.runs = [normalizedRun, ...(node.runs || []).filter((entry) => entry.id !== normalizedRun.id)].slice(
+          0,
+          MAX_NODE_RUN_HISTORY,
+        )
+        bumpPersistRevision(state)
+      })
+      emitRunUpdated(nodeId)
+      return normalizedRun
+    },
+    trackNodeRun: (nodeId, runId, patch) => {
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId)
+        if (!node) return
+        const runIndex = (node.runs || []).findIndex((entry) => entry.id === runId)
+        if (runIndex < 0) return
+        const nextRuns = [...(node.runs || [])]
+        const nextRun = mergeRunRecord(nextRuns[runIndex], patch)
+        nextRuns[runIndex] = nextRun
+        const isLatestRun = runIndex === 0
+        node.status = isLatestRun ? (nextRun.status === 'cancelled' ? 'idle' : nextRun.status) : node.status
+        node.error = isLatestRun && nextRun.status === 'error' ? nextRun.error || 'Generation failed' : undefined
+        node.progress = isLatestRun ? nextRun.progress : node.progress
+        node.runs = nextRuns.slice(0, MAX_NODE_RUN_HISTORY)
+        bumpPersistRevision(state)
+      })
+      emitRunUpdated(nodeId)
+    },
+    addNodeResult: (nodeId, result) => {
+      const { alternatives = [], ...primaryResult } = result
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId)
+        if (!node) return
+        const previousResult = node.result
+        const latestRun = node.runs?.[0]
+        const completedAt = primaryResult.createdAt || Date.now()
+        const runs = latestRun
+          ? [
+              mergeRunRecord(
+                latestRun,
+                {
+                  status: 'success',
+                  taskId: primaryResult.taskId ?? latestRun.taskId,
+                  taskKind: getResultTaskKind(primaryResult) ?? latestRun.taskKind,
+                  assetId: primaryResult.assetId ?? latestRun.assetId,
+                  assetRefId: primaryResult.assetRefId ?? latestRun.assetRefId,
+                  resultId: primaryResult.id,
+                  raw: primaryResult.raw ?? latestRun.raw,
+                  completedAt,
+                  durationSeconds: primaryResult.durationSeconds ?? latestRun.durationSeconds,
+                  progress: undefined,
+                  error: undefined,
+                },
+                completedAt,
+              ),
+              ...(node.runs || []).slice(1),
+            ].slice(0, MAX_NODE_RUN_HISTORY)
+          : node.runs
+        node.result = primaryResult
+        node.history = mergeResultHistory(primaryResult, alternatives, previousResult, node.history)
+        node.status = 'success'
+        node.error = undefined
+        node.progress = undefined
+        node.runs = runs
+        bumpPersistRevision(state)
+      })
+      emitRunUpdated(nodeId)
+    },
+    rollbackHistory: (nodeId, resultId) => {
+      const before = get().nodes
+      set((state) => {
+        const nextNodes = rollbackNodeHistory(state.nodes, nodeId, resultId)
+        if (nextNodes === state.nodes) return
+        state.nodes = nextNodes
+        bumpPersistRevision(state)
+      })
+      if (get().nodes !== before) emitRunUpdated(nodeId)
+    },
   }
 }

@@ -38,27 +38,82 @@ export interface BuildAiSdkModelInput {
  * Wrap the global fetch so each request body gets profile-driven adjustments
  * (forced temperature, default max_tokens, extra body fields).
  *
- * Optional debug: set LAB_DEBUG_REQUESTS=1 to dump each request body to /tmp.
+ * Optional debug: set LAB_DEBUG_REQUESTS=1 to dump each JSON request body to /tmp.
+ * AI SDK can hand this wrapper a string, bytes, Blob, or a ReadableStream in
+ * Electron. Normalize JSON request bodies before applying a provider profile.
  */
+async function readJsonRequestBody(init: any): Promise<string | undefined> {
+  const requestBody = init?.body;
+  if (requestBody == null) return undefined;
+  if (typeof requestBody === "string") return requestBody;
+  try {
+    return await new Response(requestBody).text();
+  } catch {
+    return undefined;
+  }
+}
+
+function stripJsonSchemaDialect(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripJsonSchemaDialect);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== "$schema")
+      .map(([key, child]) => [key, stripJsonSchemaDialect(child)]),
+  );
+}
+
+/** Exported for provider-compatibility regression tests. */
+export function adaptToolSchemasForProfile(
+  body: Record<string, unknown>,
+  profile: ReturnType<typeof getModelProfile>,
+): Record<string, unknown> {
+  if (!profile.stripToolSchemaDialect || !Array.isArray(body.tools)) return body;
+  return {
+    ...body,
+    tools: body.tools.map((tool) => {
+      if (!tool || typeof tool !== "object") return tool;
+      const functionSpec = (tool as { function?: unknown }).function;
+      if (!functionSpec || typeof functionSpec !== "object") return tool;
+      const parameters = (functionSpec as { parameters?: unknown }).parameters;
+      if (!parameters || typeof parameters !== "object") return tool;
+      return {
+        ...(tool as Record<string, unknown>),
+        function: {
+          ...(functionSpec as Record<string, unknown>),
+          parameters: stripJsonSchemaDialect(parameters),
+        },
+      };
+    }),
+  };
+}
+
 function buildProfiledFetch(modelId: string): typeof fetch {
   const profile = getModelProfile(modelId);
   const debug = process.env.LAB_DEBUG_REQUESTS === "1";
 
   return (async (url: any, init?: any) => {
-    if (init?.body && typeof init.body === "string") {
+    const jsonBody = await readJsonRequestBody(init);
+    if (jsonBody !== undefined) {
       try {
-        const body = JSON.parse(init.body) as Record<string, unknown>;
-        const adjusted = applyProfileToRequestBody(body, profile);
+        const body = JSON.parse(jsonBody) as Record<string, unknown>;
+        const adjusted = adaptToolSchemasForProfile(applyProfileToRequestBody(body, profile), profile);
         if (debug) {
-          const fs = await import("node:fs");
-          fs.writeFileSync(
-            `/tmp/lab-request-${Date.now()}.json`,
-            JSON.stringify(adjusted, null, 2),
-          );
+          try {
+            const fs = await import("node:fs");
+            fs.writeFileSync(
+              `/tmp/lab-request-${Date.now()}.json`,
+              JSON.stringify(adjusted, null, 2),
+            );
+          } catch {
+            /* optional diagnostics must never change the request */
+          }
         }
         init = { ...init, body: JSON.stringify(adjusted) };
       } catch {
-        /* body is not JSON — pass through unchanged */
+        // A stream was consumed while probing. Restore the exact string body
+        // instead of forwarding a drained stream.
+        init = { ...init, body: jsonBody };
       }
     }
     // 可观测：vendor HTTP **失败时**打实际 URL + 状态 + 上游返回体片段（诊断 502/超时/路由错的根因，别靠猜——

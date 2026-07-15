@@ -144,6 +144,7 @@ type IntersectionObserverCapableWindow = Window & {
 export function observeDeferredNodeMediaVisibility(
   element: Element | null,
   onVisible: () => void,
+  options: { root?: Element | null } = {},
 ): () => void {
   const win = typeof window === 'undefined' ? null : (window as IntersectionObserverCapableWindow)
   if (!element || !win?.IntersectionObserver) {
@@ -161,7 +162,7 @@ export function observeDeferredNodeMediaVisibility(
       onVisible()
     },
     {
-      root: null,
+      root: options.root ?? null,
       rootMargin: MEDIA_INTERSECTION_ROOT_MARGIN,
       threshold: 0,
     },
@@ -177,10 +178,13 @@ export function useDeferredNodeMediaSrc({
   src,
   kind,
   priority = false,
+  visibilityRoot,
 }: {
   src?: string
   kind: DeferredNodeMediaKind
   priority?: boolean
+  /** undefined = viewport; null = wait until a scroll root is available. */
+  visibilityRoot?: Element | null
 }): {
   deferredSrc: string | null
   loading: boolean
@@ -212,8 +216,13 @@ export function useDeferredNodeMediaSrc({
   React.useEffect(() => {
     if (!src || loadedSrc === src || deferredSrc === src || visibleSrc === src) return undefined
     if (!placeholderElement) return undefined
-    return observeDeferredNodeMediaVisibility(placeholderElement, () => setVisibleSrc(src))
-  }, [deferredSrc, loadedSrc, placeholderElement, src, visibleSrc])
+    if (visibilityRoot === null) return undefined
+    return observeDeferredNodeMediaVisibility(
+      placeholderElement,
+      () => setVisibleSrc(src),
+      { root: visibilityRoot },
+    )
+  }, [deferredSrc, loadedSrc, placeholderElement, src, visibilityRoot, visibleSrc])
 
   React.useEffect(() => {
     if (!src || visibleSrc !== src) return undefined

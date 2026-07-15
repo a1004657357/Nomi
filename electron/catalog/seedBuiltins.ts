@@ -54,6 +54,8 @@ import { COMFYUI_VENDOR_SEED, COMFYUI_CURATED_MODELS, COMFYUI_CURATED_MAPPINGS }
 import { VOLCENGINE_IMAGE_MODELS } from "./volcengineImages";
 import { VOLCENGINE_AUDIO_MODELS } from "./volcengineAudios";
 import { VOLCENGINE_SEEDANCE_QUERY_OP, VOLCENGINE_SEEDANCE_STATUS_MAPPING, VOLCENGINE_VIDEO_MODELS } from "./volcengineVideos";
+import { CODEX_IMG2_MODEL_SEED, CODEX_VENDOR_SEED } from "./codexImagegen";
+import { JIMENG_WEB_SEEDANCE_MODEL_SEED, JIMENG_WEB_VENDOR_SEED } from "./jimengWeb";
 
 /** curated 模型/mapping 的内部类型（reconcile 两函数的输入）。 */
 type CuratedModel = {
@@ -206,6 +208,21 @@ const VOLCENGINE_SPEECH_CURATED_MAPPINGS: CuratedMapping[] = VOLCENGINE_AUDIO_MO
   })),
 );
 
+/** Codex 本地 Img2 入口：只种可见模型身份，不种 HTTP mapping。 */
+const CODEX_CURATED_MODELS: CuratedModel[] = [
+  { modelKey: CODEX_IMG2_MODEL_SEED.modelKey, labelZh: CODEX_IMG2_MODEL_SEED.labelZh, kind: CODEX_IMG2_MODEL_SEED.kind, archetypeId: "gpt-image-2" },
+];
+
+/** 即梦 Web 扩展桥：只种可见模型身份，不种 HTTP mapping。runtime 走本地 Seedance bridge。 */
+const JIMENG_WEB_CURATED_MODELS: CuratedModel[] = [
+  {
+    modelKey: JIMENG_WEB_SEEDANCE_MODEL_SEED.modelKey,
+    labelZh: JIMENG_WEB_SEEDANCE_MODEL_SEED.labelZh,
+    kind: JIMENG_WEB_SEEDANCE_MODEL_SEED.kind,
+    archetypeId: JIMENG_WEB_SEEDANCE_MODEL_SEED.archetypeId,
+  },
+];
+
 /**
  * **退役的 curated 记录（变体合并迁移，2026-06-16）**：Seedance 一族原是 4 个独立 catalog 行
  * （标准/fast/face/fast-face），合并成 1 行 + 4 变体后，老装机里残留 3 个变体模型 + 6 条 mapping 成孤儿
@@ -258,12 +275,12 @@ function pruneRetiredMappings(mappings: Mapping[], retiredIds: readonly string[]
 
 /** 供应商种子（裸 baseUrl + bearer）。存在即跳过（用户配置不覆盖）。返回是否变更。
  *  多数种子默认 enabled:true；无鉴权本地后端（ComfyUI）带 `enabled:false` → 默认关、用户显式启用（污染防护）。 */
-function seedVendor(vendors: Vendor[], seed: typeof KIE_VENDOR_SEED | typeof APIMART_VENDOR_SEED | typeof AGNES_VENDOR_SEED | typeof MODELSCOPE_VENDOR_SEED | typeof VOLCENGINE_VENDOR_SEED | typeof VOLCENGINE_SPEECH_VENDOR_SEED | typeof DREAMINA_VENDOR_SEED | typeof RUNNINGHUB_VENDOR_SEED | typeof REPLICATE_VENDOR_SEED | typeof COMFYUI_VENDOR_SEED, now: string): boolean {
+function seedVendor(vendors: Vendor[], seed: typeof KIE_VENDOR_SEED | typeof APIMART_VENDOR_SEED | typeof AGNES_VENDOR_SEED | typeof MODELSCOPE_VENDOR_SEED | typeof VOLCENGINE_VENDOR_SEED | typeof VOLCENGINE_SPEECH_VENDOR_SEED | typeof DREAMINA_VENDOR_SEED | typeof RUNNINGHUB_VENDOR_SEED | typeof REPLICATE_VENDOR_SEED | typeof COMFYUI_VENDOR_SEED | typeof CODEX_VENDOR_SEED | typeof JIMENG_WEB_VENDOR_SEED, now: string): boolean {
   if (vendors.some((v) => v.key === seed.key)) return false;
   const enabled = "enabled" in seed && (seed as { enabled?: boolean }).enabled === false ? false : true;
   vendors.push({
     key: seed.key, name: seed.name, enabled,
-    baseUrlHint: seed.baseUrl, authType: seed.authType, authHeader: seed.authHeader,
+    baseUrlHint: seed.baseUrl, authType: seed.authType, authHeader: "authHeader" in seed ? seed.authHeader : null,
     // 本地素材吞入声明（仅 Replicate 等声明了 assetIngestion 的 vendor 带；resolveAssetIngestionWithFallback 据此把本地图传文件 API）。
     ...("assetIngestion" in seed && seed.assetIngestion ? { assetIngestion: seed.assetIngestion } : {}),
     createdAt: now, updatedAt: now,
@@ -362,6 +379,8 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (seedVendor(vendors, RUNNINGHUB_VENDOR_SEED, now)) changed = true; // RunningHub aggregator（先接 3D 混元文生3D）
   if (seedVendor(vendors, REPLICATE_VENDOR_SEED, now)) changed = true; // Replicate（元素拆解 qwen-image-layered，按量付费）
   if (seedVendor(vendors, COMFYUI_VENDOR_SEED, now)) changed = true; // 本地 ComfyUI（无鉴权本地后端，默认关、用户显式启用）
+  if (seedVendor(vendors, CODEX_VENDOR_SEED, now)) changed = true; // Codex Img2（本机 Codex CLI 生成，无需 Nomi API key）
+  if (seedVendor(vendors, JIMENG_WEB_VENDOR_SEED, now)) changed = true; // 即梦 Web 扩展桥（本机网页登录/任务服务器）
 
   // 退役 curated 记录清理（变体合并迁移：删 Seedance 旧变体模型 + mapping 孤儿，picker 收成 1 项）。
   if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_VIDEO_MODEL_KEYS)) changed = true;
@@ -381,6 +400,8 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_VIDEO_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_IMAGE_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, COMFYUI_VENDOR_SEED.key, COMFYUI_CURATED_MODELS, now)) changed = true;
+  if (reconcileModels(models, CODEX_VENDOR_SEED.key, CODEX_CURATED_MODELS, now)) changed = true;
+  if (reconcileModels(models, JIMENG_WEB_VENDOR_SEED.key, JIMENG_WEB_CURATED_MODELS, now)) changed = true;
 
   // kie 历史包袱 repair：把视频形状的坏 (kie, text_to_image) 替换成正确的 GPT Image 2 文生图契约
   // （旧 onboarding 抽错留下的；契约见 kieGptImage2.ts 直连实测确认）。apimart 无此历史，不需要。

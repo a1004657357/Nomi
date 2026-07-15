@@ -124,6 +124,15 @@ export async function fetchWorkbenchTaskResultByVendor(
   }) as Promise<FetchWorkbenchTaskResultResponseDto>
 }
 
+export async function cancelWorkbenchTask(payload: {
+  runId: string
+  taskId?: string
+  nodeId?: string
+  vendor?: string
+}): Promise<{ cancelled: boolean; remoteCancelled: boolean }> {
+  return requireDesktopRuntime('task cancellation').tasks.cancel(payload)
+}
+
 /**
  * 文本任务流式执行：逐 token 回调 onDelta，最终 resolve 与 runWorkbenchTaskByVendor 同形的
  * TaskResultDto（status:'succeeded'，raw 为 OpenAI choices 形状）。把 IPC 的 streamId+事件

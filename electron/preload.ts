@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     list: (payload: unknown) => ipcRenderer.invoke("nomi:assets:list", payload),
     importRemoteUrl: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-remote-url", payload),
     importFile: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-file", payload),
+    importLocalPath: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-local-path", payload),
     download: (payload: unknown) =>
       ipcRenderer.invoke("nomi:assets:download", payload) as Promise<{
         ok: boolean;
@@ -71,9 +72,29 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     logout: () => ipcRenderer.invoke("nomi:dreamina:logout"),
     install: () => ipcRenderer.invoke("nomi:dreamina:install"),
   },
+  jimengWeb: {
+    status: () => ipcRenderer.invoke("nomi:jimeng-web:status"),
+    openLogin: () => ipcRenderer.invoke("nomi:jimeng-web:open-login"),
+    openAdmin: (baseUrl?: string) => ipcRenderer.invoke("nomi:jimeng-web:open-admin", baseUrl),
+    startRunner: () => ipcRenderer.invoke("nomi:jimeng-web:start-runner"),
+    stopRunner: () => ipcRenderer.invoke("nomi:jimeng-web:stop-runner"),
+  },
   scene3d: {
     framesToVideo: (payload: unknown) =>
       ipcRenderer.invoke("nomi:scene3d:frames-to-video", payload) as Promise<{ url: string; assetId?: string }>,
+    renderWithBlender: (payload: unknown) => ipcRenderer.invoke("nomi:scene3d:render-blender", payload),
+    renderDirectorWithBlender: (payload: unknown) => ipcRenderer.invoke("nomi:scene3d:render-director-blender", payload),
+    cancelBlender: (jobId: string) =>
+      ipcRenderer.invoke("nomi:scene3d:cancel-blender", jobId) as Promise<{ cancelled: boolean }>,
+  },
+  vibingDirector: {
+    applyBlenderPlan: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:apply-blender-plan", payload),
+    importAsset: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:import-asset", payload),
+    openBlender: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:open-blender", payload) as Promise<{ opened: boolean }>,
+    cancelBlenderPlan: (jobId: string) =>
+      ipcRenderer.invoke("nomi:vibing-director:cancel-blender-plan", jobId) as Promise<{ cancelled: boolean }>,
+    openAssetSource: (source: "polyhaven" | "quaternius" | "blenderkit") =>
+      ipcRenderer.invoke("nomi:vibing-director:open-asset-source", source) as Promise<{ opened: boolean }>,
   },
   exports: {
     startJob: (payload: unknown) => ipcRenderer.invoke("nomi:exports:start-job", payload),
@@ -93,6 +114,7 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
   tasks: {
     run: (payload: unknown) => ipcRenderer.invoke("nomi:tasks:run", payload),
     result: (payload: unknown) => ipcRenderer.invoke("nomi:tasks:result", payload),
+    cancel: (payload: unknown) => ipcRenderer.invoke("nomi:tasks:cancel", payload),
     // 付费守卫：真人确认后铸一次性令牌（绑 nodeIds），返回不透明 grantId 随生成请求下传。
     grantSpend: (payload: unknown) => ipcRenderer.invoke("nomi:tasks:grant-spend", payload) as Promise<{ grantId: string }>,
     // 文本任务流式（逐 token）：start 返回 streamId，onTextEvent 收 delta/done/error。

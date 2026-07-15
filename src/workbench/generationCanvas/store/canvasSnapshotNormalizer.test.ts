@@ -47,3 +47,26 @@ describe('normalizeStoreSnapshot — 重启收敛卡住的 mid-flight 节点', (
     expect(snap.nodes.find((n) => n.id === 'bad')?.status).toBe('error')
   })
 })
+
+describe('normalizeStoreSnapshot — edge id migration', () => {
+  it('rekeys legacy edges by mode and removes duplicate semantics', () => {
+    const nodes = [
+      { id: 'a', kind: 'image', title: 'A', position: { x: 0, y: 0 } },
+      { id: 'b', kind: 'video', title: 'B', position: { x: 100, y: 0 } },
+    ]
+    const snap = normalizeStoreSnapshot({
+      nodes,
+      edges: [
+        { id: 'edge-a-b', source: 'a', target: 'b', mode: 'reference' },
+        { id: 'edge-a-b', source: 'a', target: 'b', mode: 'first_frame' },
+        { id: 'legacy-duplicate', source: 'a', target: 'b', mode: 'first_frame' },
+      ],
+    })
+
+    expect(snap.edges).toHaveLength(2)
+    expect(snap.edges.map((edge) => edge.id).sort()).toEqual([
+      'edge-a-b-first_frame',
+      'edge-a-b-reference',
+    ])
+  })
+})

@@ -12,6 +12,7 @@ import {
   listAllProjects,
   readProjectCanvas,
   referencesFromEdges,
+  renderDirectorOnProject,
   setProjectNodePrompt,
 } from './core'
 import { createDiskGateway } from './gateway'
@@ -162,6 +163,83 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
       },
     )
     expect(kind).toBe('image_to_video')
+  })
+
+  it('director render 只读取 scene3d 状态，并把预演图与 GLB 作为连接输出回写画布', async () => {
+    const project = createNamedProject('导演桥接测试')
+    const gateway = createDiskGateway(project.id)
+    const snapshot = await gateway.readDoc()
+    snapshot.nodes.push({
+      id: 'scene-node',
+      kind: 'scene3d',
+      title: '咖啡广告导演台',
+      position: { x: 120, y: 240 },
+      meta: {
+        scene3dState: {
+          objects: [],
+          cameras: [],
+          trajectories: [],
+          trajectoryBindings: [],
+          sceneTimeline: { totalDuration: 3 },
+          environment: {},
+          editorCamera: {},
+        },
+      },
+    })
+    await gateway.apply(snapshot)
+    const calls: Array<Record<string, unknown>> = []
+
+    const output = await renderDirectorOnProject(
+      { projectId: project.id, sourceNodeId: 'scene-node', stagePreset: 'coffee_shop' },
+      gateway,
+      async (input) => {
+        calls.push(input)
+        return {
+          jobId: 'director-job',
+          blenderVersion: '4.0.1',
+          preview: { url: 'nomi-local://asset/p/director-preview.png', assetId: 'preview-asset' },
+          blend: { url: 'nomi-local://asset/p/director-scene.blend', assetId: 'blend-asset' },
+          model: { url: 'nomi-local://asset/p/director-scene.glb', assetId: 'model-asset' },
+        }
+      },
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ projectId: project.id, ownerNodeId: 'scene-node', stagePreset: 'coffee_shop' })
+    expect(output).toMatchObject({ jobId: 'director-job', sourceNodeId: 'scene-node' })
+    const persisted = await gateway.readDoc()
+    const preview = persisted.nodes.find((node) => node.id === output.previewNodeId)
+    const model = persisted.nodes.find((node) => node.id === output.modelNodeId)
+    expect(preview).toMatchObject({ kind: 'image', title: 'Blender 导演预演', status: 'success', result: { type: 'image' } })
+    expect(model).toMatchObject({ kind: 'model3d', title: 'Blender 导演场景', status: 'success', result: { type: 'model3d' } })
+    expect(persisted.edges.filter((edge) => edge.source === 'scene-node')).toHaveLength(2)
+    expect((persisted.nodes.find((node) => node.id === 'scene-node')?.meta?.scene3dState as { lastThumbnail?: string }).lastThumbnail).toContain('director-preview.png')
+  })
+
+  it('director render 为外部刚创建的空 scene3d 节点补一个标准灰模初始状态', async () => {
+    const project = createNamedProject('空导演台')
+    const gateway = createDiskGateway(project.id)
+    const snapshot = await gateway.readDoc()
+    snapshot.nodes.push({ id: 'scene-node', kind: 'scene3d', title: '空导演台', position: { x: 0, y: 0 } })
+    await gateway.apply(snapshot)
+    let capturedScene: unknown
+
+    await renderDirectorOnProject(
+      { projectId: project.id, sourceNodeId: 'scene-node' },
+      gateway,
+      async (input) => {
+        capturedScene = input.scene
+        return {
+          jobId: 'director-default',
+          preview: { url: 'nomi-local://asset/p/default-preview.png' },
+          blend: { url: 'nomi-local://asset/p/default-scene.blend' },
+          model: { url: 'nomi-local://asset/p/default-scene.glb' },
+        }
+      },
+    )
+
+    expect(capturedScene).toMatchObject({ objects: [{ type: 'mannequin' }], cameras: [{ aspectRatio: '16:9' }] })
+    expect((await gateway.readDoc()).nodes.find((node) => node.id === 'scene-node')?.meta?.scene3dState).toBeTruthy()
   })
 
   it('未知项目抛清晰错误', async () => {

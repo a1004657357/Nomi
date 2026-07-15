@@ -1,6 +1,7 @@
 // BaseGenerationNode 的纯工具/常量：状态文案、尺寸边界、媒体尺寸推算、时间轴落点命中。
 // 从 BaseGenerationNode.tsx 抽出（纯函数 + 常量，无 React 依赖）。
 import type { GenerationCanvasNode } from "../model/generationCanvasTypes";
+import { STORYBOARD_TABLE_BOUNDS } from "../model/storyboardTableSizing";
 import { readNodeAspectRatio } from "./aspectRatio";
 import { isCardRenderKind, resolveNodeRenderKind } from "./resolveRenderKind";
 
@@ -54,6 +55,15 @@ export function getNodeSizeBounds(kind: GenerationCanvasNode["kind"]): NodeSizeB
         minHeight: MIN_NODE_HEIGHT,
         maxHeight: MAX_NODE_HEIGHT,
     };
+}
+
+export function getNodeSizeBoundsForNode(
+    node: Pick<GenerationCanvasNode, "kind" | "meta">,
+): NodeSizeBounds {
+    if (node.kind === "text" && node.meta?.storyboardGroup === true) {
+        return { ...STORYBOARD_TABLE_BOUNDS };
+    }
+    return getNodeSizeBounds(node.kind);
 }
 export const TIMELINE_TRACK_CLIPS_SELECTOR = ".workbench-timeline-track__clips";
 
@@ -246,7 +256,7 @@ export function resolveNodeVisualSize(
     const size = node.size || DEFAULT_VISUAL_SIZE;
     const renderKind = resolveNodeRenderKind(node);
     const isCardKind = isCardRenderKind(renderKind);
-    const bounds = getNodeSizeBounds(node.kind);
+    const bounds = getNodeSizeBoundsForNode(node);
     const { width: cardFixedWidth, height: cardFixedHeight } = cardFixedSize(renderKind, isCardKind);
     const hasResult = Boolean(node.result?.url);
     const isImageGridSplitNode =

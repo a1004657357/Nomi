@@ -13,7 +13,7 @@ describe('evaluateGate — 统一求值流(§6.1)', () => {
   })
 
   it('③ ask:写工具排队等点头', () => {
-    for (const toolName of ['create_canvas_nodes', 'connect_canvas_edges', 'set_node_prompt']) {
+    for (const toolName of ['update_storyboard_shot', 'batch_update_storyboard_shots', 'create_canvas_nodes', 'connect_canvas_edges', 'set_node_prompt', 'attach_external_image_to_node']) {
       expect(evaluateGate({ kind: 'tool-call', toolName, args: {} })).toEqual({ outcome: 'ask' })
     }
   })
@@ -82,6 +82,15 @@ describe('evaluateGate — 统一求值流(§6.1)', () => {
       expect(
         evaluateGate({ kind: 'tool-call', toolName: 'create_canvas_nodes', args: { nodes: [] } }, ctx),
       ).toEqual({ outcome: 'ask' })
+    })
+
+    it('覆盖锁住节点的外部图片结果 → deny', () => {
+      const decision = evaluateGate(
+        { kind: 'tool-call', toolName: 'attach_external_image_to_node', args: { nodeId: 'c1', sourceType: 'url', source: 'https://example.com/out.png' } },
+        ctx,
+      )
+      expect(decision.outcome).toBe('deny')
+      if (decision.outcome === 'deny') expect(decision.reason).toContain('覆盖它的图片结果')
     })
   })
 

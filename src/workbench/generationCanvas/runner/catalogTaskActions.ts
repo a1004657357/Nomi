@@ -6,12 +6,13 @@ import {
   runWorkbenchTaskByVendor,
   runWorkbenchTextTaskStream,
 } from '../../api/taskApi'
-import type {
-  GenerationCanvasNode,
-  GenerationNodeResult,
-} from '../model/generationCanvasTypes'
+import type { GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
 import type { ResolvedGenerationReferences } from './generationReferenceResolver'
-import { narrateProgress, type GenerationProgressPhase, type ProgressNarrationContext } from '../../observability/narrate'
+import {
+  narrateProgress,
+  type GenerationProgressPhase,
+  type ProgressNarrationContext,
+} from '../../observability/narrate'
 import { resolveArchetypeForModel } from '../../../config/modelArchetypes'
 import { buildArchetypeInputParams, orderedSentImageReferenceUrls } from '../nodes/controls/archetypeMeta'
 import { projectPromptForSend } from '../../assets/promptMentions'
@@ -36,7 +37,6 @@ export type { CatalogTaskActionOptions } from './catalogTaskResolve'
 export { normalizeCatalogTaskResult } from './catalogTaskResultParse'
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed'])
-
 // 任务已提交(付费已发生)后，查结果连续失败多久就放弃轮询、落「可找回」态（不重发，给「重新拉取」入口）。
 // 短于此 = 网络抖动，免费重试查询；长于此 = 上游/网络持续不可达，没必要干等到硬超时(视频 20min)空耗。
 const POLL_FAILURE_GRACE_MS = 45000
@@ -178,6 +178,67 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new DOMException('生成已取消', 'AbortError')
+}
+
+function abortableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return delay(ms)
+  throwIfAborted(signal)
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      globalThis.clearTimeout(timer)
+      reject(new DOMException('生成已取消', 'AbortError'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function abortableTask<T>(task: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return task
+  throwIfAborted(signal)
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('生成已取消', 'AbortError'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    task.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+async function runTaskWithHeartbeat(
+  run: () => Promise<TaskResultDto>,
+  options: CatalogTaskActionOptions,
+): Promise<TaskResultDto> {
+  const heartbeatMs = Math.max(1, Math.floor(options.requestHeartbeatMs ?? 5_000))
+  const startedAt = Date.now()
+  const timer = globalThis.setInterval(() => {
+    const elapsedMs = Date.now() - startedAt
+    options.onProgress?.({
+      phase: 'generating',
+      message: narrateProgress('generating', { elapsedMs }),
+    })
+  }, heartbeatMs)
+  try {
+    const result = await abortableTask(run(), options.signal)
+    throwIfAborted(options.signal)
+    return result
+  } finally {
+    globalThis.clearInterval(timer)
+  }
+}
+
 async function waitForCatalogTaskResult(
   vendor: string,
   request: TaskRequestDto,
@@ -198,15 +259,17 @@ async function waitForCatalogTaskResult(
   // 且查结果失败【绝不】能冒泡出去——否则会落进外层 runGenerationNode 的重试循环重新 runTask 二次扣费
   // (单确认最多 ×3/节点、批量再乘节点数 = 用户报「平台冒出很多视频、被扣费」的根因)。查结果是免费的：
   // 抖动就免费重试查询；持续失败超 grace(或到硬超时) → 落可找回态(不重发)。recoverable 在外层不触发重试。
-  const recoverableTimeout = () => new RecoverableTimeoutError({
-    taskId: initialResult.id,
-    vendor,
-    taskKind: request.kind,
-    modelKey: asTrimmedString(request.extras?.modelKey),
-  })
+  const recoverableTimeout = () =>
+    new RecoverableTimeoutError({
+      taskId: initialResult.id,
+      vendor,
+      taskKind: request.kind,
+      modelKey: asTrimmedString(request.extras?.modelKey),
+    })
   let current = initialResult
   let pollFailureStreakStartedAt: number | null = null
   while (!TERMINAL_STATUSES.has(current.status)) {
+    throwIfAborted(options.signal)
     const elapsedMs = Date.now() - startedAt
     if (elapsedMs > hardTimeoutMs) {
       // 超时≠失败：上游可能仍在跑/已出片 → 抛可找回错误，节点落 recoverable，给「重新拉取」入口。
@@ -219,18 +282,22 @@ async function waitForCatalogTaskResult(
       message: narrateProgress(overSoft ? 'still-generating' : 'generating', { elapsedMs }),
       taskId: initialResult.id,
     })
-    await delay(pollIntervalMs)
+    await abortableDelay(pollIntervalMs, options.signal)
     try {
-      const response = await fetchResult({
-        taskId: initialResult.id,
-        vendor,
-        taskKind: request.kind,
-        prompt: request.prompt,
-        modelKey: asTrimmedString(request.extras?.modelKey) || null,
-      })
+      const response = await abortableTask(
+        fetchResult({
+          taskId: initialResult.id,
+          vendor,
+          taskKind: request.kind,
+          prompt: request.prompt,
+          modelKey: asTrimmedString(request.extras?.modelKey) || null,
+        }),
+        options.signal,
+      )
       current = response.result
       pollFailureStreakStartedAt = null // 查成功 → 重置失败连击计数
     } catch {
+      throwIfAborted(options.signal)
       // 查结果失败：免费重试(下一轮再查)，绝不冒泡触发重发。持续失败超 grace 或已到硬超时 → 落可找回。
       const now = Date.now()
       if (pollFailureStreakStartedAt == null) pollFailureStreakStartedAt = now
@@ -266,14 +333,15 @@ export async function runCatalogGenerationTask(
   if (options.onTextDelta && TEXT_STREAM_KINDS.has(request.kind) && !options.runTask) {
     const runTextStream = options.runTextStream || runWorkbenchTextTaskStream
     report('requesting')
-    const streamed = await runTextStream(vendor, request, { onDelta: options.onTextDelta })
+    const streamed = await runTextStream(vendor, request, { onDelta: options.onTextDelta, signal: options.signal })
     report('finalizing', streamed.id)
     return normalizeCatalogTaskResult(streamed, executableNode)
   }
 
   const runTask = options.runTask || runWorkbenchTaskByVendor
   report('requesting')
-  const initialResult = await runTask(vendor, request)
+  throwIfAborted(options.signal)
+  const initialResult = await runTaskWithHeartbeat(() => runTask(vendor, request), options)
   report('waiting', initialResult.id)
   const finalResult = await waitForCatalogTaskResult(vendor, request, initialResult, options)
   report('finalizing', initialResult.id)

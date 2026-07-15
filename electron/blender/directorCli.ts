@@ -1,0 +1,267 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { projectDirById } from "../projects/repository";
+import { writeAsset } from "../runtime";
+
+type DirectorAssetRef = { url: string; assetId?: string };
+
+export type DirectorBlenderRenderRequest = {
+  jobId: string;
+  projectId: string;
+  ownerNodeId?: string | null;
+  title?: string;
+  stagePreset?: "empty" | "studio" | "coffee_shop" | "city_street" | "interior_room";
+  scene: unknown;
+  timeoutMs?: number;
+  /** Test/development override. Renderer callers must not provide executable paths. */
+  pythonPath?: string;
+  /** Test/development override for the packaged harness location. */
+  harnessRoot?: string;
+};
+
+export type DirectorBlenderRenderResult = {
+  jobId: string;
+  blenderVersion?: string;
+  preview: DirectorAssetRef;
+  blend: DirectorAssetRef;
+  model: DirectorAssetRef;
+};
+
+type BridgeOutput = {
+  jobId: string;
+  blenderVersion?: string;
+  manifestPath?: string;
+  syncPath?: string;
+  artifacts: { preview: string; blend: string; model: string };
+};
+
+type ActiveDirectorJob = {
+  child: ChildProcess;
+  cancelled: boolean;
+  forceKillTimer?: NodeJS.Timeout;
+};
+
+const activeDirectorJobs = new Map<string, ActiveDirectorJob>();
+const OUTPUT_LIMIT = 64 * 1024;
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+const STAGE_PRESETS = new Set(["empty", "studio", "coffee_shop", "city_street", "interior_room"]);
+
+export function resolveDirectorHarnessRoot(): string {
+  const override = String(process.env.NOMI_DIRECTOR_HARNESS_ROOT || "").trim();
+  if (override) return path.resolve(override);
+  const packaged = process.resourcesPath ? path.join(process.resourcesPath, "blender-harness") : "";
+  if (packaged && fs.existsSync(path.join(packaged, "cli_anything", "blender", "bridge.py"))) return packaged;
+  return path.resolve(__dirname, "../../integrations/blender/agent-harness");
+}
+
+function resolvePythonExecutable(explicitPath?: string): string {
+  return String(explicitPath || process.env.NOMI_PYTHON_PATH || "python3").trim() || "python3";
+}
+
+export function buildDirectorBridgeArgs(input: {
+  projectDir: string;
+  sceneInputPath: string;
+  jobId: string;
+  ownerNodeId?: string | null;
+  title?: string;
+  stagePreset?: string;
+  timeoutSeconds: number;
+}): string[] {
+  const args = [
+    "-m",
+    "cli_anything.blender.bridge",
+    "--project-dir",
+    input.projectDir,
+    "--scene-input",
+    input.sceneInputPath,
+    "--job-id",
+    input.jobId,
+  ];
+  if (input.ownerNodeId) args.push("--owner-node-id", input.ownerNodeId);
+  if (input.title) args.push("--title", input.title);
+  if (input.stagePreset) args.push("--stage-preset", input.stagePreset);
+  args.push("--timeout-seconds", String(input.timeoutSeconds));
+  return args;
+}
+
+function appendCapped(current: string, chunk: unknown): string {
+  const next = current + String(chunk ?? "");
+  return next.length > OUTPUT_LIMIT ? next.slice(next.length - OUTPUT_LIMIT) : next;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function requiredPath(value: unknown, field: string): string {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  if (!candidate || !path.isAbsolute(candidate)) throw new Error(`Blender 导演桥接返回的 ${field} 无效`);
+  return candidate;
+}
+
+export function parseDirectorBridgeOutput(stdout: string): BridgeOutput {
+  const line = stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).at(-1);
+  if (!line) throw new Error("Blender 导演桥接没有返回 JSON 结果");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    throw new Error("Blender 导演桥接返回了无效 JSON");
+  }
+  const payload = record(raw);
+  if (payload.ok !== true) {
+    const message = typeof record(payload.error).message === "string" ? String(record(payload.error).message) : "Blender 导演桥接失败";
+    throw new Error(message);
+  }
+  const artifacts = record(payload.artifacts);
+  const jobId = typeof payload.jobId === "string" ? payload.jobId.trim() : "";
+  if (!jobId) throw new Error("Blender 导演桥接未返回 jobId");
+  return {
+    jobId,
+    ...(typeof payload.blenderVersion === "string" && payload.blenderVersion.trim() ? { blenderVersion: payload.blenderVersion.trim() } : {}),
+    ...(typeof payload.manifestPath === "string" ? { manifestPath: payload.manifestPath } : {}),
+    ...(typeof payload.syncPath === "string" ? { syncPath: payload.syncPath } : {}),
+    artifacts: {
+      preview: requiredPath(artifacts.preview, "preview"),
+      blend: requiredPath(artifacts.blend, "blend"),
+      model: requiredPath(artifacts.model, "model"),
+    },
+  };
+}
+
+function readProjectDirectorOutput(projectDir: string, filePath: string, name: string): Buffer {
+  const root = path.resolve(projectDir, ".nomi-director");
+  const absolutePath = path.resolve(filePath);
+  const relative = path.relative(root, absolutePath);
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Blender 导演桥接返回的 ${name} 不在当前项目目录内`);
+  }
+  const bytes = fs.readFileSync(absolutePath);
+  if (bytes.byteLength === 0) throw new Error(`Blender 导演桥接返回的 ${name} 为空`);
+  return bytes;
+}
+
+function asAssetRef(value: unknown): DirectorAssetRef {
+  const raw = value as { id?: unknown; data?: { url?: unknown } };
+  const url = typeof raw?.data?.url === "string" ? raw.data.url : "";
+  if (!url) throw new Error("Blender 导演产物写入项目素材失败");
+  return { url, ...(typeof raw.id === "string" ? { assetId: raw.id } : {}) };
+}
+
+function persistDirectorOutputs(request: DirectorBlenderRenderRequest, projectDir: string, output: BridgeOutput): DirectorBlenderRenderResult {
+  const meta = {
+    kind: "blender",
+    source: "blender-director",
+    ownerNodeId: request.ownerNodeId || null,
+    blenderJobId: request.jobId,
+    directorManifestPath: output.manifestPath || null,
+    directorSyncPath: output.syncPath || null,
+  };
+  const preview = asAssetRef(writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.preview, "preview.png"), "blender-director-preview.png", "image/png", meta));
+  const blend = asAssetRef(writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.blend, "scene.blend"), "blender-director-scene.blend", "application/x-blender", meta));
+  const model = asAssetRef(writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.model, "scene.glb"), "blender-director-scene.glb", "model/gltf-binary", meta));
+  return { jobId: output.jobId, ...(output.blenderVersion ? { blenderVersion: output.blenderVersion } : {}), preview, blend, model };
+}
+
+export async function runDirectorBlenderRender(request: DirectorBlenderRenderRequest): Promise<DirectorBlenderRenderResult> {
+  const jobId = String(request.jobId || "").trim();
+  const projectId = String(request.projectId || "").trim();
+  if (!jobId) throw new Error("Blender 导演 jobId 不能为空");
+  if (!projectId) throw new Error("Blender 导演 projectId 不能为空");
+  if (activeDirectorJobs.has(jobId)) throw new Error(`Blender 导演任务 ${jobId} 已在运行`);
+  if (request.stagePreset && !STAGE_PRESETS.has(request.stagePreset)) throw new Error("Blender 导演 stagePreset 不受支持");
+  const projectDir = projectDirById(projectId);
+  if (!projectDir) throw new Error("无法找到 Blender 导演所属的本地项目目录");
+  const harnessRoot = path.resolve(request.harnessRoot || resolveDirectorHarnessRoot());
+  if (!fs.existsSync(path.join(harnessRoot, "cli_anything", "blender", "bridge.py"))) {
+    throw new Error("未找到 Blender 导演 harness；请重新安装或从源码运行 Nomi");
+  }
+
+  let tempDir = "";
+  try {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-blender-director-"));
+    const sceneInputPath = path.join(tempDir, "scene.json");
+    fs.writeFileSync(sceneInputPath, JSON.stringify({ scene: request.scene }), "utf8");
+    const timeoutMs = Math.max(1_000, Math.min(10 * 60 * 1000, request.timeoutMs || DEFAULT_TIMEOUT_MS));
+    const pythonPath = resolvePythonExecutable(request.pythonPath);
+    const args = buildDirectorBridgeArgs({
+      projectDir,
+      sceneInputPath,
+      jobId,
+      ownerNodeId: request.ownerNodeId,
+      title: request.title,
+      stagePreset: request.stagePreset,
+      timeoutSeconds: Math.ceil(timeoutMs / 1000),
+    });
+    return await new Promise<DirectorBlenderRenderResult>((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const child = spawn(pythonPath, args, {
+        cwd: harnessRoot,
+        env: { ...process.env, PYTHONPATH: [harnessRoot, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) },
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      const job: ActiveDirectorJob = { child, cancelled: false };
+      activeDirectorJobs.set(jobId, job);
+      const finish = (error?: Error, result?: DirectorBlenderRenderResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (job.forceKillTimer) clearTimeout(job.forceKillTimer);
+        activeDirectorJobs.delete(jobId);
+        if (error) reject(error);
+        else resolve(result as DirectorBlenderRenderResult);
+      };
+      const timeout = setTimeout(() => {
+        job.cancelled = true;
+        child.kill("SIGTERM");
+        finish(new Error(`Blender 导演预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
+      }, timeoutMs + 15_000);
+      timeout.unref?.();
+      child.stdout?.on("data", (chunk) => { stdout = appendCapped(stdout, chunk); });
+      child.stderr?.on("data", (chunk) => { stderr = appendCapped(stderr, chunk); });
+      child.once("error", (error) => finish(new Error(`Blender 导演桥接启动失败：${error.message}`)));
+      child.once("close", (code, signal) => {
+        if (job.cancelled) {
+          finish(new Error("Blender 导演预演已取消"));
+          return;
+        }
+        if (code !== 0) {
+          const detail = stderr.trim() || stdout.trim() || `signal=${signal || "none"}`;
+          finish(new Error(`Blender 导演预演失败（退出码 ${String(code)}）：${detail.slice(-6000)}`));
+          return;
+        }
+        try {
+          finish(undefined, persistDirectorOutputs(request, projectDir, parseDirectorBridgeOutput(stdout)));
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    });
+  } finally {
+    if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+export function cancelDirectorBlenderRender(jobId: string): boolean {
+  const job = activeDirectorJobs.get(String(jobId || ""));
+  if (!job) return false;
+  job.cancelled = true;
+  job.child.kill("SIGTERM");
+  job.forceKillTimer = setTimeout(() => {
+    if (activeDirectorJobs.has(jobId)) job.child.kill("SIGKILL");
+  }, 3_000);
+  job.forceKillTimer.unref?.();
+  return true;
+}
+
+export function cancelAllDirectorBlenderRenders(): number {
+  const jobs = [...activeDirectorJobs.keys()];
+  for (const jobId of jobs) cancelDirectorBlenderRender(jobId);
+  return jobs.length;
+}

@@ -23,14 +23,23 @@ import {
   plannedEdgeSchema,
   plannedNodeSchema,
   storyboardPlanParamsSchema,
+  updateStoryboardShotParamsSchema,
+  batchUpdateStoryboardShotsParamsSchema,
   stagingReferenceParamsSchema,
   cameraMoveParamsSchema,
+  externalImageAttachmentParamsSchema,
   type CanvasToolName,
 } from "./canvasTools";
 import {
   documentTools,
   type DocumentToolName,
 } from "./documentTools";
+import {
+  applyVibingDirectorPlanParamsSchema,
+  parseVibingDirectorPlanRequest,
+  readVibingDirectorParamsSchema,
+  type VibingDirectorToolName,
+} from "./vibingDirectorTools";
 import { readNestedRecord, trim, type JsonRecord } from "../jsonUtils";
 import { findSkillRecord } from "../skills/skillStore";
 import { decryptApiKeyRecord } from "../catalog/secrets";
@@ -107,17 +116,36 @@ function imageInputRank(model: Model): number {
   return modelSupportsImageInput(model.modelKey, model.modelAlias, model.meta) ? 1 : 0;
 }
 
-function chooseTextModel(prefModelKey?: string, preferImageInput = false): { vendor: Vendor; model: Model; apiKey: string } {
+type TextModelPreference = { modelKey?: string; vendorKey?: string };
+
+function preferenceRank(model: Model, preference: TextModelPreference): number {
+  const modelKey = trim(preference.modelKey);
+  if (!modelKey) return 0;
+  if (model.modelKey !== modelKey) return 2;
+  const vendorKey = trim(preference.vendorKey);
+  return vendorKey && model.vendorKey !== vendorKey ? 1 : 0;
+}
+
+export function orderTextModelsForAgent(
+  texts: Model[],
+  preference: TextModelPreference = {},
+  preferImageInput = false,
+): Model[] {
+  const modelKey = trim(preference.modelKey);
+  if (modelKey) {
+    return [...texts].sort((a, b) => preferenceRank(a, preference) - preferenceRank(b, preference));
+  }
+  if (preferImageInput) return [...texts].sort((a, b) => imageInputRank(b) - imageInputRank(a));
+  return [...texts].sort((a, b) => autoTextModelPenalty(a) - autoTextModelPenalty(b));
+}
+
+function chooseTextModel(preference: TextModelPreference = {}, preferImageInput = false): { vendor: Vendor; model: Model; apiKey: string } {
   const state = readCatalog();
   const texts = state.models.filter((item) => item.kind === "text" && item.enabled);
-  // 有偏好：用户选的排第一（其余作回退）。
+  // 有偏好：用户选的 vendor+model 精确排第一（同名模型在多供应商里不能串台），其余作回退。
   // 无偏好且本轮带图：优先支持图片输入的 text 模型（gpt-4o/claude/gemini 既能看图又擅长 tool_use）。
   // 无偏好无图：不盲选第一个，按「是否像通用对话模型」稳定排序，vision/preview 降到末尾。
-  const ordered = prefModelKey
-    ? [...texts].sort((a, b) => (a.modelKey === prefModelKey ? -1 : 0) - (b.modelKey === prefModelKey ? -1 : 0))
-    : preferImageInput
-      ? [...texts].sort((a, b) => imageInputRank(b) - imageInputRank(a))
-      : [...texts].sort((a, b) => autoTextModelPenalty(a) - autoTextModelPenalty(b));
+  const ordered = orderTextModelsForAgent(texts, preference, preferImageInput);
   for (const model of ordered) {
     const vendor = state.vendors.find((item) => item.key === model.vendorKey && item.enabled);
     const apiKey = decryptApiKeyRecord(state.apiKeysByVendor[model.vendorKey]);
@@ -154,7 +182,7 @@ export function resolveTextBrainKeys(): { vendor: string; modelKey: string } | n
 
 // A tool call may target either the generation-canvas tool group or the
 // creation-document tool group; the engine picks the group by skillKey.
-export type AgentToolName = CanvasToolName | DocumentToolName;
+export type AgentToolName = CanvasToolName | DocumentToolName | VibingDirectorToolName;
 
 export type AgentChatV2Event =
   | { type: "content-delta"; delta: string }
@@ -196,16 +224,24 @@ export function makeAgentTool<TParams extends z.ZodTypeAny>(
   toolName: AgentToolName,
   description: string,
   parameters: TParams,
+  normalizeArgs?: (args: unknown) => unknown | null,
 ) {
   return tool({
     description,
     parameters,
     execute: async (args: unknown, opts: { toolCallId: string }) => {
-      hooks.emit({ type: "tool-call", toolCallId: opts.toolCallId, toolName, args });
+      const confirmedArgs = normalizeArgs ? normalizeArgs(args) : args;
+      if (confirmedArgs == null) {
+        return {
+          ok: false as const,
+          error: `Invalid arguments for ${toolName}. Correct the declared operation fields and retry.`,
+        };
+      }
+      hooks.emit({ type: "tool-call", toolCallId: opts.toolCallId, toolName, args: confirmedArgs });
       const confirmation = await hooks.awaitToolConfirmation({
         toolCallId: opts.toolCallId,
         toolName,
-        args,
+        args: confirmedArgs,
       });
       if (!confirmation.ok) {
         hooks.emit({
@@ -245,6 +281,16 @@ function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
       "propose_storyboard_plan",
       "Produce a structured storyboard plan (cross-shot anchors + shots) for the user to review/edit in the creation area before anything lands on the canvas. Does not touch the canvas and costs nothing. Emit exactly one call.",
       storyboardPlanParamsSchema,
+    ),
+    update_storyboard_shot: makeTool(
+      "update_storyboard_shot",
+      "Update one shot in the current storyboard plan, including storyboard-table fields and a highly specific videoPrompt built from those fields. Edits the storyboard source-of-truth; does not call a model.",
+      updateStoryboardShotParamsSchema,
+    ),
+    batch_update_storyboard_shots: makeTool(
+      "batch_update_storyboard_shots",
+      "Batch update many shots in the current storyboard plan. Use this for storyboard-table autofill; set deriveVideoPrompts=true so Nomi rebuilds detailed video prompts from final table fields and syncs video nodes.",
+      batchUpdateStoryboardShotsParamsSchema,
     ),
     create_canvas_nodes: makeTool(
       "create_canvas_nodes",
@@ -287,6 +333,11 @@ function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
       z.object({
         nodeIds: z.array(z.string().min(1)).min(1).max(24),
       }),
+    ),
+    attach_external_image_to_node: makeTool(
+      "attach_external_image_to_node",
+      "Import an externally generated image from a local path, http(s) URL, or data:image URL into the current Nomi project and attach it as the result of an existing image-like canvas node. Use this for Codex/imagegen outputs that already exist; it does not call an image model itself.",
+      externalImageAttachmentParamsSchema,
     ),
     arrange_storyboard_to_timeline: makeTool(
       "arrange_storyboard_to_timeline",
@@ -339,16 +390,48 @@ function buildDocumentToolsForV2(hooks: AgentChatV2Hooks) {
   } as const;
 }
 
+function buildVibingDirectorToolsForV2(hooks: AgentChatV2Hooks) {
+  const make = <TParams extends z.ZodTypeAny>(
+    name: VibingDirectorToolName,
+    description: string,
+    parameters: TParams,
+    normalizeArgs?: (args: unknown) => unknown | null,
+  ) => makeAgentTool(hooks, name, description, parameters, normalizeArgs);
+  return {
+    read_vibing_director: make(
+      "read_vibing_director",
+      "Read the current Blender-backed VIBING Director state: creative brief, licensed local asset library, Blender objects, camera, beats and latest returned artifacts. Use it before changing an existing stage when the supplied context is not enough.",
+      readVibingDirectorParamsSchema,
+    ),
+    apply_vibing_director_plan: make(
+      "apply_vibing_director_plan",
+      "Propose one bounded Blender Director plan. It may only select the declared stage preset, place an asset already in this node's local asset library, add a blocking marker, move or remove a known object, set the director camera/path, and set beats. Never use code, Blender Python, shell commands, URLs, arbitrary files, downloads, or canvas operations. The user must confirm before Nomi starts local Blender.",
+      applyVibingDirectorPlanParamsSchema,
+      parseVibingDirectorPlanRequest,
+    ),
+  } as const;
+}
+
+export type AgentToolGroup = "canvas" | "document" | "vibing-director";
+
+export function agentToolGroupForSkill(skillKey: string | undefined): AgentToolGroup {
+  if (typeof skillKey === "string" && skillKey.startsWith("workbench.creation.")) return "document";
+  if (typeof skillKey === "string" && skillKey.startsWith("workbench.vibing-director")) return "vibing-director";
+  return "canvas";
+}
+
 // Tool-group selector: creation-area skills (workbench.creation.*) get the
-// document tools; everything else (generation / storyboard / default) gets the
-// canvas tools. One engine, parameterized tool group.
+// document tools; VIBING Director gets its isolated scene-patch tools; everything
+// else (generation / storyboard / default) gets canvas tools. One engine, parameterized tool group.
 function buildToolsForSkill(skillKey: string | undefined, hooks: AgentChatV2Hooks) {
-  if (typeof skillKey === "string" && skillKey.startsWith("workbench.creation.")) {
-    return buildDocumentToolsForV2(hooks);
+  const group = agentToolGroupForSkill(skillKey);
+  if (group === "document") return buildDocumentToolsForV2(hooks);
+  if (group === "vibing-director") return buildVibingDirectorToolsForV2(hooks);
+  {
+    const { _kindSchema, ...canvasTools } = buildCanvasToolsForV2(hooks);
+    void _kindSchema;
+    return canvasTools;
   }
-  const { _kindSchema, ...canvasTools } = buildCanvasToolsForV2(hooks);
-  void _kindSchema;
-  return canvasTools;
 }
 
 export type RunAgentChatV2Payload = {
@@ -359,6 +442,8 @@ export type RunAgentChatV2Payload = {
   skillKey?: string;
   skillName?: string;
   chatContext?: unknown;
+  /** Use a text-only compatibility protocol instead of provider-native tools. */
+  disableTools?: boolean;
   mode?: string;
   temperature?: number;
   agentModelKey?: string; // 助手模型偏好（用户选的）：优先用，否则回退第一个可用 text 模型
@@ -476,7 +561,10 @@ export async function runAgentChatV2(
   const wantsRichInput = attachments.some(
     (item) => item.kind === "image" || item.contentType.toLowerCase().includes("pdf") || item.fileName.toLowerCase().endsWith(".pdf"),
   );
-  const { vendor, model, apiKey } = chooseTextModel(trim(payload.agentModelKey), wantsRichInput);
+  const { vendor, model, apiKey } = chooseTextModel({
+    modelKey: trim(payload.agentModelKey),
+    vendorKey: trim(payload.agentVendorKey),
+  }, wantsRichInput);
   const systemPrompt = trim(payload.systemPrompt as unknown as JsonRecord["systemPrompt"]);
   const skillSystemPrompt = buildSkillSystemPrompt(payload as unknown as JsonRecord);
   // 收口 sanitize（P0-6）：送进 LLM 的 user/system 文本 ASCII 可移植化（防 Moonshot 等 tokenizer 异常）。
@@ -493,7 +581,10 @@ export async function runAgentChatV2(
     /* 记忆读取/提炼失败静默退回无记忆,绝不阻断对话 */
   }
 
-  const systemParts = [NOMI_AGENT_IDENTITY, systemPrompt, skillSystemPrompt, memoryBlock].filter((part) => part && part.length > 0);
+  const toolFreeProtocol = payload.disableTools
+    ? "最高优先级：本轮没有可调用的原生工具。忽略任何要求调用工具、展示补丁或解释的说明，严格按当前系统提示指定的结构化 JSON 文本协议回复。"
+    : "";
+  const systemParts = [NOMI_AGENT_IDENTITY, systemPrompt, skillSystemPrompt, toolFreeProtocol, memoryBlock].filter((part) => part && part.length > 0);
   const system = systemParts.length > 0 ? sanitizeForBroadCompat(systemParts.join("\n\n")) : undefined;
 
   const languageModel = buildLanguageModelForVendor(vendor, model, apiKey);
@@ -503,7 +594,7 @@ export async function runAgentChatV2(
   // chatContext.skill.key; fall back to the top-level payload.skillKey.
   const resolvedSkillKey =
     readRequestedSkill(payload as unknown as JsonRecord).key || trim(payload.skillKey);
-  const tools = buildToolsForSkill(resolvedSkillKey, hooks);
+  const tools = payload.disableTools ? {} : buildToolsForSkill(resolvedSkillKey, hooks);
 
   // Replay stored history for this session so the agent remembers prior turns
   // (within a panel and across the creation / generation areas, which share a
@@ -543,8 +634,11 @@ export async function runAgentChatV2(
       messages,
       tools,
       isAnthropic: normalizeProviderKind(vendor.providerKind) === "anthropic",
-      temperature: typeof payload.temperature === "number" ? payload.temperature : 0.7,
+      temperature: payload.disableTools
+        ? 0.2
+        : typeof payload.temperature === "number" ? payload.temperature : 0.7,
       skillKey: resolvedSkillKey,
+      structuredJson: payload.disableTools === true,
       abortSignal: abortController.signal,
     },
     { onError: (message) => hooks.emit({ type: "error", message }) },

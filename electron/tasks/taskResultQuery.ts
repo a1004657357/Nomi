@@ -3,6 +3,8 @@
 // ESM/CJS 都按 live binding 在调用时取值，加载期不触碰，安全。
 import { trim, type JsonRecord } from "../jsonUtils";
 import type { Mapping, Model, ProfileKind } from "../catalog/types";
+import { JIMENG_WEB_VENDOR_SEED } from "../catalog/jimengWeb";
+import { queryJimengWebTask } from "../jimengWeb/seedanceBridge";
 import { classifyTaskCacheMiss, wasTaskAdmitted } from "./taskAdmission";
 import { traceVendorCompleted } from "../events/vendorCallTrace";
 import { rememberTaskResult } from "../vendor/fingerprintCache";
@@ -18,6 +20,7 @@ import {
   findTaskMapping,
   localizeTaskAsset,
   taskCache,
+  writeAsset,
 } from "../runtime";
 
 /**
@@ -38,6 +41,19 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
   } catch {
     return null; // 模型已不可用/未配置 → 无法重建，落回诚实诊断
   }
+  if (vendorKey === JIMENG_WEB_VENDOR_SEED.key) {
+    const projectId = trim(raw.projectId);
+    return {
+      vendor: vendorKey,
+      request: { kind: taskKind, prompt: trim(raw.prompt), extras: { modelKey, projectId } },
+      raw: {},
+      mapping: null,
+      model,
+      providerMeta: { task_id: taskId, taskCode: taskId },
+      ...(projectId ? { projectId } : {}),
+      wantedKind,
+    };
+  }
   const mapping = findTaskMapping(vendorKey, taskKind, modelKey);
   if (!mapping?.query) return null; // 同步模型无 query op，没法续查
   const projectId = trim(raw.projectId);
@@ -47,7 +63,7 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
     raw: {},
     mapping,
     model,
-    providerMeta: { task_id: taskId, query_id: taskId },
+    providerMeta: { task_id: taskId, query_id: taskId, video_id: taskId },
     ...(projectId ? { projectId } : {}),
     wantedKind,
   };
@@ -55,6 +71,25 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
 
 /** 跑一次续查（缓存命中 / 无状态重建 共用单一真相）：有 query op 走 query；无则尝试 raw 里已带的资产。 */
 async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ vendor: string; result: TaskResult }> {
+  if (cached.vendor === JIMENG_WEB_VENDOR_SEED.key) {
+    const result = await queryJimengWebTask({
+      taskCode: taskId,
+      request: cached.request,
+      projectId: cached.projectId,
+      nodeId: cached.nodeId,
+      serverUrl: cached.providerMeta?.serverUrl,
+      writeAsset,
+    });
+    if (result.status === "succeeded" || result.status === "failed") {
+      traceVendorCompleted(cached.projectId, { runId: taskId, nodeId: cached.nodeId, status: result.status, assetCount: result.assets.length });
+      rememberTaskResult(cached.projectId || "", cached.fingerprint, result);
+      taskCache.delete(taskId);
+    } else {
+      admitTask(taskId, { ...cached, raw: result.raw });
+    }
+    return { vendor: cached.vendor, result };
+  }
+
   const queryOperation = cached.mapping?.query;
   if (cached.mapping && queryOperation && cached.model) {
     // 不再用缓存的明文 key，轮询时按 vendor 重新派生（并重新校验 key 仍可用）。
@@ -69,6 +104,7 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
         ...(cached.providerMeta || {}),
         query_id: cached.providerMeta?.query_id || taskId,
         task_id: cached.providerMeta?.task_id || taskId,
+        video_id: cached.providerMeta?.video_id || taskId,
       },
     });
     const normalized = await buildProfileTaskResult({

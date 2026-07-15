@@ -123,6 +123,11 @@ describe("eventLogRepository", () => {
     expect(projectIdFromSessionKey("nomi:workbench:local:creation")).toBeNull();
     expect(projectIdFromSessionKey("nomi:workbench:local:generation")).toBeNull();
   });
+
+  it("剥离带 director scope 的会话后缀", () => {
+    expect(projectIdFromSessionKey("nomi:workbench:proj-42:director:director-node-1")).toBe("proj-42");
+    expect(projectIdFromSessionKey("nomi:workbench:local:director:director-node-1")).toBeNull();
+  });
 });
 
 describe("redactDeep", () => {

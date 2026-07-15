@@ -19,18 +19,20 @@ export type DeferredNodeImageProps = Omit<NomiImageProps, 'src'> & {
   src: string
   priority?: boolean
   placeholderClassName?: string
+  visibilityRoot?: Element | null
 }
 
 export function DeferredNodeImage({
   src,
   priority = false,
   placeholderClassName,
+  visibilityRoot,
   className,
   onLoad,
   onError,
   ...props
 }: DeferredNodeImageProps): JSX.Element {
-  const media = useDeferredNodeMediaSrc({ src, kind: 'image', priority })
+  const media = useDeferredNodeMediaSrc({ src, kind: 'image', priority, visibilityRoot })
   return (
     <>
       {media.loading ? <DeferredNodeMediaPlaceholder ref={media.placeholderRef} className={placeholderClassName} /> : null}
@@ -57,6 +59,7 @@ export type DeferredNodeVideoProps = React.VideoHTMLAttributes<HTMLVideoElement>
   src: string
   priority?: boolean
   placeholderClassName?: string
+  visibilityRoot?: Element | null
 }
 
 function releaseVideoElement(video: HTMLVideoElement | null): void {
@@ -74,12 +77,13 @@ export function DeferredNodeVideo({
   src,
   priority = false,
   placeholderClassName,
+  visibilityRoot,
   className,
   onLoadedMetadata,
   onError,
   ...props
 }: DeferredNodeVideoProps): JSX.Element {
-  const media = useDeferredNodeMediaSrc({ src, kind: 'video', priority })
+  const media = useDeferredNodeMediaSrc({ src, kind: 'video', priority, visibilityRoot })
   const videoRef = React.useRef<HTMLVideoElement | null>(null)
   const setVideoRef = React.useCallback((element: HTMLVideoElement | null) => {
     if (videoRef.current && videoRef.current !== element) {

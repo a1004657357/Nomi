@@ -1,5 +1,5 @@
 import React from 'react'
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import { Bounds, Center, OrbitControls, useGLTF } from '@react-three/drei'
 import { cn } from '../../../../utils/cn'
 
@@ -20,6 +20,21 @@ function Glb({ url }: { url: string }): JSX.Element {
   return <primitive object={object} />
 }
 
+function ConnectedOrbitControls({ autoRotate, enablePan }: { autoRotate: boolean; enablePan: boolean }): JSX.Element {
+  const eventSource = useThree((state) => state.events.connected)
+  return (
+    <OrbitControls
+      makeDefault
+      domElement={(eventSource as HTMLElement | undefined) ?? undefined}
+      enablePan={enablePan}
+      autoRotate={autoRotate}
+      autoRotateSpeed={1.1}
+      minDistance={1.2}
+      maxDistance={14}
+    />
+  )
+}
+
 class GlbBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
   { failed: boolean }
@@ -36,9 +51,28 @@ class GlbBoundary extends React.Component<
   }
 }
 
-export default function Model3DViewer({ url }: { url: string }): JSX.Element {
+export default function Model3DViewer({
+  url,
+  autoRotate = true,
+  enablePan = false,
+}: {
+  url: string
+  autoRotate?: boolean
+  enablePan?: boolean
+}): JSX.Element {
+  // The viewer can live inside a draggable React Flow node. Let R3F receive its
+  // event first, then keep the canvas from claiming the pointer for node drag.
+  const keepPointerInViewer = (event: React.SyntheticEvent): void => {
+    event.stopPropagation()
+  }
+
   return (
-    <div className={cn('w-full h-full bg-nomi-ink-05')}>
+    <div
+      className={cn('w-full h-full select-none touch-none bg-nomi-ink-05')}
+      onContextMenu={keepPointerInViewer}
+      onPointerDown={keepPointerInViewer}
+      onWheel={keepPointerInViewer}
+    >
       <GlbBoundary
         fallback={
           <div className={cn('flex h-full w-full items-center justify-center text-caption text-nomi-ink-40')}>
@@ -46,7 +80,13 @@ export default function Model3DViewer({ url }: { url: string }): JSX.Element {
           </div>
         }
       >
-        <Canvas camera={{ position: [2.4, 1.8, 3.2], fov: 45 }} dpr={[1, 2]} frameloop="demand">
+        <Canvas
+          camera={{ position: [2.4, 1.8, 3.2], fov: 45 }}
+          dpr={[1, 2]}
+          frameloop="demand"
+          style={{ touchAction: 'none', userSelect: 'none' }}
+        >
+          <color attach="background" args={['#dfe6ea']} />
           <ambientLight intensity={0.75} />
           <directionalLight position={[3, 5, 2]} intensity={1.1} castShadow />
           <directionalLight position={[-3, 2, -2]} intensity={0.4} />
@@ -57,14 +97,7 @@ export default function Model3DViewer({ url }: { url: string }): JSX.Element {
               </Center>
             </Bounds>
           </React.Suspense>
-          <OrbitControls
-            makeDefault
-            enablePan={false}
-            autoRotate
-            autoRotateSpeed={1.1}
-            minDistance={1.2}
-            maxDistance={14}
-          />
+          <ConnectedOrbitControls autoRotate={autoRotate} enablePan={enablePan} />
         </Canvas>
       </GlbBoundary>
     </div>

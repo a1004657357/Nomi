@@ -111,6 +111,21 @@ const TOOLS = [
     build: (a: Record<string, unknown>) => ({ projectId: a.projectId, nodeIds: a.nodeIds || [] }),
   },
   {
+    name: 'nomi_render_director',
+    description: '把已有 3D 导演台节点的摆位和运镜渲染为本地 Blender 预演，并把预览图、可编辑 BLEND 与 GLB 输出自动接回 Nomi 画布。仅在 Nomi 桌面应用已打开时可用。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        sourceNodeId: { type: 'string', description: 'scene3d / 3D 导演台节点 id' },
+        stagePreset: { type: 'string', enum: ['empty', 'studio', 'coffee_shop', 'city_street', 'interior_room'] },
+      },
+      required: ['projectId', 'sourceNodeId'],
+    },
+    method: 'director.render',
+    build: (a: Record<string, unknown>) => ({ projectId: a.projectId, sourceNodeId: a.sourceNodeId, stagePreset: a.stagePreset }),
+  },
+  {
     name: 'nomi_generate',
     description: '触发一次生成（用 Nomi 的 archetype 正确组装参数 + 落资产回节点）。会花用户额度。intent=image/video/text/audio。',
     inputSchema: {

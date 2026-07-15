@@ -192,6 +192,8 @@ describe('Phase C storyboard happy path', () => {
       const message = buildStoryboardPlanningMessage({ storyText: '  Once upon a time...  ' })
       expect(message).toContain('propose_storyboard_plan')
       expect(message).toContain('分镜方案')
+      expect(message).toContain('屏幕可见性硬规则')
+      expect(message).toContain('如果人物正面面对镜头，而手机/电脑背面或侧面朝向镜头，屏幕不可见')
       expect(message).toContain('--- 故事正文 ---')
       expect(message).toContain('--- 故事正文结束 ---')
       expect(message).toContain('Once upon a time...')
@@ -213,6 +215,7 @@ describe('Phase C storyboard happy path', () => {
       expect(message).toContain('--- 当前方案(JSON) ---')
       expect(message).toContain('小明')
       expect(message).toContain('把所有镜头时长改成 8 秒')
+      expect(message).toContain('屏幕可见性硬规则')
       // 修改模式不该带「故事正文」骨架。
       expect(message).not.toContain('--- 故事正文 ---')
     })

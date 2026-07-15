@@ -1,6 +1,7 @@
-import type { BuiltinCanvasCategoryId, GenerationCanvasEdgeMode, GenerationNodeKind } from '../model/generationCanvasTypes'
+import type { BuiltinCanvasCategoryId, GenerationCanvasEdgeMode, GenerationNodeKind, GenerationNodeResult } from '../model/generationCanvasTypes'
 import { CATEGORY_IDS } from '../model/generationCanvasTypes'
-import { getDefaultCategoryForNodeKind, getGenerationNodeDefaultTitle } from '../model/generationNodeKinds'
+import { getDefaultCategoryForNodeKind, getGenerationNodeDefaultTitle, isImageLikeGenerationNodeKind } from '../model/generationNodeKinds'
+import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
 import { generationCanvasTools, type CreateGenerationNodeToolInput } from './generationCanvasTools'
 import { listAvailableModelsForAgent, type AgentModelEntry } from './availableModels'
 import { buildPlannedNodeMeta } from './plannedNodeMeta'
@@ -8,10 +9,19 @@ import { withCanvasGestureContext, type CanvasGestureContext } from '../events/c
 import { layoutPlannedNodes, layoutStoryboardNodes } from './trajectoryLayout'
 import { formatCanvasForAgent } from './canvasPromptContext'
 import { buildDependencyWaves } from '../runner/dependencyWaves'
+import { expandNodeIdsWithUngeneratedReferenceAncestors } from '../runner/referenceAncestors'
 import { runPlanWithToasts } from '../components/batchPlanPreview'
 import { mintSpendGrant } from '../../api/taskApi'
 import { arrangeStoryboardToTimeline } from './sendStoryboardToTimeline'
-import { parseStoryboardPlan } from './storyboardPlan'
+import {
+  buildDetailedStoryboardShotVideoPrompt,
+  parseStoryboardPlan,
+  storyboardPlanToCreateNodesArgs,
+  storyboardShotVideoPrompt,
+  type PlanShot,
+  type StoryboardPlan,
+} from './storyboardPlan'
+import { buildStoryboardScriptRows } from '../../creation/storyboard/storyboardScriptViewModel'
 import type { StagingSpec, StagingCharacterSpec } from '../nodes/scene3d/stagingBuilder'
 import type { CameraMoveSpec } from '../nodes/scene3d/cameraMoveBuilder'
 import type { ScenePropPlacement } from '../nodes/scene3d/scene3dPropSpecs'
@@ -20,6 +30,8 @@ import type { CameraSpeed } from '../nodes/scene3d/cameraMoveVocab'
 import { useWorkbenchStore } from '../../workbenchStore'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { registerCanvasToolClientId, resolveCanvasToolNodeId } from './clientIdRegistry'
+import { getDesktopBridge, type DesktopAssetDto } from '../../../desktop/bridge'
+import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 export { resetClientIdRegistry, resolveCanvasToolNodeId } from './clientIdRegistry'
 
 // 批量创建节点的布局由渲染层 derive，而不是信任 LLM 发来的像素坐标。
@@ -51,6 +63,124 @@ const EDGE_MODES: ReadonlySet<string> = new Set([
   'composition_ref',
 ])
 
+const STORYBOARD_SHOT_TEXT_FIELDS = [
+  'scene',
+  'shotSize',
+  'cameraAngle',
+  'cameraMove',
+  'characters',
+  'performance',
+  'dialogue',
+  'props',
+  'sound',
+  'notes',
+] as const satisfies readonly (keyof PlanShot)[]
+
+type StoryboardShotPatchResult = {
+  patch: Partial<PlanShot>
+  updated: string[]
+}
+
+function hasStoryboardValue(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0
+  if (Array.isArray(value)) return value.length > 0
+  if (value && typeof value === 'object') return Object.keys(value).length > 0
+  return value !== undefined && value !== null
+}
+
+function shouldPatchStoryboardField(current: PlanShot, key: keyof PlanShot, overwriteExisting: boolean): boolean {
+  return overwriteExisting || !hasStoryboardValue(current[key])
+}
+
+function collectStoryboardShotPatch(
+  current: PlanShot,
+  record: Record<string, unknown>,
+  options: { overwriteExisting: boolean },
+): StoryboardShotPatchResult {
+  const nextKind = record.shotKind === 'image' || record.shotKind === 'video' ? record.shotKind : current.shotKind
+  const patch: Partial<PlanShot> = {}
+  const updated: string[] = []
+  const add = <K extends keyof PlanShot>(key: K, value: PlanShot[K]) => {
+    patch[key] = value
+    updated.push(key)
+  }
+  const addIfAllowed = <K extends keyof PlanShot>(key: K, value: PlanShot[K]) => {
+    if (shouldPatchStoryboardField(current, key, options.overwriteExisting)) add(key, value)
+  }
+
+  if (nextKind && nextKind !== current.shotKind && shouldPatchStoryboardField(current, 'shotKind', options.overwriteExisting)) add('shotKind', nextKind)
+  if (typeof record.durationSec === 'number' && Number.isFinite(record.durationSec)) addIfAllowed('durationSec', record.durationSec)
+  if (typeof record.modelKey === 'string') addIfAllowed('modelKey', record.modelKey.trim() || undefined)
+  if (typeof record.modeId === 'string') addIfAllowed('modeId', record.modeId.trim() || undefined)
+  if (record.params && typeof record.params === 'object' && !Array.isArray(record.params)) {
+    addIfAllowed('params', { ...(record.params as Record<string, unknown>) })
+  }
+  for (const key of STORYBOARD_SHOT_TEXT_FIELDS) {
+    if (typeof record[key] === 'string') addIfAllowed(key, record[key])
+  }
+
+  const activeKind = nextKind ?? current.shotKind ?? 'video'
+  const hasPrompt = typeof record.prompt === 'string'
+  const hasImagePrompt = typeof record.imagePrompt === 'string'
+  const hasVideoPrompt = typeof record.videoPrompt === 'string'
+  if (hasImagePrompt && shouldPatchStoryboardField(current, 'imagePrompt', options.overwriteExisting)) {
+    add('imagePrompt', record.imagePrompt as string)
+    if (activeKind === 'image' && !hasPrompt && shouldPatchStoryboardField(current, 'prompt', options.overwriteExisting)) {
+      add('prompt', record.imagePrompt as string)
+    }
+  }
+  if (hasVideoPrompt && shouldPatchStoryboardField(current, 'videoPrompt', options.overwriteExisting)) {
+    add('videoPrompt', record.videoPrompt as string)
+    if (activeKind === 'video' && !hasPrompt && shouldPatchStoryboardField(current, 'prompt', options.overwriteExisting)) {
+      add('prompt', record.videoPrompt as string)
+    }
+  }
+  if (hasPrompt && shouldPatchStoryboardField(current, 'prompt', options.overwriteExisting)) {
+    const prompt = record.prompt as string
+    add('prompt', prompt)
+    if (activeKind === 'image' && shouldPatchStoryboardField(current, 'imagePrompt', options.overwriteExisting)) add('imagePrompt', prompt)
+    if (activeKind === 'video' && shouldPatchStoryboardField(current, 'videoPrompt', options.overwriteExisting)) add('videoPrompt', prompt)
+  }
+
+  return { patch, updated: Array.from(new Set(updated)) }
+}
+
+function applyDerivedStoryboardVideoPrompt(shot: PlanShot): PlanShot {
+  const prompt = buildDetailedStoryboardShotVideoPrompt(shot)
+  return {
+    ...shot,
+    videoPrompt: prompt,
+    ...((shot.shotKind ?? 'video') !== 'image' ? { prompt } : {}),
+  }
+}
+
+function syncStoryboardPlanToCanvas(nextPlan: StoryboardPlan, changedShotIndices: ReadonlySet<number>): void {
+  const canvasStore = useGenerationCanvasStore.getState()
+  const groupPrompt = storyboardPlanToCreateNodesArgs(nextPlan).nodes.find((node) => node.clientId === 'storyboard-group')?.prompt || ''
+  for (const node of canvasStore.nodes) {
+    if (!node.meta?.storyboardGroup) continue
+    canvasStore.updateNode(
+      node.id,
+      {
+        ...(groupPrompt ? { prompt: groupPrompt } : {}),
+        meta: { ...(node.meta || {}), storyboardPlanSnapshot: nextPlan },
+      },
+      { persist: false },
+    )
+  }
+  if (changedShotIndices.size > 0) {
+    const state = useGenerationCanvasStore.getState()
+    const rows = buildStoryboardScriptRows(nextPlan, state.nodes, state.edges)
+    for (const row of rows) {
+      if (!changedShotIndices.has(row.shot.index) || !row.videoNode) continue
+      const prompt = storyboardShotVideoPrompt(row.shot)
+      if (prompt) useGenerationCanvasStore.getState().updateNodePrompt(row.videoNode.id, prompt)
+    }
+  }
+  useGenerationCanvasStore.getState().commitPersistedChange()
+}
+
 /** LLM 给的边 mode 只认白名单内的值，非法值按通用参考处理（不抛、不静默改语义）。 */
 function normalizeEdgeMode(raw: unknown): GenerationCanvasEdgeMode | undefined {
   return typeof raw === 'string' && EDGE_MODES.has(raw) ? (raw as GenerationCanvasEdgeMode) : undefined
@@ -71,6 +201,69 @@ function normalizePlannedEdges(rawEdges: unknown[]): Array<{ source: string; tar
 /** S6-4 锁求值要把 LLM 口中的 clientId 翻译成真实节点 id 再查锁面(gate 调用方用)。 */
 function resolveNodeId(id: string): string {
   return resolveCanvasToolNodeId(id)
+}
+
+type ExternalImageSourceType = 'local_path' | 'url' | 'data_url'
+
+const EXTERNAL_IMAGE_SOURCE_TYPES: ReadonlySet<string> = new Set(['local_path', 'url', 'data_url'])
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function assetDataString(asset: DesktopAssetDto, key: string): string {
+  const value = asset.data?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeExternalImageSourceType(value: unknown): ExternalImageSourceType {
+  const sourceType = asTrimmedString(value)
+  if (!EXTERNAL_IMAGE_SOURCE_TYPES.has(sourceType)) {
+    throw new Error('sourceType 必须是 local_path / url / data_url')
+  }
+  return sourceType as ExternalImageSourceType
+}
+
+function assertExternalImageSource(sourceType: ExternalImageSourceType, source: string): void {
+  if (!source) throw new Error('source is required')
+  if (sourceType === 'url' && !/^https?:\/\//i.test(source)) {
+    throw new Error('sourceType=url 时 source 必须是 http(s) URL')
+  }
+  if (sourceType === 'data_url' && !source.startsWith('data:image/')) {
+    throw new Error('sourceType=data_url 时 source 必须是 data:image/... URL')
+  }
+}
+
+async function importExternalImageAsset(input: {
+  projectId: string
+  nodeId: string
+  sourceType: ExternalImageSourceType
+  source: string
+  fileName?: string
+}): Promise<DesktopAssetDto> {
+  const desktop = getDesktopBridge()
+  if (!desktop?.assets) throw new Error('外部图片导入需要 Electron 桌面运行时')
+  const base = {
+    projectId: input.projectId,
+    kind: 'generated',
+    fileName: input.fileName,
+    ownerNodeId: input.nodeId,
+  }
+  if (input.sourceType === 'local_path') {
+    if (!desktop.assets.importLocalPath) throw new Error('当前桌面桥不支持从本地路径导入图片，请重启 Nomi 后再试')
+    return desktop.assets.importLocalPath({ ...base, path: input.source })
+  }
+  return desktop.assets.importRemoteUrl({ ...base, url: input.source })
+}
+
+function assertImportedImageAsset(asset: DesktopAssetDto): string {
+  const url = assetDataString(asset, 'url')
+  if (!url) throw new Error('外部图片已导入但没有返回可用 URL')
+  const contentType = assetDataString(asset, 'contentType')
+  if (contentType && contentType !== 'application/octet-stream' && !contentType.startsWith('image/')) {
+    throw new Error(`导入结果不是图片资源：${contentType}`)
+  }
+  return url
 }
 
 /**
@@ -220,6 +413,89 @@ export async function applyCanvasToolCall(toolName: string, args: unknown, gestu
     return `已生成分镜方案「${plan.title || '未命名'}」：${plan.anchors.length} 个锚 · ${plan.shots.length} 个镜头，已放到创作区，待你审阅/修改后确认落画布。`
   }
 
+  if (toolName === 'update_storyboard_shot') {
+    const shotIndex = typeof record.shotIndex === 'number' && Number.isFinite(record.shotIndex)
+      ? Math.trunc(record.shotIndex)
+      : 0
+    if (shotIndex < 1) throw new Error('shotIndex 必须是从 1 开始的镜号')
+    const store = useWorkbenchStore.getState()
+    const plan = store.storyboardPlan
+    if (!plan) throw new Error('storyboard_plan_not_found:当前没有可编辑的分镜方案')
+    const pos = plan.shots.findIndex((shot) => shot.index === shotIndex)
+    if (pos < 0) throw new Error(`storyboard_shot_not_found:找不到镜头 ${shotIndex}`)
+
+    const current = plan.shots[pos]
+    const { patch, updated } = collectStoryboardShotPatch(current, record, { overwriteExisting: true })
+    if (updated.length === 0) throw new Error('update_storyboard_shot 需要至少提供一个要更新的字段')
+
+    const nextPlan = {
+      ...plan,
+      shots: plan.shots.map((shot, index) => (index === pos ? { ...shot, ...patch } : shot)),
+    }
+    inCtx(() => {
+      store.setStoryboardPlan(nextPlan)
+      store.setStoryboardEditorOpen(true)
+      store.setWorkspaceMode('creation')
+    })
+    syncStoryboardPlanToCanvas(nextPlan, new Set([shotIndex]))
+    return { shotIndex, updated: Array.from(new Set(updated)) }
+  }
+
+  if (toolName === 'batch_update_storyboard_shots') {
+    const shotRecords = Array.isArray(record.shots) ? record.shots : []
+    if (shotRecords.length === 0) throw new Error('batch_update_storyboard_shots 需要至少提供一个镜头更新')
+    const store = useWorkbenchStore.getState()
+    const plan = store.storyboardPlan
+    if (!plan) throw new Error('storyboard_plan_not_found:当前没有可编辑的分镜方案')
+    const overwriteExisting = record.overwriteExisting === true
+    const deriveVideoPrompts = record.deriveVideoPrompts !== false
+    const patchByShotIndex = new Map<number, { patch: Partial<PlanShot>; updated: string[] }>()
+    for (const raw of shotRecords) {
+      const item = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+      const shotIndex = typeof item.shotIndex === 'number' && Number.isFinite(item.shotIndex) ? Math.trunc(item.shotIndex) : 0
+      if (shotIndex < 1) throw new Error('shotIndex 必须是从 1 开始的镜号')
+      const current = plan.shots.find((shot) => shot.index === shotIndex)
+      if (!current) throw new Error(`storyboard_shot_not_found:找不到镜头 ${shotIndex}`)
+      const result = collectStoryboardShotPatch(current, item, { overwriteExisting })
+      if (result.updated.length > 0) patchByShotIndex.set(shotIndex, result)
+    }
+    if (patchByShotIndex.size === 0 && !deriveVideoPrompts) {
+      throw new Error('batch_update_storyboard_shots 没有可更新字段')
+    }
+    let nextPlan: StoryboardPlan = {
+      ...plan,
+      shots: plan.shots.map((shot) => {
+        const entry = patchByShotIndex.get(shot.index)
+        return entry ? { ...shot, ...entry.patch } : shot
+      }),
+    }
+    const changedShotIndices = new Set(patchByShotIndex.keys())
+    if (deriveVideoPrompts) {
+      const requestedShotIndices = new Set(
+        shotRecords
+          .map((raw) => (raw && typeof raw === 'object' ? (raw as Record<string, unknown>).shotIndex : undefined))
+          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+          .map((value) => Math.trunc(value)),
+      )
+      nextPlan = {
+        ...nextPlan,
+        shots: nextPlan.shots.map((shot) => {
+          if (!requestedShotIndices.has(shot.index)) return shot
+          changedShotIndices.add(shot.index)
+          return applyDerivedStoryboardVideoPrompt(shot)
+        }),
+      }
+    }
+    store.setStoryboardPlan(nextPlan)
+    syncStoryboardPlanToCanvas(nextPlan, changedShotIndices)
+    return {
+      updatedShotCount: changedShotIndices.size,
+      updatedShotIndices: Array.from(changedShotIndices).sort((a, b) => a - b),
+      overwriteExisting,
+      deriveVideoPrompts,
+    }
+  }
+
   if (toolName === 'create_canvas_nodes') {
     const incoming = Array.isArray(record.nodes) ? record.nodes : []
     // 任一节点带 modelKey 才加载可用模型清单（校验+补全 agent 选的模型/参数，否则零 IPC）。
@@ -257,9 +533,14 @@ export async function applyCanvasToolCall(toolName: string, args: unknown, gestu
       const positionRecord =
         node.position && typeof node.position === 'object' ? (node.position as Record<string, unknown>) : null
       const plannedMeta = buildPlannedNodeMeta(node, entryByKey)
-      // 参考卡身份透传（分镜方案的角色/场景/道具锚）→ node.meta.referenceSheet，编号分配处据此跳过。
-      const meta =
-        node.referenceSheet === true ? { ...(plannedMeta ?? {}), referenceSheet: true } : plannedMeta
+      // 分镜域标记透传：参考卡不占镜号；分镜组总控卡用于把一批镜头标成同一脚本入口。
+      const domainMeta: Record<string, unknown> = {}
+      if (node.referenceSheet === true) domainMeta.referenceSheet = true
+      if (node.storyboardGroup === true) domainMeta.storyboardGroup = true
+      if (node.storyboardPlanSnapshot && typeof node.storyboardPlanSnapshot === 'object') {
+        domainMeta.storyboardPlanSnapshot = node.storyboardPlanSnapshot
+      }
+      const meta = Object.keys(domainMeta).length > 0 ? { ...(plannedMeta ?? {}), ...domainMeta } : plannedMeta
       // 单节点：尊重 agent 指定位置（增量添加可能要贴近某节点），否则同走避让布局。
       const position =
         total > 1
@@ -280,6 +561,7 @@ export async function applyCanvasToolCall(toolName: string, args: unknown, gestu
             : `${getGenerationNodeDefaultTitle(kind)} ${index + 1}`,
         prompt: typeof node.prompt === 'string' ? node.prompt : '',
         position,
+        ...(node.storyboardGroup === true ? { size: { ...STORYBOARD_TABLE_DEFAULT_SIZE } } : {}),
         ...(meta ? { meta } : {}),
       }
     })
@@ -464,6 +746,56 @@ export async function applyCanvasToolCall(toolName: string, args: unknown, gestu
     return { deletedNodeIds: deleted }
   }
 
+  if (toolName === 'attach_external_image_to_node') {
+    const nodeId = resolveNodeId(asTrimmedString(record.nodeId))
+    if (!nodeId) throw new Error('nodeId is required')
+    const node = generationCanvasTools.read_canvas().nodes.find((candidate) => candidate.id === nodeId)
+    if (!node) throw new Error('node_not_found')
+    if (!isImageLikeGenerationNodeKind(node.kind)) {
+      throw new Error('target_node_not_image_like:只能把外部图片绑定到图片类节点')
+    }
+    const projectId = getDesktopActiveProjectId().trim()
+    if (!projectId) throw new Error('projectId is required for external image import')
+    const sourceType = normalizeExternalImageSourceType(record.sourceType)
+    const source = asTrimmedString(record.source)
+    assertExternalImageSource(sourceType, source)
+    const fileName = asTrimmedString(record.fileName) || undefined
+    const imported = await importExternalImageAsset({ projectId, nodeId, sourceType, source, fileName })
+    const url = assertImportedImageAsset(imported)
+    const now = Date.now()
+    const prompt = asTrimmedString(record.prompt)
+    const provider = asTrimmedString(record.provider) || 'codex-imagegen'
+    const modelKey = asTrimmedString(record.modelKey)
+    const result: GenerationNodeResult = {
+      id: `external-image-${imported.id || now}`,
+      type: 'image',
+      url,
+      thumbnailUrl: url,
+      ...(sourceType === 'url' ? { providerUrl: source } : {}),
+      assetId: imported.id,
+      raw: { asset: imported, sourceType },
+      createdAt: now,
+      provenance: {
+        provider,
+        ...(modelKey ? { modelKey } : {}),
+        ...(prompt ? { prompt } : {}),
+        timestamp: now,
+        params: {
+          sourceType,
+          ...(fileName ? { fileName } : {}),
+        },
+      },
+    }
+    inCtx(() => useGenerationCanvasStore.getState().addNodeResult(nodeId, result))
+    return {
+      nodeId,
+      resultId: result.id,
+      assetId: imported.id,
+      url,
+      relativePath: assetDataString(imported, 'relativePath') || undefined,
+    }
+  }
+
   if (toolName === 'run_generation_batch') {
     // S6b 受理语义:本分支只在用户批准后到达(确认前零网络调用)。受理 = 按依赖波次
     // 规划(显示的≡执行的,S2b 纯函数)并启动;立即返回受理回执——生成进度走 run 域
@@ -476,7 +808,9 @@ export async function applyCanvasToolCall(toolName: string, args: unknown, gestu
     const nodeIds = requested.filter((id) => existing.has(id))
     if (!nodeIds.length) throw new Error('node_not_found:请求生成的节点都不存在')
     const state = generationCanvasTools.read_canvas()
-    const plan = buildDependencyWaves(nodeIds, { nodes: state.nodes, edges: state.edges })
+    const expandedNodeIds = expandNodeIdsWithUngeneratedReferenceAncestors(nodeIds, { nodes: state.nodes, edges: state.edges })
+      .filter((id) => existing.has(id))
+    const plan = buildDependencyWaves(expandedNodeIds, { nodes: state.nodes, edges: state.edges })
     const accepted = plan.waves.flat()
     if (!accepted.length) {
       const reasons = plan.blocked.map((item) => item.detail).join(';')

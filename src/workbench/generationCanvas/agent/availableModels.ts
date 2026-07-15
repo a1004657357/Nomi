@@ -145,16 +145,26 @@ export async function resolveStoryboardVideoDefault(): Promise<{ modelKey?: stri
   } catch {
     return {}
   }
-  const videos = entries.filter((entry) => entry.kind === 'video')
-  if (videos.length === 0) return {}
-  const byName = (re: RegExp) =>
-    videos.find((entry) => re.test(`${entry.modelKey} ${entry.modelAlias ?? ''} ${entry.label}`))
-  const prefer = byName(/seedance/i) ?? videos[0]
-  const refMode = prefer.modes.find((m) => m.slots.some((s) => s.kind === 'image_ref' || s.kind === 'first_frame'))
-  const mode = refMode ?? prefer.modes.find((m) => m.modeId === prefer.defaultModeId) ?? prefer.modes[0]
+  return selectStoryboardVideoDefault(entries)
+}
+
+export function selectStoryboardVideoDefault(
+  entries: readonly AgentModelEntry[],
+): { modelKey?: string; modeId?: string } {
+  const compatible = entries.flatMap((entry) => {
+    if (entry.kind !== 'video') return []
+    const mode = entry.modes.find((candidate) => (
+      candidate.slots.some((slot) => slot.kind === 'image_ref' || slot.kind === 'first_frame')
+    ))
+    return mode ? [{ entry, mode }] : []
+  })
+  if (compatible.length === 0) return {}
+  const preferred = compatible.find(({ entry }) => (
+    /seedance/i.test(`${entry.modelKey} ${entry.modelAlias ?? ''} ${entry.label}`)
+  )) || compatible[0]
   return {
-    modelKey: prefer.modelKey,
-    ...(mode ? { modeId: mode.modeId } : {}),
+    modelKey: preferred.entry.modelKey,
+    modeId: preferred.mode.modeId,
   }
 }
 

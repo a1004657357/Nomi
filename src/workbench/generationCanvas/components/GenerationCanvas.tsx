@@ -1,8 +1,10 @@
 import React from 'react'
-import { IconFolderPlus, IconPlayerPlay, IconX } from '@tabler/icons-react'
-import { WorkbenchIconButton } from '../../../design'
+import { IconCopy, IconFileText, IconFolderPlus, IconFolderShare, IconMovie, IconPlayerPlay, IconTimeline, IconX } from '@tabler/icons-react'
+import { confirmDialog, promptDialog, WorkbenchIconButton } from '../../../design'
+import { useNavigate } from 'react-router-dom'
 import { toast } from '../../../ui/toast'
 import { cn } from '../../../utils/cn'
+import { buildStudioUrl } from '../../../utils/appRoutes'
 import CanvasToolbar, { NodeAddMenu } from './CanvasToolbar'
 import { WORKSPACE_FILE_DRAG_MIME } from '../../explorer/workspaceFileDrag'
 import { ASSET_LIBRARY_DRAG_MIME } from '../../assets/assetLibraryDrag'
@@ -12,9 +14,24 @@ import { isImageLikeGenerationNodeKind } from '../model/generationNodeKinds'
 import { getGenerationNodeComponent } from '../nodes/renderRegistry'
 import { completeNodeConnection } from '../nodes/completeNodeConnection'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import {
+  isStoryboardContainedNodeHidden,
+  shouldRenderEdgeInStoryboardContainment,
+} from '../model/storyboardContainedNodes'
+import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
 import { buildDependencyWaves } from '../runner/dependencyWaves'
+import { expandNodeIdsWithUngeneratedReferenceAncestors } from '../runner/referenceAncestors'
 import { confirmAndRunPlan, useBatchPlanPreviewStore } from './batchPlanPreview'
+import { BatchGenerateSettingsButton } from './BatchGenerateSettingsButton'
+import { convertImageShotsToVideos, isConvertibleImageShotNode } from '../agent/convertShotToVideo'
+import { sendStoryboardToTimeline } from '../agent/sendStoryboardToTimeline'
+import { storyboardPlanToCreateNodesArgs, type StoryboardPlan } from '../agent/storyboardPlan'
 import { useWorkbenchStore } from '../../workbenchStore'
+import StoryboardScriptShortcutButton from '../../creation/storyboard/StoryboardScriptShortcutButton'
+import { buildStoryboardScriptRows, hasStoryboardScriptSource } from '../../creation/storyboard/storyboardScriptViewModel'
+import { defaultSelectedNodeProjectName } from '../../project/selectedNodeProjectPayload'
+import { createProjectFromSelectedNodes, type SelectedNodeProjectTransferMode } from '../../project/selectedNodeProjectTransfer'
+import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
 import { GroupFrameList } from './GroupFrame'
 import { useAutoFitOnLoad } from './useAutoFitOnLoad'
 import { useCanvasShortcuts } from './useCanvasShortcuts'
@@ -54,9 +71,11 @@ const BatchPlanOverlay = lazyWithChunkBoundary('批量生成面板', () =>
 
 type GenerationCanvasProps = {
   readOnly?: boolean
+  projectName?: string
 }
 
-export default function GenerationCanvas({ readOnly = false }: GenerationCanvasProps): JSX.Element {
+export default function GenerationCanvas({ readOnly = false, projectName }: GenerationCanvasProps): JSX.Element {
+  const navigate = useNavigate()
   const isReady = useGenerationCanvasStore((state) => state.isReady)
   const allNodes = useGenerationCanvasStore((state) => state.nodes)
   const allEdges = useGenerationCanvasStore((state) => state.edges)
@@ -66,17 +85,37 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
   const hasBatchPlanPreview = useBatchPlanPreviewStore((state) => Boolean(state.plan))
   const activeCategoryId = useWorkbenchStore((state) => state.activeCategoryId)
   const setActiveCategoryId = useWorkbenchStore((state) => state.setActiveCategoryId)
+  const storyboardPlan = useWorkbenchStore((state) => state.storyboardPlan)
   // Phase E3: filter nodes by active sub-canvas. Nodes with no categoryId
   // fall back to the project default ("shots") so legacy projects keep
   // rendering until E4 migrates them.
-  const nodes = React.useMemo(() => {
+  const categoryNodes = React.useMemo(() => {
     if (!activeCategoryId) return allNodes
     return allNodes.filter((node) => (node.categoryId || 'shots') === activeCategoryId)
   }, [allNodes, activeCategoryId])
-  const visibleNodeIds = React.useMemo(() => new Set(nodes.map((n) => n.id)), [nodes])
+  const nodes = React.useMemo(
+    () => categoryNodes.filter((node) => !isStoryboardContainedNodeHidden(node)),
+    [categoryNodes],
+  )
+  const categoryNodeIds = React.useMemo(() => new Set(categoryNodes.map((n) => n.id)), [categoryNodes])
+  const categoryNodeById = React.useMemo(() => new Map(categoryNodes.map((node) => [node.id, node])), [categoryNodes])
   const edges = React.useMemo(
-    () => allEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)),
-    [allEdges, visibleNodeIds],
+    () =>
+      allEdges.filter(
+        (edge) =>
+          categoryNodeIds.has(edge.source) &&
+          categoryNodeIds.has(edge.target) &&
+          shouldRenderEdgeInStoryboardContainment(edge, categoryNodeById),
+      ),
+    [allEdges, categoryNodeById, categoryNodeIds],
+  )
+  const hasStoryboardTableNode = React.useMemo(
+    () => allNodes.some((node) => node.meta?.storyboardGroup === true),
+    [allNodes],
+  )
+  const canAddStoryboardTableNode = React.useMemo(
+    () => !hasStoryboardTableNode && hasStoryboardScriptSource(storyboardPlan, allNodes),
+    [allNodes, hasStoryboardTableNode, storyboardPlan],
   )
   const groups = React.useMemo(
     () => allGroups.filter((group) => group.categoryId === activeCategoryId),
@@ -106,8 +145,12 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
   const redo = useGenerationCanvasStore((state) => state.redo)
   const markReady = useGenerationCanvasStore((state) => state.markReady)
   const selectedSet = React.useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
-  const nodeById = React.useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
+  const nodeById = categoryNodeById
   const selectedBounds = React.useMemo(() => getSelectedBounds(nodes, selectedNodeIds), [nodes, selectedNodeIds])
+  const selectedConvertibleImageCount = React.useMemo(
+    () => nodes.filter((node) => selectedSet.has(node.id) && isConvertibleImageShotNode(node)).length,
+    [nodes, selectedSet],
+  )
   const groupBoxes = React.useMemo(() => getCanvasGroupBoxes(groups, nodes), [groups, nodes])
   const selectedGroupIds = React.useMemo(() => {
     const selected = new Set(selectedNodeIds)
@@ -144,6 +187,11 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
     canvasX: number
     canvasY: number
   } | null>(null)
+  const [selectionContextMenu, setSelectionContextMenu] = React.useState<{
+    stageX: number
+    stageY: number
+    nodeIds: string[]
+  } | null>(null)
   const [connectionCreateMenu, setConnectionCreateMenu] = React.useState<{
     sourceNodeId: string
     sourceSide: ConnectionAnchorSide
@@ -157,6 +205,7 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
   const [focusFlashNodeId, setFocusFlashNodeId] = React.useState<string | null>(null)
   const [pendingFocusNodeId, setPendingFocusNodeId] = React.useState<string | null>(null)
   const [minimapVisible, setMinimapVisible] = React.useState(true)
+  const [transferringSelectionMode, setTransferringSelectionMode] = React.useState<SelectedNodeProjectTransferMode | null>(null)
   const focusFlashTimerRef = React.useRef<number | null>(null)
 
   React.useEffect(() => {
@@ -289,6 +338,22 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
   }, [contextNodeMenu])
 
   React.useEffect(() => {
+    if (!selectionContextMenu) return undefined
+    const closeMenu = () => setSelectionContextMenu(null)
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu()
+    }
+    window.addEventListener('pointerdown', closeMenu)
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('blur', closeMenu)
+    return () => {
+      window.removeEventListener('pointerdown', closeMenu)
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('blur', closeMenu)
+    }
+  }, [selectionContextMenu])
+
+  React.useEffect(() => {
     if (!connectionCreateMenu) return undefined
     const closeMenu = () => {
       setConnectionCreateMenu(null)
@@ -359,9 +424,106 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
     const ids = [...selectedNodeIds]
     if (ids.length === 0) return
     const state = useGenerationCanvasStore.getState()
-    const plan = buildDependencyWaves(ids, { nodes: state.nodes, edges: state.edges })
+    const expandedIds = expandNodeIdsWithUngeneratedReferenceAncestors(ids, { nodes: state.nodes, edges: state.edges })
+    const plan = buildDependencyWaves(expandedIds, { nodes: state.nodes, edges: state.edges })
     void confirmAndRunPlan(plan)
   }, [selectedNodeIds])
+
+  const handleBatchConvertSelectedImagesToVideos = React.useCallback(() => {
+    const state = useGenerationCanvasStore.getState()
+    const selectedImages = state.nodes.filter((node) => selectedSet.has(node.id) && isConvertibleImageShotNode(node))
+    const result = convertImageShotsToVideos(selectedImages)
+    if (result.nodeIds.length === 0) {
+      toast('选中内容里没有可转视频的图片镜头', 'warning')
+      return
+    }
+    if (result.created > 0) {
+      const reused = result.existing > 0 ? `，复用 ${result.existing} 个已有视频` : ''
+      toast(`已转出 ${result.created} 个视频镜头${reused}`, 'success')
+      return
+    }
+    toast(`选中镜头已转过视频，已选中 ${result.existing} 个视频节点`, 'info')
+  }, [selectedSet])
+
+  const handleSendSelectedToTimeline = React.useCallback(() => {
+    const result = sendStoryboardToTimeline(selectedNodeIds)
+    if (result.sent.length > 0) {
+      toast(`已按镜序送入时间轴 ${result.sent.length} 段`, 'success')
+      return
+    }
+    toast(result.skipped.length > 0 ? '选中节点还没有可发送到时间轴的图片或视频结果' : '没有可发送到时间轴的节点', 'warning')
+  }, [selectedNodeIds])
+
+  const handleTransferSelectedNodes = React.useCallback(async (mode: SelectedNodeProjectTransferMode, explicitNodeIds?: readonly string[]) => {
+    const ids = [...(explicitNodeIds ?? selectedNodeIds)]
+    if (!ids.length) {
+      toast('请先选中要放入新项目的节点。', 'warning')
+      return
+    }
+    const defaultName = defaultSelectedNodeProjectName(projectName, mode)
+    const requestedName = await promptDialog({
+      title: mode === 'move' ? '移动到新项目' : '复制到新项目',
+      message: `将 ${ids.length} 个选中节点放入一个新的项目。`,
+      placeholder: '新项目名称',
+      initialValue: defaultName,
+      confirmLabel: mode === 'move' ? '继续移动' : '创建副本',
+    })
+    const targetProjectName = requestedName?.trim()
+    if (!targetProjectName) return
+    if (mode === 'move') {
+      const confirmed = await confirmDialog({
+        title: '确认移动节点',
+        message: `会先创建「${targetProjectName}」，成功后从当前项目删除这 ${ids.length} 个节点。`,
+        confirmLabel: '移动',
+        danger: true,
+      })
+      if (!confirmed) return
+    }
+    setTransferringSelectionMode(mode)
+    try {
+      const result = createProjectFromSelectedNodes({
+        selectedNodeIds: ids,
+        sourceProjectName: projectName,
+        targetProjectName,
+        mode,
+      })
+      if (mode === 'move') {
+        for (const nodeId of ids) {
+          useGenerationCanvasStore.getState().deleteNode(nodeId)
+        }
+        await persistActiveWorkbenchProjectNow()
+      }
+      toast(`${mode === 'move' ? '已移动' : '已复制'} ${result.nodeCount} 个节点到「${result.project.name}」`, 'success')
+      navigate(buildStudioUrl(result.project.id), { replace: false })
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), 'error')
+    } finally {
+      setTransferringSelectionMode(null)
+    }
+  }, [navigate, projectName, selectedNodeIds])
+
+  const openSelectionContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (readOnly || !stageRef.current) return
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.generation-canvas-v2-node') : null
+    if (!target) return
+    const nodeId = target.getAttribute('data-node-id') || ''
+    if (!nodeId) return
+    const nodeIds = selectedSet.has(nodeId) ? [...selectedNodeIds] : [nodeId]
+    if (!selectedSet.has(nodeId)) selectNode(nodeId)
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = stageRef.current.getBoundingClientRect()
+    const stageX = event.clientX - rect.left
+    const stageY = event.clientY - rect.top
+    const menuWidth = 172
+    const menuHeight = 92
+    setContextNodeMenu(null)
+    setSelectionContextMenu({
+      stageX: clampNumber(stageX, 8, Math.max(8, rect.width - menuWidth - 8)),
+      stageY: clampNumber(stageY, 8, Math.max(8, rect.height - menuHeight - 8)),
+      nodeIds,
+    })
+  }, [readOnly, selectedNodeIds, selectedSet, selectNode, stageRef])
 
   const handleUngroupSelectedNodes = React.useCallback(() => {
     if (!selectedGroupIds.length) return
@@ -475,7 +637,7 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
     const canvasPoint = getCanvasPointFromClientPoint(event.clientX, event.clientY)
     if (!canvasPoint) return
     const menuWidth = 148
-    const menuHeight = 330
+    const menuHeight = 366
     setContextNodeMenu({
       stageX: clampNumber(stageX, 8, Math.max(8, rect.width - menuWidth - 8)),
       stageY: clampNumber(stageY, 8, Math.max(8, rect.height - menuHeight - 8)),
@@ -490,6 +652,42 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
       kind,
       position: { x: contextNodeMenu.canvasX, y: contextNodeMenu.canvasY },
       categoryId: activeCategoryId,
+    })
+    setContextNodeMenu(null)
+  }
+
+  const handleAddStoryboardTableNode = () => {
+    if (!contextNodeMenu) return
+    const fallbackPlan: StoryboardPlan | null = storyboardPlan
+      ? null
+      : (() => {
+          const rows = buildStoryboardScriptRows(null, allNodes, allEdges)
+          return rows.length
+            ? {
+                title: '画布分镜脚本',
+                anchors: [],
+                shots: rows.map((row) => row.shot),
+              }
+            : null
+        })()
+    const plan = storyboardPlan ?? fallbackPlan
+    if (!plan) {
+      toast('当前画布还没有可整理成脚本的分镜', 'info')
+      setContextNodeMenu(null)
+      return
+    }
+    const groupNode = storyboardPlanToCreateNodesArgs(plan).nodes.find((node) => node.clientId === 'storyboard-group')
+    addNode({
+      kind: 'text',
+      title: `分镜组：${plan.title.trim() || '未命名分镜'}`,
+      prompt: groupNode?.prompt || '',
+      position: { x: contextNodeMenu.canvasX, y: contextNodeMenu.canvasY },
+      categoryId: activeCategoryId,
+      size: { ...STORYBOARD_TABLE_DEFAULT_SIZE },
+      meta: {
+        storyboardGroup: true,
+        storyboardPlanSnapshot: plan,
+      },
     })
     setContextNodeMenu(null)
   }
@@ -595,6 +793,9 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
           </React.Suspense>
         ) : null}
         {!readOnly ? <CanvasToolbar getInsertionPosition={getToolbarInsertionPosition} categoryId={activeCategoryId} /> : null}
+        {!readOnly ? (
+          <StoryboardScriptShortcutButton className="absolute top-4 left-[184px] z-[18]" label="分镜脚本" />
+        ) : null}
         <div
           className="generation-canvas-v2__stage"
           ref={stageRef}
@@ -635,7 +836,11 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
               onDisconnectEdge={disconnectEdge}
               getCanvasPointFromClientPoint={getCanvasPointFromClientPoint}
             />
-            <div className={cn('generation-canvas-v2__nodes', 'absolute top-0 left-0 w-full h-full')} data-tidying={isTidying ? 'true' : undefined}>
+            <div
+              className={cn('generation-canvas-v2__nodes', 'absolute top-0 left-0 w-full h-full')}
+              data-tidying={isTidying ? 'true' : undefined}
+              onContextMenu={openSelectionContextMenu}
+            >
               {/* E.2C-30: GroupFrame 抽离为独立组件 */}
               <GroupFrameList boxes={groupBoxes} onPointerDown={handleGroupFramePointerDown} />
               <React.Suspense fallback={null}>
@@ -681,21 +886,25 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <span className={cn('pl-1.5 pr-1 text-nomi-ink-60 text-body-sm whitespace-nowrap')}>已选 {selectedCount} 个</span>
-                {/* 主操作：批量生成（参考先行，点了直接跑能跑的；缺参考的会人话提示）。深色 pill 主角，放大更显眼。 */}
-                <button
-                  type="button"
-                  data-storyboard-run-all="true"
-                  className={cn(
-                    'inline-flex items-center gap-2 h-9 px-4 rounded-full border-0 cursor-pointer',
-                    'bg-nomi-ink text-nomi-paper text-body font-medium hover:bg-nomi-accent',
-                    'transition-colors duration-[var(--nomi-transition-fast)]',
-                  )}
-                  title="生成选中节点（参考先生成、镜头后生成；缺参考的会提示先生成参考卡）"
-                  onClick={handleBatchGenerate}
-                >
-                  <IconPlayerPlay size={16} stroke={1.6} aria-hidden />
-                  生成 {selectedCount} 个
-                </button>
+                <BatchGenerateSettingsButton selectedNodeIds={selectedNodeIds} />
+                <WorkbenchIconButton label="按原参数生成" icon={<IconPlayerPlay size={16} />} onClick={handleBatchGenerate} />
+                {selectedConvertibleImageCount > 0 ? (
+                  <WorkbenchIconButton label="批量转视频" icon={<IconMovie size={16} />} onClick={handleBatchConvertSelectedImagesToVideos} />
+                ) : null}
+                <WorkbenchIconButton label="按镜序送时间轴" icon={<IconTimeline size={16} />} onClick={handleSendSelectedToTimeline} />
+                <span className={cn('w-px h-4 bg-nomi-line')} />
+                <WorkbenchIconButton
+                  label="复制到新项目"
+                  icon={<IconCopy size={16} />}
+                  disabled={Boolean(transferringSelectionMode)}
+                  onClick={() => void handleTransferSelectedNodes('copy')}
+                />
+                <WorkbenchIconButton
+                  label="移动到新项目"
+                  icon={<IconFolderShare size={16} />}
+                  disabled={Boolean(transferringSelectionMode)}
+                  onClick={() => void handleTransferSelectedNodes('move')}
+                />
                 <span className={cn('w-px h-4 bg-nomi-line')} />
                 {/* 复制/剪切已移除（⌘C / ⌘X 覆盖，去重复）；保留编组 + 清除。 */}
                 <WorkbenchIconButton label="创建分组 (⌘G)" icon={<IconFolderPlus size={16} />} onClick={handleGroupSelectedNodes} />
@@ -730,10 +939,68 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
             <NodeAddMenu
               className={cn('generation-canvas-v2__context-node-menu', 'z-[20]')}
               style={{ left: contextNodeMenu.stageX, top: contextNodeMenu.stageY }}
+              extraItems={
+                canAddStoryboardTableNode
+                  ? [
+                      {
+                        key: 'storyboard-table',
+                        label: '分镜脚本',
+                        icon: <IconFileText size={14} stroke={1.6} />,
+                        onClick: handleAddStoryboardTableNode,
+                      },
+                    ]
+                  : []
+              }
               onPointerDown={(event) => event.stopPropagation()}
               onContextMenu={(event) => event.preventDefault()}
               onAddNode={handleAddContextNode}
             />
+          ) : null}
+          {selectionContextMenu ? (
+            <div
+              className={cn(
+                'generation-canvas-v2__selection-context-menu',
+                'absolute z-[20] min-w-[172px] overflow-hidden rounded-nomi-sm',
+                'border border-nomi-line bg-nomi-paper shadow-nomi-md p-1',
+              )}
+              role="menu"
+              style={{ left: selectionContextMenu.stageX, top: selectionContextMenu.stageY }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className={cn(
+                  'flex h-8 w-full items-center gap-2 rounded-nomi-sm px-2 text-left text-caption text-nomi-ink',
+                  'border-0 bg-transparent cursor-pointer hover:bg-nomi-ink-05',
+                )}
+                onClick={() => {
+                  const ids = selectionContextMenu.nodeIds
+                  setSelectionContextMenu(null)
+                  void handleTransferSelectedNodes('copy', ids)
+                }}
+              >
+                <IconCopy size={14} stroke={1.8} aria-hidden="true" />
+                复制到新项目
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className={cn(
+                  'flex h-8 w-full items-center gap-2 rounded-nomi-sm px-2 text-left text-caption text-nomi-ink',
+                  'border-0 bg-transparent cursor-pointer hover:bg-nomi-ink-05',
+                )}
+                onClick={() => {
+                  const ids = selectionContextMenu.nodeIds
+                  setSelectionContextMenu(null)
+                  void handleTransferSelectedNodes('move', ids)
+                }}
+              >
+                <IconFolderShare size={14} stroke={1.8} aria-hidden="true" />
+                移动到新项目
+              </button>
+            </div>
           ) : null}
           {connectionCreateMenu ? (
             <NodeAddMenu

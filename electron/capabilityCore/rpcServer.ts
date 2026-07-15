@@ -10,7 +10,7 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-import type { FetchTaskResultFn, RunTaskFn } from './core'
+import type { FetchTaskResultFn, RunDirectorFn, RunTaskFn } from './core'
 import { dispatch, RpcError } from './dispatcher'
 import { createDiskGateway, createHybridGateway, createRendererGateway, type ProjectGateway } from './gateway'
 import { isRendererAvailable } from './rendererBridge'
@@ -21,6 +21,8 @@ export type RpcServerOptions = {
   runTask: RunTaskFn
   /** 异步任务轮询入口（runtime.fetchTaskResult）。图/视频异步生成等终态用。 */
   fetchTaskResult?: FetchTaskResultFn
+  /** 受约束的本地 Blender 导演预演，仅桌面 app 进程提供。 */
+  runDirector?: RunDirectorFn
   /** 该 projectId 是否正在某个 app 窗口里打开（命中则拒绝直写图变更）。headless: ()=>false。 */
   isProjectOpen?: (projectId: string) => boolean
 }
@@ -86,7 +88,12 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
         }
         const method = String(parsed.method || '')
         const params = (parsed.params && typeof parsed.params === 'object' ? parsed.params : {}) as Record<string, unknown>
-        const result = await dispatch(method, params, { runTask: options.runTask, fetchTaskResult: options.fetchTaskResult, makeGateway })
+        const result = await dispatch(method, params, {
+          runTask: options.runTask,
+          fetchTaskResult: options.fetchTaskResult,
+          runDirector: options.runDirector,
+          makeGateway,
+        })
         send(200, { ok: true, result })
       } catch (error) {
         const status = error instanceof RpcError ? error.httpStatus : 500

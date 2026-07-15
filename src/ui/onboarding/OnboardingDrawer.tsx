@@ -25,6 +25,7 @@ import { CustomVendorManage } from './CustomVendorManage'
 import { ConnectAssistantCard, type McpInfo } from './ConnectAssistantCard'
 import { DreaminaMemberCard, type DreaminaStatus } from './DreaminaMemberCard'
 import { ComfyuiLocalCard, COMFYUI_VENDOR_KEY } from './ComfyuiLocalCard'
+import { JimengWebCard, type JimengWebStatus } from './JimengWebCard'
 import { KNOWN_VENDORS, isKnownVendor } from '../../config/knownVendors'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { notifyModelOptionsRefresh } from '../../config/useModelOptions'
@@ -53,6 +54,7 @@ export function OnboardingDrawer(): JSX.Element {
   const [vendorMeta, setVendorMeta] = React.useState<Map<string, VendorMeta>>(new Map())
   // 即梦 / 编程助手的连接状态上提到父组件（单一来源，plan §4.1）。null = 不可用/加载中（卡不显）。
   const [dreaminaStatus, setDreaminaStatus] = React.useState<DreaminaStatus | null>(null)
+  const [jimengWebStatus, setJimengWebStatus] = React.useState<JimengWebStatus | null>(null)
   const [mcpInfo, setMcpInfo] = React.useState<McpInfo | null>(null)
   // 同步数据就绪标志：分组折叠的「自适应默认」依赖 hasConnected，必须等目录/MCP 同步加载完再挂
   // AvailableGroup，否则它在首帧空态（hasConnected=false）就把默认展开态固定下来（plan §4.3 mount-before-load）。
@@ -105,6 +107,14 @@ export function OnboardingDrawer(): JSX.Element {
         .catch(() => { if (alive) setDreaminaStatus(null) })
     } else {
       setDreaminaStatus(null)
+    }
+    const jimengWeb = bridge.jimengWeb
+    if (jimengWeb) {
+      jimengWeb.status()
+        .then((s) => { if (alive) setJimengWebStatus(s as JimengWebStatus) })
+        .catch(() => { if (alive) setJimengWebStatus(null) })
+    } else {
+      setJimengWebStatus(null)
     }
     return () => { alive = false }
   }, [version])
@@ -167,8 +177,8 @@ export function OnboardingDrawer(): JSX.Element {
   // 5 个 KNOWN_VENDORS + 即梦 dreamina（走 DreaminaMemberCard，其 seeded 模型不是"自定义"，
   // 否则与即梦会员卡重复且被误标"已配置"——真机走查抓到，dreamina 种了 4 个模型）。
   // 排除有专属卡的内置家：dreamina（会员卡）+ comfyui-local（本地后端启用卡）。否则本地 ComfyUI 会落进
-  // 通用「自定义中转」卡（那卡的 key/BaseURL 手填隐喻对无 key 本地后端是错的）。
-  const otherModels = models.filter((m) => !isKnownVendor(m.vendorKey) && m.vendorKey !== 'dreamina' && m.vendorKey !== COMFYUI_VENDOR_KEY)
+  // 通用「自定义中转」卡（那卡的 key/BaseURL 手填隐喻对无 key 本地后端是错的）。即梦 Web 也走专属卡。
+  const otherModels = models.filter((m) => !isKnownVendor(m.vendorKey) && m.vendorKey !== 'dreamina' && m.vendorKey !== COMFYUI_VENDOR_KEY && m.vendorKey !== 'jimeng-web')
 
   // 本地 ComfyUI（无 key 本地后端，专属卡）：种子存在才显；enabled 决定归「已接入 / 可接入」。
   const comfyuiMeta = vendorMeta.get(COMFYUI_VENDOR_KEY)
@@ -179,6 +189,8 @@ export function OnboardingDrawer(): JSX.Element {
   // 即梦 / 编程助手连接判定 + 可用性（卡是否该出现）。
   const dreaminaAvailable = dreaminaStatus !== null
   const dreaminaConnected = !!(dreaminaStatus?.installed && dreaminaStatus?.loggedIn)
+  const jimengWebAvailable = jimengWebStatus !== null
+  const jimengWebConnected = !!jimengWebStatus?.server?.ok
   const assistantAvailable = mcpInfo !== null
   // 「已接入」= 真写了某客户端配置；仅 tokenReady（就绪未接）归「可接入」。
   const assistantConnected = !!(mcpInfo && Object.values(mcpInfo.clients).some((c) => c.installed))
@@ -188,6 +200,7 @@ export function OnboardingDrawer(): JSX.Element {
     otherModels.length > 0 ||
     comfyuiEnabled ||
     dreaminaConnected ||
+    jimengWebConnected ||
     assistantConnected
 
   // 能力覆盖：某 kind 有「已连通供应商（hasApiKey）」的模型 = 现在就能生成（诚实，未连通不算）。
@@ -196,8 +209,9 @@ export function OnboardingDrawer(): JSX.Element {
     for (const m of models) {
       if (vendorMeta.get(m.vendorKey)?.hasApiKey) set.add(String(m.kind))
     }
+    if (dreaminaConnected || jimengWebConnected) set.add('video')
     return set
-  }, [models, vendorMeta])
+  }, [models, vendorMeta, dreaminaConnected, jimengWebConnected])
 
   // 其他（自定义中转）按 vendor 拆成每家一张卡，卡名用用户在接入时填的「来源名称」（vendorMeta.name）。
   // 根因修复：此前全塞进单张「其他模型」卡、只按 kind 分组，多家糊一起分不清哪个 key 对哪家。
@@ -287,6 +301,7 @@ export function OnboardingDrawer(): JSX.Element {
                     baseUrl={meta?.baseUrl ?? ''}
                     hasApiKey={meta?.hasApiKey ?? true}
                     modelCount={group.models.length}
+                    textModelCount={group.models.filter((m) => m.kind === 'text').length}
                     onChanged={refresh}
                   />
                 </FoldableModelCard>
@@ -297,6 +312,9 @@ export function OnboardingDrawer(): JSX.Element {
             ) : null}
             {dreaminaAvailable && dreaminaConnected ? (
               <DreaminaMemberCard status={dreaminaStatus} onChanged={refresh} />
+            ) : null}
+            {jimengWebAvailable && jimengWebConnected ? (
+              <JimengWebCard status={jimengWebStatus} onChanged={refresh} />
             ) : null}
             {assistantAvailable && assistantConnected ? (
               <ConnectAssistantCard info={mcpInfo} onChanged={refresh} />
@@ -334,6 +352,12 @@ export function OnboardingDrawer(): JSX.Element {
         {dreaminaAvailable && !dreaminaConnected ? (
           <AvailableGroup title="有即梦会员？" count={1} defaultExpanded={false}>
             <DreaminaMemberCard status={dreaminaStatus} onChanged={refresh} />
+          </AvailableGroup>
+        ) : null}
+
+        {jimengWebAvailable && !jimengWebConnected ? (
+          <AvailableGroup title="即梦 Web 实验" count={1} defaultExpanded={false}>
+            <JimengWebCard status={jimengWebStatus} onChanged={refresh} />
           </AvailableGroup>
         ) : null}
 

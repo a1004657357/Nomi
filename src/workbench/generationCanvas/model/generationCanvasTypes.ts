@@ -35,6 +35,7 @@ export function getDefaultCategoryForNodeKind(kind: GenerationNodeKind): Builtin
     case 'scene':
     case 'panorama':
     case 'scene3d':
+    case 'vibingDirector':
     case 'model3d':
       return 'scene'
     case 'audio':
@@ -82,6 +83,8 @@ export type GenerationNodeResult = {
   assetRefId?: string
   raw?: unknown
   createdAt: number
+  /** Additional assets returned by the same provider request; folded into node.history when persisted. */
+  alternatives?: GenerationNodeResult[]
   /** Phase E E11: Complete provenance for reproducibility. */
   provenance?: GenerationProvenance
 }

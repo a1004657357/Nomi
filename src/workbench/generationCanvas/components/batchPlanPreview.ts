@@ -5,38 +5,72 @@ import { toast } from '../../../ui/toast'
 import { runGenerationNodesByPlan, spendCostKindForNodes } from '../runner/generationRunController'
 import { mintSpendGrant } from '../../api/taskApi'
 import { confirmAndMintGrant, describeGenerationCost } from '../spend/spendConfirm'
-import type { DependencyWavePlan } from '../runner/dependencyWaves'
+import { buildDependencyWaves, type DependencyWavePlan } from '../runner/dependencyWaves'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { verifyShotsAndReport } from '../agent/shotVerifyStore'
 
 type BatchPlanPreviewState = {
   plan: DependencyWavePlan | null
+  regenerationSourceNodeId: string | null
   running: boolean
-  open: (plan: DependencyWavePlan) => void
+  open: (plan: DependencyWavePlan, options?: { regenerationSourceNodeId?: string }) => void
   cancel: () => void
   confirm: () => Promise<void>
 }
 
+export function forkRegenerationPlan(
+  plan: DependencyWavePlan,
+  sourceNodeId: string,
+): { plan: DependencyWavePlan; variantNodeId: string } | null {
+  const duplicated = useGenerationCanvasStore.getState().duplicateNodeForRegeneration(sourceNodeId)
+  if (!duplicated) return null
+  const requestedIds = [...plan.waves.flat(), ...plan.blocked.map((item) => item.nodeId)]
+  const nextIds = requestedIds.map((nodeId) => (nodeId === sourceNodeId ? duplicated.id : nodeId))
+  if (!nextIds.includes(duplicated.id)) nextIds.push(duplicated.id)
+  const state = useGenerationCanvasStore.getState()
+  return {
+    plan: buildDependencyWaves(Array.from(new Set(nextIds)), { nodes: state.nodes, edges: state.edges }),
+    variantNodeId: duplicated.id,
+  }
+}
+
 export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, get) => ({
   plan: null,
+  regenerationSourceNodeId: null,
   running: false,
-  open: (plan) => set({ plan, running: false }),
-  cancel: () => set({ plan: null, running: false }),
+  open: (plan, options = {}) => set({
+    plan,
+    regenerationSourceNodeId: options.regenerationSourceNodeId || null,
+    running: false,
+  }),
+  cancel: () => set({ plan: null, regenerationSourceNodeId: null, running: false }),
   confirm: async () => {
-    const { plan, running } = get()
+    const { plan, regenerationSourceNodeId, running } = get()
     if (!plan || running) return
     set({ running: true })
+    let executablePlan = plan
+    if (regenerationSourceNodeId) {
+      const forked = forkRegenerationPlan(plan, regenerationSourceNodeId)
+      if (!forked) {
+        set({ running: false })
+        toast('无法创建新版本节点', 'error')
+        return
+      }
+      executablePlan = forked.plan
+      // 付费授权失败时保留已创建的空版本，用户可在原位重试，不会重复分叉。
+      set({ plan: executablePlan, regenerationSourceNodeId: null })
+    }
     // 计划 overlay 的「按计划生成」点击本身 = 真人手势 → 铸付费令牌（绑本批节点）。
     let grantId: string
     try {
-      grantId = await mintSpendGrant(plan.waves.flat())
+      grantId = await mintSpendGrant(executablePlan.waves.flat())
     } catch (error) {
       set({ running: false })
       toast(error instanceof Error && error.message ? error.message : '付费授权失败', 'error')
       return
     }
-    set({ plan: null, running: false })
-    await runPlanWithToasts(plan, grantId)
+    set({ plan: null, regenerationSourceNodeId: null, running: false })
+    await runPlanWithToasts(executablePlan, grantId)
   },
 }))
 
