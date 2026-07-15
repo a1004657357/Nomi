@@ -60,6 +60,7 @@ import {
   computeMediaMetaPatch,
   resolveNodeVisualSize,
 } from './nodeSizing'
+import { useNodeVideoHoverPreview } from './useNodeVideoHoverPreview'
 
 const CANVAS_NODE_PREVIEW_SIZE = { width: 256, height: 256 } as const
 
@@ -94,10 +95,7 @@ function BaseGenerationNodeImpl({
   const commitPersistedChange = useGenerationCanvasStore((state) => state.commitPersistedChange)
   const moveNode = useGenerationCanvasStore((state) => state.moveNode)
   const moveSelectedNodes = useGenerationCanvasStore((state) => state.moveSelectedNodes)
-  // v0.7.2 perf: 订阅 boolean primitive 而不是整个 selectedNodeIds 数组
-  // 之前数组引用每次变都触发所有节点 rerender；现在仅当 multi-select 状态翻转时触发
   const isMultiSelectActive = useGenerationCanvasStore((state) => state.selectedNodeIds.length > 1)
-  // v0.7.2 perf: sourceNode 拆成两个 primitive 订阅，避免对象引用引发的伪 update
   const sourceNodeTitle = useGenerationCanvasStore((state) => {
     if (!node.derivedFrom) return undefined
     return state.nodes.find((candidate) => candidate.id === node.derivedFrom)?.title
@@ -112,7 +110,6 @@ function BaseGenerationNodeImpl({
   })
   const startConnection = useGenerationCanvasStore((state) => state.startConnection)
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
-  // v0.7.2 perf: 只关心 "this node 是否是 pending source"，boolean
   const isPendingConnectionSource = useGenerationCanvasStore((state) => state.pendingConnectionSourceId === node.id)
   const pendingConnectionSourceSide = useGenerationCanvasStore((state) =>
     state.pendingConnectionSourceId === node.id ? state.pendingConnectionSourceSide : null,
@@ -120,10 +117,8 @@ function BaseGenerationNodeImpl({
   const isPendingConnectionTarget = useGenerationCanvasStore(
     (state) => state.pendingConnectionSourceId !== '' && state.pendingConnectionSourceId !== node.id,
   )
-  // perf：canvasZoom 仅事件处理器用、渲染从不读它；改按需 getState() 避免缩放时全节点重渲。
   const panoramaFullscreenRef = React.useRef<(() => void) | null>(null)
   const panoramaUploadInputRef = React.useRef<HTMLInputElement | null>(null)
-  // E11: provenance viewer open state (mounted into node header for AI-generated assets)
   const [provenanceOpen, setProvenanceOpen] = React.useState(false)
   const [imageStackOpen, setImageStackOpen] = React.useState(false)
   const handleImageStackOpenChange = React.useCallback((nextOpen: boolean) => {
@@ -180,6 +175,8 @@ function BaseGenerationNodeImpl({
     if (patch) updateNode(node.id, patch)
   }
 
+  const { handleVideoNodePointerEnter, handleVideoNodePointerLeave } = useNodeVideoHoverPreview(node.result?.type)
+
   const handleFocusSourceNode = React.useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault()
@@ -227,8 +224,6 @@ function BaseGenerationNodeImpl({
     commitPersistedChange,
   })
   const isGenerating = status === 'queued' || status === 'running'
-  // v0.7.2 perf: 用 boolean primitive 订阅 canGenerate，而不是 getState() 同步读
-  // 之前 getState() 在 render 外读，不响应 nodes/edges 变化，是个隐藏 bug
   const canGenerate =
     useGenerationCanvasStore((state) =>
       canRunGenerationNode(node, {
@@ -241,7 +236,10 @@ function BaseGenerationNodeImpl({
   })
   const isDirectorWorkspace = node.kind === 'scene3d' || node.kind === 'vibingDirector'
   const showTimelineNotch =
-    canSendToTimeline && !isDirectorWorkspace && node.result?.type === 'image' && !imageStackOpen
+    canSendToTimeline &&
+    !isDirectorWorkspace &&
+    (node.result?.type === 'image' || node.result?.type === 'video') &&
+    !imageStackOpen
   const showSideTimelineDrag = canSendToTimeline && !isDirectorWorkspace && !showTimelineNotch
   // 失败态不再显示文字徽标——错误信息已铺满节点正文（NodeErrorReport），
   // 顶部再写一遍「生成失败」是重复噪音（2026-06-03 6 角色评审）。
@@ -255,7 +253,6 @@ function BaseGenerationNodeImpl({
     ? localAssetThumbnailUrl(node.result?.thumbnailUrl || node.result?.url || '', CANVAS_NODE_PREVIEW_SIZE)
     : undefined
 
-  // v0.7.2 perf: 用 primitive 订阅 sourceNodeTitle / categoryId / exists 重组 label
   const sourceNodeLabel =
     sourceNodeTitle || (node.derivedFrom && !sourceNodeExists ? '源节点已不在当前项目' : node.derivedFrom || '')
   const sourceCategoryName = sourceNodeCategoryId ? getBuiltinCategoryById(sourceNodeCategoryId)?.name : null
@@ -313,6 +310,8 @@ function BaseGenerationNodeImpl({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerEnter={handleVideoNodePointerEnter}
+      onPointerLeave={handleVideoNodePointerLeave}
     >
       {!readOnly && node.kind !== 'panorama' ? (
         selected && useMagneticConnectionHandles && !isPendingConnectionSource ? (
@@ -595,6 +594,7 @@ function BaseGenerationNodeImpl({
             </React.Suspense>
           ) : node.result.type === 'video' ? (
             <DeferredNodeVideo
+              data-node-preview-video="true"
               className={cn('w-full h-full min-h-0 object-contain pointer-events-auto', 'bg-nomi-ink-05 select-none')}
               src={buildVideoPlaybackUrl(node.result.url)}
               priority={mediaPreviewPriority}

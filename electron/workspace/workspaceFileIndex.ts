@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { MEDIA_TYPES, type MediaKind } from "../assets/mediaTypes";
+import { isBrowserCaptureAssetKind } from "../assets/assetPaths";
 
 export type WorkspaceFileKind = "directory" | "text" | "image" | "video" | "audio" | "document" | "file";
 
@@ -68,6 +69,21 @@ function classify(filePath: string): { kind: WorkspaceFileKind; contentType: str
   return CONTENT_TYPES[path.extname(filePath).toLowerCase()] || { kind: "file", contentType: "application/octet-stream" };
 }
 
+function readAssetSidecarKind(absolutePath: string): string {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(`${absolutePath}.meta`, "utf8")) as { kind?: unknown } | null;
+    return typeof parsed?.kind === "string" ? parsed.kind.trim().toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+function shouldSkipWorkspaceFile(absolutePath: string, name: string): boolean {
+  if (name.endsWith(".meta")) return true;
+  // capture 族 kind 单一真相源在 assetPaths（原本地副本已收编）。
+  return isBrowserCaptureAssetKind(readAssetSidecarKind(absolutePath));
+}
+
 function sortNodes(a: WorkspaceFileNode, b: WorkspaceFileNode): number {
   if (a.kind === "directory" && b.kind !== "directory") return -1;
   if (a.kind !== "directory" && b.kind === "directory") return 1;
@@ -100,6 +116,7 @@ export function listWorkspaceFiles(input: { rootPath: string; maxFiles?: number;
       const relativePath = toRelative(rootPath, absolutePath);
       if (SKIPPED_RELATIVE_PATHS.has(relativePath)) continue;
       if (entry.isSymbolicLink()) continue;
+      if (entry.isFile() && shouldSkipWorkspaceFile(absolutePath, entry.name)) continue;
       seen += 1;
       if (seen > maxFiles) {
         truncated = true;

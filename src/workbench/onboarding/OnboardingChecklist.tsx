@@ -174,7 +174,7 @@ export function OnboardingChecklist(): JSX.Element | null {
           open && 'bg-nomi-ink-05 text-nomi-ink',
         )}
       >
-        <IconListCheck size={18} stroke={1.6} aria-hidden="true" />
+        <IconListCheck size={18} stroke={1.8} aria-hidden="true" />
         <span className="max-[700px]:hidden">上手</span>
         <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-nomi-accent-soft text-nomi-accent text-micro font-semibold tabular-nums">
           {doneCount}/{ALL_KEYS.length}
@@ -267,7 +267,7 @@ export function OnboardingChecklist(): JSX.Element | null {
                 'text-caption text-nomi-accent transition-colors hover:text-nomi-ink',
               )}
             >
-              <IconMap size={13} stroke={1.7} aria-hidden="true" />
+              <IconMap size={13} stroke={1.8} aria-hidden="true" />
               看完整手册
             </button>
             <button

@@ -63,7 +63,7 @@ export function StoryboardImagePreview({
           setLightboxOpen(true)
         }}
         className={cn(
-          'relative block shrink-0 cursor-zoom-in overflow-hidden rounded-[6px] border-0 bg-nomi-ink-05 p-0 outline-none',
+          'relative block shrink-0 cursor-zoom-in overflow-hidden rounded-nomi-sm border-0 bg-nomi-ink-05 p-0 outline-none',
           'focus-visible:ring-2 focus-visible:ring-nomi-accent/70',
         )}
       >

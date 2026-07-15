@@ -1,9 +1,18 @@
 import React from 'react'
 import type { Editor } from '@tiptap/react'
 import { IconPlayerStopFilled } from '@tabler/icons-react'
+import { createPortal } from 'react-dom'
+import { AnimatePresence, motion } from 'framer-motion'
+import { IconFileText } from '../../../vendor/tablerIcons'
 import { NomiLoadingMark } from '../../../design'
 import { cn } from '../../../utils/cn'
+import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
+import {
+  readBrowserPromptLibraryItems,
+  type BrowserPromptLibraryItem,
+} from '../../../ui/browser/assets/browserAssetLibraryStorage'
 import PromptEditor from '../../assets/PromptEditor'
+import { promptToContent } from '../../assets/promptEditorContent'
 import { resolveReferenceSlots } from '../runner/referenceSlots'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
@@ -14,6 +23,7 @@ import { useBatchPlanPreviewStore } from '../components/batchPlanPreview'
 import NodeParameterControls from './NodeParameterControls'
 import { GENERATE_BUTTON_CLASS } from './nodeComposerStyles'
 import { NodeLockBadge } from './NodeLockBadge'
+import NodeCameraMoveControl from './NodeCameraMoveControl'
 import { NodePromptOptimizer } from './NodePromptOptimizer'
 import { useNodeAssetDrop } from './useNodeAssetDrop'
 import { NODE_FLOATING_TOOLBAR_SELECTOR } from './nodeFloatingToolbarLayout'
@@ -44,6 +54,19 @@ const TEXT_MODE_PLACEHOLDER: Record<TextGenMode, string> = {
 
 // 翻转滞回带（屏幕 px）：已翻上后要等下方明显够放才切回朝下，杜绝边界反复横跳（用户反馈①）。
 const FLIP_HYSTERESIS = 48
+const PROMPT_PICKER_WIDTH = 245
+const PROMPT_PICKER_MIN_WIDTH = 240
+const PROMPT_PICKER_MAX_HEIGHT = 310
+const PROMPT_PICKER_MARGIN = 12
+const PROMPT_PICKER_PREVIEW_WIDTH = 296
+const PROMPT_PICKER_PREVIEW_GAP = 4
+const PROMPT_PICKER_PREVIEW_MAX_HEIGHT = 380
+
+type PromptPickerPosition = {
+  left: number
+  top: number
+  width: number
+}
 
 // 生成节点的浮动 composer：references + 提示词 + 参数 + 生成/生成新版本按钮。
 // 从 BaseGenerationNode 抽出（A1.5 接缝）：只有「生成类」节点挂它，素材节点不挂。
@@ -70,6 +93,139 @@ function floatingComposerLayout(width: number, _height: number, kind: Generation
   const maxHeight = kind === 'video' ? 460 : 400
   const gap = width >= 420 ? 14 : 10
   return { maxHeight, gap }
+}
+
+type BrowserPromptPickerPopoverProps = {
+  items: BrowserPromptLibraryItem[]
+  position: PromptPickerPosition | null
+  onSelect: (item: BrowserPromptLibraryItem) => void
+  setNodeRef: (node: HTMLDivElement | null) => void
+}
+
+function BrowserPromptPickerPopover({
+  items,
+  position,
+  onSelect,
+  setNodeRef,
+}: BrowserPromptPickerPopoverProps): React.ReactPortal | null {
+  const [hoveredPromptId, setHoveredPromptId] = React.useState<string | null>(null)
+  const [previewTop, setPreviewTop] = React.useState(0)
+  const [previewAnchorCenter, setPreviewAnchorCenter] = React.useState(0)
+  const previewCardRef = React.useRef<HTMLElement | null>(null)
+  const hoveredItem = hoveredPromptId ? items.find((item) => item.id === hoveredPromptId) ?? null : null
+  const hoveredReferences = hoveredItem?.referenceImages ?? []
+  const showHoveredPrompt = React.useCallback((id: string, row: HTMLElement): void => {
+    setHoveredPromptId(id)
+    const root = row.closest('[data-prompt-picker-root="true"]')
+    const rootRect = root?.getBoundingClientRect()
+    const rowRect = row.getBoundingClientRect()
+    const anchorCenter = rootRect ? rowRect.top - rootRect.top + rowRect.height / 2 : rowRect.height / 2
+    const nextItem = items.find((item) => item.id === id)
+    const referenceCount = nextItem?.referenceImages.length ? 1 : 0
+    const innerWidth = PROMPT_PICKER_PREVIEW_WIDTH - 16
+    const promptPreviewHeight = nextItem?.prompt ? 118 : 0
+    const estimatedHeight = Math.min(
+      PROMPT_PICKER_PREVIEW_MAX_HEIGHT,
+      16 + referenceCount * (innerWidth * 9 / 16) + promptPreviewHeight,
+    )
+    setPreviewAnchorCenter(anchorCenter)
+    setPreviewTop(anchorCenter - estimatedHeight / 2)
+  }, [items])
+  React.useLayoutEffect(() => {
+    if (hoveredReferences.length === 0) return
+    const card = previewCardRef.current
+    if (!card) return
+    setPreviewTop(previewAnchorCenter - card.getBoundingClientRect().height / 2)
+  }, [hoveredReferences.length, previewAnchorCenter])
+  if (!position || typeof document === 'undefined') return null
+
+  return createPortal(
+    <motion.div
+      ref={setNodeRef}
+      data-prompt-picker-root="true"
+      className="fixed z-[80] overflow-visible"
+      style={{ left: position.left, top: position.top, width: position.width, transformOrigin: 'top right' }}
+      initial={{ opacity: 0, y: -6, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -4, scale: 0.98 }}
+      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.7 }}
+      role="menu"
+      aria-label="素材盒提示词"
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseLeave={() => setHoveredPromptId(null)}
+    >
+      <div className="max-h-[310px] overflow-hidden rounded-nomi bg-nomi-paper shadow-nomi-lg">
+        <div className="min-w-0 overflow-y-auto py-1">
+          {items.length === 0 ? (
+            <div className="grid min-h-24 place-items-center px-4 text-center text-caption text-nomi-ink-40">
+              素材盒暂无可用提示词
+            </div>
+          ) : (
+            items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="menuitem"
+                className={cn(
+                  'grid w-full min-w-0 grid-cols-[32px_minmax(0,1fr)] items-center gap-2 border-0 bg-transparent px-2.5 py-1.5 text-left',
+                  'cursor-pointer transition-colors duration-[var(--nomi-transition-fast)]',
+                  'text-nomi-ink-70 hover:bg-nomi-ink-05 hover:text-nomi-ink',
+                )}
+                onMouseEnter={(event) => showHoveredPrompt(item.id, event.currentTarget)}
+                onFocus={(event) => showHoveredPrompt(item.id, event.currentTarget)}
+                onClick={() => onSelect(item)}
+              >
+                {item.referenceImages[0]?.url ? (
+                  <img
+                    src={item.referenceImages[0].url}
+                    alt=""
+                    draggable={false}
+                    className="block size-8 rounded-nomi-sm object-cover"
+                  />
+                ) : (
+                  <span className="grid size-8 place-items-center rounded-nomi-sm bg-nomi-bg text-nomi-ink-35">
+                    <IconFileText size={15} stroke={1.6} aria-hidden="true" />
+                  </span>
+                )}
+                <span className="block min-w-0 overflow-hidden whitespace-nowrap text-caption leading-none">
+                  {item.prompt}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+      {hoveredReferences.length > 0 ? (
+        <aside
+          ref={previewCardRef}
+          className="absolute left-full overflow-hidden rounded-nomi bg-nomi-paper p-2 shadow-nomi-lg"
+          style={{
+            top: previewTop,
+            marginLeft: PROMPT_PICKER_PREVIEW_GAP,
+            width: PROMPT_PICKER_PREVIEW_WIDTH,
+            maxHeight: PROMPT_PICKER_PREVIEW_MAX_HEIGHT,
+          }}
+        >
+          <div className="grid gap-2">
+            {hoveredReferences.slice(0, 1).map((reference, index) => (
+              <div
+                key={`${reference.url}-${index}`}
+                className="overflow-hidden rounded-nomi-sm bg-nomi-paper shadow-nomi-sm"
+              >
+                <img src={reference.url} alt="" draggable={false} className="block aspect-video w-full object-cover" />
+              </div>
+            ))}
+            {hoveredItem?.prompt ? (
+              <div className="overflow-hidden rounded-nomi-sm bg-nomi-bg/70 px-2 py-1.5 text-caption leading-snug text-nomi-ink-70 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:6] [overflow-wrap:anywhere]">
+                {hoveredItem.prompt}
+              </div>
+            ) : null}
+          </div>
+        </aside>
+      ) : null}
+    </motion.div>,
+    document.body,
+  )
 }
 
 export default function NodeGenerationComposer({ node, visualSize }: Props): JSX.Element {
@@ -106,8 +262,14 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
   }, [isAudioKind, node.meta])
   const audioIsTranscribe = audioMode?.transportTaskKind === 'transcribe'
   const textGenMode = getTextGenMode(node)
+  const hasPromptPickerButton = Boolean(nodeExecutionKind) && !audioIsTranscribe && !isTextKind
   // 持有 prompt 编辑器实例,供「点参考 tile → 在光标处插入 chip」(@ 内联引用主路径)。
   const [promptEditor, setPromptEditor] = React.useState<Editor | null>(null)
+  const [promptPickerOpen, setPromptPickerOpen] = React.useState(false)
+  const [promptPickerItems, setPromptPickerItems] = React.useState<BrowserPromptLibraryItem[]>([])
+  const [promptPickerPosition, setPromptPickerPosition] = React.useState<PromptPickerPosition | null>(null)
+  const promptPickerButtonRef = React.useRef<HTMLButtonElement | null>(null)
+  const promptPickerPopoverRef = React.useRef<HTMLDivElement | null>(null)
   const insertMention = React.useCallback((url: string) => {
     if (promptEditor && !promptEditor.isDestroyed) promptEditor.commands.insertAssetMention(url)
   }, [promptEditor])
@@ -121,6 +283,94 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
     const imageSlot = resolveReferenceSlots(node, mentionNodes, mentionEdges).find((s) => s.slotKind === 'image_ref')
     return imageSlot ? imageSlot.fills.flatMap((f) => (f.url ? [f.url] : [])) : []
   }, [node, mentionNodes, mentionEdges])
+
+  const loadPromptPickerItems = React.useCallback((): BrowserPromptLibraryItem[] => {
+    const items = readBrowserPromptLibraryItems(getDesktopActiveProjectId())
+    setPromptPickerItems(items)
+    return items
+  }, [])
+
+  const updatePromptPickerPosition = React.useCallback((): void => {
+    const button = promptPickerButtonRef.current
+    if (!button || typeof window === 'undefined') return
+    const rect = button.getBoundingClientRect()
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    const availableWidth = viewportWidth - PROMPT_PICKER_MARGIN * 2
+    const width = Math.max(
+      PROMPT_PICKER_MIN_WIDTH,
+      Math.min(PROMPT_PICKER_WIDTH, availableWidth),
+    )
+    const maxLeft = viewportWidth - width - PROMPT_PICKER_MARGIN
+    const left = Math.max(
+      PROMPT_PICKER_MARGIN,
+      Math.min(rect.right - width, maxLeft),
+    )
+    const belowTop = rect.bottom + 8
+    const aboveTop = rect.top - PROMPT_PICKER_MAX_HEIGHT - 8
+    const top = belowTop + PROMPT_PICKER_MAX_HEIGHT <= viewportHeight - PROMPT_PICKER_MARGIN
+      ? belowTop
+      : Math.max(PROMPT_PICKER_MARGIN, Math.min(aboveTop, viewportHeight - PROMPT_PICKER_MAX_HEIGHT - PROMPT_PICKER_MARGIN))
+    setPromptPickerPosition({ left, top, width })
+  }, [])
+
+  React.useEffect(() => {
+    if (!promptPickerOpen) return undefined
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target as Node | null
+      if (target && promptPickerButtonRef.current?.contains(target)) return
+      if (target && promptPickerPopoverRef.current?.contains(target)) return
+      setPromptPickerOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setPromptPickerOpen(false)
+    }
+    window.addEventListener('pointerdown', handlePointerDown, { capture: true })
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, { capture: true })
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [promptPickerOpen])
+
+  React.useLayoutEffect(() => {
+    if (!promptPickerOpen || typeof window === 'undefined') return undefined
+    updatePromptPickerPosition()
+    const frame = window.requestAnimationFrame(updatePromptPickerPosition)
+    const handleViewportChange = (): void => updatePromptPickerPosition()
+    window.addEventListener('resize', handleViewportChange)
+    window.addEventListener('scroll', handleViewportChange, true)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', handleViewportChange)
+      window.removeEventListener('scroll', handleViewportChange, true)
+    }
+  }, [promptPickerOpen, updatePromptPickerPosition])
+
+  const togglePromptPicker = React.useCallback((event: React.MouseEvent<HTMLButtonElement>): void => {
+    event.stopPropagation()
+    if (promptPickerOpen) {
+      setPromptPickerOpen(false)
+      return
+    }
+    loadPromptPickerItems()
+    updatePromptPickerPosition()
+    setPromptPickerOpen(true)
+  }, [loadPromptPickerItems, promptPickerOpen, updatePromptPickerPosition])
+
+  const applyPromptPickerItem = React.useCallback(
+    (item: BrowserPromptLibraryItem): void => {
+      if (node.locked) return
+      if (promptEditor && !promptEditor.isDestroyed) {
+        promptEditor.commands.setContent(promptToContent(item.prompt))
+        promptEditor.commands.focus('end')
+      }
+      updateNode(node.id, { prompt: item.prompt })
+      setPromptPickerOpen(false)
+      void persistActiveWorkbenchProjectNow().catch(() => {})
+    },
+    [node.id, node.locked, promptEditor, updateNode],
+  )
 
   const handleGenerate = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -258,7 +508,7 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
       <div
         className={cn(
           'generation-canvas-v2-node__composer-card',
-          'flex flex-col gap-2.5 p-3 min-h-[150px] min-w-[360px] max-w-[880px] w-max',
+          'relative flex flex-col gap-2.5 p-3 min-h-[150px] min-w-[360px] max-w-[880px] w-max',
           // 宽度内容驱动（w-max）：按底栏一行(锁+参数+生成钮)的真实宽长开，参数少则窄、多则宽，不塌不爆、不换行。
           // max-w-[880px] 兜底：现有最宽是 apimart Seedance 7 控件(model+变体+比例+清晰度+时长+seed+生成音频)
           // ≈810px，880 留头不触发截断；纯防极端（防 omni 模式参考槽行等异常撑爆）。实测 2026-06-16 校准。
@@ -268,6 +518,43 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
         )}
         style={{ maxHeight: Math.min(composerLayout.maxHeight, viewportMaxHeight) }}
       >
+      {hasPromptPickerButton ? (
+        <>
+          <button
+            ref={promptPickerButtonRef}
+            type="button"
+            className={cn(
+              'absolute right-3 top-3 z-[2] inline-flex h-7 items-center gap-1.5 rounded-nomi-sm border-0 bg-transparent px-2',
+              'cursor-pointer text-nomi-ink-45 transition-[background,color,transform] duration-[var(--nomi-transition-fast)]',
+              'hover:-translate-y-0.5 hover:bg-nomi-ink-05 hover:text-nomi-accent',
+              promptPickerOpen && 'bg-nomi-ink-05 text-nomi-accent',
+              node.locked && 'cursor-not-allowed opacity-45 hover:translate-y-0 hover:bg-transparent hover:text-nomi-ink-45',
+            )}
+            aria-label="打开素材盒提示词"
+            aria-haspopup="menu"
+            aria-expanded={promptPickerOpen}
+            title="素材盒提示词"
+            disabled={node.locked}
+            onClick={togglePromptPicker}
+          >
+            <IconFileText size={15} stroke={1.8} aria-hidden="true" />
+            <span className="text-caption font-medium leading-none">提示词</span>
+          </button>
+          <AnimatePresence initial={false}>
+            {promptPickerOpen ? (
+              <BrowserPromptPickerPopover
+                key="browser-prompt-picker"
+                items={promptPickerItems}
+                position={promptPickerPosition}
+                onSelect={applyPromptPickerItem}
+                setNodeRef={(popoverNode) => {
+                  promptPickerPopoverRef.current = popoverNode
+                }}
+              />
+            ) : null}
+          </AnimatePresence>
+        </>
+      ) : null}
       {/* 参考区：图像/视频的参考槽，以及声音的「配音生成/转写」模式切换 + 转写的音频参考槽。 */}
       {isImageLikeGenerationNodeKind(node.kind) || isVideoLikeGenerationNodeKind(node.kind) || isAudioKind ? (
         <>
@@ -301,9 +588,13 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
       {/* 长 prompt 在编辑器内部滚动/换行；底栏永远贴底（卡宽确定，提示词在卡宽内自然换行，不撑爆）。 */}
       {/* 提示词至少 3 行高（min-h-[72px]）——参考区/底栏再多也不把它挤成 1 行（修③）；超长时本区滚动。 */}
       {/* 转写模式无台词输入（音频参考即输入）——隐藏 prompt，避免误导。 */}
-      {audioIsTranscribe ? null : (
+      {audioIsTranscribe || isTextKind ? null : (
         // w-0 min-w-full：填满卡宽但**贡献 0** 到 max-content（长 prompt 在卡宽内换行，不把卡撑爆 → 卡宽由底栏定）。
-        <div className={cn('flex-1 min-h-[72px] overflow-auto w-0 min-w-full')}>
+        // overflow-auto 直接挂在 flex-1 伸缩区上：该区高度被卡片 maxHeight 卡住后有界 → 超长 prompt 在本区内部
+        // 滚动，底栏（shrink-0）永远贴底可见。min-h-[72px] 保底 3 行。
+        // ⚠️ 别再往里套「无高度约束的内层块 + overflow-auto」：那样内层块按内容长到全高、overflow-auto 永不触发，
+        // 整片 prompt 下溢盖住底栏（= 截图里「文字太长盖住 选择模型/优化」的根因）。滚动容器必须自己有界。
+        <div className={cn('relative flex-1 min-h-[72px] w-0 min-w-full overflow-auto')}>
           <PromptEditor
             className={cn('min-h-[72px]')}
             value={node.prompt || ''}
@@ -323,6 +614,10 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
             selected 恒为真（composer 只在选中时挂载）→ 始终可见：未锁=描边开锁、已锁=实心锁。 */}
         <NodeLockBadge nodeId={node.id} locked={node.locked} selected />
         <NodeParameterControls node={node} section="parameters" />
+        {/* 手动运镜（B1）：视频镜头才有 video_ref 槽——运镜芯片仅对 video-like 节点显示（AI 工具 create_camera_move 的第二道门，共用同一产路）。 */}
+        {isVideoLikeGenerationNodeKind(node.kind) && !node.locked ? (
+          <NodeCameraMoveControl node={node} />
+        ) : null}
         {(nodeExecutionKind === 'image' || nodeExecutionKind === 'video') && !node.locked ? (
           <NodePromptOptimizer node={node} isVideo={nodeExecutionKind === 'video'} />
         ) : null}
@@ -333,7 +628,9 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
                 ? '需要先添加参考素材（拖入 / 连线 / 点 +）'
                 : '需要先连接一个图片节点作为首帧'
               : nodeExecutionKind === 'image'
-                ? undefined
+                ? acceptsDrop
+                  ? '图生图需要参考图（拖入 / 连线 / 点 +），或切回「文生图」'
+                  : '图生图需要参考图：请连接图片节点或添加参考，或切回「文生图」'
                 : `「${node.kind}」类型暂不支持直接生成`
             : undefined
           const title = disabledReason

@@ -190,8 +190,8 @@ function TextCell({
       rows={4}
       onCommit={onCommit}
       className={cn(
-        'block min-h-[96px] w-full resize-none rounded-[6px] border border-transparent bg-transparent px-2 py-1.5',
-        'text-[12px] leading-[1.45] text-nomi-ink outline-none',
+        'block min-h-[96px] w-full resize-none rounded-nomi-sm border border-transparent bg-transparent px-2 py-1.5',
+        'text-caption leading-[1.45] text-nomi-ink outline-none',
         'hover:border-nomi-line-soft hover:bg-nomi-paper focus:border-nomi-accent/60 focus:bg-nomi-paper',
       )}
     />
@@ -226,7 +226,7 @@ function BufferedDurationInput({
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
       onKeyUp={(event) => event.stopPropagation()}
-      className="h-8 w-full rounded-[6px] border border-nomi-line-soft bg-nomi-paper px-2 text-small outline-none focus:border-nomi-accent/60"
+      className="h-8 w-full rounded-nomi-sm border border-nomi-line-soft bg-nomi-paper px-2 text-small outline-none focus:border-nomi-accent/60"
     />
   )
 }
@@ -251,8 +251,8 @@ function GroupedFieldsCell({
             rows={1}
             onCommit={(value) => onCommit(field, value)}
             className={cn(
-              'block min-h-8 w-full resize-none rounded-[6px] border border-transparent bg-transparent px-1.5 py-1',
-              'text-[12px] leading-[1.35] text-nomi-ink outline-none',
+              'block min-h-8 w-full resize-none rounded-nomi-sm border border-transparent bg-transparent px-1.5 py-1',
+              'text-caption leading-[1.35] text-nomi-ink outline-none',
               'hover:border-nomi-line-soft hover:bg-nomi-paper focus:border-nomi-accent/60 focus:bg-nomi-paper',
             )}
           />
@@ -341,7 +341,7 @@ function CompactFieldsCell({ row, fields }: { row: StoryboardScriptRow; fields: 
     return value ? [`${FIELD_LABEL[field]}：${value}`] : []
   })
   return (
-    <div className="px-2 py-2 text-[12px] leading-[1.45] text-nomi-ink-60">
+    <div className="px-2 py-2 text-caption leading-[1.45] text-nomi-ink-60">
       <p className="line-clamp-3">{values.join(' · ') || '—'}</p>
     </div>
   )
@@ -361,7 +361,7 @@ function CompactPromptCell({
   return (
     <div className="flex h-full items-center gap-2 px-2 py-2">
       <div className="min-w-0 flex-1">
-        <p className="line-clamp-3 text-[12px] leading-[1.45] text-nomi-ink-60">{prompt || '—'}</p>
+        <p className="line-clamp-3 text-caption leading-[1.45] text-nomi-ink-60">{prompt || '—'}</p>
       </div>
       <div className="flex h-[72px] w-[76px] shrink-0 items-center justify-center">
         <StoryboardMediaPreview
@@ -758,7 +758,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                   style={{ gridTemplateColumns: GRID_COLUMNS }}
                 >
                   <div className="flex flex-col items-stretch gap-2 border-r border-nomi-line-soft px-2 py-2">
-                    <span className="rounded-[6px] bg-nomi-ink-05 px-2 py-1 text-micro font-semibold text-nomi-ink">
+                    <span className="rounded-nomi-sm bg-nomi-ink-05 px-2 py-1 text-micro font-semibold text-nomi-ink">
                       镜头 {row.shot.index}
                     </span>
                     {isExpanded ? (
@@ -778,7 +778,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                     )}
                     <span
                       className={cn(
-                        'rounded-[6px] px-2 py-1 text-center text-micro font-medium',
+                        'rounded-nomi-sm px-2 py-1 text-center text-micro font-medium',
                         row.status === 'generated' && 'bg-workbench-success-soft text-workbench-success-ink',
                         row.status === 'running' && 'bg-nomi-accent-soft text-nomi-accent',
                         row.status === 'error' && 'bg-workbench-danger-soft text-workbench-danger',

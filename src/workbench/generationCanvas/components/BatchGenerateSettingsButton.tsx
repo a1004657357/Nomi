@@ -4,7 +4,7 @@ import { IconAdjustmentsHorizontal, IconPlayerPlay } from '@tabler/icons-react'
 import { NomiSelect, WorkbenchButton } from '../../../design'
 import type { ModelParameterControl } from '../../../config/modelCatalogMeta'
 import { formatVideoOptionLabel } from '../../../config/modelCatalogMeta'
-import type { DynamicCatalogControl, DynamicModelControl } from '../nodes/controls/parameterControlModel'
+import type { DynamicModelControl } from '../nodes/controls/parameterControlModel'
 import {
   catalogControlInitialValue,
   controlInitialValue,
@@ -65,7 +65,6 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
   const [modelValue, setModelValue] = React.useState('')
   const [draftMeta, setDraftMeta] = React.useState<Record<string, unknown>>({})
   const nodes = useGenerationCanvasStore((state) => state.nodes)
-  const edges = useGenerationCanvasStore((state) => state.edges)
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const imageModelState = useGenerationModelOptionsState('image')
   const videoModelState = useGenerationModelOptionsState('video')

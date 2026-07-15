@@ -6,6 +6,8 @@
     <link rel="icon" type="image/svg+xml" href="/nomi-logo.svg" />
     <link rel="stylesheet" href="/tailwind.generated.css" />
     <title>Nomi</title>
+    <!-- overlay 旗（?nomiOverlay=browserAsset）由 src/main.tsx 在 React 渲染前设置——
+         别在这里加内联 <script>：打包态 CSP（script-src 'self'）会拦，dev 放行造成两态不一致。 -->
     <style>
       html,
       body,
@@ -14,6 +16,17 @@
         height: 100%;
         margin: 0;
         background: #f7f4ed;
+      }
+
+      html[data-nomi-overlay="browserAsset"],
+      html[data-nomi-overlay="browserAsset"] body,
+      html[data-nomi-overlay="browserAsset"] #root {
+        background: transparent;
+      }
+
+      html[data-nomi-overlay="browserAsset"] #nomi-boot-shell {
+        display: none;
+        background: transparent;
       }
 
       #nomi-boot-shell {

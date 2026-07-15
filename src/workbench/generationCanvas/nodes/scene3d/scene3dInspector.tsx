@@ -195,6 +195,7 @@ export function SceneObjectList({
           return (
             <React.Fragment key={row.id}>
               <div
+                data-coach={rowObject?.type === 'mannequin' ? 'mannequin-row' : row.type === 'camera' ? 'camera-row' : undefined}
                 className={cn(
                   'group grid grid-cols-[22px_24px_minmax(0,1fr)_28px_28px] items-center gap-1 rounded-nomi-sm px-1 py-1',
                   'text-[var(--nomi-ink-60)] hover:bg-[var(--nomi-ink-05)]',

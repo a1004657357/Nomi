@@ -154,10 +154,22 @@ CSS 文件分工与「只可减不可增」规则详见 R1 最后一节。
 
 **触发条件（任一）**：
 - 用户可见改动报完成前
+- **把任何可运行/可看的东西交付给用户前（开实例「给你看」、发截图、发链接）——交付=报完成，同一道闸**
 - 整条功能链路实现完成时
 - 用户提出「用不顺 / 看不懂」反馈时
 - 重构/重大改动后确认主链路未拆坏
 - ≥25 commit 或发版前（配合 R14）
+
+### 眼见链（2026-07-12 固化：走查有效性的四问，缺一环 = 没走查）
+
+走查的本质是**证据链从改动一路连到我的眼睛**，四问逐环校验：
+
+1. **截图存在吗** —— 跑了走查脚本、产出了截图文件；
+2. **我 Read 过吗** —— 截图必须被亲眼 Read 消费。**产出验证物 ≠ 消费验证物**（栽过：shell3 截图躺在盘里没看，就把沙盒递给用户，用户当场抓到「和原来一样」）；
+3. **它来自用户所见物吗** —— 同构建（非 stale chunk/僵尸实例）、同入口（生产构建非 dev）、**同平台分支**（mac `NomiAppBar` ≠ win32 windowbar ≠ 项目库页，平台/条件分叉的 UI 改哪面就必须验哪面，全仓 `isWindows` 类分叉先 grep 清点）；
+4. **它拍得到改动区吗** —— 截图手段对改动区不是盲区（栽过：`BrowserWindow.capturePage` 拍不到子 view；打开态/弹层要逐个打开拍）。
+
+历史同类事故（这条规则的由来，均为「链在最后一跳断裂」）：素材盒修在 win32 分支 mac 没生效+截图没看就交付（07-12）；样张凭脑补不基于真实 UI（v07，×3）；gates 全绿但生产构建无样式（dev≠prod）；走查跑在 stale chunk/僵尸实例上；capturePage 拍不到捕捞子 view。机械闸：Stop hook `completion-check.sh` 已升级为**查眼不查嘴**——改了 src/electron 又宣布完成/交付时，近窗口内必须有图片 Read 痕迹，否则 block。
 
 ### 旅程构建铁律
 
@@ -196,6 +208,10 @@ CSS 文件分工与「只可减不可增」规则详见 R1 最后一节。
   **循环 = snap/shot 看真实界面 → 判断 → click/fill 操作 → 再 shot 看结果**（感知→决策→行动→再感知）。
   Electron 专用（Nomi 要主进程+IPC，普通浏览器预览工具附不上去）。用完务必 `quit`，别留后台进程/窗口。
 - `tests/ux/walkthrough.mjs` — 一次性探索式走查（逐步截图 + DOM dump）；**新工作优先用上面的常驻驱动**，盲脚本只在固定流程时用
+- **僵尸 Electron 防线（2026-07-12 栽过：迭代 12 轮一次性 walk + close 挂死 → 桌面十几个僵尸）**：
+  ① 探索/调试迭代必用常驻驱动（一个实例改一轮测一轮），一次性 walk 只跑最终验证的一两遍；
+  ② 一次性 walk 的 finally 必须「`app.close()` 竞速 8s → 超时 SIGKILL `app.process()`」——外层 shell `timeout` 只杀 node、会孤儿整棵 Electron 树，不算兜底；
+  ③ 迭代结束顺手 `pnpm run kill:zombies`（按本仓 node_modules 路径精确清，不碰正装/他仓）。
 - `tests/ux/smoke.e2e.mjs`（`pnpm run test:e2e`）— 可断言冒烟，失败即非零退出，CI-ready
 
 **「特别完整的用户测试」标准方法（定稿）**：不引入外部工具——**自主点击的「computer-use 智能体」就是 AI 本身**，驱动层用上面的常驻驱动。标准动作：① 清场（`osascript -e 'quit app "Nomi"'` 关已装 app 释放 single-instance 锁 + 杀残留 Electron/驱动）→ ② `pnpm build` 全新构建（防 stale-chunk 伪 bug）→ ③ 起常驻驱动 → ④ 逐旅程走 J1–J5（snap→判断→click/fill/setfile→shot+Read 人眼判断）→ ⑤ 逐个打开交互态看遮挡 → ⑥ Explore agent 挖根因到 file:line、分症状/根因/地基 → ⑦ 落 `docs/audit`（问题分级 + 局部/地基拆分）→ ⑧ `quit`。完整方法 + 外部工具调研：`docs/workflow/2026-06-10-autonomous-ui-test-method.md`。

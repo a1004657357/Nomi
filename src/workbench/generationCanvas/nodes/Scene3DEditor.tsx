@@ -470,7 +470,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
 
   return (
     <>
-      <div className="group relative w-full h-full overflow-hidden">
+      <div className="group relative w-full h-full overflow-hidden" data-tour-target="staging trajectory">
         {takeCaptureStatus ? <Scene3DTakeStatusOverlay status={takeCaptureStatus} /> : null}
         {thumbnailUrl ? (
           <>

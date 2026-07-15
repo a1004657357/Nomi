@@ -168,8 +168,8 @@ export default function CanvasToolbar({ getInsertionPosition, categoryId }: Canv
         <button
           type="button"
           className={cn(
-            'mt-1 grid size-8 min-h-8 place-items-center rounded-nomi-sm border-0 border-t border-workbench-border bg-transparent p-0 text-red-600 cursor-pointer',
-            'transition-colors hover:bg-red-50 hover:text-red-700',
+            'mt-1 grid size-8 min-h-8 place-items-center rounded-nomi-sm border-0 border-t border-workbench-border bg-transparent p-0 text-workbench-danger cursor-pointer',
+            'transition-colors hover:bg-workbench-danger-soft hover:text-workbench-danger',
             '[&>svg]:size-[17px]',
           )}
           aria-label="停止全部生成"

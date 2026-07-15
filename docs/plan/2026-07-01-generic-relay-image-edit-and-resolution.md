@@ -143,3 +143,8 @@ Nomi 对中转有两条接入路：
 - 不改视频/音频通用路。
 - 不引入新平台/新依赖。
 - 回滚：涉及文件集中在 `electron/catalog/newapiTransport.ts` + `electron/tasks/assetUrlExtract.ts`（或 processOperation）+ `electron/catalog/catalogCommit.ts` + 对应测试；单 commit 可整体 revert。
+
+## 八、后记（2026-07-06）
+
+- 「存量模型需删了重加才生效」的遗留已由 **catalog v4→v5 迁移**根治（见 docs/plan/2026-07-06-i2i-reference-reliability.md L1）：老中转 image 条目升级即自动补 image_edit mapping + supportsReferenceImages + 比例/清晰度参数，不再要求用户删了重加。
+- 同一批修复还包含：参考 URL 本地优先（providerUrl 过期链整类失效）+ 图生图/图生视频缺参考或缺 mapping 时拒发报人话（不再静默退化纯文生图）。

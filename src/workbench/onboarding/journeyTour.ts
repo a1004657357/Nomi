@@ -75,7 +75,7 @@ export const TOUR_BEATS: TourBeat[] = [
     kind: 'spotlight',
     title: '谁站哪、朝哪',
     body: '用 3D 摆一下站位，AI 照着画——比如屋顶上两个并排坐。',
-    selectors: ['[data-tour-target="staging"]', '.generation-canvas-v2-node'],
+    selectors: ['[data-tour-target~="staging"]', '.generation-canvas-v2-node'],
   },
   {
     id: 'trajectory',
@@ -83,7 +83,7 @@ export const TOUR_BEATS: TourBeat[] = [
     kind: 'spotlight',
     title: '想要推拉摇移',
     body: '画一条相机轨迹，AI 复刻这个运镜——比如夕阳下缓缓拉远。',
-    selectors: ['[data-tour-target="trajectory"]', '.generation-canvas-v2-node'],
+    selectors: ['[data-tour-target~="trajectory"]', '.generation-canvas-v2-node'],
   },
   {
     id: 'generate',

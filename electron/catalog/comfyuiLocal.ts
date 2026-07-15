@@ -18,7 +18,7 @@
 // 参数键刻意用 comfy_* 前缀（非 width/height/seed/steps/cfg/negative_prompt）：taskTemplateParams 会把这些
 // 标准键从 request 顶层字段**重新派生**、headless 下顶层为空会把它们清成 undefined → workflow 图里该数字节点
 // 丢键报错（实查 taskParams.ts:78-84）。用 comfy_* 走 `...extras` 直通、不被派生覆盖。
-import type { HttpOperation } from "./types";
+import { COMFYUI_VENDOR_KEY, type HttpOperation } from "./types";
 import { registerResponseTransform, type ResponseTransformFn } from "../tasks/responseTransforms";
 
 function isRec(value: unknown): value is Record<string, unknown> {
@@ -50,11 +50,28 @@ function buildViewUrl(baseUrl: string, img: Record<string, unknown>): string {
   return `${base}/view?${qs}`;
 }
 
+/** 从 outputs 里找第一个「某节点某键的数组第一项带 filename」的产物项（供图/视频各扫各的键）。 */
+function firstOutputAsset(outputs: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> | null {
+  for (const node of Object.values(outputs)) {
+    if (!isRec(node)) continue;
+    for (const key of keys) {
+      const arr = node[key];
+      if (Array.isArray(arr) && arr.length > 0 && isRec(arr[0]) && typeof arr[0].filename === "string") {
+        return arr[0] as Record<string, unknown>;
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * ComfyUI /history/{id} 响应归一（命名变换 "comfyui-history"）。三态：
- *   · 成功：outputs 里第一个 images[0] → { image_url }（runtime 拿到 assetUrl 即判 succeeded）；
- *   · 失败：status.status_str==="error" → { error }（runtime line 101 → failed，fail fast 不空转到超时）；
- *   · 未完成：空 {} / outputs 未出现 → 原样返回（无 image_url → taskStatusFromResponse 回落 queued → 继续轮询）。
+ *   · 成功：outputs 里第一个产物 → { image_url } 和/或 { video_url }（runtime 拿到 assetUrl 即判 succeeded）；
+ *       视频键是 gifs/videos（VHS_VideoCombine 历史命名：mp4/webm 也落 gifs；原生 SaveVideo 可能落 videos，
+ *       实查 Kosinkadink/ComfyUI-VideoHelperSuite + docs.comfy.org 2026-07），图片键 images。两者可同时出
+ *       （视频 + 预览帧）→ 各出各的 key，让 mapping 的 response_mapping 各取所需（图片路读 image_url、视频路读 video_url）。
+ *   · 失败：status.status_str==="error" → { error }（runtime → failed，fail fast 不空转到超时）；
+ *   · 未完成：空 {} / outputs 未出现 / 有 outputs 但无可识别产物 → 原样返回（无 *_url → 回落 queued → 继续轮询）。
  * 纯函数（导出供单测），注册为副作用（seedBuiltins 于启动期 import 本文件 → 任务触发时表已就绪）。
  */
 export const comfyuiHistoryTransform: ResponseTransformFn = (response, { baseUrl }) => {
@@ -71,14 +88,13 @@ export const comfyuiHistoryTransform: ResponseTransformFn = (response, { baseUrl
 
   const outputs = isRec(entry.outputs) ? entry.outputs : null;
   if (!outputs) return response; // outputs 未出现 → 未完成
-  for (const node of Object.values(outputs)) {
-    if (!isRec(node) || !Array.isArray(node.images) || node.images.length === 0) continue;
-    const img = node.images[0];
-    if (isRec(img) && typeof img.filename === "string") {
-      return { image_url: buildViewUrl(baseUrl, img) };
-    }
-  }
-  return response; // 有 outputs 但无 image（其它输出类型）→ 原样
+  const video = firstOutputAsset(outputs, ["gifs", "videos"]);
+  const image = firstOutputAsset(outputs, ["images"]);
+  if (!video && !image) return response; // 有 outputs 但无可识别产物（其它输出类型）→ 原样
+  return {
+    ...(video ? { video_url: buildViewUrl(baseUrl, video) } : {}),
+    ...(image ? { image_url: buildViewUrl(baseUrl, image) } : {}),
+  };
 };
 
 registerResponseTransform("comfyui-history", comfyuiHistoryTransform);
@@ -87,7 +103,7 @@ registerResponseTransform("comfyui-history", comfyuiHistoryTransform);
 // 供应商种子（无鉴权本地服务，默认关）
 // ─────────────────────────────────────────────────────────────────────────────
 export const COMFYUI_VENDOR_SEED = {
-  key: "comfyui-local",
+  key: COMFYUI_VENDOR_KEY,
   name: "本地 ComfyUI",
   baseUrl: "http://127.0.0.1:8188",
   authType: "none" as const,

@@ -34,6 +34,25 @@ export function markCanvasGestureHintSeen(): void {
   }
 }
 
+const SCENE3D_COACH_KEY = 'nomi.onboarding.scene3dCoach.v1'
+
+export function hasSeenScene3DCoach(): boolean {
+  try {
+    return window.localStorage.getItem(SCENE3D_COACH_KEY) === 'seen'
+  } catch {
+    // localStorage 不可用：退化为「已看过」，不反复弹教练标注
+    return true
+  }
+}
+
+export function markScene3DCoachSeen(): void {
+  try {
+    window.localStorage.setItem(SCENE3D_COACH_KEY, 'seen')
+  } catch {
+    /* ignore */
+  }
+}
+
 export type ChecklistStep = 'model' | 'storyboard' | 'generated' | 'exported'
 export type ChecklistState = Record<ChecklistStep, boolean>
 

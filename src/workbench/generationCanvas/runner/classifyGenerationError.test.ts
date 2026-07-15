@@ -221,3 +221,20 @@ describe('providerMessage —— 服务商真实原话提到可见区（别埋�
     expect(r.providerMessage).toBeUndefined()
   })
 })
+
+describe('即梦 CLI 错误不被误吞成「模型未开通/火山 Ark 指引」（2026-07-06 真机走查抓出）', () => {
+  it('即梦静默兜底文案（含「开通即梦会员」「该模型首次使用」）→ 账号权限不足，非模型未开通', () => {
+    const msg = '即梦生成被拒，但 CLI 未返回任何原因（exit=1）。常见原因：① 当前即梦账号不是高级会员（免费试用 2026-05-01 已结束，需开通即梦会员）；② model_version / resolution 等参数组合不被当前模型支持；③ 该模型首次使用需先在 jimeng.jianying.com 网页端授权一次；④ 即梦服务端临时异常。'
+    const report = classifyGenerationError(msg)
+    expect(report.reason).toBe('账号权限不足')
+    expect(report.reason).not.toBe('模型未开通')
+  })
+  it('火山方舟真·未开通文案仍归「模型未开通」（不被调序误伤）', () => {
+    const report = classifyGenerationError('The account has not activated the model service: doubao-seedream')
+    expect(report.reason).toBe('模型未开通')
+  })
+  it('即梦登录态失效文案 → 账号权限不足桶（原话可见）', () => {
+    const report = classifyGenerationError('即梦登录态失效或未登录：请到「模型接入 · 即梦会员」卡重新登录（或终端运行 dreamina login），完成后重试。')
+    expect(report.reason).not.toBe('模型未开通')
+  })
+})

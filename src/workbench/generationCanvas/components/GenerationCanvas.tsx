@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconCopy, IconFileText, IconFolderPlus, IconFolderShare, IconMovie, IconPlayerPlay, IconTimeline, IconX } from '@tabler/icons-react'
+import { IconCopy, IconFileText, IconFolderShare, IconMovie, IconPlayerPlay, IconTimeline } from '@tabler/icons-react'
 import { confirmDialog, promptDialog, WorkbenchIconButton } from '../../../design'
 import { useNavigate } from 'react-router-dom'
 import { toast } from '../../../ui/toast'
@@ -8,7 +8,17 @@ import { buildStudioUrl } from '../../../utils/appRoutes'
 import CanvasToolbar, { NodeAddMenu } from './CanvasToolbar'
 import { WORKSPACE_FILE_DRAG_MIME } from '../../explorer/workspaceFileDrag'
 import { ASSET_LIBRARY_DRAG_MIME } from '../../assets/assetLibraryDrag'
-import { handleCanvasStageDrop } from './canvasStageDrop'
+import {
+  BROWSER_ASSET_DRAG_MIME,
+  LEGACY_BROWSER_ASSET_DRAG_MIME,
+  handleCanvasStageDrop,
+  importBrowserAssetsToGenerationCanvas,
+} from './canvasStageDrop'
+import {
+  subscribeBrowserAssetsImportToCanvas,
+  type BrowserAssetCanvasImportItem,
+} from '../../../ui/browser/overlay/globalAssetPopoverEvents'
+import { getDesktopBridge } from '../../../desktop/bridge'
 import type { GenerationNodeKind } from '../model/generationCanvasTypes'
 import { isImageLikeGenerationNodeKind } from '../model/generationNodeKinds'
 import { getGenerationNodeComponent } from '../nodes/renderRegistry'
@@ -40,6 +50,7 @@ import { useDragToConnect } from './useDragToConnect'
 import { CanvasEmptyState } from './CanvasEmptyState'
 import { CanvasNavigationStack } from './CanvasNavigationStack'
 import { CanvasGestureHint } from './CanvasGestureHint'
+import { SelectionPromptSaveController } from './SelectionPromptSaveController'
 import { useNodeAppearTracking } from './useNodeAppearTracking'
 import { useTidyCanvas } from './useTidyCanvas'
 import {
@@ -56,6 +67,8 @@ import { shouldRenderFullNodeContent, shouldUseLightweightNodeRendering } from '
 import { LightweightGenerationNode } from './LightweightGenerationNode'
 import { hasPendingScene3DCameraMoveCapture, hasPendingScene3DStagingCapture } from './scene3dCaptureHostActivation'
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
+import { useCanvasSelectionDrag } from './useCanvasSelectionDrag'
+import { CanvasSelectionToolbar } from './CanvasSelectionToolbar'
 import '../styles/generationCanvas.css'
 
 const FOCUS_GENERATION_NODE_EVENT = 'nomi-focus-generation-node'
@@ -68,6 +81,9 @@ const CameraMoveCaptureHost = lazyWithChunkBoundary('3D 运镜捕获', () =>
 const BatchPlanOverlay = lazyWithChunkBoundary('批量生成面板', () =>
   import('./BatchPlanOverlay').then((module) => ({ default: module.BatchPlanOverlay })),
 )
+
+const MULTI_SELECTION_BOUNDS_PADDING = 16
+const MULTI_SELECTION_TOOLBAR_OFFSET = 58
 
 type GenerationCanvasProps = {
   readOnly?: boolean
@@ -132,8 +148,10 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
   const cutSelectedNodes = useGenerationCanvasStore((state) => state.cutSelectedNodes)
   const pasteNodes = useGenerationCanvasStore((state) => state.pasteNodes)
   const selectNode = useGenerationCanvasStore((state) => state.selectNode)
+  const selectNodes = useGenerationCanvasStore((state) => state.selectNodes)
   const groupSelectedNodes = useGenerationCanvasStore((state) => state.groupSelectedNodes)
   const ungroupGroups = useGenerationCanvasStore((state) => state.ungroupGroups)
+  const moveSelectedNodes = useGenerationCanvasStore((state) => state.moveSelectedNodes)
   const moveGroupNodes = useGenerationCanvasStore((state) => state.moveGroupNodes)
   const captureHistory = useGenerationCanvasStore((state) => state.captureHistory)
   const commitPersistedChange = useGenerationCanvasStore((state) => state.commitPersistedChange)
@@ -153,12 +171,16 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
   )
   const groupBoxes = React.useMemo(() => getCanvasGroupBoxes(groups, nodes), [groups, nodes])
   const selectedGroupIds = React.useMemo(() => {
-    const selected = new Set(selectedNodeIds)
     return groups
-      .filter((group) => group.nodeIds.some((nodeId) => selected.has(nodeId)))
+      .filter((group) => {
+        const memberIds = group.nodeIds.filter((nodeId) => {
+          const node = nodeById.get(nodeId)
+          return node && (node.categoryId || 'shots') === group.categoryId
+        })
+        return memberIds.length > 0 && memberIds.every((nodeId) => selectedSet.has(nodeId))
+      })
       .map((group) => group.id)
-  }, [groups, selectedNodeIds])
-  const draggingGroupRef = React.useRef<{ groupId: string; clientX: number; clientY: number; moved: boolean } | null>(null)
+  }, [groups, nodeById, selectedSet])
 
   // Pan/zoom + 视口虚拟化收口到 useCanvasViewport（壳组件顶死 800 行，抽出腾 headroom）。
   const {
@@ -237,6 +259,16 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     selectNodesInRect,
   })
   const { isPanning, isSpaceHeld, setViewportTransform, animateViewportTo, zoomAtStagePoint } = pointer
+  const { handleGroupFramePointerDown, handleSelectionBoundsPointerDown } = useCanvasSelectionDrag({
+    readOnly,
+    selectedNodeCount: selectedNodeIds.length,
+    zoomRef,
+    captureHistory,
+    commitPersistedChange,
+    moveGroupNodes,
+    moveSelectedNodes,
+    selectNodes,
+  })
 
   React.useEffect(() => {
     const handleFocusNode = (event: Event) => {
@@ -283,38 +315,6 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
       focusFlashTimerRef.current = null
     }, 1400)
   }, [activeCategoryId, allNodes, animateViewportTo, categoryViewports, pendingFocusNodeId, stageSizeRef, zoomRef])
-
-  React.useEffect(() => {
-    if (readOnly) return undefined
-    const handleMove = (event: PointerEvent) => {
-      const drag = draggingGroupRef.current
-      if (!drag) return
-      const scale = zoomRef.current || 1
-      const delta = {
-        x: (event.clientX - drag.clientX) / scale,
-        y: (event.clientY - drag.clientY) / scale,
-      }
-      if (delta.x === 0 && delta.y === 0) return
-      drag.clientX = event.clientX
-      drag.clientY = event.clientY
-      drag.moved = true
-      moveGroupNodes(drag.groupId, delta, { persist: false })
-    }
-    const handleUp = () => {
-      const drag = draggingGroupRef.current
-      if (!drag) return
-      draggingGroupRef.current = null
-      if (drag.moved) commitPersistedChange()
-    }
-    window.addEventListener('pointermove', handleMove)
-    window.addEventListener('pointerup', handleUp)
-    window.addEventListener('blur', handleUp)
-    return () => {
-      window.removeEventListener('pointermove', handleMove)
-      window.removeEventListener('pointerup', handleUp)
-      window.removeEventListener('blur', handleUp)
-    }
-  }, [commitPersistedChange, moveGroupNodes, readOnly, zoomRef])
 
   // Keep the store viewport in sync so nodes can read the same zoom/pan model.
   React.useEffect(() => {
@@ -390,7 +390,10 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     cancelConnection,
     onDropOnEmpty: ({ sourceNodeId, sourceSide, stagePoint, canvasPoint }) => {
       const sourceNode = allNodesRef.current.find((node) => node.id === sourceNodeId)
-      const sourceCanCreateMedia = sourceNode?.kind === 'image' || Boolean(sourceNode && isImageLikeGenerationNodeKind(sourceNode.kind))
+      const sourceCanCreateMedia =
+        sourceNode?.kind === 'text' ||
+        sourceNode?.kind === 'image' ||
+        Boolean(sourceNode && isImageLikeGenerationNodeKind(sourceNode.kind))
       if (!sourceCanCreateMedia || !stageRef.current) {
         cancelConnection()
         return
@@ -565,23 +568,40 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     [offset.x, offset.y, zoom, stageRef],
   )
 
+  const handleBrowserAssetsImportToCanvas = React.useCallback(
+    (assets: readonly BrowserAssetCanvasImportItem[]) => {
+      if (readOnly) return
+      const result = importBrowserAssetsToGenerationCanvas(assets, {
+        basePosition: getToolbarInsertionPosition(),
+        categoryId: activeCategoryId,
+      })
+      if (result.createdCount === 0) {
+        toast('没有可导入画布的素材', 'info')
+        return
+      }
+      toast(result.createdCount === 1 ? '已导入画布' : `已导入 ${result.createdCount} 个素材到画布`, 'success')
+    },
+    [activeCategoryId, getToolbarInsertionPosition, readOnly],
+  )
+
+  React.useEffect(
+    () => subscribeBrowserAssetsImportToCanvas((assets) => handleBrowserAssetsImportToCanvas(assets)),
+    [handleBrowserAssetsImportToCanvas],
+  )
+
+  React.useEffect(() => {
+    const overlayBridge = getDesktopBridge()?.browser?.assetOverlay
+    if (!overlayBridge?.onImportToCanvas) return undefined
+    return overlayBridge.onImportToCanvas((payload) => {
+      const assets = Array.isArray(payload?.assets) ? payload.assets as BrowserAssetCanvasImportItem[] : []
+      handleBrowserAssetsImportToCanvas(assets)
+    })
+  }, [handleBrowserAssetsImportToCanvas])
+
   const getPastePosition = React.useCallback(
     () => lastPastePositionRef.current ?? getToolbarInsertionPosition(),
     [getToolbarInsertionPosition],
   )
-
-  const handleGroupFramePointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>, groupId: string) => {
-    if (readOnly || event.button !== 0) return
-    event.preventDefault()
-    event.stopPropagation()
-    captureHistory()
-    draggingGroupRef.current = {
-      groupId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      moved: false,
-    }
-  }, [captureHistory, readOnly])
 
   useCanvasShortcuts({
     readOnly,
@@ -784,6 +804,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
       )}
       aria-label="AI 影像创作画布"
       data-ready={isReady ? 'true' : undefined}
+      data-nomi-generation-canvas-import-target={!readOnly ? 'true' : undefined}
     >
       <div className={cn('generation-canvas-v2__main', 'relative w-full h-full min-w-0 min-h-0')}>
         {hasPendingStagingCapture || hasPendingCameraMoveCapture ? (
@@ -809,7 +830,13 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
           onDragOver={(event) => {
             if (readOnly) return
             const types = Array.from(event.dataTransfer.types)
-            if (types.includes('Files') || types.includes(WORKSPACE_FILE_DRAG_MIME) || types.includes(ASSET_LIBRARY_DRAG_MIME)) {
+            if (
+              types.includes('Files') ||
+              types.includes(WORKSPACE_FILE_DRAG_MIME) ||
+              types.includes(ASSET_LIBRARY_DRAG_MIME) ||
+              types.includes(BROWSER_ASSET_DRAG_MIME) ||
+              types.includes(LEGACY_BROWSER_ASSET_DRAG_MIME)
+            ) {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'copy'
             }
@@ -820,6 +847,18 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
             className={cn('generation-canvas-v2__canvas', 'absolute inset-0 origin-top-left')}
             style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
           >
+            {selectedBounds && selectedCount > 1 ? (
+              <div
+                className="generation-canvas-v2__selection-bounds"
+                style={{
+                  transform: `translate(${Math.round(selectedBounds.minX - MULTI_SELECTION_BOUNDS_PADDING)}px, ${Math.round(selectedBounds.minY - MULTI_SELECTION_BOUNDS_PADDING)}px)`,
+                  width: Math.round(selectedBounds.width + MULTI_SELECTION_BOUNDS_PADDING * 2),
+                  height: Math.round(selectedBounds.height + MULTI_SELECTION_BOUNDS_PADDING * 2),
+                }}
+                onPointerDown={handleSelectionBoundsPointerDown}
+                aria-hidden="true"
+              />
+            ) : null}
             <CanvasEdgeLayer
               edges={edgesForRender}
               nodeById={nodeById}
@@ -872,44 +911,38 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
               </React.Suspense>
             </div>
             {selectedBounds && selectedCount > 1 && !readOnly ? (
-              <div
-                className={cn(
-                  'generation-canvas-v2__selection-toolbar',
-                  'absolute z-[11] inline-flex items-center gap-2 px-2.5 py-1.5',
-                  'border border-nomi-line rounded-full',
-                  'bg-nomi-paper/[0.96] shadow-nomi-md pointer-events-auto',
-                )}
-                style={{
-                  transform: `translate(${Math.round(selectedBounds.minX + selectedBounds.width / 2)}px, ${Math.round(Math.max(24, selectedBounds.minY - 44))}px) translateX(-50%)`,
-                }}
-                aria-label="选中区域操作"
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                <span className={cn('pl-1.5 pr-1 text-nomi-ink-60 text-body-sm whitespace-nowrap')}>已选 {selectedCount} 个</span>
-                <BatchGenerateSettingsButton selectedNodeIds={selectedNodeIds} />
-                <WorkbenchIconButton label="按原参数生成" icon={<IconPlayerPlay size={16} />} onClick={handleBatchGenerate} />
-                {selectedConvertibleImageCount > 0 ? (
-                  <WorkbenchIconButton label="批量转视频" icon={<IconMovie size={16} />} onClick={handleBatchConvertSelectedImagesToVideos} />
-                ) : null}
-                <WorkbenchIconButton label="按镜序送时间轴" icon={<IconTimeline size={16} />} onClick={handleSendSelectedToTimeline} />
-                <span className={cn('w-px h-4 bg-nomi-line')} />
-                <WorkbenchIconButton
-                  label="复制到新项目"
-                  icon={<IconCopy size={16} />}
-                  disabled={Boolean(transferringSelectionMode)}
-                  onClick={() => void handleTransferSelectedNodes('copy')}
-                />
-                <WorkbenchIconButton
-                  label="移动到新项目"
-                  icon={<IconFolderShare size={16} />}
-                  disabled={Boolean(transferringSelectionMode)}
-                  onClick={() => void handleTransferSelectedNodes('move')}
-                />
-                <span className={cn('w-px h-4 bg-nomi-line')} />
-                {/* 复制/剪切已移除（⌘C / ⌘X 覆盖，去重复）；保留编组 + 清除。 */}
-                <WorkbenchIconButton label="创建分组 (⌘G)" icon={<IconFolderPlus size={16} />} onClick={handleGroupSelectedNodes} />
-                <WorkbenchIconButton label="清除选择" icon={<IconX size={16} />} onClick={clearSelection} />
-              </div>
+              <CanvasSelectionToolbar
+                selectedCount={selectedCount}
+                selectedGroupCount={selectedGroupIds.length}
+                transform={`translate(${Math.round(selectedBounds.minX + selectedBounds.width / 2)}px, ${Math.round(selectedBounds.minY - MULTI_SELECTION_BOUNDS_PADDING - MULTI_SELECTION_TOOLBAR_OFFSET)}px) translateX(-50%)`}
+                onBatchGenerate={handleBatchGenerate}
+                onGroupSelectedNodes={handleGroupSelectedNodes}
+                onUngroupSelectedNodes={handleUngroupSelectedNodes}
+                onClearSelection={clearSelection}
+                generationControls={
+                  <>
+                    <BatchGenerateSettingsButton selectedNodeIds={selectedNodeIds} />
+                    <WorkbenchIconButton label="按原参数生成" icon={<IconPlayerPlay size={16} />} onClick={handleBatchGenerate} />
+                    {selectedConvertibleImageCount > 0 ? (
+                      <WorkbenchIconButton label="批量转视频" icon={<IconMovie size={16} />} onClick={handleBatchConvertSelectedImagesToVideos} />
+                    ) : null}
+                    <WorkbenchIconButton label="按镜序送时间轴" icon={<IconTimeline size={16} />} onClick={handleSendSelectedToTimeline} />
+                    <span className={cn('w-px h-4 bg-nomi-line')} />
+                    <WorkbenchIconButton
+                      label="复制到新项目"
+                      icon={<IconCopy size={16} />}
+                      disabled={Boolean(transferringSelectionMode)}
+                      onClick={() => void handleTransferSelectedNodes('copy')}
+                    />
+                    <WorkbenchIconButton
+                      label="移动到新项目"
+                      icon={<IconFolderShare size={16} />}
+                      disabled={Boolean(transferringSelectionMode)}
+                      onClick={() => void handleTransferSelectedNodes('move')}
+                    />
+                  </>
+                }
+              />
             ) : null}
           </div>
           {pointer.marqueeRect ? (
@@ -1037,6 +1070,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
             ) : null
           }
         />
+        <SelectionPromptSaveController nodes={allNodes} disabled={readOnly} />
       </div>
     </section>
   )

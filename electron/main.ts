@@ -1,20 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from "electron";
 import type { Rectangle, WebContents } from "electron";
-import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  createProject,
-  deleteProject,
-  listProjects,
-  readProject,
-  resolveProjectRelativePath,
-  saveProject,
-} from "./projects/repository";
+import { createProject, deleteProject, listProjects, readProject, saveProject } from "./projects/repository";
 import {
   clearModelCatalogVendorApiKey,
   deleteModelCatalogMapping,
   deleteModelCatalogModel,
+  deleteModelCatalogModels,
   deleteModelCatalogVendor,
   ensureBuiltinModelSeeds,
   exportModelCatalogPackage,
@@ -28,10 +21,12 @@ import {
   upsertModelCatalogVendor,
   upsertModelCatalogVendorApiKey,
 } from "./catalog/catalogStore";
+import { analyzeComfyWorkflowText, importComfyWorkflowToCatalog } from "./catalog/comfyuiWorkflowImportStore";
 import { runTaskWithIdempotency } from "./submissionLedger";
 import { mintSpendGrant } from "./spendGrant";
 import { openWorkspaceFolder, selectWorkspaceFolder } from "./workspace/workspaceIpc";
 import { listWorkspaceFiles, resolveWorkspaceFilePath } from "./workspace/workspaceFileIndex";
+import { registerWorkspaceFileDeleteIpc } from "./workspace/workspaceFileDelete";
 import { installCrashHandlers, logCrash } from "./crashLog";
 import { registerExportJobIpc } from "./export/exportJobIpc";
 import { registerAgentChatV2Ipc } from "./ai/agentChatV2Ipc";
@@ -41,15 +36,15 @@ import { setEventLogSecretsProvider } from "./events/eventLogRepository";
 import { registerEventsIpc } from "./events/eventsIpc";
 import { registerMemoryIpc } from "./memory/memoryIpc";
 import { registerPromptLibraryIpc } from "./promptLibrary/promptLibraryIpc";
+import { registerBrowserViewIpc } from "./browser/core/browserViews";
+import { registerBrowserPromptExtractionSettingsIpc } from "./browser/settings/browserPromptExtractionSettings";
 import { catalogSecretsProvider } from "./events/secretsProvider";
 import { registerOnboardingIpc } from "./ai/onboarding/onboardingIpc";
 import { registerUpdaterIpc } from "./update/autoUpdater";
 import { setRendererTarget } from "./capabilityCore/rendererBridge";
 import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfig";
-import {
-  cachedLocalAssetThumbnail,
-  parseLocalAssetThumbnailSize,
-} from "./assets/localAssetThumbnail";
+import { registerLocalProtocol } from "./protocol/localProtocol";
+import { installWindowCloseConfirmation } from "./windowCloseConfirmation";
 
 // 尽早安装：捕获引导阶段起的 uncaughtException / unhandledRejection，落盘到 app logs（P0-8）。
 installCrashHandlers();
@@ -86,13 +81,16 @@ if (!isMcpStdio && !allowE2eMultiInstance) {
   }
 }
 if (isMcpStdio) {
-  void app.whenReady().then(async () => {
-    const { startMcpStdioServer } = await import("./capabilityCore/mcpStdioServer");
-    await startMcpStdioServer();
-  }).catch((error) => {
-    process.stderr.write(`[nomi:mcp-stdio] 启动失败: ${error instanceof Error ? error.message : String(error)}\n`);
-    app.exit(1);
-  });
+  void app
+    .whenReady()
+    .then(async () => {
+      const { startMcpStdioServer } = await import("./capabilityCore/mcpStdioServer");
+      await startMcpStdioServer();
+    })
+    .catch((error) => {
+      process.stderr.write(`[nomi:mcp-stdio] 启动失败: ${error instanceof Error ? error.message : String(error)}\n`);
+      app.exit(1);
+    });
 }
 
 protocol.registerSchemesAsPrivileged([
@@ -117,8 +115,7 @@ let cancelBlenderRendersOnQuit: (() => number) | null = null;
 let isRecreatingMainWindow = false;
 const lowMemoryMode = process.env.NOMI_LOW_MEMORY_MODE === "1";
 const capabilityCoreDisabled =
-  process.env.NOMI_DISABLE_CAPABILITY_CORE === "1"
-  || (lowMemoryMode && process.env.NOMI_KEEP_CAPABILITY_CORE !== "1");
+  process.env.NOMI_DISABLE_CAPABILITY_CORE === "1" || (lowMemoryMode && process.env.NOMI_KEEP_CAPABILITY_CORE !== "1");
 let runtimeModulePromise: Promise<typeof import("./runtime")> | null = null;
 let capabilityCoreModule: typeof import("./capabilityCore/appIntegration") | null = null;
 let capabilityCoreModulePromise: Promise<typeof import("./capabilityCore/appIntegration")> | null = null;
@@ -178,18 +175,15 @@ if (devRemoteDebuggingPort) {
   app.commandLine.appendSwitch("remote-debugging-port", devRemoteDebuggingPort);
 }
 if (
-  (lowMemoryMode && process.env.NOMI_KEEP_HARDWARE_ACCELERATION !== "1")
-  || process.env.NOMI_DISABLE_HARDWARE_ACCELERATION === "1"
+  (lowMemoryMode && process.env.NOMI_KEEP_HARDWARE_ACCELERATION !== "1") ||
+  process.env.NOMI_DISABLE_HARDWARE_ACCELERATION === "1"
 ) {
   app.disableHardwareAcceleration();
 }
 if (lowMemoryMode) {
   app.commandLine.appendSwitch("disable-features", "AudioServiceOutOfProcess");
 }
-if (
-  (lowMemoryMode && process.env.NOMI_KEEP_GPU_PROCESS !== "1")
-  || process.env.NOMI_IN_PROCESS_GPU === "1"
-) {
+if ((lowMemoryMode && process.env.NOMI_KEEP_GPU_PROCESS !== "1") || process.env.NOMI_IN_PROCESS_GPU === "1") {
   app.commandLine.appendSwitch("in-process-gpu");
 }
 // Opt-in low-memory mode for constrained machines. V8 --jitless removes the
@@ -293,7 +287,9 @@ async function loadRendererWithRetry(mainWindow: BrowserWindow, rendererUrl: str
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-async function createWindow(options: { bounds?: Rectangle; maximize?: boolean; rendererUrl?: string } = {}): Promise<BrowserWindow> {
+async function createWindow(
+  options: { bounds?: Rectangle; maximize?: boolean; rendererUrl?: string } = {},
+): Promise<BrowserWindow> {
   const mainWindow = new BrowserWindow({
     width: options.bounds?.width ?? 1440,
     height: options.bounds?.height ?? 960,
@@ -314,6 +310,7 @@ async function createWindow(options: { bounds?: Rectangle; maximize?: boolean; r
     },
   });
   mainWindowRef = mainWindow;
+  installWindowCloseConfirmation(mainWindow);
   mainWindow.on("closed", () => {
     if (mainWindowRef === mainWindow) mainWindowRef = null;
   });
@@ -369,10 +366,7 @@ async function createWindow(options: { bounds?: Rectangle; maximize?: boolean; r
   return mainWindow;
 }
 
-function recreateMainWindowFromSender(
-  sender: WebContents,
-  options: { preserveRoute: boolean; reason: string },
-): void {
+function recreateMainWindowFromSender(sender: WebContents, options: { preserveRoute: boolean; reason: string }): void {
   if (isRecreatingMainWindow) return;
   const oldWindow = BrowserWindow.fromWebContents(sender);
   const bounds = oldWindow && !oldWindow.isDestroyed() ? oldWindow.getBounds() : undefined;
@@ -460,7 +454,9 @@ function registerIpc(): void {
   registerSyncIpc("nomi:projects:read", readProject);
   ipcMain.handle("nomi:projects:read-async", (_event, projectId: unknown) => readProject(String(projectId || "")));
   registerSyncIpc("nomi:projects:save", saveProject);
-  ipcMain.handle("nomi:projects:save-async", (_event, projectId: unknown, record: unknown) => saveProject(String(projectId || ""), record));
+  ipcMain.handle("nomi:projects:save-async", (_event, projectId: unknown, record: unknown) =>
+    saveProject(String(projectId || ""), record),
+  );
   registerSyncIpc("nomi:projects:delete", deleteProject);
   ipcMain.on("nomi:app:reopen-library-window", (event) => {
     recreateMainWindowFromSender(event.sender, { preserveRoute: false, reason: "reopen library window" });
@@ -478,6 +474,7 @@ function registerIpc(): void {
   registerSyncIpc("nomi:model-catalog:vendor-api-key:clear", clearModelCatalogVendorApiKey);
   registerSyncIpc("nomi:model-catalog:model:upsert", upsertModelCatalogModel);
   registerSyncIpc("nomi:model-catalog:model:delete", deleteModelCatalogModel);
+  registerSyncIpc("nomi:model-catalog:models:delete", deleteModelCatalogModels);
   registerSyncIpc("nomi:model-catalog:mapping:upsert", upsertModelCatalogMapping);
   registerSyncIpc("nomi:model-catalog:mapping:delete", deleteModelCatalogMapping);
   registerSyncIpc("nomi:model-catalog:export", exportModelCatalogPackage);
@@ -487,6 +484,9 @@ function registerIpc(): void {
     const { probeComfyuiSystemStats } = require("./comfyuiProbe") as typeof import("./comfyuiProbe");
     return probeComfyuiSystemStats(String(baseUrl || ""));
   });
+  // 本地 ComfyUI 自定义 workflow 导入（S3）：analyze 识别可绑定节点、import 落库为用户自有 model+mapping。
+  registerSyncIpc("nomi:model-catalog:comfyui:analyze-workflow", (text: unknown) => analyzeComfyWorkflowText(text));
+  registerSyncIpc("nomi:model-catalog:comfyui:import-workflow", (payload: unknown) => importComfyWorkflowToCatalog(payload));
 
   // Skill / Playbook 域（业务函数在 electron/skills/*，这里只接同步 IPC 管道）。
   registerSyncIpc("nomi:skill:list", () => {
@@ -556,21 +556,23 @@ function registerIpc(): void {
     if (!selection.canceled) selectedWorkspaceRoots.add(selection.rootPath);
     return selection;
   });
-  ipcMain.handle("nomi:workspace:open-folder", (_event, payload) => openWorkspaceFolder(payload, {
-    createProject,
-    selectedRootPaths: selectedWorkspaceRoots,
-    confirmInitialize: async (rootPath) => {
-      const result = await dialog.showMessageBox({
-        type: "question",
-        buttons: ["取消", "初始化"],
-        defaultId: 1,
-        cancelId: 0,
-        message: "初始化 Nomi 项目文件夹？",
-        detail: `Nomi 会在此文件夹创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/.\n\n${rootPath}`,
-      });
-      return result.response === 1;
-    },
-  }));
+  ipcMain.handle("nomi:workspace:open-folder", (_event, payload) =>
+    openWorkspaceFolder(payload, {
+      createProject,
+      selectedRootPaths: selectedWorkspaceRoots,
+      confirmInitialize: async (rootPath) => {
+        const result = await dialog.showMessageBox({
+          type: "question",
+          buttons: ["取消", "初始化"],
+          defaultId: 1,
+          cancelId: 0,
+          message: "初始化 Nomi 项目文件夹？",
+          detail: `Nomi 会在此文件夹创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/.\n\n${rootPath}`,
+        });
+        return result.response === 1;
+      },
+    }),
+  );
   ipcMain.handle("nomi:workspace:list-files", (_event, payload) => {
     const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
     if (!projectId) throw new Error("projectId is required");
@@ -579,7 +581,10 @@ function registerIpc(): void {
     if (!rootPath) throw new Error("Project folder is unavailable");
     return listWorkspaceFiles({
       rootPath,
-      maxFiles: typeof (payload as { limit?: unknown } | null)?.limit === "number" ? (payload as { limit: number }).limit : undefined,
+      maxFiles:
+        typeof (payload as { limit?: unknown } | null)?.limit === "number"
+          ? (payload as { limit: number }).limit
+          : undefined,
     });
   });
   ipcMain.handle("nomi:workspace:reveal-file", (_event, payload) => {
@@ -593,6 +598,7 @@ function registerIpc(): void {
     shell.showItemInFolder(absolutePath);
     return { ok: true };
   });
+  registerWorkspaceFileDeleteIpc({ readProject });
   ipcMain.handle("nomi:workspace:reveal-project-folder", (_event, payload) => {
     const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
     if (!projectId) throw new Error("projectId is required");
@@ -714,14 +720,18 @@ function registerIpc(): void {
   });
   // 提交幂等包在 IPC 边界：渲染层每次提交（含控制器重试）都经此，同 idempotencyKey 的提交内核 at-most-once
   // （堵「提交瞬间丢回执 → 重试 → 二次下单」；query 类 nomi:tasks:result 不包，查结果本就免费）。
-  ipcMain.handle("nomi:tasks:run", (_event, payload) => runTaskIpcGuard(payload, async () => {
-    const { runTask } = await loadRuntimeModule();
-    return runTaskWithIdempotency(payload, () => runTask(payload));
-  }));
-  ipcMain.handle("nomi:tasks:result", (_event, payload) => runTaskIpcGuard(payload, async () => {
-    const { fetchTaskResult } = await loadRuntimeModule();
-    return fetchTaskResult(payload);
-  }));
+  ipcMain.handle("nomi:tasks:run", (_event, payload) =>
+    runTaskIpcGuard(payload, async () => {
+      const { runTask } = await loadRuntimeModule();
+      return runTaskWithIdempotency(payload, () => runTask(payload));
+    }),
+  );
+  ipcMain.handle("nomi:tasks:result", (_event, payload) =>
+    runTaskIpcGuard(payload, async () => {
+      const { fetchTaskResult } = await loadRuntimeModule();
+      return fetchTaskResult(payload);
+    }),
+  );
   ipcMain.handle("nomi:tasks:cancel", async (_event, payload) => {
     const raw = (payload || {}) as { runId?: unknown; vendor?: unknown };
     const runId = String(raw.runId || "").trim();
@@ -733,7 +743,9 @@ function registerIpc(): void {
   });
   // 能力核 A/B 守卫：renderer 在打开/切换/关闭项目时上报当前打开的 projectId，
   // 让外部调用拒绝直写「正在窗口里编辑」的工程（防内存 store 回盘覆盖，见 capabilityCore/rpcServer）。
-  ipcMain.on("nomi:capability:active-project", (_event, projectId: unknown) => setActiveCapabilityProject(String(projectId || "")));
+  ipcMain.on("nomi:capability:active-project", (_event, projectId: unknown) =>
+    setActiveCapabilityProject(String(projectId || "")),
+  );
   // 「接入 AI 编程助手」卡：读接入状态/配置片段 + 一键写入/撤销 ~/.claude.json 的 mcpServers.nomi。
   registerSyncIpc("nomi:capability:mcp-info", () => readMcpInfo(getActiveCapabilityPort()));
   registerSyncIpc("nomi:capability:mcp-install", installMcp);
@@ -744,8 +756,11 @@ function registerIpc(): void {
   registerEventsIpc();
   registerMemoryIpc();
   registerPromptLibraryIpc();
+  registerBrowserPromptExtractionSettingsIpc();
+  registerBrowserViewIpc(getRendererUrl);
   registerOnboardingIpc();
   registerUpdaterIpc();
+  // M0 独立捕捞窗已退役（方案A 2026-07-12）：捕捞面收敛到应用内浏览器（registerBrowserViewIpc）。
   // S4-1 评测安全铁律:事件落盘前,已配置的 vendor key 精确匹配脱敏(形态兜底之外的地基)。
   setEventLogSecretsProvider(catalogSecretsProvider);
 }
@@ -786,17 +801,20 @@ function buildContentSecurityPolicy(): string {
   ].join("; ");
 }
 
-// COOP/COEP 开 cross-origin isolation（ONNX 的 SharedArrayBuffer 需要），但它会让 Playwright 的
-// CDP target 握手卡死（_electron.launch / connectOverCDP 都连不上）——2026-06-27 起 R13 走查全挂的根因。
-// 仅 E2E 走查时（NOMI_E2E=1）跳过这两个头，让 Playwright 能附着；生产/正常运行不受影响。
-// 注：只关 isolation，CSP 仍照常注入（安全基线不降）。ONNX 多线程在 E2E 下退单线程，与走查无关。
+// COOP/COEP 开 cross-origin isolation（ONNX 的 SharedArrayBuffer 需要），但有两类桌面场景必须跳过：
+// 1) Playwright/E2E：CDP target 握手会卡死（_electron.launch / connectOverCDP 都连不上）。
+// 2) Windows frame:false 自绘标题栏：Electron 31/Chromium 在 COOP/COEP 下会把
+//    -webkit-app-region: drag 命中测试全部返回 HTCLIENT，导致真实窗口无法拖动。
+// 注：只关 isolation，CSP 仍照常注入（安全基线不降）。相关 WASM/ONNX 能力在这些场景退到非 SAB 路径。
 const SKIP_CROSS_ORIGIN_ISOLATION = process.env.NOMI_E2E === "1";
+const SKIP_CROSS_ORIGIN_ISOLATION_FOR_WINDOWS_FRAMELESS = process.platform === "win32";
 
 function installContentSecurityPolicy(targetSession: Electron.Session): void {
   const csp = buildContentSecurityPolicy();
   const crossOriginIsolationDisabled =
     lowMemoryMode ||
     SKIP_CROSS_ORIGIN_ISOLATION ||
+    SKIP_CROSS_ORIGIN_ISOLATION_FOR_WINDOWS_FRAMELESS ||
     process.env.NOMI_DISABLE_CROSS_ORIGIN_ISOLATION === "1";
   targetSession.webRequest.onHeadersReceived((details, callback) => {
     const responseHeaders: Record<string, string[]> = {
@@ -814,100 +832,54 @@ function installContentSecurityPolicy(targetSession: Electron.Session): void {
   });
 }
 
-function registerLocalProtocol(): void {
-  protocol.handle("nomi-local", async (request) => {
-    try {
-      const url = new URL(request.url);
-      if (url.hostname !== "asset") {
-        return new Response("Unsupported nomi-local host", { status: 404 });
-      }
-      // 解码与 localAssetUrl 的「逐段 encodeURIComponent」对称：先按 "/" 切段、再逐段 decode。
-      // （此前先整体 decode 再 split，文件名若含被编码的 %2F 会让段边界错位 → 路径错位 404。）
-      const segments = url.pathname.replace(/^\/+/, "").split("/").map((seg) => {
-        try { return decodeURIComponent(seg); } catch { return seg; }
-      });
-      const [projectId, ...relativeParts] = segments;
-      const relativePath = relativeParts.join("/");
-      const filePath = resolveProjectRelativePath(projectId, relativePath);
-      const thumbnailSize = parseLocalAssetThumbnailSize(url);
-      if (thumbnailSize) {
-        const stat = await fs.promises.stat(filePath);
-        const cacheKey = `${filePath}:${stat.mtimeMs}:${stat.size}:${thumbnailSize.width}x${thumbnailSize.height}`;
-        const thumbnail = await cachedLocalAssetThumbnail(cacheKey, async () => {
-          const image = await nativeImage.createThumbnailFromPath(filePath, thumbnailSize);
-          return image.isEmpty() ? null : image.toJPEG(78);
-        });
-        if (thumbnail) {
-          const thumbnailBody = thumbnail.buffer.slice(
-            thumbnail.byteOffset,
-            thumbnail.byteOffset + thumbnail.byteLength,
-          ) as ArrayBuffer;
-          return new Response(thumbnailBody, {
-            status: 200,
-            headers: {
-              "Access-Control-Allow-Origin": "*",
-              "Cache-Control": "private, max-age=86400",
-              "Content-Type": "image/jpeg",
-              "Cross-Origin-Resource-Policy": "cross-origin",
-            },
-          });
-        }
-      }
-      const fileResponse = await net.fetch(pathToFileURL(filePath).toString());
-      // canvas.toDataURL() 需要 CORS 头，否则 crossOrigin='anonymous' 加载的图片会污染画布
-      // 导致九宫格/裁切等操作静默失败（SecurityError 被吞掉）。
-      const corsHeaders = new Headers(fileResponse.headers);
-      corsHeaders.set("Access-Control-Allow-Origin", "*");
-      corsHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
-      return new Response(fileResponse.body, { status: fileResponse.status, headers: corsHeaders });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "local asset not found";
-      return new Response(message, { status: 404 });
-    }
-  });
-}
-
 // 非主实例（没拿到单实例锁）不启动 UI / RPC——已让出给老实例（second-instance 已聚焦它）。
 // 单实例锁本身在文件顶部定义（main 与本批独立都加了同一锁，合并去重，根治全局 index 并发覆盖）。
-if (hasSingleInstanceLock) app.whenReady().then(async () => {
-  registerLocalProtocol();
-  installContentSecurityPolicy(session.defaultSession);
-  // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。
-  // sync 且渲染层一进库就读 catalog → 须在 createWindow 前完成。
-  try {
-    ensureBuiltinModelSeeds();
-  } catch (error) {
-    console.error("[nomi:desktop] ensureBuiltinModelSeeds failed:", error);
-  }
-  registerIpc();
-  // E(冷启动 P0)：代理探测与能力核都不是窗口首帧的依赖，挡在窗口前是纯浪费。
-  //  · applySystemProxy：窗口创建后延迟后台探测；低内存模式更晚加载，避免列表页常驻代理栈。
-  //  · startCapabilityCore(外部 MCP 的本地 RPC 广告)：fail-open，本就不影响 app；低内存模式默认跳过。
-  if (!capabilityCoreDisabled) {
-    void startDesktopCapabilityCore().catch((error) => {
-      console.error("[nomi:desktop] startCapabilityCore failed:", error);
-    });
-  }
-  await createWindow();
-  setTimeout(() => {
-    void import("./systemProxy")
-      .then(({ applySystemProxy }) => applySystemProxy(session.defaultSession))
-      .catch((error) => {
-        console.error("[nomi:desktop] applySystemProxy failed:", error);
-      });
-  }, lowMemoryMode ? 15000 : 3000);
+if (hasSingleInstanceLock)
+  app
+    .whenReady()
+    .then(async () => {
+      registerLocalProtocol();
+      installContentSecurityPolicy(session.defaultSession);
+      // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。
+      // sync 且渲染层一进库就读 catalog → 须在 createWindow 前完成。
+      try {
+        ensureBuiltinModelSeeds();
+      } catch (error) {
+        console.error("[nomi:desktop] ensureBuiltinModelSeeds failed:", error);
+      }
+      registerIpc();
+      // E(冷启动 P0)：代理探测与能力核都不是窗口首帧的依赖，挡在窗口前是纯浪费。
+      //  · applySystemProxy：窗口创建后延迟后台探测；低内存模式更晚加载，避免列表页常驻代理栈。
+      //  · startCapabilityCore(外部 MCP 的本地 RPC 广告)：fail-open，本就不影响 app；低内存模式默认跳过。
+      if (!capabilityCoreDisabled) {
+        void startDesktopCapabilityCore().catch((error) => {
+          console.error("[nomi:desktop] startCapabilityCore failed:", error);
+        });
+      }
+      await createWindow();
+      setTimeout(
+        () => {
+          void import("./systemProxy")
+            .then(({ applySystemProxy }) => applySystemProxy(session.defaultSession))
+            .catch((error) => {
+              console.error("[nomi:desktop] applySystemProxy failed:", error);
+            });
+        },
+        lowMemoryMode ? 15000 : 3000,
+      );
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow().catch((error) => {
-        console.error("[nomi:desktop] failed to recreate window:", error);
+      app.on("activate", () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+          void createWindow().catch((error) => {
+            console.error("[nomi:desktop] failed to recreate window:", error);
+          });
+        }
       });
-    }
-  });
-}).catch((error) => {
-  console.error("[nomi:desktop] failed to start:", error);
-  app.quit();
-});
+    })
+    .catch((error) => {
+      console.error("[nomi:desktop] failed to start:", error);
+      app.quit();
+    });
 
 app.on("window-all-closed", () => {
   if (isRecreatingMainWindow) return;

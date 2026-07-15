@@ -549,6 +549,7 @@ export function SceneAddToolbar({
           )}
           type="button"
           title="添加 3D 节点"
+          data-coach="add-button"
           aria-haspopup="menu"
           aria-expanded={addMenuOpen}
           onClick={() => {

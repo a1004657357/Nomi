@@ -1,21 +1,14 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
-import { Canvas } from '@react-three/fiber'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  IconArrowsMove,
-  IconCube,
-  IconListTree,
-  IconPhoto,
-  IconPlayerPause,
-  IconPlayerPlay,
-  IconRoute,
-  IconRotate,
-  IconSettings,
-  IconWorld,
-  IconX,
+  IconArrowsMove, IconCube, IconListTree, IconPhoto, IconPlayerPause, IconPlayerPlay,
+  IconRoute, IconRotate, IconSettings, IconWorld, IconX,
 } from '@tabler/icons-react'
 import { toast } from '../../../../ui/toast'
+import { FencedCanvas } from '../fencedCanvas'
+import { Scene3DWindowBar } from './Scene3DWindowBar'
+import { Scene3DCoachMarks, hasSeenScene3DCoach } from './Scene3DCoachMarks'
 import { cloneScene3DState } from './scene3dSerializer'
 import {
   type CaptureApi,
@@ -65,7 +58,6 @@ import {
   useScene3DMoveFrameExport,
   type Scene3DClipboardItem,
 } from './useScene3DFullscreenActions'
-
 type Scene3DFullscreenProps = {
   initialState: Scene3DState
   nodeTitle: string
@@ -100,6 +92,8 @@ export default function Scene3DFullscreen({
 }: Scene3DFullscreenProps): JSX.Element {
   const [state, setState] = React.useState(() => cloneScene3DState(initialState))
   const [selection, setSelection] = React.useState<Scene3DSelection>(null)
+  // 首次进入的三步教练标注（方案 A，2026-07-11 拍板）；只出现一次，localStorage 记忆。
+  const [showCoach, setShowCoach] = React.useState(() => !hasSeenScene3DCoach())
   const [transformMode, setTransformMode] = React.useState<Scene3DTransformMode>('translate')
   const [viewLocked, setViewLocked] = React.useState(false)
   const controlMode: Scene3DControlMode = viewLocked ? 'edit' : 'fly'
@@ -528,6 +522,7 @@ export default function Scene3DFullscreen({
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
+      <Scene3DWindowBar />
       <header className="relative z-[2] flex min-h-[52px] shrink-0 items-center gap-3 border-b border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] px-4 shadow-nomi-sm">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <IconCube size={18} className="shrink-0 text-[var(--workbench-muted)]" />
@@ -578,7 +573,7 @@ export default function Scene3DFullscreen({
           <button
             className="grid size-8 shrink-0 place-items-center rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-ink-05)] text-[var(--nomi-ink-60)] hover:bg-[var(--nomi-ink-10)] hover:text-[var(--nomi-ink)]"
             type="button"
-            title="关闭"
+            title="退出 3D 场景"
             onClick={handleClose}
           >
             <IconX size={16} />
@@ -660,7 +655,8 @@ export default function Scene3DFullscreen({
         </AnimatePresence>
 
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[var(--nomi-ink-05)]">
-          <Canvas
+          <FencedCanvas
+            fence={<div className="absolute inset-0 grid place-items-center text-caption text-[var(--nomi-ink-60)]">正在初始化 3D 视口…</div>}
             camera={canvasCamera}
             dpr={[1, 2]}
             frameloop={trajectory.isPlaying || trajectory.timelineOpen || takeRecorder.isRecording ? 'always' : 'demand'}
@@ -732,7 +728,7 @@ export default function Scene3DFullscreen({
               onSampleCamera={takeRecorder.sampleCamera}
               onSampleCameraAim={takeRecorder.sampleCameraAim}
             />
-          </Canvas>
+          </FencedCanvas>
           {!leftPanelOpen ? (
             <CanvasPanelRestoreButton side="left" title="显示场景节点" onClick={() => setLeftPanelOpen(true)}>
               <IconListTree size={18} />
@@ -838,6 +834,7 @@ export default function Scene3DFullscreen({
           ) : null}
         </AnimatePresence>
       </main>
+      {showCoach && !readOnly ? <Scene3DCoachMarks onDone={() => setShowCoach(false)} /> : null}
     </div>
   )
 

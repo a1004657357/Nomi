@@ -1,6 +1,7 @@
 import React from "react";
 import "./workbench.css";
 import "./workbench-ai.css";
+import { IconBrowser } from "@tabler/icons-react";
 import { NomiBrand, NomiLoadingMark } from "../design";
 import NomiAppBar from "../ui/app-shell/NomiAppBar";
 import { AboutNomiPopover } from "../ui/app-shell/AboutNomiPopover";
@@ -13,6 +14,7 @@ import { cn } from "../utils/cn";
 import ProjectExplorerSidebar from "./explorer/ProjectExplorerSidebar";
 import { lazyWithChunkBoundary } from "../ui/chunkBoundary";
 import { WindowControls } from "../ui/app-shell/WindowControls";
+import { handleWindowTitlebarDoubleClick } from "../ui/app-shell/windowTitlebarDoubleClick";
 import { OnboardingChecklist } from "./onboarding/OnboardingChecklist";
 
 // 工作区懒加载走容错域（审计 A5）：单个工作区 chunk 失败不拖死其余工作区。
@@ -114,6 +116,10 @@ function writeWorkspaceModeToUrl(mode: WorkspaceMode): void {
     window.history.replaceState(null, "", url.toString());
 }
 
+function openBrowser(): void {
+    window.dispatchEvent(new CustomEvent("nomi-open-browser"));
+}
+
 export default function WorkbenchShell({
     generation,
     generationAi,
@@ -188,8 +194,8 @@ export default function WorkbenchShell({
                         "bg-workbench-surface text-workbench-ink",
                     )}
                     aria-label="窗口标题栏"
+                    onDoubleClick={handleWindowTitlebarDoubleClick}
                 >
-                    <div className="app-drag absolute inset-0" data-window-drag-region="true" aria-hidden="true" />
                     <button
                         ref={brandRef}
                         type="button"
@@ -209,9 +215,37 @@ export default function WorkbenchShell({
                     {aboutOpen ? (
                         <AboutNomiPopover anchorEl={brandRef.current} onClose={() => setAboutOpen(false)} />
                     ) : null}
-                    <div className="pointer-events-none relative z-[1] h-full min-w-0 flex-1" aria-hidden="true" />
+                    <div
+                        className="app-drag relative z-[1] h-full min-w-0 flex-1"
+                        data-window-drag-region="true"
+                        aria-hidden="true"
+                    />
                     <div className="app-no-drag relative z-[2] inline-flex h-full items-center pt-0.5 pb-0.5">
                         <OnboardingChecklist />
+                    </div>
+                    <div
+                        className={cn(
+                            "app-no-drag relative z-[2] inline-flex h-full items-center gap-1 pt-0.5 pb-0.5",
+                            "text-workbench-muted",
+                        )}
+                        role="toolbar"
+                        aria-label="项目快捷操作"
+                    >
+                        <button
+                            type="button"
+                            className={cn(
+                                "inline-flex h-7 items-center gap-1.5 rounded-pill border-0 bg-transparent px-2",
+                                "cursor-pointer font-inherit text-caption text-workbench-muted",
+                                "transition-colors hover:text-workbench-ink",
+                            )}
+                            aria-label="打开浏览器"
+                            title="浏览器"
+                            onClick={openBrowser}
+                        >
+                            {/* 素材盒常驻入口已删（方案一 2026-07-12）：只作浏览器伴生收件箱。 */}
+                            <IconBrowser size={14} stroke={1.8} aria-hidden="true" />
+                            <span>浏览器</span>
+                        </button>
                     </div>
                     <WindowControls className="relative z-[2]" />
                 </div>

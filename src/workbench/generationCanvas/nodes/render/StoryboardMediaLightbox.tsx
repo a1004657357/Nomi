@@ -59,7 +59,7 @@ export function StoryboardMediaLightbox({
             event.stopPropagation()
             onClose()
           }}
-          className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-[6px] bg-black/65 text-white hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+          className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-nomi-sm bg-black/65 text-white hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
         >
           <IconX size={22} stroke={1.8} />
         </button>

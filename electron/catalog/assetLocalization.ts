@@ -3,11 +3,29 @@
 // KIE 等具体供应商的端点/字段/响应路径只住在各自的声明里(单源),由 curatedAssetIngestion 提供。
 // 全部依赖注入(读本地字节 read / POST 上传 postJson),故可零网络零额度单测。
 
-import type { AssetIngestion, AssetMediaKind } from "./types";
+import { COMFYUI_VENDOR_KEY, type AssetIngestion, type AssetMediaKind } from "./types";
 
 const NOMI_LOCAL_PREFIX = "nomi-local://";
 
-export type LocalAsset = { bytes: Buffer; contentType: string; fileName: string; originalUrl?: string };
+export type LocalAsset = {
+  bytes: Buffer;
+  contentType: string;
+  fileName: string;
+  originalUrl?: string;
+  /** 资产落盘至今的毫秒数（文件 mtime 推）。用于判 originalUrl（服务商临时直链）是否仍新鲜。 */
+  ageMs?: number;
+};
+
+/** sidecar originalUrl 的信任窗：kie ~3 天 / apimart 72h 的安全下界。窗内直接用公网直链（零上传
+ *  零延迟）；过窗视为可能已死 → 走上传链用本地字节换新链。ageMs 未知（老调用方/stat 失败）按新鲜
+ *  处理（保持既有行为，不为不可知情况加惩罚）。 */
+export const ORIGINAL_URL_TRUST_MS = 48 * 60 * 60 * 1000;
+
+export function trustedOriginalUrl(asset: Pick<LocalAsset, "originalUrl" | "ageMs"> | null | undefined): string | null {
+  if (!asset?.originalUrl) return null;
+  if (typeof asset.ageMs === "number" && asset.ageMs > ORIGINAL_URL_TRUST_MS) return null;
+  return asset.originalUrl;
+}
 export type LocalAssetReader = (url: string) => LocalAsset | null;
 export type HttpPostJson = (url: string, headers: Record<string, string>, body: unknown) => Promise<unknown>;
 // extraFields：multipart 里除 file 外的文本字段(如 KIE stream 的 uploadPath/fileName)。
@@ -111,9 +129,29 @@ export async function resolveLocalAsset(
     throw new Error(`所有免配置上传 host 都失败：${errors.join("；") || "(链为空)"}`);
   }
   const asset = read(localUrl);
-  if (!asset) throw new Error(`本地素材读取失败：${localUrl}`);
-  // sidecar originalUrl 优先：公网 URL 所有 vendor 直接使用，不转 base64、不需供应商上传 API。
-  if (asset.originalUrl) return asset.originalUrl;
+  if (!asset) throw new Error(`参考素材的本地文件读取失败（可能已被删除或随项目迁移）：${localUrl}。请重新生成该节点或重新导入这张素材。`);
+  // 本地 ComfyUI：LoadImage 只认上传回的 input 目录文件名（非公网 URL），故**跳过下面的 trustedOriginalUrl
+  // 公网 URL 快路**，恒把本地字节 POST 到 /upload/image 换文件名（field 名 "image"、type=input、overwrite 避重名堆积）。
+  if (ingestion.strategy === "comfyui-upload") {
+    const response = await postMultipart(
+      ingestion.endpoint,
+      {}, // 本地服务无鉴权
+      asset.bytes,
+      asset.fileName,
+      asset.contentType,
+      { type: "input", overwrite: "true" },
+      "image",
+    );
+    const rec = response && typeof response === "object" ? (response as Record<string, unknown>) : {};
+    const name = typeof rec.name === "string" ? rec.name : "";
+    if (!name) throw new Error(`ComfyUI /upload/image 未返回文件名（检查地址与 ComfyUI 是否在跑）：${JSON.stringify(response).slice(0, 120)}`);
+    const sub = typeof rec.subfolder === "string" ? rec.subfolder : "";
+    return sub ? `${sub}/${name}` : name; // LoadImage 的 image 输入按 subfolder/name 引用
+  }
+  // sidecar originalUrl **新鲜窗内**优先：公网 URL 所有 vendor 直接使用，不转 base64、不需供应商上传 API。
+  // 过窗（服务商临时链可能已死）→ 落到下面的上传/内联路径，用本地字节换新值（参考图永不过期的关键）。
+  const trusted = trustedOriginalUrl(asset);
+  if (trusted) return trusted;
   const base64 = asset.bytes.toString("base64");
   const dataUrl = `data:${asset.contentType};base64,${base64}`;
 
@@ -207,13 +245,19 @@ export async function localizeAssetsForVendor(
   const urlMap = new Map<string, string>();
   for (const url of urls) {
     const asset = read(url);
-    // sidecar originalUrl 优先:已是公网 URL,不需任何上传通道,任意媒体类型直接用。
-    if (asset?.originalUrl) {
-      urlMap.set(url, asset.originalUrl);
-      continue;
-    }
     const mediaKind = mediaKindFromContentType(asset?.contentType);
     const resolved = resolveIngestion(mediaKind);
+    // 本地 ComfyUI（comfyui-upload）：公网 URL 用不了，必须传到它自己的 input 目录换文件名 → 跳过 trusted 快路，恒上传。
+    const skipTrusted = resolved?.ingestion.strategy === "comfyui-upload";
+    if (!skipTrusted) {
+      // sidecar originalUrl（新鲜窗内，见 trustedOriginalUrl）优先:已是公网 URL,不需任何上传通道,
+      // 任意媒体类型直接用。过窗 → 走下面的通道解析用本地字节重新换链。
+      const trusted = trustedOriginalUrl(asset);
+      if (trusted) {
+        urlMap.set(url, trusted);
+        continue;
+      }
+    }
     if (!resolved) {
       throw new Error(
         mediaKind === "video"
@@ -368,11 +412,18 @@ export function resolveAssetIngestionForKind(
  * 返回 null = 没有任何接受该媒体类型的上传通道（调用方据此抛诚实错误，如视频缺 KIE/relay）。
  */
 export function resolveAssetIngestionWithFallback(
-  targetVendor: { key?: string; assetIngestion?: AssetIngestion } | null | undefined,
+  targetVendor: { key?: string; assetIngestion?: AssetIngestion; baseUrlHint?: string | null } | null | undefined,
   allVendors: Array<{ key?: string; assetIngestion?: AssetIngestion }>,
   getApiKey: (vendorKey: string) => string | null,
   mediaKind: AssetMediaKind = "image",
 ): { ingestion: AssetIngestion; uploadApiKey: string } | null {
+  // 本地 ComfyUI：first-frame 必须传到它自己的 /upload/image 换本地文件名（LoadImage 不认公网 URL），
+  // 不走 KIE/apimart 中转（那给公网 URL）。端点从 vendor baseUrl 动态派生（用户可改地址）。仅图片
+  //（视频输入是另一套 VHS load-video 机制，非本端点）。
+  if (targetVendor?.key === COMFYUI_VENDOR_KEY && mediaKind === "image") {
+    const base = String(targetVendor.baseUrlHint || "http://127.0.0.1:8188").replace(/\/+$/, "");
+    return { ingestion: { strategy: "comfyui-upload", endpoint: `${base}/upload/image`, accepts: ["image"] }, uploadApiKey: "" };
+  }
   // 1. 目标供应商自己接受该类型 → 直接用（apiKey 也是目标供应商的）
   const targetIngestion = resolveAssetIngestionForKind(targetVendor, mediaKind);
   if (targetIngestion && targetIngestion.strategy !== "none") {

@@ -1,10 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  getDesktopActiveProjectId,
-  getDesktopHydratedProjectId,
-  setDesktopActiveProjectId,
-  subscribeDesktopHydratedProjectId,
-} from './activeProject'
 
 const KEY = 'nomi-workbench-last-active-project-v1'
 
@@ -20,42 +14,53 @@ describe('getDesktopActiveProjectId（projectId 缺失窗口的兜底）', () =>
   beforeEach(() => {
     store.clear()
     vi.stubGlobal('window', { localStorage: localStorageStub })
-    setDesktopActiveProjectId('')
   })
   afterEach(() => {
-    setDesktopActiveProjectId('')
     vi.unstubAllGlobals()
+    vi.resetModules()
   })
 
-  it('内存全局有值时直接返回它', () => {
+  it('内存全局有值时直接返回它', async () => {
+    const { getDesktopActiveProjectId, setDesktopActiveProjectId } = await import('./activeProject')
     setDesktopActiveProjectId(' proj-A ')
     expect(getDesktopActiveProjectId()).toBe('proj-A')
   })
 
-  it('内存为空（React effect 还没赋值的窗口）→ 回退到持久化的 last-active id', () => {
-    setDesktopActiveProjectId('')
+  it('setter 尚未运行（React effect 还没赋值的窗口）→ 回退到持久化的 last-active id', async () => {
     store.set(KEY, 'proj-persisted')
+    const { getDesktopActiveProjectId } = await import('./activeProject')
     // 这正是修复点：以前这里返回空 → 生成图拿到会过期的厂商临时 URL、上传退回 base64
     expect(getDesktopActiveProjectId()).toBe('proj-persisted')
   })
 
-  it('内存有值时优先于持久化值', () => {
+  it('内存有值时优先于持久化值', async () => {
+    const { getDesktopActiveProjectId, setDesktopActiveProjectId } = await import('./activeProject')
     setDesktopActiveProjectId('proj-current')
     store.set(KEY, 'proj-stale')
     expect(getDesktopActiveProjectId()).toBe('proj-current')
   })
 
-  it('两者都空时返回空字符串（不抛错）', () => {
+  it('显式清空后不再回退到上一个持久化项目', async () => {
+    store.set(KEY, 'proj-stale')
+    const { getDesktopActiveProjectId, setDesktopActiveProjectId } = await import('./activeProject')
+    setDesktopActiveProjectId(null)
     expect(getDesktopActiveProjectId()).toBe('')
   })
 
-  it('恢复完成 ID 不读取 last-active 的旧项目兜底', () => {
+  it('两者都空时返回空字符串（不抛错）', async () => {
+    const { getDesktopActiveProjectId } = await import('./activeProject')
+    expect(getDesktopActiveProjectId()).toBe('')
+  })
+
+  it('恢复完成 ID 不读取 last-active 的旧项目兜底', async () => {
+    const { getDesktopActiveProjectId, getDesktopHydratedProjectId } = await import('./activeProject')
     store.set(KEY, 'proj-stale')
     expect(getDesktopActiveProjectId()).toBe('proj-stale')
     expect(getDesktopHydratedProjectId()).toBe('')
   })
 
-  it('内存项目变化时通知订阅者，同值写入不重复通知', () => {
+  it('内存项目变化时通知订阅者，同值写入不重复通知', async () => {
+    const { setDesktopActiveProjectId, subscribeDesktopHydratedProjectId } = await import('./activeProject')
     const listener = vi.fn()
     const unsubscribe = subscribeDesktopHydratedProjectId(listener)
     setDesktopActiveProjectId('proj-A')

@@ -1,5 +1,6 @@
 import React from 'react'
-import { Canvas, useThree } from '@react-three/fiber'
+import { useThree } from '@react-three/fiber'
+import { FencedCanvas } from '../fencedCanvas'
 import { Bounds, Center, OrbitControls, useGLTF } from '@react-three/drei'
 import { cn } from '../../../../utils/cn'
 
@@ -80,7 +81,7 @@ export default function Model3DViewer({
           </div>
         }
       >
-        <Canvas
+        <FencedCanvas
           camera={{ position: [2.4, 1.8, 3.2], fov: 45 }}
           dpr={[1, 2]}
           frameloop="demand"
@@ -98,7 +99,7 @@ export default function Model3DViewer({
             </Bounds>
           </React.Suspense>
           <ConnectedOrbitControls autoRotate={autoRotate} enablePan={enablePan} />
-        </Canvas>
+        </FencedCanvas>
       </GlbBoundary>
     </div>
   )

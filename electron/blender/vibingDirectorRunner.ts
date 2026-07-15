@@ -48,7 +48,6 @@ type ActiveJob = {
 const activeJobs = new Map<string, ActiveJob>();
 const OUTPUT_LIMIT = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-const DIRECTOR_ROOT = ".nomi/vibing-director";
 
 function safeSegment(value: unknown, label: string): string {
   const normalized = String(value || "").trim();

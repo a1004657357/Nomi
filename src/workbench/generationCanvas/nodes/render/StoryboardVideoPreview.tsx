@@ -187,7 +187,7 @@ export function StoryboardVideoPreview({
             openLightbox()
           }}
           onLoadedMetadata={updateActualAspectRatio}
-          className="shrink-0 rounded-[6px] bg-nomi-ink-05 object-contain"
+          className="shrink-0 rounded-nomi-sm bg-nomi-ink-05 object-contain"
         />
         <StoryboardMediaLightbox
           open={lightboxOpen}
@@ -201,7 +201,7 @@ export function StoryboardVideoPreview({
     )
   }
 
-  const previewClassName = 'h-full w-full rounded-[6px] bg-nomi-ink-05 object-contain'
+  const previewClassName = 'h-full w-full rounded-nomi-sm bg-nomi-ink-05 object-contain'
   return (
     <>
       <button
@@ -233,7 +233,7 @@ export function StoryboardVideoPreview({
           openLightbox()
         }}
         className={cn(
-          'group relative block shrink-0 overflow-hidden rounded-[6px] border-0 bg-nomi-ink-05 p-0 outline-none',
+          'group relative block shrink-0 overflow-hidden rounded-nomi-sm border-0 bg-nomi-ink-05 p-0 outline-none',
           'focus-visible:ring-2 focus-visible:ring-nomi-accent/70',
         )}
       >

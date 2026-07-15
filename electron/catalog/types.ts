@@ -110,6 +110,18 @@ export type AssetIngestion =
     }
   | {
       /**
+       * 本地 ComfyUI：POST /upload/image（multipart，file 字段名 "image"）把本地图传进 ComfyUI 的 input 目录，
+       * 取回 { name, subfolder, type } → 返回**文件名**（subfolder ? "subfolder/name" : name）给 LoadImage 的
+       * image 输入（LoadImage 只认 input 目录里的文件名、不认公网 URL，故也要跳过 trustedOriginalUrl 快路）。
+       * 端点由 vendor baseUrl 动态派生（用户可改地址）。实查 docs.comfy.org/api-reference + Comfy-Org server.py 2026-07。
+       */
+      strategy: "comfyui-upload";
+      /** 完整上传端点，如 http://127.0.0.1:8188/upload/image。 */
+      endpoint: string;
+      accepts?: ReadonlyArray<AssetMediaKind>;
+    }
+  | {
+      /**
        * 匿名上传 fallback 链:按顺序逐个 host 试,谁先返回合法 http(s) URL 就用谁。
        * 用于"零配置兜底"——bake-in 的免 key 免账号公共托管(litterbox → tmpfiles…),
        * 单 host 限速/宕机/封禁时自动切下一个,全失败才抛诚实错误。每个 chain 项都是
@@ -120,6 +132,9 @@ export type AssetIngestion =
       /** 该链接受的媒体类型;缺省 ['image']。匿名 host 收任意文件,声明全媒体类型。 */
       accepts?: ReadonlyArray<AssetMediaKind>;
     };
+
+/** 本地 ComfyUI 供应商固定 key（种子 + assetLocalization 识别它走自己的 /upload/image，单源防漂移）。 */
+export const COMFYUI_VENDOR_KEY = "comfyui-local";
 
 export type Vendor = {
   key: string;
@@ -352,6 +367,15 @@ export function selectExecutableModel(
   );
 }
 
+/** ProfileKind → 计费/目录口径（纯查表；从 runtime 下沉，R12 巨壳净减，runtime re-export 保 API）。 */
+export function billingKindForTaskKind(kind: ProfileKind): BillingModelKind {
+  if (kind === "text_to_video" || kind === "image_to_video") return "video";
+  if (kind === "chat" || kind === "prompt_refine" || kind === "image_to_prompt") return "text";
+  if (kind === "text_to_audio" || kind === "image_to_audio" || kind === "transcribe") return "audio"; // 音频族走第四路同步收口
+  if (kind === "text_to_3d" || kind === "image_to_3d") return "model3d"; // 3D 族（RunningHub 混元/HiTem/Meshy，输出 glb）
+  return "image";
+}
+
 /** Catalog version.
  *  v2 added Model.onboarding + ApiKeyRecord.enc.
  *  v3 collapsed Mapping.{requestMapping,responseMapping} (which used to wrap
@@ -362,8 +386,11 @@ export function selectExecutableModel(
 /*  v4 给自建中转(relay)的旧图像/视频 op 补「中性参数→线缆字段」翻译表(paramMap)——存量用户已接入的
  *  OpenAI 兼容中转其 op 是迁移前持久化的(读 size 像素却无 paramMap)，档案中性化后比例/清晰度发不出去。
  *  见 docs/plan/2026-06-24-model-param-consistency-invariant.md。 */
-export type CatalogVersion = 1 | 2 | 3 | 4;
-export const CURRENT_CATALOG_VERSION: CatalogVersion = 4;
+/*  v5 给存量中转 image 条目补图生图能力(image_edit mapping + supportsReferenceImages + 老标准参数升级成
+ *  比例/清晰度)。8c711f0c 起新接入才写这些字段，老条目此前只能「删了重加」——迁移根治，见
+ *  docs/plan/2026-07-06-i2i-reference-reliability.md（L1）。只碰非内置 vendor + OpenAI 兼容形状。 */
+export type CatalogVersion = 1 | 2 | 3 | 4 | 5;
+export const CURRENT_CATALOG_VERSION: CatalogVersion = 5;
 
 export type CatalogState = {
   version: CatalogVersion;

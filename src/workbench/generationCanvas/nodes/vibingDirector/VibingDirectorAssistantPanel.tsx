@@ -288,7 +288,7 @@ export default function VibingDirectorAssistantPanel({
               message.role === 'user'
                 ? 'ml-5 bg-[var(--nomi-ink)] text-[var(--nomi-paper)]'
                 : 'mr-3 bg-[var(--nomi-ink-05)] text-[var(--workbench-ink)]',
-              message.error && 'bg-red-50 text-red-700',
+              message.error && 'bg-workbench-danger-soft text-workbench-danger',
             )}
           >
             {message.content}
