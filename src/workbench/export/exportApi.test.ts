@@ -4,6 +4,13 @@ import type { TimelineState } from '../timeline/timelineTypes'
 const exportTimelineToWebmMock = vi.fn()
 const downloadTimelineBlobMock = vi.fn()
 
+type ExportProgressEvent = {
+  jobId: string
+  snapshot: {
+    progress: { ratio: number; stage: string; message: string }
+  }
+}
+
 vi.mock('./timelineWebmExport', () => ({
   createTimelineExportFilename: vi.fn(() => 'fallback.webm'),
   downloadTimelineBlob: downloadTimelineBlobMock,
@@ -227,12 +234,79 @@ describe('exportTimelineToMp4', () => {
     expect(payload.manifest.diagnostics.warnings.join('\n')).toMatch(/unsupported tracks|timeline model/i)
   })
 
+  it('resolves old ComfyUI providerUrl clips to local assets before starting the desktop export job', async () => {
+    const startJob = vi.fn().mockResolvedValue({ jobId: 'job-1', backend: 'filtergraph' })
+    const finishTempInput = vi.fn().mockResolvedValue({
+      absolutePath: '/tmp/out.mp4',
+      relativePath: 'exports/out.mp4',
+      size: 4,
+    })
+    const providerUrl = 'http://192.168.10.2:8188/view?filename=ComfyUI_00025_.mp4&subfolder=video&type=output'
+    const localUrl = 'nomi-local://asset/project-1/assets/generated/video.mp4'
+    const timeline: TimelineState = {
+      ...makeTimeline(),
+      tracks: [
+        {
+          id: 'videoTrack',
+          type: 'video',
+          label: '视频轨',
+          clips: [
+            {
+              id: 'clip-1',
+              type: 'video',
+              sourceNodeId: 'node-1',
+              label: 'clip',
+              startFrame: 0,
+              endFrame: 30,
+              frameCount: 30,
+              offsetStartFrame: 0,
+              offsetEndFrame: 0,
+              url: providerUrl,
+            },
+          ],
+        },
+      ],
+    }
+
+    vi.stubGlobal('window', {
+      nomiDesktop: {
+        exports: {
+          startJob,
+          writeTempInput: vi.fn(),
+          finishTempInput,
+        },
+      },
+    })
+
+    const { exportTimelineToMp4 } = await import('./exportApi')
+
+    await exportTimelineToMp4({
+      projectId: 'project-1',
+      timeline,
+      aspectRatio: '16:9',
+      generationNodes: [
+        {
+          id: 'node-1',
+          kind: 'video',
+          title: 'clip',
+          position: { x: 0, y: 0 },
+          status: 'idle',
+          result: { id: 'result-1', type: 'video', url: localUrl, providerUrl, createdAt: 1 },
+        },
+      ],
+    })
+
+    const payload = startJob.mock.calls[0][0]
+    expect(payload.manifest.assets['node-1'].url).toBe(localUrl)
+    expect(payload.manifest.assets['node-1'].url).not.toBe(providerUrl)
+  })
+
   it('subscribes to matching job progress events and unsubscribes after export completes', async () => {
     const startJob = vi.fn().mockResolvedValue({ jobId: 'job-1' })
     const writeTempInput = vi.fn().mockResolvedValue({ ok: true, size: 4 })
     const unsubscribe = vi.fn()
-    let listener: ((event: any) => void) | null = null
-    const onEvent = vi.fn((callback: (event: any) => void) => {
+    let listener: ((event: ExportProgressEvent) => void) | null = null
+    const onEvent = vi.fn((callback: (event: ExportProgressEvent) => void) => {
       listener = callback
       return unsubscribe
     })

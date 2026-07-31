@@ -46,16 +46,26 @@ describe('migrateProjectV51ToV60', () => {
       expect(diagnostic.renderKindBackfilled).toBe(1)
     })
 
-    it('infers character-card for cast / scene-card / prop-card / audio-strip respectively', () => {
+    it('infers character-card for cast / scene-card / prop-card respectively', () => {
       const record = makeRecord([
         makeNode({ id: 'a', kind: 'image', categoryId: 'cast' }),
         makeNode({ id: 'b', kind: 'image', categoryId: 'scene' }),
         makeNode({ id: 'c', kind: 'image', categoryId: 'prop' }),
-        makeNode({ id: 'd', kind: 'audio', categoryId: 'audio' }),
       ])
       const { record: out } = migrateProjectV51ToV60(record)
       const kinds = out.payload.generationCanvas.nodes.map((n) => n.renderKind)
-      expect(kinds).toEqual(['character-card', 'scene-card', 'prop-card', 'audio-strip'])
+      expect(kinds).toEqual(['character-card', 'scene-card', 'prop-card'])
+    })
+
+    it('kind 专属卡节点（画板/声音/角色/场景）不吃分类默认值——盖章 shot-frame 会顶掉专属 body（画板打开入口消失，2026-07-29）', () => {
+      const record = makeRecord([
+        makeNode({ id: 'w', kind: 'whiteboard', categoryId: 'shots' }),
+        makeNode({ id: 'd', kind: 'audio', categoryId: 'audio' }),
+        makeNode({ id: 'x', kind: 'character', categoryId: 'shots' }),
+      ])
+      const { record: out, diagnostic } = migrateProjectV51ToV60(record)
+      expect(out.payload.generationCanvas.nodes.map((n) => n.renderKind)).toEqual([undefined, undefined, undefined])
+      expect(diagnostic.renderKindBackfilled).toBe(0)
     })
 
     it('does not overwrite existing renderKind', () => {

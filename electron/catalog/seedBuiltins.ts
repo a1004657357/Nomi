@@ -51,6 +51,7 @@ import { RUNNINGHUB_VIDEO_CURATED_MODELS, RUNNINGHUB_VIDEO_CURATED_MAPPINGS } fr
 import { RUNNINGHUB_IMAGE_CURATED_MODELS, RUNNINGHUB_IMAGE_CURATED_MAPPINGS } from "./runninghubImages";
 import { REPLICATE_VENDOR_SEED } from "./replicate";
 import { COMFYUI_VENDOR_SEED, COMFYUI_CURATED_MODELS, COMFYUI_CURATED_MAPPINGS } from "./comfyuiLocal";
+import { CODEX_LOCAL_VENDOR_SEED, CODEX_IMAGE_CURATED_MODELS, CODEX_IMAGE_CURATED_MAPPINGS } from "./codexImages";
 import { VOLCENGINE_IMAGE_MODELS } from "./volcengineImages";
 import { VOLCENGINE_AUDIO_MODELS } from "./volcengineAudios";
 import { VOLCENGINE_SEEDANCE_QUERY_OP, VOLCENGINE_SEEDANCE_STATUS_MAPPING, VOLCENGINE_VIDEO_MODELS } from "./volcengineVideos";
@@ -208,7 +209,7 @@ const VOLCENGINE_SPEECH_CURATED_MAPPINGS: CuratedMapping[] = VOLCENGINE_AUDIO_MO
 
 /**
  * **退役的 curated 记录（变体合并迁移，2026-06-16）**：Seedance 一族原是 4 个独立 catalog 行
- * （标准/fast/face/fast-face），合并成 1 行 + 4 变体后，老装机里残留 3 个变体模型 + 6 条 mapping 成孤儿
+ * （标准/fast/face/fast-face），合并成 1 行后，老装机里残留 3 个变体模型 + 6 条 mapping 成孤儿
  * （reconcile 只 insert/update 不删）→ picker 仍显示 4 项。这里**精确按我们当初种的 seed id / modelKey**
  * 把它们删掉（不碰用户自建/改名的记录：模型按 (vendorKey, modelKey) 命中、mapping 按 seed- 前缀的稳定 id）。
  * 节点侧的旧 modelKey 由 renderer 的 normalizeArchetypeVariantMeta 归一成 基 modelKey + variantId（正交，互不依赖）。
@@ -223,6 +224,18 @@ const RETIRED_APIMART_VIDEO_MODEL_KEYS: readonly string[] = [
 const RETIRED_KIE_VIDEO_MODEL_KEYS: readonly string[] = [
   "bytedance/seedance-2-fast",
 ];
+/**
+ * apimart Imagen 4 退役（2026-07-30 用户拍板）：上游 Google **确定性** 404
+ * `Requested entity was not found.`（直连探针两次实锤，`credits_cost: 0` 不计费），而它在图片模型里
+ * 排第一位 = 新装机自动默认必撞、开箱即死。apimart 侧并未下架（仍挂在 274 个在售模型列表里），
+ * 只能我们这边摘。
+ *
+ * ⚠️ 与 APIMART_CURATED_MODELS 互斥：curated 里必须**同时**删掉该条，否则 reconcileModels 每次启动
+ * 又插回来、和这里的 prune 来回抖。上游修好要恢复的话：curated 加回 + 删掉这两条，一次 commit。
+ */
+const RETIRED_APIMART_IMAGE_MODEL_KEYS: readonly string[] = ["imagen-4.0-apimart"];
+const RETIRED_APIMART_IMAGE_MAPPING_IDS: readonly string[] = ["seed-apimart-imagen-4-text_to_image"];
+
 const RETIRED_APIMART_VIDEO_MAPPING_IDS: readonly string[] = [
   "seed-apimart-seedance-2-apimart-fast-text_to_video",
   "seed-apimart-seedance-2-apimart-fast-image_to_video",
@@ -256,16 +269,26 @@ function pruneRetiredMappings(mappings: Mapping[], retiredIds: readonly string[]
   return changed;
 }
 
+type VendorSeed = {
+  key: string;
+  name: string;
+  baseUrl: string;
+  authType: Vendor["authType"];
+  authHeader?: string | null;
+  enabled?: boolean;
+  assetIngestion?: Vendor["assetIngestion"];
+};
+
 /** 供应商种子（裸 baseUrl + bearer）。存在即跳过（用户配置不覆盖）。返回是否变更。
  *  多数种子默认 enabled:true；无鉴权本地后端（ComfyUI）带 `enabled:false` → 默认关、用户显式启用（污染防护）。 */
-function seedVendor(vendors: Vendor[], seed: typeof KIE_VENDOR_SEED | typeof APIMART_VENDOR_SEED | typeof AGNES_VENDOR_SEED | typeof MODELSCOPE_VENDOR_SEED | typeof VOLCENGINE_VENDOR_SEED | typeof VOLCENGINE_SPEECH_VENDOR_SEED | typeof DREAMINA_VENDOR_SEED | typeof RUNNINGHUB_VENDOR_SEED | typeof REPLICATE_VENDOR_SEED | typeof COMFYUI_VENDOR_SEED, now: string): boolean {
+function seedVendor(vendors: Vendor[], seed: VendorSeed, now: string): boolean {
   if (vendors.some((v) => v.key === seed.key)) return false;
-  const enabled = "enabled" in seed && (seed as { enabled?: boolean }).enabled === false ? false : true;
+  const enabled = seed.enabled === false ? false : true;
   vendors.push({
     key: seed.key, name: seed.name, enabled,
     baseUrlHint: seed.baseUrl, authType: seed.authType, authHeader: seed.authHeader,
     // 本地素材吞入声明（仅 Replicate 等声明了 assetIngestion 的 vendor 带；resolveAssetIngestionWithFallback 据此把本地图传文件 API）。
-    ...("assetIngestion" in seed && seed.assetIngestion ? { assetIngestion: seed.assetIngestion } : {}),
+    ...(seed.assetIngestion ? { assetIngestion: seed.assetIngestion } : {}),
     createdAt: now, updatedAt: now,
   });
   return true;
@@ -275,11 +298,68 @@ function seedVendor(vendors: Vendor[], seed: typeof KIE_VENDOR_SEED | typeof API
  * 某供应商的 curated 模型 insert + 启动对账（供应商无关）。代码所有：kind + meta.archetypeId（漂移强制对账，
  * 否则模型套错能力）；用户所有：enabled/labelZh/createdAt 保留。返回是否变更。
  */
+/**
+ * 跨供应商同一逻辑模型的**版本级** canonical 身份（modelKey → canonicalModelId，全局无键冲突）。
+ * 消费方：src/config/modelIdentity.deriveCanonicalModelId（priority-1 去重键）——填了它，节点模型
+ * 下拉的「同模型多家合并成一条 + N 家」不再赌 labelZh 字符串（label 漂移=不合并、撞名=错合并的根因）。
+ * 纪律：
+ *  - **版本级**（seedream 4.5 ≠ 5.0 ≠ 4.0），绝不用 archetype 家族级；
+ *  - 单家独有的模型（happyhorse/agnes/imagen…）不填——无叠加可治，缺省走 label 归一化回退；
+ *  - **值刻意 = normalizeModelLabel(labelZh) 的产物**（小写、空格分隔）：没进表的同名模型
+ *    （静态表条目 / 未来新家）走 label 回退会得到同一个键 → 永不把现有合并组拆开；
+ *    显式填表的价值只在「对抗 label 改名/漂移」，不在换一套 id 风格。
+ */
+const CANONICAL_MODEL_IDS: Record<string, string> = {
+  // Seedream 4.5（kie / apimart / 火山 / RunningHub 四家）
+  "seedream": "seedream 4.5",
+  "doubao-seedream-4.5": "seedream 4.5",
+  "doubao-seedream-4-5-251128": "seedream 4.5",
+  "seedream-v4.5": "seedream 4.5",
+  // Seedance 2.0（kie / apimart / 火山 / RunningHub；即梦 label 为「即梦 Seedance 2.0（会员）」本就独立，不填）
+  "bytedance/seedance-2": "seedance 2.0",
+  "doubao-seedance-2.0": "seedance 2.0",
+  "doubao-seedance-2-0-260128": "seedance 2.0",
+  "bytedance/seedance-2.0-global": "seedance 2.0",
+  // Nano Banana（kie / apimart / RunningHub；静态 gemini 表同名条目走 label 回退同键）
+  "nano-banana": "nano banana",
+  "gemini-2.5-flash-image-preview": "nano banana",
+  "rhart-image-v1": "nano banana",
+  // GPT Image 2（kie 拆「· 文生图 / · 图生图」两行 / apimart / RunningHub → 同一 canonical 合并成一条）
+  "gpt-image-2-text-to-image": "gpt image 2",
+  "gpt-image-2-image-to-image": "gpt image 2",
+  "gpt-image-2": "gpt image 2",
+  "rhart-image-g-2-official": "gpt image 2",
+  // 可灵 3.0（kie / apimart / RunningHub）
+  "kling-3.0": "可灵 3.0",
+  "kling-v3": "可灵 3.0",
+  "kling-v3.0-pro": "可灵 3.0",
+  // Qwen-Image 2.0（apimart / RunningHub）
+  "qwen-image-2.0": "qwen-image 2.0",
+  "rh-qwen-image-2.0": "qwen-image 2.0",
+  // Veo 3.1（apimart / RunningHub）
+  "veo3.1-fast": "veo 3.1",
+  "rhart-video-v3.1-pro-official": "veo 3.1",
+  // Sora 2（apimart / RunningHub）
+  "sora-2": "sora 2",
+  "rhart-video-s-official": "sora 2",
+  // Wan 2.7（apimart / RunningHub）
+  "wan2.7": "wan 2.7",
+  "rh-wan-2.7": "wan 2.7",
+  // Hailuo 2.3（apimart / RunningHub）
+  "MiniMax-Hailuo-2.3": "hailuo 2.3",
+  "rh-hailuo-2.3": "hailuo 2.3",
+};
+
 function reconcileModels(models: Model[], vendorKey: string, curated: CuratedModel[], now: string): boolean {
   let changed = false;
   for (const c of curated) {
-    // 代码所有的 meta = archetypeId（能力档案指针）+ c.meta（长尾 workflow 的 parameters 等）合并。
-    const curatedMeta: Record<string, unknown> = { ...(c.archetypeId ? { archetypeId: c.archetypeId } : {}), ...(c.meta || {}) };
+    const canonicalId = CANONICAL_MODEL_IDS[c.modelKey];
+    // 代码所有的 meta = archetypeId（能力档案指针）+ canonicalModelId（跨家去重键）+ c.meta 合并。
+    const curatedMeta: Record<string, unknown> = {
+      ...(c.archetypeId ? { archetypeId: c.archetypeId } : {}),
+      ...(canonicalId ? { canonicalModelId: canonicalId } : {}),
+      ...(c.meta || {}),
+    };
     const i = models.findIndex((m) => m.modelKey === c.modelKey && m.vendorKey === vendorKey);
     if (i < 0) {
       models.push({
@@ -295,7 +375,9 @@ function reconcileModels(models: Model[], vendorKey: string, curated: CuratedMod
     const exArch = (exMeta as { archetypeId?: string }).archetypeId;
     // parameters 是代码所有（workflow 契约），漂移强制对账（老装机自愈）。
     const paramsDrift = c.meta?.parameters !== undefined && JSON.stringify(exMeta.parameters) !== JSON.stringify(c.meta.parameters);
-    const drift = ex.kind !== c.kind || (Boolean(c.archetypeId) && exArch !== c.archetypeId) || paramsDrift;
+    // canonicalModelId 同为代码所有：缺失/漂移强制对账（老装机自愈，去重键才可靠）。
+    const canonicalDrift = canonicalId !== undefined && exMeta.canonicalModelId !== canonicalId;
+    const drift = ex.kind !== c.kind || (Boolean(c.archetypeId) && exArch !== c.archetypeId) || paramsDrift || canonicalDrift;
     if (drift) {
       const nextMeta = { ...exMeta, ...curatedMeta };
       models[i] = {
@@ -362,10 +444,15 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (seedVendor(vendors, RUNNINGHUB_VENDOR_SEED, now)) changed = true; // RunningHub aggregator（先接 3D 混元文生3D）
   if (seedVendor(vendors, REPLICATE_VENDOR_SEED, now)) changed = true; // Replicate（元素拆解 qwen-image-layered，按量付费）
   if (seedVendor(vendors, COMFYUI_VENDOR_SEED, now)) changed = true; // 本地 ComfyUI（无鉴权本地后端，默认关、用户显式启用）
+  if (seedVendor(vendors, CODEX_LOCAL_VENDOR_SEED, now)) changed = true; // Codex 本地生图（实验，默认关）
 
   // 退役 curated 记录清理（变体合并迁移：删 Seedance 旧变体模型 + mapping 孤儿，picker 收成 1 项）。
   if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_VIDEO_MODEL_KEYS)) changed = true;
   if (pruneRetiredMappings(mappings, RETIRED_APIMART_VIDEO_MAPPING_IDS)) changed = true;
+  // 上游确定性挂掉的模型下线（Imagen 4）——对老装机同样生效：种子不碰 enabled（那是用户数据），
+  // 只有走 prune 才摘得掉已经落在用户 catalog 里的那条。
+  if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_IMAGE_MODEL_KEYS)) changed = true;
+  if (pruneRetiredMappings(mappings, RETIRED_APIMART_IMAGE_MAPPING_IDS)) changed = true;
   if (pruneRetiredModels(models, KIE_VENDOR_SEED.key, RETIRED_KIE_VIDEO_MODEL_KEYS)) changed = true;
 
   // 模型 insert + 对账（两家各跑同一套逻辑）。
@@ -381,6 +468,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_VIDEO_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_IMAGE_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, COMFYUI_VENDOR_SEED.key, COMFYUI_CURATED_MODELS, now)) changed = true;
+  if (reconcileModels(models, CODEX_LOCAL_VENDOR_SEED.key, CODEX_IMAGE_CURATED_MODELS, now)) changed = true;
 
   // kie 历史包袱 repair：把视频形状的坏 (kie, text_to_image) 替换成正确的 GPT Image 2 文生图契约
   // （旧 onboarding 抽错留下的；契约见 kieGptImage2.ts 直连实测确认）。apimart 无此历史，不需要。
@@ -411,6 +499,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (reconcileMappings(mappings, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_VIDEO_CURATED_MAPPINGS, now)) changed = true;
   if (reconcileMappings(mappings, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_IMAGE_CURATED_MAPPINGS, now)) changed = true;
   if (reconcileMappings(mappings, COMFYUI_VENDOR_SEED.key, COMFYUI_CURATED_MAPPINGS, now)) changed = true;
+  if (reconcileMappings(mappings, CODEX_LOCAL_VENDOR_SEED.key, CODEX_IMAGE_CURATED_MAPPINGS, now)) changed = true;
 
   if (!changed) return { state, changed: false };
   return { state: { ...state, vendors, models, mappings }, changed: true };

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
+import { ensureElectronSignature } from "./ensure-electron-signature.mjs";
 
 const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,6 +49,9 @@ function loadOnboardingAgentEnv() {
   return out;
 }
 const electron = require("electron");
+// macOS: if Apple revoked this dev Electron's notarization, re-sign it before we
+// ever spawn it — launching a revoked binary makes macOS SIGKILL and delete it.
+ensureElectronSignature(electron, { log: (msg) => console.log(msg) });
 const vitePackagePath = require.resolve("vite/package.json");
 const vitePackageDir = path.dirname(vitePackagePath);
 const viteBin = path.join(vitePackageDir, "bin", "vite.js");

@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Combobox, useCombobox } from '@mantine/core'
 import { IconCheck, IconChevronDown } from '@tabler/icons-react'
 import { cn } from '../utils/cn'
@@ -14,7 +15,7 @@ import { cn } from '../utils/cn'
  * label+原生 select，改用本组件 → 视觉一致、以后只改这一个文件。
  */
 
-export type NomiSelectTone = 'accent' | 'muted'
+export type NomiSelectTone = 'accent' | 'muted' | 'danger'
 
 export type NomiSelectOption = {
   value: string
@@ -23,6 +24,8 @@ export type NomiSelectOption = {
   trailing?: string
   trailingTone?: NomiSelectTone
   disabled?: boolean
+  /** 整行减淡（仍可点）——「能选但眼下不建议」，如近期连败的模型沉底后。 */
+  dimmed?: boolean
 }
 
 export type NomiSelectProps = {
@@ -46,9 +49,11 @@ export type NomiSelectProps = {
 }
 
 const SURFACE_SHADOW = 'var(--workbench-shadow-pop)'
+const DROPDOWN_Z_INDEX = 4500
 
 function toneClass(tone: NomiSelectTone | undefined, kind: 'badge' | 'trailing'): string {
   if (tone === 'accent') return 'bg-nomi-accent-soft text-nomi-accent'
+  if (tone === 'danger') return 'text-workbench-danger'
   if (kind === 'badge') return 'bg-nomi-ink-10 text-nomi-ink-60'
   return 'text-nomi-ink-40'
 }
@@ -59,7 +64,7 @@ export function NomiSelect({
   onChange,
   ariaLabel,
   leadingLabel,
-  placeholder = '选择',
+  placeholder,
   triggerBadge,
   size = 'sm',
   triggerMaxWidth,
@@ -67,9 +72,10 @@ export function NomiSelect({
   title,
   className,
 }: NomiSelectProps): JSX.Element {
+  const { t } = useTranslation()
   const combobox = useCombobox({ onDropdownClose: () => combobox.resetSelectedOption() })
   const selected = options.find((option) => option.value === value)
-  const triggerText = selected?.label ?? placeholder
+  const triggerText = selected?.label ?? placeholder ?? t('common.select')
   const heightClass = size === 'xs' ? 'h-6' : 'h-7'
 
   return (
@@ -82,6 +88,7 @@ export function NomiSelect({
       width="max-content"
       position="bottom-start"
       offset={6}
+      zIndex={DROPDOWN_Z_INDEX}
       middlewares={{ flip: true, shift: true }}
       onOptionSubmit={(val) => {
         onChange(val)
@@ -100,6 +107,10 @@ export function NomiSelect({
           padding: '0 8px 0 9px',
           minHeight: 30,
           borderRadius: 'var(--nomi-radius-sm)',
+          // Mantine Option 是普通块级：minHeight 30 下内容顶在上沿（label/附注/对勾不垂直居中）。
+          // 自己 flex 居中；水平布局仍由内层 span 管。
+          display: 'flex',
+          alignItems: 'center',
         },
       }}
     >
@@ -142,12 +153,19 @@ export function NomiSelect({
             const isSel = option.value === value
             return (
               <Combobox.Option value={option.value} key={option.value} disabled={option.disabled} active={isSel}>
-                <span className="flex items-center gap-2 w-full">
+                {/* dimmed：整行减淡但仍可点（「能选、眼下不建议」）。不用 disabled——那是"点不了"，
+                    两种语义别混（近期连败的模型仍允许手动选，是拍板过的原则）。 */}
+                <span className={cn('flex items-center gap-2 w-full', option.dimmed ? 'opacity-45' : '')}>
                   <span className={cn('min-w-0 truncate text-caption', isSel ? 'text-nomi-ink font-semibold' : 'text-nomi-ink-80')}>
                     {option.label}
                   </span>
                   {option.trailing ? (
-                    <span className={cn('ml-auto shrink-0 text-micro leading-none px-1.5 py-[1px] rounded-pill', toneClass(option.trailingTone, 'trailing'))}>
+                    // max-w + truncate：trailing 是附注（厂商名/价格），不许反客为主挤压 label
+                    //（曾被「即梦会员（本地 CLI）」10 字长名挤乱布局）；悬停 title 看全文。
+                    <span
+                      title={option.trailing}
+                      className={cn('ml-auto shrink-0 max-w-[96px] truncate text-micro leading-none px-1.5 py-[1px] rounded-pill', toneClass(option.trailingTone, 'trailing'))}
+                    >
                       {option.trailing}
                     </span>
                   ) : null}

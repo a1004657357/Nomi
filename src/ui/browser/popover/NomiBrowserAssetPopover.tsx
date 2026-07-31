@@ -1,33 +1,17 @@
 import React from 'react'
 import { getDesktopActiveProjectId, subscribeDesktopActiveProjectIdChange } from '../../../desktop/activeProject'
 import { getDesktopBridge } from '../../../desktop/bridge'
-import {
-  NOMI_BROWSER_ASSETS,
-  NOMI_BROWSER_ASSET_SOURCES,
-  NOMI_BROWSER_ASSET_TABS,
-  type NomiBrowserAsset,
-  type NomiBrowserAssetSource,
-  type NomiBrowserAssetTab,
-} from '../assets/browserAssetData'
-import {
-  createBrowserPromptCategory,
-} from '../assets/browserAssetLibraryStorage'
+import type { NomiBrowserAsset, NomiBrowserAssetTab } from '../assets/browserAssetData'
 import { dispatchBrowserAssetsImportToCanvas } from '../overlay/globalAssetPopoverEvents'
 import {
-  BROWSER_DIALOG_ROOT_SELECTOR,
   BROWSER_IMAGE_DRAG_MIME,
-  CANVAS_IMPORT_TARGET_SELECTOR,
   LEGACY_BROWSER_ASSET_DRAG_MIME,
   NOMI_ASSET_DRAG_MIME,
   PROMPT_EXTRACTION_SETTINGS_DIALOG_SELECTOR,
-  PROMPT_MASONRY_COLUMN_GAP,
-  TOOL_BUTTON_CLASS,
-  TOOL_BUTTON_COMPACT_CLASS,
 } from './browserAssetPopoverConstants'
 import {
   browserAssetToCanvasImportItem,
   getAssetGridColumnCount,
-  getPromptMasonryColumnCount,
   isBrowserAssetCanvasImportItem,
   readBrowserImageDragPayload,
 } from './browserAssetPopoverUtils'
@@ -37,6 +21,7 @@ import {
 } from '../prompt/browserPromptExtractionSettings'
 import { useBrowserAssetPopoverWindow } from '../window/useBrowserAssetPopoverWindow'
 import { useBrowserAssetMarquee } from './useBrowserAssetMarquee'
+import { useCanvasImportAvailability } from './useCanvasImportAvailability'
 import { useBrowserAssetCaptureImport } from './useBrowserAssetCaptureImport'
 import { useBrowserAssetLibraryModel } from './useBrowserAssetLibraryModel'
 import { useBrowserAssetActions } from './useBrowserAssetActions'
@@ -44,7 +29,6 @@ import { BrowserAssetPopoverView } from './BrowserAssetPopoverView'
 import type {
   AssetContextMenuState,
   AssetPopoverViewMode,
-  BlankContextMenuState,
   BrowserPromptExtractionTemplateSettings,
   NomiBrowserAssetPopoverProps,
 } from './browserAssetPopoverTypes'
@@ -68,49 +52,48 @@ export function NomiBrowserAssetPopover({
   dockable,
   dockPresentation = 'overlay',
   defaultOpened = false,
-  defaultSource = 'my',
   defaultTab = 'all',
-  showTrigger = true,
   libraryProjectId,
-  assets = NOMI_BROWSER_ASSETS,
-  tabs = NOMI_BROWSER_ASSET_TABS,
-  sourceTabs = NOMI_BROWSER_ASSET_SOURCES,
   onOpenChange,
   onWindowRectChange,
   onFullWindowModalChange,
   onDockModeChange,
-  onAssetSelect,
-  onCreateFolder,
   onImportRemoteAsset,
   browserCaptureEnabled = false,
   browserCaptureDisabled = false,
   browserCaptureRequest,
-  browserPromptCaptureRequest,
   onBrowserCaptureToggle,
+  probeCanvasImportAvailable,
 }: NomiBrowserAssetPopoverProps): JSX.Element {
   const [internalOpen, setInternalOpen] = React.useState(defaultOpened)
-  const [activeSource, setActiveSource] = React.useState<NomiBrowserAssetSource>(defaultSource)
   const [activeTab, setActiveTab] = React.useState<NomiBrowserAssetTab>(defaultTab)
-  const [activePromptCategory, setActivePromptCategory] = React.useState('all')
   const [query, setQuery] = React.useState('')
   const [localAssets, setLocalAssets] = React.useState<NomiBrowserAsset[]>([])
-  const [activeFolderId, setActiveFolderId] = React.useState<string | null>(null)
+  // 捕捞临时卡（下载中/失败）不进 ready 素材网格——单列在弹层顶部状态条（审计 P1：错误项混进素材列表）。
+  const captureTransients = React.useMemo(
+    () => localAssets.filter((asset) => asset.status === 'loading' || asset.status === 'error'),
+    [localAssets],
+  )
+  const readyLocalAssets = React.useMemo(
+    () => localAssets.filter((asset) => asset.status !== 'loading' && asset.status !== 'error'),
+    [localAssets],
+  )
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set())
   const [filtersOpen, setFiltersOpen] = React.useState(false)
-  const [actionsOpen, setActionsOpen] = React.useState(false)
   const [viewMode, setViewMode] = React.useState<AssetPopoverViewMode>('grid')
   const [sortAscending, setSortAscending] = React.useState(false)
   const [dropActive, setDropActive] = React.useState(false)
   const [assetContextMenu, setAssetContextMenu] = React.useState<AssetContextMenuState | null>(null)
-  const [blankContextMenu, setBlankContextMenu] = React.useState<BlankContextMenuState | null>(null)
-  const [promptDetailAssetId, setPromptDetailAssetId] = React.useState<string | null>(null)
   const [promptExtractionSettingsOpen, setPromptExtractionSettingsOpen] = React.useState(false)
-  // 提示词提取设置是唯一 fixed inset-0 溢出整窗的模态——它开合时通知承载方扩/缩可点热区，
-  // 否则原生 overlay 承载态下它落在卡片外的死区，被点穿到网页（提示词详情用 absolute 不受影响）。
+  // 删除确认弹窗（confirmDialog 宿主渲染 fixed 居中，溢出卡片矩形）。
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false)
+  // 溢出整窗的模态（提示词提取设置 / 删除确认，fixed 居中）开合时通知承载方扩/缩可点热区，
+  // 否则原生 overlay 承载态下它落在卡片外的死区，被点穿到网页。
   React.useEffect(() => {
-    onFullWindowModalChange?.(promptExtractionSettingsOpen)
-  }, [onFullWindowModalChange, promptExtractionSettingsOpen])
-  const [canvasImportAvailable, setCanvasImportAvailable] = React.useState(false)
+    onFullWindowModalChange?.(promptExtractionSettingsOpen || deleteConfirmOpen)
+  }, [deleteConfirmOpen, onFullWindowModalChange, promptExtractionSettingsOpen])
+  // 「已放到画布」就地成功反馈（导入是跨窗 fire-and-forget，乐观显示一小段，超时自清）。
+  const [canvasImportedFeedback, setCanvasImportedFeedback] = React.useState(false)
   const [promptExtractionSettings, setPromptExtractionSettings] = React.useState<BrowserPromptExtractionTemplateSettings>(
     () => createDefaultBrowserPromptExtractionTemplateSettings(),
   )
@@ -149,16 +132,14 @@ export function NomiBrowserAssetPopover({
     onDockModeChange,
   })
 
+  // 「能不能放到画布」的可用性信号：应用内浮窗查本窗 DOM；contained overlay 窗消费跨窗探针
+  // （回归 dfc47477 = contained 分支曾无条件 false、从不调探针，ready 素材永远送不进画布，P0）。
+  const canvasImportAvailable = useCanvasImportAvailability({ popoverOpen, contained, probeCanvasImportAvailable })
+
   const compactToolbar = windowRect.width <= 560
-  const singleTileToolbar = windowRect.width <= 220
   const listMode = viewMode === 'list'
   const gridCompact = compactToolbar
   const assetGridColumnCount = getAssetGridColumnCount(windowRect.width, gridCompact)
-  const promptMasonryColumnCount = getPromptMasonryColumnCount(windowRect.width)
-  const sourceTabGridStyle = React.useMemo<React.CSSProperties>(
-    () => ({ gridTemplateColumns: `repeat(${Math.max(sourceTabs.length, 1)}, minmax(0, 1fr))` }),
-    [sourceTabs.length],
-  )
   const assetGridStyle = React.useMemo<React.CSSProperties | undefined>(
     () =>
       listMode
@@ -168,21 +149,9 @@ export function NomiBrowserAssetPopover({
           },
     [assetGridColumnCount, listMode],
   )
-  const promptMasonryStyle = React.useMemo<React.CSSProperties>(
-    () => ({
-      columnCount: promptMasonryColumnCount,
-      columnGap: PROMPT_MASONRY_COLUMN_GAP,
-    }),
-    [promptMasonryColumnCount],
-  )
-  const toolbarButtonClass = compactToolbar ? TOOL_BUTTON_COMPACT_CLASS : TOOL_BUTTON_CLASS
   const filterPopoverRef = React.useRef<HTMLDivElement | null>(null)
   const filterButtonRef = React.useRef<HTMLButtonElement | null>(null)
-  const actionsPopoverRef = React.useRef<HTMLDivElement | null>(null)
-  const actionsButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const assetContextMenuRef = React.useRef<HTMLDivElement | null>(null)
-  const blankContextMenuRef = React.useRef<HTMLDivElement | null>(null)
-  const uploadInputRef = React.useRef<HTMLInputElement | null>(null)
   const previewUrlsRef = React.useRef<string[]>([])
 
   const setPopoverOpen = React.useCallback(
@@ -213,14 +182,11 @@ export function NomiBrowserAssetPopover({
   React.useEffect(() => {
     setLocalAssets([])
     setSelectedIds(new Set())
-    setActiveFolderId(null)
-    setPromptDetailAssetId(null)
     setAssetContextMenu(null)
-    setBlankContextMenu(null)
   }, [activeLibraryProjectId])
 
   React.useEffect(() => {
-    if (!popoverOpen) return
+    if (!popoverOpen || contained) return
     const handleMouseDown = (event: MouseEvent): void => {
       const target = event.target as Node
       const targetElement = target instanceof HTMLElement ? target : target.parentElement
@@ -230,69 +196,47 @@ export function NomiBrowserAssetPopover({
     }
     document.addEventListener('mousedown', handleMouseDown)
     return () => document.removeEventListener('mousedown', handleMouseDown)
-  }, [popoverOpen, setPopoverOpen])
+  }, [contained, popoverOpen, setPopoverOpen])
 
   React.useEffect(() => {
     if (!popoverOpen) return
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      if (promptExtractionSettingsOpen) {
-        setPromptExtractionSettingsOpen(false)
+      // 删除确认在场时整段吞掉 Esc：既不能关素材盒，也不能让外层浏览器 dialog 的
+      // Esc 处理器把整个浏览器关掉（取消走弹窗的「取消」按钮/遮罩点击）。
+      if (deleteConfirmOpen) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
         return
       }
-      if (promptDetailAssetId) {
-        setPromptDetailAssetId(null)
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (filtersOpen) {
+        setFiltersOpen(false)
+        return
+      }
+      if (promptExtractionSettingsOpen) {
+        setPromptExtractionSettingsOpen(false)
         return
       }
       if (assetContextMenu) {
         setAssetContextMenu(null)
         return
       }
-      if (blankContextMenu) {
-        setBlankContextMenu(null)
-        return
-      }
       setPopoverOpen(false)
     }
     window.addEventListener('keydown', handleKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
-  }, [assetContextMenu, blankContextMenu, popoverOpen, promptDetailAssetId, promptExtractionSettingsOpen, setPopoverOpen])
+  }, [assetContextMenu, deleteConfirmOpen, filtersOpen, popoverOpen, promptExtractionSettingsOpen, setPopoverOpen])
 
   React.useEffect(() => {
     if (!popoverOpen) {
       setFiltersOpen(false)
-      setActionsOpen(false)
       setAssetContextMenu(null)
-      setBlankContextMenu(null)
-      setPromptDetailAssetId(null)
       setPromptExtractionSettingsOpen(false)
-      setCanvasImportAvailable(false)
+      setCanvasImportedFeedback(false)
     }
   }, [popoverOpen])
-
-  React.useEffect(() => {
-    if (!popoverOpen || contained || typeof document === 'undefined') {
-      setCanvasImportAvailable(false)
-      return undefined
-    }
-    const updateCanvasImportAvailability = (): void => {
-      setCanvasImportAvailable(
-        Boolean(document.querySelector(CANVAS_IMPORT_TARGET_SELECTOR)) &&
-          !document.querySelector(BROWSER_DIALOG_ROOT_SELECTOR),
-      )
-    }
-    updateCanvasImportAvailability()
-    const observer = new MutationObserver(updateCanvasImportAvailability)
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class', 'data-nomi-generation-canvas-import-target'],
-    })
-    return () => observer.disconnect()
-  }, [contained, popoverOpen])
 
   const loadPromptExtractionSettings = React.useCallback(async (): Promise<void> => {
     const projectId = getDesktopActiveProjectId()
@@ -342,55 +286,30 @@ export function NomiBrowserAssetPopover({
   )
 
   const {
-    libraryState,
     setPersistedAssets,
-    updateLibraryState,
-    mergedAssets,
-    currentFolder,
-    folderBreadcrumbs,
-    promptLibrarySourceKey,
-    showingPromptLibrary,
-    promptCategories,
+    refreshPersistedAssets,
     filterCounts,
-    promptCategoryCounts,
     filteredAssets,
     visibleIdSet,
     selectedAssets,
-    assetById,
-    promptDetailAsset,
-    activeSourceLabel,
     filterActive,
     emptyStateCopy,
   } = useBrowserAssetLibraryModel({
     projectId: activeLibraryProjectId,
     popoverOpen,
-    assets,
-    localAssets,
-    sourceTabs,
-    activeSource,
+    localAssets: readyLocalAssets,
     activeTab,
-    activePromptCategory,
-    activeFolderId,
-    promptDetailAssetId,
     query,
     selectedIds,
     sortAscending,
-    setActiveFolderId,
   })
-  const { importRemoteAssetToLibrary } = useBrowserAssetCaptureImport({
-    activeFolderId,
-    promptExtractionSettings,
+  const { importRemoteAssetToLibrary, retryCaptureImport, dismissCaptureTransient } = useBrowserAssetCaptureImport({
     browserCaptureRequest,
-    browserPromptCaptureRequest,
     onImportRemoteAsset,
-    setPopoverOpen,
-    setActiveSource,
     setActiveTab,
-    setActiveFolderId,
     setLocalAssets,
     setPersistedAssets,
     setSelectedIds,
-    updateLibraryState,
   })
   const {
     gridRef,
@@ -401,28 +320,12 @@ export function NomiBrowserAssetPopover({
     handleGridPointerUp,
   } = useBrowserAssetMarquee({ popoverOpen, filteredAssets, setSelectedIds })
   const {
-    createFolder,
     addLocalFiles,
-    handleUploadFiles,
     selectAsset,
     openAssetContextMenu,
-    openBlankContextMenu,
-    openPromptDetail,
-    openFolder,
-    openAssetRoot,
-    exitCurrentFolder,
-    selectAssetSource,
     deleteSelectedAssets,
     handleTileDragStart,
-    handleTileDragOver,
-    handleTileDrop,
   } = useBrowserAssetActions({
-    activeFolderId,
-    currentFolder,
-    libraryState,
-    promptLibrarySourceKey,
-    assetById,
-    mergedAssets,
     filteredAssets,
     selectedAssets,
     selectedIds,
@@ -430,39 +333,38 @@ export function NomiBrowserAssetPopover({
     popoverOpen,
     rootRef,
     previewUrlsRef,
-    onCreateFolder,
-    onAssetSelect,
-    updateLibraryState,
-    setActiveSource,
+    refreshPersistedAssets,
     setActiveTab,
-    setActivePromptCategory,
-    setActiveFolderId,
     setSelectedIds,
     setLocalAssets,
     setPersistedAssets,
     setAssetContextMenu,
-    setBlankContextMenu,
     setFiltersOpen,
-    setActionsOpen,
-    setPromptDetailAssetId,
+    setDeleteConfirmOpen,
   })
   const selectedCanvasImportAssets = React.useMemo(
     () => selectedAssets.map(browserAssetToCanvasImportItem).filter(isBrowserAssetCanvasImportItem),
     [selectedAssets],
   )
   const canImportSelectedAssetsToCanvas = canvasImportAvailable && selectedCanvasImportAssets.length > 0
+  // ready 素材有可见主动作即显示「放到画布」入口（不再只藏右键菜单）；有画布目标但没选素材时提示先选。
+  const showCanvasImportAction = canvasImportAvailable && readyLocalAssets.length + selectedAssets.length > 0
+  const importFeedbackTimerRef = React.useRef<number | null>(null)
+  React.useEffect(
+    () => () => {
+      if (importFeedbackTimerRef.current !== null) window.clearTimeout(importFeedbackTimerRef.current)
+    },
+    [],
+  )
   const importSelectedAssetsToCanvas = React.useCallback((): void => {
     if (!canImportSelectedAssetsToCanvas) return
     setAssetContextMenu(null)
-    setBlankContextMenu(null)
     dispatchBrowserAssetsImportToCanvas(selectedCanvasImportAssets)
+    // 跨窗导入 fire-and-forget（主窗 GenerationCanvas 收 IPC 真加节点），乐观就地确认「已放到画布」。
+    setCanvasImportedFeedback(true)
+    if (importFeedbackTimerRef.current !== null) window.clearTimeout(importFeedbackTimerRef.current)
+    importFeedbackTimerRef.current = window.setTimeout(() => setCanvasImportedFeedback(false), 4000)
   }, [canImportSelectedAssetsToCanvas, selectedCanvasImportAssets])
-
-  React.useEffect(() => {
-    if (sourceTabs.some((source) => source.key === activeSource)) return
-    const fallbackSource = sourceTabs[0]?.key
-    if (fallbackSource) setActiveSource(fallbackSource)
-  }, [activeSource, sourceTabs])
 
   React.useEffect(() => {
     if (!filtersOpen) return
@@ -477,18 +379,6 @@ export function NomiBrowserAssetPopover({
   }, [filtersOpen])
 
   React.useEffect(() => {
-    if (!actionsOpen) return
-    const handlePointerDown = (event: PointerEvent): void => {
-      const target = event.target as Node
-      if (actionsPopoverRef.current?.contains(target)) return
-      if (actionsButtonRef.current?.contains(target)) return
-      setActionsOpen(false)
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [actionsOpen])
-
-  React.useEffect(() => {
     if (!assetContextMenu) return
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target as Node
@@ -498,21 +388,6 @@ export function NomiBrowserAssetPopover({
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [assetContextMenu])
-
-  React.useEffect(() => {
-    if (!blankContextMenu) return
-    const handlePointerDown = (event: PointerEvent): void => {
-      const target = event.target as Node
-      if (blankContextMenuRef.current?.contains(target)) return
-      setBlankContextMenu(null)
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [blankContextMenu])
-
-  React.useEffect(() => {
-    if (!compactToolbar) setActionsOpen(false)
-  }, [compactToolbar])
 
   React.useEffect(() => {
     setSelectedIds((current) => {
@@ -530,13 +405,9 @@ export function NomiBrowserAssetPopover({
   const acceptsExternalAssetDrop = React.useCallback((dataTransfer: DataTransfer): boolean => {
     const types = Array.from(dataTransfer.types)
     if (types.includes(NOMI_ASSET_DRAG_MIME) || types.includes(LEGACY_BROWSER_ASSET_DRAG_MIME)) return false
-    return (
-      types.includes(BROWSER_IMAGE_DRAG_MIME) ||
-      types.includes('text/uri-list') ||
-      types.includes('text/html') ||
-      types.includes('text/plain') ||
-      dataTransfer.files.length > 0
-    )
+    // 只有 Nomi 网页桥的确定媒体 payload 或真实文件才亮“松开保存”。普通文本/HTML
+    // 在 dragover 阶段无法可靠解析，提前接纳会造成松手后静默无事发生。
+    return types.includes(BROWSER_IMAGE_DRAG_MIME) || dataTransfer.files.length > 0
   }, [])
 
   const handleWindowDragEnter = React.useCallback(
@@ -588,25 +459,11 @@ export function NomiBrowserAssetPopover({
   const selectFilterTab = React.useCallback((tab: NomiBrowserAssetTab): void => {
     setActiveTab(tab)
     setFiltersOpen(false)
-    setActionsOpen(false)
   }, [])
-
-  const selectPromptCategory = React.useCallback((categoryId: string): void => {
-    setActivePromptCategory(categoryId)
-    setFiltersOpen(false)
-    setActionsOpen(false)
-  }, [])
-
-  const addPromptCategory = React.useCallback((label: string): void => {
-    const category = createBrowserPromptCategory(activeLibraryProjectId, label)
-    if (category) setActivePromptCategory(category.id)
-  }, [activeLibraryProjectId])
 
   const showAllFilters = React.useCallback((): void => {
     setActiveTab('all')
-    setActivePromptCategory('all')
     setFiltersOpen(false)
-    setActionsOpen(false)
   }, [])
 
   const handleHeaderPointerDown = React.useCallback(
@@ -622,18 +479,18 @@ export function NomiBrowserAssetPopover({
   return (
     <BrowserAssetPopoverView
       {...{
-        rootRef, className, contained, placement, surface, showTrigger, popoverOpen, setPopoverOpen, windowRect, hostOrigin, isWindowInteracting, dockMode,
+        rootRef, className, contained, placement, surface, popoverOpen, setPopoverOpen, windowRect, hostOrigin, isWindowInteracting, dockMode,
         handleWindowDragEnter, handleWindowDragOver, handleWindowDragLeave, handleWindowDrop, splitDocked, edgeDocked, dropActive, handleHeaderPointerDown,
-        compactToolbar, sourceTabs, activeSource, selectAssetSource, onBrowserCaptureToggle, toolbarButtonClass, browserCaptureEnabled, browserCaptureDisabled,
-        promptExtractionSettingsOpen, setPromptExtractionSettingsOpen, canDock, activeBounds, toggleDockMode, query, setQuery, singleTileToolbar, sourceTabGridStyle,
-        actionsButtonRef, actionsOpen, setActionsOpen, actionsPopoverRef, listMode, setViewMode, sortAscending, setSortAscending, filterButtonRef, filtersOpen,
-        filterActive, setFiltersOpen, showingPromptLibrary, activePromptCategory, promptCategories, promptCategoryCounts, filterPopoverRef, selectPromptCategory,
-        addPromptCategory, showAllFilters, activeTab, filterCounts, tabs, selectFilterTab, uploadInputRef, createFolder, handleUploadFiles, currentFolder,
-        exitCurrentFolder, activeSourceLabel, openAssetRoot, folderBreadcrumbs, openFolder, gridRef, handleGridPointerDown, handleGridPointerMove, handleGridPointerUp,
-        openBlankContextMenu, filteredAssets, emptyStateCopy, promptMasonryStyle, selectedIds, setAssetNode, selectAsset, openPromptDetail, openAssetContextMenu,
-        handleTileDragStart, gridCompact, viewMode, handleTileDragOver, handleTileDrop, assetGridStyle, marquee, promptDetailAsset, setPromptDetailAssetId,
-        promptExtractionSettings, promptExtractionSettingsProjectAvailable, savePromptExtractionSettings, activeResizeEdges, startResize, assetContextMenu,
-        assetContextMenuRef, canImportSelectedAssetsToCanvas, importSelectedAssetsToCanvas, deleteSelectedAssets, blankContextMenu, blankContextMenuRef,
+        compactToolbar, onBrowserCaptureToggle, browserCaptureEnabled, browserCaptureDisabled,
+        promptExtractionSettingsOpen, setPromptExtractionSettingsOpen, canDock, activeBounds, toggleDockMode, query, setQuery,
+        listMode, setViewMode, sortAscending, setSortAscending, filterButtonRef, filtersOpen, filterActive, setFiltersOpen,
+        activeTab, filterCounts, filterPopoverRef, selectFilterTab, showAllFilters,
+        gridRef, handleGridPointerDown, handleGridPointerMove, handleGridPointerUp, filteredAssets, emptyStateCopy, selectedIds, setAssetNode,
+        selectAsset, openAssetContextMenu, handleTileDragStart, gridCompact, viewMode, assetGridStyle, marquee,
+        promptExtractionSettings, promptExtractionSettingsProjectAvailable, savePromptExtractionSettings, activeResizeEdges, startResize,
+        assetContextMenu, assetContextMenuRef, canImportSelectedAssetsToCanvas, importSelectedAssetsToCanvas, deleteSelectedAssets,
+        showCanvasImportAction, canvasImportedFeedback, canvasImportSelectedCount: selectedCanvasImportAssets.length,
+        captureTransients, retryCaptureImport, dismissCaptureTransient,
       }}
     />
   )

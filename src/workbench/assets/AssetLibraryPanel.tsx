@@ -1,21 +1,22 @@
 /**
- * 素材库面板（真实库）。
+ * 素材库内容（唯一素材面 · 挂在左侧栏「素材库」tab）。
  *
- * 「素材库」从前只是个上传按钮（名不副实）。这里把它做成真正的库：
- * 右侧浮动抽屉，复用 useAssetPool（画布节点 + 项目文件去重合流，单一真相源），
+ * 复用 useAssetPool（画布节点 + 项目文件去重合流，单一真相源），
  * 块复用 AssetThumb（形态自明：图=缩略图、视频=播放三角、音频=波形）。
  *
- * 挂载/关闭仿 OnboardingFloatingPanel：Mantine Portal 固定面板 + Escape / 点外关闭。
- * v1 范围：浏览 + 分段筛选 + 搜索 + 上传。拖到画布 / 删除留 v1.1（pool 合并源，删哪个源要单独想）。
+ * 右侧浮动抽屉壳已删（2026-07-22 方案一重执行）：`nomi-open-asset-library` 事件全仓无发送方，
+ * 是素材库 v1 纯抽屉时代的孤儿面——素材库唯一的门＝侧栏 tab（一个能力一个门）。
  */
 import React from 'react'
-import { Portal } from '@mantine/core'
+import { useTranslation } from 'react-i18next'
+import i18n from '../../i18n'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { IconFilter, IconPhoto, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
+import { IconChevronLeft, IconFilter, IconFolderPlus, IconPhoto, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { useAssetPool } from './useAssetPool'
 import { useAllProjectAssets } from './useAllProjectAssets'
+import { assetsForFolderScope, folderCountsForAssets, useAssetFolderInteractions, useAssetFolders } from './useAssetFolders'
 import { filterAssets, type AssetKind, type AssetRef } from './assetTypes'
 import { ASSET_LIBRARY_DRAG_MIME, serializeAssetLibraryDrag, type AssetLibraryDragPayload } from './assetLibraryDrag'
 import { importAudioFilesToLibrary, type AudioImportResult } from './importAudioToLibrary'
@@ -28,6 +29,8 @@ import { toast } from '../../ui/toast'
 import {
   AssetGridCell,
   AssetKindFilterMenu,
+  FolderGridCell,
+  NewFolderInput,
 } from './AssetLibraryPanelParts'
 import { ASSET_KIND_FILTER_VALUES, FILTER_OPTIONS, type FilterValue } from './assetLibraryPanelFilters'
 import { buildAssetLibraryDeletePlan, filterImageVideoAssets } from './assetLibrarySources'
@@ -35,10 +38,6 @@ import { buildAssetLibraryDeletePlan, filterImageVideoAssets } from './assetLibr
 const DEFAULT_GRID_COLS = 3
 const ESTIMATED_ROW_HEIGHT = 121
 const COMPACT_ESTIMATED_ROW_HEIGHT = 113
-
-const PANEL_WIDTH = 380
-const TOP_OFFSET = 64
-const RIGHT_OFFSET = 12
 
 // 从媒体类型单一真相源派生（通配 + 显式扩展名，见 mediaTypes.acceptAttrForKinds 注释）。
 // 素材库三类：图 / 视频 / 音频。accept 放行的每个格式下游都接得住（同源,不再漂移）。
@@ -71,36 +70,32 @@ export function classifyUploadFiles(files: File[]): UploadClassification {
 
 // 导入结果 → 用户反馈（Gap C：此前计数全被丢弃，超大/重复/失败/超上限零提示）。
 function reportMediaImport(result: GenerationAssetImportResult): void {
-  if (result.created.length) toast(`已导入 ${result.created.length} 个素材`, 'success')
+  if (result.created.length) toast(i18n.t('assetLibrary.importedAssets', { count: result.created.length }), 'success')
   const skipped: string[] = []
-  if (result.skippedTooLargeCount) skipped.push(`${result.skippedTooLargeCount} 个过大`)
-  if (result.skippedOverLimitCount) skipped.push(`${result.skippedOverLimitCount} 个超单次上限`)
-  if (result.skippedDuplicateCount) skipped.push(`${result.skippedDuplicateCount} 个重复`)
-  if (result.failedCount) skipped.push(`${result.failedCount} 个失败`)
-  if (skipped.length) toast(`已跳过：${skipped.join('、')}`, result.failedCount ? 'error' : 'warning')
+  if (result.skippedTooLargeCount) skipped.push(i18n.t('assetLibrary.skippedTooLarge', { count: result.skippedTooLargeCount }))
+  if (result.skippedOverLimitCount) skipped.push(i18n.t('assetLibrary.skippedOverLimit', { count: result.skippedOverLimitCount }))
+  if (result.skippedDuplicateCount) skipped.push(i18n.t('assetLibrary.skippedDuplicate', { count: result.skippedDuplicateCount }))
+  if (result.failedCount) skipped.push(i18n.t('assetLibrary.skippedFailed', { count: result.failedCount }))
+  if (skipped.length) toast(i18n.t('assetLibrary.skippedSummary', { items: skipped.join(i18n.t('assetLibrary.listSeparator')) }), result.failedCount ? 'error' : 'warning')
 }
 
 function reportAudioImport(result: AudioImportResult): void {
-  if (result.uploadedCount) toast(`已导入 ${result.uploadedCount} 个音频`, 'success')
+  if (result.uploadedCount) toast(i18n.t('assetLibrary.importedAudio', { count: result.uploadedCount }), 'success')
   const skipped: string[] = []
-  if (result.skippedTooLargeCount) skipped.push(`${result.skippedTooLargeCount} 个过大`)
-  if (result.skippedDuplicateCount) skipped.push(`${result.skippedDuplicateCount} 个重复`)
-  if (result.failedCount) skipped.push(`${result.failedCount} 个失败`)
-  if (skipped.length) toast(`已跳过：${skipped.join('、')}`, result.failedCount ? 'error' : 'warning')
+  if (result.skippedTooLargeCount) skipped.push(i18n.t('assetLibrary.skippedTooLarge', { count: result.skippedTooLargeCount }))
+  if (result.skippedDuplicateCount) skipped.push(i18n.t('assetLibrary.skippedDuplicate', { count: result.skippedDuplicateCount }))
+  if (result.failedCount) skipped.push(i18n.t('assetLibrary.skippedFailed', { count: result.failedCount }))
+  if (skipped.length) toast(i18n.t('assetLibrary.skippedSummary', { items: skipped.join(i18n.t('assetLibrary.listSeparator')) }), result.failedCount ? 'error' : 'warning')
 }
 
 type SourceFilterValue = 'all' | 'project' | 'smart'
 
-const SOURCE_OPTIONS: { value: SourceFilterValue; label: string }[] = [
-  { value: 'all', label: '全部素材' },
-  { value: 'project', label: '项目素材' },
+const SOURCE_OPTIONS: { value: SourceFilterValue; labelKey: string }[] = [
+  { value: 'all', labelKey: 'assetLibrary.allAssets' },
+  { value: 'project', labelKey: 'assetLibrary.projectAssets' },
   // 找素材并入素材库（2026-07-13 ③）：AI 自动分组是素材库的一个视图，不再独占左栏一格。
-  { value: 'smart', label: '智能分组' },
+  { value: 'smart', labelKey: 'assetLibrary.smartGroups' },
 ]
-
-const FILTER_LABEL_BY_VALUE = new Map<FilterValue, string>(
-  FILTER_OPTIONS.map((option) => [option.value, option.label]),
-)
 
 function assetToDragPayload(asset: AssetRef, dragAnchor?: AssetLibraryDragPayload['dragAnchor']): AssetLibraryDragPayload {
   return {
@@ -132,12 +127,6 @@ type AssetLibraryContentProps = {
   className?: string
 }
 
-type Props = {
-  opened: boolean
-  onClose: () => void
-  projectId: string | null
-}
-
 export function AssetLibraryContent({
   projectId,
   compact = false,
@@ -145,6 +134,7 @@ export function AssetLibraryContent({
   onClose,
   className,
 }: AssetLibraryContentProps): JSX.Element {
+  const { t } = useTranslation()
   const uploadInputRef = React.useRef<HTMLInputElement>(null)
   const filterButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const filterMenuRef = React.useRef<HTMLDivElement | null>(null)
@@ -153,6 +143,9 @@ export function AssetLibraryContent({
   const [filterOpen, setFilterOpen] = React.useState(false)
   const [query, setQuery] = React.useState('')
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set())
+  // 文件夹（素材面收敛 2026-07-22 转正）：只在「项目素材」tab 生效,搜索时退成全量平铺。
+  const [activeFolderId, setActiveFolderId] = React.useState<string | null>(null)
+  const [newFolderOpen, setNewFolderOpen] = React.useState(false)
   const lastSelectedIdRef = React.useRef<string | null>(null)
   const selectedIdsRef = React.useRef(selectedIds)
   selectedIdsRef.current = selectedIds
@@ -162,6 +155,7 @@ export function AssetLibraryContent({
     refresh: refreshProjectAssets,
   } = useAssetPool(projectId)
   const { assets: allProjectAssets, refresh: refreshAllProjectAssets } = useAllProjectAssets()
+  const folderApi = useAssetFolders(projectId)
   const allSourceAssets = React.useMemo(
     () => filterImageVideoAssets(allProjectAssets),
     [allProjectAssets],
@@ -201,19 +195,34 @@ export function AssetLibraryContent({
     () => filterBaseAssets.filter((asset) => visibleKinds.has(asset.kind)),
     [filterBaseAssets, visibleKinds],
   )
-  const visibleAssetsRef = React.useRef(visible)
-  visibleAssetsRef.current = visible
+  const projectSelectionEnabled = sourceFilter === 'project'
+  // 文件夹作用域：项目素材 tab + 无搜索词时生效（root=未分类;夹内=归属素材;搜索=全量平铺）。
+  const folderViewActive = projectSelectionEnabled && query.trim() === ''
+  const scopedAssets = React.useMemo(
+    () => (folderViewActive ? assetsForFolderScope(visible, folderApi.state.assignments, activeFolderId) : visible),
+    [activeFolderId, folderApi.state.assignments, folderViewActive, visible],
+  )
+  const folderCounts = React.useMemo(
+    () => folderCountsForAssets(projectSourceAssets, folderApi.state.assignments),
+    [folderApi.state.assignments, projectSourceAssets],
+  )
+  const visibleFolders = folderViewActive && !activeFolderId ? folderApi.state.folders : []
+  const activeFolder = activeFolderId ? folderApi.state.folders.find((folder) => folder.id === activeFolderId) ?? null : null
+  React.useEffect(() => {
+    if (activeFolderId && !activeFolder) setActiveFolderId(null)
+  }, [activeFolder, activeFolderId])
+  const visibleAssetsRef = React.useRef(scopedAssets)
+  visibleAssetsRef.current = scopedAssets
   const selectedKindValues = React.useMemo(
     () => ASSET_KIND_FILTER_VALUES.filter((kind) => visibleKinds.has(kind)),
     [visibleKinds],
   )
   const allKindsSelected = selectedKindValues.length === ASSET_KIND_FILTER_VALUES.length
   const filterActive = !allKindsSelected
-  const projectSelectionEnabled = sourceFilter === 'project'
-  const visibleIds = React.useMemo(() => visible.map((asset) => asset.id), [visible])
+  const visibleIds = React.useMemo(() => scopedAssets.map((asset) => asset.id), [scopedAssets])
   const selectedAssets = React.useMemo(
-    () => visible.filter((asset) => selectedIds.has(asset.id)),
-    [selectedIds, visible],
+    () => scopedAssets.filter((asset) => selectedIds.has(asset.id)),
+    [selectedIds, scopedAssets],
   )
   const selectedProjectAssets = React.useMemo(
     () => (projectSelectionEnabled ? selectedAssets : []),
@@ -231,7 +240,7 @@ export function AssetLibraryContent({
   const [scrollEl, setScrollEl] = React.useState<HTMLDivElement | null>(null)
   const gridCols = compact ? 2 : DEFAULT_GRID_COLS
   const estimatedRowHeight = compact ? COMPACT_ESTIMATED_ROW_HEIGHT : ESTIMATED_ROW_HEIGHT
-  const rowCount = Math.ceil(visible.length / gridCols)
+  const rowCount = Math.ceil(scopedAssets.length / gridCols)
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => scrollEl,
@@ -254,7 +263,7 @@ export function AssetLibraryContent({
         })
         .catch((error) => {
           console.error('asset library upload failed', error)
-          toast('素材导入失败，请重试', 'error')
+          toast(t('assetLibrary.importFailed'), 'error')
         })
     }
     if (audioFiles.length) {
@@ -266,21 +275,25 @@ export function AssetLibraryContent({
         })
         .catch((error) => {
           console.error('asset library audio upload failed', error)
-          toast('音频导入失败，请重试', 'error')
+          toast(t('assetLibrary.audioImportFailed'), 'error')
         })
     }
     if (unsupported.length) {
-      toast(`已跳过 ${unsupported.length} 个不支持的文件`, 'warning')
+      toast(t('assetLibrary.skippedUnsupported', { count: unsupported.length }), 'warning')
     }
-  }, [projectId, refreshAllProjectAssets, refreshProjectAssets])
+  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, t])
 
-  const isEmpty = visible.length === 0
+  const isEmpty = scopedAssets.length === 0 && visibleFolders.length === 0
   const sourceEmpty = sourceFilteredAssets.length === 0
+  const filterLabelByValue = React.useMemo(
+    () => new Map<FilterValue, string>(FILTER_OPTIONS.map((option) => [option.value, t(option.labelKey)])),
+    [t],
+  )
   const activeFilterLabel = allKindsSelected
-    ? '全部'
+    ? t('assetLibrary.all')
     : selectedKindValues.length > 0
-      ? selectedKindValues.map((kind) => FILTER_LABEL_BY_VALUE.get(kind) ?? kind).join('、')
-      : '无分类'
+      ? selectedKindValues.map((kind) => filterLabelByValue.get(kind) ?? kind).join(t('assetLibrary.listSeparator'))
+      : t('assetLibrary.noCategories')
 
   React.useEffect(() => {
     if (!filterOpen) return
@@ -371,13 +384,25 @@ export function AssetLibraryContent({
     event.dataTransfer.setData('text/plain', payloads.length > 1 ? `${payloads.length} 个素材` : asset.name)
   }, [])
 
+  // 项目素材 tab 的格子拖拽=归类进夹（独立 MIME,画布 drop 端不认识,不会误建重复节点）。
+  // 三件套 handler 抽在 useAssetFolderInteractions（R9 防巨壳）。
+  const { handleFolderAssignDragStart, handleFolderDropAssets, handleDeleteFolder } = useAssetFolderInteractions({
+    folderApi,
+    visibleAssetsRef,
+    selectedIdsRef,
+    setSelectedIds,
+    lastSelectedIdRef,
+    setActiveFolderId,
+    collectSelection: assetsForLibraryDrag,
+  })
+
   const deleteSelectedProjectAssets = React.useCallback(async (): Promise<void> => {
     if (!projectId) {
-      toast('删除失败：当前没有打开的项目', 'warning')
+      toast(t('assetLibrary.deleteNoProject'), 'warning')
       return
     }
     if (selectedProjectAssets.length === 0) {
-      toast('请先选中要删除的项目素材', 'warning')
+      toast(t('assetLibrary.selectToDelete'), 'warning')
       return
     }
     const canvasStore = useGenerationCanvasStore.getState()
@@ -388,20 +413,20 @@ export function AssetLibraryContent({
       currentProjectId: projectId,
     })
     if (deletePlan.nodeIds.length === 0) {
-      toast('选中的素材暂时无法删除', 'warning')
+      toast(t('assetLibrary.cannotDeleteSelected'), 'warning')
       return
     }
     const confirmed = await confirmDialog({
-      title: `删除 ${deletePlan.nodeIds.length} 个项目素材？`,
-      message: '对应画布节点与「全部素材」中的落盘文件会同步删除。项目文件会移到系统回收站。',
-      confirmLabel: '删除',
+      title: t('assetLibrary.confirmDeleteTitle', { count: deletePlan.nodeIds.length }),
+      message: t('assetLibrary.confirmDeleteMessage'),
+      confirmLabel: t('assetLibrary.delete'),
       danger: true,
     })
     if (!confirmed) return
     const bridge = getDesktopBridge()
     const deleteFiles = bridge?.workspace?.deleteFiles
     if (deletePlan.fileTargets.length > 0 && !deleteFiles) {
-      toast('当前运行环境不支持删除项目素材', 'error')
+      toast(t('assetLibrary.deleteUnsupported'), 'error')
       return
     }
     try {
@@ -430,14 +455,14 @@ export function AssetLibraryContent({
       refreshProjectAssets()
       refreshAllProjectAssets()
       setSelectedIds(new Set())
-      if (deletableCanvasNodeIds.length > 0) toast(`已删除 ${deletableCanvasNodeIds.length} 个项目素材`, 'success')
-      if (deletedFileCount > 0 && deletableCanvasNodeIds.length === 0) toast(`已删除 ${deletedFileCount} 个落盘素材`, 'success')
-      if (failedFileCount > 0) toast(`${failedFileCount} 个落盘素材删除失败`, 'warning')
+      if (deletableCanvasNodeIds.length > 0) toast(t('assetLibrary.deletedProjectAssets', { count: deletableCanvasNodeIds.length }), 'success')
+      if (deletedFileCount > 0 && deletableCanvasNodeIds.length === 0) toast(t('assetLibrary.deletedFiles', { count: deletedFileCount }), 'success')
+      if (failedFileCount > 0) toast(t('assetLibrary.failedFiles', { count: failedFileCount }), 'warning')
     } catch (error) {
       console.error('delete project assets failed', error)
-      toast('删除项目素材失败，请检查文件权限', 'error')
+      toast(t('assetLibrary.deleteFailed'), 'error')
     }
-  }, [allProjectAssets, projectId, refreshAllProjectAssets, refreshProjectAssets, selectedProjectAssets])
+  }, [allProjectAssets, projectId, refreshAllProjectAssets, refreshProjectAssets, selectedProjectAssets, t])
 
   const uploadButton = (
     <button
@@ -448,11 +473,11 @@ export function AssetLibraryContent({
         'transition-[background] duration-[var(--nomi-transition-fast)] hover:bg-nomi-ink-80',
         compact ? 'h-[30px] px-2.5 shrink-0' : 'h-7 px-3',
       )}
-      aria-label="上传素材"
+      aria-label={t('assetLibrary.uploadAssets')}
       onClick={() => uploadInputRef.current?.click()}
     >
       <IconPlus size={compact ? 12 : 13} stroke={2} />
-      上传
+      {t('assetLibrary.upload')}
     </button>
   )
 
@@ -468,8 +493,8 @@ export function AssetLibraryContent({
       )}
       disabled={selectedProjectAssets.length === 0}
       aria-disabled={selectedProjectAssets.length === 0}
-      aria-label={selectedProjectAssets.length > 0 ? `删除 ${selectedProjectAssets.length} 个项目素材` : '删除项目素材'}
-      title={selectedProjectAssets.length > 0 ? `删除 ${selectedProjectAssets.length} 个项目素材` : '请先选择项目素材'}
+      aria-label={selectedProjectAssets.length > 0 ? t('assetLibrary.deleteSelection', { count: selectedProjectAssets.length }) : t('assetLibrary.deleteProjectAsset')}
+      title={selectedProjectAssets.length > 0 ? t('assetLibrary.deleteSelection', { count: selectedProjectAssets.length }) : t('assetLibrary.selectProjectAssetFirst')}
       onMouseDown={(event) => event.stopPropagation()}
       onClick={() => {
         void deleteSelectedProjectAssets()
@@ -487,7 +512,7 @@ export function AssetLibraryContent({
         compact ? 'min-w-0 flex-1' : 'shrink-0',
       )}
       role="tablist"
-      aria-label="素材来源筛选"
+      aria-label={t('assetLibrary.sourceFilter')}
     >
       {SOURCE_OPTIONS.map((option) => {
         const active = sourceFilter === option.value
@@ -511,9 +536,11 @@ export function AssetLibraryContent({
               lastSelectedIdRef.current = null
               showAllAssetKinds()
               setFilterOpen(false)
+              setActiveFolderId(null)
+              setNewFolderOpen(false)
             }}
           >
-            {option.label}
+            {t(option.labelKey)}
           </button>
         )
       })}
@@ -532,11 +559,11 @@ export function AssetLibraryContent({
           compact ? 'h-8 px-2.5' : 'h-8 px-3',
           (filterOpen || filterActive) && 'border-nomi-ink-20 bg-nomi-ink-05 text-nomi-ink',
         )}
-        aria-label="筛选素材分类"
+        aria-label={t('assetLibrary.categoryFilter')}
         aria-haspopup="dialog"
         aria-expanded={filterOpen}
         aria-pressed={filterActive}
-        title={`分类：${activeFilterLabel}`}
+        title={t('assetLibrary.categoryTitle', { label: activeFilterLabel })}
         onClick={() => setFilterOpen((open) => !open)}
       >
         <IconFilter size={15} stroke={1.8} aria-hidden="true" />
@@ -562,7 +589,7 @@ export function AssetLibraryContent({
         {/* 头部 */}
         {showHeader ? (
           <div className={cn('flex items-center gap-2 px-4 pt-3.5 pb-3 border-b border-nomi-line')}>
-            <b className={cn('text-title font-bold text-nomi-ink')}>素材库</b>
+            <b className={cn('text-title font-bold text-nomi-ink')}>{t('assetLibrary.title')}</b>
             <span className={cn('text-caption text-nomi-ink-40')}>· {sourceFilteredAssets.length}</span>
             {/* 「网页捕捞」入口已删（方案一 2026-07-12）：顶栏「浏览器」是唯一上网门，
                 双门牌被用户体感为重复。 */}
@@ -575,7 +602,7 @@ export function AssetLibraryContent({
                   'text-nomi-ink-40 hover:text-nomi-ink hover:bg-nomi-ink-05',
                   'transition-[background,color] duration-[var(--nomi-transition-fast)]',
                 )}
-                aria-label="关闭素材库"
+                aria-label={t('assetLibrary.close')}
                 onClick={onClose}
               >
                 <IconX size={16} stroke={2} />
@@ -589,7 +616,7 @@ export function AssetLibraryContent({
           type="file"
           accept={UPLOAD_ACCEPT}
           multiple
-          aria-label="素材文件选择器"
+          aria-label={t('assetLibrary.filePicker')}
           onChange={handleUploadFiles}
         />
 
@@ -601,9 +628,51 @@ export function AssetLibraryContent({
           </div>
           {sourceFilter !== 'smart' ? (
             <div className="flex min-w-0 items-center gap-2">
-              <DesignSearchInput className="min-w-0 flex-1" placeholder="搜索素材…" ariaLabel="搜索素材" value={query} onChange={setQuery} />
+              <DesignSearchInput className="min-w-0 flex-1" placeholder={t('assetLibrary.search')} ariaLabel={t('assetLibrary.searchAria')} value={query} onChange={setQuery} />
               {deleteSelectedButton}
+              {projectSelectionEnabled ? (
+                newFolderOpen ? (
+                  <NewFolderInput onCreate={folderApi.createFolder} onCancel={() => setNewFolderOpen(false)} />
+                ) : (
+                  <button
+                    type="button"
+                    className={cn(
+                      'inline-flex h-8 shrink-0 items-center justify-center rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2.5',
+                      'cursor-pointer text-nomi-ink-65 transition-[background,color,border-color] duration-[var(--nomi-transition-fast)]',
+                      'hover:border-nomi-ink-20 hover:bg-nomi-ink-05 hover:text-nomi-ink',
+                    )}
+                    aria-label={t('assetLibrary.newFolder')}
+                    title={t('assetLibrary.newFolder')}
+                    onClick={() => setNewFolderOpen(true)}
+                  >
+                    <IconFolderPlus size={15} stroke={1.8} aria-hidden="true" />
+                  </button>
+                )
+              ) : null}
               {categoryFilterButton}
+            </div>
+          ) : null}
+          {folderViewActive && activeFolder ? (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <button
+                type="button"
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-0.5 rounded-nomi-sm border-0 bg-transparent px-1.5 py-1',
+                  'cursor-pointer text-caption text-nomi-accent transition-colors duration-[var(--nomi-transition-fast)] hover:bg-nomi-ink-05',
+                )}
+                aria-label={t('assetLibrary.backToAllAssets')}
+                title={t('assetLibrary.backDropToRemove')}
+                onClick={() => setActiveFolderId(null)}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'copy'
+                }}
+                onDrop={(event) => handleFolderDropAssets(null, event)}
+              >
+                <IconChevronLeft size={14} stroke={2} aria-hidden="true" />
+                {t('common.back')}
+              </button>
+              <span className="min-w-0 truncate text-caption text-nomi-ink-40">／ {activeFolder.label} · {scopedAssets.length}</span>
             </div>
           ) : null}
         </div>
@@ -614,29 +683,50 @@ export function AssetLibraryContent({
           </div>
         ) : (
         <div ref={setScrollEl} className={cn('flex-1 overflow-y-auto', compact ? 'px-3 pb-3' : 'px-3.5 pb-4')}>
+          {visibleFolders.length > 0 ? (
+            <div
+              className="grid gap-2.5 pb-2.5"
+              style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
+              role="list"
+              aria-label={t('assetLibrary.foldersAria')}
+            >
+              {visibleFolders.map((folder) => (
+                <FolderGridCell
+                  key={folder.id}
+                  id={folder.id}
+                  label={folder.label}
+                  count={folderCounts.get(folder.id) ?? 0}
+                  onOpen={setActiveFolderId}
+                  onDelete={handleDeleteFolder}
+                  onDropAssets={(folderId, event) => handleFolderDropAssets(folderId, event)}
+                />
+              ))}
+            </div>
+          ) : null}
           {isEmpty ? (
             <DesignEmptyState
               density="inline"
               icon={<IconPhoto size={34} stroke={1.4} className="text-nomi-ink-30" />}
-              title={sourceEmpty ? (sourceFilter === 'project' ? '还没有项目素材' : '还没有素材') : '没有匹配的素材'}
+              title={sourceEmpty ? (sourceFilter === 'project' ? t('assetLibrary.noProjectAssets') : t('assetLibrary.noAssets')) : t('assetLibrary.noMatches')}
               description={
                 sourceEmpty
-                  ? '点「上传」导入图片、视频或音频，或在生成区生成后会自动出现在这里。'
-                : '换个筛选或搜索词试试。'
+                  ? t('assetLibrary.emptyDescription')
+                  : t('assetLibrary.noMatchesDescription')
               }
             />
           ) : compact ? (
             <div style={{ columnCount: 3, columnGap: '10px' }}>
-              {visible.map((asset) => (
+              {scopedAssets.map((asset) => (
                 <AssetGridCell
                   key={asset.id}
                   asset={asset}
                   compact
                   selectable
-                  draggable={!projectSelectionEnabled}
+                  draggable
                   selected={selectedIds.has(asset.id)}
+                  dragHint={projectSelectionEnabled ? t('assetLibrary.dragHintFolder') : undefined}
                   onSelect={selectAsset}
-                  onDragStartAsset={projectSelectionEnabled ? undefined : handleAssetDragStart}
+                  onDragStartAsset={projectSelectionEnabled ? handleFolderAssignDragStart : handleAssetDragStart}
                 />
               ))}
             </div>
@@ -644,7 +734,7 @@ export function AssetLibraryContent({
             <div style={{ height: rowVirtualizer.getTotalSize(), width: '100%', position: 'relative' }}>
               {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                 const start = virtualRow.index * gridCols
-                const rowAssets = visible.slice(start, start + gridCols)
+                const rowAssets = scopedAssets.slice(start, start + gridCols)
                 return (
                   <div
                     key={virtualRow.key}
@@ -665,10 +755,11 @@ export function AssetLibraryContent({
                         key={asset.id}
                         asset={asset}
                         selectable
-                        draggable={!projectSelectionEnabled}
+                        draggable
                         selected={selectedIds.has(asset.id)}
+                        dragHint={projectSelectionEnabled ? t('assetLibrary.dragHintFolder') : undefined}
                         onSelect={selectAsset}
-                        onDragStartAsset={projectSelectionEnabled ? undefined : handleAssetDragStart}
+                        onDragStartAsset={projectSelectionEnabled ? handleFolderAssignDragStart : handleAssetDragStart}
                       />
                     ))}
                   </div>
@@ -683,74 +774,3 @@ export function AssetLibraryContent({
   )
 }
 
-export function AssetLibraryPanel({ opened, onClose, projectId }: Props): JSX.Element | null {
-  const panelRef = React.useRef<HTMLDivElement>(null)
-
-  // ESC 关闭
-  React.useEffect(() => {
-    if (!opened) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [opened, onClose])
-
-  // 点击外部关闭（避开 Mantine 浮层 / 文件对话框）
-  React.useEffect(() => {
-    if (!opened) return
-    const handler = (e: MouseEvent) => {
-      if (!panelRef.current) return
-      const target = e.target as Element | null
-      if (!target) return
-      if (panelRef.current.contains(target)) return
-      if (target.closest(
-        '.mantine-Modal-root, .mantine-Modal-overlay, .mantine-Modal-content,' +
-        '.mantine-Drawer-root, .mantine-Drawer-overlay,' +
-        '.mantine-Popover-dropdown, .mantine-Menu-dropdown, .mantine-Tooltip-tooltip,' +
-        '[role="dialog"]'
-      )) return
-      onClose()
-    }
-    const id = window.requestAnimationFrame(() => {
-      window.addEventListener('mousedown', handler)
-    })
-    return () => {
-      window.cancelAnimationFrame(id)
-      window.removeEventListener('mousedown', handler)
-    }
-  }, [opened, onClose])
-
-  if (!opened) return null
-
-  return (
-    <Portal>
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-label="素材库"
-        className={cn(
-          'fixed flex flex-col overflow-hidden',
-          'bg-nomi-paper border border-nomi-line rounded-nomi-lg shadow-nomi-lg',
-        )}
-        style={{
-          top: TOP_OFFSET,
-          right: RIGHT_OFFSET,
-          width: PANEL_WIDTH,
-          height: `calc(100vh - ${TOP_OFFSET + 16}px)`,
-          maxHeight: `calc(100vh - ${TOP_OFFSET + 16}px)`,
-          zIndex: 4000,
-          animation: 'nomi-panel-pop 140ms cubic-bezier(.2, .7, .3, 1)',
-        }}
-      >
-        <AssetLibraryContent projectId={projectId} onClose={onClose} />
-        <style>{`
-          @keyframes nomi-panel-pop {
-            from { opacity: 0; transform: translateY(-4px) scale(0.985); }
-            to   { opacity: 1; transform: translateY(0) scale(1); }
-          }
-        `}</style>
-      </div>
-    </Portal>
-  )
-}

@@ -173,6 +173,13 @@ type WorkbenchState = {
   /** 一次性信号：打开示例/新项目时请求创作助手默认展开（让「拆镜头」CTA 一眼可见），消费后清掉。 */
   creationAssistantAutoOpen: boolean
   setCreationAssistantAutoOpen: (open: boolean) => void
+  /**
+   * 创作助手收起态（用户拍板 2026-07-25 根治）：默认 false=常驻展开成编辑器右侧栏；用户点 ✕ 收起成 pill。
+   * 放 store（非组件本地 useState）→ 跨页面/跨导航不重置（收起「粘住」），架构对齐生成区 generationAiCollapsed。
+   * 不落盘（store 无 persist）→ 每次开 App 回到常驻展开，符合「打开之后是常驻的」。
+   */
+  creationAiCollapsed: boolean
+  setCreationAiCollapsed: (collapsed: boolean) => void
   setTimeline: (timeline: TimelineState) => void
   restoreProjectWorkbenchState: (payload: { workbenchDocument: WorkbenchDocument; timeline: TimelineState }) => void
   setTimelinePlaying: (playing: boolean) => void
@@ -309,6 +316,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   storyboardEditorOpen: false,
   canvasFitNonce: 0,
   creationAssistantAutoOpen: false,
+  creationAiCollapsed: false,
   timeline: createDefaultTimeline(),
   timelinePlaying: false,
   previewAspectRatio: '16:9',
@@ -397,6 +405,9 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   },
   setCreationAssistantAutoOpen: (creationAssistantAutoOpen) => {
     set({ creationAssistantAutoOpen })
+  },
+  setCreationAiCollapsed: (creationAiCollapsed) => {
+    set({ creationAiCollapsed })
   },
   swapCreationAiProject: (prevId, nextId) => {
     // 结构性保证:任何「创作区切项目」都先中止在途流式轮次(中止流 + 作废 token +

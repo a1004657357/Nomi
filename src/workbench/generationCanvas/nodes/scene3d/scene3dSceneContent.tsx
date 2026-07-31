@@ -3,6 +3,7 @@ import { Grid } from '@react-three/drei'
 import { crowdCount, mannequinRoleLabel } from './scene3dMath'
 import {
   SCENE3D_GRID_FLAG,
+  SCENE3D_EDITOR_ONLY_FLAG,
   GRID_CELL_COLOR,
   GRID_SECTION_COLOR,
   DARK_GRID_CELL_COLOR,
@@ -27,6 +28,7 @@ import {
   FocusController,
   CaptureBinder,
   CameraViewEditController,
+  PreviewCameraController,
 } from './scene3dViewControllers'
 import { CameraStateRecorder } from './CameraStateRecorder'
 import { CharacterDriveController } from './scene3dCharacterDriveController'
@@ -45,6 +47,8 @@ export function SceneContent({
   trajectoryMode,
   possessedObject,
   possessedLocomotionClip,
+  onPoseTransition,
+  onPoseResume,
   cameraPossessId,
   onLocomotionChange,
   onPossess,
@@ -75,6 +79,9 @@ export function SceneContent({
   onEditTrajectory,
   onDeleteTrajectory,
   onBindTargetToTrajectory,
+  previewMode,
+  playheadRef,
+  previewTrajectoryIds,
 }: {
   state: Scene3DState
   selection: Scene3DSelection
@@ -91,6 +98,9 @@ export function SceneContent({
   // 当前被操控相机 id（用于「正在操控这台相机时不再显其操控浮层」）。
   cameraPossessId?: string | null
   onLocomotionChange?: (clip: string) => void
+  // 统一 semantic pose transition（D）：C 键下蹲/恢复经此上抛，Scene3DFullscreen 同一入口更新实时画面 + 录制打点。
+  onPoseTransition?: (presetId: string) => void
+  onPoseResume?: () => void
   // 画布内「操控」浮层入口的点击回调（#6）。缺省 = 不显浮层（如只读）。
   onPossess?: (objectId: string) => void
   // 画布内「操控镜头」浮层入口的点击回调。缺省 = 不显（如只读）。
@@ -130,6 +140,10 @@ export function SceneContent({
   onEditTrajectory?: (trajectoryId: string) => void
   onDeleteTrajectory?: (trajectoryId: string) => void
   onBindTargetToTrajectory?: (trajectoryId: string, targetId: string, pointId?: string | null) => void
+  // 成片预览（第2期）：previewMode 时挂 PreviewCameraController、不挂 Scene3DControls，主相机 live 跟随播放头。
+  previewMode?: boolean
+  playheadRef: React.MutableRefObject<number>
+  previewTrajectoryIds: ReadonlySet<string> | null
 }): JSX.Element {
   const freeLook = !viewLocked
   const controlMode: Scene3DControlMode = freeLook ? 'fly' : 'edit'
@@ -187,8 +201,12 @@ export function SceneContent({
           />
         </group>
       ) : null}
-      {state.environment.showAxes && !cameraViewEditing ? <axesHelper args={[2]} /> : null}
+      {state.environment.showAxes && !cameraViewEditing
+        ? <axesHelper args={[2]} userData={{ [SCENE3D_EDITOR_ONLY_FLAG]: true }} />
+        : null}
+      {/* 轨迹线/控制点/加点按钮整组 editor-only：捕获时一律隐藏（审计 P0：首尾帧烧进白点/绿线）。 */}
       {(trajectoryMode || state.trajectories.length > 0) && !cameraViewEditing ? (
+        <group userData={{ [SCENE3D_EDITOR_ONLY_FLAG]: true }}>
         <TrajectoryRenderer
           trajectories={state.trajectories}
           activeTrajectoryId={activeTrajectoryId}
@@ -207,6 +225,7 @@ export function SceneContent({
           onDeleteTrajectory={onDeleteTrajectory}
           onBindTargetToTrajectory={onBindTargetToTrajectory}
         />
+        </group>
       ) : null}
       {state.objects.map((object) => (
         <SceneObjectView
@@ -214,7 +233,9 @@ export function SceneContent({
           object={object}
           selected={selection?.type === 'object' && selection.id === object.id}
           readOnly={readOnly || trajectoryMode || possessedObject?.id === object.id}
-          interactionDisabled={trajectoryMode}
+          // 轨迹编辑态不再把对象设成死区（模式陷阱：用户点人没反应以为全坏了，2026-07-20 反馈）。
+          // 点对象由宿主 selectSceneItem 统一「退出轨迹模式 + 选中」；变换手柄仍按 readOnly 关闭。
+          interactionDisabled={false}
           transformMode={transformMode}
           orbitControlsActive={!freeLook}
           navigationLockedRef={navigationLockedRef}
@@ -264,19 +285,29 @@ export function SceneContent({
         onCameraChange={onEditorCameraCommit}
         onFocusConsumed={onFocusConsumed}
       />
-      <Scene3DControls
-        freeLook={freeLook}
-        selectionActive={selection !== null}
-        speed={flySpeed}
-        target={state.editorCamera.target}
-        keyboardDisabled={Boolean(possessedObject)}
-        followObjectId={possessedObject?.id ?? null}
-        navigationLockedRef={navigationLockedRef}
-        onClearSelection={() => onSelect(null)}
-        onWheelNavigation={onWheelNavigation}
-        onKeyboardNavigationStart={onKeyboardNavigationStart}
-        onKeyboardNavigationStop={onKeyboardNavigationStop}
-      />
+      {/* 成片预览态：主相机交给 PreviewCameraController 只读跟随播放头，不挂 Scene3DControls——fly/orbit 与
+          playhead 驱动互斥，避免抢相机（「按模式拆分」）。退出预览恢复正常导航。 */}
+      {previewMode ? (
+        <PreviewCameraController
+          state={state}
+          playheadRef={playheadRef}
+          activeTrajectoryIds={previewTrajectoryIds}
+        />
+      ) : (
+        <Scene3DControls
+          freeLook={freeLook}
+          selectionActive={selection !== null}
+          speed={flySpeed}
+          target={state.editorCamera.target}
+          keyboardDisabled={Boolean(possessedObject)}
+          followObjectId={possessedObject?.id ?? null}
+          navigationLockedRef={navigationLockedRef}
+          onClearSelection={() => onSelect(null)}
+          onWheelNavigation={onWheelNavigation}
+          onKeyboardNavigationStart={onKeyboardNavigationStart}
+          onKeyboardNavigationStop={onKeyboardNavigationStop}
+        />
+      )}
       <CameraStateRecorder
         mode={controlMode}
         target={state.editorCamera.target}
@@ -290,6 +321,8 @@ export function SceneContent({
           locomotionClip={possessedLocomotionClip}
           onObjectPatch={onObjectPatch}
           onLocomotionChange={onLocomotionChange}
+          onPoseTransition={onPoseTransition}
+          onPoseResume={onPoseResume}
         />
       ) : null}
       <CaptureBinder cameras={state.cameras} setApi={setCaptureApi} />

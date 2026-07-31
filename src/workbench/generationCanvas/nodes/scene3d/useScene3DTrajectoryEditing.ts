@@ -7,6 +7,7 @@ import {
 } from './scene3dSerializer'
 import { UNGROUPED_TRAJECTORY_GROUP_ID } from './scene3dConstants'
 import { trajectoryBindTargetsFromState } from './scene3dTrajectoryState'
+import { syncSceneTimelineDuration } from './scene3dTimeline'
 import type {
   Scene3DState,
   Scene3DTrajectory,
@@ -25,6 +26,44 @@ const TRAJECTORY_COLOR_SEQUENCE = ['#ef4444', '#facc15', '#3b82f6', '#22c55e'] a
 const NEW_TRAJECTORY_SECOND_POINT_OFFSET = 3
 
 type Scene3DStateSetter = React.Dispatch<React.SetStateAction<Scene3DState>>
+
+// 绑定对象到轨迹的纯逻辑（单一真相源）：bindObject 与「一键补出片」共用。
+// 「一键补」要「构造绑定后的 state 立即出片」来绕开 setState 异步（绑完还没生效就出片 = 又一次静默失败），
+// 所以绑定必须有纯函数版、不能只有 setState 版——两处若各写一遍就是并行实现（违 P1）。
+export function addObjectTrajectoryBinding(
+  state: Scene3DState,
+  trajectoryId: string,
+  objectId: string,
+  offsetRatio = 0,
+): Scene3DState {
+  if (state.trajectoryBindings.some((binding) => binding.objects.some((object) => object.objectId === objectId))) {
+    return state
+  }
+  const boundObject: Scene3DTrajectoryBoundObject = { objectId, offsetRatio }
+  const existing = state.trajectoryBindings.find((binding) => binding.trajectoryId === trajectoryId)
+  if (existing) {
+    return {
+      ...state,
+      trajectoryBindings: state.trajectoryBindings.map((binding) => (
+        binding.id === existing.id
+          ? { ...binding, objects: [...binding.objects, boundObject] }
+          : binding
+      )),
+    }
+  }
+  const binding: Scene3DTrajectoryBinding = {
+    id: createScene3DTrajectoryBindingId(),
+    trajectoryId,
+    objects: [boundObject],
+    startTime: 0,
+    endTime: Math.max(0.1, state.sceneTimeline.totalDuration),
+    direction: 'forward',
+  }
+  return syncSceneTimelineDuration({
+    ...state,
+    trajectoryBindings: [...state.trajectoryBindings, binding],
+  })
+}
 
 export type Scene3DTrajectoryEditing = {
   activeTrajectoryId: string | null
@@ -61,6 +100,7 @@ export type Scene3DTrajectoryEditing = {
   translateTrajectory: (trajectoryId: string, delta: Scene3DVector3) => void
   bindObject: (trajectoryId: string, objectId: string, offsetRatio?: number) => void
   patchBinding: (bindingId: string, patch: Partial<Scene3DTrajectoryBinding>) => void
+  syncTimelineDuration: () => void
   patchBoundObject: (bindingId: string, objectId: string, patch: Partial<Scene3DTrajectoryBoundObject>) => void
   unbindObject: (bindingId: string, objectId: string) => void
   deleteBinding: (bindingId: string) => void
@@ -103,6 +143,10 @@ export function useScene3DTrajectoryEditing({
   const [activePointId, setActivePointId] = React.useState<string | null>(null)
   const [activeGroupId, setActiveGroupId] = React.useState<string | null>(null)
   const [trajectoryEditMode, setTrajectoryEditModeState] = React.useState(false)
+  // 时间轴按旅程时机出现，默认收起：进门底部要先见「添加」工具栏（摆场景是旅程第 1 步），
+  // 默认展开会把它整个盖住（2026-07-20 用户真机反馈「一进来懵逼，关掉时间轴才看到添加」——
+  // 凌晨方案里"时间轴默认开"与"添加移左栏"是一对，只落一半就是这个冲突）。
+  // 预设落轨 / 进轨迹模式 / 绑定 / 播放四条路都会 setTimelineOpen(true)——第一段运镜诞生那刻它自己出现。
   const [timelineOpen, setTimelineOpen] = React.useState(false)
   const [isPlaying, setIsPlaying] = React.useState(false)
   const playheadRef = React.useRef(0)
@@ -195,7 +239,7 @@ export function useScene3DTrajectoryEditing({
         .forEach((binding) => {
           binding.objects.forEach((object) => setScene3DObjectRuntimeRefsVisible(object.objectId, true))
         })
-      return {
+      return syncSceneTimelineDuration({
         ...current,
         trajectories: current.trajectories.filter((trajectory) => trajectory.id !== trajectoryId),
         trajectoryBindings: current.trajectoryBindings.filter((binding) => binding.trajectoryId !== trajectoryId),
@@ -203,7 +247,7 @@ export function useScene3DTrajectoryEditing({
           ...group,
           trajectoryIds: group.trajectoryIds.filter((id) => id !== trajectoryId),
         })),
-      }
+      })
     })
     setActiveTrajectoryId((current) => (current === trajectoryId ? null : current))
     setActivePointId(null)
@@ -332,47 +376,17 @@ export function useScene3DTrajectoryEditing({
 
   const bindObject = React.useCallback((trajectoryId: string, objectId: string, offsetRatio = 0) => {
     if (readOnly) return
-    setState((current) => {
-      if (current.trajectoryBindings.some((binding) => (
-        binding.objects.some((object) => object.objectId === objectId)
-      ))) {
-        return current
-      }
-      const boundObject: Scene3DTrajectoryBoundObject = { objectId, offsetRatio }
-      const existing = current.trajectoryBindings.find((binding) => binding.trajectoryId === trajectoryId)
-      if (existing) {
-        return {
-          ...current,
-          trajectoryBindings: current.trajectoryBindings.map((binding) => (
-            binding.id === existing.id
-              ? { ...binding, objects: [...binding.objects, boundObject] }
-              : binding
-          )),
-        }
-      }
-      const binding: Scene3DTrajectoryBinding = {
-        id: createScene3DTrajectoryBindingId(),
-        trajectoryId,
-        objects: [boundObject],
-        startTime: 0,
-        endTime: Math.max(0.1, current.sceneTimeline.totalDuration),
-        direction: 'forward',
-      }
-      return {
-        ...current,
-        trajectoryBindings: [...current.trajectoryBindings, binding],
-        sceneTimeline: binding.endTime > current.sceneTimeline.totalDuration
-          ? { ...current.sceneTimeline, totalDuration: binding.endTime }
-          : current.sceneTimeline,
-      }
-    })
+    setState((current) => addObjectTrajectoryBinding(current, trajectoryId, objectId, offsetRatio))
   }, [readOnly, setState])
 
+  // 纯 patch，不动 totalDuration：时间轴拖绑定条时逐帧调用它——若在此重算 totalDuration 会正反馈跳动
+  // （拖右沿→endTime 涨→尺子涨→同像素更多秒→endTime 涨更快）。totalDuration 改由 syncTimelineDuration
+  // 在「松手 / 数字输入提交 / 增删」时一次性重算（第3期：时间轴=成片长度，可增可减）。
   const patchBinding = React.useCallback((bindingId: string, patch: Partial<Scene3DTrajectoryBinding>) => {
     if (readOnly) return
-    setState((current) => {
-      let nextMaxEndTime = current.sceneTimeline.totalDuration
-      const trajectoryBindings = current.trajectoryBindings.map((binding) => {
+    setState((current) => ({
+      ...current,
+      trajectoryBindings: current.trajectoryBindings.map((binding) => {
         if (binding.id !== bindingId) return binding
         const nextBinding = { ...binding, ...patch }
         const startTime = Math.max(0, Number.isFinite(nextBinding.startTime) ? nextBinding.startTime : binding.startTime)
@@ -380,17 +394,9 @@ export function useScene3DTrajectoryEditing({
           startTime + 0.001,
           Number.isFinite(nextBinding.endTime) ? nextBinding.endTime : binding.endTime,
         )
-        nextMaxEndTime = Math.max(nextMaxEndTime, endTime)
         return { ...nextBinding, startTime, endTime }
-      })
-      return {
-        ...current,
-        trajectoryBindings,
-        sceneTimeline: nextMaxEndTime === current.sceneTimeline.totalDuration
-          ? current.sceneTimeline
-          : { ...current.sceneTimeline, totalDuration: nextMaxEndTime },
-      }
-    })
+      }),
+    }))
   }, [readOnly, setState])
 
   const patchBoundObject = React.useCallback((
@@ -416,7 +422,7 @@ export function useScene3DTrajectoryEditing({
 
   const unbindObject = React.useCallback((bindingId: string, objectId: string) => {
     if (readOnly) return
-    setState((current) => ({
+    setState((current) => syncSceneTimelineDuration({
       ...current,
       trajectoryBindings: current.trajectoryBindings.flatMap((binding) => {
         if (binding.id !== bindingId) return [binding]
@@ -432,11 +438,18 @@ export function useScene3DTrajectoryEditing({
     setState((current) => {
       const binding = current.trajectoryBindings.find((candidate) => candidate.id === bindingId)
       binding?.objects.forEach((object) => setScene3DObjectRuntimeRefsVisible(object.objectId, true))
-      return {
+      return syncSceneTimelineDuration({
         ...current,
         trajectoryBindings: current.trajectoryBindings.filter((binding) => binding.id !== bindingId),
-      }
+      })
     })
+  }, [readOnly, setState])
+
+  // 第3期：把 totalDuration 一次性重算到内容长度（可增可减）。拖绑定条松手 / 属性面板改起止时间提交时调它——
+  // 拖动逐帧走纯 patchBinding 不触发它，避免「拖右沿正反馈跳动」。
+  const syncTimelineDuration = React.useCallback(() => {
+    if (readOnly) return
+    setState((current) => syncSceneTimelineDuration(current))
   }, [readOnly, setState])
 
   const addGroup = React.useCallback(() => {
@@ -496,6 +509,7 @@ export function useScene3DTrajectoryEditing({
     translateTrajectory,
     bindObject,
     patchBinding,
+    syncTimelineDuration,
     patchBoundObject,
     unbindObject,
     deleteBinding,

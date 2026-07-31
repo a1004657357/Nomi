@@ -3,7 +3,7 @@
 // 把各家 provider 返回的任意 JSON 结构按映射表抽取资产 URL / 状态 / 元数据。
 // 纯函数、无副作用、最易出 bug ——本模块的核心价值就是为它补上 characterization 测试。
 import { extractTaskId as extractTaskIdShared } from "../ai/requestPipeline";
-import { firstString, isJsonRecord, readNestedRecord, type JsonRecord } from "../jsonUtils";
+import { firstString, isJsonRecord, readNestedRecord, trim, type JsonRecord } from "../jsonUtils";
 
 /** 与 runtime 的 TaskResult["status"] 结构等价，解耦类型依赖。 */
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed";
@@ -100,6 +100,72 @@ export function taskStatusFromResponse(response: unknown, responseMapping: JsonR
   if (assetUrls.length > 0) return "succeeded";
   if (isJsonRecord(response) && (response.error || readNestedRecord(response, ["data", "error"]))) return "failed";
   return "queued";
+}
+
+/** 各家把失败原因塞进的字段名（无序扫描用）。含 kie 的 failMsg、runninghub 的 errorMessage。 */
+const FAILURE_TEXT_KEYS = [
+  "error_message",
+  "errorMessage",
+  "failMsg",
+  "fail_reason",
+  "failureReason",
+  "message",
+  "detail",
+  "reason",
+] as const;
+/** 递归下钻的容器字段（`error` 必须在内——它常是对象 `{code,message}`，不是字符串）。 */
+const FAILURE_NEST_KEYS = ["error", "data", "raw", "response", "result", "output", "errors"] as const;
+/** 成功态占位词：`{code:200,message:"success",data:{…}}` 这种包裹别被当成失败原因报给用户。 */
+const NON_FAILURE_TEXTS = new Set(["success", "succeeded", "ok", "done", "成功", "完成"]);
+
+function failureTextByShape(value: unknown, depth = 0): string {
+  if (depth > 4) return "";
+  const node = maybeParseJsonString(value);
+  if (typeof node === "string") {
+    const text = node.trim();
+    return NON_FAILURE_TEXTS.has(text.toLowerCase()) ? "" : text;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = failureTextByShape(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (!isJsonRecord(node)) return "";
+  for (const key of FAILURE_TEXT_KEYS) {
+    const text = trim(node[key]);
+    if (text && !NON_FAILURE_TEXTS.has(text.toLowerCase())) return text;
+  }
+  for (const key of FAILURE_NEST_KEYS) {
+    if (!(key in node)) continue;
+    const found = failureTextByShape(node[key], depth + 1);
+    if (found) return found;
+  }
+  return "";
+}
+
+/**
+ * 终态失败的**真实原因**（唯一读点）。
+ *
+ * 病根（2026-07-30 用户真机报「模型任务执行失败 (taskId=…, kind=text_to_image)」）：16 份 profile 的
+ * `response_mapping.error_message` 声明了失败原因在哪（apimart `data.error.message` / kie `data.failMsg` /
+ * runninghub `errorMessage` / modelscope `errors.message` …），但**全程没有任何一处读它**——声明即死代码。
+ * 渲染层只好自己按形状猜，且猜不到 failMsg/errorMessage 这类家族专属字段，于是所有 vendor 的终态失败
+ * 统统退化成一句「模型任务执行失败 + taskId」：用户看不到能行动的信息，我们也拿不到真原因。
+ *
+ * 顺序：① profile 声明的映射（每家自己的路径，权威）→ ② 映射没声明/没取到才按常见形状下钻。
+ * 两层都在这一个函数里，渲染层不再自己解析（删掉了那份猜形状的副本）。
+ *
+ * 上游 JSON 常被当字符串二次嵌套（apimart 把 Google 的 `{"error":{"code":404,…}}` 整个塞进
+ * `data.error.message`），故取到文本后再解一层——否则用户看到的是一坨转义 JSON 而非「Requested
+ * entity was not found.」。
+ */
+export function taskFailureMessageFromResponse(response: unknown, responseMapping: JsonRecord | null): string {
+  const mapped = firstMappedString(response, responseMapping, "error_message");
+  const text = mapped || failureTextByShape(response);
+  if (!text) return "";
+  return failureTextByShape(text) || text;
 }
 
 export function providerMetaFromResponse(response: unknown, mapping: JsonRecord | null): JsonRecord {

@@ -1,5 +1,6 @@
 import React from 'react'
-import { IconCube, IconMaximize, IconMovie } from '@tabler/icons-react'
+import { useTranslation } from 'react-i18next'
+import { IconCube, IconMaximize } from '@tabler/icons-react'
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
 import { cn } from '../../../utils/cn'
 import { EmptyStateLauncher } from './render/CardCommon'
@@ -13,6 +14,10 @@ import { cloneScene3DState, normalizeScene3DState } from './scene3d/scene3dSeria
 import { persistScene3DScreenshot } from './scene3d/scene3dScreenshot'
 import { frameCountForDuration } from './scene3d/takeRecording'
 import { isVideoLikeGenerationNodeKind } from '../model/generationNodeKinds'
+import { DeferredNodeVideo } from './DeferredNodeMedia'
+import { buildVideoPlaybackUrl } from '../../../media/videoPlaybackUrl'
+import { diagnoseVideoPlaybackFailure, logVideoPlaybackFailure } from '../../../media/videoPlaybackDiagnostics'
+import { readScene3DCardPreview } from './scene3d/scene3dCardPreview'
 import {
   referenceSlotForScene3DCaptureTitle,
   shouldAttachScene3DFrameReference,
@@ -21,7 +26,7 @@ import {
 import type { Scene3DCaptureResult, Scene3DState } from './scene3d/scene3dTypes'
 
 const loadScene3DFullscreen = () => import('./scene3d/Scene3DFullscreen')
-const Scene3DFullscreen = lazyWithChunkBoundary('3D 全屏编辑', loadScene3DFullscreen)
+const Scene3DFullscreen = lazyWithChunkBoundary('i18n:scene3d.fullscreen.chunkTitle', loadScene3DFullscreen)
 
 type Scene3DEditorProps = {
   node: GenerationCanvasNode
@@ -43,6 +48,12 @@ function imageNodeSize(width: number, height: number): { width: number; height: 
 
 function readScene3DState(node: GenerationCanvasNode): Scene3DState {
   return normalizeScene3DState(node.meta?.scene3dState)
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized || null
 }
 
 function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
@@ -92,40 +103,28 @@ export function readTakeCaptureStatus(node: GenerationCanvasNode): 'generating' 
   if (!meta) return null
   if (meta.cameraMoveAutoCapture && typeof meta.cameraMoveAutoCapture === 'object') return 'generating'
   const video = meta.cameraMoveVideo
-  if (video && typeof video === 'object' && typeof (video as { url?: unknown }).url === 'string') return 'done'
+  if (video && typeof video === 'object' && readNonEmptyString((video as { url?: unknown }).url)) return 'done'
   return null
 }
 
-function Scene3DTakeStatusOverlay({ status }: { status: 'generating' | 'done' }): JSX.Element {
-  if (status === 'generating') {
-    return (
-      <div
-        className={cn(
-          'pointer-events-none absolute inset-x-0 bottom-0 z-[2] flex items-center justify-center gap-2',
-          'bg-nomi-ink/[0.62] px-3 py-1.5 text-caption font-medium text-nomi-paper backdrop-blur-[3px]',
-        )}
-        aria-live="polite"
-      >
-        <NomiLoadingMark size={16} />
-        <span>参考视频生成中…</span>
-      </div>
-    )
-  }
+function Scene3DTakeGeneratingOverlay(): JSX.Element {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
-        'pointer-events-none absolute inset-x-0 bottom-0 z-[2] flex items-center justify-center gap-1.5',
-        'bg-nomi-accent/[0.92] px-3 py-1.5 text-caption font-medium text-nomi-paper',
+        'pointer-events-none absolute inset-x-0 bottom-0 z-[2] flex items-center justify-center gap-2',
+        'bg-nomi-ink/[0.62] px-3 py-1.5 text-caption font-medium text-nomi-paper backdrop-blur-[3px]',
       )}
       aria-live="polite"
     >
-      <IconMovie size={14} stroke={1.9} />
-      <span>参考视频已生成 ✓</span>
+      <NomiLoadingMark size={16} />
+      <span>{t('scene3d.fullscreen.referenceVideoGenerating')}</span>
     </div>
   )
 }
 
 function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorProps): JSX.Element {
+  const { t } = useTranslation()
   const [fullscreen, setFullscreen] = React.useState(false)
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const addNode = useGenerationCanvasStore((state) => state.addNode)
@@ -141,7 +140,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
   )
   const persistedSceneStateKeyRef = React.useRef(sceneStateKey)
   const lastThumbnailRef = React.useRef(sceneState.lastThumbnail)
-  const thumbnailUrl = sceneState.lastThumbnail
+  const cardPreview = readScene3DCardPreview(node)
 
   React.useEffect(() => {
     persistedSceneStateKeyRef.current = sceneStateKey
@@ -152,51 +151,60 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     void loadScene3DFullscreen()
   }, [])
 
-  const handleStateChange = React.useCallback((nextState: Scene3DState) => {
-    const nextSceneState = persistableScene3DState({
-      ...nextState,
-      lastThumbnail: nextState.lastThumbnail ?? lastThumbnailRef.current,
-    })
-    const nextSceneStateKey = scene3DStateKey(nextSceneState)
-    if (persistedSceneStateKeyRef.current === nextSceneStateKey) return
+  const handleStateChange = React.useCallback(
+    (nextState: Scene3DState) => {
+      const nextSceneState = persistableScene3DState({
+        ...nextState,
+        lastThumbnail: nextState.lastThumbnail ?? lastThumbnailRef.current,
+      })
+      const nextSceneStateKey = scene3DStateKey(nextSceneState)
+      if (persistedSceneStateKeyRef.current === nextSceneStateKey) return
 
-    const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id)
-    const currentSceneState = normalizeScene3DState(current?.meta?.scene3dState)
-    if (scene3DStateEqual(currentSceneState, nextSceneState)) {
+      const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id)
+      const currentSceneState = normalizeScene3DState(current?.meta?.scene3dState)
+      if (scene3DStateEqual(currentSceneState, nextSceneState)) {
+        persistedSceneStateKeyRef.current = nextSceneStateKey
+        lastThumbnailRef.current = nextSceneState.lastThumbnail
+        return
+      }
+
       persistedSceneStateKeyRef.current = nextSceneStateKey
       lastThumbnailRef.current = nextSceneState.lastThumbnail
-      return
-    }
+      updateNode(node.id, {
+        meta: {
+          ...(current?.meta || {}),
+          scene3dState: nextSceneState,
+        },
+      })
+    },
+    [node.id, updateNode],
+  )
 
-    persistedSceneStateKeyRef.current = nextSceneStateKey
-    lastThumbnailRef.current = nextSceneState.lastThumbnail
-    updateNode(node.id, {
-      meta: {
-        ...(current?.meta || {}),
-        scene3dState: nextSceneState,
-      },
-    })
-  }, [node.id, updateNode])
-
-  // 录过 take → 关编辑器后才请画布 fit（#1 闭环可见性根因：在全屏编辑器盖着画布时 fit 是白跑，
-  // 360ms 后 fitView 时画布不可见/stageRef 未就绪，nonce 又已消费 → 关掉后看到默认视图、找不到新节点。
-  // 改成关闭后再 fit，此时画布可见、新节点已就位，fitView 框全部节点把「录制走位参考」节点带进视口）。
-  const recordedTakeRef = React.useRef(false)
+  // 关编辑器后 fit + 高亮新节点（P3）：截图和录 take 都触发，不只录 take
+  // 原 bug：fitView 只在录 take 后触发，截图后关编辑器不 fit → 用户找不到截图节点
+  const pendingFitNodeIdRef = React.useRef<string | null>(null)
+  const selectNode = useGenerationCanvasStore((state) => state.selectNode)
 
   const handleCloseFullscreen = React.useCallback(() => {
     setFullscreen(false)
     void persistActiveWorkbenchProjectNow().catch(() => {})
-    if (recordedTakeRef.current) {
-      recordedTakeRef.current = false
-      requestCanvasFit()
+    const pendingId = pendingFitNodeIdRef.current
+    if (pendingId) {
+      pendingFitNodeIdRef.current = null
+      // 延迟一帧让画布渲染完再 fit + select
+      requestAnimationFrame(() => {
+        requestCanvasFit()
+        selectNode(pendingId)
+      })
     }
-  }, [requestCanvasFit])
+  }, [requestCanvasFit, selectNode])
 
   // 录 take（S2）：把录制好的（含角色/机位轨迹的）场景另建一个 scene3d 节点 + 打 cameraMoveAutoCapture 标志，
   // 整条出 mp4 + 喂目标镜头 video_ref 复用 AI 运镜常驻 Host（CameraMoveCaptureHost），不另起接缝（P1）。
   // 另建节点而非覆写本节点 → 非破坏：用户原本编排好的 3D 场景保持原样。
   // 目标镜头 = 本 scene3d 节点下游连到的视频节点（无则只出 mp4 留痕，不挂）。
-  const handleRecordTake = React.useCallback((recordedState: Scene3DState) => {
+  // 返回 take 节点 id：出片产物卡靠它盯 meta.cameraMoveVideo 等渲染完成（P3-14）。
+  const handleRecordTake = React.useCallback((recordedState: Scene3DState): string => {
     const store = useGenerationCanvasStore.getState()
     const downstreamVideoTarget = store.edges
       .filter((edge) => edge.source === node.id)
@@ -207,7 +215,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     const frameCount = frameCountForDuration(duration, fps)
     const takeNode = addNode({
       kind: 'scene3d',
-      title: '录制走位参考',
+      title: t('scene3d.fullscreen.recordedTakeTitle'),
       prompt: '',
       // #1 闭环可见性根因：scene3d 的默认分类是 'scene'，但用户正看着的子画布
       // （source 节点所在分类，常是 'shots'）未必是 'scene'。漏传 categoryId →
@@ -234,10 +242,11 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
         },
       },
     })
-    // 闭环可见性（#1）：标记本次录过 take；真正的画布 fit 推迟到关闭编辑器后（handleCloseFullscreen），
-    // 因为此刻全屏编辑器盖着画布、fit 是白跑。关掉后画布可见再 fit，把新「录制走位参考」节点带进视口。
-    recordedTakeRef.current = true
-  }, [addNode, height, node.id, node.position.x, node.position.y, updateNode])
+    // 闭环可见性（#1）：标记本次录过 take；真正的画布 fit + 高亮推迟到关闭编辑器后（handleCloseFullscreen），
+    // 因为此刻全屏编辑器盖着画布、fit 是白跑。关掉后画布可见再 fit + select，把新「录制走位参考」节点带进视口。
+    pendingFitNodeIdRef.current = takeNode.id
+    return takeNode.id
+  }, [addNode, height, node.categoryId, node.id, node.position.x, node.position.y, t, updateNode])
 
   const handleScreenshot = React.useCallback(async (capture: Scene3DCaptureResult) => {
     try {
@@ -246,7 +255,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
       const screenshotNode = addNode({
         kind: 'image',
         title: capture.title,
-        prompt: '3D 场景截图',
+        prompt: t('scene3d.fullscreen.screenshotPrompt'),
         position: {
           x: Math.round(node.position.x + width + 80),
           y: Math.round(node.position.y),
@@ -300,23 +309,42 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
           scene3dState: nextSceneState,
         },
       })
-      toast('3D 截图已创建图片节点', 'success')
+      toast(t('scene3d.fullscreen.screenshotCreated'), 'success')
+      // P3：标记截图节点，关编辑器后 fit + 高亮
+      pendingFitNodeIdRef.current = screenshotNode.id
     } catch (error) {
-      toast(error instanceof Error ? error.message : '截图失败，请重试', 'error')
+      toast(error instanceof Error ? error.message : t('scene3d.fullscreen.screenshotFailed'), 'error')
     }
-  }, [addNode, connectNodes, node.id, node.meta, node.position.x, node.position.y, referenceTarget, updateNode, width])
+  }, [addNode, connectNodes, node.id, node.meta, node.position.x, node.position.y, referenceTarget, t, updateNode, width])
 
   const takeCaptureStatus = readTakeCaptureStatus(node)
 
   return (
     <>
       <div className="group relative w-full h-full overflow-hidden" data-tour-target="staging trajectory">
-        {takeCaptureStatus ? <Scene3DTakeStatusOverlay status={takeCaptureStatus} /> : null}
-        {thumbnailUrl ? (
+        {takeCaptureStatus === 'generating' ? <Scene3DTakeGeneratingOverlay /> : null}
+        {cardPreview.kind === 'video' ? (
+          <DeferredNodeVideo
+            data-scene3d-take-video="true"
+            className="h-full w-full min-h-0 bg-nomi-ink-05 object-contain pointer-events-auto select-none"
+            src={buildVideoPlaybackUrl(cardPreview.url)}
+            crossOrigin="use-credentials"
+            controls
+            muted
+            playsInline
+            preload="metadata"
+            draggable={false}
+            onError={(event) => {
+              void diagnoseVideoPlaybackFailure(cardPreview.url, event.currentTarget.error).then(
+                logVideoPlaybackFailure,
+              )
+            }}
+          />
+        ) : cardPreview.kind === 'image' ? (
           <>
             <img
               className="w-full h-full object-contain select-none pointer-events-none bg-nomi-ink-05"
-              src={thumbnailUrl}
+              src={cardPreview.url}
               alt=""
               draggable={false}
             />
@@ -330,7 +358,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
             >
               <button
                 type="button"
-                aria-label="打开 3D 编辑器"
+                aria-label={t('scene3d.fullscreen.openEditor')}
                 className={cn(
                   'pointer-events-auto inline-flex items-center gap-1.5 rounded-nomi px-3 py-1.5 border-0 cursor-pointer',
                   'bg-nomi-paper/[0.92] text-body-sm font-semibold text-nomi-ink shadow-nomi-sm backdrop-blur-[10px]',
@@ -346,7 +374,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
                 }}
               >
                 <IconCube size={15} stroke={1.7} />
-                打开 3D 编辑器
+                {t('scene3d.fullscreen.openEditor')}
               </button>
             </div>
           </>
@@ -354,9 +382,9 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
           <div className={cn('flex h-full w-full items-center justify-center')}>
             <EmptyStateLauncher
               icon={<IconCube size={24} stroke={1.65} />}
-              label="点击进入 3D 编辑器"
-              hint="摆放模型、相机并输出截图"
-              activateAriaLabel="进入 3D 编辑器"
+              label={t('scene3d.fullscreen.enterEditor')}
+              hint={t('scene3d.fullscreen.editorHint')}
+              activateAriaLabel={t('scene3d.fullscreen.enterEditorAria')}
               onActivate={() => setFullscreen(true)}
               onPreload={preloadFullscreenEditor}
             />
@@ -370,8 +398,8 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
             'backdrop-blur-[10px] transition hover:bg-nomi-paper hover:text-nomi-ink',
           )}
           type="button"
-          aria-label="打开 3D 编辑器"
-          title="打开 3D 编辑器"
+          aria-label={t('scene3d.fullscreen.openEditor')}
+          title={t('scene3d.fullscreen.openEditor')}
           onFocus={preloadFullscreenEditor}
           onPointerDown={(event) => event.stopPropagation()}
           onPointerEnter={preloadFullscreenEditor}
@@ -388,10 +416,12 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
         <React.Suspense fallback={null}>
           <Scene3DFullscreen
             initialState={sceneState}
-            nodeTitle={node.title || '3D场景'}
+            nodeTitle={node.title || t('scene3d.fullscreen.sceneTitle')}
             readOnly={readOnly}
             onClose={handleCloseFullscreen}
-            onScreenshot={(capture) => { void handleScreenshot(capture) }}
+            onScreenshot={(capture) => {
+              void handleScreenshot(capture)
+            }}
             onStateChange={handleStateChange}
             onRecordTake={readOnly ? undefined : handleRecordTake}
             referenceTarget={referenceTarget}
@@ -402,17 +432,19 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
   )
 }
 
-export default React.memo(Scene3DEditor, (previous, next) => (
-  previous.node.id === next.node.id &&
-  previous.node.title === next.node.title &&
-  previous.node.meta?.scene3dState === next.node.meta?.scene3dState &&
-  // 录 take 状态徽标（#1）随这两个标志变化重渲染：CaptureHost 出片后清 cameraMoveAutoCapture、写 cameraMoveVideo，
-  // 而 scene3dState 引用不变——只比 scene3dState 会漏掉状态切换、徽标永远停在「生成中」。
-  previous.node.meta?.cameraMoveAutoCapture === next.node.meta?.cameraMoveAutoCapture &&
-  previous.node.meta?.cameraMoveVideo === next.node.meta?.cameraMoveVideo &&
-  previous.node.position.x === next.node.position.x &&
-  previous.node.position.y === next.node.position.y &&
-  previous.width === next.width &&
-  previous.height === next.height &&
-  previous.readOnly === next.readOnly
-))
+export default React.memo(
+  Scene3DEditor,
+  (previous, next) =>
+    previous.node.id === next.node.id &&
+    previous.node.title === next.node.title &&
+    previous.node.meta?.scene3dState === next.node.meta?.scene3dState &&
+    // 录 take 状态徽标（#1）随这两个标志变化重渲染：CaptureHost 出片后清 cameraMoveAutoCapture、写 cameraMoveVideo，
+    // 而 scene3dState 引用不变——只比 scene3dState 会漏掉状态切换、徽标永远停在「生成中」。
+    previous.node.meta?.cameraMoveAutoCapture === next.node.meta?.cameraMoveAutoCapture &&
+    previous.node.meta?.cameraMoveVideo === next.node.meta?.cameraMoveVideo &&
+    previous.node.position.x === next.node.position.x &&
+    previous.node.position.y === next.node.position.y &&
+    previous.width === next.width &&
+    previous.height === next.height &&
+    previous.readOnly === next.readOnly,
+)

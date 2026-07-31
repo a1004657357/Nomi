@@ -25,8 +25,8 @@ const SCAN_DIRS = ["src", "electron"];
 // 现存巨壳的基线行数（棘轮上限）。清空此表 = 巨壳债还清。
 // 改小某个数 = 你成功瘦身后锁定的新上限。新增条目应经人工评审。
 const ALLOWLIST = {
-  "electron/runtime.ts": 602, // 命名响应变换钩子接入时顺手压实注释（2026-07-04）→ 抽 projectAssetStore 锁到 602（2026-07-08 PR#36；与 main 的 629 合并取更紧值）
-  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 739, // 抽 NodeConnectionHandles + NodeTimelineDragHandles（2026-06-27）→ 抽 useNodePanoramaHandlers（2026-06-28 PR#26）→ 抽 ShotPreviewOverlays 锁到 741（2026-07-03）→ 抽 useNodeVideoHoverPreview 锁到 739（2026-07-08）
+  "electron/runtime.ts": 550, // …→ 555（2026-07-22 锁定）→ 550（2026-07-27 PR#54：命名/时长探测助手抽到 assets/localizedAsset）
+  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 740, // …→ 742（2026-07-27 PR#54：入轨 options 单行化）→ 740（2026-07-30 锁定已瘦身值）
   // PR#21 白板节点引入（2026-06-25）：WhiteboardDrawingTool（1032）与 WhiteboardLeaferCanvas（3406）两巨壳
   // 已按 Rule 9 全部拆完、双双出白名单。LeaferCanvas → whiteboardCanvasTypes/Export/NodeOps/Geometry 四纯模块
   // + whiteboardSceneRender（渲染树）+ useWhiteboardDrawing/BoxSelection/SelectionActions/SceneSync 四交互 hook，
@@ -48,7 +48,13 @@ function listFiles() {
     .filter(Boolean)
     .filter((f) => /\.tsx?$/.test(f))
     .filter((f) => !/\.test\.tsx?$/.test(f))
-    .filter((f) => !/\.d\.ts$/.test(f));
+    .filter((f) => !/\.d\.ts$/.test(f))
+    // i18n 翻译资源是「数据表」不是代码复杂度 —— R9/R12 治的是代码模块化，
+    // locale 词典随翻译量线性增长天然会破 800，不适用本门（2026-07-22 全量 i18n 落地）。
+    .filter((f) => !/^src\/i18n\/(locales\/.*|resources)\.ts$/.test(f))
+    // git ls-files 会连「工作树里已删除、尚未 commit」的文件一起列出——门岗量的是
+    // 工作树现状，消失的文件没有体积可查，跳过（commit 后 CI checkout 恒存在，不削弱棘轮）。
+    .filter((f) => fs.existsSync(path.join(ROOT, f)));
 }
 
 function countLines(absPath) {

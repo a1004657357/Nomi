@@ -56,6 +56,9 @@ tests/ux/__shots__/
 tests/ux/_stagingshot/
 tests/ux/_marketing/
 tests/system/runs/
+.scene3d-ux-lab/
+.scene3d-panorama-lab/
+.onboarding-demo-lab/
 
 # 3D 预设动作校准台的本地输出（pose-lab）
 .pose-lab/
@@ -76,5 +79,18 @@ docs/feedback/*
 **/welive.yml
 **/all_keys.json
 **/keys.json
+**/wechat_keys.json
 **/wechat-export/
 *.db
+
+# R13 走查截图产物（scripts/*-walkthrough.mjs 输出，纯本地证据，不进 git）
+.failure-walk/
+.failure-walk-ok/
+.batch-walk/
+.relay-fetch-walk/
+.relay-i2v-walk/
+.retired-walk/
+
+# Python 运行副产物（decrypt_wechat.py 等被 import/执行时生成，绝不入库）
+__pycache__/
+*.pyc

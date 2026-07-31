@@ -25,6 +25,8 @@ export type AuthType = "none" | "bearer" | "x-api-key" | "query";
 export interface HttpOperationLike {
   method?: string;
   path?: string;
+  /** "host-root" = 路径从主机根拼（先剥掉 baseUrl 尾部的 /vN）。见 catalog/types.ts 的 HttpOperation.pathFrom。 */
+  pathFrom?: "host-root";
   headers?: Record<string, string>;
   query?: Record<string, unknown>;
   body?: unknown;
@@ -169,6 +171,16 @@ export function authQueryParams(authType: AuthType, apiKey: string, paramName?: 
   return { [paramName || "api_key"]: apiKey };
 }
 
+/**
+ * 剥掉 baseUrl 尾部的版本段（/v1、/v3、/v10…），拿到主机根侧的前缀。
+ * 供 `HttpOperation.pathFrom === "host-root"` 用：厂商原生端点（如火山方舟 /api/v3/…）不在
+ * OpenAI 兼容的 /v1 命名空间下，而中转用户常把地址填成 `https://host/v1`，直接拼会成
+ * `/v1/api/v3/…` 打不中。只剥一层、只剥结尾，其余原样（`https://host/codex/v1` → `https://host/codex`）。
+ */
+export function hostRootBase(baseUrl: string): string {
+  return String(baseUrl || "").trim().replace(/\/+$/, "").replace(/\/v\d+$/i, "");
+}
+
 /** Join a (possibly absolute) operation path onto the vendor base URL. */
 export function joinUrl(baseUrl: string, path: string): string {
   if (/^https?:\/\//i.test(path)) return path;
@@ -260,7 +272,9 @@ export function buildHttpRequest(input: {
   const { context, operation } = input;
   const method = (pickString(operation.method) || "POST").toUpperCase();
   const renderedPath = String(renderTemplateValue(operation.path || "/v1/tasks", context) || "/v1/tasks");
-  const url = joinUrl(input.baseUrl, renderedPath);
+  // 原生端点声明 pathFrom:"host-root" → 先剥掉 baseUrl 尾部的 /vN（用户把接入地址填成 .../v1 时，
+  // /api/v3/… 直接拼会变成 /v1/api/v3/… 打不中）。缺省仍从 baseUrl 拼，既有档案零影响。
+  const url = joinUrl(operation.pathFrom === "host-root" ? hostRootBase(input.baseUrl) : input.baseUrl, renderedPath);
 
   const renderedHeaders = stringifyHeaders(renderTemplateValue(operation.headers, context));
   const headers: Record<string, string> = {

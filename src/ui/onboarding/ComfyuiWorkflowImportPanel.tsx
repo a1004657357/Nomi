@@ -7,37 +7,137 @@
  * 纯解析/识别/落库都在后端（electron/catalog/comfyuiWorkflowImport*，可测）；本组件只做「贴→看→改→导」的壳。
  */
 import React from 'react'
-import { IconFileImport, IconWand, IconAlertTriangle, IconMovie, IconPhoto, IconX } from '@tabler/icons-react'
+import { useTranslation } from 'react-i18next'
+import { IconFileImport, IconWand, IconAlertTriangle, IconMovie, IconPhoto, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { NomiSelect } from '../../design'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { toast } from '../toast'
 
-type Candidate = { nodeId: string; inputKey: string; classType: string; title?: string; value: string | number }
+type Candidate = { nodeId: string; inputKey: string; classType: string; title?: string; value: string | number | boolean }
 type OutputCand = { nodeId: string; classType: string; kind: 'image' | 'video' }
 type NumericParam = { nodeId: string; inputKey: string; paramKey: string; label: string; default: number }
+type WorkflowParamType = 'number' | 'text' | 'boolean'
+type WorkflowParam = { nodeId: string; inputKey: string; paramKey: string; label: string; type: WorkflowParamType; default: string | number | boolean }
+type ParamPresetKey = 'width' | 'height' | 'seconds' | 'fps'
+type ParamPreset = { key: ParamPresetKey; labelKey: string; paramKey: string; match: (candidate: Candidate) => boolean }
 type Binding = {
   promptNodeId?: string; promptInputKey?: string
   firstFrameNodeId?: string; firstFrameInputKey?: string
+  lastFrameNodeId?: string; lastFrameInputKey?: string
   outputNodeId?: string; outputKind?: 'image' | 'video'
-  numeric: NumericParam[]
+  numeric?: NumericParam[]
+  params?: WorkflowParam[]
 }
 type Analysis = {
-  textInputs: Candidate[]; imageInputs: Candidate[]; outputNodes: OutputCand[]; numericInputs: Candidate[]
+  textInputs: Candidate[]; imageInputs: Candidate[]; outputNodes: OutputCand[]; numericInputs: Candidate[]; widgetInputs?: Candidate[]
   suggested: Binding
+}
+type WorkflowEditInitial = { modelKey: string; labelZh: string; text: string; binding?: Binding }
+type ComfyuiWorkflowImportPanelProps = {
+  onImported: () => void
+  initial?: WorkflowEditInitial
+  onCancel?: () => void
 }
 
 const NONE = '__none__'
-const nodeOpt = (c: Candidate) => ({ value: `${c.nodeId}:${c.inputKey}`, label: `#${c.nodeId} ${c.classType}` })
-const preview = (v: string | number) => (typeof v === 'string' && v ? `「${v.slice(0, 18)}${v.length > 18 ? '…' : ''}」` : '')
+const nodeValue = (nodeId: string, inputKey: string) => `${encodeURIComponent(nodeId)}|${encodeURIComponent(inputKey)}`
+const parseNodeValue = (raw: string): { nodeId: string; inputKey: string } | null => {
+  try {
+    const [nodeId, inputKey] = raw.split('|')
+    if (nodeId && inputKey) return { nodeId: decodeURIComponent(nodeId), inputKey: decodeURIComponent(inputKey) }
+  } catch {
+    return null
+  }
+  return null
+}
+const nodeOpt = (c: Candidate) => ({ value: nodeValue(c.nodeId, c.inputKey), label: `#${c.nodeId} ${c.classType}` })
+const preview = (v: string | number | boolean) => {
+  if (typeof v === 'string' && v) return `「${v.slice(0, 18)}${v.length > 18 ? '…' : ''}」`
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return ''
+}
+const nodeSelectOptions = (candidates: Candidate[]) => candidates.map((t) => ({ ...nodeOpt(t), trailing: preview(t.value) || undefined }))
+const PARAM_KEY_RE = /^[A-Za-z0-9_]+$/
 
-export function ComfyuiWorkflowImportPanel({ onImported }: { onImported: () => void }): JSX.Element {
+const inferParamType = (value: Candidate['value']): WorkflowParamType => {
+  if (typeof value === 'number') return 'number'
+  if (typeof value === 'boolean') return 'boolean'
+  return 'text'
+}
+
+const sanitizeParamKey = (raw: string, fallback: string): string => {
+  const cleaned = raw.trim().replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '')
+  return cleaned || fallback
+}
+
+const fallbackParamLabel = (candidate: Pick<Candidate, 'title' | 'inputKey' | 'nodeId'>): string =>
+  candidate.title?.trim() || `${candidate.inputKey} #${candidate.nodeId}`
+
+const paramFromCandidate = (candidate: Candidate, existing: WorkflowParam[] = []): WorkflowParam => {
+  const label = fallbackParamLabel(candidate)
+  const baseKey = sanitizeParamKey(label.toLowerCase(), `comfy_${candidate.inputKey}`)
+  let paramKey = baseKey
+  let i = 2
+  while (existing.some((p) => p.paramKey === paramKey)) {
+    paramKey = `${baseKey}_${i}`
+    i += 1
+  }
+  return {
+    nodeId: candidate.nodeId,
+    inputKey: candidate.inputKey,
+    paramKey,
+    label,
+    type: inferParamType(candidate.value),
+    default: candidate.value,
+  }
+}
+
+const normalizeBinding = (binding: Binding): Binding => ({
+  ...binding,
+  numeric: binding.numeric ?? [],
+  params: binding.params ?? (binding.numeric ?? []).map((n) => ({ ...n, type: 'number' as const })),
+})
+
+const candidateSearchText = (candidate: Candidate): string =>
+  `${candidate.nodeId} ${candidate.inputKey} ${candidate.classType} ${candidate.title ?? ''}`.toLowerCase()
+
+const PARAM_PRESETS: ParamPreset[] = [
+  {
+    key: 'width',
+    labelKey: 'onboardingProviders.comfyWorkflow.presetWidth',
+    paramKey: 'comfy_width',
+    match: (candidate) => /width|宽度/i.test(candidateSearchText(candidate)),
+  },
+  {
+    key: 'height',
+    labelKey: 'onboardingProviders.comfyWorkflow.presetHeight',
+    paramKey: 'comfy_height',
+    match: (candidate) => /height|高度/i.test(candidateSearchText(candidate)),
+  },
+  {
+    key: 'seconds',
+    labelKey: 'onboardingProviders.comfyWorkflow.presetSeconds',
+    paramKey: 'comfy_seconds',
+    match: (candidate) => /(seconds?|duration|时长|秒数)/i.test(candidateSearchText(candidate)),
+  },
+  {
+    key: 'fps',
+    labelKey: 'onboardingProviders.comfyWorkflow.presetFps',
+    paramKey: 'comfy_fps',
+    match: (candidate) => /\b(fps|frame_rate|帧率)\b/i.test(candidateSearchText(candidate)),
+  },
+]
+
+export function ComfyuiWorkflowImportPanel({ onImported, initial, onCancel }: ComfyuiWorkflowImportPanelProps): JSX.Element {
+  const { t } = useTranslation()
   const catalog = getDesktopBridge()?.modelCatalog
-  const [open, setOpen] = React.useState(false)
-  const [text, setText] = React.useState('')
+  const editMode = Boolean(initial)
+  const [open, setOpen] = React.useState(editMode)
+  const [text, setText] = React.useState(initial?.text ?? '')
   const [analysis, setAnalysis] = React.useState<Analysis | null>(null)
-  const [binding, setBinding] = React.useState<Binding | null>(null)
-  const [labelZh, setLabelZh] = React.useState('')
+  const [binding, setBinding] = React.useState<Binding | null>(initial?.binding ? normalizeBinding(initial.binding) : null)
+  const [labelZh, setLabelZh] = React.useState(initial?.labelZh ?? '')
   const [error, setError] = React.useState('')
   const [busy, setBusy] = React.useState(false)
 
@@ -45,29 +145,64 @@ export function ComfyuiWorkflowImportPanel({ onImported }: { onImported: () => v
     setText(''); setAnalysis(null); setBinding(null); setLabelZh(''); setError('')
   }, [])
 
+  const initialModelKey = initial?.modelKey
+  React.useEffect(() => {
+    if (!initial) return
+    setOpen(true)
+    setText(initial.text)
+    setLabelZh(initial.labelZh)
+    setBinding(initial.binding ? normalizeBinding(initial.binding) : null)
+    setError('')
+    const r = catalog?.analyzeComfyWorkflow?.(initial.text)
+    if (!r) { setError(t('onboardingProviders.comfyWorkflow.unsupportedEdit')); setAnalysis(null); return }
+    if (!r.ok) { setError(r.error); setAnalysis(null); return }
+    const a = r.analysis as Analysis
+    setAnalysis(a)
+    setBinding(normalizeBinding(initial.binding ?? a.suggested))
+  // 只在切换编辑对象时重置表单；父级 hover/focus 状态重渲染不能覆盖用户正在编辑的内容。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, initialModelKey])
+
   const analyze = React.useCallback(() => {
     setError('')
     const r = catalog?.analyzeComfyWorkflow?.(text)
-    if (!r) { setError('当前版本不支持导入'); return }
+    if (!r) { setError(t('onboardingProviders.comfyWorkflow.unsupported')); return }
     if (!r.ok) { setError(r.error); setAnalysis(null); setBinding(null); return }
     const a = r.analysis as Analysis
     setAnalysis(a)
-    setBinding(a.suggested)
-  }, [catalog, text])
+    setBinding(normalizeBinding(a.suggested))
+  }, [catalog, text, t])
+
+  const paramKeyError = React.useMemo(() => {
+    const params = binding?.params ?? []
+    const seen = new Set<string>()
+    for (const param of params) {
+      if (!param.paramKey.trim() || !PARAM_KEY_RE.test(param.paramKey)) return t('onboardingProviders.comfyWorkflow.paramKeyInvalid')
+      if (seen.has(param.paramKey)) return t('onboardingProviders.comfyWorkflow.paramKeyDuplicate')
+      seen.add(param.paramKey)
+    }
+    return ''
+  }, [binding?.params, t])
 
   const doImport = React.useCallback(() => {
     if (!binding || !catalog?.importComfyWorkflow) return
+    if (paramKeyError) { setError(paramKeyError); return }
     setBusy(true)
     try {
-      const r = catalog.importComfyWorkflow({ text, binding, labelZh: labelZh.trim() || '本地 ComfyUI 工作流' })
+      const name = labelZh.trim() || t('onboardingProviders.comfyWorkflow.defaultName')
+      const r = editMode && initial
+        ? catalog.updateComfyWorkflow?.({ modelKey: initial.modelKey, text, binding, labelZh: name }) ?? { ok: false as const, error: t('onboardingProviders.comfyWorkflow.unsupportedEdit') }
+        : catalog.importComfyWorkflow({ text, binding, labelZh: name })
       if (!r.ok) { setError(r.error); return }
-      toast(`已导入「${labelZh.trim() || '本地工作流'}」·${r.kind === 'video' ? '视频' : '图片'}`, 'success')
-      reset(); setOpen(false)
+      const kindLabel = r.kind === 'video' ? t('onboardingProviders.comfyWorkflow.video') : t('onboardingProviders.comfyWorkflow.image')
+      toast(t(editMode ? 'onboardingProviders.comfyWorkflow.saved' : 'onboardingProviders.comfyWorkflow.imported', { name, kind: kindLabel }), 'success')
+      if (editMode) onCancel?.()
+      else { reset(); setOpen(false) }
       onImported()
     } finally { setBusy(false) }
-  }, [binding, catalog, text, labelZh, reset, onImported])
+  }, [binding, catalog, editMode, initial, text, labelZh, onCancel, reset, onImported, paramKeyError, t])
 
-  if (!open) {
+  if (!open && !editMode) {
     return (
       <button
         type="button"
@@ -75,19 +210,26 @@ export function ComfyuiWorkflowImportPanel({ onImported }: { onImported: () => v
         className={cn('self-start inline-flex items-center gap-1.5 h-8 px-3 rounded-nomi-sm border border-nomi-line',
           'text-caption text-nomi-ink-60 hover:text-nomi-accent hover:border-nomi-accent')}
       >
-        <IconFileImport size={14} stroke={1.7} />导入自定义工作流（文生视频 / 图生视频…）
+        <IconFileImport size={14} stroke={1.7} />{t('onboardingProviders.comfyWorkflow.importCustom')}
       </button>
     )
   }
 
-  const setRole = (role: 'prompt' | 'firstFrame', raw: string) => {
+  const setRole = (role: 'prompt' | 'firstFrame' | 'lastFrame', raw: string) => {
     setBinding((b) => {
       if (!b) return b
-      if (raw === NONE) return { ...b, firstFrameNodeId: undefined, firstFrameInputKey: undefined }
-      const [nodeId, inputKey] = raw.split(':')
-      return role === 'prompt'
-        ? { ...b, promptNodeId: nodeId, promptInputKey: inputKey }
-        : { ...b, firstFrameNodeId: nodeId, firstFrameInputKey: inputKey }
+      if (raw === NONE) {
+        if (role === 'firstFrame') return { ...b, firstFrameNodeId: undefined, firstFrameInputKey: undefined }
+        if (role === 'lastFrame') return { ...b, lastFrameNodeId: undefined, lastFrameInputKey: undefined }
+        return { ...b, promptNodeId: undefined, promptInputKey: undefined }
+      }
+      const parsed = parseNodeValue(raw)
+      if (!parsed) return b
+      const { nodeId, inputKey } = parsed
+      if (role === 'prompt') return { ...b, promptNodeId: nodeId, promptInputKey: inputKey }
+      return role === 'firstFrame'
+        ? { ...b, firstFrameNodeId: nodeId, firstFrameInputKey: inputKey }
+        : { ...b, lastFrameNodeId: nodeId, lastFrameInputKey: inputKey }
     })
   }
   const setOutput = (nodeId: string) => {
@@ -97,23 +239,112 @@ export function ComfyuiWorkflowImportPanel({ onImported }: { onImported: () => v
       return { ...b, outputNodeId: nodeId, outputKind: out?.kind }
     })
   }
+  const widgetCandidates = analysis?.widgetInputs?.length ? analysis.widgetInputs : analysis?.numericInputs ?? []
+  const paramTypeOptions = [
+    { value: 'number', label: t('onboardingProviders.comfyWorkflow.paramTypeNumber') },
+    { value: 'text', label: t('onboardingProviders.comfyWorkflow.paramTypeText') },
+    { value: 'boolean', label: t('onboardingProviders.comfyWorkflow.paramTypeBoolean') },
+  ]
+  const presetOptions = PARAM_PRESETS.map((preset) => {
+    const candidate = widgetCandidates.find((c) => typeof c.value === 'number' && preset.match(c))
+    const added = Boolean(candidate && (binding?.params ?? []).some((p) =>
+      (p.nodeId === candidate.nodeId && p.inputKey === candidate.inputKey) || p.paramKey === preset.paramKey,
+    ))
+    return { preset, candidate, added }
+  })
+  const addParam = () => {
+    if (!widgetCandidates.length) return
+    setBinding((b) => {
+      if (!b) return b
+      const params = b.params ?? []
+      const candidate = widgetCandidates.find((c) => !params.some((p) => p.nodeId === c.nodeId && p.inputKey === c.inputKey)) ?? widgetCandidates[0]
+      return { ...b, params: [...params, paramFromCandidate(candidate, params)] }
+    })
+  }
+  const addPresetParam = (preset: ParamPreset, candidate: Candidate) => {
+    setBinding((b) => {
+      if (!b) return b
+      const params = b.params ?? []
+      if (params.some((p) => (p.nodeId === candidate.nodeId && p.inputKey === candidate.inputKey) || p.paramKey === preset.paramKey)) return b
+      return {
+        ...b,
+        params: [
+          ...params,
+          {
+            nodeId: candidate.nodeId,
+            inputKey: candidate.inputKey,
+            paramKey: preset.paramKey,
+            label: t(preset.labelKey),
+            type: 'number',
+            default: candidate.value,
+          },
+        ],
+      }
+    })
+  }
+  const updateParam = (index: number, patch: Partial<WorkflowParam>) => {
+    setBinding((b) => {
+      if (!b) return b
+      const params = [...(b.params ?? [])]
+      const current = params[index]
+      if (!current) return b
+      params[index] = { ...current, ...patch }
+      return { ...b, params }
+    })
+  }
+  const setParamCandidate = (index: number, raw: string) => {
+    const parsed = parseNodeValue(raw)
+    if (!parsed) return
+    const candidate = widgetCandidates.find((c) => c.nodeId === parsed.nodeId && c.inputKey === parsed.inputKey)
+    if (!candidate) return
+    setBinding((b) => {
+      if (!b) return b
+      const params = [...(b.params ?? [])]
+      const current = params[index]
+      if (!current) return b
+      const next = paramFromCandidate(candidate, params.filter((_, i) => i !== index))
+      params[index] = { ...next, paramKey: current.paramKey || next.paramKey, label: current.label || next.label }
+      return { ...b, params }
+    })
+  }
+  const removeParam = (index: number) => {
+    setBinding((b) => b ? { ...b, params: (b.params ?? []).filter((_, i) => i !== index) } : b)
+  }
+
+  const frameKindLabel = binding?.firstFrameNodeId && binding.lastFrameNodeId
+    ? t('onboardingProviders.comfyWorkflow.frameKindBoth')
+    : binding?.firstFrameNodeId
+      ? t('onboardingProviders.comfyWorkflow.frameKindFirst')
+      : binding?.lastFrameNodeId
+        ? t('onboardingProviders.comfyWorkflow.frameKindLast')
+        : t('onboardingProviders.comfyWorkflow.frameKindNone')
 
   return (
     <div className="flex flex-col gap-2.5 rounded-nomi-sm border border-nomi-line bg-nomi-paper p-3">
       <div className="flex items-center gap-2">
         <IconFileImport size={15} stroke={1.7} className="text-nomi-ink-60" />
-        <span className="text-body-sm font-semibold text-nomi-ink flex-1">导入自定义工作流</span>
-        <button type="button" onClick={() => { reset(); setOpen(false) }} className="h-6 w-6 grid place-items-center rounded-nomi-sm text-nomi-ink-40 hover:bg-nomi-ink-05" aria-label="收起"><IconX size={14} stroke={1.8} /></button>
+        <span className="text-body-sm font-semibold text-nomi-ink flex-1">{editMode ? t('onboardingProviders.comfyWorkflow.editTitle') : t('onboardingProviders.comfyWorkflow.title')}</span>
+        <button
+          type="button"
+          onClick={() => {
+            if (editMode) onCancel?.()
+            else { reset(); setOpen(false) }
+          }}
+          className="h-6 w-6 grid place-items-center rounded-nomi-sm text-nomi-ink-40 hover:bg-nomi-ink-05"
+          aria-label={editMode ? t('onboardingProviders.comfyWorkflow.cancelEdit') : t('onboardingProviders.comfyWorkflow.collapse')}
+        >
+          <IconX size={14} stroke={1.8} />
+        </button>
       </div>
       <div className="text-caption text-nomi-ink-60 leading-relaxed">
-        在 ComfyUI 里把工作流跑通 → 菜单 <code className="font-mono text-nomi-ink">Workflow → Export (API)</code> 导出，把 <code className="font-mono text-nomi-ink">workflow_api.json</code> 全文贴到下面。
+        {t('onboardingProviders.comfyWorkflow.instructionsBefore')} <code className="font-mono text-nomi-ink">{t('onboardingProviders.comfyWorkflow.exportCommand')}</code> {t('onboardingProviders.comfyWorkflow.instructionsMiddle')} <code className="font-mono text-nomi-ink">{t('onboardingProviders.comfyWorkflow.fileName')}</code> {t('onboardingProviders.comfyWorkflow.instructionsAfter')}
       </div>
       <textarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => { setText(e.target.value); setAnalysis(null); setBinding(null); setError('') }}
         spellCheck={false}
-        aria-label="workflow_api.json 粘贴框"
-        placeholder='{ "3": { "class_type": "KSampler", ... }, ... }'
+        aria-label={t('onboardingProviders.comfyWorkflow.pasteArea')}
+        placeholder={t('onboardingProviders.comfyWorkflow.jsonPlaceholder')}
         className={cn('w-full min-h-[110px] max-h-[220px] rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2.5 py-2',
           'font-mono text-caption text-nomi-ink placeholder:text-nomi-ink-30 focus:border-nomi-accent outline-none resize-y')}
       />
@@ -131,52 +362,144 @@ export function ComfyuiWorkflowImportPanel({ onImported }: { onImported: () => v
           className={cn('self-start inline-flex items-center gap-1.5 h-8 px-3 rounded-nomi-sm bg-nomi-ink text-nomi-paper',
             'text-caption font-medium hover:bg-nomi-accent disabled:opacity-45')}
         >
-          <IconWand size={14} stroke={1.8} />分析工作流
+          <IconWand size={14} stroke={1.8} />{t('onboardingProviders.comfyWorkflow.analyze')}
         </button>
       ) : binding ? (
         <div className="flex flex-col gap-2.5">
           {/* 自动识别结果 + 可改绑定 */}
           <div className="flex items-center gap-1.5 text-caption text-nomi-ink-60">
             {binding.outputKind === 'video' ? <IconMovie size={14} className="text-nomi-accent" /> : <IconPhoto size={14} className="text-nomi-accent" />}
-            已识别为<b className="text-nomi-ink font-semibold">{binding.outputKind === 'video' ? '视频' : '图片'}</b>工作流{binding.firstFrameNodeId ? '（带首帧输入 = 图生）' : '（无首帧 = 文生）'}——确认下面的对应关系，需要就改：
+            {t('onboardingProviders.comfyWorkflow.detectedBefore')}<b className="text-nomi-ink font-semibold">{binding.outputKind === 'video' ? t('onboardingProviders.comfyWorkflow.video') : t('onboardingProviders.comfyWorkflow.image')}</b>{t('onboardingProviders.comfyWorkflow.detectedAfter')}{frameKindLabel}{t('onboardingProviders.comfyWorkflow.confirmBindings')}
           </div>
 
-          <BindRow label="提示词接哪个节点">
+          <BindRow label={t('onboardingProviders.comfyWorkflow.promptNode')}>
             <NomiSelect
-              ariaLabel="提示词节点" size="sm"
-              value={binding.promptNodeId ? `${binding.promptNodeId}:${binding.promptInputKey}` : NONE}
-              options={analysis.textInputs.map((t) => ({ ...nodeOpt(t), label: `${nodeOpt(t).label} ${preview(t.value)}` }))}
+              ariaLabel={t('onboardingProviders.comfyWorkflow.promptNodeAria')} size="sm"
+              value={binding.promptNodeId && binding.promptInputKey ? nodeValue(binding.promptNodeId, binding.promptInputKey) : NONE}
+              options={nodeSelectOptions(analysis.textInputs)}
               onChange={(v) => setRole('prompt', v)}
+              triggerMaxWidth={160}
+              className="w-full max-w-full justify-between"
             />
           </BindRow>
           {analysis.imageInputs.length > 0 ? (
-            <BindRow label="首帧图接哪个节点">
+            <BindRow label={t('onboardingProviders.comfyWorkflow.firstFrameNode')}>
               <NomiSelect
-                ariaLabel="首帧节点" size="sm"
-                value={binding.firstFrameNodeId ? `${binding.firstFrameNodeId}:${binding.firstFrameInputKey}` : NONE}
-                options={[{ value: NONE, label: '无（文生，不给首帧）' }, ...analysis.imageInputs.map((t) => ({ ...nodeOpt(t), label: `${nodeOpt(t).label} ${preview(t.value)}` }))]}
+                ariaLabel={t('onboardingProviders.comfyWorkflow.firstFrameNodeAria')} size="sm"
+                value={binding.firstFrameNodeId && binding.firstFrameInputKey ? nodeValue(binding.firstFrameNodeId, binding.firstFrameInputKey) : NONE}
+                options={[{ value: NONE, label: t('onboardingProviders.comfyWorkflow.noFirstFrame') }, ...nodeSelectOptions(analysis.imageInputs)]}
                 onChange={(v) => setRole('firstFrame', v)}
+                triggerMaxWidth={160}
+                className="w-full max-w-full justify-between"
               />
             </BindRow>
           ) : null}
-          <BindRow label="成品输出节点">
+          {analysis.imageInputs.length > 1 ? (
+            <BindRow label={t('onboardingProviders.comfyWorkflow.lastFrameNode')}>
+              <NomiSelect
+                ariaLabel={t('onboardingProviders.comfyWorkflow.lastFrameNodeAria')} size="sm"
+                value={binding.lastFrameNodeId && binding.lastFrameInputKey ? nodeValue(binding.lastFrameNodeId, binding.lastFrameInputKey) : NONE}
+                options={[{ value: NONE, label: t('onboardingProviders.comfyWorkflow.noLastFrame') }, ...nodeSelectOptions(analysis.imageInputs)]}
+                onChange={(v) => setRole('lastFrame', v)}
+                triggerMaxWidth={160}
+                className="w-full max-w-full justify-between"
+              />
+            </BindRow>
+          ) : null}
+          <BindRow label={t('onboardingProviders.comfyWorkflow.outputNode')}>
             <NomiSelect
-              ariaLabel="输出节点" size="sm"
+              ariaLabel={t('onboardingProviders.comfyWorkflow.outputNodeAria')} size="sm"
               value={binding.outputNodeId ?? ''}
-              options={analysis.outputNodes.map((o) => ({ value: o.nodeId, label: `#${o.nodeId} ${o.classType}（${o.kind === 'video' ? '视频' : '图片'}）` }))}
+              options={analysis.outputNodes.map((o) => ({ value: o.nodeId, label: `#${o.nodeId} ${o.classType}（${o.kind === 'video' ? t('onboardingProviders.comfyWorkflow.video') : t('onboardingProviders.comfyWorkflow.image')}）` }))}
               onChange={setOutput}
+              triggerMaxWidth={160}
+              className="w-full max-w-full justify-between"
             />
           </BindRow>
-          {binding.numeric.length > 0 ? (
-            <div className="text-micro text-nomi-ink-40">
-              可调参数：{binding.numeric.map((n) => n.label).join(' · ')}（生成时可改）
+          <div className="flex flex-col gap-2 rounded-nomi-sm border border-nomi-line-soft bg-nomi-ink-05 p-2">
+            <div className="flex items-center gap-2">
+              <span className="text-caption font-semibold text-nomi-ink flex-1">{t('onboardingProviders.comfyWorkflow.customParamsTitle')}</span>
+              <button
+                type="button"
+                onClick={addParam}
+                disabled={!widgetCandidates.length}
+                className={cn('inline-flex items-center gap-1 h-7 px-2 rounded-nomi-sm border border-nomi-line bg-nomi-paper',
+                  'text-caption text-nomi-ink-80 hover:border-nomi-accent disabled:opacity-45')}
+              >
+                <IconPlus size={13} stroke={1.8} />{t('onboardingProviders.comfyWorkflow.addParam')}
+              </button>
             </div>
-          ) : null}
+            <div className="text-micro text-nomi-ink-40 leading-relaxed">{t('onboardingProviders.comfyWorkflow.customParamsHint')}</div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-micro text-nomi-ink-40">{t('onboardingProviders.comfyWorkflow.commonParams')}</span>
+              {presetOptions.map(({ preset, candidate, added }) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  onClick={() => candidate ? addPresetParam(preset, candidate) : undefined}
+                  disabled={!candidate || added}
+                  title={candidate ? `#${candidate.nodeId}.${candidate.inputKey}` : undefined}
+                  className={cn('inline-flex items-center h-6 px-2 rounded-nomi-sm border border-nomi-line bg-nomi-paper',
+                    'text-micro text-nomi-ink-80 hover:border-nomi-accent disabled:opacity-45 disabled:hover:border-nomi-line')}
+                >
+                  {t(preset.labelKey)}
+                </button>
+              ))}
+            </div>
+            {(binding.params ?? []).length > 0 ? (
+              <div className="flex flex-col gap-1.5">
+                {(binding.params ?? []).map((param, index) => (
+                  <div key={`${param.nodeId}:${param.inputKey}:${index}`} className="flex flex-col gap-1.5 rounded-nomi-sm border border-nomi-line bg-nomi-paper p-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <div className="min-w-0 flex-1">
+                        <NomiSelect
+                          ariaLabel={t('onboardingProviders.comfyWorkflow.paramNodeAria')} size="xs"
+                          value={nodeValue(param.nodeId, param.inputKey)}
+                          options={nodeSelectOptions(widgetCandidates)}
+                          onChange={(v) => setParamCandidate(index, v)}
+                          triggerMaxWidth={190}
+                          className="w-full max-w-full justify-between bg-nomi-paper"
+                        />
+                      </div>
+                      <NomiSelect
+                        ariaLabel={t('onboardingProviders.comfyWorkflow.paramTypeAria')} size="xs"
+                        value={param.type}
+                        options={paramTypeOptions}
+                        onChange={(v) => updateParam(index, { type: v as WorkflowParamType })}
+                        triggerMaxWidth={64}
+                        className="shrink-0 bg-nomi-paper"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeParam(index)}
+                        aria-label={t('onboardingProviders.comfyWorkflow.removeParam')}
+                        className="h-6 w-6 shrink-0 grid place-items-center rounded-nomi-sm text-nomi-ink-40 hover:bg-nomi-ink-05 hover:text-workbench-danger"
+                      >
+                        <IconTrash size={13} stroke={1.7} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-1.5">
+                      <input
+                        value={param.label}
+                        onChange={(e) => updateParam(index, { label: e.target.value })}
+                        aria-label={t('onboardingProviders.comfyWorkflow.paramLabelAria')}
+                        placeholder={t('onboardingProviders.comfyWorkflow.paramLabelPlaceholder')}
+                        className="h-7 min-w-0 px-2 rounded-nomi-sm border border-nomi-line bg-nomi-paper text-caption text-nomi-ink placeholder:text-nomi-ink-30 focus:border-nomi-accent outline-none"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-micro text-nomi-ink-40">{t('onboardingProviders.comfyWorkflow.noCustomParams')}</div>
+            )}
+            {paramKeyError ? <div className="text-micro text-workbench-danger">{paramKeyError}</div> : null}
+          </div>
 
           <div className="flex items-center gap-2 pt-0.5">
             <input
               value={labelZh} onChange={(e) => setLabelZh(e.target.value)}
-              placeholder="给它起个名（如：本地 WAN 图生视频）"
+              placeholder={t('onboardingProviders.comfyWorkflow.namePlaceholder')}
               className="flex-1 h-8 px-2.5 rounded-nomi-sm border border-nomi-line bg-nomi-paper text-caption text-nomi-ink placeholder:text-nomi-ink-30 focus:border-nomi-accent outline-none"
             />
             <button
@@ -184,7 +507,7 @@ export function ComfyuiWorkflowImportPanel({ onImported }: { onImported: () => v
               className={cn('inline-flex items-center gap-1.5 h-8 px-3.5 rounded-nomi-sm bg-nomi-ink text-nomi-paper',
                 'text-caption font-medium hover:bg-nomi-accent disabled:opacity-45')}
             >
-              <IconFileImport size={14} stroke={1.8} />{busy ? '导入中…' : '导入'}
+              <IconFileImport size={14} stroke={1.8} />{busy ? (editMode ? t('onboardingProviders.comfyWorkflow.saving') : t('onboardingProviders.comfyWorkflow.importing')) : (editMode ? t('onboardingProviders.comfyWorkflow.save') : t('onboardingProviders.comfyWorkflow.import'))}
             </button>
           </div>
         </div>
@@ -197,7 +520,7 @@ function BindRow({ label, children }: { label: string; children: React.ReactNode
   return (
     <div className="flex items-center gap-2">
       <span className="text-caption text-nomi-ink-60 w-24 shrink-0">{label}</span>
-      <div className="flex-1 min-w-0">{children}</div>
+      <div className="flex-1 min-w-0 overflow-hidden">{children}</div>
     </div>
   )
 }

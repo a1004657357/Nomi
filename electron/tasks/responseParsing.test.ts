@@ -6,6 +6,7 @@ import {
   maybeParseJsonString,
   pathValues,
   providerMetaFromResponse,
+  taskFailureMessageFromResponse,
   taskStatusFromResponse,
   valuesFromMapping,
 } from "./responseParsing";
@@ -112,5 +113,55 @@ describe("providerMetaFromResponse", () => {
   });
   it("returns empty meta when no mapping and no task id", () => {
     expect(providerMetaFromResponse({ nothing: 1 }, null)).toEqual({});
+  });
+});
+
+describe("taskFailureMessageFromResponse", () => {
+  // 真实抓包（2026-07-30 直连 apimart，apib.ai 备用域）：apimart 把 Google 的错误 JSON
+  // **当字符串**塞进 data.error.message；profile 声明 error_message: "data.error.message"。
+  const APIMART_IMAGEN_FAILURE = {
+    code: 200,
+    data: {
+      credits_cost: 0,
+      error: {
+        code: "task_failed",
+        message:
+          '{\n  "error": {\n    "code": 404,\n    "message": "Requested entity was not found.",\n    "status": "NOT_FOUND"\n  }\n}\n',
+        param: "",
+        type: "task_failed",
+      },
+      id: "task_01KYRKKK35KCAASMFC7ND2PR6P",
+      progress: 100,
+      status: "failed",
+    },
+  };
+
+  it("读 profile 声明的 error_message 映射，并解开被当字符串二次嵌套的上游 JSON", () => {
+    expect(
+      taskFailureMessageFromResponse(APIMART_IMAGEN_FAILURE, { status: "data.status", error_message: "data.error.message" }),
+    ).toBe("Requested entity was not found.");
+  });
+
+  it("没声明映射也能按形状下钻到对象型 error（渲染层旧副本正是漏在这）", () => {
+    expect(taskFailureMessageFromResponse(APIMART_IMAGEN_FAILURE, null)).toBe("Requested entity was not found.");
+  });
+
+  it("认得各家专属字段名：kie failMsg / runninghub errorMessage / modelscope errors.message", () => {
+    expect(taskFailureMessageFromResponse({ data: { failMsg: "content blocked" } }, { error_message: "data.failMsg" })).toBe(
+      "content blocked",
+    );
+    expect(taskFailureMessageFromResponse({ errorMessage: "node 12 crashed" }, { error_message: "errorMessage" })).toBe(
+      "node 12 crashed",
+    );
+    expect(taskFailureMessageFromResponse({ errors: { message: "size invalid" } }, null)).toBe("size invalid");
+  });
+
+  it("不把成功态包裹的 message:'success' 当失败原因报给用户", () => {
+    expect(taskFailureMessageFromResponse({ code: 200, message: "success", data: {} }, null)).toBe("");
+  });
+
+  it("扒不出原因就返回空串（由渲染层落兜底文案，不编造）", () => {
+    expect(taskFailureMessageFromResponse({ data: { status: "failed" } }, null)).toBe("");
+    expect(taskFailureMessageFromResponse(null, null)).toBe("");
   });
 });

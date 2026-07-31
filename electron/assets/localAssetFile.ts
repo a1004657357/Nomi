@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { resolveProjectRelativePath } from "../projects/repository";
 import { contentTypeFromPath } from "./assetPaths";
 import { categorizeVendorFailure } from "../vendor/vendorHttp";
+import { maybeResolveVendorBase, rewriteVendorUrl } from "../vendor/vendorBaseFallback";
 import type { LocalAsset } from "../catalog/assetLocalization";
 
 /** nomi-local URL → 项目内文件绝对路径(校验 projectId 一致 + 是真实文件);否则 null。 */
@@ -133,7 +134,7 @@ function uploadErrorDetail(json: unknown): string {
  */
 export async function postWithUploadRetry(
   doFetch: () => Promise<Response>,
-  opts: { maxAttempts?: number; delayMs?: number } = {},
+  opts: { maxAttempts?: number; delayMs?: number; onNetworkError?: (error: unknown) => Promise<void> } = {},
 ): Promise<unknown> {
   const maxAttempts = opts.maxAttempts ?? ASSET_UPLOAD_MAX_ATTEMPTS;
   const baseDelay = opts.delayMs ?? ASSET_UPLOAD_RETRY_BASE_MS;
@@ -151,7 +152,9 @@ export async function postWithUploadRetry(
       lastError = httpError; // 5xx / 429 → 可重试
     } catch (error) {
       if (error instanceof NonRetryableUploadError) throw error.original;
-      // 连接级错误（fetch 抛、无 HTTP 响应）= 代理瞬态（127.0.0.1 reset/timeout 等）→ 可重试
+      // 连接级错误（fetch 抛、无 HTTP 响应）= 代理瞬态（127.0.0.1 reset/timeout 等）→ 可重试；
+      // 给调用方一个自愈钩子（vendor 主域被墙 → 探测官方备用域），下次 attempt 的 thunk 即换线。
+      if (opts.onNetworkError) await opts.onNetworkError(error).catch(() => {});
       lastError = error instanceof Error ? error : new Error(String(error));
     }
     if (attempt < maxAttempts) await delay(baseDelay * attempt); // 线性退避
@@ -162,7 +165,14 @@ export async function postWithUploadRetry(
 /** R1 上传通道(JSON body):固定可信端点(vendor 声明里),用普通 fetch(与 requestJson 一致)。瞬态失败有界重试。 */
 export async function postJsonForAssetUpload(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
   const serialized = JSON.stringify(body);
-  return postWithUploadRetry(() => fetch(url, { method: "POST", headers, body: serialized }));
+  let wireUrl = url;
+  return postWithUploadRetry(
+    () => {
+      wireUrl = rewriteVendorUrl(url); // 每次 attempt 重取——自愈换线后下一跳即生效
+      return fetch(wireUrl, { method: "POST", headers, body: serialized });
+    },
+    { onNetworkError: async (error) => { await maybeResolveVendorBase(wireUrl, error); } },
+  );
 }
 
 /** R1 上传通道(multipart/form-data):file 字段二进制 + 可选文本字段(如 KIE stream 的 uploadPath/fileName)。
@@ -179,11 +189,16 @@ export async function postMultipartForAssetUpload(
   // 不手动设 Content-Type，fetch 会自动加 boundary。
   const { "Content-Type": _drop, ...restHeaders } = headers;
   const arrayBuffer = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
-  return postWithUploadRetry(() => {
-    // 每次重试重建 FormData/Blob：Blob 由 ArrayBuffer 支撑可重读，但重建最稳（不赌流是否已被消费）。
-    const form = new FormData();
-    form.append(fileField, new Blob([arrayBuffer], { type: contentType }), fileName);
-    for (const [key, value] of Object.entries(extraFields ?? {})) form.append(key, value);
-    return fetch(url, { method: "POST", headers: restHeaders, body: form });
-  });
+  let wireUrl = url;
+  return postWithUploadRetry(
+    () => {
+      // 每次重试重建 FormData/Blob：Blob 由 ArrayBuffer 支撑可重读，但重建最稳（不赌流是否已被消费）。
+      wireUrl = rewriteVendorUrl(url);
+      const form = new FormData();
+      form.append(fileField, new Blob([arrayBuffer], { type: contentType }), fileName);
+      for (const [key, value] of Object.entries(extraFields ?? {})) form.append(key, value);
+      return fetch(wireUrl, { method: "POST", headers: restHeaders, body: form });
+    },
+    { onNetworkError: async (error) => { await maybeResolveVendorBase(wireUrl, error); } },
+  );
 }

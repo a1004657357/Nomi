@@ -1,28 +1,53 @@
 import { BrowserWindow } from "electron";
-import type { DownloadItem, Rectangle, WebContents } from "electron";
+import type { DownloadItem, WebContents } from "electron";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extensionFromMime, extensionFromUrl } from "../../assets/assetPaths";
-import { bringBrowserViewToFront } from "../core/browserViewUtils";
+import { captureFileName } from "../captureNaming";
+import { BROWSER_MEDIA_MAX_BYTES, detectAnimatedImage, mediaTypeFromContentType, resolveBrowserMediaContentType, streamBrowserMediaResponseToFile } from "./browserMediaValidation";
+import {
+  captureError,
+  captureErrorCode,
+  classifyBrowserMediaSource,
+  classifyDownloadError,
+  decodeDataUrlMedia,
+  normalizeCaptureSourceRect,
+  normalizeLocalCaptureRect,
+  safeTempFileName,
+} from "./browserCaptureSource";
+import { captureMediaScreenshotFallback, captureVideoCurrentFrame, pageBlobIsMediaSource } from "./browserMediaVisualCapture";
 import type {
   BrowserDownloadResult,
-  BrowserPromptScreenshotSelectionResult,
   BrowserResourceCapturePayload,
-  BrowserResourceCaptureRectPayload,
   BrowserViewImportMediaPayload,
   BrowserViewPromptImagePayload,
   BrowserViewPromptScreenshotPayload,
   BrowserViewRecord,
 } from "../core/browserViewTypes";
 
-const BROWSER_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
+export const BROWSER_PROMPT_IMAGE_MAX_BYTES = 16 * 1024 * 1024;
+const browserBlobDownloadQueues = new Map<number, Promise<void>>();
+
+async function enqueueBrowserBlobDownload<T>(contents: WebContents, task: () => Promise<T>): Promise<T> {
+  const previous = browserBlobDownloadQueues.get(contents.id) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(task);
+  const settled = run.then(() => undefined, () => undefined);
+  browserBlobDownloadQueues.set(contents.id, settled);
+  try {
+    return await run;
+  } finally {
+    if (browserBlobDownloadQueues.get(contents.id) === settled) browserBlobDownloadQueues.delete(contents.id);
+  }
+}
 
 function normalizeBrowserMediaUrl(url: unknown, baseUrl: string): string {
   const value = String(url || "").trim();
+  // data: 直接放行（命名层 isCapturableMediaUrl 早已声明支持；大小/magic 校验在解码处）——
+  // 不过 URL 解析器：巨型 base64 走 new URL 是无谓整段拷贝。
+  if (/^data:/i.test(value)) return value;
   const parsed = new URL(value, baseUrl || undefined);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:" && parsed.protocol !== "blob:") {
-    throw new Error("Only http(s) and page blob media URLs are supported");
+    throw new Error("Only http(s), blob and data media URLs are supported");
   }
   return parsed.toString();
 }
@@ -38,31 +63,6 @@ function safeHeaderUrl(url: string): string {
   } catch {
     return "";
   }
-}
-
-function fileNameFromMediaUrl(url: string, fallback: unknown, contentType: string): string {
-  const ext = extensionFromMime(contentType, extensionFromUrl(url));
-  const preferred = String(fallback || "").trim();
-  const fromPath = (() => {
-    try {
-      return path.basename(new URL(url).pathname);
-    } catch {
-      return "";
-    }
-  })();
-  const rawName = preferred || fromPath || `browser-resource-${Date.now()}.${ext}`;
-  return rawName.includes(".") ? rawName : `${rawName}.${ext}`;
-}
-
-function safeTempFileName(fileName: string): string {
-  const baseName = Array.from(path.basename(fileName))
-    .map((char) => {
-      const code = char.charCodeAt(0);
-      return code < 32 || '<>:"/\\|?*'.includes(char) ? "_" : char;
-    })
-    .join("")
-    .trim();
-  return baseName || `browser-resource-${Date.now()}.bin`;
 }
 
 function fallbackContentTypeForMediaType(mediaType: "image" | "video" | null): string {
@@ -86,6 +86,43 @@ function acceptHeaderForMediaType(mediaType: "image" | "video" | null): string {
   return "image/avif,image/webp,image/apng,image/svg+xml,image/*,video/webm,video/mp4,video/*,*/*;q=0.8";
 }
 
+// Referer 只发「策略一致形态」（strict-origin-when-cross-origin 的手工等价）：
+// 同源 → 完整页面 URL（防盗链校验路径的站点需要，如 Dribbble 类 302 链）；跨源 → 仅 origin/。
+// 2026-07-22 审计 15 站实测根因：旧代码把**跨源完整 URL** 硬塞进 Referer——Electron v31 net-fetch
+// 不过滤 forbidden header，这种与 referrer 政策相抵触的值被 Chromium 拦成 ERR_BLOCKED_BY_CLIENT
+//（同 URL 无 Referer 直测 200）。`referrer` 选项则被 net-fetch 源码丢弃（只转发 referrerPolicy），不传。
+export function browserMediaReferrer(pageUrl: string, mediaUrl: string): string {
+  try {
+    const page = new URL(pageUrl);
+    if (page.protocol !== "http:" && page.protocol !== "https:") return "";
+    const media = new URL(mediaUrl);
+    if (media.origin === page.origin) return page.toString();
+    return `${page.origin}/`;
+  } catch {
+    return "";
+  }
+}
+
+// 会话内媒体请求 init 单源：cookies/cache/credentials 走页面 session + 策略一致 Referer。
+export function browserMediaFetchInit(
+  pageUrl: string,
+  mediaUrl: string,
+  requestedMediaType: "image" | "video" | null,
+  signal?: AbortSignal,
+): RequestInit {
+  const referrer = browserMediaReferrer(pageUrl, mediaUrl);
+  return {
+    credentials: "include",
+    redirect: "follow",
+    referrerPolicy: "strict-origin-when-cross-origin",
+    ...(signal ? { signal } : {}),
+    headers: {
+      Accept: acceptHeaderForMediaType(requestedMediaType),
+      ...(referrer ? { Referer: referrer } : {}),
+    },
+  };
+}
+
 function urlsMatch(left: string, right: string): boolean {
   try {
     return new URL(left).href === new URL(right).href;
@@ -97,48 +134,6 @@ function urlsMatch(left: string, right: string): boolean {
 function downloadItemMatchesUrl(item: DownloadItem, url: string): boolean {
   return [item.getURL(), ...item.getURLChain()].some((candidate) => urlsMatch(candidate, url));
 }
-
-export function normalizeCaptureSourceRect(
-  record: BrowserViewRecord,
-  rect: BrowserResourceCaptureRectPayload | undefined,
-): { left: number; top: number; right: number; bottom: number; width: number; height: number } | null {
-  const width = Math.round(Number(rect?.width));
-  const height = Math.round(Number(rect?.height));
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-  const viewWidth = Math.max(1, record.lastBounds.width);
-  const viewHeight = Math.max(1, record.lastBounds.height);
-  const boundedWidth = Math.min(width, viewWidth);
-  const boundedHeight = Math.min(height, viewHeight);
-  const localLeft = Math.min(Math.max(0, Math.round(Number(rect?.left) || 0)), viewWidth - boundedWidth);
-  const localTop = Math.min(Math.max(0, Math.round(Number(rect?.top) || 0)), viewHeight - boundedHeight);
-  const left = record.lastBounds.x + localLeft;
-  const top = record.lastBounds.y + localTop;
-  return {
-    left,
-    top,
-    right: left + boundedWidth,
-    bottom: top + boundedHeight,
-    width: boundedWidth,
-    height: boundedHeight,
-  };
-}
-
-function normalizeLocalCaptureRect(
-  record: BrowserViewRecord,
-  rect: BrowserResourceCaptureRectPayload | undefined,
-): Rectangle | null {
-  const width = Math.round(Number(rect?.width));
-  const height = Math.round(Number(rect?.height));
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-  const viewWidth = Math.max(1, record.lastBounds.width);
-  const viewHeight = Math.max(1, record.lastBounds.height);
-  const boundedWidth = Math.min(width, viewWidth);
-  const boundedHeight = Math.min(height, viewHeight);
-  const x = Math.min(Math.max(0, Math.round(Number(rect?.left) || 0)), viewWidth - boundedWidth);
-  const y = Math.min(Math.max(0, Math.round(Number(rect?.top) || 0)), viewHeight - boundedHeight);
-  return { x, y, width: boundedWidth, height: boundedHeight };
-}
-
 
 export async function captureBrowserResource(record: BrowserViewRecord): Promise<void> {
   const win = BrowserWindow.fromId(record.ownerWindowId);
@@ -161,6 +156,8 @@ export async function captureBrowserResource(record: BrowserViewRecord): Promise
       });
       return;
     }
+    // 候选快照留在 record 上：capturePage 视觉降级按 url 匹配复用这块矩形（不再现场重找元素）。
+    record.lastResourceCapture = { url, mediaType, sourceRect: captured?.sourceRect, capturedAt: Date.now() };
     const sourceRect = normalizeCaptureSourceRect(record, captured?.sourceRect);
     win.webContents.send("browser:view:resource-capture", {
       ok: true,
@@ -185,7 +182,58 @@ export async function captureBrowserResource(record: BrowserViewRecord): Promise
   }
 }
 
-async function downloadBrowserMediaFromPageView(
+async function downloadHttpBrowserMediaFromPageSession(
+  record: BrowserViewRecord,
+  mediaUrl: string,
+  fallbackName: unknown,
+  requestedMediaType: "image" | "video" | null,
+): Promise<BrowserDownloadResult> {
+  const contents = record.view.webContents;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-browser-capture-"));
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, 120_000);
+
+  try {
+    const response = await contents.session.fetch(
+      mediaUrl,
+      browserMediaFetchInit(contents.getURL(), mediaUrl, requestedMediaType, abortController.signal),
+    );
+    if (!response.ok) throw new Error(`网页素材下载失败（HTTP ${response.status}）`);
+    const stagingPath = path.join(tempDir, "download.part");
+    const header = await streamBrowserMediaResponseToFile(response, stagingPath);
+    const resolved = resolveBrowserMediaContentType(
+      response.headers.get("content-type") || "",
+      requestedMediaType,
+      header,
+    );
+    const tempFileName = safeTempFileName(
+      captureFileName(mediaUrl, resolved.contentType, resolved.mediaType, fallbackName),
+    );
+    const savePath = path.join(tempDir, tempFileName);
+    await fs.promises.rename(stagingPath, savePath);
+    return {
+      absolutePath: savePath,
+      fileName: tempFileName,
+      contentType: resolved.contentType,
+      mediaType: resolved.mediaType,
+      cleanupDir: tempDir,
+    };
+  } catch (error) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    if (timedOut || (error instanceof Error && error.name === "AbortError")) {
+      throw new Error("Media download timed out", { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function downloadBrowserBlobFromPageViewUnqueued(
   record: BrowserViewRecord,
   mediaUrl: string,
   fallbackName: unknown,
@@ -194,9 +242,9 @@ async function downloadBrowserMediaFromPageView(
   const contents = record.view.webContents;
   if (contents.isDestroyed()) throw new Error("Browser view is unavailable");
 
-  const referrer = safeHeaderUrl(contents.getURL());
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-browser-capture-"));
   let activeItem: DownloadItem | null = null;
+  let downloadExceededLimit = false;
 
   return new Promise<BrowserDownloadResult>((resolve, reject) => {
     let settled = false;
@@ -242,17 +290,25 @@ async function downloadBrowserMediaFromPageView(
       const fallbackContentType = fallbackContentTypeForMediaType(requestedMediaType);
       const itemContentType = normalizeDownloadedContentType(item.getMimeType() || fallbackContentType, requestedMediaType);
       const tempFileName = safeTempFileName(
-        fileNameFromMediaUrl(mediaUrl, item.getFilename() || fallbackName, itemContentType),
+        captureFileName(
+          mediaUrl,
+          itemContentType,
+          requestedMediaType || mediaTypeFromContentType(itemContentType) || "image",
+          item.getFilename() || fallbackName,
+        ),
       );
       const savePath = path.join(tempDir, tempFileName);
       item.setSavePath(savePath);
 
       item.on("updated", () => {
-        if (item.getReceivedBytes() > BROWSER_MEDIA_MAX_BYTES) item.cancel();
+        if (item.getReceivedBytes() > BROWSER_MEDIA_MAX_BYTES) {
+          downloadExceededLimit = true;
+          item.cancel();
+        }
       });
       item.once("done", (_doneEvent, state) => {
         if (state !== "completed") {
-          finish(new Error(`Media download ${state}`));
+          finish(new Error(downloadExceededLimit ? "Media is too large to import" : `Media download ${state}`));
           return;
         }
         if (!fs.existsSync(savePath)) {
@@ -268,24 +324,35 @@ async function downloadBrowserMediaFromPageView(
           finish(new Error("Media is too large to import"));
           return;
         }
-        const contentType = normalizeDownloadedContentType(
-          item.getMimeType() || itemContentType || fallbackContentType,
-          requestedMediaType,
-        );
-        const mediaType = contentType.startsWith("video/")
-          ? "video"
-          : contentType.startsWith("image/")
-            ? "image"
-            : requestedMediaType;
-        if (mediaType !== "image" && mediaType !== "video" && contentType !== "application/octet-stream") {
-          finish(new Error(`Downloaded resource is not supported media: ${contentType}`));
+        const fileDescriptor = fs.openSync(savePath, "r");
+        const header = Buffer.alloc(4096);
+        let headerBytes: number;
+        try {
+          headerBytes = fs.readSync(fileDescriptor, header, 0, header.byteLength, 0);
+        } finally {
+          fs.closeSync(fileDescriptor);
+        }
+        let resolved: { contentType: string; mediaType: "image" | "video" };
+        try {
+          resolved = resolveBrowserMediaContentType(
+            item.getMimeType() || itemContentType || fallbackContentType,
+            requestedMediaType,
+            header.subarray(0, headerBytes),
+          );
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
           return;
         }
+        const verifiedFileName = safeTempFileName(
+          captureFileName(mediaUrl, resolved.contentType, resolved.mediaType, item.getFilename() || fallbackName),
+        );
+        const verifiedSavePath = path.join(tempDir, verifiedFileName);
+        if (verifiedSavePath !== savePath) fs.renameSync(savePath, verifiedSavePath);
         finish(null, {
-          absolutePath: savePath,
-          fileName: item.getFilename() || tempFileName,
-          contentType,
-          mediaType,
+          absolutePath: verifiedSavePath,
+          fileName: verifiedFileName,
+          contentType: resolved.contentType,
+          mediaType: resolved.mediaType,
           cleanupDir: tempDir,
         });
       });
@@ -293,16 +360,66 @@ async function downloadBrowserMediaFromPageView(
 
     contents.session.on("will-download", handleWillDownload);
     try {
-      contents.downloadURL(mediaUrl, {
-        headers: {
-          Accept: acceptHeaderForMediaType(requestedMediaType),
-          ...(referrer ? { Referer: referrer } : null),
-        },
-      });
+      // blob: 是页面本地对象 URL，不走网络——不需要也不该带任何请求头（Referer 见 browserMediaFetchInit 注释）。
+      contents.downloadURL(mediaUrl);
     } catch (error) {
       finish(error instanceof Error ? error : new Error(String(error)));
     }
   });
+}
+
+async function downloadBrowserBlobFromPageView(
+  record: BrowserViewRecord,
+  mediaUrl: string,
+  fallbackName: unknown,
+  requestedMediaType: "image" | "video" | null,
+): Promise<BrowserDownloadResult> {
+  const contents = record.view.webContents;
+  return enqueueBrowserBlobDownload(contents, () =>
+    downloadBrowserBlobFromPageViewUnqueued(record, mediaUrl, fallbackName, requestedMediaType));
+}
+
+// data: URL 就地解码落盘（与 HTTP 路同一套 magic/类型/大小校验与命名）。
+async function saveBrowserDataUrlMedia(
+  mediaUrl: string,
+  fallbackName: unknown,
+  requestedMediaType: "image" | "video" | null,
+): Promise<BrowserDownloadResult> {
+  const { buffer, declaredContentType } = decodeDataUrlMedia(mediaUrl);
+  const resolved = resolveBrowserMediaContentType(declaredContentType, requestedMediaType, buffer.subarray(0, 4096));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-browser-capture-"));
+  const tempFileName = safeTempFileName(captureFileName(mediaUrl.slice(0, 64), resolved.contentType, resolved.mediaType, fallbackName));
+  const savePath = path.join(tempDir, tempFileName);
+  fs.writeFileSync(savePath, buffer);
+  return {
+    absolutePath: savePath,
+    fileName: tempFileName,
+    contentType: resolved.contentType,
+    mediaType: resolved.mediaType,
+    cleanupDir: tempDir,
+  };
+}
+
+export async function downloadBrowserMediaFromPageView(
+  record: BrowserViewRecord,
+  mediaUrl: string,
+  fallbackName: unknown,
+  requestedMediaType: "image" | "video" | null,
+): Promise<BrowserDownloadResult> {
+  const contents = record.view.webContents;
+  if (contents.isDestroyed()) throw new Error("Browser view is unavailable");
+  // 源分型（审计 L1-L3）：data 就地解码 / blob 先探 MSE / http 走页面会话。
+  const source = classifyBrowserMediaSource(mediaUrl);
+  if (source === "data") {
+    return saveBrowserDataUrlMedia(mediaUrl, fallbackName, requestedMediaType);
+  }
+  if (source === "blob") {
+    if (await pageBlobIsMediaSource(contents, mediaUrl)) {
+      throw captureError("mse-stream", "流媒体视频（MediaSource）没有可下载的原件");
+    }
+    return downloadBrowserBlobFromPageView(record, mediaUrl, fallbackName, requestedMediaType);
+  }
+  return downloadHttpBrowserMediaFromPageSession(record, mediaUrl, fallbackName, requestedMediaType);
 }
 
 export async function importBrowserMedia(record: BrowserViewRecord, payload: BrowserViewImportMediaPayload): Promise<unknown> {
@@ -312,19 +429,68 @@ export async function importBrowserMedia(record: BrowserViewRecord, payload: Bro
   const pageUrl = contents.getURL();
   const mediaUrl = normalizeBrowserMediaUrl(payload.url, pageUrl);
   const requestedMediaType = normalizeBrowserMediaType(payload.mediaType);
-  const download = await downloadBrowserMediaFromPageView(
-    record,
-    mediaUrl,
-    payload.fileName || payload.title,
-    requestedMediaType,
-  );
+
+  // 分型引擎（审计 L0-L4）：一次动作、分层兑现——原件优先；拿不到原件给诚实标注的视觉捕获；
+  // 都不行则抛结构化错误码（渲染层映射到一个可行动下一步，不再折叠成「请重试」）。
+  let download: BrowserDownloadResult;
+  let captureQuality: "original" | "screenshot" | "frame" = "original";
+  try {
+    download = await downloadBrowserMediaFromPageView(record, mediaUrl, payload.fileName || payload.title, requestedMediaType);
+  } catch (downloadError) {
+    const reason = downloadError instanceof Error ? downloadError.message : String(downloadError);
+    const code = classifyDownloadError(reason);
+    if (code === "mse-stream") {
+      // MSE 流媒体没有原件——「保存当前帧」是诚实兑现（验收：不再谎称「临时资源已失效」）。
+      // 黑帧是可行动终态（不落假成功卡），带 code 抛到渲染层给唯一下一步，不折叠成通用截取失败。
+      const frame = await captureVideoCurrentFrame(record, mediaUrl).catch((frameError: unknown) => {
+        if (frameError instanceof Error && captureErrorCode(frameError.message) === "black-frame") throw frameError;
+        return null;
+      });
+      if (!frame) {
+        throw captureError("mse-stream", "流媒体视频没有可下载的原件，当前帧截取也失败了——回到视频页面、让画面可见后重试", downloadError);
+      }
+      download = frame;
+      captureQuality = "frame";
+    } else if (requestedMediaType !== "video") {
+      // 图片拿不回原件 → 「所见即所得」元素截图（防盗链/签名过期/登录墙的通用地板）。
+      // 视频不冒充（Phase1 定案：无标注的首帧≠视频），失败直接给分类错误。
+      const fallback = await captureMediaScreenshotFallback(record, mediaUrl).catch(() => null);
+      if (!fallback) throw captureError(code, reason, downloadError);
+      download = fallback;
+      captureQuality = "screenshot";
+    } else {
+      throw captureError(code, reason, downloadError);
+    }
+  }
+
+  // 动图（GIF/动画 WebP）诚实标注：读原件 header 检测，落 sidecar，素材卡显示「动态图」而非静态「网页原图」。
+  let animatedImage = false;
+  if (captureQuality === "original" && (download.mediaType || requestedMediaType) === "image") {
+    try {
+      const fd = await fs.promises.open(download.absolutePath, "r");
+      try {
+        const header = Buffer.alloc(65536);
+        const { bytesRead } = await fd.read(header, 0, header.length, 0);
+        animatedImage = detectAnimatedImage(header.subarray(0, bytesRead), download.contentType);
+      } finally {
+        await fd.close();
+      }
+    } catch {
+      // 检测失败不影响导入，只是少了「动态图」标注。
+    }
+  }
 
   try {
     const { moveAssetFile } = await import("../../runtime");
     return moveAssetFile(
       projectId,
       download.absolutePath,
-      fileNameFromMediaUrl(mediaUrl, payload.fileName || payload.title || download.fileName, download.contentType),
+      captureFileName(
+        mediaUrl,
+        download.contentType,
+        download.mediaType || requestedMediaType || "image",
+        payload.fileName || payload.title || download.fileName,
+      ),
       download.contentType,
       {
         kind: "browser-capture",
@@ -334,6 +500,9 @@ export async function importBrowserMedia(record: BrowserViewRecord, payload: Bro
         pageUrl: safeHeaderUrl(pageUrl) || null,
         title: payload.title || null,
         mediaType: download.mediaType || requestedMediaType || null,
+        // 来源质量诚实标注（sidecar 持久化，素材卡显示「网页原图/页面截图/视频当前帧」）。
+        ...(captureQuality !== "original" ? { captureQuality } : {}),
+        ...(animatedImage ? { animated: true } : {}),
       },
     );
   } finally {
@@ -341,9 +510,18 @@ export async function importBrowserMedia(record: BrowserViewRecord, payload: Bro
   }
 }
 
-function dataUrlFromFile(filePath: string, contentType: string): string {
+export function assertPromptReferenceDataUrlSize(byteLength: number): void {
+  if (!Number.isFinite(byteLength) || byteLength < 0 || byteLength > BROWSER_PROMPT_IMAGE_MAX_BYTES) {
+    throw new Error("图片过大，无法用于提示词提取（最大 16 MB）");
+  }
+}
+
+async function dataUrlFromFile(filePath: string, contentType: string): Promise<string> {
   const mime = normalizeDownloadedContentType(contentType, "image");
-  return `data:${mime};base64,${fs.readFileSync(filePath).toString("base64")}`;
+  const stat = await fs.promises.stat(filePath);
+  assertPromptReferenceDataUrlSize(stat.size);
+  const bytes = await fs.promises.readFile(filePath);
+  return `data:${mime};base64,${bytes.toString("base64")}`;
 }
 
 async function movePromptReferenceFile(input: {
@@ -380,8 +558,8 @@ export async function captureBrowserPromptImage(
   try {
     if (download.mediaType && download.mediaType !== "image") throw new Error("The selected resource is not an image");
     const contentType = normalizeDownloadedContentType(download.contentType, "image");
-    const dataUrl = dataUrlFromFile(download.absolutePath, contentType);
-    const fileName = fileNameFromMediaUrl(mediaUrl, payload.fileName || payload.title || download.fileName, contentType);
+    const dataUrl = await dataUrlFromFile(download.absolutePath, contentType);
+    const fileName = captureFileName(mediaUrl, contentType, "image", payload.fileName || payload.title || download.fileName);
     const asset = await movePromptReferenceFile({
       projectId,
       absolutePath: download.absolutePath,
@@ -407,209 +585,6 @@ export async function captureBrowserPromptImage(
     };
   } finally {
     fs.rmSync(download.cleanupDir, { recursive: true, force: true });
-  }
-}
-
-export async function selectBrowserPromptScreenshotRect(record: BrowserViewRecord): Promise<BrowserPromptScreenshotSelectionResult> {
-  const contents = record.view.webContents;
-  if (contents.isDestroyed()) return { ok: false, reason: "error", message: "Browser view is unavailable" };
-  const owner = BrowserWindow.fromId(record.ownerWindowId);
-  if (!owner || owner.isDestroyed()) return { ok: false, reason: "error", message: "Browser window is unavailable" };
-  if (record.lastBounds.width <= 0 || record.lastBounds.height <= 0) {
-    return { ok: false, reason: "error", message: "Browser view bounds are unavailable" };
-  }
-  try {
-    bringBrowserViewToFront(record);
-    record.view.setBounds(record.lastBounds);
-    record.view.setVisible(true);
-    contents.focus();
-  } catch {
-    // Focusing can fail while the view is navigating; executeJavaScript below will surface real failures.
-  }
-  const script = `
-(() => new Promise((resolve) => {
-  const existing = document.getElementById('__nomi_prompt_screenshot_selection__');
-  if (existing && existing.parentElement) existing.parentElement.removeChild(existing);
-  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-  const viewport = () => ({
-    width: Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1),
-    height: Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1),
-  });
-  const pointFromEvent = (event) => {
-    const bounds = viewport();
-    return {
-      x: clamp(event.clientX, 0, bounds.width),
-      y: clamp(event.clientY, 0, bounds.height),
-    };
-  };
-  const rectFromPoints = (start, end) => {
-    const left = Math.min(start.x, end.x);
-    const top = Math.min(start.y, end.y);
-    const right = Math.max(start.x, end.x);
-    const bottom = Math.max(start.y, end.y);
-    return { left, top, width: right - left, height: bottom - top };
-  };
-
-  const overlay = document.createElement('div');
-  overlay.id = '__nomi_prompt_screenshot_selection__';
-  overlay.tabIndex = -1;
-  overlay.style.cssText = [
-    'position:fixed',
-    'inset:0',
-    'z-index:2147483647',
-    'cursor:crosshair',
-    'background:rgba(0,0,0,.42)',
-    'outline:none',
-    'user-select:none',
-    'touch-action:none',
-    'pointer-events:auto'
-  ].join(';');
-
-  const hint = document.createElement('div');
-  hint.textContent = '拖拽选择截图区域，Esc 取消';
-  hint.style.cssText = [
-    'position:fixed',
-    'left:50%',
-    'top:18px',
-    'transform:translateX(-50%)',
-    'height:32px',
-    'display:flex',
-    'align-items:center',
-    'padding:0 12px',
-    'border-radius:999px',
-    'background:rgba(17,24,39,.88)',
-    'color:#fff',
-    'font:600 12px/1 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
-    'box-shadow:0 10px 24px rgba(15,23,42,.24)',
-    'pointer-events:none'
-  ].join(';');
-
-  const box = document.createElement('div');
-  box.style.cssText = [
-    'position:fixed',
-    'display:none',
-    'border:2px solid #fff',
-    'border-radius:10px',
-    'background:rgba(255,255,255,.08)',
-    'box-shadow:0 0 0 9999px rgba(0,0,0,.34),0 12px 32px rgba(0,0,0,.28)',
-    'pointer-events:none'
-  ].join(';');
-
-  const sizeLabel = document.createElement('div');
-  sizeLabel.style.cssText = [
-    'position:absolute',
-    'right:8px',
-    'bottom:8px',
-    'height:22px',
-    'display:flex',
-    'align-items:center',
-    'padding:0 7px',
-    'border-radius:999px',
-    'background:rgba(17,24,39,.82)',
-    'color:#fff',
-    'font:600 11px/1 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif'
-  ].join(';');
-  box.appendChild(sizeLabel);
-  (document.body || document.documentElement).appendChild(overlay);
-  overlay.appendChild(hint);
-  overlay.appendChild(box);
-
-  let start = null;
-  let settled = false;
-
-  const render = (rect) => {
-    box.style.display = 'block';
-    box.style.left = Math.round(rect.left) + 'px';
-    box.style.top = Math.round(rect.top) + 'px';
-    box.style.width = Math.round(rect.width) + 'px';
-    box.style.height = Math.round(rect.height) + 'px';
-    sizeLabel.textContent = Math.round(rect.width) + ' x ' + Math.round(rect.height);
-  };
-  const cleanup = () => {
-    window.removeEventListener('pointerdown', onPointerDown, true);
-    window.removeEventListener('pointermove', onPointerMove, true);
-    window.removeEventListener('pointerup', onPointerUp, true);
-    window.removeEventListener('pointercancel', onCancel, true);
-    window.removeEventListener('contextmenu', onContextMenu, true);
-    window.removeEventListener('keydown', onKeyDown, true);
-    if (overlay.parentElement) overlay.parentElement.removeChild(overlay);
-  };
-  const finish = (rect) => {
-    if (settled) return;
-    settled = true;
-    cleanup();
-    resolve(rect);
-  };
-  function onPointerDown(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.button !== 0) {
-      finish(null);
-      return;
-    }
-    start = pointFromEvent(event);
-    render({ left: start.x, top: start.y, width: 0, height: 0 });
-  }
-  function onPointerMove(event) {
-    if (!start) return;
-    event.preventDefault();
-    event.stopPropagation();
-    render(rectFromPoints(start, pointFromEvent(event)));
-  }
-  function onPointerUp(event) {
-    if (!start) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const rect = rectFromPoints(start, pointFromEvent(event));
-    finish(rect.width >= 8 && rect.height >= 8 ? rect : null);
-  }
-  function onCancel(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    finish(null);
-  }
-  function onContextMenu(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    finish(null);
-  }
-  function onKeyDown(event) {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    finish(null);
-  }
-
-  window.addEventListener('pointerdown', onPointerDown, true);
-  window.addEventListener('pointermove', onPointerMove, true);
-  window.addEventListener('pointerup', onPointerUp, true);
-  window.addEventListener('pointercancel', onCancel, true);
-  window.addEventListener('contextmenu', onContextMenu, true);
-  window.addEventListener('keydown', onKeyDown, true);
-  try { overlay.focus({ preventScroll: true }); } catch {}
-}))()
-`;
-  try {
-    const selected = (await contents.executeJavaScript(script, true)) as BrowserResourceCaptureRectPayload | null;
-    const rect = normalizeLocalCaptureRect(record, selected ?? undefined);
-    if (!rect) return { ok: false, reason: "cancelled" };
-    return {
-      ok: true,
-      rect: {
-        left: rect.x,
-        top: rect.y,
-        width: rect.width,
-        height: rect.height,
-      },
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: "error",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    if (!owner.isDestroyed()) owner.focus();
   }
 }
 

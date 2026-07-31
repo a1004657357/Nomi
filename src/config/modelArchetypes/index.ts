@@ -18,7 +18,12 @@ import { SORA_2_ARCHETYPE } from "./sora2";
 import { VEO_3_1_ARCHETYPE } from "./veo31";
 import { WAN_2_7_ARCHETYPE } from "./wan27";
 import { HAILUO_2_3_ARCHETYPE } from "./hailuo23";
+import { GROK_IMAGINE_1_5_VIDEO_ARCHETYPE } from "./grokImagine15Video";
 import { SEEDANCE_2_APIMART_ARCHETYPE } from "./seedanceApimart";
+import { VIDU_Q3_ARCHETYPE } from "./viduQ3";
+import { KLING_3_TURBO_ARCHETYPE } from "./kling30Turbo";
+import { HAPPYHORSE_1_1_ARCHETYPE } from "./happyhorse11";
+import { SEEDREAM_5_PRO_ARCHETYPE } from "./seedream5Pro";
 import { OMNI_FLASH_EXT_ARCHETYPE } from "./omniFlashExt";
 import { AUDIO_ARCHETYPE } from "./audioArchetype";
 import { DOUBAO_TTS_ARCHETYPE } from "./doubaoTtsArchetype";
@@ -32,12 +37,13 @@ import { DREAMINA_UPSCALE_ARCHETYPE } from "./dreaminaUpscale";
 import { DREAMINA_MULTIFRAME_ARCHETYPE } from "./dreaminaMultiframe";
 import { AGNES_IMAGE_ARCHETYPE } from "./agnesImage";
 import { AGNES_VIDEO_ARCHETYPE } from "./agnesVideo";
+import { CODEX_IMAGEGEN_ARCHETYPE } from "./codexImagegen";
 import type { ModelArchetype } from "./types";
 
 export type { ModelArchetype, ArchetypeMode, ArchetypeReferenceSlot, ArchetypeReferenceSlotKind, ArchetypeIntent, ModelArchetypeVariant } from "./types";
 
 /** 内置档案注册表。新模型族在这里登记一条。 */
-export const MODEL_ARCHETYPES: readonly ModelArchetype[] = [SEEDANCE_2_ARCHETYPE, HAPPYHORSE_ARCHETYPE, GPT_IMAGE_2_ARCHETYPE, SEEDREAM_ARCHETYPE, NANO_BANANA_ARCHETYPE, KLING_3_ARCHETYPE, QWEN_IMAGE_ARCHETYPE, IMAGEN_4_ARCHETYPE, Z_IMAGE_ARCHETYPE, SORA_2_ARCHETYPE, VEO_3_1_ARCHETYPE, WAN_2_7_ARCHETYPE, HAILUO_2_3_ARCHETYPE, SEEDANCE_2_APIMART_ARCHETYPE, OMNI_FLASH_EXT_ARCHETYPE, AUDIO_ARCHETYPE, DOUBAO_TTS_ARCHETYPE, SEED_TTS_ARCHETYPE, MODELSCOPE_IMAGE_ARCHETYPE, MODELSCOPE_IMAGE_EDIT_ARCHETYPE, SEEDREAM_VOLCENGINE_ARCHETYPE, SEEDANCE_VOLCENGINE_ARCHETYPE, DREAMINA_SEEDANCE_ARCHETYPE, DREAMINA_IMAGE_ARCHETYPE, DREAMINA_UPSCALE_ARCHETYPE, DREAMINA_MULTIFRAME_ARCHETYPE, HUNYUAN3D_ARCHETYPE, HITEM3D_ARCHETYPE, MESHY6_ARCHETYPE, RUNNINGHUB_SEEDANCE_ARCHETYPE, ...RUNNINGHUB_VIDEO_ARCHETYPES, ...RUNNINGHUB_IMAGE_ARCHETYPES, AGNES_IMAGE_ARCHETYPE, AGNES_VIDEO_ARCHETYPE];
+export const MODEL_ARCHETYPES: readonly ModelArchetype[] = [SEEDANCE_2_ARCHETYPE, HAPPYHORSE_ARCHETYPE, GPT_IMAGE_2_ARCHETYPE, SEEDREAM_ARCHETYPE, NANO_BANANA_ARCHETYPE, KLING_3_ARCHETYPE, QWEN_IMAGE_ARCHETYPE, IMAGEN_4_ARCHETYPE, Z_IMAGE_ARCHETYPE, SORA_2_ARCHETYPE, VEO_3_1_ARCHETYPE, WAN_2_7_ARCHETYPE, HAILUO_2_3_ARCHETYPE, GROK_IMAGINE_1_5_VIDEO_ARCHETYPE, SEEDANCE_2_APIMART_ARCHETYPE, VIDU_Q3_ARCHETYPE, KLING_3_TURBO_ARCHETYPE, HAPPYHORSE_1_1_ARCHETYPE, SEEDREAM_5_PRO_ARCHETYPE, OMNI_FLASH_EXT_ARCHETYPE, AUDIO_ARCHETYPE, DOUBAO_TTS_ARCHETYPE, SEED_TTS_ARCHETYPE, MODELSCOPE_IMAGE_ARCHETYPE, MODELSCOPE_IMAGE_EDIT_ARCHETYPE, SEEDREAM_VOLCENGINE_ARCHETYPE, SEEDANCE_VOLCENGINE_ARCHETYPE, DREAMINA_SEEDANCE_ARCHETYPE, DREAMINA_IMAGE_ARCHETYPE, DREAMINA_UPSCALE_ARCHETYPE, DREAMINA_MULTIFRAME_ARCHETYPE, CODEX_IMAGEGEN_ARCHETYPE, HUNYUAN3D_ARCHETYPE, HITEM3D_ARCHETYPE, MESHY6_ARCHETYPE, RUNNINGHUB_SEEDANCE_ARCHETYPE, ...RUNNINGHUB_VIDEO_ARCHETYPES, ...RUNNINGHUB_IMAGE_ARCHETYPES, AGNES_IMAGE_ARCHETYPE, AGNES_VIDEO_ARCHETYPE];
 
 /** 按 id 取档案。 */
 export function getArchetypeById(id: string | null | undefined): ModelArchetype | null {
@@ -69,24 +75,44 @@ function identifierMatchesPattern(identifier: string, pattern: string): boolean 
 export type ArchetypeModelLike = {
   modelKey?: string | null;
   modelAlias?: string | null;
-  /** B 档案分层：按供应商特化 params（见 specializeArchetypeForVendor）。缺省=不特化（向后兼容）。 */
-  vendorKey?: string | null;
+  /**
+   * 模型所属供应商 —— **必传**（值可为 null=未知）。B 档案分层按它特化 params
+   * （见 specializeArchetypeForVendor）。必传是结构保证：曾有 5 个调用点漏传 →
+   * 发送路拿到的是未特化档案、与 UI 侧（传了 vendor）分裂；类型层逼所有调用点显式表态。
+   * 注意：vendor **不改变**解析结果（供应商无关识别是设计特性——seed-tts/中转 Seedance
+   * 等档案就是给任意中转用的）；中转与内置家的传输差异由「标准参考面永远在场」不变量吸收
+   * （见 catalogTaskActions.buildReferenceExtras / electron referenceInputParams，2026-07-24）。
+   */
+  vendorKey: string | null | undefined;
   meta?: unknown;
 };
 
 function readArchetypeIdFromMeta(meta: unknown): string | null {
   if (!meta || typeof meta !== "object") return null;
-  const value = (meta as { archetypeId?: unknown }).archetypeId;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  const record = meta as { archetypeId?: unknown; archetype?: unknown };
+  // catalog 模型行使用 meta.archetypeId；画布节点持久化使用 meta.archetype.id。
+  // 两者必须由同一个解析入口识别，否则会出现「连线侧已切改图，发送侧却认不出档案」的分裂。
+  const direct = record.archetypeId;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const nested = record.archetype;
+  if (nested && typeof nested === "object") {
+    const id = (nested as { id?: unknown }).id;
+    if (typeof id === "string" && id.trim()) return id.trim();
+  }
+  return null;
 }
 
 /**
  * 解析一个 catalog 模型对应的档案 —— **供应商无关**，这是「换任意供应商也能用模板」的核心。
  * 顺序：
- *   1. meta.archetypeId 显式指定（我们 seed 的模型 / 已识别并落库的）→ 直接取。
+ *   1. meta.archetypeId（catalog 模型）或 meta.archetype.id（画布节点）显式指定 → 直接取。
  *   2. 否则按模型身份（modelKey / 别名）匹配 identifierPatterns —— 任何人经任何供应商接入
  *      同一个模型都会命中，不依赖 kie。
  *   3. 都不中 → null（渲染层走「通用」回退，按接入文档原样展示，不藏能力）。
+ * 传输侧前提（2026-07-24 修正）：档案投影**叠加**在标准参考面之上、不得独占参考通道——
+ * 自定义中转的模板只认标准键（reference_images/chat_image_parts/image_url），吞掉它们会让
+ * 中转上撞档案名的模型改图不带图（群反馈根因）。该不变量钉在 buildReferenceExtras +
+ * referenceInputParams，两处测试锁死；本函数保持纯识别、不做 vendor 门。
  */
 export function resolveArchetypeForModel(model: ArchetypeModelLike | null | undefined): ModelArchetype | null {
   if (!model) return null;
@@ -135,7 +161,8 @@ export function specializeArchetypeForVendor(archetype: ModelArchetype, vendorKe
  */
 export function specializeArchetypeForVariant(archetype: ModelArchetype, variantId: string | null | undefined): ModelArchetype {
   if (!archetype.variants || archetype.variants.length === 0) return archetype;
-  const targetId = typeof variantId === "string" && variantId.trim() ? variantId.trim() : archetype.defaultVariantId;
+  const requestedId = typeof variantId === "string" && variantId.trim() ? variantId.trim() : archetype.defaultVariantId;
+  const targetId = (requestedId && archetype.variantIdAliases?.[requestedId]) || requestedId;
   const variant = archetype.variants.find((v) => v.id === targetId);
   const overrides = variant?.paramOverrides;
   if (!overrides) return archetype;

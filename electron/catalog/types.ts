@@ -210,6 +210,15 @@ export type Model = {
 export type HttpOperation = {
   method: string;
   path: string;
+  /**
+   * 路径从**主机根**拼，而不是从 vendor 的 baseUrl 拼。默认（缺省）= 从 baseUrl 拼。
+   *
+   * 为什么需要：某些厂商的原生端点不在 OpenAI 兼容的 /v1 命名空间下（火山方舟是
+   * `/api/v3/contents/generations/tasks`）。中转用户常把接入地址填成 `https://host:8443/v1`
+   * （拉模型要那个地址），直接拼就成了 `/v1/api/v3/...` 打不中。置位后 buildHttpRequest 先剥掉
+   * baseUrl 尾部的版本段（/v1、/v3、…）再 join。显式声明，不在 joinUrl 里塞按路径猜的魔法。
+   */
+  pathFrom?: "host-root";
   headers?: Record<string, string>;
   query?: Record<string, unknown>;
   body?: unknown;
@@ -249,7 +258,7 @@ export type HttpOperation = {
    * 把 stdout 归一成「类 HTTP 响应」对象，喂回现有 buildProfileTaskResult/statusMapping，状态机零改。
    *  - bin            ：可执行名（运行时经 PATH / env 解析真实路径）。
    *  - args           ：参数模板数组（如 ["text2video","--prompt={{prompt}}","--duration={{params.duration}}"]）。
-   *  - parser         ：stdout 解码器选择子（目前仅 "dreamina-cli"）。未来同形状 vendor 声明各自 parser 即复用。
+   *  - parser         ：stdout 解码器选择子（如 "dreamina-cli" / "codex-cli-image"）。未来同形状 vendor 声明各自 parser 即复用。
    *  - appendDownloadDir：true 时追加 `--download_dir=<项目素材临时目录>`，让 CLI 把结果下到本地（取本地文件）。
    *  - fileParams     ：**输入文件吞入声明**。即梦带图/视频/音频的命令收**本地文件路径**（`--image=./x.png`），
    *                     而 Nomi 槽给的是资产 URL（nomi-local://http/data）。spawn 前据此把每个输入 URL 物化成
@@ -259,7 +268,7 @@ export type HttpOperation = {
   process?: {
     bin: string;
     args: string[];
-    parser: "dreamina-cli";
+    parser: "dreamina-cli" | "codex-cli-image";
     appendDownloadDir?: boolean;
     /**
      * 特殊 arg 构建器（声明驱动分派）。缺省=用 `args` 模板渲染。"multiframe"=多帧按图数变形（2 图 shorthand /
@@ -277,6 +286,25 @@ export type HttpOperation = {
       /** mode=repeat 时的 flag 名（如 "--image"）。 */
       flag?: string;
     }>;
+  };
+  /**
+   * **multipart/form-data transport 声明**（P4 声明驱动不 hardcode vendor）。当端点收的是二进制文件上传
+   * 而非 URL-in-JSON（OpenAI 官方 /v1/images/edits 图生图：image[] 文件字段 + 文本字段），create op 声明
+   * multipart，executeProfileOperation 据此分流到 FormData 分支（而非 requestJson）：
+   *  - fields      ：文本 form 字段（值走 renderTemplateValue，与 body 同一套模板）。undefined/空值丢弃。
+   *  - imageField  ：二进制图片文件字段名（多图 "image[]" / 单图 "image"）。
+   *  - imageSource ：解析出参考图 URL（string 或 string[]）的模板；发送时把每个 URL 取成字节当文件上传
+   *                  （nomi-local 读本地字节零网络；http/data 取字节）。
+   *  - multiple    ：true=多图（每 URL 一个 imageField 项）；false=只取首图。
+   *  - filename    ：上传文件名前缀（默认 "image"）。
+   * 可序列化（持久化进 catalog JSON）：纯数据模板。
+   */
+  multipart?: {
+    fields?: Record<string, string>;
+    imageField: string;
+    imageSource: string;
+    multiple?: boolean;
+    filename?: string;
   };
   /**
    * 参数翻译表（铁律：模型身份决定参数，与渠道无关）。档案声明**中性 canonical 参数**（全站一致），
@@ -389,8 +417,15 @@ export function billingKindForTaskKind(kind: ProfileKind): BillingModelKind {
 /*  v5 给存量中转 image 条目补图生图能力(image_edit mapping + supportsReferenceImages + 老标准参数升级成
  *  比例/清晰度)。8c711f0c 起新接入才写这些字段，老条目此前只能「删了重加」——迁移根治，见
  *  docs/plan/2026-07-06-i2i-reference-reliability.md（L1）。只碰非内置 vendor + OpenAI 兼容形状。 */
-export type CatalogVersion = 1 | 2 | 3 | 4 | 5;
-export const CURRENT_CATALOG_VERSION: CatalogVersion = 5;
+/*  v6 把 image_edit 从 vendor 级单协议升级为 modelKey 精确协议：Grok Imagine 的 JSON /images/edits
+ *  不再误走 Nano Banana 的 /chat/completions；存量目录自动补精确 mapping。 */
+/*  v7 重跑 v6 的协议分流（v6 那次跑在 gpt-image/dall-e-2 接上 multipart edits 之前，存量被留在
+ *  chat/completions）。迁移幂等，靠 bump 强制重跑。 */
+/*  v8 给存量中转 video 条目补「图生视频」通道(image_to_video mapping)。接入路径此前只建 text_to_video，
+ *  视频节点一连参考图/首帧就报「没有配置图生视频通道·请删除后重新接入」，而重接也不会建（根因在接入
+ *  路径，已同 commit 修）。只碰非内置 vendor + /video/generations 形状。 */
+export type CatalogVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export const CURRENT_CATALOG_VERSION: CatalogVersion = 8;
 
 export type CatalogState = {
   version: CatalogVersion;

@@ -36,7 +36,13 @@ export function referenceAssetKindForNode(node: GenerationCanvasNode): Reference
   const exec = getGenerationNodeExecutionKind(node.kind)
   if (exec === 'video') return 'video'
   if (exec === 'image') return 'image'
-  return getGenerationNodeDefinition(node.kind).providesImageReference ? 'image' : null
+  if (!getGenerationNodeDefinition(node.kind).providesImageReference) return null
+  // 素材节点(kind='asset')**一个种类同时承载导入的图和视频**——真实媒体类型必须看产物 result.type，
+  // 不能一律当图参考。否则导入的视频被判 image → 连成 character_ref → 落「角色参考」图槽 →
+  // 显示成 <img src=video.mp4> 加载失败(用户报的「上传视频却显示图片/加载失败」)，且与发送侧
+  // (generationReferenceResolver 按 result.type 把视频分流进 referenceVideos)口径分裂。看 result.type
+  // 后:视频 → video_ref 槽(显示成视频块)+ 边语义 reference(不再冒充角色图)。无产物(上传中)默认 image。
+  return node.result?.type === 'video' ? 'video' : 'image'
 }
 
 /**
@@ -209,13 +215,71 @@ export function resolveTargetModeForEdge(
   if (!asset) return null
   const archetype = archetypeForNode(target)
   if (!archetype) return null
-  const required = EDGE_MODE_SLOTS[mode ?? 'reference']
-  const accepts = (m: ArchetypeMode): boolean =>
-    m.slots.some((slot) => required.includes(slot.kind) && SLOT_ACCEPTS[slot.kind].includes(asset))
-  const currentMode = currentArchetypeMode(archetype, (target.meta || {}) as Record<string, unknown>)
-  if (accepts(currentMode)) return null
-  const fallback = archetype.modes.find(accepts)
-  return fallback ? fallback.id : null
+  return resolveModeForReferenceDemand(archetype, (target.meta || {}) as Record<string, unknown>, [
+    { slots: EDGE_MODE_SLOTS[mode ?? 'reference'], asset },
+  ])
+}
+
+/** 一条「挂在节点身上的参考需求」：它想落的槽种类集合 × 源资产类型。 */
+export type ReferenceDemand = { slots: readonly ArchetypeReferenceSlotKind[]; asset: ReferenceAssetKind }
+
+/**
+ * 给定若干参考需求，当前模式该不该切、切到哪（resolveTargetModeForEdge 的多需求泛化，同一份语义）。
+ * 当前模式已能消费**任一**需求 → null（尊重现状，与建边 auto-promote 的幂等口径一致）；
+ * 一条都收不下 → 挑「能收下需求条数最多」的模式；档案没有任何模式能收 → null（真不支持）。
+ */
+export function resolveModeForReferenceDemand(
+  archetype: ModelArchetype,
+  meta: Record<string, unknown> | undefined,
+  demands: readonly ReferenceDemand[],
+): string | null {
+  if (!demands.length) return null
+  const accepts = (m: ArchetypeMode, d: ReferenceDemand): boolean =>
+    m.slots.some((slot) => d.slots.includes(slot.kind) && SLOT_ACCEPTS[slot.kind].includes(d.asset))
+  const currentMode = currentArchetypeMode(archetype, meta)
+  if (demands.some((d) => accepts(currentMode, d))) return null
+  let best: ArchetypeMode | null = null
+  let bestScore = 0
+  for (const m of archetype.modes) {
+    const score = demands.filter((d) => accepts(m, d)).length
+    if (score > bestScore) {
+      best = m
+      bestScore = score
+    }
+  }
+  return best && best.id !== currentMode.id ? best.id : null
+}
+
+/**
+ * 按**活边**判断：目标节点当前「生成方式」收不收得下身上挂着的参考，收不下该切到哪。
+ *
+ * 根因（2026-07-28 群反馈「男的角色图生成出女的」）：建边时的 auto-promote 只覆盖「建边那一刻」，
+ * 三条路够不到——①换模型（meta.archetype 失配落回新档案默认 t2i，边还挂着）②提示词库带参考图
+ * ③auto-promote 上线前的存量边。停在 t2i 的节点在 buildArchetypeInputParams 的 M2 互斥里把参考
+ * 整个丢掉、canRunGenerationNode 又对 t2i 提前放行 → 付费发出纯文生。此函数供提交咽喉/换模型处
+ * reconcile 兜底（P2：让整类不再复发）。
+ *
+ * **只看活边，不看 meta 参考残值**：meta 参考值跨模式持久是拍板过的设计（切模式不清数据，怕丢上传），
+ * 用户手动切走后残值不构成「要用参考」的意图；活边是画布上可见的连接，才是意图。
+ * 文本 prompt 边（isTextPromptEdge）不是参考素材，不参与。
+ */
+export function resolveModeForConnectedReferences(
+  target: GenerationCanvasNode,
+  nodes: readonly GenerationCanvasNode[],
+  edges: readonly GenerationCanvasEdge[],
+): string | null {
+  const archetype = archetypeForNode(target)
+  if (!archetype || archetype.modes.length <= 1) return null
+  const demands: ReferenceDemand[] = []
+  for (const edge of edges) {
+    if (edge.target !== target.id) continue
+    const source = nodes.find((n) => n.id === edge.source)
+    if (!source || isTextPromptEdge(source, target, edge.mode)) continue
+    const asset = referenceAssetKindForNode(source)
+    if (!asset) continue
+    demands.push({ slots: EDGE_MODE_SLOTS[edge.mode ?? 'reference'], asset })
+  }
+  return resolveModeForReferenceDemand(archetype, (target.meta || {}) as Record<string, unknown>, demands)
 }
 
 /** 计划里的边(批准前):可能用 clientId(新节点)或真实 id(复用已有卡)。 */

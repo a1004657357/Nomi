@@ -2,8 +2,18 @@
 // 统一一条下载路径：图片/视频/素材都走这里（按 url 协议取字节，不为不同类型分叉）。从 main.ts 抽出（规则 12 巨壳净减）。
 import { app, BrowserWindow, dialog, net } from "electron";
 import path from "node:path";
+import { existsSync, statSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolveProjectRelativePath } from "../projects/repository";
+import { getLastDownloadDir, pickDownloadDir, rememberDownloadDir } from "./downloadPrefs";
+
+function isDirectory(dir: string): boolean {
+  try {
+    return existsSync(dir) && statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 function sanitizeDownloadName(name: string): string {
   // 仅去掉路径分隔与文件系统非法字符（保留中英文/数字/空格/连字符等可读字符），留下安全的单段文件名。
@@ -40,10 +50,13 @@ export async function downloadAssetToDisk(
   if (!suggested) suggested = `nomi-asset${fallbackExt || ".bin"}`;
   else if (!path.extname(suggested) && fallbackExt) suggested += fallbackExt;
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0] || undefined;
+  // 默认目录：上次另存到的目录（仍存在）优先，否则系统下载夹——省得每次手动导航（fb-20260724）。
+  const baseDir = pickDownloadDir(getLastDownloadDir(), app.getPath("downloads"), isDirectory);
   const result = await dialog.showSaveDialog(win as BrowserWindow, {
-    defaultPath: path.join(app.getPath("downloads"), suggested),
+    defaultPath: path.join(baseDir, suggested),
   });
   if (result.canceled || !result.filePath) return { ok: false, canceled: true };
   await writeFile(result.filePath, bytes);
+  rememberDownloadDir(path.dirname(result.filePath)); // 记住这次目录，下次默认弹到这里
   return { ok: true, path: result.filePath };
 }

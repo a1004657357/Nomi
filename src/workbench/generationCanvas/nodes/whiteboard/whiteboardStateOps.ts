@@ -80,7 +80,26 @@ export function groupTargetsIntoLayer(state: WhiteboardState, targets: CanvasObj
   }
 }
 
+/** 删除可行性判定（单一真相源：deleteTargetFromState 与 UI 提示共用，静默 no-op 根治为明确反馈）。 */
+export type DeleteTargetVerdict = 'ok' | 'missing' | 'background' | 'locked'
+
+export function assessDeleteTarget(state: WhiteboardState, target: CanvasObjectTarget): DeleteTargetVerdict {
+  const targetLayerId =
+    target.kind === 'group'
+      ? target.id
+      : target.kind === 'asset'
+        ? state.canvasAssets.find((asset) => asset.id === target.id)?.layerId
+        : state.strokes.find((stroke) => stroke.id === target.id)?.layerId
+  if (!targetLayerId) return 'missing'
+  const layer = state.layers.find((item) => item.id === targetLayerId)
+  if (!layer) return 'missing'
+  if (layer.kind === 'background') return 'background'
+  if (layer.locked) return 'locked'
+  return 'ok'
+}
+
 export function deleteTargetFromState(state: WhiteboardState, target: CanvasObjectTarget): WhiteboardState {
+  if (assessDeleteTarget(state, target) !== 'ok') return state
   const targetLayerId =
     target.kind === 'group'
       ? target.id
@@ -88,8 +107,6 @@ export function deleteTargetFromState(state: WhiteboardState, target: CanvasObje
         ? state.canvasAssets.find((asset) => asset.id === target.id)?.layerId
         : state.strokes.find((stroke) => stroke.id === target.id)?.layerId
   if (!targetLayerId) return state
-  const layer = state.layers.find((item) => item.id === targetLayerId)
-  if (!layer || layer.kind === 'background' || layer.locked) return state
 
   const nextAssets = state.canvasAssets.filter((asset) =>
     !(target.kind === 'asset' && asset.id === target.id) &&
@@ -110,6 +127,21 @@ export function deleteTargetFromState(state: WhiteboardState, target: CanvasObje
     layers: removeLayer ? state.layers.filter((item) => item.id !== targetLayerId) : state.layers,
     activeLayerId: 'drawing-layer-1',
   }
+}
+
+/**
+ * 「结果」页签的素材源合并（IA 归位，2026-07-29 拍板 A）：已连线的上游结果在前，
+ * 画布全量成图去重补后（同一节点连了线就不再以「来自画布」重复出现）。
+ */
+export function mergeResultLibraryItems<T extends { nodeId: string }>(
+  connected: T[],
+  canvas: T[],
+): Array<T & { fromCanvas?: boolean }> {
+  const connectedNodeIds = new Set(connected.map((item) => item.nodeId))
+  return [
+    ...connected,
+    ...canvas.filter((item) => !connectedNodeIds.has(item.nodeId)).map((item) => ({ ...item, fromCanvas: true })),
+  ]
 }
 
 export function getAssetPanelItems(layers: LayerItem[], assets: CanvasAsset[]): AssetPanelItem[] {

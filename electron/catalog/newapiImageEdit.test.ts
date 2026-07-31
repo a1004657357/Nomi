@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { NEWAPI_IMAGE_EDIT_OP, NEWAPI_IMAGE_CREATE_OP, NEWAPI_IMAGE_PARAM_MAP, NEWAPI_VIDEO_CREATE_OP, NEWAPI_VIDEO_QUERY_OP, NEWAPI_AUDIO_TTS_OP } from "./newapiTransport";
+import { NEWAPI_IMAGE_EDIT_OP, NEWAPI_IMAGE_CREATE_OP, NEWAPI_IMAGE_PARAM_MAP, NEWAPI_VIDEO_CREATE_OP, NEWAPI_VIDEO_QUERY_OP, NEWAPI_AUDIO_TTS_OP, newapiImageEditProfileForModel } from "./newapiTransport";
 import { taskTemplateParams } from "./taskParams";
 import { applyParamMap } from "./paramTranslate";
 import { valuesFromMapping } from "../tasks/responseParsing";
@@ -37,6 +37,75 @@ describe("通用中转 image_edit（chat/completions 多模态）请求装配", 
     const params = taskTemplateParams({ extras: {} });
     const body = renderBody(NEWAPI_IMAGE_EDIT_OP, "画只猫", params);
     expect((body.messages as AnyRec[])[0].content).toEqual([{ type: "text", text: "画只猫" }]);
+  });
+});
+
+describe("通用中转 image_edit 按模型协议精确分流", () => {
+  it("Grok Imagine 单参考图 → JSON /v1/images/edits + image（不是 chat/completions）", () => {
+    const profile = newapiImageEditProfileForModel("grok-imagine-image-quality");
+    expect(profile.protocol).toBe("xai-json-edits");
+    expect(profile.operation.path).toBe("/v1/images/edits");
+    const body = renderBody(
+      profile.operation,
+      "把背景换成夜晚",
+      taskTemplateParams({ extras: { referenceImages: ["https://x/a.png"] } }),
+    );
+    expect(body).toMatchObject({
+      model: "gemini-2.5-flash-image",
+      prompt: "把背景换成夜晚",
+      image: { type: "image_url", url: "https://x/a.png" },
+      response_format: "url",
+    });
+    expect(body).not.toHaveProperty("messages");
+    expect(body).not.toHaveProperty("images");
+  });
+
+  it("Grok Imagine 多参考图 → images 有序数组，最多取官方支持的 3 张", () => {
+    const profile = newapiImageEditProfileForModel("xai/grok-imagine-image");
+    const body = renderBody(
+      profile.operation,
+      "合成一张图",
+      taskTemplateParams({ extras: { referenceImages: ["https://x/1.png", "https://x/2.png", "https://x/3.png", "https://x/4.png"] } }),
+    );
+    expect(body.images).toEqual([
+      { type: "image_url", url: "https://x/1.png" },
+      { type: "image_url", url: "https://x/2.png" },
+      { type: "image_url", url: "https://x/3.png" },
+    ]);
+    expect(body).not.toHaveProperty("image");
+  });
+
+  it("Nano Banana 保留 chat/completions 多模态协议", () => {
+    const profile = newapiImageEditProfileForModel("google/nano-banana-edit");
+    expect(profile.protocol).toBe("chat-completions-image-url");
+    expect(profile.operation).toBe(NEWAPI_IMAGE_EDIT_OP);
+  });
+
+  it("GPT Image 2 → OpenAI multipart /v1/images/edits（image[] 文件字段，非 chat/非 JSON）", () => {
+    const profile = newapiImageEditProfileForModel("gpt-image-2");
+    expect(profile.protocol).toBe("openai-multipart-edits");
+    expect(profile.operation.path).toBe("/v1/images/edits");
+    expect(profile.operation.multipart?.imageField).toBe("image[]");
+    expect(profile.operation.multipart?.multiple).toBe(true);
+    // 不设 Content-Type（multipart 由 fetch 加 boundary）；body 走 multipart.fields 不走 JSON body。
+    expect(profile.operation.body).toBeUndefined();
+    expect(profile.operation.headers?.["Content-Type"]).toBeUndefined();
+  });
+
+  it("dall-e-2 也走 multipart edits；带路径前缀的 gpt-image 仍命中", () => {
+    expect(newapiImageEditProfileForModel("dall-e-2").protocol).toBe("openai-multipart-edits");
+    expect(newapiImageEditProfileForModel("openai/gpt-image-1").protocol).toBe("openai-multipart-edits");
+  });
+
+  it("override（探测/手动选）压过智能默认：把 gpt-image 强判成 chat", () => {
+    const profile = newapiImageEditProfileForModel("gpt-image-2", null, "chat-completions-image-url");
+    expect(profile.protocol).toBe("chat-completions-image-url");
+    expect(profile.operation).toBe(NEWAPI_IMAGE_EDIT_OP);
+  });
+
+  it("非法 override 被忽略，回落智能默认", () => {
+    const profile = newapiImageEditProfileForModel("gpt-image-2", null, "bogus" as never);
+    expect(profile.protocol).toBe("openai-multipart-edits");
   });
 });
 

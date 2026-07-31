@@ -18,8 +18,14 @@ describe("resolveNodeRenderKind — 渲染分发优先级（kind > categoryId）
     expect(resolveNodeRenderKind(node({ kind: "asset", categoryId: "cast" }))).toBeUndefined();
   });
 
-  it("显式 node.renderKind 覆盖一切", () => {
-    expect(resolveNodeRenderKind(node({ kind: "character", renderKind: "shot-frame" }))).toBe("shot-frame");
+  it("kind 专属卡压过存量脏显式值——V51→V60 曾把 shots 默认 shot-frame 盖章到画板/角色节点，画板『打开』入口消失（2026-07-29 真机复现）", () => {
+    expect(resolveNodeRenderKind(node({ kind: "whiteboard", renderKind: "shot-frame", categoryId: "shots" }))).toBe("whiteboard-card");
+    expect(resolveNodeRenderKind(node({ kind: "character", renderKind: "shot-frame" }))).toBe("character-card");
+    expect(resolveNodeRenderKind(node({ kind: "audio", renderKind: "shot-frame" }))).toBe("audio-strip");
+  });
+
+  it("无专属卡的 kind 显式 renderKind 仍然生效（image 显式 shot-frame → 媒体预览）", () => {
+    expect(resolveNodeRenderKind(node({ kind: "image", renderKind: "shot-frame", categoryId: "prop" }))).toBe("shot-frame");
   });
 
   it("无 kind 信号时按 categoryId 兜底（prop 分类的 image → prop-card）", () => {

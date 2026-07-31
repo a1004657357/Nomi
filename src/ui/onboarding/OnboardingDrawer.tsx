@@ -13,7 +13,8 @@
  * 不改后端 catalog / IPC / 三套 vendor 名单（不合并、不去重）。
  */
 import React from 'react'
-import { IconStack2, IconChevronRight, IconPlus, IconPhoto, IconVideo, IconMessageCircle, IconMusic } from '@tabler/icons-react'
+import { useTranslation } from 'react-i18next'
+import { IconStack2, IconChevronRight, IconPlus, IconPhoto, IconVideo, IconMessageCircle, IconMusic, IconTrash, IconRefresh } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { OnboardingWizard } from './OnboardingWizard'
 import { FoldableModelCard } from './FoldableModelCard'
@@ -22,9 +23,11 @@ import { AvailableGroup } from './AvailableGroup'
 import { type ChipModel } from './ModelChipGroups'
 import { ModelEnableEditor } from './ModelEnableEditor'
 import { CustomVendorManage } from './CustomVendorManage'
+import { confirmAndDeleteVendor } from './vendorDeleteAction'
 import { ConnectAssistantCard, type McpInfo } from './ConnectAssistantCard'
 import { DreaminaMemberCard, type DreaminaStatus } from './DreaminaMemberCard'
 import { ComfyuiLocalCard, COMFYUI_VENDOR_KEY } from './ComfyuiLocalCard'
+import { CODEX_LOCAL_VENDOR_KEY } from './codexLocalProvider'
 import { KNOWN_VENDORS, isKnownVendor } from '../../config/knownVendors'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { notifyModelOptionsRefresh } from '../../config/useModelOptions'
@@ -35,21 +38,30 @@ type VendorMeta = {
   hasApiKey: boolean
   baseUrl: string
   enabled: boolean
+  authType: string
 }
 
 // 能力概览：四类产物 → 图标/文案。covered 由已连通供应商的模型 kind 派生（derive 不 hardcode）。
+// labelKey 指向 onboardingProviders.drawer.kind.*，在渲染时用 t() 取文案。
 const KIND_CAPS = [
-  { kind: 'image', label: '图片', Icon: IconPhoto },
-  { kind: 'video', label: '视频', Icon: IconVideo },
-  { kind: 'text', label: '文本', Icon: IconMessageCircle },
-  { kind: 'audio', label: '配音', Icon: IconMusic },
+  { kind: 'image', labelKey: 'onboardingProviders.drawer.kind.image', Icon: IconPhoto },
+  { kind: 'video', labelKey: 'onboardingProviders.drawer.kind.video', Icon: IconVideo },
+  { kind: 'text', labelKey: 'onboardingProviders.drawer.kind.text', Icon: IconMessageCircle },
+  { kind: 'audio', labelKey: 'onboardingProviders.drawer.kind.audio', Icon: IconMusic },
 ] as const
 
+// Issue #42:后台桥（preload 注入的 window.nomiDesktop）偶发未就绪时，别把用户永久卡在「加载中…」。
+// 有界重试（总窗口 ≈ 5×400ms = 2s，覆盖启动竞态），仍拿不到才判真故障、给可操作错误态。
+const MAX_BRIDGE_RETRIES = 5
+const BRIDGE_RETRY_MS = 400
+
 export function OnboardingDrawer(): JSX.Element {
+  const { t } = useTranslation()
   const [wizardOpen, setWizardOpen] = React.useState(false)
   const [wizardPreset, setWizardPreset] = React.useState<string | undefined>(undefined)
   const openWizard = React.useCallback((preset?: string) => { setWizardPreset(preset); setWizardOpen(true) }, [])
   const [models, setModels] = React.useState<ChipModel[]>([])
+  const [mappings, setMappings] = React.useState<Array<Record<string, unknown>>>([])
   const [vendorMeta, setVendorMeta] = React.useState<Map<string, VendorMeta>>(new Map())
   // 即梦 / 编程助手的连接状态上提到父组件（单一来源，plan §4.1）。null = 不可用/加载中（卡不显）。
   const [dreaminaStatus, setDreaminaStatus] = React.useState<DreaminaStatus | null>(null)
@@ -57,15 +69,44 @@ export function OnboardingDrawer(): JSX.Element {
   // 同步数据就绪标志：分组折叠的「自适应默认」依赖 hasConnected，必须等目录/MCP 同步加载完再挂
   // AvailableGroup，否则它在首帧空态（hasConnected=false）就把默认展开态固定下来（plan §4.3 mount-before-load）。
   const [loaded, setLoaded] = React.useState(false)
+  // Issue #42:后台桥缺失（多为启动竞态/多窗口 preload 未挂）→ 有界重试；仍无则给可操作错误态，不无限「加载中…」。
+  const [bridgeMissing, setBridgeMissing] = React.useState(false)
+  const bridgeRetries = React.useRef(0)
   const [version, setVersion] = React.useState(0) // bump to refetch
 
   React.useEffect(() => {
     const bridge = getDesktopBridge()
-    if (!bridge) return
+    if (!bridge) {
+      if (bridgeRetries.current < MAX_BRIDGE_RETRIES) {
+        bridgeRetries.current += 1
+        const t = setTimeout(() => setVersion((v) => v + 1), BRIDGE_RETRY_MS)
+        return () => clearTimeout(t)
+      }
+      setBridgeMissing(true)
+      setLoaded(true) // 结束加载态，交给错误态渲染（下面 bridgeMissing 分支）。
+      return
+    }
+    bridgeRetries.current = 0
+    setBridgeMissing(false)
     // 生成模型目录（同步）。
     try {
       const ms = bridge.modelCatalog.listModels() as Array<Record<string, unknown>>
       const vs = bridge.modelCatalog.listVendors() as Array<Record<string, unknown>>
+      const maps = bridge.modelCatalog.listMappings({ vendorKey: COMFYUI_VENDOR_KEY }) as Array<Record<string, unknown>>
+      let currentMcpInfo: McpInfo | null = null
+      try {
+        currentMcpInfo = (bridge.capability?.mcpInfo?.() as McpInfo | undefined) ?? null
+      } catch {
+        currentMcpInfo = null
+      }
+      const codexInstalled = currentMcpInfo?.clients.codex?.installed === true
+      const codexVendor = vs.find((v) => String(v.key) === CODEX_LOCAL_VENDOR_KEY)
+      if (codexVendor && (codexVendor.enabled !== false) !== codexInstalled) {
+        bridge.modelCatalog.upsertVendor({ key: CODEX_LOCAL_VENDOR_KEY, enabled: codexInstalled })
+        codexVendor.enabled = codexInstalled
+        notifyModelOptionsRefresh('all')
+        window.dispatchEvent(new CustomEvent('nomi-model-catalog-changed'))
+      }
       const metaMap = new Map<string, VendorMeta>()
       for (const v of vs) {
         metaMap.set(String(v.key), {
@@ -73,6 +114,7 @@ export function OnboardingDrawer(): JSX.Element {
           hasApiKey: Boolean(v.hasApiKey),
           baseUrl: String(v.baseUrlHint || ''),
           enabled: v.enabled !== false,
+          authType: String(v.authType || ''),
         })
       }
       const rows: ChipModel[] = ms.map((m) => ({
@@ -82,12 +124,15 @@ export function OnboardingDrawer(): JSX.Element {
         kind: m.kind as ChipModel['kind'],
         // enabled 缺省视为 true（老快照/DTO 未带时不误停用）。
         enabled: m.enabled !== false,
+        meta: m.meta,
       }))
       setVendorMeta(metaMap)
       setModels(rows)
+      setMappings(maps)
     } catch {
       setVendorMeta(new Map())
       setModels([])
+      setMappings([])
     }
     // 编程助手 MCP 状态（同步）。
     try {
@@ -109,6 +154,14 @@ export function OnboardingDrawer(): JSX.Element {
     return () => { alive = false }
   }, [version])
 
+  // Issue #42:错误态「重新加载」——清零重试计数，重新走一遍取桥流程。
+  const reloadFromError = React.useCallback(() => {
+    bridgeRetries.current = 0
+    setBridgeMissing(false)
+    setLoaded(false)
+    setVersion((v) => v + 1)
+  }, [])
+
   const refresh = React.useCallback(() => {
     notifyModelOptionsRefresh('all')
     setVersion((v) => v + 1)
@@ -122,11 +175,11 @@ export function OnboardingDrawer(): JSX.Element {
     if (!bridge || rows.length === 0) return
     const single = rows.length === 1
     const ok = await confirmDialog({
-      title: single ? '删除模型' : `删除 ${rows.length} 个模型`,
+      title: single ? t('onboardingProviders.drawer.deleteModel') : t('onboardingProviders.drawer.deleteModels', { count: rows.length }),
       message: single
-        ? `删除「${rows[0].labelZh}」？此操作不可恢复，之后要用需重新拉取。`
-        : `删除选中的 ${rows.length} 个模型？此操作不可恢复，之后要用需重新拉取。`,
-      confirmLabel: '删除',
+        ? t('onboardingProviders.drawer.deleteSingleMessage', { name: rows[0].labelZh })
+        : t('onboardingProviders.drawer.deleteMultipleMessage', { count: rows.length }),
+      confirmLabel: t('common.delete'),
       danger: true,
     })
     if (!ok) return
@@ -134,9 +187,9 @@ export function OnboardingDrawer(): JSX.Element {
       bridge.modelCatalog.deleteModels(rows.map((r) => ({ vendorKey: r.vendorKey, modelKey: r.modelKey })))
       refresh()
     } catch (e) {
-      void alertDialog({ title: '删除失败', message: e instanceof Error ? e.message : String(e) })
+      void alertDialog({ title: t('onboardingProviders.drawer.deleteFailed'), message: e instanceof Error ? e.message : String(e) })
     }
-  }, [refresh])
+  }, [refresh, t])
 
   // 启用/停用模型（可逆，保留清单）：逐行只翻 enabled（upsert 保留其余字段），末尾一次 refresh。
   // enabled:false 的模型天然从生成下拉/runtime 消失（selectExecutableModel 只选 enabled）。
@@ -150,9 +203,15 @@ export function OnboardingDrawer(): JSX.Element {
       }
       refresh()
     } catch (e) {
-      void alertDialog({ title: '操作失败', message: e instanceof Error ? e.message : String(e) })
+      void alertDialog({ title: t('onboardingProviders.drawer.operationFailed'), message: e instanceof Error ? e.message : String(e) })
     }
-  }, [refresh])
+  }, [refresh, t])
+
+  // 卡头快捷删除整家供应商（与 CustomVendorManage 的删除按钮共用 confirmAndDeleteVendor，P1）。
+  const handleDeleteVendor = React.useCallback(async (vendorKey: string, vendorName: string, modelCount: number) => {
+    const res = await confirmAndDeleteVendor({ vendorKey, vendorName, modelCount, onChanged: refresh })
+    if (res.error) void alertDialog({ title: t('onboardingProviders.drawer.deleteFailed'), message: res.error })
+  }, [refresh, t])
 
   // 已知供应商：catalog 里存在该 vendor 才渲染卡片。
   const knownCards = KNOWN_VENDORS
@@ -170,9 +229,15 @@ export function OnboardingDrawer(): JSX.Element {
   // 其他模型：用户自定义接入（有 key 才存在）→ 视为已接入。排除有专属卡的内置家：
   // 5 个 KNOWN_VENDORS + 即梦 dreamina（走 DreaminaMemberCard，其 seeded 模型不是"自定义"，
   // 否则与即梦会员卡重复且被误标"已配置"——真机走查抓到，dreamina 种了 4 个模型）。
-  // 排除有专属卡的内置家：dreamina（会员卡）+ comfyui-local（本地后端启用卡）。否则本地 ComfyUI 会落进
+  // 排除有专属卡/派生状态的内置家：dreamina（会员卡）+ comfyui-local（本地后端启用卡）+
+  // codex-local（由「接入 AI 编程助手」里的 Codex 接入状态派生）。否则本地 provider 会落进
   // 通用「自定义中转」卡（那卡的 key/BaseURL 手填隐喻对无 key 本地后端是错的）。
-  const otherModels = models.filter((m) => !isKnownVendor(m.vendorKey) && m.vendorKey !== 'dreamina' && m.vendorKey !== COMFYUI_VENDOR_KEY)
+  const otherModels = models.filter((m) =>
+    !isKnownVendor(m.vendorKey) &&
+    m.vendorKey !== 'dreamina' &&
+    m.vendorKey !== COMFYUI_VENDOR_KEY &&
+    m.vendorKey !== CODEX_LOCAL_VENDOR_KEY,
+  )
 
   // 本地 ComfyUI（无 key 本地后端，专属卡）：种子存在才显；enabled 决定归「已接入 / 可接入」。
   const comfyuiMeta = vendorMeta.get(COMFYUI_VENDOR_KEY)
@@ -194,13 +259,18 @@ export function OnboardingDrawer(): JSX.Element {
     dreaminaConnected ||
     assistantConnected
 
-  // 能力覆盖：某 kind 有「已连通供应商（hasApiKey）」的模型 = 现在就能生成（诚实，未连通不算）。
-  const coveredKinds = React.useMemo(() => {
-    const set = new Set<string>()
+  // 能力覆盖：某 kind 有「已连通供应商（hasApiKey）+ 已启用」的模型 = 现在就能生成（诚实，未连通不算）。
+  // 计数 = 该 kind 下已启用且可用的模型数（用户 2026-07-17：能力条要显示选中的不同类型模型数量）。
+  const coveredKindCounts = React.useMemo(() => {
+    const counts = new Map<string, number>()
     for (const m of models) {
-      if (vendorMeta.get(m.vendorKey)?.hasApiKey) set.add(String(m.kind))
+      if (!m.enabled) continue
+      const meta = vendorMeta.get(m.vendorKey)
+      if (!meta?.hasApiKey && !(m.vendorKey === CODEX_LOCAL_VENDOR_KEY && meta?.authType === 'none' && meta.enabled)) continue
+      const k = String(m.kind)
+      counts.set(k, (counts.get(k) ?? 0) + 1)
     }
-    return set
+    return counts
   }, [models, vendorMeta])
 
   // 其他（自定义中转）按 vendor 拆成每家一张卡，卡名用用户在接入时填的「来源名称」（vendorMeta.name）。
@@ -228,6 +298,7 @@ export function OnboardingDrawer(): JSX.Element {
       baseUrl={card.meta.baseUrl}
       hasApiKey={card.meta.hasApiKey}
       models={card.vendorModels}
+      onToggleModel={(model, enabled) => handleSetEnabled([model], enabled)}
       onChanged={refresh}
     />
   )
@@ -235,15 +306,16 @@ export function OnboardingDrawer(): JSX.Element {
   return (
     <div className="flex flex-col">
       <div className="px-4 pt-4 pb-1">
-        <div className="text-title font-bold text-nomi-ink">模型设置</div>
+        <div className="text-title font-bold text-nomi-ink">{t('onboardingProviders.drawer.title')}</div>
       </div>
 
       {/* 顶部能力概览：先告诉用户「你现在能生成什么」（effect-first），再谈配置。 */}
       <div className="px-4 pt-1 pb-2">
-        <div className="text-micro text-nomi-ink-40 mb-1.5">你现在已经能生成</div>
+        <div className="text-micro text-nomi-ink-40 mb-1.5">{t('onboardingProviders.drawer.capabilities')}</div>
         <div className="flex flex-wrap gap-1.5">
-          {KIND_CAPS.map(({ kind, label, Icon }) => {
-            const on = coveredKinds.has(kind)
+          {KIND_CAPS.map(({ kind, labelKey, Icon }) => {
+            const count = coveredKindCounts.get(kind) ?? 0
+            const on = count > 0
             return (
               <span
                 key={kind}
@@ -253,22 +325,40 @@ export function OnboardingDrawer(): JSX.Element {
                 )}
               >
                 <Icon size={13} stroke={1.7} />
-                {label}
-                {on ? null : <span className="text-nomi-ink-30">未接</span>}
+                {t(labelKey)}
+                {/* 数量 = 该类型下已启用且厂商已连通的模型数（用户 2026-07-17 要求）。 */}
+                {on ? <span className="font-semibold tabular-nums">{count}</span> : <span className="text-nomi-ink-30">{t('onboardingProviders.drawer.notConnected')}</span>}
               </span>
             )
           })}
         </div>
       </div>
 
-      {!loaded ? (
-        <div className="px-4 py-6 text-caption text-nomi-ink-40">加载中…</div>
+      {bridgeMissing ? (
+        <div className="px-4 py-6 flex flex-col items-start gap-2">
+          <div className="text-body-sm font-semibold text-nomi-ink">{t('onboardingProviders.drawer.bridgeMissingTitle')}</div>
+          <div className="text-caption text-nomi-ink-60 leading-relaxed">
+            {t('onboardingProviders.drawer.bridgeMissingBody')}
+          </div>
+          <button
+            type="button"
+            onClick={reloadFromError}
+            className={cn(
+              'mt-1 inline-flex items-center gap-1.5 h-8 px-3 rounded-nomi-sm',
+              'bg-nomi-ink text-nomi-paper text-caption font-semibold hover:bg-nomi-accent',
+            )}
+          >
+            <IconRefresh size={14} stroke={1.8} />{t('common.reload')}
+          </button>
+        </div>
+      ) : !loaded ? (
+        <div className="px-4 py-6 text-caption text-nomi-ink-40">{t('onboardingProviders.drawer.loading')}</div>
       ) : (
       <div className="px-3 pb-3 pt-1 flex flex-col gap-2">
         {/* ── 已接入：你接好的家浮顶，一眼可见（无已接入项则整段不显）── */}
         {hasConnected ? (
           <>
-            <div className="text-micro font-semibold text-nomi-ink-40 pt-1 px-0.5">已接入</div>
+            <div className="text-micro font-semibold text-nomi-ink-40 pt-1 px-0.5">{t('onboardingProviders.drawer.connected')}</div>
             {connectedKnown.map(renderVendorCard)}
             {otherVendorGroups.map((group) => {
               const enabledN = group.models.filter((m) => m.enabled).length
@@ -279,10 +369,24 @@ export function OnboardingDrawer(): JSX.Element {
                   glyph={<IconStack2 size={16} stroke={1.6} />}
                   glyphTone="soft"
                   name={group.name}
-                  subtitle={`${enabledN} / ${group.models.length} 个模型已启用`}
+                  subtitle={t('onboardingProviders.drawer.modelsEnabled', { enabled: enabledN, total: group.models.length })}
                   status="ok"
-                  statusLabel="已配置"
+                  statusLabel={t('onboardingProviders.drawer.configured')}
                   defaultExpanded={false}
+                  headerAction={
+                    <button
+                      type="button"
+                      aria-label={t('onboardingProviders.drawer.deleteVendorAria', { name: group.name })}
+                      title={t('onboardingProviders.drawer.deleteVendorTitle')}
+                      onClick={() => void handleDeleteVendor(group.vendorKey, group.name, group.models.length)}
+                      className={cn(
+                        'grid place-items-center size-7 rounded-nomi-sm text-nomi-ink-40 transition-colors',
+                        'hover:bg-[var(--workbench-danger-soft)] hover:text-workbench-danger',
+                      )}
+                    >
+                      <IconTrash size={15} stroke={1.7} />
+                    </button>
+                  }
                 >
                   <ModelEnableEditor models={group.models} onToggle={handleSetEnabled} onDelete={handleDelete} />
                   <CustomVendorManage
@@ -297,7 +401,7 @@ export function OnboardingDrawer(): JSX.Element {
               )
             })}
             {comfyuiAvailable && comfyuiEnabled ? (
-              <ComfyuiLocalCard enabled={comfyuiEnabled} baseUrl={comfyuiMeta?.baseUrl ?? ''} models={comfyuiModels} onChanged={refresh} />
+              <ComfyuiLocalCard enabled={comfyuiEnabled} baseUrl={comfyuiMeta?.baseUrl ?? ''} models={comfyuiModels} mappings={mappings} onChanged={refresh} />
             ) : null}
             {dreaminaAvailable && dreaminaConnected ? (
               <DreaminaMemberCard status={dreaminaStatus} onChanged={refresh} />
@@ -309,9 +413,9 @@ export function OnboardingDrawer(): JSX.Element {
         ) : null}
 
         {/* ── 可接入：保留原分组，每组折叠 + 数量；首组自适应默认展开（无已接入时）── */}
-        <div className="text-micro font-semibold text-nomi-ink-40 pt-2 px-0.5">可接入</div>
+        <div className="text-micro font-semibold text-nomi-ink-40 pt-2 px-0.5">{t('onboardingProviders.drawer.available')}</div>
 
-        <AvailableGroup title="接入生成模型" count={availableKnown.length} defaultExpanded={!hasConnected}>
+        <AvailableGroup title={t('onboardingProviders.drawer.connectGenerationModels')} count={availableKnown.length} defaultExpanded={!hasConnected}>
           {availableKnown.map(renderVendorCard)}
           <button
             type="button"
@@ -323,26 +427,26 @@ export function OnboardingDrawer(): JSX.Element {
             )}
           >
             <IconPlus size={16} stroke={1.9} />
-            <span className="flex-1 min-w-0">添加模型 / 中转站</span>
+            <span className="flex-1 min-w-0">{t('onboardingProviders.drawer.addModel')}</span>
             <IconChevronRight size={15} className="shrink-0 opacity-60" />
           </button>
-          <div className="text-micro text-nomi-ink-40 px-1 -mt-0.5">new-api 一次拉全图·视频·文本 · 也可接官方厂商 / 自定义接口</div>
+          <div className="text-micro text-nomi-ink-40 px-1 -mt-0.5">{t('onboardingProviders.drawer.addModelHint')}</div>
         </AvailableGroup>
 
         {comfyuiAvailable && !comfyuiEnabled ? (
-          <AvailableGroup title="有本地 ComfyUI？" count={1} defaultExpanded={false}>
-            <ComfyuiLocalCard enabled={comfyuiEnabled} baseUrl={comfyuiMeta?.baseUrl ?? ''} models={comfyuiModels} onChanged={refresh} />
+          <AvailableGroup title={t('onboardingProviders.drawer.localComfyui')} count={1} defaultExpanded={false}>
+            <ComfyuiLocalCard enabled={comfyuiEnabled} baseUrl={comfyuiMeta?.baseUrl ?? ''} models={comfyuiModels} mappings={mappings} onChanged={refresh} />
           </AvailableGroup>
         ) : null}
 
         {dreaminaAvailable && !dreaminaConnected ? (
-          <AvailableGroup title="有即梦会员？" count={1} defaultExpanded={false}>
+          <AvailableGroup title={t('onboardingProviders.drawer.dreaminaMember')} count={1} defaultExpanded={false}>
             <DreaminaMemberCard status={dreaminaStatus} onChanged={refresh} />
           </AvailableGroup>
         ) : null}
 
         {assistantAvailable && !assistantConnected ? (
-          <AvailableGroup title="接入编程助手 · 可选" count={1} defaultExpanded={false}>
+          <AvailableGroup title={t('onboardingProviders.drawer.connectAssistant')} count={1} defaultExpanded={false}>
             <ConnectAssistantCard info={mcpInfo} onChanged={refresh} />
           </AvailableGroup>
         ) : null}

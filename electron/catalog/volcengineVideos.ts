@@ -57,7 +57,10 @@ export const VOLCENGINE_SEEDANCE_STATUS_MAPPING = {
   queued: ["queued"],
   running: ["running"],
   succeeded: ["succeeded"],
-  failed: ["failed", "expired"],
+  // cancelled 在方舟官方状态枚举里（queued/running/cancelled/succeeded/failed/expired，
+  // new-api 中转的交付文档同款）。漏掉它 = 任务在控制台被取消后我们一直轮询到超时，
+  // 而不是立刻报「任务已取消」。归 failed 桶（终态、不可恢复、不重试）。
+  failed: ["failed", "expired", "cancelled", "canceled"],
 };
 
 export type VolcengineVideoModel = {

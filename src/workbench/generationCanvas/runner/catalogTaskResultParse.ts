@@ -1,3 +1,4 @@
+import i18n from '../../../i18n'
 import {
   type TaskKind,
   type TaskResultDto,
@@ -56,41 +57,25 @@ function generationTypeForTask(taskKind: TaskKind): GenerationResultType {
   return 'image'
 }
 
-function readFailureMessageFromRaw(raw: unknown): string {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ''
-  const record = raw as Record<string, unknown>
-  const direct = [
-    record.message,
-    record.error,
-    record.errorMessage,
-    record.failureReason,
-    record.reason,
-  ]
-  for (const value of direct) {
-    const text = asTrimmedString(value)
-    if (text) return text
-  }
-  const nested = [record.raw, record.response, record.data, record.result]
-  for (const value of nested) {
-    const text = readFailureMessageFromRaw(value)
-    if (text) return text
-  }
-  return ''
-}
-
+/**
+ * 终态失败 → 抛给 runner 的 message。真实原因取 `result.error`（主进程按 profile 声明的
+ * error_message 映射取出的上游原话，见 electron/tasks/responseParsing）。
+ *
+ * 这里**不再自己解析 raw**：那份形状猜测读不到 kie `data.failMsg`、runninghub `errorMessage`
+ * 一类家族专属路径，也不下钻对象型的 `error`，于是每家的失败都退化成一句「模型任务执行失败」
+ * （2026-07-30 用户真机报的就是它）。猜测逻辑已合并进主进程那个唯一读点。
+ */
 function describeTaskFailure(result: TaskResultDto): string {
-  const rawMessage = readFailureMessageFromRaw(result.raw)
   const suffix = [
     result.id ? `taskId=${result.id}` : '',
     result.kind ? `kind=${result.kind}` : '',
   ].filter(Boolean).join(', ')
-  const prefix = rawMessage || '模型任务执行失败'
+  const prefix = asTrimmedString(result.error) || i18n.t('generationCommon.error.taskFailed')
   return suffix ? `${prefix} (${suffix})` : prefix
 }
 
-function readDurationSeconds(node: GenerationCanvasNode): number | undefined {
-  const meta = node.meta || {}
-  return asFiniteNumber(meta.durationSeconds) ?? asFiniteNumber(meta.videoDuration)
+function readDurationSeconds(asset: { durationSeconds?: unknown } | null | undefined): number | undefined {
+  return asFiniteNumber(asset?.durationSeconds)
 }
 
 export function normalizeCatalogTaskResult(
@@ -103,7 +88,7 @@ export function normalizeCatalogTaskResult(
   // C5: 文本任务没有 asset，文本在 raw 里。单独成支，不走下面的图片/视频 asset 逻辑。
   if (TEXT_TASK_KINDS.has(result.kind)) {
     const text = extractTextFromChatRaw(result.raw)
-    if (!text) throw new Error('模型任务完成但没有返回文本内容')
+    if (!text) throw new Error(i18n.t('generationCommon.error.noText'))
     const provenance = extractProvenanceFromTaskResult(result)
     return {
       id: `${node.id}-${result.id || Date.now()}`,
@@ -123,7 +108,7 @@ export function normalizeCatalogTaskResult(
   const firstImageAsset = result.assets.find((item) => item.type === 'image' && asTrimmedString(item.url))
   const firstAudioAsset = result.assets.find((item) => item.type === 'audio' && asTrimmedString(item.url))
   const asset = firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
-  if (!asset) throw new Error(inferredType === 'video' ? '模型任务完成但没有返回视频地址' : inferredType === 'audio' ? '配音生成完成但没有返回音频' : '模型任务完成但没有返回图片地址')
+  if (!asset) throw new Error(i18n.t(inferredType === 'video' ? 'generationCommon.error.noVideoUrl' : inferredType === 'audio' ? 'generationCommon.error.noAudio' : 'generationCommon.error.noImageUrl'))
   const type = (asset.type === 'video' || asset.type === 'image' || asset.type === 'audio') ? asset.type : inferredType
   // E11: propagate provenance from electron TaskResult into the node result.
   const provenance = extractProvenanceFromTaskResult(result)
@@ -134,7 +119,7 @@ export function normalizeCatalogTaskResult(
     thumbnailUrl: asset.thumbnailUrl || undefined,
     ...(asset.providerUrl ? { providerUrl: asset.providerUrl } : {}),
     model: selectedModelKey(node) || undefined,
-    durationSeconds: type === 'video' ? readDurationSeconds(node) : undefined,
+    durationSeconds: type === 'video' ? readDurationSeconds(asset) : undefined,
     taskId: result.id,
     taskKind: type,
     assetId: asset.assetId || undefined,

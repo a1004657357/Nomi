@@ -20,6 +20,10 @@ import {
 } from './scene3dTypes'
 import { buildPoseTrack } from './scene3dPoseTrack'
 import { cameraAimBindingId } from './scene3dBindingIds'
+import { fitEditorCameraToScene } from './scene3dFitView'
+import { safeFrameCameraForSubjects } from './scene3dSafeFrame'
+import { cameraLookAtRotation } from './scene3dMath'
+import { DEFAULT_SCENE_TIMELINE_DURATION } from './scene3dTimeline'
 
 const GEOMETRIES = new Set<Scene3DGeometry>(['box', 'sphere', 'cylinder', 'plane'])
 // 道具 kind 白名单（与 scene3dProps 的 spec 表同域；这里手列避免 serializer 拖进 React/three 依赖）。
@@ -35,7 +39,6 @@ const SCENE3D_LOCAL_ASSET_URL_PATTERN = /^(nomi-local:\/\/|data:image\/|https?:\
 const MANNEQUIN_DEFAULT_SCALE: Scene3DVector3 = [2.5, 2.5, 2.5]
 const ROLE_COLOR_SEQUENCE = ['#ef4444', '#facc15', '#3b82f6', '#22c55e'] as const
 const CROWD_MAX_AXIS = 10
-const DEFAULT_SCENE_TIMELINE_DURATION = 10
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -130,8 +133,7 @@ export function createScene3DTrajectoryGroupId(): string {
 }
 
 export function createDefaultScene3DState(): Scene3DState {
-  return {
-    objects: [
+  const objects: Scene3DState['objects'] = [
       {
         id: createScene3DObjectId(),
         name: '假人',
@@ -142,12 +144,13 @@ export function createDefaultScene3DState(): Scene3DState {
         scale: [...MANNEQUIN_DEFAULT_SCALE],
         color: ROLE_COLOR_SEQUENCE[0],
       },
-    ],
-    cameras: [
+  ]
+  const cameras: Scene3DState['cameras'] = [
       {
         id: createScene3DCameraId(),
         name: '相机1',
         visible: true,
+        // 保留出厂 3/4 俯视方位；下面按主体安全画幅重解 target + 距离（F1：不再固定看 0.75 把头裁掉）。
         position: [4, 2.4, 5],
         rotation: [-0.36, 0.68, 0],
         target: [0, 0.75, 0],
@@ -156,8 +159,20 @@ export function createDefaultScene3DState(): Scene3DState {
         lensDepth: 0,
         near: 0.1,
         far: 200,
+        // auto-managed：默认/模板/切画幅走安全画幅求解器；用户手动构图后转 manual、不再被自动覆盖。
+        framing: 'auto',
       },
-    ],
+  ]
+  // F1：默认相机按假人 world-space 包围盒 + 画幅求安全构图（保方位，重解 target=主体中心 + 最小距离）。
+  const framed = safeFrameCameraForSubjects(objects, cameras[0])
+  if (framed) {
+    cameras[0].position = framed.position
+    cameras[0].target = framed.target
+    cameras[0].rotation = cameraLookAtRotation(framed.position, framed.target)
+  }
+  return {
+    objects,
+    cameras,
     trajectories: [],
     trajectoryBindings: [],
     trajectoryGroups: [],
@@ -176,8 +191,8 @@ export function createDefaultScene3DState(): Scene3DState {
       sphereRadius: 50,
     },
     editorCamera: {
-      position: [-5, 3.2, 6],
-      target: [0, 0.75, 0],
+      // 出厂机位 = 看全场取景（相机1 也要在画面里，见 scene3dFitView 与用户 2026-07-20 反馈）
+      ...fitEditorCameraToScene(objects, cameras),
       rotation: [0, 0, 0],
       mode: 'edit',
     },
@@ -219,6 +234,7 @@ function normalizeObject(value: unknown, index: number): Scene3DObject | null {
     poseTrack: poseTrackValue(raw.poseTrack),
     locomotionClip: typeof raw.locomotionClip === 'string' ? raw.locomotionClip : undefined,
     children: Array.isArray(raw.children) ? raw.children.filter((id): id is string => typeof id === 'string') : undefined,
+    ...(typeof raw.templateGroup === 'string' && raw.templateGroup ? { templateGroup: raw.templateGroup } : {}),
   }
 }
 
@@ -248,6 +264,8 @@ function normalizeCamera(value: unknown, index: number): Scene3DCamera | null {
     ...(finiteNumber(raw.shakeAmplitude, 0) > 0
       ? { shakeAmplitude: Math.min(100, Math.max(0, finiteNumber(raw.shakeAmplitude, 0))) }
       : {}),
+    // 构图所有权：只认显式 'auto'；缺省/其它一律不落字段 = 按 manual 处理（老项目相机绝不被自动取景覆盖）。
+    ...(raw.framing === 'auto' ? { framing: 'auto' as const } : {}),
   }
 }
 

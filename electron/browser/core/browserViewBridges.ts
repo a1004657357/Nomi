@@ -14,20 +14,48 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
   const dragMime = ${JSON.stringify(BROWSER_IMAGE_DRAG_MIME)};
   if (window.__nomiBrowserImageDragBridgeInstalled) return true;
   window.__nomiBrowserImageDragBridgeInstalled = true;
-  const pickImageElement = (target) => {
+  const pickMediaElement = (target) => {
     if (!(target instanceof Element)) return null;
-    if (target instanceof HTMLImageElement) return target;
-    return target.closest ? target.closest('img') : null;
+    if (target instanceof HTMLImageElement || target instanceof HTMLVideoElement) return target;
+    const closestMedia = target.closest ? target.closest('img,video') : null;
+    if (closestMedia) return closestMedia;
+    const container = target.closest ? target.closest('[draggable="true"],a,picture,figure') : null;
+    return container?.querySelector ? container.querySelector('img,video') : null;
   };
-  const readImageUrl = (image) => {
-    if (!image) return '';
-    return image.currentSrc || image.src || image.getAttribute('data-src') || image.getAttribute('data-original') || '';
+  const readBackgroundUrl = (target) => {
+    if (!(target instanceof Element)) return '';
+    const candidates = [target, target.closest?.('[draggable="true"],a,figure')].filter(Boolean);
+    for (const candidate of candidates) {
+      const value = getComputedStyle(candidate).backgroundImage || '';
+      const match = value.match(/url\\(["']?(.+?)["']?\\)/i);
+      if (match?.[1]) return match[1];
+    }
+    return '';
+  };
+  const readMedia = (target) => {
+    const media = pickMediaElement(target);
+    if (media instanceof HTMLVideoElement) {
+      const videoUrl = media.currentSrc || media.src || media.querySelector('source')?.src || '';
+      return {
+        element: media,
+        url: videoUrl || media.poster || '',
+        mediaType: videoUrl ? 'video' : 'image',
+      };
+    }
+    if (media instanceof HTMLImageElement) {
+      return {
+        element: media,
+        url: media.currentSrc || media.src || media.getAttribute('data-src') || media.getAttribute('data-original') || media.getAttribute('data-lazy-src') || '',
+        mediaType: 'image',
+      };
+    }
+    return { element: target instanceof Element ? target : null, url: readBackgroundUrl(target), mediaType: 'image' };
   };
   document.addEventListener('dragstart', (event) => {
     const transfer = event.dataTransfer;
     if (!transfer) return;
-    const image = pickImageElement(event.target);
-    const rawUrl = readImageUrl(image);
+    const media = readMedia(event.target);
+    const rawUrl = media.url;
     if (!rawUrl) return;
     let url = '';
     try {
@@ -35,10 +63,11 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
     } catch {
       return;
     }
-    const title = (image.getAttribute('alt') || image.getAttribute('title') || document.title || '').trim();
+    const title = (media.element?.getAttribute?.('alt') || media.element?.getAttribute?.('title') || document.title || '').trim();
     const payload = {
       url,
       title,
+      mediaType: media.mediaType,
       pageUrl: window.location.href,
       pageTitle: document.title || '',
     };
@@ -51,6 +80,9 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
   document.addEventListener('dragend', () => {
     try { console.info(${JSON.stringify(BROWSER_IMAGE_DRAG_END_CONSOLE_MESSAGE)}); } catch {}
   }, true);
+  document.addEventListener('drop', () => {
+    try { console.info(${JSON.stringify(BROWSER_IMAGE_DRAG_END_CONSOLE_MESSAGE)}); } catch {}
+  }, true);
   return true;
 })()
 `;
@@ -61,13 +93,14 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
   }
 }
 
-export async function installBrowserPromptHoverBridge(record: BrowserViewRecord): Promise<void> {
-  const contents = record.view.webContents;
-  if (contents.isDestroyed()) return;
-  const script = `
+// 提示词/划词桥脚本抽成纯函数：单测钉死「零 innerHTML sink」（Trusted Types 站点上桥必须活着）。
+// 素材面收敛 2026-07-22：自定义分类数据源（素材盒 localStorage 私账）已亡，恒喂 []——
+// 注入版 normalize 前置内置 图片/视频 两默认项，页内「保存提示词」面板照常可用。
+export function promptHoverBridgeScript(promptCategories: { id: string; label: string }[] = []): string {
+  return `
 (() => {
   const consolePrefix = ${JSON.stringify(BROWSER_IMAGE_PROMPT_CONSOLE_PREFIX)};
-  const promptCategories = ${JSON.stringify(record.promptCategories)};
+  const promptCategories = ${JSON.stringify(promptCategories)};
   const normalizePromptCategories = (input) => {
     const output = [];
     const seen = new Set();
@@ -97,6 +130,19 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
   }
   window.__nomiBrowserPromptHoverBridgeInstalled = true;
 
+  // Trusted Types-safe DOM 构造（2026-07-22 审计 P1：YouTube 等强制 TT 的站点上 innerHTML 直接抛异常，
+  // 整条划词/提示词桥失效）。textContent/createElement/setAttribute 不经 TT sink，全站通用。
+  const el = (tag, props, children) => {
+    const node = document.createElement(tag);
+    const options = props || {};
+    if (options.className) node.className = options.className;
+    if (options.text) node.textContent = options.text;
+    if (options.style) node.style.cssText = options.style;
+    if (options.attrs) Object.keys(options.attrs).forEach((name) => node.setAttribute(name, options.attrs[name]));
+    (children || []).forEach((child) => node.appendChild(child));
+    return node;
+  };
+
   const state = {
     image: null,
     visible: false,
@@ -105,7 +151,8 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
   const button = document.createElement('button');
   button.type = 'button';
   button.setAttribute('aria-label', 'Nomi 获取提示词');
-  button.innerHTML = '<span class="nomi-prompt-mark">N</span><span>获取提示词</span>';
+  button.appendChild(el('span', { className: 'nomi-prompt-mark', text: 'N' }));
+  button.appendChild(el('span', { text: '获取提示词' }));
   button.style.cssText = [
     'position:fixed',
     'z-index:2147483647',
@@ -152,7 +199,11 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
     option.className = 'nomi-prompt-mode-option';
     option.setAttribute('role', 'menuitem');
     option.setAttribute('data-nomi-prompt-mode', mode);
-    option.innerHTML = '<span class="nomi-prompt-mode-icon">' + (mode === 'style' ? 'S' : 'R') + '</span><span><span class="nomi-prompt-mode-title">' + title + '</span><span class="nomi-prompt-mode-desc">' + description + '</span></span>';
+    option.appendChild(el('span', { className: 'nomi-prompt-mode-icon', text: mode === 'style' ? 'S' : 'R' }));
+    option.appendChild(el('span', {}, [
+      el('span', { className: 'nomi-prompt-mode-title', text: title }),
+      el('span', { className: 'nomi-prompt-mode-desc', text: description }),
+    ]));
     return option;
   };
   menu.appendChild(createModeOption('replicate', '画面复刻', '还原主体、构图、光影与细节'));
@@ -309,7 +360,8 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
   const textButton = document.createElement('button');
   textButton.type = 'button';
   textButton.setAttribute('aria-label', 'Nomi 保存提示词');
-  textButton.innerHTML = '<span class="nomi-prompt-mark">N</span><span>保存提示词</span>';
+  textButton.appendChild(el('span', { className: 'nomi-prompt-mark', text: 'N' }));
+  textButton.appendChild(el('span', { text: '保存提示词' }));
   textButton.style.cssText = [
     'position:fixed',
     'z-index:2147483647',
@@ -348,17 +400,46 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
     'font:500 13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
     'backdrop-filter:blur(10px)'
   ].join(';');
-  textCard.innerHTML =
-    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">' +
-      '<strong style="font-size:14px">保存提示词</strong>' +
-      '<button type="button" data-nomi-text-close style="border:0;background:transparent;color:rgba(23,32,51,.55);font-size:18px;line-height:1;cursor:pointer">×</button>' +
-    '</div>' +
-    '<div style="display:grid;gap:10px">' +
-      '<div style="display:grid;place-items:center;min-height:72px;border-radius:12px;background:rgba(23,32,51,.06);color:rgba(23,32,51,.48);font-size:12px">无参考图</div>' +
-      '<label style="display:grid;gap:5px"><span style="color:rgba(23,32,51,.62);font-size:12px">提示词类型</span><select data-nomi-text-type style="height:34px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:0 8px;color:#172033"><option value="image">图片提示词</option><option value="video">视频提示词</option></select></label>' +
-      '<label style="display:grid;gap:5px"><span style="color:rgba(23,32,51,.62);font-size:12px">选中文字</span><textarea data-nomi-text-value style="min-height:110px;resize:vertical;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:8px;color:#172033;font:500 13px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif"></textarea></label>' +
-      '<div style="display:flex;justify-content:flex-end;gap:8px"><button type="button" data-nomi-text-cancel style="height:32px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;color:rgba(23,32,51,.72);padding:0 12px;cursor:pointer">取消</button><button type="button" data-nomi-text-save style="height:32px;border:0;border-radius:10px;background:#172033;color:white;padding:0 12px;font-weight:700;cursor:pointer">保存</button></div>' +
-    '</div>';
+  textCard.appendChild(el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px' }, [
+    el('strong', { text: '保存提示词', style: 'font-size:14px' }),
+    el('button', {
+      text: '×',
+      attrs: { type: 'button', 'data-nomi-text-close': '' },
+      style: 'border:0;background:transparent;color:rgba(23,32,51,.55);font-size:18px;line-height:1;cursor:pointer',
+    }),
+  ]));
+  textCard.appendChild(el('div', { style: 'display:grid;gap:10px' }, [
+    el('div', {
+      text: '无参考图',
+      style: 'display:grid;place-items:center;min-height:72px;border-radius:12px;background:rgba(23,32,51,.06);color:rgba(23,32,51,.48);font-size:12px',
+    }),
+    el('label', { style: 'display:grid;gap:5px' }, [
+      el('span', { text: '提示词类型', style: 'color:rgba(23,32,51,.62);font-size:12px' }),
+      el('select', {
+        attrs: { 'data-nomi-text-type': '' },
+        style: 'height:34px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:0 8px;color:#172033',
+      }),
+    ]),
+    el('label', { style: 'display:grid;gap:5px' }, [
+      el('span', { text: '选中文字', style: 'color:rgba(23,32,51,.62);font-size:12px' }),
+      el('textarea', {
+        attrs: { 'data-nomi-text-value': '' },
+        style: 'min-height:110px;resize:vertical;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:8px;color:#172033;font:500 13px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+      }),
+    ]),
+    el('div', { style: 'display:flex;justify-content:flex-end;gap:8px' }, [
+      el('button', {
+        text: '取消',
+        attrs: { type: 'button', 'data-nomi-text-cancel': '' },
+        style: 'height:32px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;color:rgba(23,32,51,.72);padding:0 12px;cursor:pointer',
+      }),
+      el('button', {
+        text: '保存',
+        attrs: { type: 'button', 'data-nomi-text-save': '' },
+        style: 'height:32px;border:0;border-radius:10px;background:#172033;color:white;padding:0 12px;font-weight:700;cursor:pointer',
+      }),
+    ]),
+  ]));
   document.documentElement.appendChild(textCard);
 
   const getPromptCategories = () => {
@@ -470,17 +551,22 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
   return true;
 })()
 `;
+}
+
+export async function installBrowserPromptHoverBridge(record: BrowserViewRecord): Promise<void> {
+  const contents = record.view.webContents;
+  if (contents.isDestroyed()) return;
   try {
-    await contents.executeJavaScript(script, true);
+    await contents.executeJavaScript(promptHoverBridgeScript(), true);
   } catch {
     // The next DOM-ready/load event retries.
   }
 }
 
-export async function installBrowserResourceCaptureBridge(record: BrowserViewRecord, enabled: boolean): Promise<void> {
-  const contents = record.view.webContents;
-  if (contents.isDestroyed()) return;
-  const script = `
+// 资源捕捞桥脚本抽成纯函数：jsdom 单测可直接 eval 验证「候选冻结」不变量
+// （2026-07-22 审计 L0：保存时重新 pickAt 会让用户保存到与所见不同的资源）。
+export function resourceCaptureBridgeScript(enabled: boolean): string {
+  return `
 (() => {
   const enabled = ${enabled ? "true" : "false"};
   const imagePattern = /\\.(?:png|jpe?g|gif|webp|avif|svg)(?:[?#]|$)/i;
@@ -490,7 +576,6 @@ export async function installBrowserResourceCaptureBridge(record: BrowserViewRec
     enabled: false,
     current: null,
     target: null,
-    lastPoint: null,
   };
   const absoluteUrl = (value) => {
     const raw = String(value || '').trim();
@@ -635,7 +720,6 @@ export async function installBrowserResourceCaptureBridge(record: BrowserViewRec
     state.current = candidate?.payload || null;
   };
   const pickAt = (clientX, clientY) => {
-    state.lastPoint = { clientX, clientY };
     const elements = document.elementsFromPoint(clientX, clientY);
     for (const element of elements) {
       const candidate = candidateFromElement(element, clientX, clientY);
@@ -664,14 +748,20 @@ export async function installBrowserResourceCaptureBridge(record: BrowserViewRec
   if (!enabled) setTarget(null);
   window.__nomiBrowserResourceCaptureBridge = state;
   window.__nomiReadBrowserResourceCapture = () => {
-    if (state.enabled && state.lastPoint) setTarget(pickAt(state.lastPoint.clientX, state.lastPoint.clientY));
+    // 候选冻结（审计 L0）：保存读的是高亮那一刻的候选，绝不按坐标重新 pick——
+    // hover 换图站点（YouTube 动图缩略等）重拾会拿到与用户所见不同的 URL。
     return state.current ? { ...state.current } : null;
   };
   return true;
 })()
 `;
+}
+
+export async function installBrowserResourceCaptureBridge(record: BrowserViewRecord, enabled: boolean): Promise<void> {
+  const contents = record.view.webContents;
+  if (contents.isDestroyed()) return;
   try {
-    await contents.executeJavaScript(script, true);
+    await contents.executeJavaScript(resourceCaptureBridgeScript(enabled), true);
   } catch {
     // Pages can be between navigations; dom-ready and load events reinstall while the mode remains active.
   }

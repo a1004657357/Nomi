@@ -16,13 +16,13 @@ function readString(value: unknown): string {
 }
 
 /**
- * clip 播放 URL 口径：providerUrl > url > thumbnailUrl。
- * 与 runner/referenceUrl.resultUrl 同序，但**不过 vendor 严格白名单**——
- * clip.url 是本地 <video>/<img> 播放用，file:// / nomi-local:// 等本地 scheme 都合法，
- * 不能像「喂 vendor」那样被 asUrl 收紧。这里只修「漏读 providerUrl」的真坑（记忆 url-priority-inconsistency）。
+ * clip 播放 URL 口径：本地 url > providerUrl > thumbnailUrl（PR#54：本地持久文件优先，
+ * 不再优先会过期的 ComfyUI/CDN providerUrl；providerUrl 仅在无本地拷贝时兜底）。
+ * 与 referenceUrl.resultUrl 同序但**不过 asUrl 的 vendor 白名单**——clip.url 供本地 <video>/<img>
+ * 播放，file:// / nomi-local:// 等本地 scheme 都合法；被 vendor 白名单收紧会把 file:// 产物误丢成 null clip（记忆 url-priority-inconsistency）。
  */
 function pickClipUrl(result: GenerationNodeResult | null | undefined): string {
-  return readString(result?.providerUrl) || readString(result?.url) || readString(result?.thumbnailUrl)
+  return readString(result?.url) || readString(result?.providerUrl) || readString(result?.thumbnailUrl)
 }
 
 function readPositiveNumber(value: unknown): number | null {
@@ -87,7 +87,6 @@ export function buildClipFromGenerationNode(node: GenerationCanvasNode, options?
   const startFrame = normalizeFrame(options?.startFrame)
   const type = resolveClipType(node, result)
   const label = readString(node.title) || readString(node.prompt) || node.id
-  // providerUrl 优先（不再只读 result.url）——否则只有 providerUrl 的产物会被静默丢、拖不进轨。
   const url = pickClipUrl(result)
   const thumbnailUrl = readString(result?.thumbnailUrl) || (type === 'image' ? url : '')
 
@@ -116,7 +115,7 @@ export function buildClipFromGenerationNode(node: GenerationCanvasNode, options?
  * 把「重生成后的新产物」回填进一条已存在的 clip（C0 回填闸的纯函数核）。
  * 铁律（评审挖出的三个坑）：
  *  - 位置不变：startFrame 保持（"位置不变 = 起点不变"，时长真变了 endFrame 才变）。
- *  - URL 口径：providerUrl > url > thumbnailUrl（复用 resultUrl）。
+ *  - URL 口径：本地 url > providerUrl > thumbnailUrl（pickClipUrl，不过 vendor 白名单，保 file://）。
  *  - trim 越界夹取：新产物时长可能变短/变长，offset 夹进新 frameCount，保可见 ≥1 帧。
  * image clip 的时长是用户设的、与产物无关 → 只换 URL；video/audio 才按新 durationSeconds 重算。
  * 无可用产物（url 空）→ 原样返回（防御，不破坏既有 clip）。

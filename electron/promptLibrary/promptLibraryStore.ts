@@ -2,11 +2,13 @@
 // 缓存内存 + 磁盘双层:进程内 1h TTL 内存命中;首次访问从 userData 水合,成功拉取后原子落盘,
 // 故重启后无需重拉、离线也能出旧库(避免「每次开 App 都去 GitHub raw 拉一遍」)。
 // 拉取走 hardenedFetchText(代理自动继承,SSRF/超时加固);惰性刷新,无后台 timer(沿用代码库习惯)。
+// 对外出口恒定前置内置包(builtinPacks):内置内容随构建走、不进缓存,在线拉取只增减外部源。
 import path from "node:path";
 import { hardenedFetchText } from "../hardenedFetch";
 import { writeJsonFileAtomic } from "../jsonFile";
 import { getSettingsRoot, readJson } from "../runtimePaths";
 import { PROMPT_SOURCES, type PromptSource } from "./promptSources";
+import { withBuiltinPrompts } from "./builtinPacks";
 import type { LibraryPrompt } from "./promptLibraryTypes";
 import seedJson from "./promptLibrarySeed.json";
 
@@ -90,8 +92,8 @@ async function loadAll(): Promise<LibraryPrompt[]> {
   return settled.flat();
 }
 
-/** 取全部提示词;命中缓存即返,否则拉取;全失败回退旧缓存(可能空)。 */
-export async function getPromptLibrary(): Promise<LibraryPrompt[]> {
+/** 外部源提示词;命中缓存即返,否则拉取;全失败回退旧缓存(可能空)。缓存/落盘只含外部源。 */
+async function getExternalPrompts(): Promise<LibraryPrompt[]> {
   hydrateFromDisk();
   if (cache && Date.now() - cache.at < TTL_MS) return cache.prompts;
   if (inflight) return inflight;
@@ -109,6 +111,11 @@ export async function getPromptLibrary(): Promise<LibraryPrompt[]> {
       inflight = null;
     });
   return inflight;
+}
+
+/** 取全部提示词 = 内置包(随构建,恒在最前) + 外部源。唯一对外出口,内置永不被在线拉取顶掉。 */
+export async function getPromptLibrary(): Promise<LibraryPrompt[]> {
+  return withBuiltinPrompts(await getExternalPrompts());
 }
 
 /** 测试/手动失效。清内存 + 重新允许磁盘水合(下次访问从盘读回或重拉)。 */

@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url'
 
 const ENV = { NOMI_LOOP_SPEND_OK: '1' }
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const OUT = path.join(root, 'src/workbench/onboarding/assets/robot')
+// 落 resources/ 而不是 src/：主进程要按稳定文件名读它们（引导时 seed 成项目资产），
+// 走 src 会被 Vite 加哈希、只有渲染进程算得出地址。见 electron/onboarding/demoAssetSeed.ts。
+const OUT = path.join(root, 'resources/onboarding-demo')
 fs.mkdirSync(OUT, { recursive: true })
 
 const STYLE = 'warm cinematic 3D animated movie still, Pixar-like, soft golden dusk lighting, cozy heartwarming, shallow depth of field, high detail, 16:9 aspect ratio.'

@@ -8,7 +8,8 @@ import {
   authQueryParams as buildAuthQueryParams,
   looksLikeLogicalError,
 } from "../ai/requestPipeline";
-import { describeIllegalHeader, findIllegalHeader, firstString, isJsonRecord, readNestedRecord } from "../jsonUtils";
+import { describeIllegalHeader, findIllegalHeader, isJsonRecord, pickUpstreamMessage } from "../jsonUtils";
+import { fetchVendorWithBaseFallback } from "./vendorBaseFallback";
 import type { Vendor } from "../catalog/types";
 
 export type VendorErrorCategory = "auth" | "balance" | "quota" | "input" | "server" | "network" | "unknown";
@@ -81,18 +82,23 @@ export function authQueryParams(vendor: Vendor, apiKey: string): Record<string, 
   return buildAuthQueryParams(vendor.authType as AuthType, apiKey, vendor.authQueryParam ?? undefined);
 }
 
-export async function requestJson(
+/**
+ * 付费生成提交的共享传输核（JSON 与 multipart 两条 wire 同源，P1 不建并行版）：请求头守卫 → 超时 fetch →
+ * 读体 → 逻辑错误信封识别 → 分诊抛 VendorRequestError。`bodyInit` 已是 fetch 可直发的形态
+ * （字符串 JSON / FormData / undefined），本核不再关心 body 是什么形状。
+ */
+async function requestVendor(
   vendor: Vendor,
   apiKey: string,
   method: string,
   url: string,
   headers: Record<string, string>,
   query: Record<string, unknown>,
-  body: unknown,
+  bodyInit: BodyInit | undefined,
 ): Promise<unknown> {
   const finalUrl = appendQueryParams(url, { ...authQueryParams(vendor, apiKey), ...query });
   const upperMethod = method.toUpperCase();
-  const hasBody = upperMethod !== "GET" && upperMethod !== "HEAD" && body != null;
+  const hasBody = bodyInit != null;
   // 发送前请求头守卫：fetch 遇到码点 > 255 的头值会同步抛 ByteString 错，被下面 catch
   // 误判成「网络超时」让用户白查网络（最常见来源=密钥混进中文/全角字符）。在这里先识别，
   // 抛 auth 类（不可重试）+ 说人话的 upstreamMsg，让错误卡指向「重新粘贴密钥」而非网络。
@@ -113,11 +119,13 @@ export async function requestJson(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    response = await fetch(finalUrl, {
+    // 经 vendorBaseFallback：主域被墙（连接从未建立）→ 零额度探测官方备用域 → 换线重发一次。
+    // 仅连接层安全码触发重发，「重试绝不包住付费提交」铁律不破（见 vendorBaseFallback 文件头）。
+    response = await fetchVendorWithBaseFallback(finalUrl, {
       method: upperMethod,
       headers,
       signal: controller.signal,
-      ...(hasBody ? { body: typeof body === "string" ? body : JSON.stringify(body) } : {}),
+      ...(hasBody ? { body: bodyInit } : {}),
     });
   } catch (error: unknown) {
     clearTimeout(timer);
@@ -168,21 +176,8 @@ export async function requestJson(
   // body with no asset URL to the result builder and report a silent dud.
   const logicalCode = looksLikeLogicalError(record);
   if (!response.ok || logicalCode != null) {
-    const rawUpstream = firstString(
-      record.msg,
-      record.message,
-      record.error,
-      // RunningHub：业务错误在 errorMessage（如「标准模型API仅限企业级-共享API Key调用」）。
-      record.errorMessage,
-      readNestedRecord(record, ["error", "message"]),
-      readNestedRecord(record, ["data", "msg"]),
-      // ModelScope（及同类）失败体是复数 `errors`：{ "errors": { "message": "..." } }——
-      // 轮询侧 mapping 早就读这个键（modelscopeVendor.ts:41），但提交/错误侧此前漏读，
-      // 真正的 400 原因被压成「(no detail from provider)」。补齐复数 errors 的 message/detail。
-      readNestedRecord(record, ["errors", "message"]),
-      readNestedRecord(record, ["errors", "detail"]),
-      record.errors,
-    );
+    // 键优先级表住 jsonUtils.pickUpstreamMessage（全仓唯一，onboarding 拉模型/测连接同读一份）。
+    const rawUpstream = pickUpstreamMessage(record);
     const statusLabel = logicalCode != null ? `code ${logicalCode}` : `HTTP ${response.status}`;
     // "No message available" is Spring's default placeholder — surface the URL
     // and status so the failure is diagnosable instead of opaque.
@@ -200,4 +195,39 @@ export async function requestJson(
     });
   }
   return json;
+}
+
+/** URL-in-JSON 提交（现有主路）：非 GET/HEAD 且有 body 时序列化成 JSON 发。 */
+export async function requestJson(
+  vendor: Vendor,
+  apiKey: string,
+  method: string,
+  url: string,
+  headers: Record<string, string>,
+  query: Record<string, unknown>,
+  body: unknown,
+): Promise<unknown> {
+  const upperMethod = method.toUpperCase();
+  const hasBody = upperMethod !== "GET" && upperMethod !== "HEAD" && body != null;
+  const bodyInit = hasBody ? (typeof body === "string" ? body : JSON.stringify(body)) : undefined;
+  return requestVendor(vendor, apiKey, upperMethod, url, headers, query, bodyInit);
+}
+
+/**
+ * multipart/form-data 提交（OpenAI 官方 /v1/images/edits 图生图等二进制文件上传端点）。POST FormData，
+ * **不设 Content-Type**（fetch 自动加 boundary，手动设会缺 boundary 令服务器 400）。响应解析/错误分诊
+ * 与 requestJson 共享 requestVendor 核。
+ */
+export async function requestMultipart(
+  vendor: Vendor,
+  apiKey: string,
+  url: string,
+  headers: Record<string, string>,
+  query: Record<string, unknown>,
+  form: FormData,
+): Promise<unknown> {
+  const cleanHeaders = Object.fromEntries(
+    Object.entries(headers).filter(([key]) => key.toLowerCase() !== "content-type"),
+  );
+  return requestVendor(vendor, apiKey, "POST", url, cleanHeaders, query, form);
 }

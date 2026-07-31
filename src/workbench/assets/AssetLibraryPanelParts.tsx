@@ -1,5 +1,6 @@
 import React from 'react'
-import { IconCheck, IconEye, IconEyeOff, IconMusic, IconPhoto, IconPlayerPlayFilled } from '@tabler/icons-react'
+import { useTranslation } from 'react-i18next'
+import { IconCheck, IconEye, IconEyeOff, IconFolder, IconMusic, IconPhoto, IconPlayerPlayFilled, IconTrash } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { NomiImage } from '../../design/media'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../design'
@@ -7,10 +8,10 @@ import { AssetThumb } from './AssetTile'
 import type { AssetKind, AssetRef } from './assetTypes'
 import { ASSET_KIND_FILTER_VALUES, FILTER_OPTIONS, type FilterValue } from './assetLibraryPanelFilters'
 
-const KIND_LABEL: Record<AssetKind, string> = {
-  image: '图片',
-  video: '视频',
-  audio: '音频',
+const KIND_LABEL_KEY: Record<AssetKind, string> = {
+  image: 'assetLibrary.image',
+  video: 'assetLibrary.video',
+  audio: 'assetLibrary.audio',
 }
 
 const KIND_ICON: Record<AssetKind, typeof IconPhoto> = {
@@ -20,6 +21,7 @@ const KIND_ICON: Record<AssetKind, typeof IconPhoto> = {
 }
 
 function AssetKindBadge({ kind, compact = false }: { kind: AssetKind; compact?: boolean }): JSX.Element {
+  const { t } = useTranslation()
   const Icon = KIND_ICON[kind]
   return (
     <span
@@ -30,7 +32,7 @@ function AssetKindBadge({ kind, compact = false }: { kind: AssetKind; compact?: 
       )}
     >
       <Icon size={compact ? 10 : 11} stroke={1.8} aria-hidden="true" />
-      {KIND_LABEL[kind]}
+      {t(KIND_LABEL_KEY[kind])}
     </span>
   )
 }
@@ -48,6 +50,7 @@ export function AssetKindFilterMenu({
   onToggleKind: (kind: AssetKind) => void
   onShowAll: () => void
 }): JSX.Element {
+  const { t } = useTranslation()
   const allSelected = ASSET_KIND_FILTER_VALUES.every((kind) => selectedKinds.has(kind))
 
   return (
@@ -59,9 +62,9 @@ export function AssetKindFilterMenu({
       )}
       style={{ width: 176 }}
       role="dialog"
-      aria-label="素材分类筛选"
+      aria-label={t('assetLibrary.kindFilter')}
     >
-      <div className="grid gap-0.5" role="listbox" aria-label="素材分类" aria-multiselectable="true">
+      <div className="grid gap-0.5" role="listbox" aria-label={t('assetLibrary.kinds')} aria-multiselectable="true">
         {FILTER_OPTIONS.map((option) => {
           const kind = option.value === 'all' ? null : option.value
           const count = counts.get(option.value) ?? 0
@@ -85,7 +88,7 @@ export function AssetKindFilterMenu({
               onClick={kind === null ? onShowAll : () => onToggleKind(kind)}
             >
               <EyeIcon size={15} stroke={1.8} aria-hidden="true" />
-              <span className="min-w-0 whitespace-nowrap">{option.label}</span>
+              <span className="min-w-0 whitespace-nowrap">{t(option.labelKey)}</span>
               <span
                 className={cn(
                   'min-w-7 justify-self-end rounded-nomi-sm px-1.5 py-0.5 text-center text-micro leading-none tabular-nums',
@@ -106,12 +109,118 @@ export function AssetKindFilterMenu({
   )
 }
 
+// 文件夹瓦片（素材面收敛 2026-07-22 转正）：排网格最前,点击进入;素材拖到瓦片上=归属进夹。
+export function FolderGridCell({
+  id,
+  label,
+  count,
+  compact = false,
+  onOpen,
+  onDelete,
+  onDropAssets,
+}: {
+  id: string
+  label: string
+  count: number
+  compact?: boolean
+  onOpen: (folderId: string) => void
+  onDelete: (folderId: string) => void
+  onDropAssets: (folderId: string, event: React.DragEvent<HTMLDivElement>) => void
+}): JSX.Element {
+  const { t } = useTranslation()
+  const [dragOver, setDragOver] = React.useState(false)
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={t('assetLibrary.openFolder', { label })}
+      className={cn(
+        'group relative flex flex-col items-center justify-center gap-1 overflow-hidden rounded-nomi-sm border bg-nomi-paper',
+        'cursor-pointer transition-[border-color,background,box-shadow] duration-[var(--nomi-transition-fast)]',
+        compact ? 'mb-2.5 h-[92px] w-full' : 'aspect-square',
+        dragOver ? 'border-nomi-accent bg-nomi-accent-soft shadow-nomi-md' : 'border-nomi-line hover:border-nomi-ink-20 hover:bg-nomi-ink-05',
+      )}
+      style={compact ? { breakInside: 'avoid' } : undefined}
+      onClick={() => onOpen(id)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') onOpen(id)
+      }}
+      onDragOver={(event) => {
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+        setDragOver(true)
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(event) => {
+        setDragOver(false)
+        onDropAssets(id, event)
+      }}
+    >
+      <IconFolder size={compact ? 22 : 26} stroke={1.6} className={cn(dragOver ? 'text-nomi-accent' : 'text-nomi-ink-45')} aria-hidden="true" />
+      <span className="max-w-[90%] truncate text-caption text-nomi-ink">{label}</span>
+      <span className="text-micro tabular-nums text-nomi-ink-40">{count}</span>
+      <button
+        type="button"
+        className={cn(
+          'absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-nomi-sm border-0 bg-transparent',
+          'cursor-pointer text-transparent transition-colors duration-[var(--nomi-transition-fast)]',
+          'hover:bg-workbench-danger-soft hover:text-workbench-danger group-hover:text-nomi-ink-40',
+        )}
+        aria-label={t('assetLibrary.deleteFolder', { label })}
+        title={t('assetLibrary.deleteFolderHint')}
+        onClick={(event) => {
+          event.stopPropagation()
+          onDelete(id)
+        }}
+      >
+        <IconTrash size={13} stroke={2} aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
+
+// 新建文件夹内联输入（Enter 建 / Esc 收）——Electron 无 window.prompt,就地小表单。
+export function NewFolderInput({
+  onCreate,
+  onCancel,
+}: {
+  onCreate: (label: string) => void
+  onCancel: () => void
+}): JSX.Element {
+  const { t } = useTranslation()
+  const inputRef = React.useRef<HTMLInputElement>(null)
+  React.useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      placeholder={t('assetLibrary.newFolderPlaceholder')}
+      aria-label={t('assetLibrary.newFolderNameAria')}
+      className={cn(
+        'h-8 w-36 rounded-nomi-sm border border-nomi-accent bg-nomi-paper px-2 text-caption text-nomi-ink outline-none',
+      )}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          const value = event.currentTarget.value.trim()
+          if (value) onCreate(value)
+          onCancel()
+        }
+        if (event.key === 'Escape') onCancel()
+      }}
+      onBlur={onCancel}
+    />
+  )
+}
+
 export const AssetGridCell = React.memo(function AssetGridCell({
   asset,
   compact = false,
   selected = false,
   selectable = false,
   draggable = true,
+  dragHint: dragHintProp,
   onSelect,
   onDragStartAsset,
 }: {
@@ -120,9 +229,11 @@ export const AssetGridCell = React.memo(function AssetGridCell({
   selected?: boolean
   selectable?: boolean
   draggable?: boolean
+  dragHint?: string
   onSelect?: (asset: AssetRef, event: React.MouseEvent<HTMLDivElement>) => void
   onDragStartAsset?: (asset: AssetRef, event: React.DragEvent<HTMLDivElement>) => void
 }): JSX.Element {
+  const { t } = useTranslation()
   const handleDragStart = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (!draggable || !onDragStartAsset) {
       event.preventDefault()
@@ -133,9 +244,9 @@ export const AssetGridCell = React.memo(function AssetGridCell({
   const handleClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     onSelect?.(asset, event)
   }, [asset, onSelect])
-  const dragHint = draggable
-    ? asset.kind === 'audio' ? '拖到时间轴音频轨' : '拖到画布'
-    : '当前项目画布素材，可选择后删除'
+  const dragHint = dragHintProp ?? (draggable
+    ? asset.kind === 'audio' ? t('assetLibrary.dragAudio') : t('assetLibrary.dragCanvas')
+    : t('assetLibrary.selectableProjectAsset'))
   const check = selectable ? (
     <span
       className={cn(

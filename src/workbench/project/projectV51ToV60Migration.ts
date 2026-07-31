@@ -105,8 +105,9 @@ export function migrateProjectV51ToV60(record: WorkbenchProjectRecordV1): {
     const node = rawNode as GenerationCanvasNode
     let next: GenerationCanvasNode = node
 
-    // 1. renderKind 补齐
-    if (!next.renderKind) {
+    // 1. renderKind 补齐——kind 自带专属卡的节点（画板/声音/角色/场景）不吃分类默认值：
+    //    盖章 shot-frame 会顶掉它们的专属 body（画板「打开」入口消失，2026-07-29 真机复现）。
+    if (!next.renderKind && !['whiteboard', 'audio', 'character', 'scene'].includes(next.kind)) {
       const inferred = inferRenderKind(next.categoryId)
       if (inferred) {
         next = { ...next, renderKind: inferred }

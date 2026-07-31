@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { describeIllegalHeader, findIllegalHeader, findNonHeaderSafeChar, firstString, isJsonRecord, nowIso, readNestedRecord, trim } from "./jsonUtils";
+import { describeIllegalHeader, findIllegalHeader, findNonHeaderSafeChar, firstString, isJsonRecord, nowIso, pickUpstreamMessage, readNestedRecord, trim } from "./jsonUtils";
+
+describe("pickUpstreamMessage", () => {
+  it("挑出各家失败体里的那句人话（唯一键优先级表）", () => {
+    // new-api / one-api：嵌在 error.message（用户看到过整坨裸 JSON，就是漏读了它）
+    expect(pickUpstreamMessage({ error: { code: "", message: "Invalid token (request id: abc)", type: "new_api_error" } }))
+      .toBe("Invalid token (request id: abc)");
+    expect(pickUpstreamMessage({ msg: "余额不足" })).toBe("余额不足");
+    expect(pickUpstreamMessage({ message: "bad request" })).toBe("bad request");
+    // RunningHub 的业务错误键
+    expect(pickUpstreamMessage({ errorMessage: "标准模型API仅限企业级" })).toBe("标准模型API仅限企业级");
+    // ModelScope 的复数 errors
+    expect(pickUpstreamMessage({ errors: { message: "quota exceeded" } })).toBe("quota exceeded");
+    expect(pickUpstreamMessage({ data: { msg: "task not found" } })).toBe("task not found");
+  });
+
+  it("挑不出来返回空串（调用方自己兜底 HTTP 码）", () => {
+    expect(pickUpstreamMessage({})).toBe("");
+    expect(pickUpstreamMessage({ nope: 1 })).toBe("");
+  });
+});
 
 describe("trim", () => {
   it("trims strings and returns '' for non-strings", () => {

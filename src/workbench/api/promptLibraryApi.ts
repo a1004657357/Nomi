@@ -1,10 +1,13 @@
 // 渲染层取提示词库的唯一入口(镜像 skillApi 的 requireDesktopRuntime 范式)。
 // 主进程已聚合+缓存;这里取全量,搜索/分类过滤是平凡纯函数,放渲染层(不重复后端逻辑)。
 import { getDesktopBridge, type DesktopBridge } from '../../desktop/bridge'
+import i18n from '../../i18n'
 
 export type PromptMediaType = 'image' | 'video'
 
 export type PromptOrigin = 'public' | 'user'
+
+export type PromptReferenceImage = { url: string; title?: string; sourceUrl?: string }
 
 export type LibraryPrompt = {
   id: string
@@ -21,6 +24,8 @@ export type LibraryPrompt = {
   origin: PromptOrigin
   /** 我的库条目的更新时间(ISO);public 无。 */
   updatedAt?: string
+  /** 参考图(网页提取的截图/原图;素材面收敛 2026-07-22 随迁字段,封面 mediaUrl=首图)。 */
+  referenceImages?: PromptReferenceImage[]
 }
 
 function requireDesktopRuntime(feature: string): DesktopBridge {
@@ -39,7 +44,7 @@ function toPrompt(raw: unknown): LibraryPrompt | null {
   const promptType: PromptMediaType = r.promptType === 'video' ? 'video' : 'image'
   return {
     id,
-    title: String(r.title ?? '未命名'),
+    title: String(r.title ?? i18n.t('runtime.promptLibrary.untitled')),
     prompt,
     mediaUrl: String(r.mediaUrl ?? ''),
     mediaType,
@@ -50,6 +55,11 @@ function toPrompt(raw: unknown): LibraryPrompt | null {
     sourceUrl: String(r.sourceUrl ?? ''),
     origin: r.origin === 'user' ? 'user' : 'public',
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : undefined,
+    referenceImages: Array.isArray(r.referenceImages)
+      ? (r.referenceImages as unknown[])
+          .filter((img): img is PromptReferenceImage =>
+            Boolean(img) && typeof img === 'object' && typeof (img as PromptReferenceImage).url === 'string' && (img as PromptReferenceImage).url.length > 0)
+      : undefined,
   }
 }
 
@@ -72,17 +82,23 @@ export async function fetchUserPrompts(): Promise<LibraryPrompt[]> {
   return mapUserPrompts(await desktop.promptLibrary!.userList())
 }
 
-export async function addUserPrompt(input: { title?: string; prompt: string; promptType: PromptMediaType }): Promise<LibraryPrompt[]> {
+export async function addUserPrompt(input: {
+  title?: string
+  prompt: string
+  promptType: PromptMediaType
+  tags?: string[]
+  referenceImages?: PromptReferenceImage[]
+}): Promise<LibraryPrompt[]> {
   const desktop = requireDesktopRuntime('add prompt')
   const res = await desktop.promptLibrary!.userAdd(input)
-  if (!res?.ok) throw new Error(res?.error || '保存失败')
+  if (!res?.ok) throw new Error(res?.error || i18n.t('runtime.promptLibrary.saveFailed'))
   return mapUserPrompts(res)
 }
 
 export async function updateUserPrompt(id: string, patch: { title?: string; prompt?: string; promptType?: PromptMediaType }): Promise<LibraryPrompt[]> {
   const desktop = requireDesktopRuntime('edit prompt')
   const res = await desktop.promptLibrary!.userUpdate(id, patch)
-  if (!res?.ok) throw new Error(res?.error || '更新失败')
+  if (!res?.ok) throw new Error(res?.error || i18n.t('runtime.promptLibrary.updateFailed'))
   return mapUserPrompts(res)
 }
 

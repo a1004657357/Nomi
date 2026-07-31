@@ -2,8 +2,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createProject, importRemoteAsset, listProjectAssets } from "./runtime";
+import { createProject, importRemoteAsset, listProjectAssets, localizeTaskAsset, localizedTaskAssetFileName } from "./runtime";
 import { importLocalFile } from "./assets/localFileImport";
+
+vi.mock("./export/mediaProbe", () => ({
+  probeMediaMetadata: vi.fn(async () => ({ kind: "video", hasAudio: false, durationSeconds: 3.0625 })),
+}));
+
+vi.mock("./review/reviewTrace", () => ({
+  scheduleTechnicalReview: vi.fn(),
+}));
 
 type AssetRecord = {
   data: {
@@ -58,6 +66,32 @@ function createWorkspace(): { id: string; rootPath: string } {
 }
 
 describe("runtime workspace asset storage", () => {
+  it("keeps provider video filename extensions when localizing task assets", () => {
+    expect(
+      localizedTaskAssetFileName(
+        "video",
+        "http://127.0.0.1:8188/view?filename=ComfyUI_00123_.webm&subfolder=&type=output",
+        123,
+      ),
+    ).toBe("video-123.webm");
+    expect(localizedTaskAssetFileName("video", "https://cdn.example.com/result.mov", 123)).toBe("video-123.mov");
+    expect(localizedTaskAssetFileName("video", "https://cdn.example.com/result", 123)).toBe("video-123.mp4");
+  });
+
+  it("includes probed video duration when localizing task assets", async () => {
+    const workspace = createWorkspace();
+
+    const asset = await localizeTaskAsset(
+      workspace.id,
+      "data:video/mp4;base64,aGVsbG8=",
+      "video",
+      "node-1",
+    );
+
+    expect(asset.url).toContain("nomi-local://asset/");
+    expect(asset.durationSeconds).toBe(3.0625);
+  });
+
   it("writes generated remote assets under assets/generated/YYYY-MM-DD", async () => {
     const workspace = createWorkspace();
 

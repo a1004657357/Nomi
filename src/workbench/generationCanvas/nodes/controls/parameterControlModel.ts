@@ -13,6 +13,7 @@ import {
   type VideoModelControlBinding,
 } from '../../../../config/modelCatalogMeta'
 import { normalizeOrientation, type Orientation } from '../../../../utils/orientation'
+import { normalizeAspectRatioToWH } from '../aspectRatio'
 import { resultUrl } from '../../runner/referenceUrl'
 import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import type { WorkbenchAssetDto } from '../../../api/assetUploadApi'
@@ -52,6 +53,11 @@ export type ImageUrlSlot = {
   key: string
   label: string
   group: ImageUrlGroup
+}
+
+export type FrameSlotLabels = {
+  firstFrame: string
+  lastFrame: string
 }
 
 const FIRST_FRAME_KEY_FRAGMENTS = ['firstframe', 'firstimage', 'startframe', 'startimage', 'initialframe']
@@ -104,6 +110,40 @@ export function buildImageUrlSlots(meta: unknown): ImageUrlSlot[] {
   return controls
     .filter(looksLikeImageUrlControl)
     .map((c) => ({ key: c.key, label: c.label, group: inferImageUrlGroup(c.key) }))
+}
+
+function readComfyWorkflowBinding(meta: unknown): Record<string, unknown> | null {
+  if (!meta || typeof meta !== 'object') return null
+  const draft = (meta as Record<string, unknown>).comfyWorkflowImport
+  if (!draft || typeof draft !== 'object') return null
+  const binding = (draft as Record<string, unknown>).binding
+  return binding && typeof binding === 'object' ? binding as Record<string, unknown> : null
+}
+
+export function buildComfyWorkflowImageUrlSlots(meta: unknown, labels: FrameSlotLabels): ImageUrlSlot[] | null {
+  const binding = readComfyWorkflowBinding(meta)
+  if (!binding) return null
+  const slots: ImageUrlSlot[] = []
+  if (typeof binding.firstFrameNodeId === 'string' && typeof binding.firstFrameInputKey === 'string') {
+    slots.push({ key: 'firstFrameUrl', label: labels.firstFrame, group: 'first_frame' })
+  }
+  if (typeof binding.lastFrameNodeId === 'string' && typeof binding.lastFrameInputKey === 'string') {
+    slots.push({ key: 'lastFrameUrl', label: labels.lastFrame, group: 'last_frame' })
+  }
+  return slots
+}
+
+export function shouldUseVideoFrameSlotFallback(input: {
+  isVideoLike: boolean
+  modelImageUrlSlots: readonly ImageUrlSlot[]
+  comfyImageUrlSlots: ImageUrlSlot[] | null
+  vendor?: string | null
+}): boolean {
+  if (!input.isVideoLike || input.modelImageUrlSlots.length > 0) return false
+  // ComfyUI imported workflows are graph-defined. If their saved binding is absent
+  // or says no frame inputs, guessing first+last-frame creates invalid requests.
+  if (String(input.vendor || '').trim() === 'comfyui-local') return false
+  return !input.comfyImageUrlSlots
 }
 
 export function imageCatalogReferenceSlot(config: ImageModelCatalogConfig | null): ImageUrlSlot[] {
@@ -526,6 +566,37 @@ export function defaultPatchForControls(controls: readonly DynamicModelControl[]
       ? defaultPatchForParameterControl(control)
       : defaultPatchForCatalogControl(control)),
   }), {})
+}
+
+/**
+ * 视频比例默认覆盖（2026-07-17 用户拍板：视频首选 16:9，输入全竖才 9:16——档案声明的默认让位于
+ * 这条产品规则）。在 controls 里找比例控件，匹配 preferred 的等价选项（normalize 后同 W:H），
+ * 生成写入 patch（含比例多键同步）。模型没有等价档位（如只有 1:1）→ 返回空，保留档案默认。
+ */
+export function videoAspectDefaultPatch(
+  controls: readonly DynamicModelControl[],
+  preferred: '16:9' | '9:16',
+): Record<string, unknown> {
+  for (const control of controls) {
+    if (isParameterControl(control)) {
+      if (!ASPECT_RATIO_ALIASES.includes(control.key)) continue
+      const matched = control.options.find(
+        (o) => normalizeAspectRatioToWH(controlValueToString(o.value)) === preferred || normalizeAspectRatioToWH(o.label) === preferred,
+      )
+      if (!matched) return {}
+      // 与 handleParameterControlChange 同语义：写控件 key + 规范化 W:H 进 aspect_ratio（最高优先级读取键）。
+      return { [control.key]: matched.value, aspect_ratio: preferred }
+    }
+    if (control.binding !== 'size' && control.binding !== 'aspectRatio') continue
+    const matched = control.options.find((o) => {
+      const value = normalizeAspectRatioToWH(optionValue(o))
+      const label = typeof o === 'string' ? value : normalizeAspectRatioToWH(o.label)
+      return value === preferred || label === preferred
+    })
+    if (!matched) return {}
+    return defaultPatchForCatalogControl({ ...control, defaultValue: optionValue(matched) })
+  }
+  return {}
 }
 
 export function removePreviousControlParams(

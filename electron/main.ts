@@ -3,6 +3,7 @@ import type { Rectangle, WebContents } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createProject, deleteProject, listProjects, readProject, saveProject } from "./projects/repository";
+import { registerAssetsIpc } from "./assets/assetsIpc";
 import {
   clearModelCatalogVendorApiKey,
   deleteModelCatalogMapping,
@@ -21,7 +22,7 @@ import {
   upsertModelCatalogVendor,
   upsertModelCatalogVendorApiKey,
 } from "./catalog/catalogStore";
-import { analyzeComfyWorkflowText, importComfyWorkflowToCatalog } from "./catalog/comfyuiWorkflowImportStore";
+import { analyzeComfyWorkflowText, importComfyWorkflowToCatalog, updateComfyWorkflowInCatalog } from "./catalog/comfyuiWorkflowImportStore";
 import { runTaskWithIdempotency } from "./submissionLedger";
 import { mintSpendGrant } from "./spendGrant";
 import { openWorkspaceFolder, selectWorkspaceFolder } from "./workspace/workspaceIpc";
@@ -44,16 +45,13 @@ import { registerUpdaterIpc } from "./update/autoUpdater";
 import { setRendererTarget } from "./capabilityCore/rendererBridge";
 import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfig";
 import { registerLocalProtocol } from "./protocol/localProtocol";
-import { installWindowCloseConfirmation } from "./windowCloseConfirmation";
-
-// 尽早安装：捕获引导阶段起的 uncaughtException / unhandledRejection，落盘到 app logs（P0-8）。
+import { installMainWindowInteractions } from "./mainWindowInteractions";
+import { desktopT, registerI18nIpc, setDesktopLocale } from "./i18n";
 installCrashHandlers();
 
 const configuredUserDataDir = String(process.env.NOMI_ELECTRON_USER_DATA_DIR || "").trim();
 if (configuredUserDataDir) {
-  // dev-electron.mjs 会按 renderer 端口分配独立 profile；这里若不真正切到该目录，
-  // Electron 仍会复用全局 userData，把旧的 Vite chunk/code cache 吃回来，出现
-  // 「主界面加载失败但纯 Vite 页面正常」这类很像灵异事件的缓存串味。
+  // dev-electron.mjs 按 renderer 端口隔离 profile，避免复用旧 Vite chunk/code cache。
   app.setPath("userData", configuredUserDataDir);
 }
 
@@ -304,7 +302,7 @@ async function createWindow(
     },
   });
   mainWindowRef = mainWindow;
-  installWindowCloseConfirmation(mainWindow);
+  installMainWindowInteractions(mainWindow);
   mainWindow.on("closed", () => {
     if (mainWindowRef === mainWindow) mainWindowRef = null;
   });
@@ -425,6 +423,7 @@ async function runTaskIpcGuard<T>(payload: unknown, thunk: () => Promise<T>): Pr
 
 function registerIpc(): void {
   const selectedWorkspaceRoots = new Set<string>();
+  registerI18nIpc();
   // 渲染层崩溃（RootErrorBoundary）也落到同一崩溃日志（P0-8）。
   ipcMain.on("nomi:log:renderer-crash", (_event, message: unknown) => logCrash("renderer", String(message)));
   // 窗口控制（Windows 自绘标题栏）：只注册一次，作用于发起请求的那个窗口（fromWebContents），
@@ -459,7 +458,12 @@ function registerIpc(): void {
     recreateMainWindowFromSender(event.sender, { preserveRoute: true, reason: "hard reload window" });
   });
   registerSyncIpc("nomi:model-catalog:vendors:list", listModelCatalogVendors);
-  registerSyncIpc("nomi:model-catalog:models:list", listModelCatalogModels);
+  registerSyncIpc("nomi:model-catalog:models:list", (params?: unknown) => {
+    // Renderer 热更新不会重启 Electron main；读取时补一次内置种子，避免 onboarding
+    // 长时间停留在旧的持久化目录（例如 APIMart 缺 Grok Imagine 1.5）。
+    ensureBuiltinModelSeeds();
+    return listModelCatalogModels(params);
+  });
   registerSyncIpc("nomi:model-catalog:mappings:list", listModelCatalogMappings);
   registerSyncIpc("nomi:model-catalog:health", getModelCatalogHealth);
   registerSyncIpc("nomi:model-catalog:vendor:upsert", upsertModelCatalogVendor);
@@ -481,7 +485,7 @@ function registerIpc(): void {
   // 本地 ComfyUI 自定义 workflow 导入（S3）：analyze 识别可绑定节点、import 落库为用户自有 model+mapping。
   registerSyncIpc("nomi:model-catalog:comfyui:analyze-workflow", (text: unknown) => analyzeComfyWorkflowText(text));
   registerSyncIpc("nomi:model-catalog:comfyui:import-workflow", (payload: unknown) => importComfyWorkflowToCatalog(payload));
-
+  registerSyncIpc("nomi:model-catalog:comfyui:update-workflow", (payload: unknown) => updateComfyWorkflowInCatalog(payload));
   // Skill / Playbook 域（业务函数在 electron/skills/*，这里只接同步 IPC 管道）。
   registerSyncIpc("nomi:skill:list", () => {
     const { listSkillsForRenderer } = require("./skills/skillIpc") as typeof import("./skills/skillIpc");
@@ -537,11 +541,11 @@ function registerIpc(): void {
       confirmInitialize: async (rootPath) => {
         const result = await dialog.showMessageBox({
           type: "question",
-          buttons: ["取消", "初始化"],
+          buttons: [desktopT("common.cancel"), desktopT("common.initialize")],
           defaultId: 1,
           cancelId: 0,
-          message: "初始化 Nomi 项目文件夹？",
-          detail: `Nomi 会在此文件夹创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/.\n\n${rootPath}`,
+          message: desktopT("workspace.initializeTitle"),
+          detail: desktopT("workspace.initializeDetail", { path: rootPath }),
         });
         return result.response === 1;
       },
@@ -590,18 +594,11 @@ function registerIpc(): void {
     const { importRemoteAsset } = await loadRuntimeModule();
     return importRemoteAsset(payload);
   });
-  ipcMain.handle("nomi:assets:import-file", async (_event, payload) => {
-    const { importLocalFile } = await import("./assets/localFileImport");
-    return importLocalFile(payload);
-  });
   ipcMain.handle("nomi:assets:list", async (_event, payload) => {
     const { listProjectAssets } = await loadRuntimeModule();
     return listProjectAssets(payload);
   });
-  ipcMain.handle("nomi:assets:download", async (_event, payload) => {
-    const { downloadAssetToDisk } = await import("./assets/downloadAsset");
-    return downloadAssetToDisk(payload);
-  });
+  registerAssetsIpc();
   ipcMain.handle("nomi:video:extract-frame", async (_event, payload) => {
     const { extractVideoFrameToAsset } = await import("./video/extractVideoFrame");
     return extractVideoFrameToAsset(payload);
@@ -733,6 +730,7 @@ if (hasSingleInstanceLock)
   app
     .whenReady()
     .then(async () => {
+      setDesktopLocale(app.getLocale());
       registerLocalProtocol();
       installContentSecurityPolicy(session.defaultSession);
       // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。
@@ -742,6 +740,8 @@ if (hasSingleInstanceLock)
       } catch (error) {
         console.error("[nomi:desktop] ensureBuiltinModelSeeds failed:", error);
       }
+      // 存量中转模型升级到厂商原生报文（异步不挡窗口、幂等、失败静默；细节见该模块头注释）。
+      void import("./catalog/relayNativeWireUpgrade").then((m) => m.scheduleRelayNativeWireUpgrade()).catch(() => {});
       registerIpc();
       // E(冷启动 P0)：代理探测与能力核都不是窗口首帧的依赖，挡在窗口前是纯浪费。
       //  · applySystemProxy：窗口创建后延迟后台探测；低内存模式更晚加载，避免列表页常驻代理栈。
@@ -758,7 +758,11 @@ if (hasSingleInstanceLock)
             .then(({ applySystemProxy }) => applySystemProxy(session.defaultSession))
             .catch((error) => {
               console.error("[nomi:desktop] applySystemProxy failed:", error);
-            });
+            })
+            // 代理定型后装 vendor 候选域自愈（apimart 被墙自动切官方备用域；回切探测走最终 dispatcher）。
+            .then(() => import("./vendor/vendorBaseFallbackBoot"))
+            .then((m) => m.configureVendorBaseFallbackAtBoot())
+            .catch((error) => console.error("[nomi:desktop] vendor base fallback boot failed:", error));
         },
         lowMemoryMode ? 15000 : 3000,
       );

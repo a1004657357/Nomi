@@ -26,6 +26,27 @@ export function isJsonRecord(value: unknown): value is JsonRecord {
 }
 
 /**
+ * 从上游失败响应体里挑出「那句人话」。各家把原因塞在不同键上，这里是**唯一**的键优先级表：
+ * 谁要说清一次上游失败（vendorHttp 的生成请求、onboarding 的拉模型/测连接）都读这一份，
+ * 免得各处平行猜形状漂移（P1）。挑不出来返回 ""，调用方自己兜底（HTTP 状态等）。
+ */
+export function pickUpstreamMessage(record: JsonRecord): string {
+  return firstString(
+    record.msg,
+    record.message,
+    record.error,
+    // RunningHub：业务错误在 errorMessage（如「标准模型API仅限企业级-共享API Key调用」）。
+    record.errorMessage,
+    readNestedRecord(record, ["error", "message"]),
+    readNestedRecord(record, ["data", "msg"]),
+    // ModelScope（及同类）失败体是复数 `errors`：{ "errors": { "message": "..." } }。
+    readNestedRecord(record, ["errors", "message"]),
+    readNestedRecord(record, ["errors", "detail"]),
+    record.errors,
+  );
+}
+
+/**
  * 找出字符串里第一个无法安全放进 HTTP 头/凭证的字符，返回 null 表示安全。
  * 治本于一个真坑（kie createTask 报「Cannot convert argument to a ByteString
  * because the character at index 7 has a value of 34915」）：API 密钥里混进中文/

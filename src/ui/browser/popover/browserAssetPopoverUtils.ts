@@ -1,10 +1,8 @@
 import type { CSSProperties } from 'react'
 import type { DesktopAssetDto } from '../../../desktop/bridge'
 import type { BrowserAssetCanvasImportItem } from '../overlay/globalAssetPopoverEvents'
-import type { BrowserAssetLibraryState } from '../assets/browserAssetLibraryStorage'
 import type { NomiBrowserAsset } from '../assets/browserAssetData'
 import type { BrowserPromptExtractionMode } from '../prompt/browserPromptExtraction'
-import { BROWSER_PROMPT_EXTRACTION_MODE_LABELS } from '../prompt/browserPromptExtraction'
 import type {
   AssetPopoverDockMode,
   BrowserAssetPromptCaptureRequest,
@@ -22,11 +20,6 @@ import {
   DOCK_DEFAULT_WIDTH,
   DOCK_GAP,
   DOCK_MAX_WIDTH_RATIO,
-  LEGACY_BROWSER_ASSET_DRAG_MIME,
-  NOMI_ASSET_DRAG_MIME,
-  PROMPT_MASONRY_COLUMN_GAP,
-  PROMPT_MASONRY_MAX_COLUMNS,
-  PROMPT_MASONRY_MIN_COLUMN_WIDTH,
 } from './browserAssetPopoverConstants'
 import { FLOATING_WINDOW_MIN_WIDTH, type FloatingWindowBoundsRect, type FloatingWindowRect } from '../window/useResizableFloatingWindow'
 
@@ -41,14 +34,6 @@ export function getAssetGridColumnCount(windowWidth: number, compact: boolean): 
   const rawCount = Math.floor((availableWidth + ASSET_GRID_COLUMN_GAP) / (minColumnWidth + ASSET_GRID_COLUMN_GAP))
   const maxColumns = compact ? ASSET_GRID_COMPACT_MAX_COLUMNS : Number.POSITIVE_INFINITY
   return clampNumber(rawCount, 1, maxColumns)
-}
-
-export function getPromptMasonryColumnCount(windowWidth: number): number {
-  const availableWidth = Math.max(0, windowWidth - ASSET_GRID_HORIZONTAL_PADDING)
-  const rawCount = Math.floor(
-    (availableWidth + PROMPT_MASONRY_COLUMN_GAP) / (PROMPT_MASONRY_MIN_COLUMN_WIDTH + PROMPT_MASONRY_COLUMN_GAP),
-  )
-  return clampNumber(rawCount, 1, PROMPT_MASONRY_MAX_COLUMNS)
 }
 
 export function createDockedWindowRect(
@@ -80,17 +65,19 @@ export function rectsIntersect(left: DOMRect, right: DOMRect): boolean {
   return left.left <= right.right && left.right >= right.left && left.top <= right.bottom && left.bottom >= right.top
 }
 
-export function assetTypeFromFile(file: File): NomiBrowserAsset['type'] {
+/** 托盘=图/视频捕捞收件箱：本地拖入只认媒体文件，其余（文本等）走素材库上传。 */
+export function assetTypeFromFile(file: File): NomiBrowserAsset['type'] | null {
   if (file.type.startsWith('image/')) return 'image'
   if (file.type.startsWith('video/')) return 'video'
-  return 'prompt'
+  const name = file.name.toLowerCase()
+  if (/\.(png|jpe?g|webp|gif|avif)$/.test(name)) return 'image'
+  if (/\.(mp4|webm|mov|m4v)$/.test(name)) return 'video'
+  return null
 }
 
 export function contentTypeFromFile(file: File): string {
   if (file.type) return file.type
   const name = file.name.toLowerCase()
-  if (name.endsWith('.md') || name.endsWith('.markdown')) return 'text/markdown'
-  if (name.endsWith('.txt')) return 'text/plain'
   if (name.endsWith('.png')) return 'image/png'
   if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg'
   if (name.endsWith('.webp')) return 'image/webp'
@@ -108,18 +95,51 @@ function parseAssetTime(value?: string): number {
 }
 
 export function browserAssetTimeValue(asset: NomiBrowserAsset): number {
-  const explicitTime = Math.max(
-    parseAssetTime(asset.updatedAt),
-    parseAssetTime(asset.createdAt),
-    parseAssetTime(asset.promptCard?.savedAt),
-  )
+  const explicitTime = Math.max(parseAssetTime(asset.updatedAt), parseAssetTime(asset.createdAt))
   if (explicitTime > 0) return explicitTime
   const idTime = asset.id.match(/\d{12,}/)?.[0]
   return idTime ? Number(idTime) : 0
 }
 
-function isPromptAssetFileName(fileName: string): boolean {
-  return /\.(md|markdown|txt)$/i.test(fileName)
+export function browserAssetDisplaySubtitle(asset: NomiBrowserAsset): string {
+  const concreteSubtitle = asset.subtitle?.trim()
+  if (asset.status === 'loading') return '下载中...'
+  if (asset.status === 'error') return concreteSubtitle || '下载失败'
+  if (concreteSubtitle) return concreteSubtitle
+  return asset.type === 'image' ? '图片' : '视频'
+}
+
+export function isBrowserAssetDraggable(asset: NomiBrowserAsset): boolean {
+  return asset.status !== 'loading' && asset.status !== 'error'
+}
+
+// 结构化错误码（主进程 [nomi-capture:<code>] 前缀）→ 文案 + 唯一下一步。
+// 每种失败必须映射到一个可行动动作（2026-07-22 审计 P1：通用「请重试」让用户重复必败动作）。
+const CAPTURE_ERROR_CODE_MESSAGES: Record<string, string> = {
+  'forbidden': '网站拒绝了下载（可能要登录）——先在浏览器里登录该网站再捕捞',
+  'not-found': '素材链接已失效——回到页面重新选一次',
+  'html-not-media': '网站返回的是网页而不是图片/视频（防盗链或人机验证）——通过验证后重试',
+  'too-large': '素材超过 200MB 上限——换小一点的素材',
+  'timeout': '下载超时——网络慢或站点限流，稍后重试',
+  'blocked-by-client': '请求被浏览器安全策略拦截——重新捕捞一次',
+  'mse-stream': '这是流媒体视频（边播边传），没有可下载的原件——回到视频页让画面可见后重试保存当前帧',
+  'black-frame': '视频当前是黑屏/无画面——先在页面里播放到有清晰画面的一帧，再保存当前帧',
+  'network': '网络连接失败——检查网络后重试',
+}
+
+export function browserAssetImportErrorMessage(reason: string, url: string): string {
+  // 不锚行首：渲染层拿到的是 IPC 包裹后的 message（Error invoking remote method …: Error: [nomi-capture:…]）。
+  const code = /\[nomi-capture:([a-z-]+)\]/i.exec(reason)?.[1]?.toLowerCase()
+  if (code && CAPTURE_ERROR_CODE_MESSAGES[code]) return CAPTURE_ERROR_CODE_MESSAGES[code]
+  // 旧构建/渲染层自产错误没有 code——按字符串归类（保留旧口径）。
+  if (/来源页面会话|source page session/i.test(reason)) return '来源网页已关闭，请重新拖入'
+  if (/timed out|超时/i.test(reason)) return '下载超时，请重试'
+  if (/HTTP\s*(401|403)|forbidden|hotlink|referer/i.test(reason)) return '网站拒绝下载（可能需要登录）'
+  if (/HTTP\s*(404|410)/i.test(reason)) return '网页素材已失效'
+  if (/不是图片或视频|not supported media|media type/i.test(reason)) return '网站返回的不是图片或视频'
+  if (/too large|200\s*MiB|超过.*MB/i.test(reason)) return '素材超过 200MB'
+  if (/^blob:/i.test(url)) return '网页临时资源已失效'
+  return '下载失败，请重试'
 }
 
 function assetTypeFromDesktopAsset(asset: DesktopAssetDto): NomiBrowserAsset['type'] | null {
@@ -131,55 +151,49 @@ function assetTypeFromDesktopAsset(asset: DesktopAssetDto): NomiBrowserAsset['ty
   if (contentType.startsWith('video/')) return 'video'
   if (/\.(mp4|webm|mov|m4v)$/i.test(asset.name)) return 'video'
   if (/\.(png|jpe?g|webp|gif|avif)$/i.test(asset.name)) return 'image'
-  if (contentType.startsWith('text/') || isPromptAssetFileName(asset.name)) return 'prompt'
   return null
 }
 
-function browserAssetStorageKeyFromDesktopAsset(asset: DesktopAssetDto): string {
-  const url = typeof asset.data.url === 'string' ? asset.data.url : ''
-  return url ? `url:${url}` : `id:${asset.id}`
-}
-
-function browserAssetLibraryHasDesktopAsset(asset: DesktopAssetDto, libraryState?: BrowserAssetLibraryState): boolean {
-  if (!libraryState) return false
-  return Object.prototype.hasOwnProperty.call(
-    libraryState.folderAssignments,
-    browserAssetStorageKeyFromDesktopAsset(asset),
-  )
-}
-
-export function shouldShowDesktopAssetInBrowserPopover(asset: DesktopAssetDto, libraryState?: BrowserAssetLibraryState): boolean {
-  const kind = typeof asset.data.kind === 'string' ? asset.data.kind : ''
-  if (asset.data.ownerNodeId) return false
-  if (kind === 'browser-capture') return true
-  if (kind === 'browser-upload') return true
-  return browserAssetLibraryHasDesktopAsset(asset, libraryState)
-}
-
+// 素材卡副标题（曾是三处 mapper 的共享单源；mapper 收敛成一份后回归本文件私有）。
 function browserAssetSubtitleFromDesktopAsset(asset: DesktopAssetDto): string {
   const kind = typeof asset.data.kind === 'string' ? asset.data.kind : ''
-  if (kind === 'browser-capture') return '网页素材'
+  if (kind === 'browser-capture') {
+    // 来源质量诚实标注（审计 L4）：页面截图/视频当前帧不冒充原图——后续模型也据此知道输入质量。
+    const quality = typeof asset.data.captureQuality === 'string' ? asset.data.captureQuality : ''
+    if (quality === 'screenshot') return '页面截图'
+    if (quality === 'frame') return '视频当前帧'
+    // 动图（GIF/动画 WebP）诚实标注为「动态图」，不笼统当静态「网页原图」（后续用户/模型据此知道是动态参考）。
+    if (asset.data.animated === true) return '动态图'
+    return '网页原图'
+  }
   if (kind === 'browser-upload') return '本地导入'
   if (kind === 'upload') return '本地导入'
   return '项目素材'
 }
 
-export function browserAssetFromDesktopAsset(asset: DesktopAssetDto): NomiBrowserAsset | null {
+/**
+ * DesktopAssetDto → 托盘素材的唯一映射（此前 dialog/overlay 各持一份平行版，已收敛到这一份）。
+ * 显示名优先用网页捕捞时抓到的人类标题(alt/title/文档标题，落在 sidecar.title)，
+ * 其次调用方兜底标题（捕捞传入 title/fileName），再退原始文件名——
+ * 防盗链图的 URL 文件名常是哈希(263fcbf8…)，直接当名字没法认(用户 2026-07-13 抓出)。
+ */
+export function browserAssetFromDesktopAsset(asset: DesktopAssetDto, fallbackTitle?: string): NomiBrowserAsset | null {
   if (asset.name.endsWith('.meta')) return null
   const type = assetTypeFromDesktopAsset(asset)
   if (!type) return null
   const url = typeof asset.data.url === 'string' ? asset.data.url : ''
+  const relativePath = typeof asset.data.relativePath === 'string' ? asset.data.relativePath : undefined
   const subtitle = browserAssetSubtitleFromDesktopAsset(asset)
-  // 显示名优先用网页捕捞时抓到的人类标题(alt/title/文档标题，落在 sidecar.title)，
-  // 而不是原始文件名——防盗链图的 URL 文件名常是哈希(263fcbf8…)，直接当名字没法认(用户 2026-07-13 抓出)。
   const sidecarTitle = typeof asset.data.title === 'string' ? asset.data.title.trim() : ''
   return {
     id: asset.id,
     type,
     source: 'my',
-    title: sidecarTitle || asset.name || (type === 'video' ? '项目视频' : type === 'image' ? '项目图片' : '本地文本'),
+    title: sidecarTitle || fallbackTitle?.trim() || asset.name || (type === 'video' ? '项目视频' : '项目图片'),
     subtitle,
-    previewUrl: type === 'prompt' ? undefined : url || undefined,
+    previewUrl: url || undefined,
+    previewMediaType: type,
+    relativePath,
     tags: [subtitle],
     createdAt: asset.createdAt,
     updatedAt: asset.updatedAt,
@@ -187,28 +201,11 @@ export function browserAssetFromDesktopAsset(asset: DesktopAssetDto): NomiBrowse
 }
 
 export function browserAssetUrlKey(asset: NomiBrowserAsset): string {
-  if (asset.promptCard) return ''
   return asset.previewUrl || ''
 }
 
-export function browserAssetStorageKey(asset: NomiBrowserAsset): string {
-  if (asset.promptCard) return `prompt:${asset.id}`
-  return asset.previewUrl ? `url:${asset.previewUrl}` : `id:${asset.id}`
-}
-
-function promptTextFromBrowserAsset(asset: NomiBrowserAsset): string {
-  const promptCardPrompt = asset.promptCard?.prompt.trim()
-  if (promptCardPrompt) return promptCardPrompt
-  const subtitle = asset.subtitle?.trim() ?? ''
-  if (subtitle && !['本地文本', '本地导入', '网页素材', '项目素材'].includes(subtitle)) return subtitle
-  return asset.title
-}
-
 export function browserAssetToCanvasImportItem(asset: NomiBrowserAsset): BrowserAssetCanvasImportItem | null {
-  if (asset.type === 'folder' || asset.status === 'loading' || asset.status === 'error') return null
-  if (asset.type === 'prompt') {
-    return { id: asset.id, type: 'prompt', title: asset.title, subtitle: asset.subtitle, prompt: promptTextFromBrowserAsset(asset) }
-  }
+  if (asset.status === 'loading' || asset.status === 'error') return null
   const previewUrl = asset.previewUrl?.trim()
   if (!previewUrl) return null
   return { id: asset.id, type: asset.type, title: asset.title, subtitle: asset.subtitle, previewUrl }
@@ -247,17 +244,31 @@ function firstUsableImageUrlFromText(text: string): string {
   return ''
 }
 
-function imageUrlFromHtml(html: string): { url: string; title?: string } | null {
+function mediaUrlFromHtml(html: string): { url: string; title?: string; mediaType: 'image' | 'video' } | null {
   if (!html.trim()) return null
+  if (typeof DOMParser === 'undefined') {
+    const videoTag = html.match(/<video\b[^>]*>/i)?.[0] || ''
+    const posterUrl = videoTag.match(/\bposter\s*=\s*["']([^"']+)["']/i)?.[1] || ''
+    const title = videoTag.match(/\btitle\s*=\s*["']([^"']+)["']/i)?.[1] || undefined
+    return posterUrl ? { url: posterUrl, title, mediaType: 'image' } : null
+  }
   try {
     const doc = new DOMParser().parseFromString(html, 'text/html')
     const image = doc.querySelector('img')
-    const url = image?.getAttribute('src') || image?.getAttribute('data-src') || ''
-    if (!url) return null
-    return { url, title: image?.getAttribute('alt') || image?.getAttribute('title') || undefined }
+    const imageUrl = image?.getAttribute('src') || image?.getAttribute('data-src') || ''
+    if (imageUrl) return { url: imageUrl, title: image?.getAttribute('alt') || image?.getAttribute('title') || undefined, mediaType: 'image' }
+    const video = doc.querySelector('video')
+    const videoUrl = video?.getAttribute('src') || video?.querySelector('source')?.getAttribute('src') || ''
+    if (videoUrl) return { url: videoUrl, title: video?.getAttribute('title') || undefined, mediaType: 'video' }
+    const posterUrl = video?.getAttribute('poster') || ''
+    return posterUrl ? { url: posterUrl, title: video?.getAttribute('title') || undefined, mediaType: 'image' } : null
   } catch {
     return null
   }
+}
+
+function mediaTypeFromRemoteUrl(url: string): 'image' | 'video' {
+  return /\.(?:mp4|m4v|mov|webm|ogv|ogg|avi)(?:[?#]|$)/i.test(url) ? 'video' : 'image'
 }
 
 export function fileNameFromRemoteAssetUrl(url: string): string {
@@ -274,21 +285,24 @@ export function readBrowserImageDragPayload(dataTransfer: DataTransfer): Browser
   const customPayload = dataTransfer.getData(BROWSER_IMAGE_DRAG_MIME)
   if (customPayload) {
     try {
-      const parsed = JSON.parse(customPayload) as { url?: unknown; title?: unknown }
+      const parsed = JSON.parse(customPayload) as { url?: unknown; title?: unknown; mediaType?: unknown }
       const url = typeof parsed.url === 'string' ? parsed.url.trim() : ''
       if (url) {
-        return { url, title: typeof parsed.title === 'string' ? parsed.title.trim() || undefined : undefined, fileName: fileNameFromRemoteAssetUrl(url), mediaType: 'image' }
+        const mediaType = parsed.mediaType === 'video' || parsed.mediaType === 'image'
+          ? parsed.mediaType
+          : mediaTypeFromRemoteUrl(url)
+        return { url, title: typeof parsed.title === 'string' ? parsed.title.trim() || undefined : undefined, fileName: fileNameFromRemoteAssetUrl(url), mediaType }
       }
     } catch {
       // Ignore malformed drag payloads and fall back to standard browser data.
     }
   }
   const uriListUrl = firstUsableImageUrlFromText(dataTransfer.getData('text/uri-list'))
-  if (uriListUrl) return { url: uriListUrl, fileName: fileNameFromRemoteAssetUrl(uriListUrl), mediaType: 'image' }
-  const htmlImage = imageUrlFromHtml(dataTransfer.getData('text/html'))
-  if (htmlImage) return { ...htmlImage, fileName: fileNameFromRemoteAssetUrl(htmlImage.url), mediaType: 'image' }
+  if (uriListUrl) return { url: uriListUrl, fileName: fileNameFromRemoteAssetUrl(uriListUrl), mediaType: mediaTypeFromRemoteUrl(uriListUrl) }
+  const htmlMedia = mediaUrlFromHtml(dataTransfer.getData('text/html'))
+  if (htmlMedia) return { ...htmlMedia, fileName: fileNameFromRemoteAssetUrl(htmlMedia.url) }
   const plainUrl = firstUsableImageUrlFromText(dataTransfer.getData('text/plain'))
-  return plainUrl ? { url: plainUrl, fileName: fileNameFromRemoteAssetUrl(plainUrl), mediaType: 'image' } : null
+  return plainUrl ? { url: plainUrl, fileName: fileNameFromRemoteAssetUrl(plainUrl), mediaType: mediaTypeFromRemoteUrl(plainUrl) } : null
 }
 
 export function promptReferenceImagesFromRequest(request: BrowserAssetPromptCaptureRequest): BrowserAssetPromptReference[] {
@@ -313,24 +327,6 @@ export function promptExtractionModeFromRequest(request: BrowserAssetPromptCaptu
   return request.extractionMode === 'style' ? 'style' : 'replicate'
 }
 
-function promptExtractionModeLabel(mode: BrowserPromptExtractionMode): string {
-  return BROWSER_PROMPT_EXTRACTION_MODE_LABELS[mode]
-}
-
-function promptAssetTitle(request: BrowserAssetPromptCaptureRequest, promptTitle?: string): string {
-  const title = (promptTitle || request.title || request.pageTitle || '').trim()
-  if (title) return title.slice(0, 48)
-  if (promptExtractionModeFromRequest(request) === 'style') return request.sourceType === 'screenshot' ? '网页截图风格' : '画面风格'
-  return request.sourceType === 'screenshot' ? '网页截图提示词' : '图片提示词'
-}
-
-function promptAssetSubtitle(asset: NomiBrowserAsset): string {
-  const label = promptExtractionModeLabel(asset.promptCard?.extractionMode === 'style' ? 'style' : 'replicate')
-  if (asset.status === 'loading') return `正在提取${label}...`
-  if (asset.status === 'error') return `${label}提取失败`
-  return label
-}
-
 export function referenceResultUrl(raw: unknown): string {
   if (!raw || typeof raw !== 'object') return ''
   const record = raw as Record<string, unknown>
@@ -341,53 +337,4 @@ export function referenceResultDataUrl(raw: unknown): string {
   if (!raw || typeof raw !== 'object') return ''
   const record = raw as Record<string, unknown>
   return typeof record.dataUrl === 'string' ? record.dataUrl.trim() : ''
-}
-
-export function createPromptCardAsset(input: {
-  id: string
-  request: BrowserAssetPromptCaptureRequest
-  references: readonly BrowserAssetPromptReference[]
-  prompt: string
-  status: NomiBrowserAsset['status']
-  title?: string
-  savedAt?: string
-  updatedAt?: string
-}): NomiBrowserAsset {
-  const savedAt = input.savedAt || new Date().toISOString()
-  const updatedAt = input.updatedAt || new Date().toISOString()
-  const previewUrl = input.references[0]?.url
-  const extractionMode = promptExtractionModeFromRequest(input.request)
-  const modeLabel = promptExtractionModeLabel(extractionMode)
-  const asset: NomiBrowserAsset = {
-    id: input.id,
-    type: 'prompt',
-    source: 'transcript',
-    title: promptAssetTitle(input.request, input.title),
-    tags: ['图片提示词', modeLabel],
-    previewUrl,
-    previewMediaType: previewUrl ? 'image' : undefined,
-    status: input.status,
-    createdAt: savedAt,
-    updatedAt,
-    promptCard: {
-      referenceImages: input.references,
-      prompt: input.prompt,
-      promptType: 'image',
-      extractionMode,
-      savedAt,
-    },
-  }
-  return { ...asset, subtitle: promptAssetSubtitle(asset) }
-}
-
-export function assetDragPayloadToIds(dataTransfer: DataTransfer): string[] {
-  const payload = dataTransfer.getData(NOMI_ASSET_DRAG_MIME) || dataTransfer.getData(LEGACY_BROWSER_ASSET_DRAG_MIME)
-  if (!payload) return []
-  try {
-    const parsed = JSON.parse(payload) as Array<{ id?: unknown }>
-    if (!Array.isArray(parsed)) return []
-    return parsed.map((asset) => (typeof asset.id === 'string' ? asset.id : '')).filter(Boolean)
-  } catch {
-    return []
-  }
 }

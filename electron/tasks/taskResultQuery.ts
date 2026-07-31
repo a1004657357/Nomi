@@ -139,6 +139,13 @@ export async function fetchTaskResult(payload: unknown): Promise<{ vendor: strin
   const miss = classifyTaskCacheMiss(taskId, wasTaskAdmitted(taskId));
   return {
     vendor: trim(raw.vendor),
-    result: { id: taskId, kind: (raw.taskKind as ProfileKind) || "text_to_image", status: miss.status, assets: [], raw: miss.raw },
+    result: {
+      id: taskId,
+      kind: (raw.taskKind as ProfileKind) || "text_to_image",
+      status: miss.status,
+      assets: [],
+      raw: miss.raw,
+      error: miss.error,
+    },
   };
 }

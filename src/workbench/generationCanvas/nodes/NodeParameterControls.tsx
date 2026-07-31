@@ -1,10 +1,20 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../../utils/cn'
 import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
-import { deriveGenerationModelCatalogStatus, findModelOptionByIdentifier, useGenerationModelOptionsState } from '../adapters/modelOptionsAdapter'
+import {
+  deriveGenerationModelCatalogStatus,
+  findModelOptionByIdentifier,
+  useGenerationModelOptionsState,
+} from '../adapters/modelOptionsAdapter'
 import { type ModelParameterControl } from '../../../config/modelCatalogMeta'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
-import { getGenerationNodeExecutionKind, isAudioLikeGenerationNodeKind, isImageLikeGenerationNodeKind, isVideoLikeGenerationNodeKind } from '../model/generationNodeKinds'
+import {
+  getGenerationNodeExecutionKind,
+  isAudioLikeGenerationNodeKind,
+  isImageLikeGenerationNodeKind,
+  isVideoLikeGenerationNodeKind,
+} from '../model/generationNodeKinds'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { importWorkbenchLocalAssetFile } from '../../api/assetUploadApi'
 import {
@@ -12,10 +22,12 @@ import {
   type ImageUrlSlot,
   assetUrl,
   buildEffectiveImageCatalogConfig,
+  buildComfyWorkflowImageUrlSlots,
   buildImageUrlSlots,
   buildModelControls,
   defaultPatchForCatalogControl,
   defaultPatchForControls,
+  videoAspectDefaultPatch,
   edgeModeForGroup,
   getEdgeSourceForSlot,
   getSlotNodeRef,
@@ -25,6 +37,7 @@ import {
   readMeta,
   removePreviousControlParams,
   resultPreviewUrl,
+  shouldUseVideoFrameSlotFallback,
 } from './controls/parameterControlModel'
 import {
   type ArchetypeArraySlot,
@@ -42,6 +55,7 @@ import {
   referenceSlotStorage,
 } from './controls/archetypeMeta'
 import { resolveReferenceSlots, decideArrayReferenceRemoval } from '../runner/referenceSlots'
+import { resolveModeForConnectedReferences } from '../agent/referenceEdgeCapability'
 import { specializeArchetypeForVariant } from '../../../config/modelArchetypes'
 import ModeBar from './controls/ModeBar'
 import AssetReference, { type AssetSlot } from '../../assets/AssetReference'
@@ -52,7 +66,12 @@ import { showInfoToast } from '../../../utils/showInfoToast'
 import InlineParameterBar from './InlineParameterBar'
 import { useNodeModelAutoSelect } from './useNodeModelAutoSelect'
 import { resolveArchetypeForOption, resolveRenderedControls } from './nodeModelArchetype'
-import { ASPECT_RATIO_KEYS, normalizeAspectRatioToWH } from './aspectRatio'
+import {
+  ASPECT_RATIO_KEYS,
+  collectInputAspectRatios,
+  normalizeAspectRatioToWH,
+  preferredVideoAspect,
+} from './aspectRatio'
 
 // 模块级常量：比例参数的 key 白名单（与 aspectRatio.ts 的 ASPECT_RATIO_KEYS 保持一致）。
 const ASPECT_RATIO_KEY_SET = new Set<string>(ASPECT_RATIO_KEYS)
@@ -62,14 +81,17 @@ type NodeParameterControlsProps = {
   section?: 'all' | 'references' | 'parameters' | 'model' | 'controls'
   /** 点参考 tile → 在描述框光标处插入 @ 引用 chip(主路径,由 composer 注入 editor 命令)。 */
   onInsertMention?: (url: string) => void
+  /** 参数面板开/合（透传给 InlineParameterBar → composer 冻结位置用）。 */
+  onParamPanelOpenChange?: (open: boolean) => void
 }
-
 
 export default function NodeParameterControls({
   node,
   section = 'all',
   onInsertMention,
+  onParamPanelOpenChange,
 }: NodeParameterControlsProps): JSX.Element | null {
+  const { t } = useTranslation()
   const nodes = useGenerationCanvasStore((state) => state.nodes)
   const edges = useGenerationCanvasStore((state) => state.edges)
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
@@ -93,14 +115,18 @@ export default function NodeParameterControls({
   const isAudioLike = isAudioLikeGenerationNodeKind(node.kind)
   const isGenerationNode = isImageLike || isVideoLike || isTextLike || isAudioLike
 
-  const selectedModelValue = readMeta(meta, 'modelKey') || readMeta(meta, 'modelAlias') || readMeta(meta, 'imageModel') || readMeta(meta, 'videoModel')
+  const selectedModelValue =
+    readMeta(meta, 'modelKey') ||
+    readMeta(meta, 'modelAlias') ||
+    readMeta(meta, 'imageModel') ||
+    readMeta(meta, 'videoModel')
   const selectedModelOption = findModelOptionByIdentifier(modelOptions, selectedModelValue) || null
   // 认得的模型 → 内置档案（供应商无关）；驱动模式分段切换 + 当前模式的槽/参数。认不出 → null（走 flat）。
   const archetype = resolveArchetypeForOption(selectedModelOption)
   // 变体特化：选中变体可能收窄某 mode 的参数（如 Seedance fast 的 resolution 仅 480/720）——
   // 槽/参数全由特化后的档案派生，保证 UI 选项与发送一致。无 variants → 原样（零开销）。
   const variantChoices = archetype ? archetypeVariantChoices(archetype) : []
-  const activeVariantId = archetype ? (currentArchetypeVariant(archetype, meta)?.id || '') : ''
+  const activeVariantId = archetype ? currentArchetypeVariant(archetype, meta)?.id || '' : ''
   const effectiveArchetype = archetype ? specializeArchetypeForVariant(archetype, activeVariantId) : null
   const archMode = effectiveArchetype ? currentArchetypeMode(effectiveArchetype, meta) : null
   const imageCatalogConfig = archetype ? null : buildEffectiveImageCatalogConfig(selectedModelOption?.meta)
@@ -122,19 +148,36 @@ export default function NodeParameterControls({
     const nextOption = findModelOptionByIdentifier(modelOptions, value)
     const controls = buildModelControls(nextOption?.meta, isImageLike, isVideoLike)
     const defaultPatch = defaultPatchForControls(controls)
+    const nextArchetype = resolveArchetypeForOption(nextOption)
+    // 视频比例产品默认（覆盖档案默认）：首选 16:9，已连输入全竖才 9:16（2026-07-17 用户拍板）。
+    const aspectPatch = isVideoLike
+      ? videoAspectDefaultPatch(controls, preferredVideoAspect(collectInputAspectRatios(node.id, edges, nodes)))
+      : {}
+    let nextMeta: Record<string, unknown> = {
+      ...removePreviousControlParams(getLatestMeta(), renderedControls),
+      modelKey: nextOption?.modelKey || nextOption?.value || value || null,
+      modelAlias: nextOption?.modelAlias || nextOption?.value || value || null,
+      modelVendor: nextOption?.vendor || null,
+      vendor: nextOption?.vendor || null,
+      modelLabel: nextOption?.label || value || null,
+      ...defaultPatch,
+      ...aspectPatch,
+      ...(isVideoLike
+        ? { videoModel: nextOption?.value || value || null, videoModelVendor: nextOption?.vendor || null }
+        : { imageModel: nextOption?.value || value || null, imageModelVendor: nextOption?.vendor || null }),
+    }
+    if (!nextArchetype) {
+      delete nextMeta.archetype
+    } else {
+      // 换模型后旧 meta.archetype 失配 → currentArchetypeMode 落回新档案默认（常为 t2i 空槽）。
+      // 身上挂着活边参考时就地促到能收的模式（与建边 auto-promote 同一把尺子），UI 立即正确、
+      // 不等提交咽喉兜底——否则用户看着「文生图」还以为参考没用（2026-07-28 群反馈根因之一）。
+      const state = useGenerationCanvasStore.getState()
+      const promotedModeId = resolveModeForConnectedReferences({ ...node, meta: nextMeta }, state.nodes, state.edges)
+      if (promotedModeId) nextMeta = applyArchetypeModeSwitch(nextMeta, nextArchetype, promotedModeId)
+    }
     updateNode(node.id, {
-      meta: {
-        ...removePreviousControlParams(getLatestMeta(), renderedControls),
-        modelKey: nextOption?.modelKey || nextOption?.value || value || null,
-        modelAlias: nextOption?.modelAlias || nextOption?.value || value || null,
-        modelVendor: nextOption?.vendor || null,
-        vendor: nextOption?.vendor || null,
-        modelLabel: nextOption?.label || value || null,
-        ...defaultPatch,
-        ...(isVideoLike
-          ? { videoModel: nextOption?.value || value || null, videoModelVendor: nextOption?.vendor || null }
-          : { imageModel: nextOption?.value || value || null, imageModelVendor: nextOption?.vendor || null }),
-      },
+      meta: nextMeta,
     })
   }
 
@@ -151,6 +194,34 @@ export default function NodeParameterControls({
     updateNode,
   })
 
+  // 连边联动（2026-07-17 用户拍板）：视频比例产品默认 = 首选 16:9、已连输入**全竖**才 9:16。
+  // 输入边集合或模型变化时重算；用户显式选过比例（aspect_ratio_user_set）后不再自动改。
+  const inputAspectSignature = edges
+    .filter((e) => e.target === node.id)
+    .map((e) => `${e.source}:${String(e.mode || '')}`)
+    .sort()
+    .join('|')
+  React.useEffect(() => {
+    if (!isVideoLike) return
+    const latest = getLatestMeta()
+    if (latest.aspect_ratio_user_set === true) return
+    const state = useGenerationCanvasStore.getState()
+    const preferred = preferredVideoAspect(collectInputAspectRatios(node.id, state.edges, state.nodes))
+    const current = ((): string | null => {
+      for (const key of ASPECT_RATIO_KEYS) {
+        const wh = normalizeAspectRatioToWH(String(latest[key] ?? ''))
+        if (wh) return wh
+      }
+      return null
+    })()
+    if (current === preferred) return
+    const patch = videoAspectDefaultPatch(renderedControls, preferred)
+    if (Object.keys(patch).length > 0) updateMeta(patch)
+    // renderedControls/updateMeta 每渲染重建，入 deps 会令 effect 每次 meta 写都重跑；
+    // 触发时机只需「输入边集合 / 模型」变化，语义由下面两个签名精确表达。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputAspectSignature, isVideoLike, selectedModelValue, node.id])
+
   if (!isGenerationNode) return null
 
   const handleParameterControlChange = (control: ModelParameterControl, value: string) => {
@@ -162,12 +233,19 @@ export default function NodeParameterControls({
     if (ASPECT_RATIO_KEY_SET.has(control.key)) {
       const wh = normalizeAspectRatioToWH(parsed)
       if (wh) patch.aspect_ratio = wh
+      // 用户显式选过比例 → 打标记，连边联动不再自动改（用户选择优先于产品默认）。
+      patch.aspect_ratio_user_set = true
     }
     updateMeta(patch)
   }
 
   const handleCatalogControlChange = (control: DynamicCatalogControl, value: string) => {
-    updateMeta(defaultPatchForCatalogControl({ ...control, defaultValue: value }))
+    const isAspect =
+      control.binding === 'size' || control.binding === 'aspectRatio' || ASPECT_RATIO_KEY_SET.has(control.key)
+    updateMeta({
+      ...defaultPatchForCatalogControl({ ...control, defaultValue: value }),
+      ...(isAspect ? { aspect_ratio_user_set: true } : {}),
+    })
   }
 
   // 切生成方式：只改 modeId，参考值全局保留（切回照片还在）；互斥发生在传输投影。
@@ -189,16 +267,20 @@ export default function NodeParameterControls({
   const handleArrayAdd = (slot: ArchetypeArraySlot, url: string) => {
     // 容量先按**已占用位置**判（含连线 + pending 边，单源 resolveReferenceSlots），不能只看 meta 数组长度——
     // 否则被边占满的槽仍允许写入 meta、却落不进槽（显示/发送都没它）=「参考图上不去」。
-    const occupied = resolveReferenceSlots(node, nodes, edges)
-      .find((rs) => referenceSlotStorage({ kind: rs.slotKind })?.metaKey === slot.metaKey)?.fills.length
+    const occupied = resolveReferenceSlots(node, nodes, edges).find(
+      (rs) => referenceSlotStorage({ kind: rs.slotKind })?.metaKey === slot.metaKey,
+    )?.fills.length
     if (occupied != null && occupied >= slot.max) {
-      showInfoToast(`参考已满（最多 ${slot.max} 个，含连线）`)
+      showInfoToast(t('generationCommon.parameters.referenceFull', { max: slot.max }))
       return
     }
     // 单源去重/上限：与拖入/连线共用 appendArchetypeArrayValue（规则 1：不另开写路径）。
     // 读最新 meta 计算追加（避免基于渲染快照算出过期数组 → 覆盖刚连边写入的项）。
     const result = appendArchetypeArrayValue(getLatestMeta(), slot, url)
-    if (result.status === 'full') { showInfoToast(`最多 ${slot.max} 个${slot.label}`); return } // 到上限:明确告知(对抗评审:别静默丢)
+    if (result.status === 'full') {
+      showInfoToast(t('generationCommon.parameters.maximum', { max: slot.max, label: slot.label }))
+      return
+    } // 到上限:明确告知(对抗评审:别静默丢)
     if (result.status !== 'added') return // empty / duplicate：静默
     setArrayValue(slot.metaKey, result.next)
     setOpenSlotKey('')
@@ -243,9 +325,12 @@ export default function NodeParameterControls({
     setUploadingArrayKey(slot.metaKey)
     setUploadError('')
     try {
-      const uploaded = await importWorkbenchLocalAssetFile(file, file.name || slot.label, { ownerNodeId: node.id, taskKind: 'image_edit' })
+      const uploaded = await importWorkbenchLocalAssetFile(file, file.name || slot.label, {
+        ownerNodeId: node.id,
+        taskKind: 'image_edit',
+      })
       const url = assetUrl(uploaded)
-      if (!url) throw new Error('服务器没有返回素材 URL')
+      if (!url) throw new Error(t('generationCommon.parameters.missingAssetUrl'))
       handleArrayAdd(slot, url)
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : String(error))
@@ -260,9 +345,13 @@ export default function NodeParameterControls({
     setUploadingArrayKey(metaKey)
     setUploadError('')
     try {
-      const uploaded = await importWorkbenchLocalAssetFile(file, file.name || '源视频', { ownerNodeId: node.id, taskKind: 'image_edit' })
+      const uploaded = await importWorkbenchLocalAssetFile(
+        file,
+        file.name || t('generationCommon.parameters.sourceVideo'),
+        { ownerNodeId: node.id, taskKind: 'image_edit' },
+      )
       const url = assetUrl(uploaded)
-      if (!url) throw new Error('服务器没有返回视频 URL')
+      if (!url) throw new Error(t('generationCommon.parameters.missingVideoUrl'))
       updateMeta({ [metaKey]: url })
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : String(error))
@@ -276,9 +365,19 @@ export default function NodeParameterControls({
       const existingEdge = edges.find((e) => e.target === node.id && e.mode === targetMode)
       if (existingEdge) storeDisconnectEdge(existingEdge.id)
       const clearPatch: Record<string, unknown> = { [slot.key]: null, [slot.key + '_nodeRef']: null }
-      if (slot.group === 'first_frame') { clearPatch.firstFrameUrl = null; clearPatch.firstFrameRef = null }
-      if (slot.group === 'last_frame') { clearPatch.lastFrameUrl = null; clearPatch.lastFrameRef = null }
-      if (slot.group === 'reference') { clearPatch.referenceImages = []; clearPatch.referenceImageUrl = null; clearPatch.referenceImageRef = null }
+      if (slot.group === 'first_frame') {
+        clearPatch.firstFrameUrl = null
+        clearPatch.firstFrameRef = null
+      }
+      if (slot.group === 'last_frame') {
+        clearPatch.lastFrameUrl = null
+        clearPatch.lastFrameRef = null
+      }
+      if (slot.group === 'reference') {
+        clearPatch.referenceImages = []
+        clearPatch.referenceImageUrl = null
+        clearPatch.referenceImageRef = null
+      }
       updateNode(node.id, { meta: { ...getLatestMeta(), ...clearPatch } })
       setOpenSlotKey('')
       return
@@ -289,7 +388,9 @@ export default function NodeParameterControls({
     } else {
       storeConnectNodes(newSourceNodeId, node.id, targetMode)
     }
-    const conflictEdge = edges.find((e) => e.target === node.id && e.mode === targetMode && e.source !== newSourceNodeId)
+    const conflictEdge = edges.find(
+      (e) => e.target === node.id && e.mode === targetMode && e.source !== newSourceNodeId,
+    )
     if (conflictEdge) storeDisconnectEdge(conflictEdge.id)
     // S2 写收口：边即真相源——不再写 firstFrameUrl/firstFrameRef/referenceImages 等快照 meta。
     // 那份快照在连边时 resultPreviewUrl 还可能为空(源未生成)=陈旧,且与其它参数写入竞态(lost-update)；
@@ -304,16 +405,26 @@ export default function NodeParameterControls({
     if (existingEdge) storeDisconnectEdge(existingEdge.id)
     const latestMeta = getLatestMeta()
     const patch: Record<string, unknown> = { [slot.key]: url, [slot.key + '_nodeRef']: null }
-    if (slot.group === 'first_frame') { patch.firstFrameUrl = url; patch.firstFrameRef = null }
-    if (slot.group === 'last_frame') { patch.lastFrameUrl = url; patch.lastFrameRef = null }
-    if (slot.group === 'reference') { patch.referenceImages = [url]; patch.referenceImageUrl = url; patch.referenceImageRef = null }
+    if (slot.group === 'first_frame') {
+      patch.firstFrameUrl = url
+      patch.firstFrameRef = null
+    }
+    if (slot.group === 'last_frame') {
+      patch.lastFrameUrl = url
+      patch.lastFrameRef = null
+    }
+    if (slot.group === 'reference') {
+      patch.referenceImages = [url]
+      patch.referenceImageUrl = url
+      patch.referenceImageRef = null
+    }
     updateNode(node.id, { meta: { ...latestMeta, ...patch } })
     setOpenSlotKey('')
   }
   const handleSlotUpload = async (slot: ImageUrlSlot, file: File | null | undefined) => {
     if (!file) return
     if (!file.type.startsWith('image/')) {
-      setUploadError('只能选择图片文件')
+      setUploadError(t('generationCommon.parameters.imageOnly'))
       return
     }
     setUploadingSlotKey(slot.key)
@@ -324,7 +435,7 @@ export default function NodeParameterControls({
         taskKind: 'image_edit',
       })
       const url = assetUrl(uploaded)
-      if (!url) throw new Error('服务器没有返回图片 URL')
+      if (!url) throw new Error(t('generationCommon.parameters.missingImageUrl'))
       setSingleFrameUrlMeta(slot, url)
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : String(error))
@@ -333,18 +444,29 @@ export default function NodeParameterControls({
     }
   }
 
+  const comfyImageUrlSlots = buildComfyWorkflowImageUrlSlots(selectedModelOption?.meta, {
+    firstFrame: t('generationCommon.parameters.firstFrame'),
+    lastFrame: t('generationCommon.parameters.lastFrame'),
+  })
   const modelImageUrlSlots = [
-    ...buildImageUrlSlots(selectedModelOption?.meta),
-    ...imageCatalogReferenceSlot(imageCatalogConfig),
-  ].filter((slot, index, slots) => slots.findIndex((item) => item.key === slot.key && item.group === slot.group) === index)
+    ...(comfyImageUrlSlots ?? buildImageUrlSlots(selectedModelOption?.meta)),
+    ...(comfyImageUrlSlots ? [] : imageCatalogReferenceSlot(imageCatalogConfig)),
+  ].filter(
+    (slot, index, slots) => slots.findIndex((item) => item.key === slot.key && item.group === slot.group) === index,
+  )
   // 认得档案 → 槽位严格由当前模式声明（首帧 / 首尾帧…，切模式即换整组，互斥 hide）。
   // 认不出 → 现有启发式槽 + 视频模型 首/尾帧 兜底。
   const imageUrlSlots: ImageUrlSlot[] = archMode
     ? archetypeModeSlots(archMode)
-    : isVideoLike && modelImageUrlSlots.length === 0
+    : shouldUseVideoFrameSlotFallback({
+        isVideoLike,
+        modelImageUrlSlots,
+        comfyImageUrlSlots,
+        vendor: selectedModelOption?.vendor,
+      })
       ? [
-          { key: 'firstFrameUrl', label: '首帧', group: 'first_frame' },
-          { key: 'lastFrameUrl', label: '尾帧', group: 'last_frame' },
+          { key: 'firstFrameUrl', label: t('generationCommon.parameters.firstFrame'), group: 'first_frame' },
+          { key: 'lastFrameUrl', label: t('generationCommon.parameters.lastFrame'), group: 'last_frame' },
         ]
       : modelImageUrlSlots
   const modeChoices = archetype ? archetypeModeChoices(archetype) : []
@@ -357,9 +479,42 @@ export default function NodeParameterControls({
 
   // ── P1 统一参考槽：声明式 AssetSlot 列表 + 当前值 + 三类回调（单帧连边 / 数组 meta / 源视频 meta，复用上面已验证的写入逻辑）──
   const assetSlots: AssetSlot[] = [
-    ...imageUrlSlots.map((s): AssetSlot => ({ key: s.key, label: s.label, accept: 'image', form: 'single', persistAsEdge: true, numbered: false, max: 1 })),
-    ...arraySlots.map((s): AssetSlot => ({ key: s.metaKey, label: s.label, accept: s.accept, form: 'array', persistAsEdge: false, numbered: s.numbered, max: s.max, caption: s.caption })),
-    ...(sourceVideoSlot ? [{ key: sourceVideoSlot.metaKey, label: sourceVideoSlot.label, accept: 'video', form: 'single', persistAsEdge: false, numbered: false, max: 1 } as AssetSlot] : []),
+    ...imageUrlSlots.map(
+      (s): AssetSlot => ({
+        key: s.key,
+        label: s.label,
+        accept: 'image',
+        form: 'single',
+        persistAsEdge: true,
+        numbered: false,
+        max: 1,
+      }),
+    ),
+    ...arraySlots.map(
+      (s): AssetSlot => ({
+        key: s.metaKey,
+        label: s.label,
+        accept: s.accept,
+        form: 'array',
+        persistAsEdge: false,
+        numbered: s.numbered,
+        max: s.max,
+        caption: s.caption,
+      }),
+    ),
+    ...(sourceVideoSlot
+      ? [
+          {
+            key: sourceVideoSlot.metaKey,
+            label: sourceVideoSlot.label,
+            accept: 'video',
+            form: 'single',
+            persistAsEdge: false,
+            numbered: false,
+            max: 1,
+          } as AssetSlot,
+        ]
+      : []),
   ]
   // 档案节点：槽值统一由 resolveReferenceSlots（边 + 上传单一真相源）派生——这样连线参考在槽里
   // 真的看得见（根治「显示读 meta、生成读边」分裂导致的「连线没用」）。按存储键回填到 assetValuesByKey。
@@ -373,7 +528,10 @@ export default function NodeParameterControls({
     for (const rs of resolveReferenceSlots(node, nodes, edges)) {
       const storage = referenceSlotStorage({ kind: rs.slotKind })
       if (storage) {
-        resolvedFillUrlsByMetaKey.set(storage.metaKey, rs.fills.map((f) => f.url).filter((u): u is string => Boolean(u)))
+        resolvedFillUrlsByMetaKey.set(
+          storage.metaKey,
+          rs.fills.map((f) => f.url).filter((u): u is string => Boolean(u)),
+        )
         arrayOccupiedByKey.set(storage.metaKey, rs.fills.length)
       }
     }
@@ -387,10 +545,17 @@ export default function NodeParameterControls({
     const edgeSource = getEdgeSourceForSlot(s.group, edges, node.id)
     const nodeRef = edgeSource || getSlotNodeRef(meta, s.key)
     const thumbNode = nodeRef ? nodes.find((n) => n.id === nodeRef) : undefined
-    assetValuesByKey[s.key] = (thumbNode ? resultPreviewUrl(thumbNode) : null) || getSlotThumbUrl(meta, s.key, nodes) || readMeta(meta, s.key) || ''
+    assetValuesByKey[s.key] =
+      (thumbNode ? resultPreviewUrl(thumbNode) : null) ||
+      getSlotThumbUrl(meta, s.key, nodes) ||
+      readMeta(meta, s.key) ||
+      ''
   }
-  for (const s of arraySlots) assetValuesByKey[s.metaKey] = resolvedFillUrlsByMetaKey.get(s.metaKey) ?? readArchetypeArray(meta, s.metaKey)
-  if (sourceVideoSlot) assetValuesByKey[sourceVideoSlot.metaKey] = resolvedFillUrlsByMetaKey.get(sourceVideoSlot.metaKey)?.[0] || readMeta(meta, sourceVideoSlot.metaKey) || ''
+  for (const s of arraySlots)
+    assetValuesByKey[s.metaKey] = resolvedFillUrlsByMetaKey.get(s.metaKey) ?? readArchetypeArray(meta, s.metaKey)
+  if (sourceVideoSlot)
+    assetValuesByKey[sourceVideoSlot.metaKey] =
+      resolvedFillUrlsByMetaKey.get(sourceVideoSlot.metaKey)?.[0] || readMeta(meta, sourceVideoSlot.metaKey) || ''
 
   const handleAssetPick = (slot: AssetSlot, asset: AssetRef) => {
     if (slot.form === 'array') {
@@ -435,7 +600,10 @@ export default function NodeParameterControls({
     window.dispatchEvent(new CustomEvent('nomi-open-files-panel'))
   }
   const handleAssetRemove = (slot: AssetSlot, index: number) => {
-    if (slot.form === 'array') { handleArrayRemove(slot.key, index); return }
+    if (slot.form === 'array') {
+      handleArrayRemove(slot.key, index)
+      return
+    }
     if (slot.persistAsEdge) {
       const img = imageUrlSlots.find((i) => i.key === slot.key)
       if (img) handleSlotAssignment(img, '')
@@ -460,20 +628,28 @@ export default function NodeParameterControls({
         variantChoices={showVariantBar ? variantChoices : []}
         activeVariantId={activeVariantId}
         onVariantSelect={handleVariantSwitch}
+        onParamPanelOpenChange={onParamPanelOpenChange}
       />
     )
   }
 
   // 模式分段切换要常驻（即便当前模式无参考槽，如纯文生）——有 modeBar / 数组槽 / 源视频槽都不空返回。
   // 变体（型号）已从这里挪到底栏 InlineParameterBar 的小下拉（用户拍板：和模型并排在最下面），不再占顶部一排。
-  if (section === 'references' && imageUrlSlots.length === 0 && arraySlots.length === 0 && !sourceVideoSlot && !showModeBar) return null
+  if (
+    section === 'references' &&
+    imageUrlSlots.length === 0 &&
+    arraySlots.length === 0 &&
+    !sourceVideoSlot &&
+    !showModeBar
+  )
+    return null
 
   // 走到这里只剩 section="references"（parameters/settings 已提前 return；旧的 all/model/controls 网格
   // 渲染随设置弹层落地而删除——参数现在进设置弹层，模型进底栏芯片，不再有这套裸值网格，Rule 1/12）。
   const rootClassName = cn('generation-canvas-v2-node__ref-section', 'flex flex-col gap-1')
 
   return (
-    <div className={rootClassName} aria-label="参考素材">
+    <div className={rootClassName} aria-label={t('generationCommon.parameters.referencesAria')}>
       {showReferences && showModeBar ? (
         <ModeBar choices={modeChoices} activeId={archMode?.id || ''} onSelect={handleModeSwitch} />
       ) : null}
@@ -488,7 +664,9 @@ export default function NodeParameterControls({
           uploadingSlotKey={uploadingSlotKey || uploadingArrayKey}
           onTogglePicker={(key) => setOpenSlotKey((prev) => (prev === key ? '' : key))}
           onPick={handleAssetPick}
-          onUpload={(slot, file) => { void handleAssetUpload(slot, file) }}
+          onUpload={(slot, file) => {
+            void handleAssetUpload(slot, file)
+          }}
           onRemove={handleAssetRemove}
           onInsertMention={onInsertMention}
           onReorder={handleReorder}
@@ -497,7 +675,9 @@ export default function NodeParameterControls({
       ) : null}
 
       {showReferences && uploadError ? (
-        <div className={cn('text-workbench-danger text-micro leading-tight')} role="alert">{uploadError}</div>
+        <div className={cn('text-workbench-danger text-micro leading-tight')} role="alert">
+          {uploadError}
+        </div>
       ) : null}
     </div>
   )

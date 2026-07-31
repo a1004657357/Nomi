@@ -12,6 +12,20 @@ function invokeSync<T>(channel: string, ...args: unknown[]): T {
 
 contextBridge.exposeInMainWorld("nomiDesktop", {
   platform: process.platform,
+  i18n: {
+    setLocale: (locale: "zh-CN" | "en") => ipcRenderer.send("nomi:i18n:set-locale", locale),
+    // 首启探测系统语言用；拿不到就返回 ""（渲染层据此回落默认语言，绝不抛断首帧）。
+    // 测试铁律：E2E/走查默认关探测（否则跟随 CI 机器系统语言 → 全批中文选择器测试崩），
+    // 回落默认中文；仅「首启语言探测」专项走查显式 NOMI_TEST_SYSTEM_LOCALE=1 才真探测。
+    getSystemLocale: (): string => {
+      if (process.env.NOMI_E2E === "1" && process.env.NOMI_TEST_SYSTEM_LOCALE !== "1") return "";
+      try {
+        return invokeSync<string>("nomi:i18n:get-system-locale");
+      } catch {
+        return "";
+      }
+    },
+  },
   // 窗口控制（Windows 自绘标题栏用；mac 原生 chrome 不调用）。窄面：仅 min/max/close + 最大化态订阅。
   window: {
     minimize: () => ipcRenderer.invoke("nomi:window:minimize"),
@@ -30,6 +44,11 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
       const listener = (_: unknown, v: boolean) => cb(v);
       ipcRenderer.on("nomi:window:maximized", listener);
       return () => ipcRenderer.removeListener("nomi:window:maximized", listener);
+    },
+    onCanvasZoomShortcut: (cb: (direction: -1 | 1) => void) => {
+      const listener = (_: unknown, direction: -1 | 1) => cb(direction);
+      ipcRenderer.on("nomi:canvas:zoom-shortcut", listener);
+      return () => ipcRenderer.removeListener("nomi:canvas:zoom-shortcut", listener);
     },
   },
   logRendererCrash: (message: unknown) => ipcRenderer.send("nomi:log:renderer-crash", message),
@@ -62,6 +81,9 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
   },
   assets: {
     list: (payload: unknown) => ipcRenderer.invoke("nomi:assets:list", payload),
+    // 素材文件夹（素材面收敛 2026-07-22 转正）：per-project 落盘,素材库唯一消费者。
+    foldersGet: (payload: unknown) => ipcRenderer.invoke("nomi:assets:folders-get", payload),
+    foldersSave: (payload: unknown) => ipcRenderer.invoke("nomi:assets:folders-save", payload),
     // 素材写入层（writeAsset/moveAssetFile）落盘即广播——素材库面板/素材盒徽章的统一回流信号，
     // 任何导入路径（浏览器捕捞/拖拽/上传/agent）免费获得刷新（M0 捕捞窗私有 onImported 的接任者）。
     onUpdated: (cb: (payload: unknown) => void) => {
@@ -71,6 +93,10 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     },
     importRemoteUrl: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-remote-url", payload),
     importFile: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-file", payload),
+    // 播放懒自愈：nomi-local 视频解不了（HEVC 存量/供应商 HEVC 产物）→ 主进程转码出新 MP4 资产。
+    ensurePlayable: (payload: unknown) => ipcRenderer.invoke("nomi:assets:ensure-playable", payload),
+    // 引导示例项目：把随包成图落成项目资产，回 clientId → nomi-local URL（渲染侧算不出稳定地址）。
+    seedOnboardingDemo: (payload: unknown) => ipcRenderer.invoke("nomi:assets:seed-onboarding-demo", payload),
     download: (payload: unknown) =>
       ipcRenderer.invoke("nomi:assets:download", payload) as Promise<{
         ok: boolean;
@@ -88,7 +114,6 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     resize: (payload: unknown) => ipcRenderer.send("browser:view:resize", payload),
     show: (payload: unknown) => ipcRenderer.send("browser:view:show", payload),
     hide: (payload: unknown) => ipcRenderer.send("browser:view:hide", payload),
-    importImage: (payload: unknown) => ipcRenderer.invoke("browser:view:import-image", payload),
     importMedia: (payload: unknown) => ipcRenderer.invoke("browser:view:import-media", payload),
     capturePromptImage: (payload: unknown) => ipcRenderer.invoke("browser:view:capture-prompt-image", payload),
     selectPromptScreenshot: (payload: unknown) =>
@@ -99,7 +124,6 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
       ipcRenderer.invoke("browser:prompt-extraction-settings:read", payload),
     writePromptExtractionSettings: (payload: unknown) =>
       ipcRenderer.invoke("browser:prompt-extraction-settings:write", payload),
-    setPromptCategories: (payload: unknown) => ipcRenderer.send("browser:view:set-prompt-categories", payload),
     setResourceCapture: (payload: unknown) => ipcRenderer.send("browser:view:set-resource-capture", payload),
     captureResource: (payload: unknown) => ipcRenderer.send("browser:view:capture-resource", payload),
     showChromeMenu: (payload: unknown) => ipcRenderer.invoke("browser:chrome-menu:show", payload),
@@ -108,11 +132,12 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
       updateHost: (payload: unknown) => ipcRenderer.send("browser:asset-overlay:update-host", payload),
       close: () => ipcRenderer.send("browser:asset-overlay:close"),
       captureRequest: (payload: unknown) => ipcRenderer.send("browser:asset-overlay:capture-request", payload),
-      promptRequest: (payload: unknown) => ipcRenderer.send("browser:asset-overlay:prompt-request", payload),
       ready: () => ipcRenderer.send("browser:asset-overlay:ready"),
       setInteractive: (payload: unknown) => ipcRenderer.send("browser:asset-overlay:set-interactive", payload),
+      finishDrag: () => ipcRenderer.send("browser:asset-overlay:finish-drag"),
       setState: (payload: unknown) => ipcRenderer.send("browser:asset-overlay:set-state", payload),
       importToCanvas: (payload: unknown) => ipcRenderer.send("browser:asset-overlay:import-to-canvas", payload),
+      canvasImportAvailable: () => ipcRenderer.invoke("browser:asset-overlay:canvas-import-available"),
       onConfig: (callback: (event: unknown) => void) => {
         const listener = (_event: unknown, payload: unknown) => callback(payload);
         ipcRenderer.on("browser:asset-overlay:config", listener as never);
@@ -255,7 +280,7 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
         prompts: unknown[];
         error?: string;
       }>,
-    userAdd: (input: { title?: string; prompt: string; promptType: "image" | "video" }) =>
+    userAdd: (input: { title?: string; prompt: string; promptType: "image" | "video"; tags?: string[]; referenceImages?: { url: string; title?: string; sourceUrl?: string }[] }) =>
       ipcRenderer.invoke("nomi:prompt-library:user-add", input) as Promise<{
         ok: boolean;
         prompts: unknown[];
@@ -372,6 +397,8 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     analyzeComfyWorkflow: (text: string) => invokeSync("nomi:model-catalog:comfyui:analyze-workflow", text),
     importComfyWorkflow: (payload: { text: string; binding: unknown; labelZh: string }) =>
       invokeSync("nomi:model-catalog:comfyui:import-workflow", payload),
+    updateComfyWorkflow: (payload: { modelKey: string; text: string; binding: unknown; labelZh: string }) =>
+      invokeSync("nomi:model-catalog:comfyui:update-workflow", payload),
   },
   skill: {
     list: () => invokeSync("nomi:skill:list"),

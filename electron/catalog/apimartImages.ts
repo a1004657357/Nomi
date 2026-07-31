@@ -88,8 +88,15 @@ function imageModel(p: {
   return { modelKey: p.modelKey, labelZh: p.labelZh, archetypeId: p.archetypeId, mappings };
 }
 
-/** 6 个 apimart 图片模型（单源；seedBuiltins 据此注册 catalog 行 + mapping）。 */
+/** 7 个 apimart 图片模型（单源；seedBuiltins 据此注册 catalog 行 + mapping）。 */
 export const APIMART_IMAGE_MODELS: ApimartImageModel[] = [
+  // Seedream 5.0 Pro（2026-07-29 照 docs.apimart.ai seedream-5-0-pro/generation.md 对账）：
+  // ≤10 张参考图多参一图（首张免费）；resolution 仅 1K/2K（3K/4K 会 400）→ 独立档案不与 4.5 共享。
+  imageModel({
+    modelKey: "doubao-seedream-5-0-pro", labelZh: "Seedream 5.0 Pro", archetypeId: "seedream-5-pro",
+    t2iBody: { size: SIZE, resolution: RESOLUTION },
+    editBody: { size: SIZE, resolution: RESOLUTION, image_urls: IMAGE_URLS },
+  }),
   // 共享档案（kie 已建）：Seedream / Nano Banana(Gemini) / GPT-Image-2 —— apimart 专属 params 由档案 vendorParams 提供。
   imageModel({
     modelKey: "doubao-seedream-4.5", labelZh: "Seedream 4.5", archetypeId: "seedream",
@@ -109,16 +116,15 @@ export const APIMART_IMAGE_MODELS: ApimartImageModel[] = [
     // 铁律迁移：gpt-image-2 已中性化（档案 params=比例+清晰度），apimart 字段是 size/resolution → 翻译。
     paramMap: GPT_IMAGE_2_APIMART_PARAM_MAP,
   }),
-  // 独占档案（apimart 专属，新建）：Qwen-Image / Imagen 4 / Z-Image-Turbo。
+  // 独占档案（apimart 专属，新建）：Qwen-Image / Z-Image-Turbo。
+  // Imagen 4 已退役（2026-07-30：上游 Google 确定性 404，见 seedBuiltins 的 RETIRED_APIMART_IMAGE_*）
+  // —— curated 与退役清单**互斥**，别在这儿加回来，否则每次启动 reconcileModels 插回、prune 再删，
+  // 来回抖。上游修好要恢复：这里加回 + 那边两条删掉，一次 commit。
   // Qwen-Image：变体（标准 qwen-image-2.0 / Pro qwen-image-2.0-pro）→ body model 取 {{request.params.model}}。
   imageModel({
     modelKey: "qwen-image-2.0", labelZh: "Qwen-Image 2.0", archetypeId: "qwen-image", modelRef: VARIANT_MODEL_REF,
     t2iBody: { size: SIZE, resolution: RESOLUTION, negative_prompt: NEGATIVE_PROMPT },
     editBody: { size: SIZE, resolution: RESOLUTION, image_urls: IMAGE_URLS, negative_prompt: NEGATIVE_PROMPT },
-  }),
-  imageModel({
-    modelKey: "imagen-4.0-apimart", labelZh: "Imagen 4", archetypeId: "imagen-4",
-    t2iBody: { size: SIZE }, // imagen 仅 t2i，无 resolution
   }),
   imageModel({
     modelKey: "z-image-turbo", labelZh: "Z-Image Turbo", archetypeId: "z-image-turbo",

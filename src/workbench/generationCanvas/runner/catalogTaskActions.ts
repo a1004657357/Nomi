@@ -12,14 +12,14 @@ import type {
 } from '../model/generationCanvasTypes'
 import type { ResolvedGenerationReferences } from './generationReferenceResolver'
 import { narrateProgress, type GenerationProgressPhase, type ProgressNarrationContext } from '../../observability/narrate'
-import { resolveArchetypeForModel } from '../../../config/modelArchetypes'
-import { buildArchetypeInputParams, orderedSentImageReferenceUrls } from '../nodes/controls/archetypeMeta'
+import { buildArchetypeInputParams, currentArchetypeMode, orderedSentImageReferenceUrls } from '../nodes/controls/archetypeMeta'
 import { projectPromptForSend } from '../../assets/promptMentions'
 import {
   type CatalogTaskActionOptions,
   asFiniteNumber,
   asTrimmedString,
   readStringArray,
+  resolveTaskArchetype,
   resolveExecutableNodeFromCatalog,
   resolveTaskKind,
   selectedModelKey,
@@ -43,6 +43,26 @@ const POLL_FAILURE_GRACE_MS = 45000
 
 // 走流式文本通道的 kind(与 catalogTaskResultParse 的 TEXT_TASK_KINDS 同语义)。
 const TEXT_STREAM_KINDS = new Set<TaskKind>(['chat', 'prompt_refine', 'image_to_prompt'])
+
+// 本地进程/队列后端：codex(`codex exec $imagegen`,官方 smoke 就 ~75s)、本地 ComfyUI 队列(可达数分钟)——
+// 都跑在用户机器上,时延本质是「秒级到分钟级」且方差大,不能和「秒级返回的云图像 API」共用 2min 硬超时:
+// 否则本地图还在生成就被判超时落「可找回」,用户体验成「Codex 生图拉取步骤超时」(群反馈 2026-07-30 的根因)。
+// 判据用 vendor key(稳定:codex-local/comfyui-local 都是 local:// 或本机 127.0.0.1 后端)。
+const SLOW_LOCAL_BACKENDS = new Set(['codex-local', 'comfyui-local'])
+
+// 轮询按「后端时延」而非「视频 vs 图像」分档:慢道 = 视频 ∪ 本地进程后端。这样本地生图(codex/comfyui)
+// 不再被云 API 的 2min 硬超时腰斩,而 codex 进程真跑完(成功/失败)时 query 立即返回终态、循环自然结束,
+// 故放宽硬超时纯为「等它跑完」、不会平白多等(查结果免费、不重发、不二次扣费)。
+export function isSlowLaneBackend(kind: TaskKind, vendor: string): boolean {
+  return kind === 'text_to_video' || kind === 'image_to_video' || SLOW_LOCAL_BACKENDS.has(vendor)
+}
+
+/** 轮询预算(ms):慢道(视频/本地进程后端)5min 软 / 20min 硬;快道云 API 2min 软=硬。 */
+export function resolvePollBudget(kind: TaskKind, vendor: string): { softMs: number; hardMs: number } {
+  return isSlowLaneBackend(kind, vendor)
+    ? { softMs: 300000, hardMs: 1200000 }
+    : { softMs: 120000, hardMs: 120000 }
+}
 
 function buildReferenceExtras(
   node: GenerationCanvasNode,
@@ -68,11 +88,7 @@ function buildReferenceExtras(
   // 认得档案的模型 → renderer 据**当前模式**把参考值打成完整 snake input（含 per-mode enum），放进
   // extras.archetypeInput，runtime 原样铺进 params（M1/M2/M3）。别的模式的残留键根本不进结果（互斥）。
   // 认不出 → 现有无条件带首/尾帧（非档案模型走老路）。
-  const archetype = resolveArchetypeForModel({
-    modelKey: asTrimmedString(meta.modelKey),
-    modelAlias: asTrimmedString(meta.modelAlias),
-    meta,
-  })
+  const archetype = resolveTaskArchetype(meta)
   if (archetype) {
     const archetypeInput = buildArchetypeInputParams(meta, archetype, {
       firstFrameUrl: asTrimmedString(references.firstFrameUrl) || null,
@@ -84,8 +100,33 @@ function buildReferenceExtras(
       referenceVideos: references.referenceVideos || [],
       referenceAudios: references.referenceAudios || [],
     })
+    // 标准参考面（camelCase firstFrameUrl/lastFrameUrl/referenceImages）**与档案投影并存**——
+    // electron 侧的标准键（reference_images/chat_image_parts/image_url…）由它派生，通用中转模板
+    // 只认标准键。旧实现档案分支把 firstFrameUrl/lastFrameUrl 丢掉、archetypeInput 独占参考通道 →
+    // 中转上撞档案名的模型改图不带图/i2v 首帧到不了 wire（2026-07-24 群反馈根因）。
+    // M2 互斥同样约束标准面：首/尾帧只在**当前模式声明了对应槽**时才带（活边优先、meta 兜底），
+    // 否则「首帧模式残留尾帧」的 §2 坑2 会从标准键复活（kie 同名 token 渲进 body）。
+    const mode = currentArchetypeMode(archetype, meta)
+    const modeHasFirst = (mode.slots || []).some((slot) => slot.kind === 'first_frame')
+    const modeHasLast = (mode.slots || []).some((slot) => slot.kind === 'last_frame')
+    const firstFrameUrl = modeHasFirst
+      ? asTrimmedString(references.firstFrameUrl) || asTrimmedString(meta.firstFrameUrl)
+      : ''
+    const lastFrameUrl = modeHasLast
+      ? asTrimmedString(references.lastFrameUrl) || asTrimmedString(meta.lastFrameUrl)
+      : ''
+    // 档案图槽的上传住 meta.referenceImageUrls（ARRAY_SLOT_ROUTE.image_ref.metaKey）——它同样必须进
+    // 标准面，否则中转 multipart 的 params.reference_images 恒空、0 张图被诚实抛（走查 B 段抓出的
+    // 第二个吞点）。同样按当前模式门控（声明了 image_ref 槽才带，防 t2i 残留复活进 chat 回退 body）。
+    const modeHasImageArray = (mode.slots || []).some((slot) => slot.kind === 'image_ref')
+    const standardReferenceImages = uniqueStrings([
+      ...referenceImages,
+      ...(modeHasImageArray ? readStringArray(meta.referenceImageUrls) : []),
+    ])
     return {
-      ...(referenceImages.length ? { referenceImages } : {}),
+      ...(standardReferenceImages.length ? { referenceImages: standardReferenceImages } : {}),
+      ...(firstFrameUrl ? { firstFrameUrl } : {}),
+      ...(lastFrameUrl ? { lastFrameUrl } : {}),
       archetypeInput,
       ...(styleReferenceImages.length ? { styleReferenceImages } : {}),
       ...(characterReferenceImages.length ? { characterReferenceImages } : {}),
@@ -119,15 +160,11 @@ export function buildCatalogTaskRequest(
   const references = options.references || {}
   const kind = resolveTaskKind(node, references)
   const meta = node.meta || {}
-  // @ 内联引用投影(R6 单源 · option 2 · 2026-06-25):把 prompt 里的 @[asset:url] 标记转成 character{N}，
+  // @ 内联引用投影(R6 单源 · option 2):把 prompt 里的 @[asset:url] 标记转成 @imageN，
   // N = url 在「连线在前+上传」有序数组里的位置——**与实际发送的 reference_image 数组逐位一致**。此前只读
   // meta.referenceImageUrls，把连线进来的参考图当成「不在数组里」直接把 @ 标记删成空串（连线图 @ 不到/被
   // 删空的根因）。纯文字 prompt 无标记 → 原样(no-op)。无档案模型回退旧口径（仅上传）。
-  const promptRefArchetype = resolveArchetypeForModel({
-    modelKey: asTrimmedString(meta.modelKey),
-    modelAlias: asTrimmedString(meta.modelAlias),
-    meta,
-  })
+  const promptRefArchetype = resolveTaskArchetype(meta)
   const orderedReferenceUrls = promptRefArchetype
     ? orderedSentImageReferenceUrls(meta, promptRefArchetype, references.referenceImages || [])
     : readStringArray(meta.referenceImageUrls)
@@ -186,11 +223,13 @@ async function waitForCatalogTaskResult(
 ): Promise<TaskResultDto> {
   if (TERMINAL_STATUSES.has(initialResult.status)) return initialResult
   const pollIntervalMs = options.pollIntervalMs ?? 1500
-  const isVideo = request.kind === 'text_to_video' || request.kind === 'image_to_video'
-  // 软超时：到点不报错，只把文案切成「仍在生成·已超常规时长」，后台继续等（视频 5min→续拉到 hard）。
-  // 硬超时：真停，抛可找回错误（视频 20min；非视频 2min）。options.pollTimeoutMs 覆盖时 soft=hard（测试可控）。
-  const softTimeoutMs = options.pollTimeoutMs ?? (isVideo ? 300000 : 120000)
-  const hardTimeoutMs = options.pollTimeoutMs ?? (isVideo ? 1200000 : 120000)
+  // 软超时：到点不报错，只把文案切成「仍在生成·已超常规时长」，后台继续等（慢道 5min→续拉到 hard）。
+  // 硬超时：真停，抛可找回错误（慢道=视频/本地进程后端 20min；快道云 API 2min）。
+  // 分档见 resolvePollBudget：按后端时延分,不再把本地生图(codex/comfyui)当快道云 API 腰斩。
+  // options.pollTimeoutMs 覆盖时 soft=hard（测试可控）。
+  const budget = resolvePollBudget(request.kind, vendor)
+  const softTimeoutMs = options.pollTimeoutMs ?? budget.softMs
+  const hardTimeoutMs = options.pollTimeoutMs ?? budget.hardMs
   const startedAt = Date.now()
   const fetchResult = options.fetchTaskResult || fetchWorkbenchTaskResultByVendor
 
