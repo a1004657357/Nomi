@@ -43,6 +43,7 @@ import { setRendererTarget } from "./capabilityCore/rendererBridge";
 import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfig";
 import { registerLocalProtocol } from "./protocol/localProtocol";
 import { installWindowCloseConfirmation } from "./windowCloseConfirmation";
+import { createWindowActivator } from "./windowActivator";
 import { registerDesktopIntegrationIpc } from "./desktopIntegrationIpc";
 import { registerI18nIpc, setDesktopLocale } from "./i18n";
 
@@ -78,11 +79,9 @@ if (!isMcpStdio && !allowE2eMultiInstance) {
     app.quit();
   } else {
     app.on("second-instance", () => {
-      const [existing] = BrowserWindow.getAllWindows();
-      if (existing) {
-        if (existing.isMinimized()) existing.restore();
-        existing.focus();
-      }
+      void app.whenReady()
+        .then(() => activateMainWindow())
+        .catch((error) => console.error("[nomi:desktop] failed to activate second instance:", error));
     });
   }
 }
@@ -370,6 +369,11 @@ async function createWindow(
   }
   return mainWindow;
 }
+
+const activateMainWindow = createWindowActivator({
+  getWindows: () => BrowserWindow.getAllWindows(),
+  createWindow,
+});
 
 function recreateMainWindowFromSender(sender: WebContents, options: { preserveRoute: boolean; reason: string }): void {
   if (isRecreatingMainWindow) return;
@@ -736,7 +740,7 @@ if (hasSingleInstanceLock)
           console.error("[nomi:desktop] startCapabilityCore failed:", error);
         });
       }
-      await createWindow();
+      await activateMainWindow();
       setTimeout(
         () => {
           void import("./systemProxy")
@@ -753,11 +757,9 @@ if (hasSingleInstanceLock)
       );
 
       app.on("activate", () => {
-        if (BrowserWindow.getAllWindows().length === 0) {
-          void createWindow().catch((error) => {
-            console.error("[nomi:desktop] failed to recreate window:", error);
-          });
-        }
+        void activateMainWindow().catch((error) => {
+          console.error("[nomi:desktop] failed to recreate window:", error);
+        });
       });
     })
     .catch((error) => {
