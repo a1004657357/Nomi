@@ -35,7 +35,7 @@ export function convertImageShotToVideo(node: GenerationCanvasNode): { nodeId: s
   }
   const video = state.addNode({
     kind: 'video',
-    title: node.title ? `${node.title} · 视频` : '',
+    title: node.title ? i18n.t('generationCommon.shotConversion.videoTitle', { name: node.title }) : '',
     prompt: node.prompt || '',
     meta: {
       sourceNodeId: node.id,

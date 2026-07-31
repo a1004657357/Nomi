@@ -3,7 +3,10 @@ import fs from "node:fs";
 import { contentTypeFromPath, extensionFromMime } from "./assets/assetPaths";
 import { writeAsset } from "./assets/projectAssetStore";
 import { endpoint } from "./vendorEndpoint";
-import { requestJson } from "./vendor/vendorHttp";
+import { requestJson, requestMultipart } from "./vendor/vendorHttp";
+import { runMultipartProfileOperation } from "./catalog/multipartOperation";
+import { templateContext, buildProfileHttpRequest } from "./catalog/profileHttpRequest";
+import { chatImageFallbackOperation } from "./catalog/imageRouteFallback";
 import { buildNormalizedRecipe, buildTaskProvenance } from "./vendor/provenance";
 import { traceVendorCompleted, traceVendorRequested } from "./events/vendorCallTrace";
 import {
@@ -34,6 +37,8 @@ import {
 // 公共 API：main.ts 仍从 "./runtime" 消费这些 —— re-export 保持其 import 不变。
 export { createProject, deleteProject, listProjects, readProject, resolveProjectRelativePath, saveProject };
 export { importRemoteAsset, listProjectAssets, moveAssetFile, writeAsset } from "./assets/projectAssetStore";
+// localizedTaskAssetFileName 已抽到 ./assets/localizedAsset（规则 9/12 减负 giant shell）；re-export 保持既有 import（含 runtime.assets.test）不变。
+export { localizedTaskAssetFileName };
 
 // 任务执行复用 catalog 状态（readCatalog + extractVendorExtraHeaders 纯函数）；
 // catalogStore 反向复用本文件任务引擎 → 运行期循环引用（CommonJS 安全）。
@@ -144,8 +149,11 @@ export type TaskResult = {
     model3dValidation?: GlbValidationReport;
     /** 原始 CDN URL（https://...）。供后续生成直接用，无需上传。可能过期，过期后退回本地字节。 */
     providerUrl?: string | null;
+    durationSeconds?: number;
   }>;
   raw: unknown;
+  /** failed 时的上游真实原因（tasks/responseParsing.taskFailureMessageFromResponse 取；渲染层只读这一处）。 */
+  error?: string;
   /**
    * E11: Complete provenance for reproducibility. Populated on successful
    * generation. Renderer copies this into GenerationNodeResult.provenance.
@@ -185,33 +193,9 @@ export type CachedTask = {
   fingerprint?: string;
 };
 
-export function findExecutableModel(
-  vendorKey: string,
-  modelKey: string,
-  kind?: BillingModelKind,
-): { vendor: Vendor; model: Model; apiKey: string } {
-  const state = readCatalog();
-  const vendor = state.vendors.find((item) => item.key === vendorKey && item.enabled);
-  if (!vendor) throw new Error(`Vendor is not enabled: ${vendorKey}`);
-  // 精确 modelKey 优先于 alias（修双键 OR 误路由，selectExecutableModel 纯函数单测覆盖）。
-  const model = selectExecutableModel(state.models, vendorKey, modelKey, kind);
-  if (!model) throw new Error(`Model is not enabled: ${modelKey}`);
-  const apiKey = decryptApiKeyRecord(state.apiKeysByVendor[vendorKey]);
-  if (vendor.authType !== "none" && !apiKey) throw new Error(`API key missing: ${vendorKey}`);
-  return { vendor, model, apiKey };
-}
-
-export function findExecutableModelForTask(
-  vendorKey: string,
-  modelKey: string,
-  kind: BillingModelKind,
-): { vendor: Vendor; model: Model; apiKey: string } {
-  if (modelKey) return findExecutableModel(vendorKey, modelKey, kind);
-  const state = readCatalog();
-  const model = state.models.find((item) => item.vendorKey === vendorKey && item.enabled && item.kind === kind);
-  if (!model) throw new Error(`No enabled ${kind} model for vendor: ${vendorKey}`);
-  return findExecutableModel(vendorKey, model.modelKey, kind);
-}
+// 可执行模型解析下沉到 catalog/executableModel（R12 净减）；re-export 保住 textTaskRunner/taskResultQuery 既有 import 面。
+export { findExecutableModel, findExecutableModelForTask } from "./catalog/executableModel";
+import { findExecutableModel } from "./catalog/executableModel";
 
 // Thin Vendor→primitive adapters over the shared requestPipeline auth logic
 // (the shared module is electron-free and doesn't know the Vendor shape).
@@ -354,7 +338,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     mapping?.create?.defaultParams,
   ); // headless 缺参兜底(档案默认+mapping)
   // L3 诚实护栏：图生图/图生视频缺参考或缺 mapping → 付费守卫之前拒发人话，绝不静默退化纯文生（判定在 taskParams.imageEditGuardError）。
-  const guardError = imageEditGuardError(kind, request, Boolean(mapping), model.labelZh || model.modelKey);
+  const guardError = imageEditGuardError(kind, request, Boolean(mapping), model.labelZh || model.modelKey, mapping?.create?.body);
   if (guardError) throw new Error(guardError);
   // 第四路 audio：TTS/Whisper 同步收口（二进制/multipart）。付费守卫：必发 vendor，进来即校验消费令牌。
   if (wantedKind === "audio") {
@@ -385,7 +369,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     const normalized = await buildProfileTaskResult({
       response: executed.response,
       mapping,
-      operation: mapping.create,
+      operation: createOperation,
       request,
       taskIdFallback: taskId,
       wantedKind,
@@ -486,7 +470,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   const type: "image" | "video" | "model3d" =
     wantedKind === "video" ? "video" : wantedKind === "model3d" ? "model3d" : "image";
   const asset: TaskResult["assets"][number] = projectId
-    ? await localizeTaskAsset(projectId, assetUrl, type, nodeId)
+    ? await localizeTaskAsset(projectId, assetUrl, type, nodeId, vendor)
     : { type, url: assetUrl, thumbnailUrl: type === "image" ? assetUrl : null };
   // E11 provenance + S4-1 终态事件:与 profile 路径共用 vendor/provenance 模块(单一真相)。
   const provenance = buildTaskProvenance({ vendor, model, request, vendorRequestId: upstreamTaskId });

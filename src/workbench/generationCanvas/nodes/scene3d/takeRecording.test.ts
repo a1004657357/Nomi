@@ -11,7 +11,13 @@ import {
   type RecordedCameraTake,
 } from './takeRecording'
 import { cameraAimBindingId } from './scene3dBindingIds'
+import { applyCameraMovePreset } from './cameraMovePreset'
+import { CAMERA_MOVE_LABEL } from './cameraMoveVocab'
+import { frameMotionSource, poseKeyframeKey } from './scene3dPoseTrack'
 import { createDefaultScene3DState, normalizeScene3DState } from './scene3dSerializer'
+import { cameraWithPlaybackPosition, sceneObjectTrajectorySample } from './scene3dPlayback'
+import { objectSubjectAabb, projectAabbScreenRect } from './scene3dSafeFrame'
+import { SCENE3D_ASPECT_RATIOS } from './scene3dTypes'
 
 const sample = (time: number, position: [number, number, number]): TakeSample => ({ time, position })
 
@@ -238,6 +244,111 @@ describe('buildRecordedTakeScene', () => {
       ],
     }))
     expect(scene!.objects.find((o) => o.id === characterId)!.poseTrack).toBeUndefined()
+  })
+
+  // ── D：C 键下蹲进入最终 take（走→蹲→走）─────────────────────────────
+  const crouch = { mixamorigSpine: [30, 0, 0] as [number, number, number] }
+
+  it('records a C-key crouch as base→crouch→base poseTrack; mid-take crouch interrupts walk (D)', () => {
+    const { state, characterId } = baseSceneWithCharacter()
+    // 录制器产物：t=0 站立种子 → C 按下 crouch → C 松开 resume(base)。
+    const scene = buildRecordedTakeScene(state, take(characterId, {
+      poseEvents: [
+        { time: 0, presetId: undefined, pose: undefined },   // 站立种子
+        { time: 1.2, presetId: 'crouch', pose: crouch },      // C 按下
+        { time: 2.5, presetId: undefined, pose: undefined },  // C 松开 → 恢复走路
+      ],
+    }))!
+    const character = scene.objects.find((o) => o.id === characterId)!
+    expect(character.poseTrack?.map((k) => poseKeyframeKey(k))).toEqual(['base', 'preset:crouch', 'base'])
+    expect(character.locomotionClip).toBe('walk')
+    // 松开前走路、C 窗口内静态蹲打断 walk、松开后恢复走路——正是「走→蹲→走」的成片语义。
+    expect(frameMotionSource(character.poseTrack, character.locomotionClip, 0.5)).toBe('locomotion')
+    expect(frameMotionSource(character.poseTrack, character.locomotionClip, 1.8)).toBe('static-pose')
+    expect(frameMotionSource(character.poseTrack, character.locomotionClip, 3.0)).toBe('locomotion')
+  })
+
+  it('held-until-stop crouch (C 按住不松直到停止录制) still lands a crouch keyframe', () => {
+    const { state, characterId } = baseSceneWithCharacter()
+    const scene = buildRecordedTakeScene(state, take(characterId, {
+      poseEvents: [
+        { time: 0, presetId: undefined, pose: undefined },
+        { time: 1.0, presetId: 'crouch', pose: crouch },
+      ],
+    }))!
+    const character = scene.objects.find((o) => o.id === characterId)!
+    expect(character.poseTrack?.map((k) => poseKeyframeKey(k))).toEqual(['base', 'preset:crouch'])
+    expect(frameMotionSource(character.poseTrack, character.locomotionClip, 2.0)).toBe('static-pose')
+  })
+
+  // ── E：保留已选运镜（右横移跟拍）不被采样机位覆盖 ───────────────────────
+  it('preserves a pre-selected camera move (右横移跟拍) instead of overwriting it with a sampled path (E)', () => {
+    const state = createDefaultScene3DState()
+    const characterId = state.objects[0].id
+    const cameraId = state.cameras[0].id
+    const withMove = applyCameraMovePreset(state, cameraId, { move: 'track_right', duration: 5, amplitude: 1 })!.state
+    // 用户录人物动作时也绕拍了相机——必须忽略采样、保留预选运镜。
+    const scene = buildRecordedTakeScene(withMove, take(characterId, {
+      cameraSamples: [sample(0, [4, 2, 5]), sample(2000, [2, 2, 6]), sample(4000, [0, 2, 5])],
+    }))!
+    expect(scene.trajectories.some((t) => t.name === CAMERA_MOVE_LABEL.track_right)).toBe(true)
+    expect(scene.trajectories.some((t) => t.name === '机位路径')).toBe(false)
+    // 相机仍绑运镜轨迹，且按录制时长重定时到 [0,duration]（跟人物动作同步跑）。
+    const cameraBinding = scene.trajectoryBindings.find((b) => b.objects.some((o) => o.objectId === cameraId))!
+    expect(cameraBinding.startTime).toBe(0)
+    expect(cameraBinding.endTime).toBe(4)
+    // 角色走位轨迹仍在（人物动作没被运镜挤掉）。
+    expect(scene.trajectories.some((t) => t.name.endsWith('走位'))).toBe(true)
+  })
+
+  it('still samples a fresh 机位路径 when there is NO pre-existing camera move (老行为不回归)', () => {
+    const { state, characterId } = baseSceneWithCharacter()
+    const scene = buildRecordedTakeScene(state, take(characterId, {
+      cameraSamples: [sample(0, [4, 2, 5]), sample(2000, [2, 2, 6]), sample(4000, [0, 2, 5])],
+    }))!
+    expect(scene.trajectories.some((t) => t.name === '机位路径')).toBe(true)
+    expect(scene.cameras[0].followTargetId).toBe(characterId)
+  })
+
+  // ── E：位置-only 预选运镜必须 follow 被录角色（不只断言轨迹名，投影主体验「持续看住」）──
+  it('位置-only 预选运镜继承后 follow 被录角色（朝向单源不回退静态 target）', () => {
+    const state = createDefaultScene3DState()
+    const characterId = state.objects[0].id
+    const withMove = applyCameraMovePreset(state, state.cameras[0].id, { move: 'track_right', duration: 5, amplitude: 1 })!.state
+    const scene = buildRecordedTakeScene(withMove, take(characterId))!
+    expect(scene.cameras[0].followTargetId).toBe(characterId)
+    expect(scene.cameras[0].aimTrajectoryId).toBeUndefined()
+  })
+
+  it('E 真投影：右横移跟拍 take 首/中/尾角色完整可见 + 中心横向漂移 ≤ 画宽 10%', () => {
+    const state = createDefaultScene3DState()
+    const characterId = state.objects[0].id
+    const withMove = applyCameraMovePreset(state, state.cameras[0].id, { move: 'track_right', duration: 5, amplitude: 1 })!.state
+    // 角色沿 Z 向前走一段（右横移跟拍应始终看住它）。
+    const scene = buildRecordedTakeScene(withMove, take(characterId, {
+      characterSamples: [sample(0, [0, 1.25, 0]), sample(2500, [0, 1.25, 2.5]), sample(5000, [0, 1.25, 5])],
+    }))!
+    const camera0 = scene.cameras[0]
+    const character = scene.objects.find((o) => o.id === characterId)!
+    const aspect = SCENE3D_ASPECT_RATIOS[camera0.aspectRatio]
+    let centerX0: number | null = null
+    for (const frac of [0, 0.5, 1]) {
+      const tSec = frac * scene.sceneTimeline.totalDuration
+      const cam = cameraWithPlaybackPosition(scene, camera0, tSec)
+      // 角色 AABB 从脚底（轨迹采样点）建——objectSubjectAabb 内部 +halfHeight 求中心，与相机 follow 瞄准点同口径。
+      const feet = sceneObjectTrajectorySample(scene, characterId, tSec)!.position
+      const aabb = objectSubjectAabb({ ...character, position: [feet.x, feet.y, feet.z] })!
+      const rect = projectAabbScreenRect(aabb, cam.position, cam.target, cam.fov, aspect)
+      expect(rect, `t=${frac} 角色应在相机前方`).not.toBeNull()
+      // 完整可见（真渲染 8% 容差；求解线 10%）——头脚左右都不裁。
+      expect(rect!.minX, `t=${frac} 左`).toBeGreaterThanOrEqual(0.08 - 1e-6)
+      expect(rect!.maxX, `t=${frac} 右`).toBeLessThanOrEqual(0.92 + 1e-6)
+      expect(rect!.minY, `t=${frac} 上(头)`).toBeGreaterThanOrEqual(0.08 - 1e-6)
+      expect(rect!.maxY, `t=${frac} 下(脚)`).toBeLessThanOrEqual(0.92 + 1e-6)
+      const centerX = (rect!.minX + rect!.maxX) / 2
+      if (centerX0 === null) centerX0 = centerX
+      else expect(Math.abs(centerX - centerX0), `t=${frac} 中心横向漂移`).toBeLessThanOrEqual(0.1)
+    }
   })
 })
 

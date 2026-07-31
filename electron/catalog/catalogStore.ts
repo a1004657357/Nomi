@@ -7,7 +7,9 @@ import { CATALOG_FILE, getSettingsRoot, readJson } from "../runtimePaths";
 import { type ApiKeyRecord, decryptApiKeyRecord, isSafeStorageAvailable, makeApiKeyRecordFromPlain } from "./secrets";
 import { humanizeModelKey } from "./modelLabel";
 import { applyBuiltinSeeds } from "./seedBuiltins";
-import { NEWAPI_IMAGE_EDIT_OP, NEWAPI_IMAGE_PARAM_MAP, NEWAPI_STANDARD_IMAGE_PARAMS, NEWAPI_VIDEO_PARAM_MAP } from "./newapiTransport";
+import { migrateRelayImageEditProtocols } from "./relayImageEditMigration";
+import { migrateRelayVideoImageToVideo } from "./relayVideoI2vMigration";
+import { migrateRelayImageEditCapability, migrateRelayParamMaps } from "./relayLegacyMigrations";
 import type { AiSdkProviderKind, BillingModelKind, CatalogState, HttpOperation, Mapping, Model, ProfileKind, Vendor } from "./types";
 import { CURRENT_CATALOG_VERSION } from "./types";
 
@@ -309,6 +311,32 @@ function migrateCatalogForward(state: CatalogState): CatalogState {
     writeCatalog(s);
   }
 
+  if (s.version === 5) {
+    // v5 → v6：同一中转的不同图片模型按真实 image_edit 协议精确分流；存量 Grok 自动修复，无需删后重加。
+    const migrated = migrateRelayImageEditProtocols(s);
+    s = { ...migrated.state, version: 6 };
+    writeCatalog(s);
+  }
+
+  if (s.version === 6) {
+    // v6 → v7：**重跑**协议分流。v6 迁移跑在「gpt-image/dall-e-2 还没接 OpenAI multipart edits」之前，
+    // 故存量 gpt-image-2 等被留在 chat/completions（图生图在只认 /v1/images/edits 的中转站接不上）。
+    // migrateRelayImageEditProtocols 幂等，重跑即按新智能默认把 gpt-image/dall-e-2 升到 multipart。
+    // 无版本 bump 就不会重跑（v6 已是终版）——所以必须 bump 到 v7 强制存量用户也升级。
+    const migrated = migrateRelayImageEditProtocols(s);
+    s = { ...migrated.state, version: 7 };
+    writeCatalog(s);
+  }
+
+  if (s.version === 7) {
+    // v7 → v8：存量中转 video 条目补「图生视频」通道（image_to_video mapping）。接入路径此前只建
+    // text_to_video，视频节点一连参考图就报「没有配置图生视频通道 · 请删除后重新接入」——而重接
+    // 也不会建（根因在接入路径，已同 commit 修）。迁移让存量直接可用，不必删了重加。
+    const migrated = migrateRelayVideoImageToVideo(s);
+    s = { ...migrated.state, version: 8 };
+    writeCatalog(s);
+  }
+
   if ((s.version as number) > CURRENT_CATALOG_VERSION) {
     // Newer file than this app understands — return it untouched so it stays
     // readable, and let `writeCatalog` REFUSE any write back (read-only guard).
@@ -606,6 +634,7 @@ export function upsertModelCatalogModel(payload: unknown): Model {
 export function deleteModelCatalogModel(vendorKey: string, modelKey: string): void {
   const state = readCatalog();
   state.models = state.models.filter((model) => !(model.vendorKey === vendorKey && model.modelKey === modelKey));
+  state.mappings = state.mappings.filter((mapping) => !(mapping.vendorKey === vendorKey && mapping.modelKey === modelKey));
   writeCatalog(state);
 }
 
@@ -619,6 +648,7 @@ export function deleteModelCatalogModels(targets: Array<{ vendorKey: string; mod
   const keySet = new Set(list.map((t) => `${String(t?.vendorKey ?? "")} ${String(t?.modelKey ?? "")}`));
   const state = readCatalog();
   state.models = state.models.filter((model) => !keySet.has(`${model.vendorKey} ${model.modelKey}`));
+  state.mappings = state.mappings.filter((mapping) => !mapping.modelKey || !keySet.has(`${mapping.vendorKey} ${mapping.modelKey}`));
   writeCatalog(state);
 }
 
@@ -739,6 +769,7 @@ export type CatalogMutation = {
   upsertApiKey: (vendorKey: string, payload: unknown) => void;
   upsertModel: (payload: unknown) => Model;
   upsertMapping: (payload: unknown) => Mapping;
+  deleteModelMappings: (vendorKey: string, modelKey: string) => void;
 };
 
 /**
@@ -754,6 +785,9 @@ export function mutateCatalog<T>(fn: (tx: CatalogMutation) => T): T {
     upsertApiKey: (vendorKey, payload) => applyApiKeyUpsert(state, vendorKey, payload),
     upsertModel: (payload) => applyModelUpsert(state, payload),
     upsertMapping: (payload) => applyMappingUpsert(state, payload),
+    deleteModelMappings: (vendorKey, modelKey) => {
+      state.mappings = state.mappings.filter((mapping) => !(mapping.vendorKey === vendorKey && mapping.modelKey === modelKey));
+    },
   };
   const result = fn(tx);
   writeCatalog(state);

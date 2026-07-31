@@ -1,5 +1,4 @@
 import React from 'react'
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 import {
   getDesktopBridge,
   type DesktopBrowserAssetOverlayCaptureRequest,
@@ -9,16 +8,8 @@ import {
   type DesktopBrowserViewState,
 } from '../../../desktop/bridge'
 import { browserUrlDisplayTitle } from './browserUrl'
-import {
-  type BrowserAssetCaptureRequest,
-  type BrowserAssetPromptCaptureRequest,
-} from '../popover/NomiBrowserAssetPopover'
+import { type BrowserAssetCaptureRequest } from '../popover/NomiBrowserAssetPopover'
 import { NomiBrowserDialogView } from './NomiBrowserDialogView'
-import {
-  BROWSER_ASSET_LIBRARY_UPDATED_EVENT,
-  browserAssetLibraryKey,
-  readBrowserPromptCategories,
-} from '../assets/browserAssetLibraryStorage'
 import type { FloatingWindowBoundsRect } from '../window/useResizableFloatingWindow'
 import { useBrowserDialogActions } from './useBrowserDialogActions'
 
@@ -217,14 +208,6 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
   )
   const useNativeBrowserAssetOverlay = Boolean(USE_NATIVE_BROWSER_ASSET_OVERLAY && browserBridge?.assetOverlay)
 
-  React.useEffect(() => {
-    if (!browserBridge?.setPromptCategories) return
-    for (const tab of tabs) {
-      if (tab.viewId === null) continue
-      browserBridge.setPromptCategories({ viewId: tab.viewId, categories: browserPromptCategoryOptions })
-    }
-  }, [browserBridge, browserPromptCategoryOptions, tabs])
-
   const syncWebContentBounds = React.useCallback((): void => {
     const node = webContainerRef.current
     if (!node) {
@@ -350,21 +333,16 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
   }, [browserBridge])
 
   const openNativeAssetPopover = React.useCallback(
-    (
-      captureRequest?: DesktopBrowserAssetOverlayCaptureRequest,
-      promptRequest?: BrowserAssetPromptCaptureRequest,
-    ): boolean => {
+    (captureRequest?: DesktopBrowserAssetOverlayCaptureRequest): boolean => {
       const tab = tabsRef.current.find((item) => item.id === activeTabIdRef.current)
       const node = webContainerRef.current
       if (!useNativeBrowserAssetOverlay || !browserBridge?.assetOverlay || !tab || !node) return false
-      if (promptRequest && !browserBridge.assetOverlay.promptRequest) return false
       const wasPopoverOpen = browserAssetPopoverOpen
       const bounds = browserBoundsFromRect(toViewportRect(node.getBoundingClientRect()))
       browserBridge.assetOverlay.open({
         viewId: tab.viewId ?? null,
         bounds,
         ...(captureRequest ? { captureRequest } : {}),
-        ...(promptRequest ? { promptRequest } : {}),
       })
       setBrowserAssetPopoverOpen(true)
       if (!wasPopoverOpen) {
@@ -381,11 +359,20 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       event.preventDefault()
-      if (tabContextMenu) {
+      const layer = escapeLayerRef.current
+      if (layer.materialSitesOpen) {
+        setMaterialSitesOpen(false)
+        return
+      }
+      if (layer.promptModePicker) {
+        setPromptModePicker(null)
+        return
+      }
+      if (layer.tabContextMenu) {
         setTabContextMenu(null)
         return
       }
-      if (bookmarkContextMenu) {
+      if (layer.bookmarkContextMenu) {
         setBookmarkContextMenu(null)
         return
       }
@@ -393,7 +380,7 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [bookmarkContextMenu, onClose, opened, tabContextMenu])
+  }, [onClose, opened])
 
   React.useEffect(() => {
     if (!tabContextMenu) return
@@ -482,7 +469,6 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
       )
       if (!state.opened) {
         setBrowserCaptureRequest(null)
-        setBrowserPromptCaptureRequest(null)
       }
     })
   }, [browserBridge, useNativeBrowserAssetOverlay])

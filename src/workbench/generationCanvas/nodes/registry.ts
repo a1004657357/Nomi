@@ -1,19 +1,17 @@
-import type { ComponentType } from "react";
-import type { BillingModelKind } from "../../../api/desktopClient";
+import type { ComponentType } from 'react'
+import type { BillingModelKind } from '../../../api/desktopClient'
 
 export type GenerationNodeRenderProps<TNode = unknown> = {
-    node: TNode;
-    selected: boolean;
-    readOnly?: boolean;
-    focusFlash?: boolean;
-    /** 新落点（add/paste/Agent）一次性弹入动画；开项目已有节点不传（不齐闪）。 */
-    appear?: boolean;
-};
+  node: TNode
+  selected: boolean
+  readOnly?: boolean
+  focusFlash?: boolean
+  /** 新落点（add/paste/Agent）一次性弹入动画；开项目已有节点不传（不齐闪）。 */
+  appear?: boolean
+}
 
-export type GenerationNodeComponent = ComponentType<
-    GenerationNodeRenderProps<unknown>
->;
-export type GenerationNodeExecutionKind = "image" | "video" | "text" | "audio" | "model3d";
+export type GenerationNodeComponent = ComponentType<GenerationNodeRenderProps<unknown>>
+export type GenerationNodeExecutionKind = 'image' | 'video' | 'text' | 'audio' | 'model3d'
 export type GenerationNodeIconKey =
     | "text"
     | "character"
@@ -33,34 +31,31 @@ export type GenerationNodeIconKey =
     | "audio";
 
 export type GenerationNodePluginDefinition<TKind extends string = string> = {
-    kind: TKind;
-    label: string;
-    menuLabel: string;
-    component: () => Promise<{ default: GenerationNodeComponent }>;
-    icon: GenerationNodeIconKey;
-    defaultTitle?: string;
-    defaultSize: { width: number; height: number };
-    catalogKind: BillingModelKind;
-    executionKind?: GenerationNodeExecutionKind;
-    quickAdd?: boolean;
-    agentCreatable?: boolean;
-    providesImageReference?: boolean;
-    promptPlaceholder?: string;
-};
+  kind: TKind
+  label: string
+  menuLabel: string
+  component: () => Promise<{ default: GenerationNodeComponent }>
+  icon: GenerationNodeIconKey
+  defaultTitle?: string
+  defaultSize: { width: number; height: number }
+  catalogKind: BillingModelKind
+  executionKind?: GenerationNodeExecutionKind
+  quickAdd?: boolean
+  agentCreatable?: boolean
+  providesImageReference?: boolean
+  promptPlaceholder?: string
+}
 
 function defineGenerationNodePlugins<
-    const TPlugins extends readonly [
-        GenerationNodePluginDefinition,
-        ...GenerationNodePluginDefinition[],
-    ],
+  const TPlugins extends readonly [GenerationNodePluginDefinition, ...GenerationNodePluginDefinition[]],
 >(plugins: TPlugins): TPlugins {
-    return plugins;
+  return plugins
 }
 
 const loadBaseGenerationNode = () =>
-    import("./BaseGenerationNode") as Promise<{
-        default: GenerationNodeComponent;
-    }>;
+  import('./BaseGenerationNode') as Promise<{
+    default: GenerationNodeComponent
+  }>
 
 export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
     {
@@ -325,16 +320,14 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
     },
 ]);
 
-export type GenerationNodePlugin = (typeof GENERATION_NODE_PLUGINS)[number];
-export type GenerationNodeKind = GenerationNodePlugin["kind"];
+export type GenerationNodePlugin = (typeof GENERATION_NODE_PLUGINS)[number]
+export type GenerationNodeKind = GenerationNodePlugin['kind']
 
-export const GENERATION_NODE_KINDS = GENERATION_NODE_PLUGINS.map(
-    (plugin) => plugin.kind,
-) as [GenerationNodeKind, ...GenerationNodeKind[]];
+export const GENERATION_NODE_KINDS = GENERATION_NODE_PLUGINS.map((plugin) => plugin.kind) as [
+  GenerationNodeKind,
+  ...GenerationNodeKind[],
+]
 
-export const GENERATION_NODE_PLUGIN_BY_KIND: Record<
-    GenerationNodeKind,
-    GenerationNodePlugin
-> = Object.fromEntries(
-    GENERATION_NODE_PLUGINS.map((plugin) => [plugin.kind, plugin]),
-) as Record<GenerationNodeKind, GenerationNodePlugin>;
+export const GENERATION_NODE_PLUGIN_BY_KIND: Record<GenerationNodeKind, GenerationNodePlugin> = Object.fromEntries(
+  GENERATION_NODE_PLUGINS.map((plugin) => [plugin.kind, plugin]),
+) as Record<GenerationNodeKind, GenerationNodePlugin>

@@ -1,20 +1,22 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 import {
   getDesktopBridge,
-  type DesktopAssetDto,
   type DesktopBrowserAssetOverlayCaptureRequest,
   type DesktopBrowserAssetOverlayConfig,
   type DesktopBrowserAssetOverlayDockMode,
   type DesktopBrowserAssetOverlayRect,
 } from '../../../desktop/bridge'
+// 素材盒真删走 confirmDialog；overlay 是独立 React root，必须自挂宿主，
+// 否则确认请求进 preMountQueue 永不 resolve（主窗宿主在 NomiStudioApp，跨窗口不共享）。
+import { ConfirmDialogHost } from '../../../design'
 import type { NomiBrowserAsset } from '../assets/browserAssetData'
+import { browserAssetFromDesktopAsset } from '../popover/browserAssetPopoverUtils'
 import {
   NomiBrowserAssetPopover,
   type BrowserAssetCaptureRequest,
-  type BrowserAssetPromptCaptureRequest,
-  type BrowserAssetPromptReference,
   type BrowserAssetRemoteImportInput,
 } from '../popover/NomiBrowserAssetPopover'
 import { subscribeBrowserAssetsImportToCanvas } from './globalAssetPopoverEvents'
@@ -37,28 +39,6 @@ type OverlayCaptureFlyout = {
 
 const CAPTURE_FLYOUT_TARGET_WIDTH = 96
 const CAPTURE_FLYOUT_KEYFRAME_TIMES = [0, 0.18, 1]
-
-function browserAssetFromDesktopAsset(asset: DesktopAssetDto, fallbackTitle: string): NomiBrowserAsset {
-  const contentType = typeof asset.data.contentType === 'string' ? asset.data.contentType : ''
-  const mediaType = asset.data.mediaType === 'video' || contentType.startsWith('video/') ? 'video' : 'image'
-  const url = typeof asset.data.url === 'string' ? asset.data.url : ''
-  // 显示名人类标题优先(sidecar.title=捕捞抓的 alt/网页标题 → 捕捞传入 title → 文件名)——
-  // 防盗链图 URL 文件名常是哈希，认不出(用户 2026-07-13 抓出 263fcbf8…)。⚠️同名映射有三份
-  // 平行版(此处 + NomiBrowserDialogModel + browserAssetPopoverUtils)，三处口径须一致，待收敛。
-  const sidecarTitle = typeof asset.data.title === 'string' ? asset.data.title.trim() : ''
-  return {
-    id: asset.id,
-    type: mediaType,
-    source: 'my',
-    title: sidecarTitle || fallbackTitle || asset.name || (mediaType === 'video' ? '网页视频' : '网页图片'),
-    subtitle: '网页素材',
-    previewUrl: url,
-    previewMediaType: mediaType,
-    tags: ['网页素材'],
-    createdAt: asset.createdAt,
-    updatedAt: asset.updatedAt,
-  }
-}
 
 function canDownloadFromBrowserView(url: string): boolean {
   return /^(https?:\/\/|blob:)/i.test(url)
@@ -110,61 +90,6 @@ function captureRequestForPopover(
   }
 }
 
-function promptRequestForPopover(request: unknown): BrowserAssetPromptCaptureRequest | null {
-  if (!request || typeof request !== 'object') return null
-  const raw = request as Record<string, unknown>
-  const requestId = typeof raw.requestId === 'string' ? raw.requestId.trim() : ''
-  const sourceType = raw.sourceType === 'screenshot' ? 'screenshot' : raw.sourceType === 'image' ? 'image' : null
-  if (!requestId || !sourceType) return null
-  const rawSourceRect = raw.sourceRect && typeof raw.sourceRect === 'object' ? raw.sourceRect as Record<string, unknown> : null
-  const sourceRect =
-    rawSourceRect &&
-    Number.isFinite(Number(rawSourceRect.left)) &&
-    Number.isFinite(Number(rawSourceRect.top)) &&
-    Number.isFinite(Number(rawSourceRect.width)) &&
-    Number.isFinite(Number(rawSourceRect.height)) &&
-    Number(rawSourceRect.width) > 0 &&
-    Number(rawSourceRect.height) > 0
-      ? {
-          left: Math.round(Number(rawSourceRect.left)),
-          top: Math.round(Number(rawSourceRect.top)),
-          width: Math.round(Number(rawSourceRect.width)),
-          height: Math.round(Number(rawSourceRect.height)),
-        }
-      : undefined
-  const referenceImages: BrowserAssetPromptCaptureRequest['referenceImages'] = Array.isArray(raw.referenceImages)
-    ? raw.referenceImages.reduce<BrowserAssetPromptReference[]>(
-        (items, reference) => {
-          if (!reference || typeof reference !== 'object') return items
-          const item = reference as Record<string, unknown>
-          const url = typeof item.url === 'string' ? item.url.trim() : ''
-          if (!url) return items
-          items.push({
-            url,
-            ...(typeof item.title === 'string' ? { title: item.title } : {}),
-            ...(typeof item.sourceUrl === 'string' ? { sourceUrl: item.sourceUrl } : {}),
-          })
-          return items
-        },
-        [],
-      )
-    : undefined
-  return {
-    requestId,
-    sourceType,
-    extractionMode: raw.extractionMode === 'style' ? 'style' : 'replicate',
-    viewId: typeof raw.viewId === 'number' ? raw.viewId : undefined,
-    title: typeof raw.title === 'string' ? raw.title : undefined,
-    fileName: typeof raw.fileName === 'string' ? raw.fileName : undefined,
-    pageUrl: typeof raw.pageUrl === 'string' ? raw.pageUrl : undefined,
-    pageTitle: typeof raw.pageTitle === 'string' ? raw.pageTitle : undefined,
-    sourceUrl: typeof raw.sourceUrl === 'string' ? raw.sourceUrl : undefined,
-    modelImageUrl: typeof raw.modelImageUrl === 'string' ? raw.modelImageUrl : undefined,
-    sourceRect,
-    referenceImages,
-  }
-}
-
 function localSourceRectFromCapture(
   request: DesktopBrowserAssetOverlayCaptureRequest,
   config: DesktopBrowserAssetOverlayConfig,
@@ -197,9 +122,16 @@ function captureFlyoutScale(source: OverlayCaptureFlyoutRect, target: OverlayCap
 }
 
 export function BrowserAssetOverlayApp(): JSX.Element {
+  const { t } = useTranslation()
   const desktop = React.useMemo(() => getDesktopBridge(), [])
   const browserBridge = React.useMemo(() => desktop?.browser, [desktop])
   const overlayBridge = React.useMemo(() => browserBridge?.assetOverlay, [browserBridge])
+  // 稳定身份：内联 lambda 会让 popover 的探测 effect 每次渲染重跑（拖拽期间高频打 IPC，实测拖入被打断）。
+  const probeCanvasImportAvailable = React.useMemo(() => (
+    overlayBridge?.canvasImportAvailable
+      ? () => overlayBridge.canvasImportAvailable!()
+      : undefined
+  ), [overlayBridge])
   const [config, setConfig] = React.useState<DesktopBrowserAssetOverlayConfig>({
     opened: false,
     viewId: null,
@@ -213,12 +145,9 @@ export function BrowserAssetOverlayApp(): JSX.Element {
   const [fullWindowModal, setFullWindowModal] = React.useState(false)
   const [captureEnabled, setCaptureEnabled] = React.useState(false)
   const [browserCaptureRequest, setBrowserCaptureRequest] = React.useState<BrowserAssetCaptureRequest | null>(null)
-  const [browserPromptCaptureRequest, setBrowserPromptCaptureRequest] =
-    React.useState<BrowserAssetPromptCaptureRequest | null>(null)
   const [captureFlyouts, setCaptureFlyouts] = React.useState<OverlayCaptureFlyout[]>([])
   const pendingCaptureFlyoutRef = React.useRef<DesktopBrowserAssetOverlayCaptureRequest | null>(null)
   const handledCaptureRequestIdRef = React.useRef<string | null>(null)
-  const handledPromptRequestIdRef = React.useRef<string | null>(null)
   const lastSentStateKeyRef = React.useRef<string | null>(null)
   const pointerDownRef = React.useRef(false)
   const interactiveRef = React.useRef<boolean | null>(null)
@@ -254,7 +183,6 @@ export function BrowserAssetOverlayApp(): JSX.Element {
         setDockMode(null)
         setPopoverRect(null)
         setBrowserCaptureRequest(null)
-        setBrowserPromptCaptureRequest(null)
       }
       const request = nextConfig.captureRequest
       const requestId = typeof request?.requestId === 'string' ? request.requestId : ''
@@ -263,11 +191,6 @@ export function BrowserAssetOverlayApp(): JSX.Element {
         const popoverRequest = captureRequestForPopover(request)
         if (popoverRequest) setBrowserCaptureRequest(popoverRequest)
         pendingCaptureFlyoutRef.current = request
-      }
-      const promptRequest = promptRequestForPopover(nextConfig.promptRequest)
-      if (promptRequest && handledPromptRequestIdRef.current !== promptRequest.requestId) {
-        handledPromptRequestIdRef.current = promptRequest.requestId
-        setBrowserPromptCaptureRequest(promptRequest)
       }
     })
     overlayBridge.ready?.()
@@ -372,24 +295,18 @@ export function BrowserAssetOverlayApp(): JSX.Element {
   )
 
   React.useEffect(() => {
-    const updateFromPoint = (x: number, y: number): void => {
-      setInteractive(pointerDownRef.current || pointInsidePopover(x, y))
-    }
-    const handlePointerMove = (event: PointerEvent): void => updateFromPoint(event.clientX, event.clientY)
     const handlePointerDown = (event: PointerEvent): void => {
       pointerDownRef.current = pointInsidePopover(event.clientX, event.clientY)
-      updateFromPoint(event.clientX, event.clientY)
+      setInteractive(pointerDownRef.current)
     }
-    const handlePointerUp = (event: PointerEvent): void => {
+    const handlePointerUp = (): void => {
       pointerDownRef.current = false
-      updateFromPoint(event.clientX, event.clientY)
+      setInteractive(false)
     }
-    window.addEventListener('pointermove', handlePointerMove, { capture: true })
     window.addEventListener('pointerdown', handlePointerDown, { capture: true })
     window.addEventListener('pointerup', handlePointerUp, { capture: true })
     window.addEventListener('pointercancel', handlePointerUp, { capture: true })
     return () => {
-      window.removeEventListener('pointermove', handlePointerMove, { capture: true })
       window.removeEventListener('pointerdown', handlePointerDown, { capture: true })
       window.removeEventListener('pointerup', handlePointerUp, { capture: true })
       window.removeEventListener('pointercancel', handlePointerUp, { capture: true })
@@ -397,8 +314,28 @@ export function BrowserAssetOverlayApp(): JSX.Element {
   }, [pointInsidePopover, setInteractive])
 
   React.useEffect(() => {
-    if (!config.opened) setInteractive(false)
-  }, [config.opened, setInteractive])
+    if (!config.opened || !fullWindowModal) {
+      if (!pointerDownRef.current) setInteractive(false)
+      return
+    }
+    setInteractive(true)
+  }, [config.opened, fullWindowModal, setInteractive])
+
+  React.useEffect(() => {
+    const finishDrag = (): void => {
+      pointerDownRef.current = false
+      // drop 落在卡片内时 hoverInteractive 已负责维持卡片命中；不要把 pointerInteractive
+      // 再置回 true，否则原生拖拽吞掉 pointermove/up 后，透明整窗会继续挡住网页。
+      interactiveRef.current = false
+      overlayBridge?.finishDrag?.()
+    }
+    window.addEventListener('drop', finishDrag, { capture: true })
+    window.addEventListener('dragend', finishDrag, { capture: true })
+    return () => {
+      window.removeEventListener('drop', finishDrag, { capture: true })
+      window.removeEventListener('dragend', finishDrag, { capture: true })
+    }
+  }, [overlayBridge])
 
   React.useEffect(() => {
     const pending = pendingCaptureFlyoutRef.current
@@ -425,40 +362,24 @@ export function BrowserAssetOverlayApp(): JSX.Element {
       if (!projectId) throw new Error('projectId is required')
       const viewId = config.viewId
       const fallbackTitle = input.title || input.fileName || (input.mediaType === 'video' ? '网页视频' : '网页图片')
-      // 直连拉取兜底：会话下载(带 cookie/Referer,能过防盗链)失败时退这条，别直接判「下载失败」。
-      const importViaRemoteUrl = async (): Promise<NomiBrowserAsset> => {
-        const asset = await desktop?.assets.importRemoteUrl({
-          projectId,
-          url: input.url,
-          kind: 'browser-capture',
-          fileName: input.fileName,
-        })
-        if (!asset) throw new Error('素材导入通道不可用')
-        return browserAssetFromDesktopAsset(asset, fallbackTitle)
+      // 原生素材盒只接受当前内置网页产生的拖拽；没有来源 WebContents 时不准换成另一套
+      // 无 Cookie/Referer 的网络栈重抓 URL，否则既破坏防盗链，也会把真实错误掩盖掉。
+      if (!viewId || !browserBridge?.importMedia || !canDownloadFromBrowserView(input.url)) {
+        throw new Error('来源页面会话已失效，请回到原网页重新拖入')
       }
-      if (viewId && browserBridge?.importMedia && canDownloadFromBrowserView(input.url)) {
-        try {
-          const asset = await browserBridge.importMedia({
-            viewId,
-            projectId,
-            url: input.url,
-            fileName: input.fileName,
-            title: input.title,
-            mediaType: input.mediaType,
-          })
-          return browserAssetFromDesktopAsset(asset, fallbackTitle)
-        } catch (sessionError) {
-          // 会话下载失败(防盗链头不够/内容类型/blob 跨界)→ 退直连拉取；两条都失败才抛真实原因。
-          try {
-            return await importViaRemoteUrl()
-          } catch {
-            throw sessionError instanceof Error ? sessionError : new Error(String(sessionError))
-          }
-        }
-      }
-      return importViaRemoteUrl()
+      const asset = await browserBridge.importMedia({
+        viewId,
+        projectId,
+        url: input.url,
+        fileName: input.fileName,
+        title: input.title,
+        mediaType: input.mediaType,
+      })
+      const mapped = browserAssetFromDesktopAsset(asset, fallbackTitle)
+      if (!mapped) throw new Error('导入的素材无法识别为图片或视频')
+      return mapped
     },
-    [browserBridge, config.viewId, desktop?.assets],
+    [browserBridge, config.viewId],
   )
 
   const handleOpenChange = React.useCallback(
@@ -499,7 +420,6 @@ export function BrowserAssetOverlayApp(): JSX.Element {
         surface="contained"
         placement="absolute"
         opened={config.opened}
-        showTrigger={false}
         onOpenChange={handleOpenChange}
         onWindowRectChange={handlePopoverRectChange}
         onFullWindowModalChange={setFullWindowModal}
@@ -510,9 +430,10 @@ export function BrowserAssetOverlayApp(): JSX.Element {
         browserCaptureEnabled={captureEnabled}
         browserCaptureDisabled={!config.viewId}
         browserCaptureRequest={browserCaptureRequest}
-        browserPromptCaptureRequest={browserPromptCaptureRequest}
         onBrowserCaptureToggle={toggleBrowserResourceCapture}
+        probeCanvasImportAvailable={probeCanvasImportAvailable}
       />
+      <ConfirmDialogHost />
       <AnimatePresence>
         {captureFlyouts.map((flyout) => (
           <motion.div
@@ -562,7 +483,7 @@ export function BrowserAssetOverlayApp(): JSX.Element {
               <>
                 <video src={flyout.url} muted playsInline className="block size-full bg-nomi-ink object-contain" />
                 <span className="absolute right-1 top-1 rounded-pill bg-nomi-accent px-1.5 py-0.5 text-micro font-semibold leading-none text-nomi-paper shadow-nomi-sm">
-                  视频
+                  {t('browserAssets.video')}
                 </span>
               </>
             ) : (

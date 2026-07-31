@@ -13,9 +13,11 @@ type Props = {
   node: GenerationCanvasNode
   downloading: boolean
   onDownload: (event: React.MouseEvent) => void
+  onPreview: () => void
 }
 
-export default function NodeVideoFrameToolbar({ node, downloading, onDownload }: Props): JSX.Element {
+export default function NodeVideoFrameToolbar({ node, downloading, onDownload, onPreview }: Props): JSX.Element {
+  const { t } = useTranslation()
   const [busy, setBusy] = React.useState<'first' | 'last' | null>(null)
   const [inspecting, setInspecting] = React.useState(false)
   const extract = (which: 'first' | 'last') => {

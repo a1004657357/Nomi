@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../utils/cn'
 import CreationAiPanel from './CreationAiPanel'
 import WorkbenchEditor from './WorkbenchEditor'
@@ -9,12 +10,17 @@ import { NomiAILabel, WorkbenchButton } from '../../design'
 import { useWorkbenchStore } from '../workbenchStore'
 
 export default function CreationWorkspace(): JSX.Element {
-  // 与生成区助手一致：一开始收着（浮起一个 pill），点开才展开成 344px 侧栏。
-  const [collapsed, setCollapsed] = React.useState(true)
+  const { t } = useTranslation()
+  // 创作助手默认展开成编辑器右侧的 344px 侧栏（用户拍板 2026-07-25：回到 3c2fe821 之前的常驻右栏）。
+  // 收起态放 store（非本地 useState）→ 跨页面/跨导航不重置，收起「粘住」（根治 3c2fe821 本地 useState 每次进页重置的问题）。
+  const collapsed = useWorkbenchStore((s) => s.creationAiCollapsed)
+  const setCollapsed = useWorkbenchStore((s) => s.setCreationAiCollapsed)
   // 一次性信号：打开示例/新项目时自动展开助手，让「拆镜头」CTA 一眼可见，消费后清掉。
   const autoOpen = useWorkbenchStore((s) => s.creationAssistantAutoOpen)
   const setAutoOpen = useWorkbenchStore((s) => s.setCreationAssistantAutoOpen)
-  // 编辑器「打开」时主列展开分镜方案编辑器，替换文档编辑器；收起则回文档、方案以卡片留在对话流（回看链路）。
+  // 原稿与分镜是同一创作阶段的两个工作面；方案存在后始终给出明确入口，避免“内容被替换”的错觉。
+  const storyboardPlan = useWorkbenchStore((s) => s.storyboardPlan)
+  const storyboardPlanCommitted = useWorkbenchStore((s) => s.storyboardPlanCommitted)
   const storyboardEditorOpen = useWorkbenchStore((s) => s.storyboardEditorOpen)
   const storyboardScriptOpen = useWorkbenchStore((s) => s.storyboardScriptOpen)
   React.useEffect(() => {
@@ -32,13 +38,13 @@ export default function CreationWorkspace(): JSX.Element {
         'pt-[22px] px-6 pb-6',
         'bg-workbench-bg',
         collapsed
-          ? 'grid grid-cols-[minmax(0,900px)] justify-center'
+          ? 'grid max-w-[900px] mx-auto'
           : cn(
-              'grid grid-cols-[minmax(0,900px)_344px] justify-center gap-5',
+              'grid grid-cols-[minmax(0,1fr)_344px] max-w-[1264px] mx-auto gap-5',
               'max-[1120px]:grid-cols-[minmax(0,1fr)] max-[1120px]:grid-rows-[minmax(420px,1fr)_minmax(320px,42vh)]',
             ),
       )}
-      aria-label="创作区"
+      aria-label={t('creationAi.workspace.aria')}
     >
       {storyboardEditorOpen ? <StoryboardPlanEditor /> : storyboardScriptOpen ? <StoryboardScriptPanel /> : <WorkbenchEditor />}
       {!storyboardEditorOpen && !storyboardScriptOpen ? (
@@ -53,10 +59,10 @@ export default function CreationWorkspace(): JSX.Element {
             'text-body-sm font-medium shadow-nomi-sm cursor-pointer',
             'hover:shadow-nomi-md hover:-translate-y-px',
           )}
-          aria-label="展开创作助手"
+          aria-label={t('creationAi.workspace.expandAssistant')}
           onClick={() => setCollapsed(false)}
         >
-          <NomiAILabel markSize={18} wordSize={13} suffix="创作" />
+          <NomiAILabel markSize={18} wordSize={13} suffix={t('creationAi.workspace.assistantSuffix')} />
         </WorkbenchButton>
       ) : (
         <CreationAiPanel onCollapse={() => setCollapsed(true)} />

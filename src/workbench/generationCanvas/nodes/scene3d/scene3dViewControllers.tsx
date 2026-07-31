@@ -1,5 +1,7 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { OrbitControls } from '@react-three/drei'
+import { SCENE_FIT_FOCUS_ID, fitEditorCameraToScene } from './scene3dFitView'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import {
@@ -28,6 +30,7 @@ import {
 } from './scene3dMath'
 import { objectGroundFootprint, objectVisualHalfHeight } from './scene3dCrowd'
 import { groundSpeedMultiplier } from './scene3dCharacterDrive'
+import { cameraWithPlaybackPosition, playbackCameraAtPlayhead } from './scene3dPlayback'
 import {
   type CaptureApi,
   type Scene3DCamera,
@@ -455,7 +458,23 @@ export function FocusController({
     const targetId = focusId.split(':')[0] || focusId
     const object = objects.find((candidate) => candidate.id === targetId)
     const sceneCamera = cameras.find((candidate) => candidate.id === targetId)
-    if (!object && !sceneCamera) return
+    if (!object && !sceneCamera) {
+      // 「看全场」哨兵：把全部对象+相机框回视锥（迷路一键回家，同 fit 数学治「进门看不见相机」）
+      if (targetId !== SCENE_FIT_FOCUS_ID) return
+      lastFocusRef.current = focusId
+      const pose = fitEditorCameraToScene(objects, cameras)
+      applyEditorCameraPose(camera, pose)
+      syncOrbitControlsTarget(controls, new THREE.Vector3(...pose.target))
+      onCameraChange({
+        position: pose.position,
+        target: pose.target,
+        rotation: eulerToArray(camera.rotation),
+        mode: 'fly',
+      })
+      onFocusConsumed()
+      invalidate()
+      return
+    }
     lastFocusRef.current = focusId
     const target = object ? objectFocusTarget(object) : cameraFocusTarget(sceneCamera!)
     const distance = object ? objectFocusDistance(object) : cameraFocusDistance(sceneCamera!)
@@ -502,6 +521,7 @@ export function CaptureBinder({
   cameras: Scene3DCamera[]
   setApi: (api: CaptureApi | null) => void
 }): null {
+  const { t } = useTranslation()
   const { gl, scene, camera, size } = useThree()
 
   React.useLayoutEffect(() => {
@@ -509,7 +529,15 @@ export function CaptureBinder({
       captureViewport: () => {
         const width = Math.max(1, Math.round(gl.domElement.width || size.width))
         const height = Math.max(1, Math.round(gl.domElement.height || size.height))
-        return captureScene(gl, scene, camera, width, height, '3D截图 - 当前视口', 'scene3d-viewport')
+        return captureScene(
+          gl,
+          scene,
+          camera,
+          width,
+          height,
+          t('scene3d.capture.viewportTitle'),
+          'scene3d-viewport',
+        )
       },
       captureCamera: (sceneCamera) => {
         const dimensions = aspectDimensions(sceneCamera.aspectRatio)
@@ -526,14 +554,14 @@ export function CaptureBinder({
           captureCamera,
           dimensions.width,
           dimensions.height,
-          `3D截图 - ${sceneCamera.name}`,
+          t('scene3d.capture.cameraTitle', { name: sceneCamera.name }),
           'scene3d-camera',
           true,
         )
       },
     })
     return () => setApi(null)
-  }, [camera, cameras, gl, scene, setApi, size.height, size.width])
+  }, [camera, cameras, gl, scene, setApi, size.height, size.width, t])
 
   return null
 }
@@ -603,5 +631,36 @@ export function CameraViewEditController({
     onCameraPatch(cameraData.id, { position, target, rotation })
   })
 
+  return null
+}
+
+// 成片预览（第2期）：主视口相机 live 跟随播放头，只读渲染当前 active 相机的镜头——对齐剪辑软件的节目监视器。
+// 与 CameraViewEditController（手动取景、把 editor 相机位姿写回场景相机）互斥、各司其职（「按模式拆分」原则）：
+// 那个是「调机位」（用户主导），这个是「看运镜回放」（播放头主导，不写回、不接管 fly）。
+export function PreviewCameraController({
+  state,
+  playheadRef,
+  activeTrajectoryIds,
+}: {
+  state: Scene3DState
+  playheadRef: React.MutableRefObject<number>
+  activeTrajectoryIds: ReadonlySet<string> | null
+}): null {
+  const { camera } = useThree()
+  const lookTarget = React.useRef(new THREE.Vector3())
+  useFrame(() => {
+    // 当前播放头处生效的相机（按 binding 时间窗挑）；无 active（未绑定/超窗）时回落第一台相机，保证有画面。
+    const active = playbackCameraAtPlayhead(state, playheadRef.current, activeTrajectoryIds)
+    const source = active?.camera ?? state.cameras[0]
+    if (!source) return
+    const posed = cameraWithPlaybackPosition(state, source, playheadRef.current, activeTrajectoryIds)
+    camera.position.set(posed.position[0], posed.position[1], posed.position[2])
+    lookTarget.current.set(posed.target[0], posed.target[1], posed.target[2])
+    camera.lookAt(lookTarget.current)
+    if (camera instanceof THREE.PerspectiveCamera && Math.abs(camera.fov - posed.fov) > 0.01) {
+      camera.fov = posed.fov
+      camera.updateProjectionMatrix()
+    }
+  })
   return null
 }

@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { EditorContent, type Editor, type JSONContent } from '@tiptap/react'
 import { IconFileImport, IconSparkles } from '@tabler/icons-react'
 import SelectionGeneratePopover from './SelectionGeneratePopover'
@@ -18,9 +19,6 @@ import {
   SCRIPT_IMPORT_ACCEPT,
   SCRIPT_IMPORT_MAX_BYTES,
 } from './scriptImportModel'
-
-const CREATION_PLACEHOLDER =
-  '从这里开始写你的故事、脚本或文案……  选中文字，点右侧即可生成图片 / 视频节点。'
 
 // 工具栏分组：格式按语义分 3 簇（强调 / 标题 / 列表·引用）靠左，历史（撤销/重做）推到右端。
 // 之前用一个 flex-1 spacer 把 9 个按钮全挤到左侧、右边 ~570px 浪费 —— 这里按语义两端锚定。
@@ -79,7 +77,7 @@ function WorkbenchEditorToolbar({
         'h-[44px] flex items-center gap-1 px-3',
         'border-b border-workbench-border-soft bg-workbench-surface',
       )}
-      aria-label="文本工具栏"
+      aria-label={t('creationAi.editor.toolbarAria')}
     >
       <WorkbenchIconButton
         className="workbench-editor-toolbar__button size-[30px]"
@@ -114,6 +112,7 @@ function WorkbenchEditorToolbar({
 }
 
 export default function WorkbenchEditor(): JSX.Element {
+  const { t } = useTranslation()
   const workbenchDocument = useWorkbenchStore((state) => state.workbenchDocument)
   const setWorkbenchDocument = useWorkbenchStore((state) => state.setWorkbenchDocument)
   const setCreationDocumentTools = useWorkbenchStore((state) => state.setCreationDocumentTools)
@@ -158,7 +157,7 @@ export default function WorkbenchEditor(): JSX.Element {
 
   const { editor, tools } = useNomiRichTextEditor({
     content: editorContent,
-    placeholder: CREATION_PLACEHOLDER,
+    placeholder: t('creationAi.editor.placeholder'),
     onChange: handleChange,
     onSelectionChange: handleSelectionChange,
   })
@@ -250,7 +249,7 @@ export default function WorkbenchEditor(): JSX.Element {
         'bg-workbench-surface-solid shadow-workbench-md',
         'overflow-hidden',
       )}
-      aria-label="创作文档编辑区"
+      aria-label={t('creationAi.editor.documentAria')}
       onKeyDown={(event) => event.stopPropagation()}
       onKeyUp={(event) => event.stopPropagation()}
     >
@@ -281,7 +280,8 @@ export default function WorkbenchEditor(): JSX.Element {
       <div
         ref={scrollRef}
         className={cn(
-          'workbench-editor__scroll', 'min-w-0 min-h-0 overflow-auto',
+          'workbench-editor__scroll',
+          'min-w-0 min-h-0 overflow-auto',
           // Tiptap Placeholder 渲染：空文档第一段显示 data-placeholder（仿 PromptEditor，
           // 补上创作编辑器缺失的 ::before 规则——根因，不是只在这一处贴症状）。
           '[&_.is-editor-empty]:before:content-[attr(data-placeholder)]',

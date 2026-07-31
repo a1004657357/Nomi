@@ -3,7 +3,7 @@ import { IconBrush, IconCrop, IconCube, IconDownload, IconFlipHorizontal, IconFl
 import { IMAGE_TRANSFORM_LABEL, type ImageGridSize, type ImageTransformOp } from './useNodeImageEditing'
 import type { CropGridSize } from './render/ImageCropGridOverlay'
 import { useResultDownload } from './useResultDownload'
-import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton, ToolbarDivider, ToolbarMenu } from './NodeFloatingToolbar'
+import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton, ToolbarDivider, ToolbarIconButton, ToolbarMenu } from './NodeFloatingToolbar'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import WhiteboardModal from './whiteboard/WhiteboardModal'
 import { inferWhiteboardAspectRatio, readWhiteboardState } from './whiteboard/whiteboardState'
@@ -25,6 +25,8 @@ type Props = {
   onTransform: (op: ImageTransformOp) => void
   onRemoveBackground?: () => void
   removeBackgroundBusy?: boolean
+  /** 打开共享图片全屏预览。 */
+  onPreview: () => void
   /** Tier1「定妆」：基于当前图建一个预填身份板提示词的新节点（不自动生成）。缺省不渲染该按钮。 */
   onMakeup?: () => void
   /** 用现有图片转 3D 配方创建可调相机的 GLB 代理。 */
@@ -43,23 +45,31 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
   }, [decomposeState])
   return (
     <>
-      <FloatingToolbarShell ariaLabel="图片操作">
+      <FloatingToolbarShell ariaLabel={t('generationCommon.imageToolbar.aria')}>
+        <ToolbarIconButton
+          icon={<IconMaximize size={I.size} stroke={I.stroke} />}
+          title={t('generationCommon.imageToolbar.fullscreen')}
+          ariaLabel={t('generationCommon.imageToolbar.fullscreenAria')}
+          disabled={!imageUrl}
+          onClick={onPreview}
+        />
+        <ToolbarDivider />
         {onMakeup ? (
           <ToolbarButton
             icon={<IconSparkles size={I.size} stroke={I.stroke} />}
-            label="定妆"
+            label={t('generationCommon.imageToolbar.makeup')}
             accent
-            title="定妆：基于这张图，预填一份角色/场景身份板提示词到新节点（不自动生成）"
+            title={t('generationCommon.imageToolbar.makeupHint')}
             onClick={onMakeup}
           />
         ) : null}
         <ToolbarMenu
           icon={decomposeBusy ? <NomiLoadingMark size={I.size} /> : <IconWand size={I.size} stroke={I.stroke} />}
-          label={decomposeBusy ? '拆解中' : 'AI 编辑'}
+          label={decomposeBusy ? t('generationCommon.imageToolbar.decomposing') : t('generationCommon.imageToolbar.aiEdit')}
           disabled={busy || !imageUrl}
           items={[
-            { icon: <IconLayersSubtract size={I.size} stroke={I.stroke} />, label: '拆解元素（拆成可编辑图层）', onClick: () => { void runDecompose() } },
-            { icon: <IconTypography size={I.size} stroke={I.stroke} />, label: '改字（保留字体改文字）', onClick: () => applyTextEdit(node) },
+            { icon: <IconLayersSubtract size={I.size} stroke={I.stroke} />, label: t('generationCommon.imageToolbar.decompose'), onClick: () => { void runDecompose() } },
+            { icon: <IconTypography size={I.size} stroke={I.stroke} />, label: t('generationCommon.imageToolbar.editText'), onClick: () => applyTextEdit(node) },
           ]}
         />
         {onCreate3dCameraProxy ? (
@@ -74,16 +84,16 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
         <ToolbarDivider />
         <ToolbarButton
           icon={<IconCrop size={I.size} stroke={I.stroke} />}
-          label="裁剪"
-          title="裁剪（可拖取景框，加入堆叠并设为主图）"
+          label={t('generationCommon.imageToolbar.crop')}
+          title={t('generationCommon.imageToolbar.cropHint')}
           disabled={busy}
           onClick={onCrop}
         />
         {onRemoveBackground ? (
           <ToolbarButton
             icon={removeBackgroundBusy ? <NomiLoadingMark size={I.size} /> : <IconScissors size={I.size} stroke={I.stroke} />}
-            label={removeBackgroundBusy ? '抠图中' : '抠图'}
-            title="抠图（去除背景，加入堆叠并设为主图）"
+            label={removeBackgroundBusy ? t('generationCommon.imageToolbar.removingBackground') : t('generationCommon.imageToolbar.removeBackground')}
+            title={t('generationCommon.imageToolbar.removeBackgroundHint')}
             disabled={busy}
             ariaBusy={removeBackgroundBusy}
             onClick={onRemoveBackground}
@@ -91,37 +101,41 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
         ) : null}
         <ToolbarMenu
           icon={<IconGridDots size={I.size} stroke={I.stroke} />}
-          label="切图"
+          label={t('generationCommon.imageToolbar.split')}
           disabled={busy}
           items={[
-            { icon: <IconLayoutGrid size={I.size} stroke={I.stroke} />, label: '四视图（2×2）', onClick: () => onGridSplit(2) },
-            { icon: <IconGrid3x3 size={I.size} stroke={I.stroke} />, label: '九宫格（3×3）', onClick: () => onGridSplit(3) },
+            { icon: <IconLayoutGrid size={I.size} stroke={I.stroke} />, label: t('generationCommon.imageToolbar.fourView'), onClick: () => onGridSplit(2) },
+            { icon: <IconGrid3x3 size={I.size} stroke={I.stroke} />, label: t('generationCommon.imageToolbar.gridNine'), onClick: () => onGridSplit(3) },
           ]}
         />
         <ToolbarMenu
           icon={<IconTransform size={I.size} stroke={I.stroke} />}
-          label="变换"
+          label={t('generationCommon.imageToolbar.transform')}
           disabled={busy}
           items={([
             { op: 'rotate-left' as const, icon: <IconRotate2 size={I.size} stroke={I.stroke} /> },
             { op: 'rotate-right' as const, icon: <IconRotateClockwise2 size={I.size} stroke={I.stroke} /> },
             { op: 'flip-h' as const, icon: <IconFlipHorizontal size={I.size} stroke={I.stroke} /> },
             { op: 'flip-v' as const, icon: <IconFlipVertical size={I.size} stroke={I.stroke} /> },
-          ]).map(({ op, icon }) => ({ icon, label: IMAGE_TRANSFORM_LABEL[op], onClick: () => onTransform(op) }))}
+          ]).map(({ op, icon }) => ({
+            icon,
+            label: t(`generationCommon.imageToolbar.${op === 'rotate-left' ? 'rotateLeft' : op === 'rotate-right' ? 'rotateRight' : op === 'flip-h' ? 'flipHorizontal' : 'flipVertical'}` as 'generationCommon.imageToolbar.rotateLeft'),
+            onClick: () => onTransform(op),
+          }))}
         />
         <ToolbarDivider />
         <ToolbarButton
           icon={<IconBrush size={I.size} stroke={I.stroke} />}
-          label="画板"
-          title="在画板中编辑（自动导入当前图片）"
+          label={t('generationCommon.imageToolbar.whiteboard')}
+          title={t('generationCommon.imageToolbar.whiteboardHint')}
           disabled={busy || !imageUrl}
           onClick={() => setWhiteboardOpen(true)}
         />
         <ToolbarDivider />
         <ToolbarButton
           icon={<IconDownload size={I.size} stroke={I.stroke} />}
-          label="下载"
-          title="下载 / 另存到本地"
+          label={t('generationCommon.imageToolbar.download')}
+          title={t('generationCommon.imageToolbar.downloadHint')}
           disabled={downloading}
           onClick={download}
         />
@@ -130,7 +144,7 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
         <WhiteboardModal
           nodeId={node.id}
           sourceKind="image"
-          nodeTitle={`${node.title || '图片'} · ${decomposeState ? '拆解元素' : '画板'}`}
+          nodeTitle={`${node.title || t('generationCommon.imageToolbar.image')} · ${decomposeState ? t('generationCommon.imageToolbar.decomposeTitle') : t('generationCommon.imageToolbar.whiteboard')}`}
           initialState={decomposeState ?? readWhiteboardState(node)}
           {...(decomposeState
             ? {}

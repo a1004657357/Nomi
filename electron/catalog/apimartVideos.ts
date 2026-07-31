@@ -1,6 +1,8 @@
-// apimart 视频模型的 curated 传输配方（6 个高频视频模型，单源）。契约见
+// apimart 视频模型的 curated 传输配方（11 个高频视频模型，单源）。契约见
 // docs/plan/2026-06-07-apimart-curated-onboarding.md 附录 A（R5 抓 + Sora 2 已真 mp4 验证）；
 // VEO 3.1 的别名/范围归一参考 R6 对标（Infinite-Canvas 的 apimart_veo31_* helper）。
+// 2026-07-29 增补（各自照 docs.apimart.ai 当日文档对账）：Vidu Q3（参考生，无 t2v）、可灵 3.0 Turbo、
+// HappyHorse 1.1（单 model 字段自动路由）、Wan 2.7 升级角色参考（wan2.7-r2v，per-mode modelEnum 通道）。
 //
 // apimart 视频创建是扁平 body：POST /v1/videos/generations { model, prompt, <按模型不同的字段> }
 //   → { code:200, data:[{ status:"submitted", task_id }] }。轮询/结果与图片同构（已验证视频结果
@@ -18,7 +20,7 @@ import { APIMART_CREATE_TASK_ID_PATH, APIMART_STATUS_MAPPING, APIMART_VIDEO_QUER
 
 const CREATE_HEADERS = { Authorization: "Bearer {{user_api_key}}", "Content-Type": "application/json" };
 
-// model 字段缺省取 catalog 行 modelKey；变体合并的模型（Seedance：1 catalog 行 + 4 变体）改取
+// model 字段缺省取 catalog 行 modelKey；变体合并的模型（Seedance：1 catalog 行 + 3 变体）改取
 // {{request.params.model}}（值来自档案当前变体的 modelKey，同 happyhorse modelEnum 通道）。
 function videoCreateOp(bodyFields: Record<string, unknown>, modelRef = "{{model.modelKey}}", paramMap?: ParamMap): HttpOperation {
   return {
@@ -44,6 +46,7 @@ const VARIANT_MODEL_REF = "{{request.params.model}}";
 const ASPECT = "{{request.params.aspect_ratio}}";
 const SIZE = "{{request.params.size}}";
 const RESOLUTION = "{{request.params.resolution}}";
+const QUALITY = "{{request.params.quality}}";
 const DURATION = "{{request.params.duration}}";
 const MODE = "{{request.params.mode}}";
 const AUDIO = "{{request.params.audio}}";
@@ -59,7 +62,7 @@ const GENERATION_TYPE = "{{request.params.generation_type}}"; // 首尾帧/参�
 // 由 archetypeMeta combineSlotsInto 在构造层组装，与 image_urls 互斥（同 body，非当前模式键自动丢）。
 const IMAGE_WITH_ROLES = "{{request.params.image_with_roles}}";
 
-// Seedance 四变体共享的 body 形状（单源 P1，见下方 APIMART_VIDEO_MODELS 注释）。
+// Seedance 三变体共享的 body 形状（单源 P1，见下方 APIMART_VIDEO_MODELS 注释）。
 const SEEDANCE_T2V_BODY = { size: SIZE, resolution: RESOLUTION, duration: DURATION, seed: SEED, generate_audio: GEN_AUDIO };
 const SEEDANCE_I2V_BODY = { size: SIZE, resolution: RESOLUTION, duration: DURATION, image_urls: IMAGE_URLS, video_urls: VIDEO_URLS, audio_urls: AUDIO_URLS, image_with_roles: IMAGE_WITH_ROLES, seed: SEED, generate_audio: GEN_AUDIO };
 
@@ -78,23 +81,52 @@ function videoModel(p: {
   idKey?: string;
   /** body 的 model 字段引用。缺省 {{model.modelKey}}；变体合并模型传 VARIANT_MODEL_REF。 */
   modelRef?: string;
-  t2vBody: Record<string, unknown>;
+  /** 省略 = 该模型无纯文生模式（Vidu Q3 参考生：image_urls 必填，只有 i2v mapping）。 */
+  t2vBody?: Record<string, unknown>;
   i2vBody?: Record<string, unknown>;
   /** i2v 模式「故意不发」的 canonical 参数（比例由图自动决定）。明示 drop 满足铁律不变量，行为不变。 */
   i2vDrops?: string[];
 }): ApimartVideoModel {
   const idKey = p.idKey ?? p.archetypeId;
-  const mappings: ApimartVideoModel["mappings"] = [
-    { id: `seed-apimart-${idKey}-text_to_video`, taskKind: "text_to_video", name: `${p.labelZh} · 文生视频`, create: videoCreateOp(p.t2vBody, p.modelRef) },
-  ];
+  const mappings: ApimartVideoModel["mappings"] = [];
+  if (p.t2vBody) {
+    mappings.push({ id: `seed-apimart-${idKey}-text_to_video`, taskKind: "text_to_video", name: `${p.labelZh} · 文生视频`, create: videoCreateOp(p.t2vBody, p.modelRef) });
+  }
   if (p.i2vBody) {
     mappings.push({ id: `seed-apimart-${idKey}-image_to_video`, taskKind: "image_to_video", name: `${p.labelZh} · 图生视频`, create: videoCreateOp(p.i2vBody, p.modelRef, p.i2vDrops?.length ? dropParamMap(p.i2vDrops) : undefined) });
   }
   return { modelKey: p.modelKey, labelZh: p.labelZh, archetypeId: p.archetypeId, mappings };
 }
 
-/** 6 个 apimart 视频模型（单源）。 */
+/** 11 个 apimart 视频模型（单源）。 */
 export const APIMART_VIDEO_MODELS: ApimartVideoModel[] = [
+  // Vidu Q3（2026-07-29）：参考生视频，1-7 张参考图必填、无纯文生 → 只种 i2v mapping。
+  // 变体（标准 viduq3 / Mix viduq3-mix）→ body model 取 {{request.params.model}}。
+  videoModel({
+    modelKey: "viduq3", labelZh: "Vidu Q3", archetypeId: "vidu-q3", modelRef: VARIANT_MODEL_REF,
+    i2vBody: { duration: DURATION, resolution: RESOLUTION, aspect_ratio: ASPECT, image_urls: IMAGE_URLS, seed: SEED },
+  }),
+  // 可灵 3.0 Turbo（2026-07-29）：无画质档（resolution 代替 mode），图生=单张 first_frame_image 字符串、
+  // 比例随首帧（i2v 不声明 aspect_ratio，无需 drop）。watermark 不发=默认无。
+  videoModel({
+    modelKey: "kling-3.0-turbo", labelZh: "可灵 3.0 Turbo", archetypeId: "kling-3.0-turbo",
+    t2vBody: { aspect_ratio: ASPECT, resolution: RESOLUTION, duration: DURATION },
+    i2vBody: { resolution: RESOLUTION, duration: DURATION, first_frame_image: FIRST_FRAME_IMAGE },
+  }),
+  // HappyHorse 1.1（2026-07-29）：单 model id，上游按字段自动路由（first_frame_image=图生 /
+  // image_urls 1-9=角色参考）。i2v/ref 共用一条 i2v mapping：互斥由 M2 模式投影保证（非当前模式键不进 body）；
+  // size 仅 t2v/ref 模式声明（图生被官方忽略→不声明不发，同 body 键自动丢）。
+  videoModel({
+    modelKey: "happyhorse-1.1", labelZh: "HappyHorse 1.1", archetypeId: "happyhorse-1.1",
+    t2vBody: { resolution: RESOLUTION, size: SIZE, duration: DURATION, seed: SEED },
+    i2vBody: { resolution: RESOLUTION, size: SIZE, duration: DURATION, seed: SEED, first_frame_image: FIRST_FRAME_IMAGE, image_urls: IMAGE_URLS },
+  }),
+  // Grok Imagine 1.5：文生/图生共用标准视频端点。图生最多 7 图，比例自动跟随参考图，故不发 size。
+  videoModel({
+    modelKey: "grok-imagine-1.5-video-apimart", labelZh: "Grok Imagine 1.5", archetypeId: "grok-imagine-1.5-video",
+    t2vBody: { size: SIZE, quality: QUALITY, duration: DURATION },
+    i2vBody: { quality: QUALITY, duration: DURATION, image_urls: IMAGE_URLS },
+  }),
   // Sora 2：变体（标准 sora-2 / Pro sora-2-pro）→ body model 取 {{request.params.model}}。duration 离散枚举。
   videoModel({
     modelKey: "sora-2", labelZh: "Sora 2", archetypeId: "sora-2", modelRef: VARIANT_MODEL_REF,
@@ -117,17 +149,20 @@ export const APIMART_VIDEO_MODELS: ApimartVideoModel[] = [
     i2vBody: { mode: MODE, duration: DURATION, image_urls: IMAGE_URLS, audio: AUDIO, negative_prompt: NEGATIVE_PROMPT },
     i2vDrops: ["aspect_ratio"], // i2v 比例由首/尾帧决定
   }),
-  // Seedance 2.0：变体合并（2026-06-16）——原 4 个独立 catalog 行（标准/fast/face/fast-face）收成 **1 个**。
-  // 4 变体由档案 variants 声明（seedanceApimart.ts），用户经 VariantBar 切换；body 的 model 字段取
+  // Seedance 2.0：catalog 始终只有 **1 个**基础行；档案提供 Seedance 2.0 / Fast / Mini 三种模式。
+  // 3 变体由档案 variants 声明（seedanceApimart.ts），用户经 VariantBar 切换；body 的 model 字段取
   // {{request.params.model}}（= 档案当前变体的 modelKey，如 doubao-seedance-2.0-fast），同 happyhorse 通道。
   // body 形状一致（SEEDANCE_*_BODY 单源 P1）：i2vBody 一条覆盖 图生/全能参考/首尾帧 三模式——
   // image_urls + video_urls/audio_urls + image_with_roles(与 image_urls 互斥) + seed；空键由模板自动丢（M2）。
   videoModel({ modelKey: "doubao-seedance-2.0", labelZh: "Seedance 2.0", archetypeId: "seedance-2-apimart", modelRef: VARIANT_MODEL_REF, t2vBody: SEEDANCE_T2V_BODY, i2vBody: SEEDANCE_I2V_BODY }),
+  // Wan 2.7（2026-07-29 升级角色参考）：三模式经 per-mode modelEnum 发不同 model（t2v/i2v=wan2.7、
+  // 角色参考=wan2.7-r2v）→ body model 改取 {{request.params.model}}。i2v/ref 共用一条 i2v mapping：
+  // i2v 走 image_urls（首/尾帧）；ref 走 image_with_roles（combineSlotsInto 产 [{url,role:'reference_image'}]）
+  // + video_urls；互斥由 M2 模式投影保证。size 从 i2v 模式移除（官方忽略 → 不声明不发，替代旧 drops 明示）。
   videoModel({
-    modelKey: "wan2.7", labelZh: "Wan 2.7", archetypeId: "wan-2.7",
+    modelKey: "wan2.7", labelZh: "Wan 2.7", archetypeId: "wan-2.7", modelRef: VARIANT_MODEL_REF,
     t2vBody: { size: SIZE, resolution: RESOLUTION, duration: DURATION, negative_prompt: NEGATIVE_PROMPT },
-    i2vBody: { resolution: RESOLUTION, duration: DURATION, image_urls: IMAGE_URLS, negative_prompt: NEGATIVE_PROMPT },
-    i2vDrops: ["size"], // wan i2v 比例（size）由参考帧决定
+    i2vBody: { size: SIZE, resolution: RESOLUTION, duration: DURATION, image_urls: IMAGE_URLS, image_with_roles: IMAGE_WITH_ROLES, video_urls: VIDEO_URLS, negative_prompt: NEGATIVE_PROMPT, seed: SEED },
   }),
   // Hailuo 2.3：无 aspect_ratio；图生视频用 first_frame_image（字符串，非数组）。变体（标准 / Fast）→ {{request.params.model}}。
   videoModel({

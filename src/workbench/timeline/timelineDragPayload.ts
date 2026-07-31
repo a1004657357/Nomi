@@ -10,6 +10,7 @@ export type TimelineClipDragPayload = {
 
 export type TimelineGenerationNodeDragPayload = {
   kind: 'generationNode'
+  nodeId: string
   node: GenerationCanvasNode
   resultId?: string
 }
@@ -23,8 +24,10 @@ function parseJsonPayload(value: string): unknown {
 }
 
 export function encodeTimelineGenerationNodeDragPayload(node: GenerationCanvasNode, resultId?: string): string {
+  const nodeId = String(node.id || '').trim()
   return JSON.stringify({
     kind: 'generationNode',
+    nodeId,
     node,
     ...(resultId ? { resultId } : {}),
   } satisfies TimelineGenerationNodeDragPayload)
@@ -33,13 +36,18 @@ export function encodeTimelineGenerationNodeDragPayload(node: GenerationCanvasNo
 export function decodeTimelineGenerationNodeDragPayload(value: string): TimelineGenerationNodeDragPayload | null {
   const parsed = parseJsonPayload(value)
   if (!parsed || typeof parsed !== 'object') return null
-  const payload = parsed as { kind?: unknown; node?: unknown; resultId?: unknown }
+  const payload = parsed as { kind?: unknown; nodeId?: unknown; node?: unknown; resultId?: unknown }
   if (payload.kind !== 'generationNode' || !payload.node || typeof payload.node !== 'object') return null
   const node = payload.node as GenerationCanvasNode
-  const id = typeof node.id === 'string' ? node.id.trim() : ''
+  const id = typeof payload.nodeId === 'string' && payload.nodeId.trim()
+    ? payload.nodeId.trim()
+    : typeof node.id === 'string'
+      ? node.id.trim()
+      : ''
   if (!id) return null
   return {
     kind: 'generationNode',
+    nodeId: id,
     node: {
       ...node,
       id,

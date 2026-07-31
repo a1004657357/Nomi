@@ -310,7 +310,7 @@
       <a href="/">首页</a>
       <a href="#first-video">第一条成片</a>
       <a href="#scene3d">3D 导演台</a>
-      <a href="#download" class="cta">下载 v0.16.2</a>
+      <a href="#download" class="cta">下载最新版</a>
     </nav>
   </div>
 </header>
@@ -423,7 +423,7 @@
           <div class="section-kicker">04 / Scene 3D</div>
           <h2>3D 导演台：把镜头搭出来。</h2>
         </div>
-        <p class="section-lead">你可以像导演置景一样，放白模、放道具、摆姿势、架相机。v0.16.2 延续了 0.16 系列的姿势校准，坐、蹲、跪、指向、举手等参考图更稳定。</p>
+        <p class="section-lead">你可以像导演置景一样，放白模、放道具、摆姿势、架相机。0.16 系列校准过坐、蹲、跪、指向、举手等白模姿势，参考图更稳定。</p>
       </div>
       <figure class="visual">
         <img src="/assets/guide/scene3d-director.svg" alt="3D 导演台：摆人物、道具、相机和运镜轨迹" width="1200" height="620" />
@@ -466,7 +466,7 @@
       <div class="tips">
         <div class="tip"><strong>AI 助手 / 拆镜头不工作</strong><p>检查是否接了文本模型。只接图片或视频模型，不等于有“文本大脑”。</p></div>
         <div class="tip"><strong>每个镜头人物不一致</strong><p>把角色定妆图接到每个镜头，或者用同一张 3D 参考图锁空间关系。</p></div>
-        <div class="tip"><strong>图生视频没按原图来</strong><p>使用最新版 v0.16.2，并确认参考图已经连接到视频节点的参考输入。</p></div>
+        <div class="tip"><strong>图生视频没按原图来</strong><p>使用最新版 Nomi，并确认参考图已经连接到视频节点的参考输入。</p></div>
         <div class="tip"><strong>想要精确对口型</strong><p>当前不把对口型当作稳定主链路。先做画面和运镜，声音和口型后续再细化。</p></div>
       </div>
     </div>
@@ -477,7 +477,7 @@
       <div class="section-head">
         <div>
           <div class="section-kicker">07 / Download</div>
-          <h2>下载最新版 v0.16.2。</h2>
+          <h2>下载最新版 <span data-latest-version>v0.18.1</span>。</h2>
         </div>
         <p class="section-lead">Windows 和 Mac 都有安装包。Mac 不确定芯片时，左上角苹果图标 → 关于本机 → 看“芯片”。</p>
       </div>
@@ -508,5 +508,21 @@
     <div><a href="/">首页</a> · <a href="/handbook.html">一页上手</a> · <a href="https://github.com/aqm857886159/Nomi">GitHub</a></div>
   </div>
 </footer>
+
+<script>
+  // 版本号随 GitHub 最新 release 自动更新，页面永不显示过期版本（下载链接已用 /releases/latest）。
+  (function () {
+    fetch('https://api.github.com/repos/aqm857886159/Nomi/releases/latest', { headers: { 'Accept': 'application/vnd.github+json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (rel) {
+        if (!rel) return;
+        var tag = (rel.tag_name || '').trim();
+        if (!tag) return;
+        if (tag[0] !== 'v') tag = 'v' + tag;
+        document.querySelectorAll('[data-latest-version]').forEach(function (el) { el.textContent = tag; });
+      })
+      .catch(function () { /* 离线/限流时保留静态兜底 */ });
+  })();
+</script>
 </body>
 </html>

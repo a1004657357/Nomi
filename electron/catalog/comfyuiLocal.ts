@@ -50,18 +50,127 @@ function buildViewUrl(baseUrl: string, img: Record<string, unknown>): string {
   return `${base}/view?${qs}`;
 }
 
-/** 从 outputs 里找第一个「某节点某键的数组第一项带 filename」的产物项（供图/视频各扫各的键）。 */
-function firstOutputAsset(outputs: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> | null {
-  for (const node of Object.values(outputs)) {
-    if (!isRec(node)) continue;
-    for (const key of keys) {
-      const arr = node[key];
-      if (Array.isArray(arr) && arr.length > 0 && isRec(arr[0]) && typeof arr[0].filename === "string") {
-        return arr[0] as Record<string, unknown>;
-      }
-    }
-  }
+type ComfyAssetKind = "image" | "video";
+
+// 落盘扩展名集合（实查内置 SaveImage/SaveAnimatedWEBP/SaveAnimatedPNG、VHS_VideoCombine、原生 SaveVideo、
+// 社区 save-image-extended[AVIF/WebP/JPEG]，docs.comfy.org + 各节点源 2026-07）——放宽到含 heic/jxl/ts/flv 等
+// 少见但真实会出现的格式，减少「出了图却不认」的漏拉。
+const IMAGE_EXTENSIONS = new Set([
+  "apng", "avif", "bmp", "gif", "heic", "heif", "ico", "jfif", "jpeg", "jpg", "jxl",
+  "png", "svg", "tga", "tif", "tiff", "webp",
+]);
+const VIDEO_EXTENSIONS = new Set([
+  "3gp", "avi", "flv", "m2ts", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "ogv", "ts", "webm",
+]);
+// 中间产物 / 非可预览文件：即便带完整 {filename,subfolder,type} 三元组也不当产物拉
+// （SaveLatent 同样出 /view 三元组，靠这条挡住，别把 latent/权重/文本误当图）。
+const NON_MEDIA_EXTENSIONS = new Set([
+  "latent", "safetensors", "ckpt", "pt", "pth", "bin", "gguf", "onnx", "pkl",
+  "json", "txt", "yaml", "yml", "csv", "npy", "npz",
+]);
+const VIEW_FOLDER_TYPES = new Set(["output", "temp", "input"]);
+
+function hasFilename(value: unknown): value is Record<string, unknown> {
+  return isRec(value) && typeof value.filename === "string" && value.filename.trim().length > 0;
+}
+
+function assetExtension(asset: Record<string, unknown>): string {
+  const filename = String(asset.filename || "").split(/[?#]/, 1)[0];
+  return filename.includes(".") ? filename.slice(filename.lastIndexOf(".") + 1).toLowerCase() : "";
+}
+
+/**
+ * 判一个产物项是图还是视频，判不了返 null（跳过）。判据按「可信度」排序、不写死节点名（P4 通用）：
+ *   ① 文件扩展名（最可信——.mp4 就是视频，管它挂在哪个键下；治「视频挂在非 gifs/videos 键 → 被键名误判成图 →
+ *      视频路读 video_url 读空 → 一直轮询到超时」）；② 已知中间产物扩展名 → 跳过（挡 latent/权重/文本）；
+ *   ③ format/mime；④ 父键名兜底（images/preview→图，gifs/videos→视频）；
+ *   ⑤ 最后「不漏」兜底：带完整 ComfyUI /view 三元组（filename+subfolder+type∈output/temp/input）但仍判不出的
+ *      未知扩展名 → 当图拉（②已挡掉中间产物，剩下极可能是我们没枚举的新图片格式；代价：未知**视频**格式会被
+ *      当图 → 视频路仍漏，属可接受的保守取舍）。
+ */
+function kindFromAsset(asset: Record<string, unknown>, parentKey: string): ComfyAssetKind | null {
+  const extension = assetExtension(asset);
+  if (VIDEO_EXTENSIONS.has(extension)) return "video";
+  if (IMAGE_EXTENSIONS.has(extension)) return "image";
+  if (NON_MEDIA_EXTENSIONS.has(extension)) return null;
+
+  const format = [asset.format, asset.mime_type, asset.mimeType, asset.content_type]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  if (format.includes("video/")) return "video";
+  if (format.includes("image/")) return "image";
+
+  const key = parentKey.toLowerCase();
+  if (key === "images" || key === "image" || key.includes("preview")) return "image";
+  if (key === "gifs" || key === "videos" || key === "video") return "video";
+
+  const hasViewTriple = typeof asset.subfolder === "string" && typeof asset.type === "string" && VIEW_FOLDER_TYPES.has(asset.type);
+  if (hasViewTriple && extension.length > 0) return "image";
   return null;
+}
+
+/**
+ * 递归扫描节点输出、按结构特征（不写死节点名）识别第一张图 + 第一个视频。判类型交给 kindFromAsset
+ * （扩展名→中间产物挡→mime→键名→/view 三元组兜底）；这样兼容 result/files/saved_files/output 等任意
+ * 自定义保存节点的键名，同时不会把 latent/checkpoint 误当成可预览产物。标准键（gifs/videos/images）先访问，
+ * 只是为了同节点同时出「预览图 + 最终视频」时选对，不影响自定义键的识别。
+ */
+function findOutputAssets(outputs: Record<string, unknown>): { image: Record<string, unknown> | null; video: Record<string, unknown> | null } {
+  let image: Record<string, unknown> | null = null;
+  let video: Record<string, unknown> | null = null;
+  const seen = new Set<unknown>();
+
+  const visit = (value: unknown, parentKey = ""): void => {
+    if (image && video) return;
+    if ((isRec(value) || Array.isArray(value)) && seen.has(value)) return;
+    if (isRec(value) || Array.isArray(value)) seen.add(value);
+
+    if (hasFilename(value)) {
+      const kind = kindFromAsset(value, parentKey);
+      if (kind === "image" && !image) image = value;
+      if (kind === "video" && !video) video = value;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, parentKey);
+      return;
+    }
+    if (!isRec(value)) return;
+
+    // 标准键优先，避免同一节点同时带预览图和最终视频时选错。
+    for (const key of ["gifs", "videos", "images"]) {
+      if (key in value) visit(value[key], key);
+    }
+    for (const [key, nested] of Object.entries(value)) {
+      if (key === "gifs" || key === "videos" || key === "images") continue;
+      visit(nested, key);
+    }
+  };
+
+  visit(outputs);
+  return { image, video };
+}
+
+/** 找到真正的 history entry，兼容动态 prompt_id、多顶层字段以及 data/history/result 包装。 */
+function findHistoryEntry(response: Record<string, unknown>): Record<string, unknown> | null {
+  if (isRec(response.outputs) || isRec(response.status)) return response;
+
+  const seen = new Set<unknown>();
+  const candidates: Record<string, unknown>[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      if (seen.has(value)) return;
+      seen.add(value);
+      for (const item of value) visit(item);
+      return;
+    }
+    if (!isRec(value) || seen.has(value)) return;
+    seen.add(value);
+    if (isRec(value.outputs) || isRec(value.status)) candidates.push(value);
+    for (const nested of Object.values(value)) visit(nested);
+  };
+  visit(response);
+  return candidates.find((entry) => isRec(entry.outputs)) ?? candidates[0] ?? null;
 }
 
 /**
@@ -71,15 +180,15 @@ function firstOutputAsset(outputs: Record<string, unknown>, keys: readonly strin
  *       实查 Kosinkadink/ComfyUI-VideoHelperSuite + docs.comfy.org 2026-07），图片键 images。两者可同时出
  *       （视频 + 预览帧）→ 各出各的 key，让 mapping 的 response_mapping 各取所需（图片路读 image_url、视频路读 video_url）。
  *   · 失败：status.status_str==="error" → { error }（runtime → failed，fail fast 不空转到超时）；
- *   · 未完成：空 {} / outputs 未出现 / 有 outputs 但无可识别产物 → 原样返回（无 *_url → 回落 queued → 继续轮询）。
+ *   · 未完成：空 {} / outputs 未出现 / 明确 completed:false 且无可识别产物 → 原样返回（继续轮询）；
+ *   · 完成但无文件：返回 { error }，提示工作流补保存输出节点，避免一直轮询到超时。
  * 纯函数（导出供单测），注册为副作用（seedBuiltins 于启动期 import 本文件 → 任务触发时表已就绪）。
  */
 export const comfyuiHistoryTransform: ResponseTransformFn = (response, { baseUrl }) => {
   if (!isRec(response)) return response;
-  const keys = Object.keys(response);
-  // /history/{id} 是单键对象（键=prompt_id）；空 {} = 任务未进 history → 原样（继续轮询）。
-  const entry = keys.length === 1 && isRec(response[keys[0]]) ? (response[keys[0]] as Record<string, unknown>) : response;
-  if (!isRec(entry)) return response;
+  // 空 {} = 任务未进 history；非空响应则递归定位真正的 prompt history entry。
+  const entry = findHistoryEntry(response);
+  if (!entry) return response;
 
   const status = isRec(entry.status) ? entry.status : null;
   if (status && status.status_str === "error") {
@@ -88,9 +197,16 @@ export const comfyuiHistoryTransform: ResponseTransformFn = (response, { baseUrl
 
   const outputs = isRec(entry.outputs) ? entry.outputs : null;
   if (!outputs) return response; // outputs 未出现 → 未完成
-  const video = firstOutputAsset(outputs, ["gifs", "videos"]);
-  const image = firstOutputAsset(outputs, ["images"]);
-  if (!video && !image) return response; // 有 outputs 但无可识别产物（其它输出类型）→ 原样
+  const { video, image } = findOutputAssets(outputs);
+  if (!video && !image) {
+    const statusText = typeof status?.status_str === "string" ? status.status_str.toLowerCase() : "";
+    const explicitlyIncomplete = status?.completed === false;
+    const completed = status?.completed === true || (!explicitlyIncomplete && ["success", "completed", "complete"].includes(statusText));
+    if (completed) {
+      return { error: "ComfyUI 已生成完成，但工作流没有返回可下载的图片或视频文件（请检查输出节点是否保存文件）" };
+    }
+    return response;
+  }
   return {
     ...(video ? { video_url: buildViewUrl(baseUrl, video) } : {}),
     ...(image ? { image_url: buildViewUrl(baseUrl, image) } : {}),

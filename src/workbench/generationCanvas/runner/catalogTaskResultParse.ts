@@ -78,9 +78,8 @@ function describeTaskFailure(result: TaskResultDto): string {
   return suffix ? `${prefix} (${suffix})` : prefix
 }
 
-function readDurationSeconds(node: GenerationCanvasNode): number | undefined {
-  const meta = node.meta || {}
-  return asFiniteNumber(meta.durationSeconds) ?? asFiniteNumber(meta.videoDuration)
+function readDurationSeconds(asset: { durationSeconds?: unknown } | null | undefined): number | undefined {
+  return asFiniteNumber(asset?.durationSeconds)
 }
 
 export function normalizeCatalogTaskResult(result: TaskResultDto, node: GenerationCanvasNode): GenerationNodeResult {
@@ -90,7 +89,7 @@ export function normalizeCatalogTaskResult(result: TaskResultDto, node: Generati
   // C5: 文本任务没有 asset，文本在 raw 里。单独成支，不走下面的图片/视频 asset 逻辑。
   if (TEXT_TASK_KINDS.has(result.kind)) {
     const text = extractTextFromChatRaw(result.raw)
-    if (!text) throw new Error('模型任务完成但没有返回文本内容')
+    if (!text) throw new Error(i18n.t('generationCommon.error.noText'))
     const provenance = extractProvenanceFromTaskResult(result)
     return {
       id: `${node.id}-${result.id || Date.now()}`,

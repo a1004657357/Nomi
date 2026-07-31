@@ -23,6 +23,7 @@ type Props = {
 }
 
 function SceneCardNodeImpl({ node }: Props): JSX.Element {
+  const { t } = useTranslation()
   const meta = readSceneMeta(node)
   const usageCount = useNodeUsageCount(node.id, node.title)
   const variantCount = useNodeVariantCount(node.id)
@@ -44,7 +45,7 @@ function SceneCardNodeImpl({ node }: Props): JSX.Element {
             className="w-full h-full object-contain object-center select-none pointer-events-none"
           />
         ) : (
-          <UploadFallback accept="image/*" label="场景图" onUpload={handleUpload} />
+          <UploadFallback accept="image/*" label={t('generationCommon.card.scene.image')} onUpload={handleUpload} />
         )}
       </div>
 
@@ -61,7 +62,7 @@ function SceneCardNodeImpl({ node }: Props): JSX.Element {
             <EditableNodeTitle
               nodeId={node.id}
               value={node.title || ''}
-              placeholder="未命名场景"
+              placeholder={t('generationCommon.card.scene.unnamed')}
               className="text-nomi-paper"
             />
             <span className="flex items-center gap-1">
@@ -69,11 +70,7 @@ function SceneCardNodeImpl({ node }: Props): JSX.Element {
               <VariantChip count={variantCount} />
             </span>
           </div>
-          {hasMood ? (
-            <span className="text-micro text-nomi-paper/80">
-              {meta.mood!.join(' · ')}
-            </span>
-          ) : null}
+          {hasMood ? <span className="text-micro text-nomi-paper/80">{meta.mood!.join(' · ')}</span> : null}
         </div>
       ) : null}
     </div>

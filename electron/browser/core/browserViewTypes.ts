@@ -7,7 +7,13 @@ export type BrowserViewRecord = {
   view: WebContentsView;
   lastBounds: Rectangle;
   resourceCaptureEnabled: boolean;
-  promptCategories: BrowserPromptCategory[];
+  // 捕捞触发那一刻记下的候选快照（url+元素矩形）：capturePage 视觉降级按 url 匹配复用（120s 新鲜窗）。
+  lastResourceCapture?: {
+    url: string;
+    mediaType: "image" | "video";
+    sourceRect?: BrowserResourceCaptureRectPayload;
+    capturedAt: number;
+  };
 };
 
 export type BrowserViewCreatePayload = {
@@ -27,14 +33,11 @@ export type BrowserViewResizePayload = BrowserViewIdPayload & {
   bounds?: Partial<Rectangle>;
 };
 
-export type BrowserViewImportImagePayload = BrowserViewIdPayload & {
+export type BrowserViewImportMediaPayload = BrowserViewIdPayload & {
   projectId?: unknown;
   url?: unknown;
   fileName?: unknown;
   title?: unknown;
-};
-
-export type BrowserViewImportMediaPayload = BrowserViewImportImagePayload & {
   mediaType?: unknown;
 };
 
@@ -85,15 +88,6 @@ export type BrowserResourceCapturePayload = {
   sourceRect?: BrowserResourceCaptureRectPayload;
 };
 
-export type BrowserPromptCategory = {
-  id: string;
-  label: string;
-};
-
-export type BrowserPromptCategoriesPayload = BrowserViewIdPayload & {
-  categories?: unknown;
-};
-
 export type BrowserPromptScreenshotSelectionResult =
   | {
       ok: true;
@@ -133,15 +127,9 @@ export type BrowserAssetOverlayCaptureRequest = {
   sourceRect?: Partial<BrowserAssetOverlayRect>;
 };
 
-export type BrowserAssetOverlayPromptRequest = {
-  requestId?: unknown;
-  sourceType?: unknown;
-};
-
 export type BrowserAssetOverlayPayload = BrowserViewIdPayload & {
   bounds?: Partial<Rectangle>;
   captureRequest?: BrowserAssetOverlayCaptureRequest;
-  promptRequest?: BrowserAssetOverlayPromptRequest;
 };
 
 export type BrowserAssetOverlayStatePayload = {
@@ -159,9 +147,10 @@ export type BrowserAssetOverlayRecord = {
   rendererReady: boolean;
   pendingShow: boolean;
   pendingCaptureRequest: BrowserAssetOverlayCaptureRequest | null;
-  pendingPromptRequest: BrowserAssetOverlayPromptRequest | null;
   dockMode: BrowserAssetOverlayDockMode;
   popoverRect: BrowserAssetOverlayRect | null;
+  /** True only when a native window shape was actually applied on a supported platform. */
+  shapeInteractive: boolean;
   pointerInteractive: boolean;
   hoverInteractive: boolean;
   dragInteractive: boolean;

@@ -7,12 +7,35 @@ import {
 } from "../assets/localAssetThumbnail";
 import { resolveProjectRelativePath } from "../projects/repository";
 
-export function registerLocalProtocol(): void {
-  protocol.handle("nomi-local", async (request) => {
-    try {
-      const url = new URL(request.url);
-      if (url.hostname !== "asset") {
-        return new Response("Unsupported nomi-local host", { status: 404 });
+function withLocalAssetHeaders(headers?: HeadersInit): Headers {
+  const next = new Headers(headers);
+  // canvas.toDataURL() 需要 CORS 头，否则 crossOrigin='anonymous' 加载的图片会污染画布
+  // 导致九宫格/裁切等操作静默失败（SecurityError 被吞掉）。
+  next.set("Access-Control-Allow-Origin", "*");
+  next.set("Cross-Origin-Resource-Policy", "cross-origin");
+  next.set("Accept-Ranges", "bytes");
+  return next;
+}
+
+/** nomi-local://asset/... → { projectId, 磁盘绝对路径 }。协议处理与懒自愈（ensurePlayableAsset）共用。 */
+export function parseLocalAssetUrl(rawUrl: string): { projectId: string; filePath: string } | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "nomi-local:" || url.hostname !== "asset") return null;
+  // 解码与 localAssetUrl 的「逐段 encodeURIComponent」对称：先按 "/" 切段、再逐段 decode。
+  // （此前先整体 decode 再 split，文件名若含被编码的 %2F 会让段边界错位 → 路径错位 404。）
+  const segments = url.pathname
+    .replace(/^\/+/, "")
+    .split("/")
+    .map((seg) => {
+      try {
+        return decodeURIComponent(seg);
+      } catch {
+        return seg;
       }
       // 解码与 localAssetUrl 的「逐段 encodeURIComponent」对称：先按 "/" 切段、再逐段 decode。
       // （此前先整体 decode 再 split，文件名若含被编码的 %2F 会让段边界错位 → 路径错位 404。）
@@ -65,4 +88,30 @@ export function registerLocalProtocol(): void {
       return new Response(message, { status: 404 });
     }
   });
+}
+
+export async function handleNomiLocalRequest(request: Request): Promise<Response> {
+  try {
+    const filePath = assetPathFromUrl(request.url);
+    if (!filePath) {
+      return new Response("Unsupported nomi-local host", { status: 404 });
+    }
+    const rangeHeader = request.headers.get("range") || "";
+    if (rangeHeader) {
+      const stat = fs.statSync(filePath);
+      const range = parseRangeHeader(rangeHeader, stat.size);
+      if (!range) return rangeNotSatisfiable(stat.size);
+      return streamRange(filePath, range, stat.size, request.method);
+    }
+    const fileResponse = await net.fetch(pathToFileURL(filePath).toString());
+    const corsHeaders = withLocalAssetHeaders(fileResponse.headers);
+    return new Response(request.method === "HEAD" ? null : fileResponse.body, { status: fileResponse.status, headers: corsHeaders });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "local asset not found";
+    return new Response(message, { status: 404 });
+  }
+}
+
+export function registerLocalProtocol(): void {
+  protocol.handle("nomi-local", handleNomiLocalRequest);
 }

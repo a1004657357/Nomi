@@ -16,18 +16,18 @@ function makeNode(result: Partial<GenerationNodeResult> | null): GenerationCanva
   }
 }
 
-describe('buildClipFromGenerationNode URL 口径（providerUrl 优先）', () => {
+describe('buildClipFromGenerationNode URL 口径（本地 url 优先）', () => {
   it('只有 providerUrl（url/thumbnail 都空）也能成 clip——这是修复前会被静默丢的坑', () => {
     const clip = buildClipFromGenerationNode(makeNode({ providerUrl: 'https://cdn.example.com/a.png' }))
     expect(clip).not.toBeNull()
     expect(clip?.url).toBe('https://cdn.example.com/a.png')
   })
 
-  it('providerUrl 优先于 url', () => {
+  it('url 优先于 providerUrl，避免时间轴播放 ComfyUI 私网源被 CSP 拦截', () => {
     const clip = buildClipFromGenerationNode(
       makeNode({ providerUrl: 'https://cdn.example.com/a.png', url: 'nomi-local://a.png' }),
     )
-    expect(clip?.url).toBe('https://cdn.example.com/a.png')
+    expect(clip?.url).toBe('nomi-local://a.png')
   })
 
   it('无 providerUrl 时退回 url', () => {

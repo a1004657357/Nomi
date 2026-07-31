@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconPhoto, IconTrash, IconUpload } from '@tabler/icons-react'
 import { cn } from '../../../../utils/cn'
 import { toast } from '../../../../ui/toast'
@@ -13,15 +14,11 @@ import {
   SPHERE_RADIUS_MIN,
 } from './scene3dConstants'
 import type { Scene3DState } from './scene3dTypes'
-
-const PANORAMA_IMPORT_MAX_BYTES = 80 * 1024 * 1024
-const PANORAMA_STANDARD_RATIO = 2
-const PANORAMA_RATIO_TOLERANCE = 0.03
-
-type ImageDimensions = {
-  width: number
-  height: number
-}
+import {
+  isStandardPanoramaDimensions,
+  PANORAMA_IMPORT_MAX_BYTES,
+  type ImageDimensions,
+} from './panoramaImport'
 
 function readImageFileDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -51,11 +48,6 @@ function readImageDimensions(src: string): Promise<ImageDimensions> {
   })
 }
 
-function isStandardPanoramaDimensions(dimensions: ImageDimensions): boolean {
-  if (dimensions.height <= 0) return false
-  return Math.abs(dimensions.width / dimensions.height - PANORAMA_STANDARD_RATIO) <= PANORAMA_RATIO_TOLERANCE
-}
-
 function EnvironmentColorField({
   label,
   value,
@@ -67,6 +59,7 @@ function EnvironmentColorField({
   disabled?: boolean
   onChange: (value: string) => void
 }): JSX.Element {
+  const { t } = useTranslation()
   const color = /^#[0-9a-f]{6}$/i.test(value) ? value : '#808080'
   const displayValue = color.toUpperCase()
 
@@ -79,7 +72,7 @@ function EnvironmentColorField({
             'relative grid size-8 shrink-0 place-items-center overflow-hidden rounded-nomi-sm border border-[var(--nomi-line)]',
             disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:border-[var(--nomi-accent)]',
           )}
-          title={disabled ? undefined : '选择颜色'}
+          title={disabled ? undefined : t('scene3d.inspector.selectColor')}
         >
           <span className="absolute inset-0" style={{ backgroundColor: color }} />
           <input
@@ -91,7 +84,7 @@ function EnvironmentColorField({
           />
         </label>
         <input
-          aria-label={`${label}值`}
+          aria-label={t('scene3d.inspector.colorValueAria', { label })}
           className="h-8 min-w-0 rounded-nomi-sm border border-[var(--nomi-line)] bg-[var(--nomi-ink-05)] px-2 font-mono text-caption font-medium uppercase text-[var(--nomi-ink)] outline-none disabled:opacity-50"
           disabled={disabled}
           readOnly
@@ -111,17 +104,24 @@ export function Scene3DEnvironmentPanel({
   readOnly: boolean
   onEnvironmentPatch: (patch: Partial<Scene3DState['environment']>) => void
 }): JSX.Element {
+  const { t } = useTranslation()
   const panoramaInputRef = React.useRef<HTMLInputElement | null>(null)
   const panoramaImportRunRef = React.useRef(0)
+  // 从预览 img 的 naturalWidth/Height 派生（不进持久化状态），给非 2:1 图挂常驻「可能拉伸」提示。
+  const [previewDimensions, setPreviewDimensions] = React.useState<ImageDimensions | null>(null)
+
+  React.useEffect(() => {
+    setPreviewDimensions(null)
+  }, [environment.panoramaUrl])
 
   const handlePanoramaFile = React.useCallback((file: File) => {
     if (readOnly) return
     if (!file.type.startsWith('image/')) {
-      toast('请选择图片格式的全景图', 'warning')
+      toast(t('scene3d.environment.imageOnly'), 'warning')
       return
     }
     if (file.size > PANORAMA_IMPORT_MAX_BYTES) {
-      toast('全景图文件过大，请压缩后再导入', 'warning')
+      toast(t('scene3d.environment.fileTooLarge'), 'warning')
       return
     }
 
@@ -135,18 +135,19 @@ export function Scene3DEnvironmentPanel({
         try {
           dimensions = await readImageDimensions(previewUrl)
         } catch {
-          toast('无法读取全景图尺寸，请换一张标准图片', 'warning')
+          toast(t('scene3d.environment.dimensionsUnreadable'), 'warning')
           return
         }
         if (panoramaImportRunRef.current !== importRunId) return
-        if (!isStandardPanoramaDimensions(dimensions)) {
-          toast(`请导入 2:1 标准经纬度全景图，当前尺寸 ${dimensions.width}×${dimensions.height}`, 'warning')
-          return
+        // 非 2:1 不拒收（equirect 对任意比例渲染安全），降级为「可能拉伸」警告照常导入。
+        const standardRatio = isStandardPanoramaDimensions(dimensions)
+        if (!standardRatio) {
+          toast(t('scene3d.environment.nonStandardImported', { width: dimensions.width, height: dimensions.height }), 'warning')
         }
 
         onEnvironmentPatch({
           panoramaUrl: previewUrl,
-          panoramaFileName: file.name || '全景图',
+          panoramaFileName: file.name || t('scene3d.environment.defaultName'),
           showSky: false,
           environmentMode: 'panorama',
         })
@@ -157,29 +158,29 @@ export function Scene3DEnvironmentPanel({
         if (panoramaImportRunRef.current !== importRunId) return
         onEnvironmentPatch({
           panoramaUrl: hostedUrl,
-          panoramaFileName: file.name || '全景图',
+          panoramaFileName: file.name || t('scene3d.environment.defaultName'),
         })
-        toast('全景图已导入', 'success')
+        if (standardRatio) toast(t('scene3d.environment.imported'), 'success')
       } catch {
         try {
           const dataUrl = await readImageFileDataUrl(file)
           if (panoramaImportRunRef.current !== importRunId) return
           onEnvironmentPatch({
             panoramaUrl: dataUrl,
-            panoramaFileName: file.name || '全景图',
+            panoramaFileName: file.name || t('scene3d.environment.defaultName'),
           })
-          toast('全景图已导入为临时数据', 'info')
+          toast(t('scene3d.environment.importedTemporary'), 'info')
         } catch {
           if (panoramaImportRunRef.current === importRunId) {
             onEnvironmentPatch({ panoramaUrl: undefined, panoramaFileName: undefined })
           }
-          toast('全景图导入失败', 'error')
+          toast(t('scene3d.environment.importFailed'), 'error')
         }
       } finally {
         window.setTimeout(() => URL.revokeObjectURL(previewUrl), 30_000)
       }
     })()
-  }, [onEnvironmentPatch, readOnly])
+  }, [onEnvironmentPatch, readOnly, t])
 
   const handlePanoramaInputChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0]
@@ -200,7 +201,7 @@ export function Scene3DEnvironmentPanel({
   return (
     <div className="grid gap-3">
       <div className="flex items-center justify-between gap-2 text-caption text-[var(--nomi-ink-60)]">
-        <label htmlFor="scene3d-dark-mode">场景暗色</label>
+        <label htmlFor="scene3d-dark-mode">{t('scene3d.environment.darkScene')}</label>
         <Switch
           id="scene3d-dark-mode"
           checked={environment.darkMode}
@@ -212,7 +213,7 @@ export function Scene3DEnvironmentPanel({
         />
       </div>
       <div className="flex items-center justify-between gap-2 text-caption text-[var(--nomi-ink-60)]">
-        <label htmlFor="scene3d-show-grid">网格地面</label>
+        <label htmlFor="scene3d-show-grid">{t('scene3d.environment.gridGround')}</label>
         <Switch
           id="scene3d-show-grid"
           checked={environment.showGrid}
@@ -221,7 +222,7 @@ export function Scene3DEnvironmentPanel({
         />
       </div>
       <div className="flex items-center justify-between gap-2 text-caption text-[var(--nomi-ink-60)]">
-        <label htmlFor="scene3d-show-axes">坐标轴</label>
+        <label htmlFor="scene3d-show-axes">{t('scene3d.environment.axes')}</label>
         <Switch
           id="scene3d-show-axes"
           checked={environment.showAxes}
@@ -230,7 +231,7 @@ export function Scene3DEnvironmentPanel({
         />
       </div>
       <div className="flex items-center justify-between gap-2 text-caption text-[var(--nomi-ink-60)]">
-        <label htmlFor="scene3d-show-sky">天空背景</label>
+        <label htmlFor="scene3d-show-sky">{t('scene3d.environment.skyBackground')}</label>
         <Switch
           id="scene3d-show-sky"
           checked={environment.showSky}
@@ -239,7 +240,7 @@ export function Scene3DEnvironmentPanel({
         />
       </div>
       <EnvironmentColorField
-        label="背景颜色"
+        label={t('scene3d.environment.backgroundColor')}
         value={environment.backgroundColor}
         disabled={readOnly}
         onChange={(backgroundColor) => onEnvironmentPatch({ backgroundColor })}
@@ -248,14 +249,14 @@ export function Scene3DEnvironmentPanel({
         <div className="flex items-center justify-between gap-2">
           <span className="inline-flex min-w-0 items-center gap-1.5 text-caption font-medium text-[var(--nomi-ink)]">
             <IconPhoto size={14} className="shrink-0 text-[var(--nomi-ink-60)]" />
-            <span className="truncate">全景图</span>
+            <span className="truncate">{t('scene3d.environment.panorama')}</span>
           </span>
           {environment.panoramaUrl ? (
             <button
               className="grid size-7 place-items-center rounded-nomi-sm text-[var(--nomi-ink-40)] hover:bg-[var(--workbench-danger-soft)] hover:text-[var(--workbench-danger)] disabled:opacity-40"
               disabled={readOnly}
               type="button"
-              title="移除全景图"
+              title={t('scene3d.environment.removePanorama')}
               onClick={clearPanorama}
             >
               <IconTrash size={14} />
@@ -270,13 +271,27 @@ export function Scene3DEnvironmentPanel({
                 src={environment.panoramaUrl}
                 alt=""
                 draggable={false}
+                onLoad={(event) => {
+                  const { naturalWidth, naturalHeight } = event.currentTarget
+                  if (naturalWidth > 0 && naturalHeight > 0) {
+                    setPreviewDimensions({ width: naturalWidth, height: naturalHeight })
+                  }
+                }}
               />
             </div>
             <div className="min-w-0 truncate text-micro text-[var(--nomi-ink-60)]">
-              {environment.panoramaFileName || '全景图'}
+              {environment.panoramaFileName || t('scene3d.environment.defaultName')}
             </div>
+            {previewDimensions && !isStandardPanoramaDimensions(previewDimensions) ? (
+              <div className="text-micro text-[var(--nomi-ink-60)]">
+                {t('scene3d.environment.nonStandardHint', {
+                  width: previewDimensions.width,
+                  height: previewDimensions.height,
+                })}
+              </div>
+            ) : null}
             <label className="grid gap-1">
-              <span className="text-micro text-[var(--nomi-ink-60)]">水平旋转</span>
+              <span className="text-micro text-[var(--nomi-ink-60)]">{t('scene3d.environment.horizontalRotation')}</span>
               <div className="grid grid-cols-[1fr_48px] items-center gap-2">
                 <input
                   className="h-1.5 w-full accent-[var(--nomi-ink)] disabled:opacity-50"
@@ -296,11 +311,11 @@ export function Scene3DEnvironmentPanel({
               </div>
             </label>
             <div className="grid gap-2 rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-2">
-              <span className="text-micro text-[var(--nomi-ink-60)]">显示模式</span>
+              <span className="text-micro text-[var(--nomi-ink-60)]">{t('scene3d.environment.displayMode')}</span>
               <div className="grid grid-cols-2 gap-1">
                 {([
-                  ['panorama', '全景背景'],
-                  ['sphere', '全景球'],
+                  ['panorama', t('scene3d.environment.panoramaBackground')],
+                  ['sphere', t('scene3d.environment.panoramaSphere')],
                 ] as const).map(([mode, label]) => (
                   <button
                     key={mode}
@@ -321,10 +336,10 @@ export function Scene3DEnvironmentPanel({
             </div>
             {environment.environmentMode === 'sphere' ? (
               <div className="grid gap-2 rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-2">
-                <span className="text-micro font-medium text-[var(--nomi-ink)]">球体半径</span>
+                <span className="text-micro font-medium text-[var(--nomi-ink)]">{t('scene3d.environment.sphereRadius')}</span>
                 <label className="grid gap-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-micro text-[var(--nomi-ink-60)]">半径</span>
+                    <span className="text-micro text-[var(--nomi-ink-60)]">{t('scene3d.environment.radius')}</span>
                     <span className="font-mono text-micro text-[var(--nomi-ink-40)]">
                       {environment.sphereRadius.toFixed(0)}
                     </span>
@@ -351,7 +366,7 @@ export function Scene3DEnvironmentPanel({
             onClick={() => panoramaInputRef.current?.click()}
           >
             <IconUpload size={14} />
-            导入全景图
+            {t('scene3d.environment.importPanorama')}
           </button>
         )}
         <input

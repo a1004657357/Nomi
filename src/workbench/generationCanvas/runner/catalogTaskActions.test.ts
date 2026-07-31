@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCatalogTaskRequest, normalizeCatalogTaskResult, runCatalogGenerationTask } from './catalogTaskActions'
+import { buildCatalogTaskRequest, isSlowLaneBackend, normalizeCatalogTaskResult, resolvePollBudget, runCatalogGenerationTask } from './catalogTaskActions'
 import { resolveGenerationReferences } from './generationReferenceResolver'
 import { MODEL_ARCHETYPES } from '../../../config/modelArchetypes'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
@@ -13,6 +13,10 @@ function textNode(): GenerationCanvasNode {
 
 function imageNode(): GenerationCanvasNode {
   return { id: 'n2', kind: 'image', title: '', position: { x: 0, y: 0 }, meta: { modelKey: 'sd' } }
+}
+
+function generatedVideoNode(): GenerationCanvasNode {
+  return { id: 'v1', kind: 'video', title: '', position: { x: 0, y: 0 }, meta: { modelKey: 'comfyui-local-video' } }
 }
 
 function chatResult(raw: unknown, status: TaskResultDto['status'] = 'succeeded'): TaskResultDto {
@@ -301,6 +305,122 @@ describe('video-to-video recipe transport', () => {
     expect(input.model).toBe('happyhorse/video-edit')
     expect(input.video_url).toBe('https://cdn/source.mp4')
     expect(input.reference_image).toEqual(['https://cdn/style.png'])
+  })
+})
+
+describe('buildCatalogTaskRequest — ComfyUI 本地 workflow 不吃旧档案 archetype', () => {
+  it('只绑定首帧的 Comfy i2v 即便残留 Dreamina archetype，也走 flat firstFrameUrl', () => {
+    const node: GenerationCanvasNode = {
+      id: 'comfy-i2v',
+      kind: 'video',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: '一杯咖啡',
+      meta: {
+        modelKey: 'comfy-wan2-2-5b-t2v-mrvi3py1',
+        modelVendor: 'comfyui-local',
+        vendor: 'comfyui-local',
+        archetype: { id: 'dreamina-seedance-2', modeId: 'multimodal', variantId: 'fast' },
+        comfy_width: 1280,
+        comfy_height: 704,
+        comfy_length: 121,
+        comfy_fps: 24,
+        comfy_batch_size: 1,
+      },
+    }
+    const built = buildCatalogTaskRequest(node, {
+      references: { firstFrameUrl: 'nomi-local://asset/first.png' },
+    })
+
+    expect(built.vendor).toBe('comfyui-local')
+    expect(built.request.kind).toBe('image_to_video')
+    expect(built.request.extras?.firstFrameUrl).toBe('nomi-local://asset/first.png')
+    expect(built.request.extras?.lastFrameUrl).toBeUndefined()
+    expect(built.request.extras?.archetypeInput).toBeUndefined()
+  })
+})
+
+// 根因回归（2026-07-24 群反馈）：档案分支曾让 archetypeInput **独占**参考通道——标准 camelCase 面
+// （firstFrameUrl/lastFrameUrl）被丢，参考只剩 kie 键 `input_urls`；而通用中转模板读的是标准键
+// （multipart `{{request.params.reference_images}}` / chat `chat_image_parts` / i2v `image_url`），
+// → 中转上撞档案名的模型改图不带图被拒（「未开启生图功能」类）、i2v 首帧到不了 wire；接入测试
+// （t2i 不吃参考键）却能过。收口后不变量：**标准参考面永远在场，档案投影叠加其上**（两面并存，
+// 内置家 body 只引用自家声明键、多出的标准键不进 body → 零影响）。
+describe('buildCatalogTaskRequest — 标准参考面与档案投影并存（中转不丢参考）', () => {
+  const relayNode = (vendor: string): GenerationCanvasNode => ({
+    id: 'relay-i2i',
+    kind: 'image',
+    title: '',
+    position: { x: 0, y: 0 },
+    prompt: '把它改成蓝色',
+    meta: {
+      modelKey: 'gpt-image-2',
+      modelVendor: vendor,
+      vendor,
+      archetype: { id: 'gpt-image-2', modeId: 'i2i' },
+    },
+  })
+
+  it('中转 vendor：archetypeInput 照常（档案是通用能力面），且标准 referenceImages 同时在场', () => {
+    const built = buildCatalogTaskRequest(relayNode('my-relay'), {
+      references: { referenceImages: ['nomi-local://asset/ref.png'] },
+    })
+    expect(built.request.kind).toBe('image_edit')
+    const archetypeInput = built.request.extras?.archetypeInput as Record<string, unknown>
+    expect(archetypeInput.input_urls).toEqual(['nomi-local://asset/ref.png'])
+    // 关键不变量：标准面不被档案吞——中转 multipart/chat 模板由它派生 reference_images/chat_image_parts。
+    expect(built.request.extras?.referenceImages).toEqual(['nomi-local://asset/ref.png'])
+  })
+
+  it('kie 行为零变化：档案投影仍在（input_urls + kie 模式枚举），标准面并存不进 kie body', () => {
+    const built = buildCatalogTaskRequest(relayNode('kie'), {
+      references: { referenceImages: ['nomi-local://asset/ref.png'] },
+    })
+    expect(built.request.kind).toBe('image_edit')
+    const archetypeInput = built.request.extras?.archetypeInput as Record<string, unknown>
+    expect(archetypeInput.input_urls).toEqual(['nomi-local://asset/ref.png'])
+    expect(archetypeInput.model).toBe('gpt-image-2-image-to-image')
+    expect(built.request.extras?.referenceImages).toEqual(['nomi-local://asset/ref.png'])
+  })
+
+  it('档案图槽上传（meta.referenceImageUrls）同样进标准面；t2i 模式的残留不复活', () => {
+    const uploaded: GenerationCanvasNode = {
+      id: 'relay-upload', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: '改成蓝色调',
+      meta: {
+        modelKey: 'gpt-image-2', modelVendor: 'y7-mock', vendor: 'y7-mock',
+        archetype: { id: 'gpt-image-2', modeId: 'i2i' },
+        referenceImageUrls: ['nomi-local://asset/up.png'],
+      },
+    }
+    const built = buildCatalogTaskRequest(uploaded, { references: {} })
+    expect(built.request.kind).toBe('image_edit')
+    // 走查 B 段抓出的第二个吞点：上传住档案槽键，从没进过标准面 → multipart 0 张图被抛。
+    expect(built.request.extras?.referenceImages).toEqual(['nomi-local://asset/up.png'])
+    // t2i 模式（无 image_ref 槽）→ 残留不复活进标准面（否则 chat 回退的 t2i body 会带旧图）。
+    const t2i: GenerationCanvasNode = {
+      ...uploaded,
+      meta: { ...uploaded.meta, archetype: { id: 'gpt-image-2', modeId: 't2i' } },
+    }
+    expect(buildCatalogTaskRequest(t2i, { references: {} }).request.extras?.referenceImages).toBeUndefined()
+  })
+
+  it('档案视频节点的 i2v 首帧：标准 firstFrameUrl 不再被档案分支丢掉（中转 image_url 由它派生）', () => {
+    const node: GenerationCanvasNode = {
+      id: 'relay-i2v',
+      kind: 'video',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: '镜头缓慢推近',
+      // 首帧模式（真实链路：连 first_frame 边时 useNodeModelAutoSelect 自动切到该模式）。
+      meta: { modelKey: 'bytedance/seedance-2', modelVendor: 'my-relay', vendor: 'my-relay', archetype: { id: 'seedance-2', modeId: 'first' } },
+    }
+    const built = buildCatalogTaskRequest(node, {
+      references: { firstFrameUrl: 'nomi-local://asset/first.png' },
+    })
+    expect(built.request.extras?.archetypeInput).toBeTruthy()
+    expect(built.request.extras?.firstFrameUrl).toBe('nomi-local://asset/first.png')
+    // M2 互斥在标准面同样生效：当前模式无尾帧槽 → 标准 lastFrameUrl 不带。
+    expect(built.request.extras?.lastFrameUrl).toBeUndefined()
   })
 })
 
@@ -729,6 +849,40 @@ describe('normalizeCatalogTaskResult — model3d validation evidence', () => {
   })
 })
 
+describe('normalizeCatalogTaskResult — generated video duration', () => {
+  it('uses localized asset duration before the canvas metadata fallback', () => {
+    const node = generatedVideoNode()
+    const result = normalizeCatalogTaskResult(
+      {
+        id: 't-video',
+        kind: 'text_to_video',
+        status: 'succeeded',
+        assets: [{ type: 'video', url: 'nomi-local://asset/p/video.mp4', durationSeconds: 3.0625 }],
+        raw: {},
+      },
+      { ...node, meta: { ...node.meta, videoDuration: 5 } },
+    )
+
+    expect(result.durationSeconds).toBe(3.0625)
+  })
+
+  it('does not freeze a previous video metadata duration into a newly generated result', () => {
+    const node = generatedVideoNode()
+    const result = normalizeCatalogTaskResult(
+      {
+        id: 't-video',
+        kind: 'text_to_video',
+        status: 'succeeded',
+        assets: [{ type: 'video', url: 'nomi-local://asset/p/new-video.mp4' }],
+        raw: {},
+      },
+      { ...node, meta: { ...node.meta, videoDuration: 8 } },
+    )
+
+    expect(result.durationSeconds).toBeUndefined()
+  })
+})
+
 describe('GPT Image 2 档案（图像，2 模式打不同 taskKind 桶 + input_urls）', () => {
   const gptNode = (modeId: string, extra: Record<string, unknown> = {}): GenerationCanvasNode => ({
     id: 'g1',
@@ -787,6 +941,38 @@ describe('Seedream 档案（图像，改图输入图走 image_urls，与 GPT 同
     expect(ai.image_urls).toEqual(['https://x/1.png', 'https://x/2.png'])
     expect(ai).not.toHaveProperty('input_urls')
     expect(ai).not.toHaveProperty('reference_image_urls')
+  })
+})
+
+describe('供应商真实 modelKey + 节点 meta.archetype.id：连线参考必须进入图生图字段', () => {
+  const SOURCE_URL = 'https://x/direct-source.png'
+  const source: GenerationCanvasNode = {
+    id: 'source', kind: 'image', title: '源图', position: { x: 0, y: 0 }, prompt: '',
+    result: { id: 'source-result', type: 'image', url: SOURCE_URL, createdAt: 0 },
+  }
+
+  it.each([
+    ['apimart', 'doubao-seedream-4.5', 'seedream', 'edit', 'image_urls'],
+    ['apimart', 'gemini-2.5-flash-image-preview', 'nano-banana', 'edit', 'image_urls'],
+    ['modelscope', 'Qwen/Qwen-Image-Edit-2511', 'modelscope-image-edit', 'edit', 'image_url'],
+    ['volcengine', 'doubao-seedream-5-0-260128', 'volcengine-seedream', 'edit', 'image_urls'],
+    ['volcengine', 'doubao-seedream-4-5-251128', 'volcengine-seedream', 'edit', 'image_urls'],
+    ['volcengine', 'doubao-seedream-4-0-250828', 'volcengine-seedream', 'edit', 'image_urls'],
+  ])('%s / %s（%s.%s）：直接参考边进入 %s', (vendor, modelKey, archetypeId, modeId, inputKey) => {
+    const target: GenerationCanvasNode = {
+      id: 'target', kind: 'image', title: '目标图', position: { x: 100, y: 0 }, prompt: '改成蓝色',
+      meta: {
+        modelKey, modelAlias: modelKey, modelVendor: vendor, vendor,
+        archetype: { id: archetypeId, modeId },
+      },
+    }
+    const references = resolveGenerationReferences(target, {
+      nodes: [source, target],
+      edges: [{ id: 'source-target', source: source.id, target: target.id, mode: 'reference', order: 0 }],
+    })
+    const request = buildCatalogTaskRequest(target, { references }).request
+    expect(request.kind).toBe('image_edit')
+    expect((request.extras?.archetypeInput as Record<string, unknown>)[inputKey]).toEqual([SOURCE_URL])
   })
 })
 

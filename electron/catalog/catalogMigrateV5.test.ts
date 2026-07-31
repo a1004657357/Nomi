@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { migrateRelayImageEditCapability } from "./catalogStore";
 import { NEWAPI_IMAGE_EDIT_OP } from "./newapiTransport";
-import { CURRENT_CATALOG_VERSION, type CatalogState, type Mapping, type Model, type Vendor } from "./types";
+import { type CatalogState, type Mapping, type Model, type Vendor } from "./types";
 
 const NOW = "2026-07-06T00:00:00.000Z";
 
@@ -98,7 +98,4 @@ describe("migrateRelayImageEditCapability（v4→v5）", () => {
     expect(state.mappings.filter((m) => m.vendorKey === "has-edit" && m.taskKind === "image_edit")).toHaveLength(1);
   });
 
-  it("CURRENT_CATALOG_VERSION 已推进到 5（v4 catalog 会走 v5 步）", () => {
-    expect(CURRENT_CATALOG_VERSION).toBe(5);
-  });
 });

@@ -43,6 +43,8 @@ export type Scene3DObject = {
   // 与 poseTrack 共存：某帧 poseTrack 命中非 base 关键帧（用户切了静态动作）→ 静态优先，不播 locomotion。
   locomotionClip?: string
   children?: string[]
+  /** 场景模板一键铺出的对象带组标（如「城市街道」）：场景树按组折叠，不再 30 个平铺节点（审计 §6.3）。 */
+  templateGroup?: string
 }
 
 // pose-over-time 单帧：在时刻 time 把该假人切到 pose（presetId 仅留痕/UI 高亮）。
@@ -72,6 +74,9 @@ export type Scene3DCamera = {
   // 手持抖动强度 0-100（0/缺省 = 关）。播放/离屏采帧时在 cameraWithPlaybackPosition 叠
   // 确定性多频正弦噪声（纯播放头 t 的函数，逐帧可重现），经运镜小片 video_ref 真传进成片。
   shakeAmplitude?: number
+  // 构图所有权（F1）：'auto' = 系统按主体安全画幅自动取景（默认/模板/切画幅重解）；'manual' = 用户手动
+  // orbit/pan/dolly/改机位/改 target 后接管，自动取景不再覆盖。缺省（老项目/未标）按 manual 处理，绝不动用户已有构图。
+  framing?: 'auto' | 'manual'
 }
 
 export type Scene3DTrajectoryPoint = {

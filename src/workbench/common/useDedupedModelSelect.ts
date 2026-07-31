@@ -7,20 +7,81 @@
 import React from 'react'
 import type { ModelOption } from '../../config/models'
 import type { NomiSelectOption } from '../../design'
+import i18n from '../../i18n'
 import { dedupeModelOptions, resolveBestProvider, type DedupedModel } from '../../config/modelIdentity'
+import { isModelRecentlyAiling } from '../generationCanvas/runner/modelHealthMemory'
+
+import type { ModelProviderRef } from '../../config/modelIdentity'
 
 const VENDOR_LABELS: Record<string, string> = {
   volcengine: '火山方舟',
+  'volcengine-speech': '火山语音',
   modelscope: '魔搭',
   apimart: 'APIMart',
   kie: 'Kie',
   newapi: 'new-api',
   runninghub: 'RunningHub',
+  agnes: 'Agnes',
+  replicate: 'Replicate',
+  dreamina: '即梦',
+  'comfyui-local': '本地 ComfyUI',
 }
 
-function vendorLabel(vendor?: string): string {
-  if (!vendor) return '默认'
-  return VENDOR_LABELS[vendor.toLowerCase()] || vendor
+/** 厂商显示名：内置短名映射（下拉附注要短）> option.vendorName（自定义中转的真名）> key 原样。
+ *  短名优先：catalog 里内置家的 name 是接入卡全称（如「即梦会员（本地 CLI）」），当 trailing 太啰嗦。 */
+function providerLabel(provider?: ModelProviderRef | null): string {
+  if (!provider) return '默认'
+  const short = provider.vendor ? VENDOR_LABELS[provider.vendor.toLowerCase()] : undefined
+  if (short) return short
+  const fromCatalog = provider.option.vendorName?.trim()
+  if (fromCatalog) return fromCatalog
+  return provider.vendor || '默认'
+}
+
+/** 该模型是否「病」了：**每一家**供应商都在避让期才算。注入判据便于纯函数单测。 */
+type AilingProbe = (modelKey: string) => boolean
+
+/**
+ * 「病」= 该模型每一家供应商近 24h 都连败 ≥2（modelHealthMemory 记的本地实测经验，不是写死名单；
+ * 服务商修好后成功一次即清零回位）。
+ *
+ * 必须是**供应商级**而不是模型级：下拉里一条 = 去重后的模型，底下可能挂 2-4 家。只要还有一家健康，
+ * pickHealthiestProvider 就会走那家，整条不该被标病——否则 Nano Banana「3 家」里一家挂了就误伤整个模型。
+ */
+function isModelAiling(model: DedupedModel, isAiling: AilingProbe): boolean {
+  if (model.providers.length === 0) return false
+  return model.providers.every((p) => isAiling(p.option.modelKey || p.option.value))
+}
+
+/** 病的沉到最后 + 灰化 + 右侧标注换成「最近多次失败」；健康的保持原有顺序不动。 */
+export function buildModelSelectOptions(deduped: readonly DedupedModel[], isAiling: AilingProbe): NomiSelectOption[] {
+  const toOption = (m: DedupedModel): NomiSelectOption => {
+    // 厂商标注（用户 2026-07-17：模型来自哪家要看得见）：多家=「N 家」，单家=厂商短名。
+    const origin = m.providers.length > 1 ? `${m.providers.length} 家` : providerLabel(m.providers[0])
+    if (!isModelAiling(m, isAiling)) return { value: m.canonicalId, label: m.label, trailing: origin }
+    return {
+      value: m.canonicalId,
+      label: m.label,
+      trailing: i18n.t('generationCommon.parameters.recentlyFailing'),
+      trailingTone: 'danger',
+      dimmed: true,
+    }
+  }
+  // 用户选**之前**就避开坏的，而不是撞了才知道。仍可点（手动选择永不拦，2026-07-30 拍板）。
+  const healthy = deduped.filter((m) => !isModelAiling(m, isAiling))
+  const ailing = deduped.filter((m) => isModelAiling(m, isAiling))
+  return [...healthy, ...ailing].map(toOption)
+}
+
+/** 换家优先于换模型：先只在健康供应商里挑；全病（用户明知故选）才回退全集，绝不空选。 */
+export function pickHealthiestProvider(model: DedupedModel, isAiling: AilingProbe): ModelProviderRef | null {
+  const healthyVendors = new Set(
+    model.providers
+      .filter((p) => !isAiling(p.option.modelKey || p.option.value))
+      .map((p) => p.vendor)
+      .filter((v): v is string => v != null),
+  )
+  return resolveBestProvider(model, { usableVendorKeys: healthyVendors }) || resolveBestProvider(model)
 }
 
 export interface DedupedModelSelectView {
@@ -58,20 +119,16 @@ export function useDedupedModelSelect(
   )
 
   const modelOptionsView = React.useMemo<NomiSelectOption[]>(
-    () =>
-      deduped.map((m) => ({
-        value: m.canonicalId,
-        label: m.label,
-        trailing: m.providers.length > 1 ? `${m.providers.length} 家` : undefined,
-      })),
-    [deduped],
+    () => buildModelSelectOptions(deduped, isModelRecentlyAiling),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language：切语言要重算 trailing 文案
+    [deduped, i18n.language],
   )
 
   const onModelPick = React.useCallback(
     (canonicalId: string) => {
       const model = deduped.find((m) => m.canonicalId === canonicalId)
       if (!model) return
-      const best = resolveBestProvider(model)
+      const best = pickHealthiestProvider(model, isModelRecentlyAiling)
       if (best) onChange(best.option.value)
     },
     [deduped, onChange],
@@ -84,7 +141,7 @@ export function useDedupedModelSelect(
     const byVendor = new Map<string, NomiSelectOption>()
     for (const p of selectedModel.providers) {
       const key = p.vendor || p.option.value
-      if (!byVendor.has(key)) byVendor.set(key, { value: p.option.value, label: vendorLabel(p.vendor) })
+      if (!byVendor.has(key)) byVendor.set(key, { value: p.option.value, label: providerLabel(p) })
     }
     return byVendor.size > 1 ? [...byVendor.values()] : []
   }, [selectedModel])

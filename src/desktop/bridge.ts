@@ -44,6 +44,19 @@ export type DesktopAssetDto = {
   data: Record<string, unknown>
 }
 
+export type DesktopAssetFolder = {
+  id: string
+  label: string
+  order: number
+}
+
+export type DesktopAssetFoldersState = {
+  version: 1
+  folders: DesktopAssetFolder[]
+  /** 素材 renderUrl → folderId。 */
+  assignments: Record<string, string>
+}
+
 export type DesktopMp4ExportResult = {
   absolutePath: string
   relativePath: string
@@ -126,7 +139,6 @@ export type DesktopBrowserAssetOverlayConfig = {
   bounds: DesktopBrowserViewBounds | null
   captureEnabled?: boolean
   captureRequest?: DesktopBrowserAssetOverlayCaptureRequest | null
-  promptRequest?: unknown | null
 }
 
 export type DesktopBrowserAssetOverlayState = {
@@ -268,6 +280,7 @@ export type DesktopBridge = {
     cancelClose?: (requestId: string) => void
     onCloseRequest?: (cb: (payload: { requestId: string }) => void) => () => void
     onMaximized: (cb: (maximized: boolean) => void) => () => void
+    onCanvasZoomShortcut?: (cb: (direction: -1 | 1) => void) => () => void
   }
   app?: {
     reopenLibraryWindow: () => void
@@ -312,6 +325,9 @@ export type DesktopBridge = {
       limit?: number
       kind?: string
     }) => Promise<{ items: DesktopAssetDto[]; cursor: string | null }>
+    /** 素材文件夹（素材面收敛 2026-07-22 转正）：per-project 落盘 .nomi/folders.json,归属键=renderUrl。 */
+    foldersGet?: (payload: { projectId: string }) => Promise<{ ok: boolean; state: DesktopAssetFoldersState; error?: string }>
+    foldersSave?: (payload: { projectId: string; state: DesktopAssetFoldersState }) => Promise<{ ok: boolean; state: DesktopAssetFoldersState; error?: string }>
     /** 写入层落盘广播（nomi:assets:updated）——素材库面板/素材盒徽章的统一回流信号。 */
     onUpdated?: (cb: (payload: { projectId: string }) => void) => () => void
     importRemoteUrl: (payload: {
@@ -382,14 +398,7 @@ export type DesktopBridge = {
     resize: (payload: { viewId: number; bounds: DesktopBrowserViewBounds }) => void
     show: (payload: { viewId: number }) => void
     hide: (payload: { viewId: number }) => void
-    importImage: (payload: {
-      viewId: number
-      projectId: string
-      url: string
-      fileName?: string
-      title?: string
-    }) => Promise<DesktopAssetDto>
-    importMedia?: (payload: {
+    importMedia: (payload: {
       viewId: number
       projectId: string
       url: string
@@ -424,10 +433,6 @@ export type DesktopBridge = {
       settings: unknown
     }) => Promise<{ ok: boolean; settings?: unknown; error?: string }>
     selectPromptScreenshot?: (payload: { viewId: number }) => Promise<DesktopBrowserPromptScreenshotSelection>
-    setPromptCategories?: (payload: {
-      viewId: number
-      categories: Array<{ id: string; label: string }>
-    }) => void
     setResourceCapture?: (payload: { viewId: number; enabled: boolean }) => void
     captureResource?: (payload: { viewId: number }) => void
     showChromeMenu?: (payload: {
@@ -441,20 +446,20 @@ export type DesktopBridge = {
         viewId: number | null
         bounds: DesktopBrowserViewBounds
         captureRequest?: DesktopBrowserAssetOverlayCaptureRequest
-        promptRequest?: unknown
       }) => void
       updateHost: (payload: { viewId?: number | null; bounds: DesktopBrowserViewBounds }) => void
       close: () => void
       captureRequest: (payload: DesktopBrowserAssetOverlayCaptureRequest) => void
-      promptRequest?: (payload: unknown) => void
       ready?: () => void
       setInteractive: (payload: { interactive: boolean }) => void
+      finishDrag?: () => void
       setState: (payload: {
         dockMode?: DesktopBrowserAssetOverlayDockMode
         popoverRect?: DesktopBrowserAssetOverlayRect | null
         captureEnabled?: boolean
       }) => void
       importToCanvas?: (payload: { assets: unknown[] }) => void
+      canvasImportAvailable?: () => Promise<boolean>
       onConfig: (callback: (config: DesktopBrowserAssetOverlayConfig) => void) => () => void
       onState: (callback: (state: DesktopBrowserAssetOverlayState) => void) => () => void
       onImportToCanvas?: (callback: (payload: { assets?: unknown[] }) => void) => () => void
@@ -598,6 +603,8 @@ export type DesktopBridge = {
       title?: string
       prompt: string
       promptType: 'image' | 'video'
+      tags?: string[]
+      referenceImages?: { url: string; title?: string; sourceUrl?: string }[]
     }) => Promise<{ ok: boolean; prompts: unknown[]; error?: string }>
     userUpdate: (
       id: string,
@@ -643,6 +650,12 @@ export type DesktopBridge = {
       providerKind?: ProviderKind
       /** true = 自动探测 chat↔responses（anthropic 按 hostname 提示）。 */
       autoProbe?: boolean
+      /**
+       * 'reachability' = 只验「地址+Key 通不通」（GET /models），不发聊天请求、不探协议。
+       * 用于上游一个文本模型都没有时（纯图片/视频中转）——协议只管文本，那时探协议毫无意义，
+       * 拿视频模型 id 发 chat/completions 只会被上游拒、误报「连不上」。
+       */
+      probe?: 'reachability'
       headers?: Record<string, string>
     }) => Promise<{
       ok: boolean
@@ -650,6 +663,8 @@ export type DesktopBridge = {
       error?: string
       /** 探测/确认成功的协议——渲染层据此显示「用的是 X 协议」并存盘。 */
       detectedKind?: ProviderKind
+      /** true = 这次只验了可达性（没探协议），文案要如实说清，别谎称「模型能用」。 */
+      reachabilityOnly?: boolean
     }>
     listModels: (payload: {
       baseUrl: string
@@ -702,6 +717,9 @@ export type DesktopBridge = {
     analyzeComfyWorkflow: (text: string) => { ok: true; analysis: unknown } | { ok: false; error: string }
     /** 按绑定落库为用户自有 model+mapping（同步）。 */
     importComfyWorkflow: (payload: { text: string; binding: unknown; labelZh: string }) =>
+      { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
+    /** 用同一 modelKey 更新已导入 workflow（同步）。 */
+    updateComfyWorkflow?: (payload: { modelKey: string; text: string; binding: unknown; labelZh: string }) =>
       { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
   }
   skill: {

@@ -1,10 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from 'react'
+import i18n from '../../../i18n'
 import { IconBrowser, IconBrush, IconPalette, IconWorld } from '../../../vendor/tablerIcons'
-import type { DesktopAssetDto, DesktopBrowserAssetOverlayCaptureRequest, DesktopBrowserPromptCaptureEvent, DesktopBrowserResourceCaptureEvent, DesktopBrowserViewBounds } from '../../../desktop/bridge'
+import type { DesktopBrowserAssetOverlayCaptureRequest, DesktopBrowserPromptCaptureEvent, DesktopBrowserResourceCaptureEvent, DesktopBrowserViewBounds } from '../../../desktop/bridge'
 import { cn } from '../../../utils/cn'
 import { BROWSER_PROMPT_EXTRACTION_MODE_LABELS, type BrowserPromptExtractionMode } from '../prompt/browserPromptExtraction'
-import type { NomiBrowserAsset } from '../assets/browserAssetData'
 import type { BrowserAssetPromptCaptureRequest } from '../popover/NomiBrowserAssetPopover'
 import type { FloatingWindowBoundsRect } from '../window/useResizableFloatingWindow'
 
@@ -99,7 +99,7 @@ export const USE_NATIVE_BROWSER_ASSET_OVERLAY = true
 export const DEFAULT_BOOKMARKS: BrowserBookmark[] = [
   {
     id: 'default-nomi',
-    title: 'Nomi 官网',
+    title: i18n.t('browserAssets.sites.nomiOfficial'),
     url: 'http://nomiaqm.com/',
     createdAt: 1,
   },
@@ -151,7 +151,7 @@ export function createBlankTab(): BrowserTab {
   return {
     id: createTabId(),
     viewId: null,
-    title: '新建标签页',
+    title: i18n.t('browserAssets.newTab'),
     url: '',
     canGoBack: false,
     canGoForward: false,
@@ -418,26 +418,6 @@ export function TabFavicon({ tab }: { tab: BrowserTab }): JSX.Element {
   return <IconWorld size={15} stroke={1.7} aria-hidden="true" />
 }
 
-export function browserAssetFromDesktopAsset(asset: DesktopAssetDto, fallbackTitle: string): NomiBrowserAsset {
-  const contentType = typeof asset.data.contentType === 'string' ? asset.data.contentType : ''
-  const mediaType = asset.data.mediaType === 'video' || contentType.startsWith('video/') ? 'video' : 'image'
-  const url = typeof asset.data.url === 'string' ? asset.data.url : ''
-  // 显示名人类标题优先(sidecar.title=捕捞时抓的 alt/网页标题 → 捕捞传入 title → 文件名)。
-  // 防盗链图 URL 文件名常是哈希，直接当名字认不出(用户 2026-07-13 抓出 263fcbf8…)。
-  const sidecarTitle = typeof asset.data.title === 'string' ? asset.data.title.trim() : ''
-  return {
-    id: asset.id,
-    type: mediaType,
-    source: 'my',
-    title: sidecarTitle || fallbackTitle || asset.name || '网页图片',
-    subtitle: '网页素材',
-    previewUrl: url,
-    tags: ['网页素材'],
-    createdAt: asset.createdAt,
-    updatedAt: asset.updatedAt,
-  }
-}
-
 export function overlayCaptureRequestFromBrowserEvent(
   event: Extract<DesktopBrowserResourceCaptureEvent, { ok: true }>,
 ): DesktopBrowserAssetOverlayCaptureRequest {
@@ -486,7 +466,7 @@ export function PromptModeOption({
   return (
     <button
       type="button"
-      className="flex w-full cursor-pointer items-start gap-2 rounded-nomi-sm border-0 bg-transparent p-2 text-left text-caption text-nomi-ink-70 transition-colors hover:bg-nomi-ink-05 hover:text-nomi-ink"
+      className="flex w-full cursor-pointer items-start gap-2 rounded-nomi-sm border-0 bg-transparent p-2 text-left text-caption text-nomi-ink-80 transition-colors hover:bg-nomi-ink-05 hover:text-nomi-ink"
       role="menuitem"
       onClick={() => onSelect(mode)}
     >
@@ -502,8 +482,10 @@ export function PromptModeOption({
         <span className="block font-semibold leading-[1.25] text-nomi-ink">
           {BROWSER_PROMPT_EXTRACTION_MODE_LABELS[mode]}
         </span>
-        <span className="mt-0.5 block text-micro leading-snug text-nomi-ink-45">
-          {styleMode ? '提取配色、字体、构图、效果 JSON' : '还原主体、构图、光影和细节'}
+        <span className="mt-0.5 block text-micro leading-snug text-nomi-ink-40">
+          {styleMode
+            ? i18n.t('browserAssets.extraction.styleDescription')
+            : i18n.t('browserAssets.extraction.replicateDescription')}
         </span>
       </span>
     </button>

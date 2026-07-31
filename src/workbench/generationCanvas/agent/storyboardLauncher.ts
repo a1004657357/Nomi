@@ -21,8 +21,8 @@ export const STORYBOARD_PLANNER_SKILL = {
  * - 首次拆镜头：传 storyText，规划整份方案。
  * - 修改现方案：传 currentPlan + revisionRequest，规划师基于现方案按要求改、保留其余，重出整份。
  */
-/** 拆镜头模式：image=图片分镜（每镜静态画面，默认）；video=视频分镜（每镜带时长）。 */
-export type StoryboardShotMode = 'image' | 'video'
+/** 拆镜头模式：image=图片；video=视频；image-video=图片+视频（首帧图→视频）。 */
+export type StoryboardShotMode = 'image' | 'video' | 'image-video'
 
 /** 按模式给 planner 的镜头种类硬指令（首拆注入；改方案不注入——保留现方案里每镜已定的 shotKind）。 */
 function shotModeDirective(mode: StoryboardShotMode): string {
@@ -31,6 +31,17 @@ function shotModeDirective(mode: StoryboardShotMode): string {
       '本次拆的是**视频分镜**：每个 shot 的 shotKind 必须填 "video"，按方法论给时长（durationSec）、运镜与动作演进，modelKey 从可用清单里选视频模型。',
       '每个 shot 必须尽量填写结构化列：scene（场景）、shotSize（景别）、cameraAngle（机位）、cameraMove（运镜）、characters（角色）、performance（人物表演）、dialogue（对白，无则留空）、props（道具）、sound（音乐/音效）、notes（备注）。',
       '每个 shot 同时填写 imagePrompt 和 videoPrompt：imagePrompt 写分镜参考画面；叙事镜头默认按全能参考组织，videoPrompt 不把分镜图锁成首帧，重点写单一动作链、动作结果、明确运镜轴向、随动作变化的光影和结束姿态。只有接戏或明确首帧复刻时才写首帧继承。prompt 字段镜像 videoPrompt，兼容旧链路。',
+    ].join('\n')
+  }
+  if (mode === 'image-video') {
+    return [
+      '本次拆的是**图片+视频分镜**：每个逻辑镜头只允许输出一个 shot，不要把首帧图另拆成一条 image shot。',
+      '每个 shot 的 shotKind 必须填 "video"，durationSec 按视频镜头填写。',
+      '每个 shot 必须填 keyframe: { enabled: true, prompt: "..." }；keyframe.prompt 写一张静态首帧图：构图/景别/光线/人物姿态与表情/环境，禁止写运镜、动作演进、转场、时长感、台词/字幕/声音。',
+      'shot.prompt 写视频部分：从这张首帧继续发生的动作演进、运镜、节奏与时长感，不要复述锚的静态外貌。',
+      'keyframe.modelKey 从可用模型清单里选图片模型；shot.modelKey 从可用模型清单里选视频模型。拿不准就留空，系统用默认模型兜底。',
+      'anchorIds 只引用 anchors 里的 id，绝对不要引用 image-1、shot-1-keyframe 等系统派生 id；系统会自动创建首帧图并把它用 first_frame 连到视频。',
+      'propose_storyboard_plan 的 shots 字段必须是**数组本体**，形如 shots: [{...}, {...}]；绝对不要写成字符串，禁止 shots: "[{...}]" 或任何转义 JSON 文本。',
     ].join('\n')
   }
   return [

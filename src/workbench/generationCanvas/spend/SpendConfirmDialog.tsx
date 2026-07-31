@@ -11,6 +11,7 @@ import { useSpendConfirmStore } from './spendConfirm'
 // - agent 受理（不 light）：每次必确认。
 // - 外部 AI 助手（MCP，source='agent'）：换机器人图标 + 明细行 + 倒计时（到点自动按未确认返回，不死等）。
 export function SpendConfirmDialog() {
+  const { t } = useTranslation()
   const pending = useSpendConfirmStore((state) => state.pending)
   const resolvePending = useSpendConfirmStore((state) => state.resolvePending)
   const [suppress, setSuppress] = React.useState(false)
@@ -75,7 +76,9 @@ export function SpendConfirmDialog() {
           </span>
           <div className={cn('min-w-0')}>
             <p className={cn('text-title font-medium text-nomi-ink truncate')}>{pending.title}</p>
-            {isAgent ? <p className={cn('text-micro text-nomi-ink-60')}>经 AI 助手（MCP）驱动 · 需你确认花费</p> : null}
+            {isAgent ? (
+              <p className={cn('text-micro text-nomi-ink-60')}>{t('generationCommon.spend.agentNotice')}</p>
+            ) : null}
           </div>
         </div>
 
@@ -111,13 +114,13 @@ export function SpendConfirmDialog() {
             className={cn('flex items-center gap-2 mb-4 cursor-pointer select-none text-caption text-nomi-ink-60')}
           >
             <input type="checkbox" checked={suppress} onChange={(event) => setSuppress(event.target.checked)} />
-            本次会话不再提示
+            {t('generationCommon.spend.suppressSession')}
           </label>
         ) : null}
 
         <div className={cn('flex items-center justify-end gap-2')}>
           <WorkbenchButton className={cn('h-8 px-4 cursor-pointer')} onClick={() => resolvePending(false)}>
-            {isAgent ? '忽略' : '取消'}
+            {isAgent ? t('generationCommon.spend.ignore') : t('generationCommon.spend.cancel')}
           </WorkbenchButton>
           <WorkbenchButton
             className={cn(
@@ -125,7 +128,7 @@ export function SpendConfirmDialog() {
             )}
             onClick={() => resolvePending(true, suppress)}
           >
-            {pending.confirmLabel || '确认生成'}
+            {pending.confirmLabel || t('generationCommon.spend.confirm')}
           </WorkbenchButton>
         </div>
       </div>

@@ -14,9 +14,11 @@ import { isCapabilityRecipesEnabled } from '../../../config/featureFlags'
 type Props = {
   node: GenerationCanvasNode
   selected: boolean
+  onPreview: () => void
 }
 
-export default function NodeResultDownloadButton({ node, selected }: Props): JSX.Element | null {
+export default function NodeResultDownloadButton({ node, selected, onPreview }: Props): JSX.Element | null {
+  const { t } = useTranslation()
   const { canDownload, downloading, download } = useResultDownload(node)
   const [handoffBusy, setHandoffBusy] = React.useState<Model3dHandoffTarget | null>(null)
   const handoff = React.useCallback((target: Model3dHandoffTarget) => {
@@ -31,7 +33,7 @@ export default function NodeResultDownloadButton({ node, selected }: Props): JSX
 
   // 视频结果 → 专用浮条（抽首/尾帧 + 下载）。
   if (node.result?.type === 'video') {
-    return <NodeVideoFrameToolbar node={node} downloading={downloading} onDownload={download} />
+    return <NodeVideoFrameToolbar node={node} downloading={downloading} onDownload={download} onPreview={onPreview} />
   }
 
   if (node.result?.type === 'model3d' && isCapabilityRecipesEnabled()) {
@@ -65,11 +67,11 @@ export default function NodeResultDownloadButton({ node, selected }: Props): JSX
   }
 
   return (
-    <FloatingToolbarShell ariaLabel="结果操作">
+    <FloatingToolbarShell ariaLabel={t('generationCommon.resultDownload.actions')}>
       <ToolbarButton
         icon={<IconDownload size={I.size} stroke={I.stroke} />}
-        label="下载"
-        title="下载 / 另存到本地"
+        label={t('generationCommon.resultDownload.download')}
+        title={t('generationCommon.resultDownload.downloadHint')}
         disabled={downloading}
         onClick={download}
       />

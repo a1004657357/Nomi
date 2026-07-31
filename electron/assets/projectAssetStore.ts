@@ -156,7 +156,12 @@ export function moveAssetFile(
   };
 }
 
-export async function importRemoteAsset(payload: unknown): Promise<unknown> {
+type RemoteAssetImportOptions = {
+  /** 仅供 main 进程内部已配置的本地生成服务使用；renderer IPC 无法注入第二参数。 */
+  trustedPrivateOrigin?: string;
+};
+
+export async function importRemoteAsset(payload: unknown, options: RemoteAssetImportOptions = {}): Promise<unknown> {
   const raw = payload as JsonRecord;
   const projectId = String(raw.projectId || "").trim();
   const url = String(raw.url || "").trim();

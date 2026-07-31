@@ -263,7 +263,7 @@ const Model3DViewer = React.forwardRef<Model3DViewerHandle, Model3DViewerProps>(
       <GlbBoundary
         fallback={
           <div className={cn('flex h-full w-full items-center justify-center text-caption text-nomi-ink-40')}>
-            模型加载失败
+            {t('generationCommon.node.model3dLoadFailed')}
           </div>
         }
       >

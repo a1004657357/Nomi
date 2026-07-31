@@ -10,6 +10,7 @@ import {
 } from './scene3dSerializer'
 import { ROLE_COLOR_SEQUENCE } from './scene3dConstants'
 import { CAMERA_MOVE_LABEL, type CameraMove } from './cameraMoveVocab'
+import { syncSceneTimelineDuration } from './scene3dTimeline'
 import type {
   Scene3DState,
   Scene3DTrajectory,
@@ -263,15 +264,13 @@ export function applyCameraMovePreset(
   }
 
   return {
-    state: {
+    // totalDuration 同步到内容真实终点（第3期：可增可减，不再 grow-only 把 5s 预设撑成默认 10s；
+    // 追加式串联时新段 endTime 恒为最大 → 仍 = 末段 endTime，与旧「串联延长」行为一致）。
+    state: syncSceneTimelineDuration({
       ...state,
       trajectories: [...state.trajectories, trajectory],
       trajectoryBindings: [...state.trajectoryBindings, binding],
-      sceneTimeline: {
-        ...state.sceneTimeline,
-        totalDuration: Math.max(state.sceneTimeline.totalDuration, endTime),
-      },
-    },
+    }),
     trajectoryId: trajectory.id,
     bindingId: binding.id,
     startTime,

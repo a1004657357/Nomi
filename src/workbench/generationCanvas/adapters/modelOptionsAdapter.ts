@@ -8,6 +8,8 @@ import {
   type ModelOptionsState,
 } from '../../../config/useModelOptions'
 import { normalizeOrientation, type Orientation } from '../../../utils/orientation'
+import i18n from '../../../i18n'
+import { translateModelDisplayText } from '../../../i18n/modelDisplayText'
 import type { ModelOption, NodeKind } from '../../../config/models'
 import type { GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
 import { getGenerationNodeCatalogKind, isVideoLikeGenerationNodeKind } from '../model/generationNodeKinds'
@@ -135,9 +137,15 @@ export function getImageModelControlLabels(option: ModelOption | null | undefine
   const config = parseImageModelCatalogConfig(option?.meta)
   return {
     config,
-    aspectLabel: config?.controls.find((control) => control.binding === 'aspectRatio')?.label || '画幅',
-    sizeLabel: config?.controls.find((control) => control.binding === 'imageSize')?.label || '尺寸',
-    resolutionLabel: config?.controls.find((control) => control.binding === 'resolution')?.label || '分辨率',
+    aspectLabel:
+      translateModelDisplayText(config?.controls.find((control) => control.binding === 'aspectRatio')?.label || '') ||
+      i18n.t('runtime.modelCatalog.control.frame'),
+    sizeLabel:
+      translateModelDisplayText(config?.controls.find((control) => control.binding === 'imageSize')?.label || '') ||
+      i18n.t('runtime.modelCatalog.control.size'),
+    resolutionLabel:
+      translateModelDisplayText(config?.controls.find((control) => control.binding === 'resolution')?.label || '') ||
+      i18n.t('runtime.modelCatalog.control.resolution'),
   }
 }
 
@@ -145,10 +153,18 @@ export function getVideoModelControlLabels(option: ModelOption | null | undefine
   const config = parseVideoModelCatalogConfig(option?.meta)
   return {
     config,
-    durationLabel: config?.controls.find((control) => control.binding === 'durationSeconds')?.label || '时长',
-    sizeLabel: config?.controls.find((control) => control.binding === 'size')?.label || '画幅',
-    resolutionLabel: config?.controls.find((control) => control.binding === 'resolution')?.label || '分辨率',
-    orientationLabel: config?.controls.find((control) => control.binding === 'orientation')?.label || '方向',
+    durationLabel:
+      translateModelDisplayText(config?.controls.find((control) => control.binding === 'durationSeconds')?.label || '') ||
+      i18n.t('runtime.modelCatalog.control.duration'),
+    sizeLabel:
+      translateModelDisplayText(config?.controls.find((control) => control.binding === 'size')?.label || '') ||
+      i18n.t('runtime.modelCatalog.control.frame'),
+    resolutionLabel:
+      translateModelDisplayText(config?.controls.find((control) => control.binding === 'resolution')?.label || '') ||
+      i18n.t('runtime.modelCatalog.control.resolution'),
+    orientationLabel:
+      translateModelDisplayText(config?.controls.find((control) => control.binding === 'orientation')?.label || '') ||
+      i18n.t('runtime.modelCatalog.control.orientation'),
   }
 }
 

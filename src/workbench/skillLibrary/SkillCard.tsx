@@ -57,6 +57,9 @@ export function SkillCard({
   onDelete: (skill: SkillListItemDto) => void
   showManagementActions?: boolean
 }): JSX.Element {
+  const { t } = useTranslation()
+  const providerName = (kind: SkillProviderKind): string =>
+    t(`libraries.skill.provider.${kind}` as 'libraries.skill.provider.text')
   const cap = skillCapabilityFor(skill, available)
   const isUser = skill.origin === 'user'
   const canvasEnabled = isCanvasSkill(skill)
@@ -92,17 +95,19 @@ export function SkillCard({
           </span>
         ) : skill.isPlaybook ? (
           <span className={cn('shrink-0 rounded-full bg-nomi-accent-soft px-2 py-0.5 text-micro text-nomi-accent')}>
-            playbook · {skill.stageLabels.length} 段
+            {t('libraries.skill.playbookStages', { count: skill.stageLabels.length })}
           </span>
         ) : (
-          <span className={cn('shrink-0 rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro text-nomi-ink-60')}>助手</span>
+          <span className={cn('shrink-0 rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro text-nomi-ink-60')}>
+            {t('libraries.skill.assistant')}
+          </span>
         )}
       </div>
 
       {skill.description ? (
         <p className={cn('text-caption text-nomi-ink-60 line-clamp-2')}>{skill.description}</p>
       ) : (
-        <p className={cn('text-caption text-nomi-ink-40')}>暂无说明</p>
+        <p className={cn('text-caption text-nomi-ink-40')}>{t('libraries.skill.noDescription')}</p>
       )}
 
       {skill.neededProviders.length > 0 && (
@@ -112,10 +117,13 @@ export function SkillCard({
             return (
               <span
                 key={kind}
-                className={cn('inline-flex items-center gap-0.5 text-micro', ok ? 'text-workbench-success' : 'text-nomi-ink-40')}
+                className={cn(
+                  'inline-flex items-center gap-0.5 text-micro',
+                  ok ? 'text-workbench-success' : 'text-nomi-ink-40',
+                )}
               >
                 {ok ? <IconCheck size={11} stroke={2} /> : <IconAlertTriangle size={11} stroke={2} />}
-                {providerLabel(kind)}
+                {providerName(kind)}
               </span>
             )
           })}
@@ -127,7 +135,9 @@ export function SkillCard({
           type="button"
           data-skill-use="true"
           onClick={() => onUse(skill)}
-          className={cn('shrink-0 whitespace-nowrap rounded-nomi-sm px-2 py-1 text-caption text-nomi-accent hover:bg-nomi-accent-soft transition-colors')}
+          className={cn(
+            'shrink-0 whitespace-nowrap rounded-nomi-sm px-2 py-1 text-caption text-nomi-accent hover:bg-nomi-accent-soft transition-colors',
+          )}
         >
           {canvasEnabled ? '添加到画布' : '在创作区用'}
         </button>

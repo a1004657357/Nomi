@@ -1,8 +1,10 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconAlertTriangle, IconCheck, IconMovie, IconLockOpen, IconPlus } from '@tabler/icons-react'
 import { alertDialog, confirmDialog, WorkbenchButton } from '../../../design'
 import { useWorkbenchStore } from '../../workbenchStore'
-import { applyCanvasToolCall } from '../../generationCanvas/agent/applyCanvasToolCall'
+import { applyCanvasToolCall, resolveCanvasToolNodeId } from '../../generationCanvas/agent/applyCanvasToolCall'
+import { useGenerationCanvasStore } from '../../generationCanvas/store/generationCanvasStore'
 import { resolveStoryboardImageDefault, resolveStoryboardVideoDefault } from '../../generationCanvas/agent/availableModels'
 import { useModelOptionsState } from '../../../config/useModelOptions'
 import { storyboardPlanToCreateNodesArgs } from '../../generationCanvas/agent/storyboardPlan'
@@ -30,23 +32,10 @@ import StoryboardShotCard from './StoryboardShotCard'
  * 确认 → storyboardPlanToCreateNodesArgs 转 create_canvas_nodes → applyCanvasToolCall 落画布 → 清方案、切生成区。
  */
 
-function firstIssueLabel(issue: PlanIssue): string {
-  switch (issue.kind) {
-    case 'no-shots':
-      return '还没有镜头'
-    case 'empty-shot-prompt':
-      return `镜 ${issue.shotIndex} 没写提示词`
-    case 'dangling-ref':
-      return `镜 ${issue.shotIndex} 有失效引用`
-    case 'anchor-no-name':
-      return '有锚还没起名字'
-  }
-}
-
 export default function StoryboardPlanEditor(): JSX.Element | null {
+  const { t } = useTranslation()
   const plan = useWorkbenchStore((s) => s.storyboardPlan)
   const setStoryboardPlan = useWorkbenchStore((s) => s.setStoryboardPlan)
-  const setStoryboardEditorOpen = useWorkbenchStore((s) => s.setStoryboardEditorOpen)
   const commitStoryboardPlan = useWorkbenchStore((s) => s.commitStoryboardPlan)
   const discardStoryboardPlan = useWorkbenchStore((s) => s.discardStoryboardPlan)
   const setWorkspaceMode = useWorkbenchStore((s) => s.setWorkspaceMode)
@@ -58,6 +47,15 @@ export default function StoryboardPlanEditor(): JSX.Element | null {
   const videoModelOptions = useModelOptionsState('video').options
   const imageModelOptions = useModelOptionsState('image').options
 
+  const firstIssueLabel = (issue: PlanIssue): string => {
+    switch (issue.kind) {
+      case 'no-shots': return t('storyboardEditor.issue.noShots')
+      case 'empty-shot-prompt': return t('storyboardEditor.issue.emptyPrompt', { index: issue.shotIndex })
+      case 'dangling-ref': return t('storyboardEditor.issue.danglingRef', { index: issue.shotIndex })
+      case 'anchor-no-name': return t('storyboardEditor.issue.anchorNoName')
+    }
+  }
+
   if (!plan) return null
 
   const issues = validatePlan(plan)
@@ -66,9 +64,9 @@ export default function StoryboardPlanEditor(): JSX.Element | null {
 
   const onDiscard = async () => {
     const ok = await confirmDialog({
-      title: '丢弃这份方案？',
-      message: '方案和你刚才的修改会清空，可以重新让 AI 拆镜头。',
-      confirmLabel: '丢弃',
+      title: t('storyboardEditor.discardTitle'),
+      message: t('storyboardEditor.discardMessage'),
+      confirmLabel: t('storyboardEditor.discard'),
       danger: true,
     })
     if (ok) discardStoryboardPlan()
@@ -99,10 +97,15 @@ export default function StoryboardPlanEditor(): JSX.Element | null {
       // 揭示新落的镜头：请画布平滑 fit 一次。否则新节点落在已加载画布的视口外，
       // 用户点完「确认落画布」看着像「没反应」（useAutoFitOnLoad 只在首次加载/切分类触发）。
       requestCanvasFit()
+      // 落画布即自动全选这批新节点（样张拍板 2026-07-29）→ 既有多选浮条「生成 N 个」直接浮现，
+      // 批量入口不再靠用户自己发现框选；点浮条整批确认生成，依赖波次照旧（定妆/首帧先、镜头后）。
+      // clientId 经注册表换真实节点 id；≤1 个不选（浮条本就只在多选时出现，单节点一键生成足矣）。
+      const landedIds = args.nodes.map((created) => resolveCanvasToolNodeId(created.clientId))
+      if (landedIds.length > 1) useGenerationCanvasStore.getState().selectNodes(landedIds)
     } catch (error: unknown) {
       await alertDialog({
-        title: '落画布失败',
-        message: error instanceof Error && error.message ? error.message : '未知错误，请重试。',
+        title: t('storyboardEditor.landFailed'),
+        message: error instanceof Error && error.message ? error.message : t('storyboardEditor.unknownRetry'),
       })
     } finally {
       setLanding(false)
@@ -117,44 +120,37 @@ export default function StoryboardPlanEditor(): JSX.Element | null {
           <input
             value={plan.title}
             onChange={(event) => setStoryboardPlan(updateTitle(plan, event.target.value))}
-            aria-label="方案标题"
-            placeholder="给方案起个名字"
+            aria-label={t('storyboardEditor.titleAria')}
+            placeholder={t('storyboardEditor.titlePlaceholder')}
             className="min-w-0 max-w-[260px] text-title font-medium text-nomi-ink bg-transparent outline-none focus:bg-nomi-ink-05 rounded-nomi-sm px-1"
           />
-          <span className="shrink-0 text-micro text-nomi-ink-40 bg-nomi-ink-05 px-2 py-0.5 rounded-full">{plan.shots.length} 镜</span>
+          <span className="shrink-0 text-micro text-nomi-ink-40 bg-nomi-ink-05 px-2 py-0.5 rounded-full">{t('storyboardEditor.shotCount', { count: plan.shots.length })}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <WorkbenchButton
             variant="default"
             size="sm"
-            onClick={() => setStoryboardEditorOpen(false)}
-          >
-            收起
-          </WorkbenchButton>
-          <WorkbenchButton
-            variant="default"
-            size="sm"
             onClick={onDiscard}
           >
-            丢弃方案
+            {t('storyboardEditor.discardPlan')}
           </WorkbenchButton>
         </div>
       </header>
 
       <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-nomi-line-soft text-caption text-nomi-ink-40">
         <IconLockOpen size={14} stroke={1.6} className="shrink-0" />
-        <span className="truncate"><span className="text-nomi-ink-60">AI 草拟，随便改</span> · 确认前不生成、不花钱</span>
+        <span className="truncate"><span className="text-nomi-ink-60">{t('storyboardEditor.draftEditable')}</span> · {t('storyboardEditor.freeBeforeConfirm')}</span>
       </div>
 
       <div className="overflow-y-auto px-4 py-4 flex flex-col gap-4">
         <section>
           <div className="flex items-baseline gap-2 mb-2">
-            <span className="text-body-sm font-medium text-nomi-ink-80">跨镜头要一致的</span>
-            <span className="text-micro text-nomi-ink-40">生成参考图=锁长相 · 仅提示词=写进 prompt</span>
+            <span className="text-body-sm font-medium text-nomi-ink-80">{t('storyboardEditor.consistencyTitle')}</span>
+            <span className="text-micro text-nomi-ink-40">{t('storyboardEditor.consistencyHint')}</span>
           </div>
           <div className="border border-nomi-line rounded-nomi divide-y divide-nomi-line-soft overflow-hidden">
             {plan.anchors.length === 0 && (
-              <div className="text-caption text-nomi-ink-40 px-2.5 py-2">还没有锚——加一个，或直接写镜头。</div>
+              <div className="text-caption text-nomi-ink-40 px-2.5 py-2">{t('storyboardEditor.noAnchors')}</div>
             )}
             {plan.anchors.map((anchor) => (
               <StoryboardAnchorCard
@@ -172,13 +168,13 @@ export default function StoryboardPlanEditor(): JSX.Element | null {
               className="w-full flex items-center gap-1.5 px-2.5 py-2 bg-nomi-ink-05 text-caption text-nomi-ink-40 hover:text-nomi-ink-60 hover:bg-nomi-ink-10"
             >
               <IconPlus size={13} stroke={1.8} />
-              添加锚（角色 / 场景 / 道具 / 风格）
+              {t('storyboardEditor.addAnchor')}
             </button>
           </div>
         </section>
 
         <section>
-          <div className="text-body-sm font-medium text-nomi-ink-80 mb-2">分镜 · {plan.shots.length} 镜</div>
+          <div className="text-body-sm font-medium text-nomi-ink-80 mb-2">{t('storyboardEditor.storyboardHeading', { count: plan.shots.length })}</div>
           <div className="flex flex-col gap-2">
             {plan.shots.map((shot, pos) => (
               <StoryboardShotCard
@@ -219,7 +215,7 @@ export default function StoryboardPlanEditor(): JSX.Element | null {
               className="self-start h-6 px-2.5 rounded-full border border-dashed border-nomi-ink-20 text-caption text-nomi-ink-60 inline-flex items-center gap-1 hover:text-nomi-ink-80"
             >
               <IconPlus size={13} stroke={1.8} />
-              添加镜头
+              {t('storyboardEditor.addShot')}
             </button>
           </div>
         </section>
@@ -229,12 +225,12 @@ export default function StoryboardPlanEditor(): JSX.Element | null {
         {issues.length > 0 ? (
           <span className="text-caption text-workbench-danger inline-flex items-center gap-[5px] min-w-0">
             <IconAlertTriangle size={14} stroke={1.8} className="shrink-0" />
-            <span className="truncate">{issues.length} 处待处理：{firstIssueLabel(issues[0])}</span>
+            <span className="truncate">{t('storyboardEditor.issuesSummary', { count: issues.length, issue: firstIssueLabel(issues[0]) })}</span>
           </span>
         ) : (
           <span className="text-caption text-workbench-success inline-flex items-center gap-[5px]">
             <IconCheck size={14} stroke={1.8} />
-            全部就绪 · {plan.anchors.length} 锚 · {plan.shots.length} 镜
+            {t('storyboardEditor.readySummary', { anchors: plan.anchors.length, shots: plan.shots.length })}
           </span>
         )}
         <WorkbenchButton
@@ -243,7 +239,7 @@ export default function StoryboardPlanEditor(): JSX.Element | null {
           disabled={issues.length > 0 || landing}
         >
           <IconCheck size={15} stroke={1.8} />
-          {landing ? '落画布中…' : '确认落画布'}
+          {landing ? t('storyboardEditor.landing') : t('storyboardEditor.confirmLanding')}
         </WorkbenchButton>
       </footer>
     </section>

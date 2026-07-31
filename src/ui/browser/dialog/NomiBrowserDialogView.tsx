@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import { IconCamera } from '@tabler/icons-react'
 import {
@@ -51,7 +52,6 @@ export function NomiBrowserDialogView({
   browserAssetPopoverOpen,
   browserBridge,
   browserCaptureRequest,
-  browserPromptCaptureRequest,
   browserResourceCaptureEnabled,
   browserSideWidth,
   browserViewHostRef,
@@ -108,6 +108,7 @@ export function NomiBrowserDialogView({
   webContentBounds,
   workspaceMode,
 }: NomiBrowserDialogViewProps): JSX.Element {
+  const { t } = useTranslation()
   const browserAssetPopoverBounds = React.useMemo(() => {
     if (!localBrowserAssetPopoverSplit || !webContentBounds) return webContentBounds
     const width = Math.min(dockPanelWidth, webContentBounds.width)
@@ -185,12 +186,12 @@ export function NomiBrowserDialogView({
                   >
                     <span className="grid size-4 place-items-center text-nomi-ink-40"><TabFavicon tab={tab} /></span>
                     <span className="min-w-0 truncate text-caption font-medium">
-                      {tab.loading ? '加载中...' : tab.title}
+                      {tab.loading ? t('browserAssets.loading') : tab.title}
                     </span>
                     <button
                       type="button"
                       className="grid size-5 cursor-pointer place-items-center rounded-nomi-sm border-0 bg-transparent text-nomi-ink-40 opacity-70 hover:bg-nomi-ink-05 hover:text-nomi-ink group-hover:opacity-100"
-                      aria-label={`关闭 ${tab.title}`}
+                      aria-label={t('browserAssets.closeTabNamed', { title: tab.title })}
                       onClick={(event) => {
                         event.stopPropagation()
                         setTabContextMenu(null)
@@ -212,7 +213,7 @@ export function NomiBrowserDialogView({
               <button
                 type="button"
                 className={cn(TOOL_BUTTON_CLASS, 'mb-0.5')}
-                aria-label="新建标签页"
+                aria-label={t('browserAssets.newTab')}
                 disabled={tabs.length >= TAB_LIMIT}
                 onClick={() => createTab()}
               >
@@ -249,7 +250,7 @@ export function NomiBrowserDialogView({
               <button
                 type="button"
                 className={TOOL_BUTTON_CLASS}
-                aria-label="后退"
+                aria-label={t('browserAssets.back')}
                 disabled={!activeTab?.canGoBack}
                 onClick={() => activeTab?.viewId && browserBridge?.back({ viewId: activeTab.viewId })}
               >
@@ -258,7 +259,7 @@ export function NomiBrowserDialogView({
               <button
                 type="button"
                 className={TOOL_BUTTON_CLASS}
-                aria-label="前进"
+                aria-label={t('browserAssets.forward')}
                 disabled={!activeTab?.canGoForward}
                 onClick={() => activeTab?.viewId && browserBridge?.forward({ viewId: activeTab.viewId })}
               >
@@ -267,7 +268,7 @@ export function NomiBrowserDialogView({
               <button
                 type="button"
                 className={TOOL_BUTTON_CLASS}
-                aria-label="刷新"
+                aria-label={t('browserAssets.refresh')}
                 disabled={!activeTab?.viewId}
                 onClick={() => activeTab?.viewId && browserBridge?.reload({ viewId: activeTab.viewId })}
               >
@@ -281,19 +282,19 @@ export function NomiBrowserDialogView({
                 onFocus={handleAddressFocus}
                 onBlur={handleAddressBlur}
                 onChange={handleAddressChange}
-                placeholder="输入网址或搜索关键词"
-                aria-label="地址栏"
+                placeholder={t('browserAssets.addressPlaceholder')}
+                aria-label={t('browserAssets.addressBar')}
                 className="h-full min-w-0 flex-1 border-0 bg-transparent text-body-sm leading-8 text-nomi-ink outline-none ring-0 placeholder:text-nomi-ink-30 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
               />
               <button
                 type="button"
                 className={cn(
                   'grid size-6 shrink-0 place-items-center rounded-pill border-0 bg-transparent',
-                  'cursor-pointer text-nomi-ink-35 transition-colors duration-[var(--nomi-transition-fast)] hover:bg-nomi-ink-05 hover:text-nomi-ink',
+                  'cursor-pointer text-nomi-ink-40 transition-colors duration-[var(--nomi-transition-fast)] hover:bg-nomi-ink-05 hover:text-nomi-ink',
                   activeBookmarked && 'text-nomi-accent hover:text-nomi-accent',
                   (!activeTab?.url || activeBookmarked) && 'cursor-default',
                 )}
-                aria-label="保存为书签"
+                aria-label={t('browserAssets.saveBookmark')}
                 aria-pressed={activeBookmarked}
                 disabled={!activeTab?.url || activeBookmarked}
                 onClick={() => saveBookmark(activeTab)}
@@ -346,13 +347,13 @@ export function NomiBrowserDialogView({
                       <button
                         key={site.url}
                         type="button"
-                        className="flex h-9 w-full items-center gap-2 rounded-nomi-sm border-0 bg-transparent px-2.5 text-left text-body-sm text-nomi-ink-70 hover:bg-nomi-ink-05 hover:text-nomi-ink"
+                        className="flex h-9 w-full items-center gap-2 rounded-nomi-sm border-0 bg-transparent px-2.5 text-left text-body-sm text-nomi-ink-80 hover:bg-nomi-ink-05 hover:text-nomi-ink"
                         onClick={() => {
                           setMaterialSitesOpen(false)
                           void createTab(site.url)
                         }}
                       >
-                        <IconWorld size={15} stroke={1.7} className="shrink-0 text-nomi-ink-35" aria-hidden="true" />
+                        <IconWorld size={15} stroke={1.7} className="shrink-0 text-nomi-ink-40" aria-hidden="true" />
                         <span className="min-w-0 flex-1 truncate">{site.name}</span>
                         <IconExternalLink size={13} stroke={1.7} className="shrink-0 text-nomi-ink-30" aria-hidden="true" />
                       </button>
@@ -363,8 +364,8 @@ export function NomiBrowserDialogView({
               <button
                 type="button"
                 className={TOOL_BUTTON_CLASS}
-                aria-label="截图提取提示词"
-                title="截图提取提示词"
+                aria-label={t('browserAssets.screenshotPrompt')}
+                title={t('browserAssets.screenshotPrompt')}
                 disabled={!activeTab?.viewId}
                 onClick={openBrowserScreenshotPromptModePicker}
               >
@@ -380,13 +381,13 @@ export function NomiBrowserDialogView({
                   'hover:bg-nomi-ink-05 hover:text-nomi-ink',
                   browserAssetPopoverOpen && 'bg-nomi-ink-05 text-nomi-ink',
                 )}
-                aria-label={browserAssetPopoverOpen ? '收起素材盒' : '打开素材盒'}
+                aria-label={browserAssetPopoverOpen ? t('browserAssets.collapseAssetBox') : t('browserAssets.openAssetBox')}
                 aria-pressed={browserAssetPopoverOpen}
-                title="素材盒：捕捞收件箱，可多选拖上画布"
+                title={t('browserAssets.assetBoxHint')}
                 onClick={() => handleBrowserAssetPopoverOpenChange(!browserAssetPopoverOpen)}
               >
                 <IconBox size={16} stroke={1.8} aria-hidden="true" />
-                <span className="whitespace-nowrap">素材盒</span>
+                <span className="whitespace-nowrap">{t('browserAssets.assetBox')}</span>
               </button>
             </div>
           </form>
@@ -414,7 +415,7 @@ export function NomiBrowserDialogView({
               </button>
             ))}
             {bookmarks.length > 10 ? <span className="px-2 text-caption text-nomi-ink-30">···</span> : null}
-            <span className="ml-auto shrink-0 text-micro text-nomi-ink-30">右键标签或书签打开菜单</span>
+            <span className="ml-auto shrink-0 text-micro text-nomi-ink-30">{t('browserAssets.contextMenuHint')}</span>
           </div>
 
           <main
@@ -423,7 +424,7 @@ export function NomiBrowserDialogView({
               'min-h-0 flex-1 overflow-hidden bg-nomi-bg',
               localBrowserAssetPopoverSplit ? 'flex flex-row' : 'relative',
             )}
-            aria-label="网页内容"
+            aria-label={t('browserAssets.webContent')}
           >
             <div
               ref={browserViewHostRef}
@@ -439,9 +440,9 @@ export function NomiBrowserDialogView({
                     <div className="mx-auto mb-4 grid size-12 place-items-center">
                       <NomiLogoMark size={40} />
                     </div>
-                    <h3 className="m-0 text-h2 font-semibold text-nomi-ink">打开网页参考</h3>
+                    <h3 className="m-0 text-h2 font-semibold text-nomi-ink">{t('browserAssets.openWebReference')}</h3>
                     <p className="m-0 mt-2 text-body-sm text-nomi-ink-40">
-                      输入网址直达，或用 Bing 搜索关键词
+                      {t('browserAssets.openWebDescription')}
                     </p>
                   </div>
                   <form
@@ -458,20 +459,20 @@ export function NomiBrowserDialogView({
                         onFocus={handleAddressFocus}
                         onBlur={handleAddressBlur}
                         onChange={handleAddressChange}
-                        placeholder="搜 Bing 或输入网址"
-                        aria-label="搜 Bing 或输入网址"
+                        placeholder={t('browserAssets.searchBing')}
+                        aria-label={t('browserAssets.searchBing')}
                         className="h-11 min-w-0 flex-1 border-0 bg-transparent text-body leading-[44px] outline-none ring-0 placeholder:text-nomi-ink-30 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
                       />
                       <button
                         type="submit"
                         className="h-11 rounded-pill border-0 bg-nomi-ink px-5 text-body-sm font-semibold text-nomi-paper transition-colors hover:bg-nomi-accent"
                       >
-                        打开
+                        {t('browserAssets.open')}
                       </button>
                     </div>
                   </form>
                   <div>
-                    <div className="mb-3 text-caption font-semibold text-nomi-ink-45">常用参考站点</div>
+                    <div className="mb-3 text-caption font-semibold text-nomi-ink-40">{t('browserAssets.commonSites')}</div>
                     <div
                       className="grid gap-2"
                       style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}
@@ -479,7 +480,8 @@ export function NomiBrowserDialogView({
                       {BROWSER_START_SHORTCUTS.map((site) => {
                         // 预设站图标不求第三方 favicon 服务（Google s2 对部分域 404、
                         // 中国网络下每次开浏览器都刷 console 错）——首字母瓷贴，零网络零 flake。
-                        const initial = (site.label || '?').trim().slice(0, 1)
+                        const siteLabel = site.labelKey ? t(site.labelKey) : site.label
+                        const initial = (siteLabel || '?').trim().slice(0, 1)
                         return (
                           <button
                             key={site.url}
@@ -498,8 +500,8 @@ export function NomiBrowserDialogView({
                               {initial || <IconWorld size={15} stroke={1.7} aria-hidden="true" />}
                             </span>
                             <span className="grid min-w-0 flex-1 gap-0.5">
-                              <span className="truncate text-caption font-semibold text-nomi-ink">{site.label}</span>
-                              <span className="truncate text-micro text-nomi-ink-45">{site.hint}</span>
+                              <span className="truncate text-caption font-semibold text-nomi-ink">{siteLabel}</span>
+                              <span className="truncate text-micro text-nomi-ink-40">{t(site.hintKey)}</span>
                             </span>
                           </button>
                         )
@@ -529,7 +531,6 @@ export function NomiBrowserDialogView({
                   placement="absolute"
                   opened={browserAssetPopoverOpen}
                   boundsRect={browserAssetPopoverBounds}
-                  showTrigger={false}
                   onOpenChange={handleBrowserAssetPopoverOpenChange}
                   onWindowRectChange={handleBrowserAssetPopoverRectChange}
                   onDockModeChange={setBrowserAssetPopoverDockMode}
@@ -539,7 +540,6 @@ export function NomiBrowserDialogView({
                   browserCaptureEnabled={browserResourceCaptureEnabled}
                   browserCaptureDisabled={!activeTab?.viewId || !browserBridge?.setResourceCapture}
                   browserCaptureRequest={browserCaptureRequest}
-                  browserPromptCaptureRequest={browserPromptCaptureRequest}
                   onBrowserCaptureToggle={toggleBrowserResourceCapture}
                 />
                 {localBrowserAssetPopoverSplit ? (
@@ -562,7 +562,7 @@ export function NomiBrowserDialogView({
             className="fixed z-[575] w-56 rounded-nomi border border-nomi-line bg-nomi-paper p-1.5 shadow-nomi-lg"
             style={{ left: promptModePicker.x, top: promptModePicker.y }}
             role="menu"
-            aria-label="选择提示词提取方式"
+            aria-label={t('browserAssets.promptMode')}
             onContextMenu={(event) => event.preventDefault()}
             onMouseDown={(event) => event.stopPropagation()}
           >
@@ -623,7 +623,7 @@ export function NomiBrowserDialogView({
                 <>
                   <video src={flyout.url} muted playsInline className="block size-full bg-nomi-ink object-contain" />
                   <span className="absolute right-1 top-1 rounded-pill bg-nomi-accent px-1.5 py-0.5 text-micro font-semibold leading-none text-nomi-paper shadow-nomi-sm">
-                    视频
+                    {t('browserAssets.video')}
                   </span>
                 </>
               ) : (
@@ -645,7 +645,7 @@ export function NomiBrowserDialogView({
             className="fixed z-[560] rounded-nomi border border-nomi-line bg-nomi-paper p-1 shadow-nomi-lg"
             style={{ left: tabContextMenu.x, top: tabContextMenu.y, width: TAB_CONTEXT_MENU_WIDTH }}
             role="menu"
-            aria-label={`${contextMenuTab.title} 标签菜单`}
+            aria-label={t('browserAssets.tabMenu', { title: contextMenuTab.title })}
             data-nomi-browser-tab-menu="true"
             onContextMenu={(event) => event.preventDefault()}
             onMouseDown={(event) => event.stopPropagation()}
@@ -665,7 +665,7 @@ export function NomiBrowserDialogView({
               ) : (
                 <IconStar size={15} stroke={1.8} aria-hidden="true" className="shrink-0 text-nomi-ink-40" />
               )}
-              <span className="min-w-0 flex-1 truncate">{contextMenuTabBookmarked ? '已收藏' : '收藏'}</span>
+              <span className="min-w-0 flex-1 truncate">{contextMenuTabBookmarked ? t('browserAssets.bookmarked') : t('browserAssets.bookmark')}</span>
             </button>
             <button
               type="button"
@@ -677,7 +677,7 @@ export function NomiBrowserDialogView({
               }}
             >
               <IconX size={15} stroke={1.9} aria-hidden="true" className="shrink-0 text-nomi-ink-40" />
-              <span className="min-w-0 flex-1 truncate">关闭标签</span>
+              <span className="min-w-0 flex-1 truncate">{t('browserAssets.closeTab')}</span>
             </button>
             {tabs.length > 1 ? (
               <>
@@ -689,7 +689,7 @@ export function NomiBrowserDialogView({
                   onClick={closeAllTabs}
                 >
                   <IconX size={15} stroke={1.9} aria-hidden="true" className="shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">关闭全部</span>
+                  <span className="min-w-0 flex-1 truncate">{t('browserAssets.closeAllTabs')}</span>
                 </button>
               </>
             ) : null}
@@ -701,7 +701,7 @@ export function NomiBrowserDialogView({
             className="fixed z-[560] rounded-nomi border border-nomi-line bg-nomi-paper p-1 shadow-nomi-lg"
             style={{ left: bookmarkContextMenu.x, top: bookmarkContextMenu.y, width: TAB_CONTEXT_MENU_WIDTH }}
             role="menu"
-            aria-label={`${contextMenuBookmark.title} 书签菜单`}
+            aria-label={t('browserAssets.bookmarkMenu', { title: contextMenuBookmark.title })}
             data-nomi-browser-bookmark-menu="true"
             onContextMenu={(event) => event.preventDefault()}
             onMouseDown={(event) => event.stopPropagation()}
@@ -717,7 +717,7 @@ export function NomiBrowserDialogView({
               }}
             >
               <IconPencil size={15} stroke={1.8} aria-hidden="true" className="shrink-0 text-nomi-ink-40" />
-              <span className="min-w-0 flex-1 truncate">重命名</span>
+              <span className="min-w-0 flex-1 truncate">{t('browserAssets.rename')}</span>
             </button>
             <button
               type="button"
@@ -729,7 +729,7 @@ export function NomiBrowserDialogView({
               }}
             >
               <IconTrash size={15} stroke={1.8} aria-hidden="true" className="shrink-0" />
-              <span className="min-w-0 flex-1 truncate">删除</span>
+              <span className="min-w-0 flex-1 truncate">{t('browserAssets.delete')}</span>
             </button>
           </div>
         ) : null}

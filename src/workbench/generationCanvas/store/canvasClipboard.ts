@@ -4,6 +4,7 @@
 import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { createEdgeId } from '../model/graphOps'
 import { CLIPBOARD_OFFSET, createClipboardNodeId } from './canvasIds'
+import i18n from '../../../i18n'
 
 export type GenerationCanvasClipboard = {
   nodes: GenerationCanvasNode[]
@@ -55,7 +56,7 @@ export function cloneClipboardPayload(payload: GenerationCanvasClipboard): Clipb
     return {
       ...node,
       id: nextId,
-      title: node.title ? `${node.title} 副本` : node.title,
+      title: node.title ? i18n.t('generationCommon.whiteboard.copyName', { name: node.title }) : node.title,
       position: {
         x: node.position.x + CLIPBOARD_OFFSET,
         y: node.position.y + CLIPBOARD_OFFSET,

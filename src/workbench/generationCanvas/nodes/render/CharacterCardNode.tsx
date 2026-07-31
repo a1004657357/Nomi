@@ -27,6 +27,7 @@ type Props = {
 }
 
 function CharacterCardNodeImpl({ node }: Props): JSX.Element {
+  const { t } = useTranslation()
   const meta = readCharacterMeta(node)
   const usageCount = useNodeUsageCount(node.id, node.title)
   const variantCount = useNodeVariantCount(node.id)
@@ -50,7 +51,7 @@ function CharacterCardNodeImpl({ node }: Props): JSX.Element {
             className="w-full h-full object-contain object-center select-none pointer-events-none"
           />
         ) : (
-          <UploadFallback accept="image/*" label="角色图" onUpload={handleUpload} />
+          <UploadFallback accept="image/*" label={t('generationCommon.card.character.image')} onUpload={handleUpload} />
         )}
       </div>
 
@@ -60,7 +61,7 @@ function CharacterCardNodeImpl({ node }: Props): JSX.Element {
             <EditableNodeTitle
               nodeId={node.id}
               value={node.title || ''}
-              placeholder="未命名角色"
+              placeholder={t('generationCommon.card.character.unnamed')}
             />
             <UsageDot count={usageCount} />
           </div>

@@ -24,6 +24,7 @@ export function CanvasSelectionToolbar({
   onUngroupSelectedNodes,
   onClearSelection,
 }: CanvasSelectionToolbarProps): JSX.Element {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
@@ -33,7 +34,7 @@ export function CanvasSelectionToolbar({
         'bg-nomi-paper/[0.96] shadow-nomi-md pointer-events-auto',
       )}
       style={{ transform }}
-      aria-label="选中区域操作"
+      aria-label={t('generationCommon.selection.aria')}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <span className={cn('pl-1.5 pr-1 text-nomi-ink-60 text-body-sm whitespace-nowrap')}>已选 {selectedCount} 个</span>
@@ -55,11 +56,23 @@ export function CanvasSelectionToolbar({
       )}
       <span className={cn('w-px h-4 bg-nomi-line')} />
       {selectedGroupCount > 0 ? (
-        <WorkbenchIconButton label="解除分组 (⇧⌘G)" icon={<IconFolderMinus size={16} />} onClick={onUngroupSelectedNodes} />
+        <WorkbenchIconButton
+          label={t('generationCommon.selection.ungroup')}
+          icon={<IconFolderMinus size={16} />}
+          onClick={onUngroupSelectedNodes}
+        />
       ) : (
-        <WorkbenchIconButton label="创建分组 (⌘G)" icon={<IconFolderPlus size={16} />} onClick={onGroupSelectedNodes} />
+        <WorkbenchIconButton
+          label={t('generationCommon.selection.group')}
+          icon={<IconFolderPlus size={16} />}
+          onClick={onGroupSelectedNodes}
+        />
       )}
-      <WorkbenchIconButton label="清除选择" icon={<IconX size={16} />} onClick={onClearSelection} />
+      <WorkbenchIconButton
+        label={t('generationCommon.selection.clear')}
+        icon={<IconX size={16} />}
+        onClick={onClearSelection}
+      />
     </div>
   )
 }

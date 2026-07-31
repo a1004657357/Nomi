@@ -73,6 +73,6 @@
     <text x="34" y="154" font-family="Inter, PingFang SC, sans-serif" font-size="13" fill="#fffdf8" opacity=".66">Preview = Final</text>
   </g>
   <rect x="86" y="610" width="1094" height="1" fill="#d9d3c5"/>
-  <text x="86" y="650" font-family="Inter, PingFang SC, sans-serif" font-size="18" font-weight="700" fill="#1a1816">Nomi v0.16.2</text>
-  <text x="212" y="650" font-family="Inter, PingFang SC, sans-serif" font-size="18" fill="#5f5850">Windows / Mac 都可下载 · nomiaqm.com</text>
+  <text x="86" y="650" font-family="Inter, PingFang SC, sans-serif" font-size="18" font-weight="700" fill="#1a1816">Nomi</text>
+  <text x="150" y="650" font-family="Inter, PingFang SC, sans-serif" font-size="18" fill="#5f5850">Windows / Mac 都可下载 · nomiaqm.com</text>
 </svg>

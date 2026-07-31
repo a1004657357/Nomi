@@ -2,14 +2,18 @@
 // 从组件抽出为 hook：默认选模型 / vendor 同步 / 供应商断开自愈 / archetype meta 初始化。
 // 行为与原组件逐字节一致——仅把 effect 体平移进来，依赖数组原样保留。
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ModelOption } from '../../../config/models'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { buildModelControls, defaultPatchForControls, readMeta } from './controls/parameterControlModel'
 import {
-  buildModelControls,
-  defaultPatchForControls,
-  readMeta,
-} from './controls/parameterControlModel'
-import { ensureArchetypeNodeMeta, normalizeArchetypeVariantMeta, resolveArchetypeForModel } from './controls/archetypeMeta'
+  applyArchetypeModeSwitch,
+  ensureArchetypeNodeMeta,
+  normalizeArchetypeVariantMeta,
+  resolveArchetypeForModel,
+} from './controls/archetypeMeta'
+import { resolveModeForConnectedReferences } from '../agent/referenceEdgeCapability'
+import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { remapArchetypeMode } from '../runner/usableVendorModel'
 import { showInfoToast } from '../../../utils/showInfoToast'
 import { chooseDefaultModelOption, resolveArchetypeForOption } from './nodeModelArchetype'
@@ -136,7 +140,11 @@ export function useNodeModelAutoSelect({
     if (!target?.value || !optionVendor) return
     const targetArchetype = resolveArchetypeForOption(target)
     const remapped = targetArchetype
-      ? remapArchetypeMode(sourceArchetype, (meta.archetype as { modeId?: string } | undefined)?.modeId, targetArchetype)
+      ? remapArchetypeMode(
+          sourceArchetype,
+          (meta.archetype as { modeId?: string } | undefined)?.modeId,
+          targetArchetype,
+        )
       : null
     updateNode(node.id, {
       meta: {
@@ -157,6 +165,10 @@ export function useNodeModelAutoSelect({
 
   // 选到一个有内置档案的模型、还没有命名空间 meta 时，初始化 node.meta.archetype（落到默认模式）。
   // 幂等：已是该档案则 no-op，不会循环。
+  // 初始化的同一笔写里对账活边参考（2026-07-28 群反馈）：「创建并连接」菜单 + 自动选模型不经
+  // handleModelChange，默认 t2i 会把已连参考晾在门外——UI 停在「文生图」误导用户（提交端虽有
+  // 咽喉 reconcile 兜底发送正确，但界面得当场说真话）。仅在初始化时刻对账，不做持续强制——
+  // 用户之后手动切回文生图是他的选择，提交时才由咽喉按「挂着参考=要用参考」纠正。
   React.useEffect(() => {
     if (!autoSelectionAllowed || !isGenerationNode || !archetype) return
     const patch = ensureArchetypeNodeMeta(node.meta || {}, archetype)

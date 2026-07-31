@@ -27,6 +27,7 @@ import {
   applyBrowserAssetOverlayMouseEvents,
   applyBrowserAssetOverlayShape,
   closeBrowserAssetOverlay,
+  finishBrowserAssetOverlayDrag,
   getOverlayForSender,
   getOwnerWindowForSender,
   normalizeOverlayBounds,
@@ -53,7 +54,6 @@ import {
   getSenderWindow,
   normalizeBounds,
   normalizeBrowserUrl,
-  normalizePromptCategories,
   normalizePromptExtractionMode,
   readViewId,
   sameRectangle,
@@ -62,14 +62,11 @@ import {
 import type {
   BrowserAssetOverlayCaptureRequest,
   BrowserAssetOverlayPayload,
-  BrowserAssetOverlayPromptRequest,
   BrowserAssetOverlayStatePayload,
   BrowserChromeMenuPayload,
-  BrowserPromptCategoriesPayload,
   BrowserResourceCapturePayload,
   BrowserViewCreatePayload,
   BrowserViewIdPayload,
-  BrowserViewImportImagePayload,
   BrowserViewImportMediaPayload,
   BrowserViewNavigatePayload,
   BrowserViewPromptImagePayload,
@@ -287,7 +284,6 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
       view,
       lastBounds: { x: 0, y: 0, width: 0, height: 0 },
       resourceCaptureEnabled: false,
-      promptCategories: normalizePromptCategories([]),
     };
     browserViews.set(record.viewId, record);
     trackBrowserView(win, record);
@@ -345,11 +341,6 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
     void record.view.webContents.session.cookies.flushStore().catch(() => undefined);
   });
 
-  ipcMain.handle("browser:view:import-image", async (event, payload: BrowserViewImportImagePayload) => {
-    const record = getBrowserViewForSender(event.sender, payload);
-    return importBrowserMedia(record, { ...payload, mediaType: "image" });
-  });
-
   ipcMain.handle("browser:view:import-media", async (event, payload: BrowserViewImportMediaPayload) => {
     const record = getBrowserViewForSender(event.sender, payload);
     return importBrowserMedia(record, payload);
@@ -376,12 +367,6 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
     void installBrowserResourceCaptureBridge(record, record.resourceCaptureEnabled);
   });
 
-  ipcMain.on("browser:view:set-prompt-categories", (event, payload: BrowserPromptCategoriesPayload) => {
-    const record = getBrowserViewForSender(event.sender, payload);
-    record.promptCategories = normalizePromptCategories(payload.categories);
-    void installBrowserPromptHoverBridge(record);
-  });
-
   ipcMain.on("browser:view:capture-resource", (event, payload: BrowserViewIdPayload) => {
     const record = getBrowserViewForSender(event.sender, payload);
     if (!record.resourceCaptureEnabled) return;
@@ -403,12 +388,7 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
 
   ipcMain.on("browser:asset-overlay:open", (event, payload: BrowserAssetOverlayPayload) => {
     const owner = getOwnerWindowForSender(event.sender);
-    openBrowserAssetOverlay(
-      owner,
-      payload,
-      payload.captureRequest ?? null,
-      payload.promptRequest ?? null,
-    );
+    openBrowserAssetOverlay(owner, payload, payload.captureRequest ?? null);
   });
 
   ipcMain.on("browser:asset-overlay:update-host", (event, payload: BrowserAssetOverlayPayload) => {
@@ -437,13 +417,6 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
     showBrowserAssetOverlay(record, payload);
   });
 
-  ipcMain.on("browser:asset-overlay:prompt-request", (event, payload: BrowserAssetOverlayPromptRequest) => {
-    const owner = getOwnerWindowForSender(event.sender);
-    const record = browserAssetOverlaysByWindow.get(owner.id);
-    if (!record) return;
-    showBrowserAssetOverlay(record, null, payload);
-  });
-
   ipcMain.on("browser:asset-overlay:ready", (event) => {
     const record = getOverlayForSender(event.sender);
     if (!record) return;
@@ -461,6 +434,12 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
     if (!record || record.window.isDestroyed()) return;
     record.pointerInteractive = payload.interactive === true;
     applyBrowserAssetOverlayMouseEvents(record);
+  });
+
+  ipcMain.on("browser:asset-overlay:finish-drag", (event) => {
+    const record = getOverlayForSender(event.sender);
+    if (!record || record.window.isDestroyed()) return;
+    finishBrowserAssetOverlayDrag(record);
   });
 
   ipcMain.on("browser:asset-overlay:set-state", (event, payload: BrowserAssetOverlayStatePayload) => {
@@ -489,5 +468,21 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
     const owner = getOwnerWindowForSender(event.sender);
     if (owner.isDestroyed()) return;
     owner.webContents.send("browser:asset-overlay:import-to-canvas", payload);
+  });
+
+  // contained 素材盒问「父窗现在有没有画布导入目标」——overlay 是独立窗口，DOM 探针跨窗探不到。
+  // 选择器与渲染层 browserAssetPopoverConstants.CANVAS_IMPORT_TARGET_SELECTOR 同义（跨进程无法共享常量）。
+  ipcMain.handle("browser:asset-overlay:canvas-import-available", async (event) => {
+    try {
+      const owner = getOwnerWindowForSender(event.sender);
+      if (owner.isDestroyed()) return false;
+      // 不传 userGesture：这是每 3s 的后台探测，绝不能在父窗合成用户手势（会干扰进行中的拖拽/焦点）。
+      const available = await owner.webContents.executeJavaScript(
+        "!!document.querySelector('[data-nomi-generation-canvas-import-target=\"true\"]')",
+      );
+      return Boolean(available);
+    } catch {
+      return false;
+    }
   });
 }

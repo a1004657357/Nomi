@@ -3,7 +3,11 @@
 // 从 GenerationCanvas 抽出，保持组件壳瘦身（R9）。
 
 import type { DragEvent } from 'react'
-import { WORKSPACE_FILE_DRAG_MIME, buildWorkspaceFileUrl, parseWorkspaceFileDrag } from '../../explorer/workspaceFileDrag'
+import {
+  WORKSPACE_FILE_DRAG_MIME,
+  buildWorkspaceFileUrl,
+  parseWorkspaceFileDrag,
+} from '../../explorer/workspaceFileDrag'
 import {
   ASSET_LIBRARY_DRAG_MIME,
   parseAssetLibraryDragItems,
@@ -16,7 +20,7 @@ import {
   showClipboardMediaPasteNotes,
 } from '../adapters/clipboardImagePaste'
 import { getGenerationNodeDefaultSize, getGenerationNodeFootprintSize } from '../model/generationNodeKinds'
-import { dropKindFromMime } from '../model/nodeAssetDrop'
+import { dropKindFromFile } from '../model/nodeAssetDrop'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { toast } from '../../../ui/toast'
 import type { BrowserAssetCanvasImportItem } from '../../../ui/browser/overlay/globalAssetPopoverEvents'
@@ -126,7 +130,8 @@ function normalizeBrowserAssetCanvasItem(item: unknown): BrowserAssetCanvasItem 
     text?: unknown
     content?: unknown
   }
-  const type = asset.type === 'video' ? 'video' : asset.type === 'image' ? 'image' : asset.type === 'prompt' ? 'prompt' : null
+  const type =
+    asset.type === 'video' ? 'video' : asset.type === 'image' ? 'image' : asset.type === 'prompt' ? 'prompt' : null
   if (!type) return null
   const title = cleanBrowserAssetTitle(
     asset.title,
@@ -416,7 +421,12 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
       result,
       history: [result],
       status: 'success',
-      meta: { ...(node.meta || {}), source: 'workspace-file', fileName: workspaceDrag.name, workspaceRelativePath: workspaceDrag.relativePath },
+      meta: {
+        ...(node.meta || {}),
+        source: 'workspace-file',
+        fileName: workspaceDrag.name,
+        workspaceRelativePath: workspaceDrag.relativePath,
+      },
     })
     return
   }
@@ -428,7 +438,7 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
     event.stopPropagation()
     const mediaItems = assetDragItems.filter((asset) => asset.kind !== 'audio')
     if (!mediaItems.length) {
-      toast('音频请拖到时间轴的「音频轨」当配乐', 'info')
+      toast(i18n.t('generationCommon.canvas.audioToTimeline'), 'info')
       return
     }
     const store = useGenerationCanvasStore.getState()
@@ -446,10 +456,16 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
         exactPosition: true,
         select: false,
       })
-      const result = { id: `asset-ref-${node.id}-${Date.now()}`, type: assetDrag.kind, url: assetDrag.renderUrl, createdAt: Date.now() }
-      const originMeta = assetDrag.origin.source === 'project'
-        ? { source: 'workspace-file', fileName: assetDrag.name, workspaceRelativePath: assetDrag.origin.relativePath }
-        : { source: 'asset-library', fileName: assetDrag.name, referencedNodeId: assetDrag.origin.nodeId }
+      const result = {
+        id: `asset-ref-${node.id}-${Date.now()}`,
+        type: assetDrag.kind,
+        url: assetDrag.renderUrl,
+        createdAt: Date.now(),
+      }
+      const originMeta =
+        assetDrag.origin.source === 'project'
+          ? { source: 'workspace-file', fileName: assetDrag.name, workspaceRelativePath: assetDrag.origin.relativePath }
+          : { source: 'asset-library', fileName: assetDrag.name, referencedNodeId: assetDrag.origin.nodeId }
       store.updateNode(node.id, {
         result,
         history: [result],
@@ -459,7 +475,9 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
       nodeIds.push(node.id)
     })
     nodeIds.forEach((nodeId, index) => store.selectNode(nodeId, index > 0))
-    if (mediaItems.length < assetDragItems.length) toast('音频请拖到时间轴的「音频轨」当配乐', 'info')
+    if (mediaItems.length < assetDragItems.length) {
+      toast(i18n.t('generationCommon.canvas.audioToTimeline'), 'info')
+    }
     return
   }
 
@@ -470,16 +488,19 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
   if (browserAssets.length) {
     event.preventDefault()
     event.stopPropagation()
-    importBrowserAssetsToGenerationCanvas(browserAssets.map((asset) => ({
-      id: asset.id,
-      type: asset.type,
-      title: asset.title,
-      previewUrl: asset.url,
-      prompt: asset.prompt,
-    })), {
-      basePosition,
-      categoryId: ctx.activeCategoryId,
-    })
+    importBrowserAssetsToGenerationCanvas(
+      browserAssets.map((asset) => ({
+        id: asset.id,
+        type: asset.type,
+        title: asset.title,
+        previewUrl: asset.url,
+        prompt: asset.prompt,
+      })),
+      {
+        basePosition,
+        categoryId: ctx.activeCategoryId,
+      },
+    )
     return
   }
 
@@ -500,7 +521,7 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
 
   // 6) OS 文件拖入：复制进项目并上传，创建图片 / 视频素材节点（音频无可落节点，过滤）。
   const files = Array.from(event.dataTransfer.files || []).filter((file) => {
-    const kind = dropKindFromMime(file.type)
+    const kind = dropKindFromFile(file)
     return kind === 'image' || kind === 'video'
   })
   if (!files.length) {
@@ -517,12 +538,14 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
   }
   event.preventDefault()
   event.stopPropagation()
-  void importLocalMediaFilesToGenerationCanvas(files, { basePosition, categoryId: ctx.activeCategoryId }).then((result) => {
-    // C5：超限截断 / 上传失败不再静默——聚合成一句人话提示（此前 >8 张悄悄丢、失败只在节点上红）。
-    const notes: string[] = []
-    if (result.skippedOverLimitCount > 0) notes.push(`超过 8 个，已忽略 ${result.skippedOverLimitCount} 个`)
-    if (result.skippedTooLargeCount > 0) notes.push(`${result.skippedTooLargeCount} 个文件过大`)
-    if (result.failedCount > 0) notes.push(`${result.failedCount} 个导入失败`)
-    if (notes.length) toast(notes.join('；'), result.failedCount > 0 ? 'error' : 'info')
-  }).catch(() => {})
+  void importLocalMediaFilesToGenerationCanvas(files, { basePosition, categoryId: ctx.activeCategoryId })
+    .then((result) => {
+      // C5：超限截断 / 上传失败不再静默——聚合成一句人话提示（此前 >8 张悄悄丢、失败只在节点上红）。
+      const notes: string[] = []
+      if (result.skippedOverLimitCount > 0) notes.push(`超过 8 个，已忽略 ${result.skippedOverLimitCount} 个`)
+      if (result.skippedTooLargeCount > 0) notes.push(`${result.skippedTooLargeCount} 个文件过大`)
+      if (result.failedCount > 0) notes.push(`${result.failedCount} 个导入失败`)
+      if (notes.length) toast(notes.join('；'), result.failedCount > 0 ? 'error' : 'info')
+    })
+    .catch(() => {})
 }

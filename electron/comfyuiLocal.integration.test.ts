@@ -4,7 +4,7 @@
  * 起一个假 ComfyUI（node http）：POST /prompt 返 prompt_id、GET /history/{id} 头一拍空后一拍出图、GET /view 返图。
  * 然后用**真 runtime**（executeProfileOperation 真 fetch + buildProfileTaskResult 真解析/变换/状态机）跑
  * 提交→轮询→归一，坐实：① /prompt 收到的是 API 格式工作流图且数字是真数字；② prompt_id→providerMeta.task_id；
- * ③ 真轮询（第一拍未完成继续、第二拍出图）；④ comfyui-history 变换把 /history 归一成 /view 资产 URL → succeeded。
+ * ③ 真轮询（第一拍未完成继续、第二拍出图）；④ /history 产物从同源 /view 下载并落进真实项目 → succeeded。
  *
  * 真出图（真像素、SaveImage 落盘、/view 下载本地化）需用户本机 ComfyUI + checkpoint —— 那一段靠用户环境，
  * 本测证的是**传输契约**（提交格式 + 轮询 + 取产物 URL 的构造），不是模型质量。
@@ -24,9 +24,10 @@ vi.mock("electron", () => ({
     encryptString: (s: string) => Buffer.from(s),
     decryptString: (b: Buffer) => b.toString(),
   },
+  webContents: { getAllWebContents: () => [] },
 }));
 
-import { executeProfileOperation, buildProfileTaskResult } from "./runtime";
+import { executeProfileOperation, buildProfileTaskResult, createProject, listProjectAssets } from "./runtime";
 import { COMFYUI_CURATED_MAPPINGS, COMFYUI_CURATED_MODELS } from "./catalog/comfyuiLocal";
 import { applyWireDefaults } from "./catalog/taskParams";
 
@@ -91,7 +92,9 @@ afterAll(() => {
 });
 
 describe("本地 ComfyUI 传输链（真 HTTP 端到端）", () => {
-  it("提交→轮询→变换→succeeded，产物是 /view URL", async () => {
+  it("提交→轮询→变换→/view 下载落盘→succeeded", async () => {
+    const projectRoot = fs.mkdtempSync(path.join(mockedUserDataRoot, "project-"));
+    const project = createProject({ rootPath: projectRoot, name: "ComfyUI 回收验证", payload: {} });
     const mapping = COMFYUI_CURATED_MAPPINGS[0];
     const vendor = {
       key: "comfyui-local", name: "本地 ComfyUI", enabled: true,
@@ -129,27 +132,28 @@ describe("本地 ComfyUI 传输链（真 HTTP 端到端）", () => {
     const providerMeta = { ...createNorm.providerMeta, task_id: taskId, query_id: taskId };
     let status = createNorm.result.status;
     let assetUrl = "";
+    let providerUrl = "";
     for (let tries = 0; status !== "succeeded" && status !== "failed" && tries < 6; tries += 1) {
       const polled = await executeProfileOperation({ vendor, model, apiKey: "", request, operation: mapping.query, providerMeta });
       const norm = await buildProfileTaskResult({
         response: polled.response, mapping, operation: mapping.query, request,
-        taskIdFallback: "e2e-abc", wantedKind: "image", vendor, model,
+        taskIdFallback: "e2e-abc", wantedKind: "image", projectId: project.id, vendor, model,
       });
       status = norm.result.status;
       assetUrl = norm.result.assets[0]?.url || "";
+      providerUrl = norm.result.assets[0]?.providerUrl || "";
     }
 
     expect(status).toBe("succeeded");
     expect(historyHits).toBeGreaterThanOrEqual(2); // 真轮询过（第一拍空、第二拍出图）
-    // 变换从 filename+subfolder+type 拼出的 /view 完整 URL
-    expect(assetUrl).toContain(`${baseUrl}/view?`);
-    expect(assetUrl).toContain("filename=Nomi_00001_.png");
-    expect(assetUrl).toContain("type=output");
-
-    // ── 3) 该 URL 真能取到图（证 /view 端点契约）──
-    const img = await fetch(assetUrl);
-    expect(img.status).toBe(200);
-    expect(img.headers.get("content-type")).toBe("image/png");
+    // 变换先拼 /view URL，再从明确受信任的 ComfyUI origin 拉取并落到项目资产。
+    expect(providerUrl).toContain(`${baseUrl}/view?`);
+    expect(providerUrl).toContain("filename=Nomi_00001_.png");
+    expect(providerUrl).toContain("type=output");
+    expect(assetUrl).toMatch(/^nomi-local:\/\/asset\//);
+    const stored = listProjectAssets({ projectId: project.id, limit: 10 }).items;
+    expect(stored).toHaveLength(1);
+    expect(fs.readFileSync(stored[0].data.absolutePath)).toEqual(PNG_1x1);
     expect(viewHits).toBeGreaterThanOrEqual(1);
   });
 });

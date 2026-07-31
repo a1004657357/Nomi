@@ -6,16 +6,16 @@
  * 其余助手（Cline/Windsurf…）走「复制配置」。主操作 = 写各客户端配置的 nomi 条目（合并 + 备份，mcpConfig）。
  */
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconTerminal2, IconPlugConnected, IconCopy, IconCheck, IconCircleCheck, IconExternalLink } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { toast } from '../toast'
 import { FoldableModelCard } from './FoldableModelCard'
 import { DesignSegmentedControl } from '../../design'
+import { CODEX_IMAGE_MODEL_LABEL, CODEX_LOCAL_VENDOR_KEY } from './codexLocalProvider'
 
 const GUIDE_URL = 'https://github.com/aqm857886159/Nomi/blob/main/docs/guide/capability-core-cli-mcp.md'
-const SAY_EXAMPLE = '在 Nomi 新建项目「咖啡广告」，拆 3 个镜头加到画布，用我的图模型把第一个生成出来。'
-
 type ClientKey = 'claude' | 'codex' | 'cursor'
 const CLIENT_LABEL: Record<ClientKey, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' }
 const CLIENT_ORDER: ClientKey[] = ['claude', 'codex', 'cursor']
@@ -36,6 +36,7 @@ type ConnectAssistantCardProps = {
 }
 
 export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardProps): JSX.Element | null {
+  const { t } = useTranslation()
   const [target, setTarget] = React.useState<ClientKey>('claude')
   const pickedDefault = React.useRef(false)
   const [busy, setBusy] = React.useState(false)
@@ -65,10 +66,11 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
     setError('')
     try {
       capability.installMcp(target)
+      if (target === 'codex') syncCodexLocalVendor(true)
       onChanged()
-      toast(`已接入 ${label}，重启后生效`, 'success')
+      toast(t('onboardingProviders.assistant.connectedToast', { client: label }), 'success')
     } catch (e) {
-      setError(`接入失败：${e instanceof Error ? e.message : String(e)}`)
+      setError(t('onboardingProviders.assistant.connectFailed', { message: e instanceof Error ? e.message : String(e) }))
     } finally {
       setBusy(false)
     }
@@ -80,10 +82,11 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
     setError('')
     try {
       capability.uninstallMcp(target)
+      if (target === 'codex') syncCodexLocalVendor(false)
       onChanged()
-      toast('已撤销接入', 'success')
+      toast(t('onboardingProviders.assistant.disconnectedToast'), 'success')
     } catch (e) {
-      setError(`撤销失败：${e instanceof Error ? e.message : String(e)}`)
+      setError(t('onboardingProviders.assistant.disconnectFailed', { message: e instanceof Error ? e.message : String(e) }))
     } finally {
       setBusy(false)
     }
@@ -92,7 +95,7 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
   const handleCopy = () => {
     void navigator.clipboard.writeText(client.snippet).then(() => {
       setCopied(true)
-      toast('配置已复制', 'success')
+      toast(t('onboardingProviders.assistant.copiedToast'), 'success')
       window.setTimeout(() => setCopied(false), 1600)
     })
   }
@@ -103,15 +106,15 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
     <FoldableModelCard
       glyph={<IconTerminal2 size={16} stroke={1.6} />}
       glyphTone="ink"
-      name="接入 AI 编程助手"
-      subtitle="让 Claude Code / Codex / Cursor 帮你建项目、出图"
+      name={t('onboardingProviders.assistant.name')}
+      subtitle={t('onboardingProviders.assistant.subtitle')}
       status={anyInstalled || info.tokenReady ? 'ok' : 'todo'}
       statusLabel={statusLabel}
       defaultExpanded={false}
     >
       {!info.tokenReady ? (
         <div className="text-caption text-nomi-ink-60 leading-relaxed">
-          凭证还没生成——重启 Nomi 一次即可（启动时自动生成）。
+          {t('onboardingProviders.assistant.credentialPending')}
         </div>
       ) : (
         <>
@@ -128,21 +131,30 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
               <div className="flex items-start gap-2 rounded-nomi-sm bg-[var(--workbench-success-soft)] px-3 py-2.5">
                 <IconCircleCheck size={17} className="shrink-0 mt-0.5 text-workbench-success" />
                 <div className="min-w-0">
-                  <div className="text-body-sm font-semibold text-nomi-ink">已写入 {label} 配置</div>
-                  <div className="text-caption text-nomi-ink-60 mt-0.5">重启 {label} 后生效。</div>
+                  <div className="text-body-sm font-semibold text-nomi-ink">{t('onboardingProviders.assistant.configWritten', { client: label })}</div>
+                  <div className="text-caption text-nomi-ink-60 mt-0.5">{t('onboardingProviders.assistant.restartClient', { client: label })}</div>
                 </div>
               </div>
-              <div className="text-caption text-nomi-ink-40">现在可以对它说：</div>
+              <div className="text-caption text-nomi-ink-40">{t('onboardingProviders.assistant.sayNow')}</div>
               <div className="text-body-sm text-nomi-ink-80 leading-relaxed rounded-nomi-sm border border-nomi-line bg-nomi-paper px-3 py-2.5">
-                「{SAY_EXAMPLE}」
+                “{t('onboardingProviders.assistant.example')}”
               </div>
+              {target === 'codex' ? (
+                <div className="flex items-start gap-2 rounded-nomi-sm bg-nomi-ink-05 px-3 py-2.5">
+                  <IconCircleCheck size={16} className="shrink-0 mt-0.5 text-workbench-success" />
+                  <div className="min-w-0">
+                    <div className="text-body-sm font-semibold text-nomi-ink">{t('onboardingProviders.assistant.codexImageReadyTitle')}</div>
+                    <div className="text-caption text-nomi-ink-60 mt-0.5">{t('onboardingProviders.assistant.codexImageReadyBody', { model: CODEX_IMAGE_MODEL_LABEL })}</div>
+                  </div>
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={handleUninstall}
                 disabled={busy}
                 className="self-start text-caption text-nomi-ink-40 hover:text-workbench-danger disabled:opacity-50"
               >
-                撤销接入
+                {t('onboardingProviders.assistant.disconnect')}
               </button>
             </>
           ) : (
@@ -175,17 +187,17 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
                   )}
                 >
                   {copied ? <IconCheck size={14} stroke={1.8} /> : <IconCopy size={14} stroke={1.6} />}
-                  {copied ? '已复制' : '复制配置'}
+                  {copied ? t('onboardingProviders.assistant.copied') : t('onboardingProviders.assistant.copyConfig')}
                 </button>
                 <button
                   type="button"
                   onClick={() => window.open(GUIDE_URL, '_blank', 'noopener')}
                   className="h-8 px-1 text-caption text-nomi-ink-60 inline-flex items-center gap-1 hover:text-nomi-accent"
                 >
-                  看用法<IconExternalLink size={13} stroke={1.6} />
+                  {t('onboardingProviders.assistant.guide')}<IconExternalLink size={13} stroke={1.6} />
                 </button>
               </div>
-              <div className="text-micro text-nomi-ink-30">用 Cline / Windsurf 等其它助手？点「复制配置」粘进它的 MCP 设置即可。</div>
+              <div className="text-micro text-nomi-ink-30">{t('onboardingProviders.assistant.otherClients')}</div>
             </>
           )}
         </>

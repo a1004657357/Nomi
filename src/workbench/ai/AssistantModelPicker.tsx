@@ -1,6 +1,7 @@
 // 助手模型选择器：让用户指定创作/画布 agent 用哪个 text 模型（根治「盲选第一个=撞到不响应的就全卡」）。
 // 写偏好到 localStorage（assistantModelPref），runWorkbenchAgent 自动带进 payload，两个面板都生效。
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { listWorkbenchModelCatalogModels, type ModelCatalogModelDto } from '../api/modelCatalogApi'
 import { getAssistantModelPref, setAssistantModelPref } from './assistantModelPref'
 import {
@@ -22,6 +23,7 @@ function pickDefaultModel(models: ModelCatalogModelDto[]): ModelCatalogModelDto 
 }
 
 export default function AssistantModelPicker({ className }: { className?: string } = {}): JSX.Element | null {
+  const { t } = useTranslation()
   const [models, setModels] = React.useState<ModelCatalogModelDto[]>([])
   const [loaded, setLoaded] = React.useState(false)
   const [selectedValue, setSelectedValue] = React.useState('')
@@ -84,8 +86,8 @@ export default function AssistantModelPicker({ className }: { className?: string
 
   return (
     <NomiSelect
-      ariaLabel="助手模型"
-      title="助手用哪个模型（建议选 GPT / Claude / DeepSeek 系，能稳定执行画布操作）"
+      ariaLabel={t('creationAi.assistantMessage.modelAria')}
+      title={t('creationAi.assistantMessage.modelHint')}
       size="xs"
       className={className}
       triggerMaxWidth={160}

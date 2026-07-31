@@ -9,6 +9,7 @@ import { describeGenerationCost, useSpendConfirmStore } from '../spend/spendConf
 import { generationNodeExecutor, type GenerationNodeExecutor } from './generationNodeExecutor'
 import { narrateProgress } from '../../observability/narrate'
 import { isRecoverableTimeoutError } from './recoverableTimeout'
+import { recordModelFailure, recordModelSuccess } from './modelHealthMemory'
 // 错误分类(classifyGenerationError)已抽到 observability/classifyError(人话叶子层,生成域+对话域共用);
 // 这里 re-export 保持 NodeErrorReport / classifyGenerationError.test 等既有 import 不破。
 export { classifyGenerationError, type GenerationErrorReport } from '../../observability/classifyError'
@@ -186,6 +187,32 @@ async function waitForRetry(attempt: number, baseDelayMs: number, signal?: Abort
   })
 }
 
+/**
+ * 提交前对账「生成方式 × 活边参考」（2026-07-28 群反馈根治）：当前模式一条参考边都收不下、档案里
+ * 有能收的模式 → 切过去（与建边 autoPromoteTargetModeForEdge 同一套语义，ModeBar 同步翻转）。
+ * 建边时的 auto-promote 只覆盖「建边那一刻」，换模型（archetype 失配落回默认 t2i）、存量边都够不到；
+ * 停在 t2i 的节点会在投影层（buildArchetypeInputParams 空槽互斥）把挂着的参考静默丢掉、付费发出
+ * 纯文生（「男的角色图生成出女的」根因）。挂在唯一提交咽喉 runGenerationNode 入口，整类不再复发。幂等。
+ */
+export function reconcileNodeModeWithConnectedReferences(nodeId: string): void {
+  const state = useGenerationCanvasStore.getState()
+  const node = state.nodes.find((candidate) => candidate.id === nodeId)
+  if (!node) return
+  const nextModeId = resolveModeForConnectedReferences(node, state.nodes, state.edges)
+  if (!nextModeId) return
+  const archetype = archetypeForNode(node)
+  if (!archetype) return
+  state.updateNode(nodeId, {
+    meta: applyArchetypeModeSwitch((node.meta || {}) as Record<string, unknown>, archetype, nextModeId),
+  })
+}
+
+/** 结算时读节点当前绑定的模型键（健康记忆的记账主体；meta 无 modelKey 的异常路径记空=跳过）。 */
+function currentNodeModelKey(nodeId: string): unknown {
+  const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId)
+  return (node?.meta as Record<string, unknown> | undefined)?.modelKey
+}
+
 export async function runGenerationNode(
   nodeId: string,
   options: RunGenerationNodeOptions = {},
@@ -193,6 +220,7 @@ export async function runGenerationNode(
   const id = String(nodeId || '').trim()
   if (!id) throw new Error('nodeId is required')
 
+  reconcileNodeModeWithConnectedReferences(id)
   const initialState = useGenerationCanvasStore.getState()
   const initialNode = initialState.nodes.find((node) => node.id === id)
   if (!initialNode) throw new Error('node not found')
@@ -289,6 +317,7 @@ export async function runGenerationNode(
     }
     if (!result) throw new Error('生成失败')
     useGenerationCanvasStore.getState().addNodeResult(id, result)
+    recordModelSuccess(currentNodeModelKey(id))
     await persistActiveWorkbenchProjectNow().catch(() => {})
     return result
   } catch (error: unknown) {
@@ -298,10 +327,12 @@ export async function runGenerationNode(
     }
     // 可找回超时：上游可能仍在跑/已出片 → 落 recoverable（不进红色错误桶），给「重新拉取」入口。
     // taskId 已在 run 记录里持久化，recover 动作从节点重建续查（重启后也能拉）。
+    // 健康记账也不算失败——上游没有明确判死。
     if (isRecoverableTimeoutError(error)) {
       useGenerationCanvasStore.getState().setNodeStatus(id, 'recoverable', error.message)
       throw error
     }
+    recordModelFailure(currentNodeModelKey(id))
     // Store the RAW message; the UI (NodeErrorReport) runs classifyGenerationError
     // to show a human reason + hint + the raw detail. Keeping node.error a plain
     // string avoids a persisted-shape migration for existing project files.
@@ -542,13 +573,62 @@ export async function confirmAndRunNode(nodeId: string, opts: { rerun?: boolean 
   try {
     grantId = await mintSpendGrant([runId])
   } catch (error) {
-    toast(error instanceof Error && error.message ? error.message : '付费授权失败', 'error')
+    toast(
+      error instanceof Error && error.message
+        ? error.message
+        : i18n.t('generationCommon.batchPlan.authorizationFailed'),
+      'error',
+    )
     return
   }
   try {
     await runGenerationNode(runId, { grantId })
   } catch {
     // 失败已记在节点上（卡片渲染人话错误），这里不再弹。
+  }
+}
+
+/**
+ * 同一镜头 ×N 变体连发（2026-07-29 批量体检 C，样张拍板）：一次轻确认按 N 张报成本，
+ * 随后逐次铸令牌+跑。**串行**——同节点的进度/状态是单通道，并发会互踩；N≤4 体感可接受。
+ * 出图走 addNodeResult 既有堆叠（新图设主图、旧图进历史里挑）。中途失败即停：
+ * 剩余次数不再扣费（对坏通道不连烧；失败原因已落节点卡片），已出的变体保留。
+ */
+export async function confirmAndRunNodeVariants(
+  nodeId: string,
+  count: number,
+  options: RunGenerationNodeOptions = {},
+): Promise<void> {
+  const id = String(nodeId || '').trim()
+  if (!id) return
+  const total = Math.max(1, Math.min(8, Math.floor(count)))
+  const node = useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)
+  const ok = await useSpendConfirmStore.getState().requestConfirm({
+    title: i18n.t('generationCommon.spend.startGeneration'),
+    message: describeGenerationCost(total, node ? spendCostKind(node.kind) : 'image'),
+    confirmLabel: i18n.t('generationCommon.spend.generate'),
+    light: true,
+  })
+  if (!ok) return
+  for (let index = 0; index < total; index += 1) {
+    let grantId: string
+    try {
+      grantId = await mintSpendGrant([id])
+    } catch (error) {
+      toast(
+        error instanceof Error && error.message
+          ? error.message
+          : i18n.t('generationCommon.batchPlan.authorizationFailed'),
+        'error',
+      )
+      return
+    }
+    try {
+      const result = await runGenerationNode(id, { ...options, grantId })
+      useWorkbenchStore.getState().reconcileTimelineForUpdatedNodes(id, result)
+    } catch {
+      return // 失败已落节点卡片（人话错误）；停发剩余变体
+    }
   }
 }
 
@@ -582,7 +662,12 @@ export async function regenerateNodeInPlace(nodeId: string): Promise<void> {
   try {
     grantId = await mintSpendGrant([id])
   } catch (error) {
-    toast(error instanceof Error && error.message ? error.message : '付费授权失败', 'error')
+    toast(
+      error instanceof Error && error.message
+        ? error.message
+        : i18n.t('generationCommon.batchPlan.authorizationFailed'),
+      'error',
+    )
     return
   }
   try {
@@ -607,11 +692,7 @@ export function canRunGenerationNode(
     // 连了线但源未生成不在此禁——composer 的「备齐参考」波次接管。
     if (!('id' in node) || !node.id) return true
     const meta = node.meta || {}
-    const imageArchetype = resolveArchetypeForModel({
-      modelKey: typeof meta.modelKey === 'string' ? meta.modelKey : undefined,
-      modelAlias: typeof meta.modelAlias === 'string' ? meta.modelAlias : undefined,
-      meta,
-    })
+    const imageArchetype = resolveTaskArchetype(meta)
     const imageMode = imageArchetype ? currentArchetypeMode(imageArchetype, meta) : null
     if (!imageMode || imageMode.transportTaskKind !== 'image_edit' || (imageMode.slots || []).length === 0) return true
     const references = resolveGenerationReferences(node, context)
@@ -627,11 +708,7 @@ export function canRunGenerationNode(
   if (executionKind === 'audio') {
     if (!('meta' in node)) return true
     const meta = node.meta || {}
-    const audioArchetype = resolveArchetypeForModel({
-      modelKey: typeof meta.modelKey === 'string' ? meta.modelKey : undefined,
-      modelAlias: typeof meta.modelAlias === 'string' ? meta.modelAlias : undefined,
-      meta,
-    })
+    const audioArchetype = resolveTaskArchetype(meta)
     const mode = audioArchetype ? currentArchetypeMode(audioArchetype, meta) : null
     const needsAudioRef = (mode?.slots || []).some((slot) => slot.kind === 'audio_ref')
     if (!needsAudioRef) return true
@@ -640,11 +717,7 @@ export function canRunGenerationNode(
   if (executionKind !== 'video') return false
   if (!('id' in node) || !node.id) return false
   const meta = node.meta || {}
-  const archetype = resolveArchetypeForModel({
-    modelKey: typeof meta.modelKey === 'string' ? meta.modelKey : undefined,
-    modelAlias: typeof meta.modelAlias === 'string' ? meta.modelAlias : undefined,
-    meta,
-  })
+  const archetype = resolveTaskArchetype(meta)
   // 当前模式无参考槽 = 纯文生视频（t2v）→ 只要 prompt 即可生成，同 text/image 节点（prompt 缺失下游兜底）。
   // 不能因「video 一律要首帧」把 t2v 的生成按钮锁死——栽过：RunningHub Seedance 默认 text 模式（slots:[]）
   // 按钮被置灰、误提示"需要首帧"，用户根本点不了文生视频（2026-06-30 用户反馈）。apimart/kie Seedance 同病，

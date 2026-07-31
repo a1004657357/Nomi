@@ -29,6 +29,13 @@ describe('referenceAssetKindForNode — 源能给哪种可参考资产', () => {
   it('视频节点 → video', () => {
     expect(referenceAssetKindForNode(node('n', 'video'))).toBe('video')
   })
+  it('导入的**视频素材**(kind=asset 但 result.type=video)→ video(不是 image)', () => {
+    // 用户报的根因:一个 asset 种类同时装图和视频,只按 kind 判会把导入视频当图参考 → 加载失败。
+    const videoAsset = { ...node('n', 'asset'), result: { id: 'r', type: 'video', url: 'x.mp4', createdAt: 0 } } as GenerationCanvasNode
+    expect(referenceAssetKindForNode(videoAsset)).toBe('video')
+    const imageAsset = { ...node('n', 'asset'), result: { id: 'r', type: 'image', url: 'x.png', createdAt: 0 } } as GenerationCanvasNode
+    expect(referenceAssetKindForNode(imageAsset)).toBe('image')
+  })
   it('文本/镜头/输出节点 → null(无可参考产物)', () => {
     for (const kind of ['text', 'shot', 'output']) {
       expect(referenceAssetKindForNode(node('n', kind))).toBeNull()
@@ -161,8 +168,66 @@ describe('resolveTargetModeForEdge — 连线后目标自动切到能消费这�
   })
 })
 
-import { findVideoRefMode } from './referenceEdgeCapability'
+import { findVideoRefMode, resolveModeForConnectedReferences } from './referenceEdgeCapability'
 import { getArchetypeById } from '../../../config/modelArchetypes'
+import type { GenerationCanvasEdge } from '../model/generationCanvasTypes'
+
+describe('resolveModeForConnectedReferences — 按活边对账「生成方式」(提交/换模型兜底)', () => {
+  function edge(source: string, target: string, mode?: GenerationCanvasEdge['mode']): GenerationCanvasEdge {
+    return { id: `${source}->${target}`, source, target, ...(mode ? { mode } : {}) } as GenerationCanvasEdge
+  }
+  function imageAsset(id: string): GenerationCanvasNode {
+    return { ...node(id, 'asset'), result: { id: 'r', type: 'image', url: 'https://cdn/a.png', createdAt: 0 } } as GenerationCanvasNode
+  }
+  function videoAsset(id: string): GenerationCanvasNode {
+    return { ...node(id, 'asset'), result: { id: 'r', type: 'video', url: 'https://cdn/a.mp4', createdAt: 0 } } as GenerationCanvasNode
+  }
+
+  it('t2i(空槽) + 图参考边 → 促到 edit（换模型落回默认/存量边的根因回归）', () => {
+    const source = imageAsset('s')
+    const target = { ...node('t', 'image', 'seedream'), meta: { archetype: { id: 'seedream', modeId: 't2i' } } } as GenerationCanvasNode
+    expect(resolveModeForConnectedReferences(target, [source, target], [edge('s', 't', 'reference')])).toBe('edit')
+  })
+
+  it('当前已是 edit（能收）→ null（幂等，尊重现状）', () => {
+    const source = imageAsset('s')
+    const target = { ...node('t', 'image', 'seedream'), meta: { archetype: { id: 'seedream', modeId: 'edit' } } } as GenerationCanvasNode
+    expect(resolveModeForConnectedReferences(target, [source, target], [edge('s', 't', 'reference')])).toBeNull()
+  })
+
+  it('无参考边 → null（纯文生不受打扰）；文本 prompt 边不算参考', () => {
+    const target = node('t', 'image', 'seedream')
+    expect(resolveModeForConnectedReferences(target, [target], [])).toBeNull()
+    const text = node('x', 'text')
+    expect(resolveModeForConnectedReferences(target, [text, target], [edge('x', 't', 'reference')])).toBeNull()
+  })
+
+  it('纯文生模型(imagen-4 无任何参考槽) → null（真不支持，不硬切）', () => {
+    const source = imageAsset('s')
+    const target = node('t', 'image', 'imagen-4')
+    expect(resolveModeForConnectedReferences(target, [source, target], [edge('s', 't', 'reference')])).toBeNull()
+  })
+
+  it('t2v + 首帧边 → 促到 first（视频同类修复）', () => {
+    const source = imageAsset('s')
+    const target = { ...node('t', 'video', 'seedance-2'), meta: { archetype: { id: 'seedance-2', modeId: 't2v' } } } as GenerationCanvasNode
+    expect(resolveModeForConnectedReferences(target, [source, target], [edge('s', 't', 'first_frame')])).toBe('first')
+  })
+
+  it('异质多需求（角色图边 + 视频参考边）→ 挑能收下最多条的模式（omni）', () => {
+    const character = imageAsset('c')
+    const clip = videoAsset('v')
+    const target = { ...node('t', 'video', 'seedance-2'), meta: { archetype: { id: 'seedance-2', modeId: 't2v' } } } as GenerationCanvasNode
+    const edges = [edge('c', 't', 'character_ref'), edge('v', 't', 'reference')]
+    expect(resolveModeForConnectedReferences(target, [character, clip, target], edges)).toBe('omni')
+  })
+
+  it('目标未声明档案 → null（P4 通用回退）', () => {
+    const source = imageAsset('s')
+    const target = node('t', 'image')
+    expect(resolveModeForConnectedReferences(target, [source, target], [edge('s', 't', 'reference')])).toBeNull()
+  })
+})
 
 describe('findVideoRefMode — 档案有没有 video_ref 槽', () => {
   it('Seedance 2.0 (omni 有 video_ref) → 返回 omni 模式 + referenceVideoUrls + video_urls', () => {

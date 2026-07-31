@@ -1,5 +1,6 @@
 import { TtlLruCache } from "./taskCache";
 import type { JsonRecord } from "../jsonUtils";
+import { desktopT } from "../i18n";
 
 // 「曾受理 taskId」账本（修 P1·把驱逐误当从不存在）。只存 id 字符串（极轻），故容量更大、
 // 存活更久：高并发(>200)把仍在轮询的条目从工作缓存 LRU 驱逐后，这里仍记得它「曾被受理」，
@@ -22,25 +23,16 @@ export function wasTaskAdmitted(id: string): boolean {
  * - 未曾受理(wasAdmitted=false) → task_unknown：真·未知 id（调错/不存在）。
  * - 曾受理但已被驱逐/过期(wasAdmitted=true) → task_tracking_lost：本地追踪丢失，
  *   vendor 侧可能已完成 —— 引导去查/重试，而不是当作彻底失败。
- * message 落在 raw.message，渲染层 readFailureMessageFromRaw 能读到。
+ * 原因落在一等字段 error（与 vendor 终态失败同一个出口，渲染层只读这一处）。
  */
-export function classifyTaskCacheMiss(taskId: string, wasAdmitted: boolean): { status: "failed"; raw: JsonRecord } {
-  if (wasAdmitted) {
-    return {
-      status: "failed",
-      raw: {
-        code: "task_tracking_lost",
-        message: "本地任务追踪已丢失（可能因并发过高被清理）。该任务可能已在供应商侧完成——请稍后重试或在供应商后台查看。",
-        taskId,
-      },
-    };
-  }
+export function classifyTaskCacheMiss(
+  taskId: string,
+  wasAdmitted: boolean,
+): { status: "failed"; error: string; raw: JsonRecord } {
+  const code = wasAdmitted ? "task_tracking_lost" : "task_unknown";
   return {
     status: "failed",
-    raw: {
-      code: "task_unknown",
-      message: "未知任务：该任务不在本地待办缓存中（可能从未受理或 id 有误）。",
-      taskId,
-    },
+    error: desktopT(wasAdmitted ? "tasks.trackingLost" : "tasks.unknown"),
+    raw: { code, taskId },
   };
 }

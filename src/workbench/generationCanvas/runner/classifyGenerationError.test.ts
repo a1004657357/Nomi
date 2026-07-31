@@ -63,6 +63,13 @@ describe('classifyGenerationError — 已知分类', () => {
     expect(r.hint).not.toMatch(/网络/)
   })
 
+  it('输出截断(agent length 签名)不落 unknown 的「稍等重试」误导(2026-07-15 拆镜头事故)', () => {
+    const r = classifyGenerationError('模型「Mimo v2.5」这一轮达到了输出长度上限，内容被截断，没能完整返回。')
+    expect(r.reason).toBe('输出超长被截断')
+    expect(r.hint).toMatch(/分段|减少镜头|输出上限/)
+    expect(r.hint).not.toMatch(/临时故障|稍等重试/)
+  })
+
   it('模型未开通(火山 404,真实 structured IPC 形态):不当成「服务商临时故障」,指向控制台开通', () => {
     const upstreamMsg =
       'Your account 2126482930 has not activated the model doubao-seedream-4-5-251128. Please activate the model service in the Ark Console.'
@@ -245,5 +252,75 @@ describe('即梦 CLI 错误不被误吞成「模型未开通/火山 Ark 指引�
   it('即梦登录态失效文案 → 账号权限不足桶（原话可见）', () => {
     const report = classifyGenerationError('即梦登录态失效或未登录：请到「模型接入 · 即梦会员」卡重新登录（或终端运行 dreamina login），完成后重试。')
     expect(report.reason).not.toBe('模型未开通')
+  })
+})
+
+describe('上游「模型不存在」不再退化成一句 taskId（2026-07-30 用户真机 Imagen 4 报错）', () => {
+  // 用户看到的整条：「模型任务执行失败 (taskId=task_01KYQJG…, kind=text_to_image)」——上游真原因
+  // （Google 404 Requested entity was not found）被 profile 声明却无人读的 error_message 吞了。
+  // 修复后 describeTaskFailure 拿到的是真原话；这里锁的是拿到之后的分类不能再误导。
+  const REAL_UPSTREAM = 'Requested entity was not found. (taskId=task_01KYRKKK35KCAASMFC7ND2PR6P, kind=text_to_image)'
+
+  it('主动作 = 换个模型（不是重试）——重试必再撞同一堵墙', () => {
+    const report = classifyGenerationError(REAL_UPSTREAM)
+    expect(report.reason).toBe('这个模型服务商这边取不到')
+    expect(report.primary).toBe('switch-model')
+    // 重试降为次动作：不堵死用户，但也不许在建议文案里假装它有用。
+    expect(report.secondary).toBe('retry')
+    expect(report.hint).not.toMatch(/稍等|稍后再试/)
+  })
+
+  it('不误判成「模型未配置」（本地没配）或「模型未开通」（去控制台开）——动作完全不同', () => {
+    const report = classifyGenerationError(REAL_UPSTREAM)
+    expect(report.reason).not.toBe('模型未配置')
+    expect(report.reason).not.toBe('模型未开通')
+  })
+
+  it('短语取窄：素材/项目一类的 404 不被误吞', () => {
+    expect(classifyGenerationError('下载素材失败：404 Not Found').reason).not.toBe('这个模型服务商这边取不到')
+    expect(classifyGenerationError('项目不存在或已被删除').reason).not.toBe('这个模型服务商这边取不到')
+  })
+})
+
+describe('每类错误都说得出「该干嘛」（2026-07-30 拍板：主按钮按错误类型走）', () => {
+  it('确定性失败不给重试当主按钮——那是骗用户', () => {
+    // 上游没这个模型 / 已下线 → 换模型；密钥·开通·分组·档位 → 去模型接入。
+    expect(classifyGenerationError('Model is retired: imagen-4.0-apimart').primary).toBe('switch-model')
+    expect(classifyGenerationError('401 unauthorized: bad api key').primary).toBe('open-model-access')
+    expect(classifyGenerationError('The account has not activated the model service: x').primary).toBe(
+      'open-model-access',
+    )
+    expect(classifyGenerationError('Image generation is not enabled for this group').primary).toBe('open-model-access')
+    expect(classifyGenerationError('账户余额不足，请充值').primary).toBe('open-model-access')
+  })
+
+  it('偶发失败仍给重试当主按钮（不是一刀切换模型）', () => {
+    expect(classifyGenerationError('ETIMEDOUT while connecting').primary).toBe('retry')
+    expect(classifyGenerationError('429 rate limit').primary).toBe('retry')
+    expect(classifyGenerationError('某种没见过的报错').primary).toBe('retry')
+  })
+
+  it('次动作恒为「另一个可能有用的」，且不与主动作重复', () => {
+    for (const message of ['Model is retired: x', '401 unauthorized', 'ETIMEDOUT', '没见过的错']) {
+      const report = classifyGenerationError(message)
+      expect(report.secondary).not.toBe(report.primary)
+    }
+    // 主 = 重试 → 次给换模型（等不及就换一家）。
+    expect(classifyGenerationError('ETIMEDOUT').secondary).toBe('switch-model')
+  })
+})
+
+describe('模型已下线 ≠ 模型被停用（删模型不能变成坑换坑）', () => {
+  it('退役签名 → 中文人话 + 换个模型，不是英文技术原话', () => {
+    const report = classifyGenerationError('Model is retired: imagen-4.0-apimart')
+    expect(report.reason).toBe('这个模型已经下线了')
+    expect(report.primary).toBe('switch-model')
+    expect(report.hint).not.toMatch(/稍等|稍后再试/)
+  })
+
+  it('「被停用」仍归模型未配置 → 去模型接入（记录还在，那儿能开回来）', () => {
+    const report = classifyGenerationError('Model is not enabled: some-model')
+    expect(report.reason).not.toBe('这个模型已经下线了')
+    expect(report.primary).toBe('open-model-access')
   })
 })

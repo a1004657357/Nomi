@@ -89,6 +89,107 @@ export const NEWAPI_IMAGE_EDIT_OP: HttpOperation = {
   response_mapping: { image_url: "choices.0.message.images.0.url" },
 };
 
+// xAI Imagine 图片编辑官方契约（2026-05-26）：JSON POST /v1/images/edits；单图字段 image，多图字段
+// images（最多 3 张），返回 data[*].url。注意它和 OpenAI SDK 的 multipart images.edit 不是同一种线缆。
+export const XAI_JSON_IMAGE_EDIT_OP: HttpOperation = {
+  method: "POST",
+  path: "/v1/images/edits",
+  headers: JSON_HEADERS,
+  body: {
+    model: "{{model.modelKey}}",
+    prompt: "{{request.prompt}}",
+    image: "{{request.params.json_edit_image}}",
+    images: "{{request.params.json_edit_images}}",
+    aspect_ratio: "{{request.params.json_edit_aspect_ratio}}",
+    resolution: "{{request.params.xai_resolution}}",
+    response_format: "url",
+  },
+  response_mapping: { image_url: "data[*].url" },
+  paramMap: {
+    rules: [{ wire: "xai_resolution", fromMany: ["resolution"], transform: "toLowerCase" }],
+  },
+};
+
+// OpenAI 官方图像编辑契约（gpt-image-1/1.5/2、dall-e-2；R5 核 OpenAI 官方 developers.openai.com +
+// new-api doc.newapi.pro + apiyi 文档，2026-07）：**multipart/form-data** POST /v1/images/edits，参考图走
+// image[] 文件字段（多图，官方上限 16），文本字段 model/prompt/size/quality/n，返回 data[*].url|b64_json。
+// 这是 chat/completions 之外一大类中转站唯一认的图生图线缆（packyapi 等明确不支持 chat 出图）——补上它 =
+// 通用覆盖所有走 OpenAI 标准 images/edits 的模型，不止 gpt-image。v1 不做 mask（Nomi 节点无 mask 概念；
+// gpt-image mask 本可选，纯 prompt 改图能用）。参考图来自 request.params.reference_images（taskParams 聚合）。
+export const OPENAI_MULTIPART_IMAGE_EDIT_OP: HttpOperation = {
+  method: "POST",
+  path: "/v1/images/edits",
+  headers: { Authorization: "Bearer {{user_api_key}}" }, // 不设 Content-Type：multipart 由 fetch 自动加 boundary
+  multipart: {
+    fields: {
+      model: "{{model.modelKey}}",
+      prompt: "{{request.prompt}}",
+      size: "{{request.params.size}}",
+      quality: "{{request.params.quality}}",
+      n: "{{request.params.n}}",
+      response_format: "url",
+    },
+    imageField: "image[]",
+    imageSource: "{{request.params.reference_images}}",
+    multiple: true,
+  },
+  response_mapping: { image_url: "data[*].url" },
+  paramMap: NEWAPI_IMAGE_PARAM_MAP,
+};
+
+export type NewapiImageEditProtocol = "chat-completions-image-url" | "xai-json-edits" | "openai-multipart-edits";
+export type NewapiImageEditProfile = { protocol: NewapiImageEditProtocol; operation: HttpOperation };
+
+// 协议 → 真实 wire op（单一真相源；commit/migration/probe 都按协议名查这张表拿 op）。
+const OP_BY_PROTOCOL: Record<NewapiImageEditProtocol, HttpOperation> = {
+  "chat-completions-image-url": NEWAPI_IMAGE_EDIT_OP,
+  "xai-json-edits": XAI_JSON_IMAGE_EDIT_OP,
+  "openai-multipart-edits": OPENAI_MULTIPART_IMAGE_EDIT_OP,
+};
+
+// 智能默认按模型族猜协议（B1，探测/手动缺位时的兜底）：只匹配**确有 /v1/images/edits 端点**的模型族——
+// gpt-image 全系 + dall-e-2。dall-e-3 是纯生成、无编辑端点，故意不匹配（避免误判成 multipart 后撞 404）。
+const OPENAI_MULTIPART_EDIT_MODEL_RE = /(^|[/_-])gpt[_-]?image|(^|[/_-])dall-?e-2(?![0-9])/i;
+
+// 模型级协议档案，而非 vendor 级开关：同一个中转站可以同时挂 Nano Banana(chat 多模态)与
+// Grok Imagine(JSON edits)。匹配只认完整模型身份/末段，避免把普通 grok 文本模型误判成图片端点。
+const XAI_JSON_EDIT_MODEL_IDS = new Set([
+  "grok-imagine-image",
+  "grok-imagine-image-quality",
+  "grok-imagine-image-pro",
+  "grok-imagine-image-2026-03-02",
+]);
+
+function normalizedModelId(modelKey: string): string {
+  const value = String(modelKey || "").trim().toLowerCase().replace(/^models\//, "");
+  return value.slice(value.lastIndexOf("/") + 1);
+}
+
+/**
+ * 中转 image_edit 选真实 wire。三层（探测优先 → 智能默认 → chat 兜底）：
+ *  - override：来自免费端点探测（probeImageEditProtocol）或用户在模型编辑面板手选的协议，最高优先；
+ *  - 智能默认：grok-imagine → xai-json；gpt-image 系 / dall-e 系 → openai-multipart-edits；
+ *  - 兜底：其余（gemini/nano-banana 系）→ chat/completions 多模态。
+ * 只认完整模型身份，避免把普通文本模型误判成图片端点。
+ */
+export function newapiImageEditProfileForModel(
+  modelKey: string,
+  modelAlias?: string | null,
+  override?: NewapiImageEditProtocol | null,
+): NewapiImageEditProfile {
+  const forced = override && OP_BY_PROTOCOL[override] ? override : null;
+  const protocol = forced ?? smartDefaultImageEditProtocol(modelKey, modelAlias);
+  return { protocol, operation: OP_BY_PROTOCOL[protocol] };
+}
+
+/** 按模型族猜协议（无探测/手动时的默认）。 */
+export function smartDefaultImageEditProtocol(modelKey: string, modelAlias?: string | null): NewapiImageEditProtocol {
+  const identities = [modelKey, modelAlias].filter((v): v is string => Boolean(v));
+  if (identities.some((value) => XAI_JSON_EDIT_MODEL_IDS.has(normalizedModelId(value)))) return "xai-json-edits";
+  if (identities.some((value) => OPENAI_MULTIPART_EDIT_MODEL_RE.test(value))) return "openai-multipart-edits";
+  return "chat-completions-image-url";
+}
+
 // ── 视频：异步 create（返回 task_id 进轮询）──
 export const NEWAPI_VIDEO_CREATE_OP: HttpOperation = {
   method: "POST",
@@ -146,7 +247,11 @@ export const NEWAPI_STANDARD_IMAGE_PARAMS: ParamControl[] = [
 export const NEWAPI_STANDARD_VIDEO_PARAMS: ParamControl[] = [
   { key: "duration", label: "时长(秒)", type: "number", options: [], min: 1, max: 30, defaultValue: 5 },
   { key: "size", label: "比例 / 尺寸", type: "select", options: sel(["16:9", "9:16", "1:1", "1280x720", "720x1280"]), defaultValue: "16:9" },
-  { key: "image", label: "首帧图(图生视频，可选)", type: "image-url", options: [] },
+  // 键必须叫 image_url（= body 模板读的那个键、= taskParams 聚合首帧的那个键）。曾叫 image：
+  // 于是 commit 的 reconcile 发现「声明了 image 但 body 里没有 {{request.params.image}}」，就把
+  // body 的 `image: "{{request.params.image_url}}"` **覆盖**成 `{{request.params.image}}` ——
+  // 而 taskParams 从不产出 image，连线的首帧从此静默到不了线上。同一个东西只准一个名字。
+  { key: "image_url", label: "首帧图(图生视频，可选)", type: "image-url", options: [] },
 ];
 
 // ── 配音(TTS)：OpenAI 兼容同步 create（POST /v1/audio/speech → **直接回二进制音频**，runner 读 arrayBuffer）──
@@ -173,18 +278,25 @@ export const NEWAPI_STANDARD_AUDIO_PARAMS: ParamControl[] = [
   { key: "speed", label: "语速", type: "number", options: [], min: 0.25, max: 4, defaultValue: 1 },
 ];
 
-/** 一个 new-api 模型的传输配方（按 kind 取 create/query + taskKind；图像另带 image_edit 改图 op）。 */
+/** 一个 new-api 模型的传输配方（按 kind 取 create/query + taskKind；图像另带 image_edit 改图 op、
+ *  视频另带 image_to_video 图生视频 op）。 */
 export function newapiTransportFor(kind: "image" | "video" | "audio"): {
   taskKind: ProfileKind;
   create: HttpOperation;
   /** 图像专有：图生图/改图 mapping（chat/completions 多模态）。落库时按 taskKind:"image_edit" 注册。 */
   edit?: HttpOperation;
+  /** 视频专有：图生视频 mapping。落库时按 taskKind:"image_to_video" 注册（与 create 共用轮询 query）。 */
+  imageToVideo?: HttpOperation;
   query?: HttpOperation;
   statusMapping?: Record<string, string[]>;
   params: ParamControl[];
 } {
   if (kind === "video") {
-    return { taskKind: "text_to_video", create: NEWAPI_VIDEO_CREATE_OP, query: NEWAPI_VIDEO_QUERY_OP, statusMapping: NEWAPI_STATUS_MAPPING, params: NEWAPI_STANDARD_VIDEO_PARAMS };
+    // 图生视频与文生视频是**同一条 wire**：new-api 的 /v1/video/generations 本就带可选 image（首帧）。
+    // 但 taskKind 必须各注册一条 mapping——runtime 按 taskKind 选投递通道，只有 text_to_video 时
+    // 图生视频请求找不到通道，参考图整条掉地（imageEditGuardError 会拒发）。共用同一个 op 对象，
+    // 不造第二份形状（P1）。
+    return { taskKind: "text_to_video", create: NEWAPI_VIDEO_CREATE_OP, imageToVideo: NEWAPI_VIDEO_CREATE_OP, query: NEWAPI_VIDEO_QUERY_OP, statusMapping: NEWAPI_STATUS_MAPPING, params: NEWAPI_STANDARD_VIDEO_PARAMS };
   }
   if (kind === "audio") {
     return { taskKind: "text_to_audio", create: NEWAPI_AUDIO_TTS_OP, params: NEWAPI_STANDARD_AUDIO_PARAMS };

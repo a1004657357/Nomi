@@ -1,12 +1,15 @@
 import { getDesktopActiveProjectId } from '../../desktop/activeProject'
 import { getDesktopBridge } from '../../desktop/bridge'
 import type { DesktopMp4ExportResult } from '../../desktop/bridge'
+import i18n from '../../i18n'
 import type { TimelineState } from '../timeline/timelineTypes'
 import type { PreviewAspectRatio } from '../workbenchTypes'
+import type { GenerationCanvasNode } from '../generationCanvas/model/generationCanvasTypes'
 import { createTimelineExportFilename, downloadTimelineBlob, exportTimelineToWebm } from './timelineWebmExport'
 import type { ExportQuality } from './exportTypes'
 import { buildRenderManifestRequest } from './renderManifest'
 import { renderTextOverlays } from './textOverlayPng'
+import { resolveTimelinePlaybackUrls } from '../timeline/timelinePlaybackUrl'
 
 const MP4_WEBM_IPC_CHUNK_BYTES = 1024 * 1024
 
@@ -17,6 +20,7 @@ export type ExportTimelineToMp4Options = {
   outputName?: string
   resolution?: '720p' | '1080p'
   quality?: ExportQuality
+  generationNodes?: GenerationCanvasNode[]
   onProgress?: (progress: { status: 'preparing' | 'recording' | 'converting' | 'done'; ratio: number }) => void
 }
 
@@ -25,20 +29,21 @@ export type StartTimelineMp4ExportJobOptions = Omit<ExportTimelineToMp4Options, 
 export async function startTimelineMp4ExportJob(options: StartTimelineMp4ExportJobOptions): Promise<{ jobId: string }> {
   const desktop = getDesktopBridge()
   if (!desktop?.exports?.startJob) {
-    throw new Error('导出任务需要 Electron 桌面运行时')
+    throw new Error(i18n.t('runtime.export.jobRequiresDesktop'))
   }
   const projectId = (options.projectId || getDesktopActiveProjectId()).trim()
-  if (!projectId) throw new Error('导出失败：缺少项目 ID')
+  if (!projectId) throw new Error(i18n.t('runtime.export.missingProjectId'))
+  const exportTimeline = resolveTimelinePlaybackUrls(options.timeline, options.generationNodes || [])
 
   const manifest = buildRenderManifestRequest({
     projectId,
-    timeline: options.timeline,
+    timeline: exportTimeline,
     aspectRatio: options.aspectRatio,
     resolution: options.resolution || '1080p',
     quality: options.quality || 'standard',
     preset: 'publish',
   })
-  manifest.textOverlays = renderTextOverlays(options.timeline, manifest.profile.width, manifest.profile.height)
+  manifest.textOverlays = renderTextOverlays(exportTimeline, manifest.profile.width, manifest.profile.height)
 
   return desktop.exports.startJob({
     projectId,
@@ -50,21 +55,22 @@ export async function startTimelineMp4ExportJob(options: StartTimelineMp4ExportJ
 export async function exportTimelineToMp4(options: ExportTimelineToMp4Options): Promise<DesktopMp4ExportResult> {
   const desktop = getDesktopBridge()
   if (!desktop?.exports?.startJob || !desktop.exports.writeTempInput || !desktop.exports.finishTempInput) {
-    throw new Error('导出 MP4 需要 Electron 桌面运行时')
+    throw new Error(i18n.t('runtime.export.mp4RequiresDesktop'))
   }
   const projectId = (options.projectId || getDesktopActiveProjectId()).trim()
-  if (!projectId) throw new Error('导出失败：缺少项目 ID')
+  if (!projectId) throw new Error(i18n.t('runtime.export.missingProjectId'))
   const resolution = options.resolution || '1080p'
   const quality = options.quality || 'standard'
+  const exportTimeline = resolveTimelinePlaybackUrls(options.timeline, options.generationNodes || [])
   const manifest = buildRenderManifestRequest({
     projectId,
-    timeline: options.timeline,
+    timeline: exportTimeline,
     aspectRatio: options.aspectRatio,
     resolution,
     quality,
     preset: 'publish',
   })
-  manifest.textOverlays = renderTextOverlays(options.timeline, manifest.profile.width, manifest.profile.height)
+  manifest.textOverlays = renderTextOverlays(exportTimeline, manifest.profile.width, manifest.profile.height)
   const { jobId, backend } = await desktop.exports.startJob({
     projectId,
     outputName: options.outputName,
@@ -92,7 +98,7 @@ export async function exportTimelineToMp4(options: ExportTimelineToMp4Options): 
 
     // 降级路径：资产无法本地解析 → 录 canvas WebM 上传，主进程转码。
     webmBlob = await exportTimelineToWebm({
-      timeline: options.timeline,
+      timeline: exportTimeline,
       aspectRatio: options.aspectRatio,
       width: options.resolution === '720p' ? 1280 : 1920,
       autoDownload: false,
@@ -123,13 +129,13 @@ export async function exportTimelineToMp4(options: ExportTimelineToMp4Options): 
         console.warn('Failed to cancel MP4 export job after renderer-side failure', cancelError)
       }
     }
-    const message = error instanceof Error ? error.message : 'MP4 导出失败'
+    const message = error instanceof Error ? error.message : i18n.t('runtime.export.mp4Failed')
     if (!webmBlob) {
       throw new Error(message)
     }
     const fallbackName = createTimelineExportFilename('webm')
     downloadTimelineBlob(webmBlob, fallbackName)
-    throw new Error(`${message}。已自动下载 WebM 备用文件：${fallbackName}`)
+    throw new Error(i18n.t('runtime.export.webmFallbackDownloaded', { message, file: fallbackName }))
   } finally {
     unsubscribe?.()
   }

@@ -1,6 +1,8 @@
 import { IconPaperclip, IconPlayerStopFilled, IconSend2, IconX } from '@tabler/icons-react'
 import { NomiAILabel, NomiLogoMark, NomiSelect, WorkbenchButton, WorkbenchIconButton } from '../../../design'
 import React from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import { cn } from '../../../utils/cn'
 import {
   sendGenerationCanvasAgentMessage,
@@ -85,15 +87,16 @@ function createMessageId(): string {
 // 文字里像「要动画布却没动」的意图特征——配合零工具发射判定「只说不做」，提示换模型。
 const AGENT_ACTION_INTENT = /创建|生成|添加|新增|修改|删除|替换|连接|拆镜头|分镜|节点|我将|我会|我来|计划|操作/
 
-// 「只说不做」提示:模型只回文字没发任何工具调用、但话里像要操作时追加。
-const ONLY_TALK_WARNING = '\n\n⚠️ 这一轮 AI 只回复了文字、没有真正动画布。如果你是想生成或修改节点，多半是当前模型不擅长工具调用——点上方「模型」换一个（推荐 GPT / Claude / DeepSeek 系）再试一次。'
+// 「只说不做」提示:模型只回文字没发任何工具调用、但话里像要操作时追加(拼进消息正文=可见,走 i18n)。
+const onlyTalkWarning = (): string => i18n.t('generationCommon.assistant.onlyTalkWarning')
 
 // 截断提示:finishReason=length 且有正文 = 模型这条输出到达单次上限被切断(别把半截当完整)。
-const TRUNCATED_WARNING = '\n\n⚠️ 这条回复可能没说完（达到模型单次输出上限被截断）。需要的话直接说「继续」。'
+const truncatedWarning = (): string => i18n.t('generationCommon.assistant.truncatedWarning')
 
 export default function CanvasAssistantPanel({
   onCollapsedChange,
 }: CanvasAssistantPanelProps): JSX.Element {
+  const { t } = useTranslation()
   const nodes = useGenerationCanvasStore((state) => state.nodes)
   const edges = useGenerationCanvasStore((state) => state.edges)
   const selectedNodeIds = useGenerationCanvasStore((state) => state.selectedNodeIds)
@@ -477,7 +480,7 @@ export default function CanvasAssistantPanel({
         // 截断只在「模型真出了正文又被切断」时提示(空文本+length 是弱模型空响应,backend 已另说人话)。
         const truncated = result.response.finishReason === 'length' && finalText !== ''
         const withNotes = (text: string): string =>
-          `${text}${warn ? ONLY_TALK_WARNING : ''}${truncated ? TRUNCATED_WARNING : ''}`
+          `${text}${warn ? onlyTalkWarning() : ''}${truncated ? truncatedWarning() : ''}`
         if (activeId !== null && activeText.trim() !== '') {
           // 尾段有正文(纯聊天整段 / 卡后总结)。
           updateMessage(activeId, withNotes(activeText))
@@ -619,7 +622,7 @@ export default function CanvasAssistantPanel({
           'block w-auto h-auto rounded-full',
         )}
         data-collapsed="true"
-        aria-label="生成区 AI 启动器"
+        aria-label={t('generationCommon.assistant.launcherAria')}
       >
         <WorkbenchButton
           className={cn(
@@ -655,7 +658,7 @@ export default function CanvasAssistantPanel({
         'max-[900px]:border max-[900px]:border-nomi-line max-[900px]:rounded-nomi max-[900px]:shadow-nomi-lg',
       )}
       data-collapsed="false"
-      aria-label="生成区 AI 助手"
+      aria-label={t('generationCommon.assistant.panelAria')}
       {...dragHandlers}
     >
       {isDragging ? (
@@ -668,8 +671,8 @@ export default function CanvasAssistantPanel({
           aria-hidden="true"
         >
           <IconPaperclip size={26} stroke={1.5} />
-          <div>拖到这里添加附件</div>
-          <div className={cn('text-micro font-normal text-nomi-ink-60')}>图片 / PDF / Word / Excel / txt · 单个上限 30MB</div>
+          <div>{t('generationCommon.assistant.dropAttachments')}</div>
+          <div className={cn('text-micro font-normal text-nomi-ink-60')}>{t('generationCommon.assistant.attachmentLimits')}</div>
         </div>
       ) : null}
       {/* 头部：Nomi 标 + 「助手」+ 动作（含 token 计数）+ 收起。 */}
@@ -680,7 +683,7 @@ export default function CanvasAssistantPanel({
         <div className={cn('flex items-center gap-2 min-w-0')}>
           <NomiLogoMark size={18} />
           {/* 审计 A14：与入口词「生成」一致，不再裸叫「助手」 */}
-          <span className={cn('text-body-sm font-semibold text-nomi-ink')}>生成助手</span>
+          <span className={cn('text-body-sm font-semibold text-nomi-ink')}>{t('generationCommon.assistant.title')}</span>
         </div>
         <div className={cn('inline-flex items-center gap-2 ml-auto min-w-0')}>
           <WorkbenchAiHeaderActions
@@ -699,7 +702,7 @@ export default function CanvasAssistantPanel({
               'p-0 border-0 rounded-nomi-sm bg-transparent text-nomi-ink-60 cursor-pointer',
               'hover:bg-nomi-ink-05 hover:text-nomi-ink',
             )}
-            label="收起 AI"
+            label={t('generationCommon.assistant.collapse')}
             onClick={() => setCollapsed(true)}
             icon={<IconX size={14} />}
           />
@@ -773,8 +776,8 @@ export default function CanvasAssistantPanel({
             'bg-nomi-paper text-nomi-ink text-body-sm leading-[1.45]',
             'placeholder:text-nomi-ink-40',
           )}
-          aria-label="给生成助手发送消息"
-          placeholder="告诉我画布上想怎么搭..."
+          aria-label={t('generationCommon.assistant.inputAria')}
+          placeholder={t('generationCommon.assistant.placeholder')}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => handleAiComposerKeyDown(event, () => {
@@ -791,20 +794,20 @@ export default function CanvasAssistantPanel({
                 'border-0 rounded-nomi-sm bg-transparent text-nomi-ink-60 cursor-pointer',
                 'hover:bg-nomi-ink-05 hover:text-nomi-ink',
               )}
-              label="添加附件"
-              aria-label="添加附件（也可拖拽 / 粘贴）"
+              label={t('generationCommon.assistant.addAttachment')}
+              aria-label={t('generationCommon.assistant.addAttachmentAria')}
               onClick={openFilePicker}
               icon={<IconPaperclip size={16} />}
             />
             <NomiSelect
-              ariaLabel="AI 模式"
-              leadingLabel="模式"
+              ariaLabel={t('generationCommon.assistant.modeAria')}
+              leadingLabel={t('generationCommon.assistant.modeLeading')}
               size="sm"
               value={mode}
               options={[
                 { value: 'agent', label: 'Agent' },
-                { value: 'chat', label: '问答' },
-                { value: 'refine', label: '润色' },
+                { value: 'chat', label: t('generationCommon.assistant.chat') },
+                { value: 'refine', label: t('generationCommon.assistant.refine') },
               ]}
               onChange={(value) => setMode(value as 'agent' | 'chat' | 'refine')}
             />
@@ -819,8 +822,8 @@ export default function CanvasAssistantPanel({
                 'border-0 rounded-full bg-nomi-ink text-nomi-paper cursor-pointer',
                 'hover:enabled:bg-nomi-accent',
               )}
-              label="停止"
-              aria-label="停止生成"
+              label={t('generationCommon.assistant.stop')}
+              aria-label={t('generationCommon.assistant.stopAria')}
               icon={<IconPlayerStopFilled size={13} />}
             />
           ) : (
@@ -833,8 +836,8 @@ export default function CanvasAssistantPanel({
                 'disabled:bg-nomi-ink-20 disabled:text-nomi-ink-40 disabled:cursor-not-allowed',
               )}
               disabled={!draft.trim() && !attachments.some((item) => item.status === 'ready')}
-              label="发送"
-              aria-label="生成 AI 发送"
+              label={t('generationCommon.assistant.send')}
+              aria-label={t('generationCommon.assistant.sendAria')}
               icon={<IconSend2 size={15} />}
             />
           )}

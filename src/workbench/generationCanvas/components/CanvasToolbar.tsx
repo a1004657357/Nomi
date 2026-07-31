@@ -32,6 +32,18 @@ const PRIMARY_ADD_ITEMS = PRIMARY_NODE_KINDS.map((kind) =>
   QUICK_ADD_NODE_ITEMS.find((item) => item.kind === kind),
 ).filter((item): item is (typeof QUICK_ADD_NODE_ITEMS)[number] => Boolean(item))
 
+function nodeKindLabel(kind: GenerationNodeKind, t: TFunction): string {
+  if (kind === 'text') return t('canvas.nodeKinds.text')
+  if (kind === 'image') return t('canvas.nodeKinds.image')
+  if (kind === 'video') return t('canvas.nodeKinds.video')
+  if (kind === 'audio') return t('canvas.nodeKinds.audio')
+  if (kind === 'model3d') return t('canvas.nodeKinds.model3d')
+  if (kind === 'whiteboard') return t('canvas.nodeKinds.whiteboard')
+  if (kind === 'panorama') return t('canvas.nodeKinds.panorama')
+  if (kind === 'scene3d') return t('canvas.nodeKinds.scene3d')
+  return kind
+}
+
 type NodeAddMenuProps = {
   className?: string
   style?: React.CSSProperties
@@ -56,6 +68,7 @@ export function NodeAddMenu({
   onContextMenu,
   onPointerDown,
 }: NodeAddMenuProps): JSX.Element {
+  const { t } = useTranslation()
   const items = React.useMemo(() => {
     if (!kinds?.length) return PRIMARY_ADD_ITEMS
     const allowed = new Set(kinds)
@@ -71,7 +84,7 @@ export function NodeAddMenu({
         className,
       )}
       role="menu"
-      aria-label="添加节点菜单"
+      aria-label={t('canvas.addNodeMenu')}
       style={style}
       onContextMenu={onContextMenu}
       onPointerDown={onPointerDown}
@@ -97,6 +110,7 @@ export function NodeAddMenu({
       ))}
       {items.map((item) => {
         const Icon = item.icon
+        const label = nodeKindLabel(item.kind, t)
         return (
           <button
             type="button"
@@ -109,11 +123,11 @@ export function NodeAddMenu({
               '[&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-nomi-ink-60 [&>svg]:stroke-[1.8]',
             )}
             role="menuitem"
-            aria-label={`添加${item.menuLabel}节点`}
+            aria-label={t('canvas.addNode', { type: label })}
             onClick={() => onAddNode(item.kind)}
           >
             <Icon size={14} stroke={1.6} />
-            <span>{item.menuLabel}</span>
+            <span>{label}</span>
           </button>
         )
       })}
@@ -156,10 +170,11 @@ export default function CanvasToolbar({
         'border border-workbench-border rounded-nomi',
         'bg-nomi-paper shadow-workbench-md -translate-y-1/2',
       )}
-      aria-label="生成画布工具栏"
+      aria-label={t('canvas.toolbar')}
     >
       {PRIMARY_ADD_ITEMS.map((item) => {
         const Icon = item.icon
+        const label = nodeKindLabel(item.kind, t)
         return (
           <button
             type="button"
@@ -169,12 +184,12 @@ export default function CanvasToolbar({
               'transition-colors hover:bg-nomi-ink-05 hover:text-nomi-ink',
               '[&>svg]:size-[18px] [&>svg]:stroke-[1.8]',
             )}
-            aria-label={`添加${item.menuLabel}节点`}
-            title={item.menuLabel}
+            aria-label={t('canvas.addNode', { type: label })}
+            title={label}
             onClick={() => handleAddNode(item.kind)}
           >
             <Icon size={18} stroke={1.6} />
-            <span className="hidden">{item.menuLabel}</span>
+            <span className="hidden">{label}</span>
           </button>
         )
       })}

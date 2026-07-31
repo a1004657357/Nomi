@@ -81,7 +81,9 @@ describe("runTask L3 护栏 — 图生图/图生视频绝不静默退化", () =>
       request: { kind: "image_edit", prompt: "放在一起", extras: { modelKey: "some-image-model", referenceImages: ["https://cdn.example.com/dog.png"], grantId: mintSpendGrant({ nodeIds: [] }) } },
     }).catch((e: Error) => e);
     expect(error).toBeInstanceOf(Error);
-    expect(String((error as Error).message)).toMatch(/没有配置「图生图（改图）」通道/);
+    expect(String((error as Error).message)).toMatch(/没有「图生图（改图）」通道/);
+    // 不再指路「删除该模型后重新接入」——那是假动作（接入路径本来就不建这条通道，重接也没用）。
+    expect(String((error as Error).message)).not.toMatch(/重新接入/);
     expect(fetchFn).not.toHaveBeenCalled();
   }, 15_000);
 
@@ -138,5 +140,33 @@ describe("runTask L3 护栏 — 图生图/图生视频绝不静默退化", () =>
     const parts = body.messages?.[0]?.content || [];
     const imageUrls = parts.filter((p) => p.type === "image_url").map((p) => p.image_url?.url);
     expect(imageUrls).toEqual(["https://cdn.example.com/dog.png", "https://cdn.example.com/cat.png"]);
+  }, 15_000);
+
+  it("模型级分流：同一中转的 Grok 精确命中 JSON /images/edits，不落入 generic chat mapping", async () => {
+    const store = await import("./catalog/catalogStore");
+    const { NEWAPI_IMAGE_EDIT_OP, XAI_JSON_IMAGE_EDIT_OP } = await import("./catalog/newapiTransport");
+    store.upsertModelCatalogVendor({ key: "relay", name: "中转站", enabled: true, authType: "bearer", baseUrlHint: "https://relay.example.com" });
+    store.upsertModelCatalogVendorApiKey("relay", { apiKey: "sk-relay" });
+    store.upsertModelCatalogModel({ vendorKey: "relay", modelKey: "grok-imagine-image-quality", kind: "image", enabled: true });
+    store.upsertModelCatalogMapping({ vendorKey: "relay", taskKind: "image_edit", name: "通用 chat 改图", create: NEWAPI_IMAGE_EDIT_OP });
+    store.upsertModelCatalogMapping({ vendorKey: "relay", taskKind: "image_edit", modelKey: "grok-imagine-image-quality", name: "Grok JSON 改图", create: XAI_JSON_IMAGE_EDIT_OP });
+    const fetchFn = stubFetch(() =>
+      new Response(JSON.stringify({ data: [{ url: "https://cdn.example.com/grok-out.png" }] }), { status: 200 }),
+    );
+    const { runTask } = await import("./runtime");
+    const { mintSpendGrant } = await import("./spendGrant");
+    const result = await runTask({
+      vendor: "relay",
+      request: {
+        kind: "image_edit",
+        prompt: "把背景换成夜晚",
+        extras: { modelKey: "grok-imagine-image-quality", referenceImages: ["https://cdn.example.com/source.png"], grantId: mintSpendGrant({ nodeIds: [] }) },
+      },
+    });
+    expect(result.status).toBe("succeeded");
+    expect(String(fetchFn.mock.calls[0]?.[0])).toBe("https://relay.example.com/v1/images/edits");
+    const body = JSON.parse(String((fetchFn.mock.calls[0]?.[1] as { body?: string })?.body || "{}"));
+    expect(body.image).toEqual({ type: "image_url", url: "https://cdn.example.com/source.png" });
+    expect(body).not.toHaveProperty("messages");
   }, 15_000);
 });

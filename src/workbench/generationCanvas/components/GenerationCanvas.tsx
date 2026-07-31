@@ -314,7 +314,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
       if (!nodeId) return
       const target = allNodesRef.current.find((node) => node.id === nodeId)
       if (!target) {
-        toast('源节点已不存在', 'warning')
+        toast(t('generationCommon.node.sourceNoLongerExists'), 'warning')
         return
       }
       const targetCategoryId = target.categoryId || 'shots'
@@ -330,7 +330,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
         focusFlashTimerRef.current = null
       }
     }
-  }, [selectNode, setActiveCategoryId])
+  }, [selectNode, setActiveCategoryId, t])
 
   React.useEffect(() => {
     if (!pendingFocusNodeId) return
@@ -366,10 +366,15 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
         categoryId: activeCategoryId,
       })
       if (result.createdCount === 0) {
-        toast('没有可导入画布的素材', 'info')
+        toast(t('generationCommon.canvas.noImportableAssets'), 'info')
         return
       }
-      toast(result.createdCount === 1 ? '已导入画布' : `已导入 ${result.createdCount} 个素材到画布`, 'success')
+      toast(
+        result.createdCount === 1
+          ? t('generationCommon.canvas.importedOne')
+          : t('generationCommon.canvas.importedMany', { count: result.createdCount }),
+        'success',
+      )
     },
     [activeCategoryId, getToolbarInsertionPosition, readOnly],
   )
@@ -386,7 +391,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
       const assets = Array.isArray(payload?.assets) ? payload.assets as BrowserAssetCanvasImportItem[] : []
       handleBrowserAssetsImportToCanvas(assets)
     })
-  }, [handleBrowserAssetsImportToCanvas])
+  }, [handleBrowserAssetsImportToCanvas, t])
 
   useCanvasShortcuts({
     readOnly,
@@ -403,6 +408,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     cutSelectedNodes,
     pasteNodes,
     getPastePosition,
+    zoomByStep: handleZoomByStep,
     undo,
     redo,
   })
@@ -432,16 +438,6 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     const z = zoomRef.current || 1
     setViewportTransform(z, { x: stageSize.width / 2 - point.x * z, y: stageSize.height / 2 - point.y * z })
   }, [setViewportTransform, stageSize.width, stageSize.height, zoomRef])
-
-  // 缩放条拖动：以画布中心为锚点缩放（无 rect 时退化为原地缩放，不丢手势）。
-  const handleZoomTo = React.useCallback((nextZoom: number) => {
-    const rect = stageRef.current?.getBoundingClientRect()
-    if (!rect) {
-      setViewportTransform(nextZoom, offsetRef.current)
-      return
-    }
-    zoomAtStagePoint(nextZoom, { x: rect.width / 2, y: rect.height / 2 })
-  }, [offsetRef, setViewportTransform, stageRef, zoomAtStagePoint])
 
   // 项目/分类首次加载时自动适应视图（含「历史视口框不住任何节点」的自愈式适应，
   // 防止图都在视口外、用户误以为「图消失」）。逻辑抽到 useAutoFitOnLoad（防巨壳）。
@@ -523,7 +519,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
         'generation-canvas-v2',
         'grid grid-rows-[minmax(0,1fr)] w-full h-full min-w-0 min-h-0 bg-workbench-bg text-workbench-ink',
       )}
-      aria-label="AI 影像创作画布"
+      aria-label={t('generationCommon.canvas.aria')}
       data-ready={isReady ? 'true' : undefined}
       data-nomi-generation-canvas-import-target={!readOnly ? 'true' : undefined}
     >

@@ -2,6 +2,7 @@ import React from 'react'
 import {
   cameraLookAtRotation,
   editorCameraFromSceneCamera,
+  vectorAlmostEqual,
 } from './scene3dMath'
 import { cameraWithPlaybackPosition } from './scene3dPlayback'
 import type { Scene3DCamera, Scene3DState } from './scene3dTypes'
@@ -22,8 +23,9 @@ export function useScene3DCameraViewEdit({
   setCameraViewEditId,
   setViewLocked,
   setFocusId,
-  updateEditorCamera,
+  setState,
   patchCamera,
+  setTimelineOpen,
 }: {
   readOnly: boolean
   selectedCamera: Scene3DCamera | undefined
@@ -37,13 +39,18 @@ export function useScene3DCameraViewEdit({
   setCameraViewEditId: React.Dispatch<React.SetStateAction<string | null>>
   setViewLocked: (locked: boolean) => void
   setFocusId: (id: string) => void
-  updateEditorCamera: (editorCamera: Scene3DState['editorCamera']) => void
+  setState: React.Dispatch<React.SetStateAction<Scene3DState>>
   patchCamera: (id: string, patch: Partial<Scene3DCamera>) => void
+  setTimelineOpen: (open: boolean) => void
 }): {
   enterCameraViewEdit: (cameraData: Scene3DCamera) => void
   exitCameraViewEdit: () => void
   toggleCameraViewEdit: () => void
   levelSelectedCamera: () => void
+  previewMode: boolean
+  setPreviewMode: React.Dispatch<React.SetStateAction<boolean>>
+  handleTogglePreview: () => void
+  updateEditorCamera: (editorCamera: Scene3DState['editorCamera']) => void
 } {
   // 被取景相机被删 → 退出取景态（state 在壳里，effect 也住壳；这里只清 id 兜底）。
   React.useEffect(() => {
@@ -51,6 +58,29 @@ export function useScene3DCameraViewEdit({
       setCameraViewEditId(null)
     }
   }, [cameraViewEditCamera, cameraViewEditId, setCameraViewEditId])
+
+  // 编辑器相机写回（从壳内迁入，R9 防巨壳）：更新 latest ref + 幂等 setState（位姿没变则跳过，省重渲染）。
+  const updateEditorCamera = React.useCallback((editorCamera: Scene3DState['editorCamera']) => {
+    latestEditorCameraRef.current = editorCamera
+    setState((current) => {
+      const nextEditorCamera = {
+        ...current.editorCamera,
+        ...editorCamera,
+      }
+      if (
+        current.editorCamera.mode === nextEditorCamera.mode &&
+        vectorAlmostEqual(current.editorCamera.position, nextEditorCamera.position) &&
+        vectorAlmostEqual(current.editorCamera.rotation, nextEditorCamera.rotation) &&
+        vectorAlmostEqual(current.editorCamera.target, nextEditorCamera.target)
+      ) {
+        return current
+      }
+      return {
+        ...current,
+        editorCamera: nextEditorCamera,
+      }
+    })
+  }, [latestEditorCameraRef, setState])
 
   const enterCameraViewEdit = React.useCallback((cameraData: Scene3DCamera) => {
     if (readOnly) return
@@ -69,6 +99,20 @@ export function useScene3DCameraViewEdit({
     setFocusId('')
   }, [setCameraViewEditId, setFocusId, setViewLocked])
 
+  // 成片预览态（第2期）：主视口 live 跟随播放头看运镜回放。与取景态同属「主视口视图模式」，收在同一 hook
+  // （P1 内聚，一处管工作/取景/预览三态）。互斥：进预览退取景 + 开时间轴（好拖着看回放）。
+  const [previewMode, setPreviewMode] = React.useState(false)
+  const handleTogglePreview = React.useCallback(() => {
+    setPreviewMode((on) => {
+      const next = !on
+      if (next) {
+        if (cameraViewEditId) exitCameraViewEdit()
+        setTimelineOpen(true)
+      }
+      return next
+    })
+  }, [cameraViewEditId, exitCameraViewEdit, setTimelineOpen])
+
   const toggleCameraViewEdit = React.useCallback(() => {
     if (!selectedCamera || readOnly) return
     if (cameraViewEditId === selectedCamera.id) return
@@ -83,5 +127,5 @@ export function useScene3DCameraViewEdit({
     })
   }, [activeTrajectoryIds, patchCamera, playheadRef, readOnly, selectedCamera, stateRef])
 
-  return { enterCameraViewEdit, exitCameraViewEdit, toggleCameraViewEdit, levelSelectedCamera }
+  return { enterCameraViewEdit, exitCameraViewEdit, toggleCameraViewEdit, levelSelectedCamera, previewMode, setPreviewMode, handleTogglePreview, updateEditorCamera }
 }

@@ -138,7 +138,7 @@ describe('applyCameraMovePreset · 追加与串联', () => {
     expect(result.state.trajectoryBindings[0].objects[0].objectId).toBe('cam1')
     expect(result.startTime).toBe(0)
     expect(result.endTime).toBe(4)
-    expect(result.state.sceneTimeline.totalDuration).toBeGreaterThanOrEqual(4)
+    expect(result.state.sceneTimeline.totalDuration).toBe(4) // 第3期：= 内容真实终点（不再 grow-only 撑到默认 10）
   })
 
   it('连点串联：第二段从第一段末尾接力，总时长随之延长', () => {
