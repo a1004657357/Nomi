@@ -10,6 +10,7 @@ import {
   IconPhoto,
   IconPencil,
   IconRobot,
+  IconSparkles,
   IconVideo,
   IconWand,
 } from '@tabler/icons-react'
@@ -19,7 +20,6 @@ import { WorkbenchButton } from '../../../../design'
 import { useWorkbenchStore } from '../../../workbenchStore'
 import {
   buildStoryboardScriptRows,
-  generationResultUrl,
   type StoryboardScriptRow,
 } from '../../../creation/storyboard/storyboardScriptViewModel'
 import {
@@ -33,10 +33,7 @@ import {
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { isShotNumberedNode } from '../../model/shotNumbering'
 import { FOCUS_GENERATION_NODE_EVENT } from '../nodeSizing'
-import {
-  isStoryboardContainedNodeExpanded,
-  withStoryboardContainedMeta,
-} from '../../model/storyboardContainedNodes'
+import { isStoryboardContainedNodeExpanded, withStoryboardContainedMeta } from '../../model/storyboardContainedNodes'
 import {
   STORYBOARD_TABLE_DEFAULT_SIZE,
   STORYBOARD_TABLE_MIN_CONTENT_WIDTH,
@@ -45,31 +42,29 @@ import {
 } from '../../model/storyboardTableSizing'
 import { runStoryboardTableAutofill } from '../../agent/storyboardTableAutofill'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
+import { openCapabilityRecipeInspector } from '../../components/capabilityRecipeEvents'
+import { confirmAndRunPlan } from '../../components/batchPlanPreview'
+import { buildDependencyWaves } from '../../runner/dependencyWaves'
 import {
   ensureStoryboardRowImageOutput,
   ensureStoryboardRowVideoOutput,
   storyboardRowOutputPosition,
 } from './storyboardRowOutputs'
-import { StoryboardImagePreview } from './StoryboardImagePreview'
-import { StoryboardVideoPreview } from './StoryboardVideoPreview'
+import { ensureStoryboardRowKeyframes } from './storyboardRowKeyframes'
+import {
+  BufferedDurationInput,
+  CompactFieldsCell,
+  CompactPromptCell,
+  GroupedFieldsCell,
+  StoryboardMediaPreview,
+  TextCell,
+} from './StoryboardTableCells'
+import { STORYBOARD_FIELD_GROUPS, type ShotTextField } from './storyboardTableFieldConfig'
+export { StoryboardMediaPreview } from './StoryboardTableCells'
 
 type Props = {
   node: GenerationCanvasNode
 }
-
-type ShotTextField = Extract<
-  keyof PlanShot,
-  | 'scene'
-  | 'shotSize'
-  | 'cameraAngle'
-  | 'cameraMove'
-  | 'characters'
-  | 'performance'
-  | 'dialogue'
-  | 'props'
-  | 'sound'
-  | 'notes'
->
 
 type PromptField = Extract<keyof PlanShot, 'imagePrompt' | 'videoPrompt'>
 
@@ -77,36 +72,7 @@ type EnsureRowMediaOptions = {
   expanded?: boolean
 }
 
-const FIELD_LABEL: Record<ShotTextField, string> = {
-  scene: '场景',
-  shotSize: '景别',
-  cameraAngle: '机位',
-  cameraMove: '运镜',
-  characters: '角色',
-  performance: '表演',
-  dialogue: '对白',
-  props: '道具',
-  sound: '音乐/音效',
-  notes: '备注',
-}
-
-const FIELD_GROUPS: Array<{ label: string; fields: ShotTextField[] }> = [
-  { label: '画面', fields: ['scene', 'props', 'notes'] },
-  { label: '摄影', fields: ['shotSize', 'cameraAngle', 'cameraMove'] },
-  { label: '角色/表演', fields: ['characters', 'performance'] },
-  { label: '对白/声音', fields: ['dialogue', 'sound'] },
-]
-
-const GRID_COLUMNS = [
-  '88px',
-  '160px',
-  '150px',
-  '170px',
-  '160px',
-  '220px',
-  '220px',
-  '152px',
-].join(' ')
+const GRID_COLUMNS = ['88px', '160px', '150px', '170px', '160px', '220px', '220px', '152px'].join(' ')
 
 const STATUS_LABEL: Record<StoryboardScriptRow['status'], string> = {
   generated: '已生成',
@@ -135,245 +101,8 @@ function videoPromptPatch(shot: PlanShot, prompt: string): Partial<PlanShot> {
   }
 }
 
-function BufferedTextarea({
-  value,
-  ariaLabel,
-  onCommit,
-  className,
-  rows = 1,
-}: {
-  value: string
-  ariaLabel: string
-  onCommit: (value: string) => void
-  className: string
-  rows?: number
-}): JSX.Element {
-  const [draft, setDraft] = React.useState(value)
-  const focused = React.useRef(false)
-
-  React.useEffect(() => {
-    if (!focused.current) setDraft(value)
-  }, [value])
-
-  return (
-    <textarea
-      aria-label={ariaLabel}
-      value={draft}
-      rows={rows}
-      onFocus={() => { focused.current = true }}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => {
-        focused.current = false
-        if (draft !== value) onCommit(draft)
-      }}
-      onPointerDown={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-      onKeyUp={(event) => event.stopPropagation()}
-      className={className}
-    />
-  )
-}
-
-function TextCell({
-  value,
-  ariaLabel,
-  onCommit,
-}: {
-  value: string
-  ariaLabel: string
-  onCommit: (value: string) => void
-}): JSX.Element {
-  return (
-    <BufferedTextarea
-      ariaLabel={ariaLabel}
-      value={value}
-      rows={4}
-      onCommit={onCommit}
-      className={cn(
-        'block min-h-[96px] w-full resize-none rounded-nomi-sm border border-transparent bg-transparent px-2 py-1.5',
-        'text-caption leading-[1.45] text-nomi-ink outline-none',
-        'hover:border-nomi-line-soft hover:bg-nomi-paper focus:border-nomi-accent/60 focus:bg-nomi-paper',
-      )}
-    />
-  )
-}
-
-function BufferedDurationInput({
-  value,
-  ariaLabel,
-  onCommit,
-}: {
-  value: number
-  ariaLabel: string
-  onCommit: (value: string) => void
-}): JSX.Element {
-  const normalized = Number.isFinite(value) ? String(value) : '0'
-  const [draft, setDraft] = React.useState(normalized)
-
-  React.useEffect(() => setDraft(normalized), [normalized])
-
-  return (
-    <input
-      aria-label={ariaLabel}
-      type="number"
-      min={0}
-      step={1}
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => {
-        if (draft !== normalized) onCommit(draft)
-      }}
-      onPointerDown={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-      onKeyUp={(event) => event.stopPropagation()}
-      className="h-8 w-full rounded-nomi-sm border border-nomi-line-soft bg-nomi-paper px-2 text-small outline-none focus:border-nomi-accent/60"
-    />
-  )
-}
-
-function GroupedFieldsCell({
-  row,
-  fields,
-  onCommit,
-}: {
-  row: StoryboardScriptRow
-  fields: ShotTextField[]
-  onCommit: (field: ShotTextField, value: string) => void
-}): JSX.Element {
-  return (
-    <div className="space-y-1.5 px-1.5 py-2">
-      {fields.map((field) => (
-        <label key={field} className="block">
-          <span className="mb-0.5 block text-micro font-medium text-nomi-ink-40">{FIELD_LABEL[field]}</span>
-          <BufferedTextarea
-            ariaLabel={`镜头 ${row.shot.index} ${FIELD_LABEL[field]}`}
-            value={String(row.shot[field] || '')}
-            rows={1}
-            onCommit={(value) => onCommit(field, value)}
-            className={cn(
-              'block min-h-8 w-full resize-none rounded-nomi-sm border border-transparent bg-transparent px-1.5 py-1',
-              'text-caption leading-[1.35] text-nomi-ink outline-none',
-              'hover:border-nomi-line-soft hover:bg-nomi-paper focus:border-nomi-accent/60 focus:bg-nomi-paper',
-            )}
-          />
-        </label>
-      ))}
-    </div>
-  )
-}
-
-function nodeStatusLabel(node: GenerationCanvasNode | null, emptyLabel: string): string {
-  if (!node) return emptyLabel
-  if (node.status === 'queued' || node.status === 'running') return '生成中'
-  if (node.status === 'error') return '失败'
-  if (node.status === 'recoverable') return '待取回'
-  if (node.status === 'success') return '已生成'
-  return '待生成'
-}
-
 function storyboardActionError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback
-}
-
-export function StoryboardMediaPreview({
-  node,
-  type,
-  emptyLabel,
-  compact = false,
-  visibilityRoot,
-}: {
-  node: GenerationCanvasNode | null
-  type: 'image' | 'video'
-  emptyLabel: string
-  compact?: boolean
-  visibilityRoot?: Element | null
-}): JSX.Element {
-  if (!node?.result) {
-    return <span className="text-micro text-nomi-ink-40">{nodeStatusLabel(node, emptyLabel)}</span>
-  }
-  if (type === 'video') {
-    const videoUrl = String(node.result.url || node.result.providerUrl || '').trim()
-    const posterUrl = String(node.result.thumbnailUrl || '').trim()
-    if (!videoUrl && posterUrl) {
-      return (
-        <StoryboardImagePreview
-          node={node}
-          imageUrl={posterUrl}
-          thumbnailUrl={posterUrl}
-          compact={compact}
-          visibilityRoot={visibilityRoot}
-          labelKind="视频封面"
-        />
-      )
-    }
-    if (!videoUrl) {
-      return <span className="text-micro text-nomi-ink-40">{nodeStatusLabel(node, emptyLabel)}</span>
-    }
-    return (
-      <StoryboardVideoPreview
-        node={node}
-        videoUrl={videoUrl}
-        posterUrl={posterUrl}
-        compact={compact}
-        visibilityRoot={visibilityRoot}
-      />
-    )
-  }
-  const imageUrl = generationResultUrl(node.result)
-  if (!imageUrl) {
-    return <span className="text-micro text-nomi-ink-40">{nodeStatusLabel(node, emptyLabel)}</span>
-  }
-  const thumbnailUrl = String(node.result.thumbnailUrl || '').trim()
-  return (
-    <StoryboardImagePreview
-      node={node}
-      imageUrl={imageUrl}
-      thumbnailUrl={thumbnailUrl || undefined}
-      compact={compact}
-      visibilityRoot={visibilityRoot}
-    />
-  )
-}
-
-function CompactFieldsCell({ row, fields }: { row: StoryboardScriptRow; fields: ShotTextField[] }): JSX.Element {
-  const values = fields.flatMap((field) => {
-    const value = String(row.shot[field] || '').trim()
-    return value ? [`${FIELD_LABEL[field]}：${value}`] : []
-  })
-  return (
-    <div className="px-2 py-2 text-caption leading-[1.45] text-nomi-ink-60">
-      <p className="line-clamp-3">{values.join(' · ') || '—'}</p>
-    </div>
-  )
-}
-
-function CompactPromptCell({
-  prompt,
-  node,
-  type,
-  visibilityRoot,
-}: {
-  prompt: string
-  node: GenerationCanvasNode | null
-  type: 'image' | 'video'
-  visibilityRoot: Element | null
-}): JSX.Element {
-  return (
-    <div className="flex h-full items-center gap-2 px-2 py-2">
-      <div className="min-w-0 flex-1">
-        <p className="line-clamp-3 text-caption leading-[1.45] text-nomi-ink-60">{prompt || '—'}</p>
-      </div>
-      <div className="flex h-[72px] w-[76px] shrink-0 items-center justify-center">
-        <StoryboardMediaPreview
-          node={node}
-          type={type}
-          emptyLabel={type === 'image' ? '待生成图' : '待生成视频'}
-          compact
-          visibilityRoot={visibilityRoot}
-        />
-      </div>
-    </div>
-  )
 }
 
 function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
@@ -382,22 +111,28 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
   const setWorkspaceMode = useWorkbenchStore((state) => state.setWorkspaceMode)
   const setActiveCategoryId = useWorkbenchStore((state) => state.setActiveCategoryId)
   const requestCanvasFit = useWorkbenchStore((state) => state.requestCanvasFit)
-  const nodes = useGenerationCanvasStore(useShallow((state) => {
-    const shotNodeIds = new Set(state.nodes.filter(isShotNumberedNode).map((candidate) => candidate.id))
-    const referenceNodeIds = new Set(
-      state.edges.filter((edge) => shotNodeIds.has(edge.target)).map((edge) => edge.source),
-    )
-    return state.nodes.filter((candidate) => shotNodeIds.has(candidate.id) || referenceNodeIds.has(candidate.id))
-  }))
-  const edges = useGenerationCanvasStore(useShallow((state) => {
-    const shotNodeIds = new Set(state.nodes.filter(isShotNumberedNode).map((candidate) => candidate.id))
-    return state.edges.filter((edge) => shotNodeIds.has(edge.target))
-  }))
+  const nodes = useGenerationCanvasStore(
+    useShallow((state) => {
+      const shotNodeIds = new Set(state.nodes.filter(isShotNumberedNode).map((candidate) => candidate.id))
+      const referenceNodeIds = new Set(
+        state.edges.filter((edge) => shotNodeIds.has(edge.target)).map((edge) => edge.source),
+      )
+      return state.nodes.filter((candidate) => shotNodeIds.has(candidate.id) || referenceNodeIds.has(candidate.id))
+    }),
+  )
+  const edges = useGenerationCanvasStore(
+    useShallow((state) => {
+      const shotNodeIds = new Set(state.nodes.filter(isShotNumberedNode).map((candidate) => candidate.id))
+      return state.edges.filter((edge) => shotNodeIds.has(edge.target))
+    }),
+  )
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const updateNodePrompt = useGenerationCanvasStore((state) => state.updateNodePrompt)
   const selectNode = useGenerationCanvasStore((state) => state.selectNode)
+  const selectNodes = useGenerationCanvasStore((state) => state.selectNodes)
   const commitPersistedChange = useGenerationCanvasStore((state) => state.commitPersistedChange)
   const [agentFilling, setAgentFilling] = React.useState(false)
+  const [keyframeGeneratingShotIndex, setKeyframeGeneratingShotIndex] = React.useState<number | null>(null)
   const [expandedShotIndex, setExpandedShotIndex] = React.useState<number | null>(null)
   const [mediaVisibilityRoot, setMediaVisibilityRoot] = React.useState<HTMLElement | null>(null)
 
@@ -419,11 +154,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
         shots: plan.shots.map((shot) => (shot.index === shotIndex ? { ...shot, ...patch } : shot)),
       }
       setStoryboardPlan(nextPlan)
-      updateNode(
-        node.id,
-        { meta: { ...(node.meta || {}), storyboardPlanSnapshot: nextPlan } },
-        { persist: false },
-      )
+      updateNode(node.id, { meta: { ...(node.meta || {}), storyboardPlanSnapshot: nextPlan } }, { persist: false })
     },
     [node.id, node.meta, plan, setStoryboardPlan, updateNode],
   )
@@ -466,7 +197,9 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
 
   const polishAllVideoPrompts = React.useCallback(() => {
     if (!plan || rows.length === 0) return
-    const promptByShotIndex = new Map(rows.map((row) => [row.shot.index, buildDetailedStoryboardShotVideoPrompt(row.shot)]))
+    const promptByShotIndex = new Map(
+      rows.map((row) => [row.shot.index, buildDetailedStoryboardShotVideoPrompt(row.shot)]),
+    )
     const nextPlan: StoryboardPlan = {
       ...plan,
       shots: plan.shots.map((shot) => {
@@ -475,11 +208,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
       }),
     }
     setStoryboardPlan(nextPlan)
-    updateNode(
-      node.id,
-      { meta: { ...(node.meta || {}), storyboardPlanSnapshot: nextPlan } },
-      { persist: false },
-    )
+    updateNode(node.id, { meta: { ...(node.meta || {}), storyboardPlanSnapshot: nextPlan } }, { persist: false })
     for (const row of rows) {
       const prompt = promptByShotIndex.get(row.shot.index)
       if (prompt && row.videoNode) updateNodePrompt(row.videoNode.id, prompt)
@@ -488,18 +217,21 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
     toast(`已润色 ${promptByShotIndex.size} 个视频提示词`, 'success')
   }, [commitPersistedChange, node.id, node.meta, plan, rows, setStoryboardPlan, updateNode, updateNodePrompt])
 
-  const autofillWithAgent = React.useCallback(async (overwriteExisting: boolean) => {
-    if (!plan || agentFilling) return
-    setAgentFilling(true)
-    try {
-      const result = await runStoryboardTableAutofill({ plan, overwriteExisting })
-      toast(`Agent 已填写 ${result.updatedShotCount} 个镜头`, 'success')
-    } catch (error: unknown) {
-      toast(error instanceof Error ? error.message : 'Agent 填表失败', 'error')
-    } finally {
-      setAgentFilling(false)
-    }
-  }, [agentFilling, plan])
+  const autofillWithAgent = React.useCallback(
+    async (overwriteExisting: boolean) => {
+      if (!plan || agentFilling) return
+      setAgentFilling(true)
+      try {
+        const result = await runStoryboardTableAutofill({ plan, overwriteExisting })
+        toast(`Agent 已填写 ${result.updatedShotCount} 个镜头`, 'success')
+      } catch (error: unknown) {
+        toast(error instanceof Error ? error.message : 'Agent 填表失败', 'error')
+      } finally {
+        setAgentFilling(false)
+      }
+    },
+    [agentFilling, plan],
+  )
 
   const containNodeForRow = React.useCallback(
     (
@@ -529,7 +261,10 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
   )
 
   const ensureImageNodeForRow = React.useCallback(
-    (row: StoryboardScriptRow, options: EnsureRowMediaOptions = {}): { nodeId: string; node: GenerationCanvasNode; created: boolean } => {
+    (
+      row: StoryboardScriptRow,
+      options: EnsureRowMediaOptions = {},
+    ): { nodeId: string; node: GenerationCanvasNode; created: boolean } => {
       return ensureStoryboardRowImageOutput({
         tableNode: node,
         shot: row.shot,
@@ -542,7 +277,10 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
   )
 
   const ensureVideoNodeForRow = React.useCallback(
-    async (row: StoryboardScriptRow, options: EnsureRowMediaOptions = {}): Promise<{ nodeId: string; node: GenerationCanvasNode; existed: boolean; imageCreated: boolean }> => {
+    async (
+      row: StoryboardScriptRow,
+      options: EnsureRowMediaOptions = {},
+    ): Promise<{ nodeId: string; node: GenerationCanvasNode; existed: boolean; imageCreated: boolean }> => {
       const result = await ensureStoryboardRowVideoOutput({
         tableNode: node,
         shot: row.shot,
@@ -593,25 +331,76 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
   }, [commitPersistedChange, node.id, node.meta, requestCanvasFit, updateNode])
 
   const revealRowOutput = React.useCallback(
-    async (row: StoryboardScriptRow, role: 'image' | 'video') => {
+    async (row: StoryboardScriptRow, role: 'image' | 'video', openCapability = false) => {
       try {
-        const result = role === 'image'
-          ? ensureImageNodeForRow(row, { expanded: true })
-          : await ensureVideoNodeForRow(row, { expanded: true })
+        const result =
+          role === 'image'
+            ? ensureImageNodeForRow(row, { expanded: true })
+            : await ensureVideoNodeForRow(row, { expanded: true })
         setWorkspaceMode('generation')
         setActiveCategoryId(result.node.categoryId || 'shots')
         selectNode(result.nodeId)
         const focusNode = () => {
           window.dispatchEvent(new CustomEvent(FOCUS_GENERATION_NODE_EVENT, { detail: { nodeId: result.nodeId } }))
+          if (openCapability) openCapabilityRecipeInspector(result.nodeId)
         }
         if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(focusNode)
         else window.setTimeout(focusNode, 0)
-        toast(`镜头 ${row.shot.index} 的${role === 'image' ? '图片' : '视频'}节点已提取，可选择模型和参数`, 'success')
+        toast(
+          openCapability
+            ? `已打开镜头 ${row.shot.index} 的${role === 'image' ? '图片' : '视频'}创作能力`
+            : `镜头 ${row.shot.index} 的${role === 'image' ? '图片' : '视频'}节点已提取，可选择模型和参数`,
+          'success',
+        )
       } catch (error: unknown) {
         toast(storyboardActionError(error, `镜头 ${row.shot.index} 生成节点提取失败`), 'error')
       }
     },
     [ensureImageNodeForRow, ensureVideoNodeForRow, selectNode, setActiveCategoryId, setWorkspaceMode],
+  )
+
+  const generateTimedKeyframes = React.useCallback(
+    async (row: StoryboardScriptRow) => {
+      if (keyframeGeneratingShotIndex !== null) return
+      setKeyframeGeneratingShotIndex(row.shot.index)
+      try {
+        const imageOutput = ensureImageNodeForRow(row)
+        const result = ensureStoryboardRowKeyframes({
+          tableNode: node,
+          shot: row.shot,
+          sourceImageNode: imageOutput.node,
+        })
+        const state = useGenerationCanvasStore.getState()
+        const dependencyPlan = buildDependencyWaves(result.nodeIds, {
+          nodes: state.nodes,
+          edges: state.edges,
+        })
+        setWorkspaceMode('generation')
+        setActiveCategoryId(imageOutput.node.categoryId || 'shots')
+        selectNodes(result.nodeIds)
+        requestCanvasFit()
+        toast(
+          result.createdCount
+            ? `已建立镜头 ${row.shot.index} 的 5秒动作帧和 8秒结尾帧`
+            : `镜头 ${row.shot.index} 的 5+3 秒关键帧已存在，准备重新生成`,
+          'success',
+        )
+        await confirmAndRunPlan(dependencyPlan)
+      } catch (error: unknown) {
+        toast(storyboardActionError(error, `镜头 ${row.shot.index} 关键帧生成失败`), 'error')
+      } finally {
+        setKeyframeGeneratingShotIndex(null)
+      }
+    },
+    [
+      ensureImageNodeForRow,
+      keyframeGeneratingShotIndex,
+      node,
+      requestCanvasFit,
+      selectNodes,
+      setActiveCategoryId,
+      setWorkspaceMode,
+    ],
   )
 
   return (
@@ -695,16 +484,10 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                 >
                   覆盖填写已有内容
                 </Menu.Item>
-                <Menu.Item
-                  leftSection={<IconWand size={14} stroke={1.8} />}
-                  onClick={polishAllVideoPrompts}
-                >
+                <Menu.Item leftSection={<IconWand size={14} stroke={1.8} />} onClick={polishAllVideoPrompts}>
                   润色全部视频提示词
                 </Menu.Item>
-                <Menu.Item
-                  leftSection={<IconMaximize size={14} stroke={1.8} />}
-                  onClick={fitStoryboardTable}
-                >
+                <Menu.Item leftSection={<IconMaximize size={14} stroke={1.8} />} onClick={fitStoryboardTable}>
                   显示全部镜头
                 </Menu.Item>
               </Menu.Dropdown>
@@ -729,11 +512,13 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
               className="sticky top-0 z-[1] grid border-b border-nomi-line bg-nomi-paper text-micro font-semibold text-nomi-ink-50"
               style={{ gridTemplateColumns: GRID_COLUMNS }}
             >
-              {['镜头', ...FIELD_GROUPS.map((group) => group.label), '图片', '视频', '生成设置'].map((label) => (
-                <div key={label} className="border-r border-nomi-line-soft px-2 py-2 last:border-r-0">
-                  {label}
-                </div>
-              ))}
+              {['镜头', ...STORYBOARD_FIELD_GROUPS.map((group) => group.label), '图片', '视频', '生成设置'].map(
+                (label) => (
+                  <div key={label} className="border-r border-nomi-line-soft px-2 py-2 last:border-r-0">
+                    {label}
+                  </div>
+                ),
+              )}
             </div>
             {rows.map((row) => {
               const isExpanded = expandedShotIndex === row.shot.index
@@ -788,7 +573,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                       {STATUS_LABEL[row.status]}
                     </span>
                   </div>
-                  {FIELD_GROUPS.map((group) => (
+                  {STORYBOARD_FIELD_GROUPS.map((group) => (
                     <div key={group.label} className="border-r border-nomi-line-soft">
                       {isExpanded ? (
                         <GroupedFieldsCell row={row} fields={group.fields} onCommit={commitField} />
@@ -850,21 +635,53 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                     )}
                   </div>
                   <div className="flex flex-col items-stretch gap-1.5 px-2 py-2">
-                    <WorkbenchButton
-                      type="button"
-                      variant="default"
-                      size="sm"
-                      className="h-8 justify-center px-1.5"
-                      aria-expanded={isExpanded}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setExpandedShotIndex(isExpanded ? null : row.shot.index)
-                      }}
-                    >
-                      {isExpanded ? <IconChevronUp size={14} stroke={1.8} /> : <IconPencil size={14} stroke={1.8} />}
-                      {isExpanded ? '收起' : '编辑'}
-                    </WorkbenchButton>
+                    <div className="grid grid-cols-[minmax(0,1fr)_32px] gap-1.5">
+                      <WorkbenchButton
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        className="h-8 justify-center px-1.5"
+                        aria-expanded={isExpanded}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setExpandedShotIndex(isExpanded ? null : row.shot.index)
+                        }}
+                      >
+                        {isExpanded ? <IconChevronUp size={14} stroke={1.8} /> : <IconPencil size={14} stroke={1.8} />}
+                        {isExpanded ? '收起' : '编辑'}
+                      </WorkbenchButton>
+                      <Menu withinPortal position="bottom-end" shadow="md">
+                        <Menu.Target>
+                          <WorkbenchButton
+                            type="button"
+                            variant="default"
+                            size="sm"
+                            className="h-8 w-8 justify-center p-0"
+                            aria-label={`打开镜头 ${row.shot.index} 创作能力`}
+                            title="基于该镜头的图片或视频继续创作"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <IconSparkles size={14} stroke={1.8} />
+                          </WorkbenchButton>
+                        </Menu.Target>
+                        <Menu.Dropdown onPointerDown={(event) => event.stopPropagation()}>
+                          <Menu.Item
+                            leftSection={<IconPhoto size={14} stroke={1.8} />}
+                            onClick={() => void revealRowOutput(row, 'image', true)}
+                          >
+                            基于图片继续创作
+                          </Menu.Item>
+                          <Menu.Item
+                            leftSection={<IconVideo size={14} stroke={1.8} />}
+                            onClick={() => void revealRowOutput(row, 'video', true)}
+                          >
+                            基于视频继续创作
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                    </div>
                     <div className="grid grid-cols-2 gap-1.5">
                       <WorkbenchButton
                         type="button"
@@ -899,6 +716,25 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                         <span className="text-micro">视频设置</span>
                       </WorkbenchButton>
                     </div>
+                    <WorkbenchButton
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      className="h-8 justify-center gap-1 px-1.5"
+                      aria-label={`生成镜头 ${row.shot.index} 的 5+3 秒关键帧`}
+                      title="以分镜参考图为 0 秒帧，依次生成第 5 秒动作帧和第 8 秒结尾帧"
+                      disabled={keyframeGeneratingShotIndex !== null}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void generateTimedKeyframes(row)
+                      }}
+                    >
+                      <IconPhoto size={14} stroke={1.8} />
+                      <span className="text-micro">
+                        {keyframeGeneratingShotIndex === row.shot.index ? '关键帧生成中' : '生成5+3关键帧'}
+                      </span>
+                    </WorkbenchButton>
                     {isExpanded ? (
                       <WorkbenchButton
                         type="button"

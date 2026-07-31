@@ -27,6 +27,8 @@ export type GenerationNodeIconKey =
     | "scene3d"
     | "vibingDirector"
     | "model3d"
+    | "compare"
+    | "skill"
     | "whiteboard"
     | "audio";
 
@@ -182,11 +184,39 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
         menuLabel: "输出",
         component: loadBaseGenerationNode,
         icon: "output",
-        defaultTitle: "输出",
-        defaultSize: { width: 280, height: 170 },
+        defaultTitle: "输出收集",
+        defaultSize: { width: 560, height: 420 },
         catalogKind: "text",
         quickAdd: true,
+        agentCreatable: true,
         promptPlaceholder: "整理最终输出说明或交付备注...",
+    },
+    {
+        kind: "compare",
+        label: "Image Compare",
+        menuLabel: "图像对比",
+        component: loadBaseGenerationNode,
+        icon: "compare",
+        defaultTitle: "图像对比",
+        defaultSize: { width: 520, height: 360 },
+        catalogKind: "image",
+        quickAdd: true,
+        agentCreatable: true,
+    },
+    {
+        // First-class workflow component. It orchestrates connected media and
+        // capability recipes but does not itself call a generation provider.
+        kind: "skill",
+        label: "Skill",
+        menuLabel: "技能",
+        component: loadBaseGenerationNode,
+        icon: "skill",
+        defaultTitle: "技能",
+        defaultSize: { width: 380, height: 360 },
+        catalogKind: "text",
+        quickAdd: false,
+        agentCreatable: false,
+        promptPlaceholder: "从技能库放入一个技能...",
     },
     {
         kind: "panorama",
@@ -197,6 +227,7 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
         defaultTitle: "全景图",
         defaultSize: { width: 480, height: 270 },
         catalogKind: "image",
+        executionKind: "image",
         quickAdd: true,
         providesImageReference: true,
         promptPlaceholder: "上传或截取全景参考图...",
@@ -261,6 +292,21 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
         quickAdd: true,
         agentCreatable: true,
         promptPlaceholder: "描述要生成的 3D 模型（外形、材质、风格）…",
+    },
+    {
+        // 可复用创作资源：保存风格/效果/身份/色板及其来源资产、许可、提示词。
+        // 它不直接发起生成，但可作为参考连接到能力配方派生节点。
+        kind: "resource",
+        label: "Creative Resource",
+        menuLabel: "创作资源",
+        component: loadBaseGenerationNode,
+        icon: "whiteboard",
+        defaultTitle: "创作资源",
+        defaultSize: { width: 300, height: 220 },
+        catalogKind: "image",
+        quickAdd: false,
+        agentCreatable: false,
+        providesImageReference: true,
     },
     {
         // 素材：导入图 / 文件树拖入 / 本地切图裁剪旋转衍生物。它就是一张图，不是生成节点：

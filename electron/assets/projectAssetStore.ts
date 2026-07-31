@@ -7,6 +7,7 @@ import { projectDirById, sanitizeName } from "../projects/repository";
 import { ensureDir } from "../runtimePaths";
 import { broadcastAssetsUpdated } from "./assetEvents";
 import { collectFilesRecursively, parseDataUrl } from "./assetBytes";
+import { absolutePathFromLocalAssetUrlAnyProject } from "./localAssetFile";
 import {
   assetBucketFromMeta,
   assetKindFromContentType,
@@ -17,6 +18,8 @@ import {
   sanitizeAssetMetaForKind,
   stableAssetId,
 } from "./assetPaths";
+import { inspectGlb, type GlbValidationReport } from "./glbValidation";
+import { runTechnicalCheck, type TechnicalCheckVerdict } from "../review/technicalCheck";
 
 type LocalAssetRecord = {
   id: string;
@@ -173,29 +176,74 @@ export async function importRemoteAsset(payload: unknown): Promise<unknown> {
   if (url.startsWith("data:")) {
     const parsed = parseDataUrl(url);
     const ext = extensionFromMime(parsed.contentType, "bin");
+    const fileName = String(raw.fileName || `asset-${Date.now()}.${ext}`);
+    const model3dValidation = shouldValidateGlb(raw, fileName, parsed.contentType)
+      ? inspectGlb(parsed.bytes)
+      : undefined;
     return writeAsset(
       projectId,
       parsed.bytes,
-      String(raw.fileName || `asset-${Date.now()}.${ext}`),
+      fileName,
       parsed.contentType,
-      { kind: raw.kind || "generated", originalUrl: null },
+      {
+        kind: raw.kind || "generated",
+        originalUrl: null,
+        ...(typeof raw.mediaType === "string" ? { mediaType: raw.mediaType } : {}),
+        ...(model3dValidation ? { model3dValidation } : {}),
+      },
     );
   }
   if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s), data, and nomi-local assets are supported");
   const fetched = await hardenedFetch(url, {
     timeoutMs: 60_000,
     maxBytes: 200 * 1024 * 1024,
-    allowContentTypes: ["image/", "video/", "audio/", "application/octet-stream"],
+    allowContentTypes: ["image/", "video/", "audio/", "model/", "application/gltf", "application/octet-stream"],
   });
   const contentType = fetched.contentType || "application/octet-stream";
   const bytes = fetched.bytes;
   const ext = extensionFromMime(contentType, extensionFromUrl(url));
   const fileName = String(raw.fileName || path.basename(new URL(url).pathname) || `asset-${Date.now()}.${ext}`);
+  const model3dValidation = shouldValidateGlb(raw, fileName, contentType)
+    ? inspectGlb(bytes)
+    : undefined;
   return writeAsset(projectId, bytes, fileName.includes(".") ? fileName : `${fileName}.${ext}`, contentType, {
     kind: raw.kind || "generated",
     originalUrl: url,
     ownerNodeId: raw.ownerNodeId || null,
+    ...(typeof raw.mediaType === "string" ? { mediaType: raw.mediaType } : {}),
+    ...(model3dValidation ? { model3dValidation } : {}),
   });
+}
+
+function shouldValidateGlb(raw: JsonRecord, fileName: string, contentType: string): boolean {
+  return raw.mediaType === "model3d"
+    || path.extname(fileName).toLowerCase() === ".glb"
+    || contentType.toLowerCase().split(";")[0]?.trim() === "model/gltf-binary";
+}
+
+export function inspectProjectModel3dAsset(payload: unknown): GlbValidationReport {
+  const raw = payload as JsonRecord;
+  const sourceUrl = String(raw.url || "").trim();
+  const sourcePath = absolutePathFromLocalAssetUrlAnyProject(sourceUrl);
+  if (!sourcePath) throw new Error("3D 模型本地资产不存在或已失效");
+  if (path.extname(sourcePath).toLowerCase() !== ".glb") throw new Error("当前只支持校验 GLB 2.0 模型");
+  return inspectGlb(fs.readFileSync(sourcePath));
+}
+
+type InspectProjectVideoAssetDeps = {
+  resolvePath?: typeof absolutePathFromLocalAssetUrlAnyProject;
+  inspectVideo?: typeof runTechnicalCheck;
+};
+
+export async function inspectProjectVideoAsset(
+  payload: unknown,
+  deps: InspectProjectVideoAssetDeps = {},
+): Promise<TechnicalCheckVerdict> {
+  const raw = payload as JsonRecord;
+  const sourceUrl = String(raw.url || "").trim();
+  const sourcePath = (deps.resolvePath ?? absolutePathFromLocalAssetUrlAnyProject)(sourceUrl);
+  if (!sourcePath) throw new Error("视频本地资产不存在或已失效");
+  return (deps.inspectVideo ?? runTechnicalCheck)(sourcePath, "video");
 }
 
 export function listProjectAssets(payload: unknown): { items: LocalAssetRecord[]; cursor: string | null } {

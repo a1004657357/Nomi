@@ -183,6 +183,19 @@ export const createCanvasRunActions: CanvasSliceCreator<CanvasRunActions> = (set
       })
       emitRunUpdated(nodeId)
     },
+    addNodeResultCollection: (nodeId, collection) => {
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId)
+        if (!node) return
+        const current = node.resultCollections ?? []
+        const existingIndex = current.findIndex((entry) => entry.id === collection.id)
+        node.resultCollections = existingIndex < 0
+          ? [...current, collection]
+          : current.map((entry, index) => index === existingIndex ? collection : entry)
+        bumpPersistRevision(state)
+      })
+      emitRunUpdated(nodeId)
+    },
     rollbackHistory: (nodeId, resultId) => {
       const before = get().nodes
       set((state) => {

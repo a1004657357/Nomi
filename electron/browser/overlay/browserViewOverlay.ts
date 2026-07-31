@@ -160,9 +160,25 @@ export function applyBrowserAssetOverlayShape(record: BrowserAssetOverlayRecord)
 export function applyBrowserAssetOverlayMouseEvents(record: BrowserAssetOverlayRecord): void {
   if (record.window.isDestroyed()) return;
   const shapedDockInteractive = Boolean(record.dockMode && record.popoverRect);
+  const dragCaptureInteractive = browserAssetOverlayUsesDragCapture({
+    dragInteractive: record.dragInteractive,
+    dockMode: record.dockMode,
+    hasPopoverRect: Boolean(record.popoverRect),
+  });
   const interactive =
-    shapedDockInteractive || record.pointerInteractive || record.hoverInteractive || record.dragInteractive;
+    shapedDockInteractive || record.pointerInteractive || record.hoverInteractive || dragCaptureInteractive;
   record.window.setIgnoreMouseEvents(!interactive, { forward: true });
+}
+
+export function browserAssetOverlayUsesDragCapture(input: {
+  dragInteractive: boolean;
+  dockMode: BrowserAssetOverlayDockMode;
+  hasPopoverRect: boolean;
+}): boolean {
+  // A floating transparent child window has no shape. Making it interactive for a
+  // cross-WebContents drag blocks the whole canvas until dragend/timeout. Docked
+  // popovers are shaped to their visible bounds, so only that case is safe.
+  return input.dragInteractive && Boolean(input.dockMode) && input.hasPopoverRect;
 }
 
 export function showBrowserAssetOverlay(
@@ -237,7 +253,7 @@ export function setBrowserAssetOverlayDragInteractive(record: BrowserAssetOverla
       record.dragInteractive = false;
       record.dragInteractiveResetTimer = null;
       applyBrowserAssetOverlayMouseEvents(record);
-    }, 30_000);
+    }, 8_000);
   }
   applyBrowserAssetOverlayMouseEvents(record);
 }

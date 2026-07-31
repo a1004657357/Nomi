@@ -52,7 +52,7 @@ export async function startCapabilityCore(runTask: RunTaskFn, fetchTaskResult: F
 
 /** 退出清理：清广告 + 关 server。同步触发、不抛，绝不卡退出。 */
 export function stopCapabilityCore(): void {
-  clearInstanceAdvertisement()
+  clearInstanceAdvertisement(process.pid)
   if (handle) {
     void handle.close()
     handle = null

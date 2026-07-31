@@ -23,7 +23,7 @@ import { currentArchetypeMode } from '../nodes/controls/archetypeMeta'
 /** 源节点产出的可参考资产类型;text/shot/output 等无产出 → null(不能作参考源)。 */
 export type ReferenceAssetKind = 'image' | 'video'
 
-export type EdgeSkipReason = 'dangling' | 'source_not_referenceable' | 'unsupported_reference'
+export type EdgeSkipReason = 'dangling' | 'source_not_referenceable' | 'unsupported_reference' | 'target_input_full'
 
 export type EdgeCapabilityResult = { ok: true } | { ok: false; reason: EdgeSkipReason }
 
@@ -146,6 +146,11 @@ export function validateReferenceEdge(
   target: GenerationCanvasNode,
   mode: GenerationCanvasEdgeMode | undefined,
 ): EdgeCapabilityResult {
+  if (target.kind === 'compare') {
+    return referenceAssetKindForNode(source) === 'image'
+      ? { ok: true }
+      : { ok: false, reason: 'unsupported_reference' }
+  }
   if (isTextPromptEdge(source, target, mode)) return { ok: true }
   const asset = referenceAssetKindForNode(source)
   if (!asset) return { ok: false, reason: 'source_not_referenceable' }

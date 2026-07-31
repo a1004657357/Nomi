@@ -61,7 +61,7 @@ function readFailureMessageFromRaw(raw: unknown): string {
     const text = asTrimmedString(value)
     if (text) return text
   }
-  const nested = [record.raw, record.response, record.data, record.result]
+  const nested = [record.raw, record.response, record.data, record.result, record.jimengWeb]
   for (const value of nested) {
     const text = readFailureMessageFromRaw(value)
     if (text) return text
@@ -109,15 +109,19 @@ export function normalizeCatalogTaskResult(result: TaskResultDto, node: Generati
   const firstVideoAsset = result.assets.find((item) => item.type === 'video' && asTrimmedString(item.url))
   const firstImageAsset = result.assets.find((item) => item.type === 'image' && asTrimmedString(item.url))
   const firstAudioAsset = result.assets.find((item) => item.type === 'audio' && asTrimmedString(item.url))
-  const asset =
-    firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
+  const firstModel3dAsset = result.assets.find((item) => item.type === 'model3d' && asTrimmedString(item.url))
+  const asset = inferredType === 'model3d'
+    ? firstModel3dAsset
+    : firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
   if (!asset)
     throw new Error(
       inferredType === 'video'
         ? '模型任务完成但没有返回视频地址'
         : inferredType === 'audio'
           ? '配音生成完成但没有返回音频'
-          : '模型任务完成但没有返回图片地址',
+          : inferredType === 'model3d'
+            ? '3D 模型任务完成但没有返回 GLB 模型地址'
+            : '模型任务完成但没有返回图片地址',
     )
   // E11: propagate provenance from electron TaskResult into the node result.
   const provenance = extractProvenanceFromTaskResult(result)
@@ -129,7 +133,7 @@ export function normalizeCatalogTaskResult(result: TaskResultDto, node: Generati
     includeRaw: boolean,
   ): GenerationNodeResult => {
     const candidateType =
-      candidate.type === 'video' || candidate.type === 'image' || candidate.type === 'audio'
+      candidate.type === 'video' || candidate.type === 'image' || candidate.type === 'audio' || candidate.type === 'model3d'
         ? candidate.type
         : inferredType
     return {
@@ -144,6 +148,9 @@ export function normalizeCatalogTaskResult(result: TaskResultDto, node: Generati
       taskKind: candidateType,
       assetId: candidate.assetId || undefined,
       assetRefId: candidate.assetRefId || undefined,
+      ...(candidateType === 'model3d' && candidate.model3dValidation
+        ? { model3dValidation: candidate.model3dValidation }
+        : {}),
       ...(includeRaw ? { raw: result.raw } : {}),
       createdAt,
       ...(provenance ? { provenance } : {}),

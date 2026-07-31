@@ -39,6 +39,7 @@ export function CustomVendorManage({
   const [urlEditing, setUrlEditing] = React.useState(false)
   const [urlDraft, setUrlDraft] = React.useState('')
   const [textModelDraft, setTextModelDraft] = React.useState('')
+  const [textModelSupportsImageInput, setTextModelSupportsImageInput] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
 
@@ -109,7 +110,9 @@ export function CustomVendorManage({
   }, [vendorKey, vendorName, modelCount, onChanged])
 
   const handleAddTextModel = React.useCallback(() => {
-    const payload = buildCustomTextModelUpsert(vendorKey, textModelDraft)
+    const payload = buildCustomTextModelUpsert(vendorKey, textModelDraft, {
+      supportsImageInput: textModelSupportsImageInput,
+    })
     if (!payload) { setError('请先填写文本模型 ID。'); return }
     const bridge = getDesktopBridge()
     if (!bridge) return
@@ -117,11 +120,12 @@ export function CustomVendorManage({
     try {
       bridge.modelCatalog.upsertModel(payload)
       setTextModelDraft('')
+      setTextModelSupportsImageInput(false)
       onChanged()
     } catch (e) {
       setError(`添加失败：${e instanceof Error ? e.message : String(e)}`)
     } finally { setBusy(false) }
-  }, [vendorKey, textModelDraft, onChanged])
+  }, [vendorKey, textModelDraft, textModelSupportsImageInput, onChanged])
 
   return (
     <div className="flex flex-col gap-2.5 border-t border-nomi-line-soft pt-3">
@@ -201,6 +205,15 @@ export function CustomVendorManage({
             <IconPlus size={14} stroke={1.7} />添加
           </button>
         </div>
+        <label className="flex items-center gap-2 text-caption text-nomi-ink-60">
+          <input
+            type="checkbox"
+            checked={textModelSupportsImageInput}
+            onChange={(event) => setTextModelSupportsImageInput(event.currentTarget.checked)}
+            disabled={busy}
+          />
+          支持图片输入（用于视觉复核）
+        </label>
       </div>
 
       {/* 接入地址（可就地改——StepFun 那类填错地址的根因入口）*/}

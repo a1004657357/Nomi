@@ -28,6 +28,7 @@ import {
   uniqueStrings,
 } from './catalogTaskResolve'
 import { normalizeCatalogTaskResult } from './catalogTaskResultParse'
+import { resolveCatalogTaskPollingPolicy } from './catalogTaskPollingPolicy'
 import { RecoverableTimeoutError } from './recoverableTimeout'
 
 // 重导出：实现已拆到 catalogTaskResolve（节点→vendor/model/kind 选择）与
@@ -53,6 +54,9 @@ function buildReferenceExtras(
     ...readStringArray(meta.referenceImages),
     ...(references.referenceImages || []),
   ])
+  const referenceImageRoles = (references.referenceImageRoles || [])
+    .map((value) => asTrimmedString(value))
+    .filter(Boolean)
   const styleReferenceImages = uniqueStrings([
     ...readStringArray(meta.styleReferenceImages),
     ...(references.styleReferenceImages || []),
@@ -86,6 +90,7 @@ function buildReferenceExtras(
     })
     return {
       ...(referenceImages.length ? { referenceImages } : {}),
+      ...(referenceImageRoles.length ? { referenceImageRoles } : {}),
       archetypeInput,
       ...(styleReferenceImages.length ? { styleReferenceImages } : {}),
       ...(characterReferenceImages.length ? { characterReferenceImages } : {}),
@@ -178,6 +183,36 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
 }
 
+type GenerationPhaseTimings = {
+  resolveMs: number
+  submitMs: number
+  pollMs: number
+  finalizeMs: number
+  totalMs: number
+}
+
+function attachGenerationPhaseTimings(
+  result: GenerationNodeResult,
+  timings: GenerationPhaseTimings,
+): GenerationNodeResult {
+  const raw = result.raw && typeof result.raw === 'object' && !Array.isArray(result.raw)
+    ? result.raw as Record<string, unknown>
+    : { providerRaw: result.raw }
+  const nomi = raw.__nomi && typeof raw.__nomi === 'object' && !Array.isArray(raw.__nomi)
+    ? raw.__nomi as Record<string, unknown>
+    : {}
+  return {
+    ...result,
+    raw: {
+      ...raw,
+      __nomi: {
+        ...nomi,
+        generationPhases: timings,
+      },
+    },
+  }
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new DOMException('生成已取消', 'AbortError')
 }
@@ -247,11 +282,11 @@ async function waitForCatalogTaskResult(
 ): Promise<TaskResultDto> {
   if (TERMINAL_STATUSES.has(initialResult.status)) return initialResult
   const pollIntervalMs = options.pollIntervalMs ?? 1500
-  const isVideo = request.kind === 'text_to_video' || request.kind === 'image_to_video'
-  // 软超时：到点不报错，只把文案切成「仍在生成·已超常规时长」，后台继续等（视频 5min→续拉到 hard）。
-  // 硬超时：真停，抛可找回错误（视频 20min；非视频 2min）。options.pollTimeoutMs 覆盖时 soft=hard（测试可控）。
-  const softTimeoutMs = options.pollTimeoutMs ?? (isVideo ? 300000 : 120000)
-  const hardTimeoutMs = options.pollTimeoutMs ?? (isVideo ? 1200000 : 120000)
+  const pollingPolicy = resolveCatalogTaskPollingPolicy(request.kind, vendor)
+  // 软超时：到点不报错，只把文案切成「仍在生成·已超常规时长」，后台继续等到供应商硬上限。
+  // 硬超时：真停，抛可找回错误；options.pollTimeoutMs 覆盖时 soft=hard（测试可控）。
+  const softTimeoutMs = options.pollTimeoutMs ?? pollingPolicy.softTimeoutMs
+  const hardTimeoutMs = options.pollTimeoutMs ?? pollingPolicy.hardTimeoutMs
   const startedAt = Date.now()
   const fetchResult = options.fetchTaskResult || fetchWorkbenchTaskResultByVendor
 
@@ -323,9 +358,12 @@ export async function runCatalogGenerationTask(
   // 此前轮询拿到 status 后随手丢弃,且无任何阶段回报)。
   const report = (phase: GenerationProgressPhase, taskId?: string, ctx?: ProgressNarrationContext) =>
     options.onProgress?.({ phase, message: narrateProgress(phase, ctx), ...(taskId ? { taskId } : {}) })
+  const totalStartedAt = Date.now()
+  const resolveStartedAt = Date.now()
   report('resolving')
   const executableNode = await resolveExecutableNodeFromCatalog(node, options)
   const { vendor, request } = buildCatalogTaskRequest(executableNode, options)
+  const resolveMs = Date.now() - resolveStartedAt
 
   // 文本任务 + 调用方要逐字 → 走流式通道:逐 token 回调 onTextDelta,终态直接返回
   // (文本无轮询,流 resolve 即 succeeded),不走下面的 runTask + 轮询。runTask 覆盖项
@@ -333,17 +371,41 @@ export async function runCatalogGenerationTask(
   if (options.onTextDelta && TEXT_STREAM_KINDS.has(request.kind) && !options.runTask) {
     const runTextStream = options.runTextStream || runWorkbenchTextTaskStream
     report('requesting')
+    const submitStartedAt = Date.now()
     const streamed = await runTextStream(vendor, request, { onDelta: options.onTextDelta, signal: options.signal })
+    const submitMs = Date.now() - submitStartedAt
     report('finalizing', streamed.id)
-    return normalizeCatalogTaskResult(streamed, executableNode)
+    const finalizeStartedAt = Date.now()
+    const normalized = normalizeCatalogTaskResult(streamed, executableNode)
+    const finalizeMs = Date.now() - finalizeStartedAt
+    return attachGenerationPhaseTimings(normalized, {
+      resolveMs,
+      submitMs,
+      pollMs: 0,
+      finalizeMs,
+      totalMs: Date.now() - totalStartedAt,
+    })
   }
 
   const runTask = options.runTask || runWorkbenchTaskByVendor
   report('requesting')
   throwIfAborted(options.signal)
+  const submitStartedAt = Date.now()
   const initialResult = await runTaskWithHeartbeat(() => runTask(vendor, request), options)
+  const submitMs = Date.now() - submitStartedAt
   report('waiting', initialResult.id)
+  const pollStartedAt = Date.now()
   const finalResult = await waitForCatalogTaskResult(vendor, request, initialResult, options)
+  const pollMs = Date.now() - pollStartedAt
   report('finalizing', initialResult.id)
-  return normalizeCatalogTaskResult(finalResult, executableNode)
+  const finalizeStartedAt = Date.now()
+  const normalized = normalizeCatalogTaskResult(finalResult, executableNode)
+  const finalizeMs = Date.now() - finalizeStartedAt
+  return attachGenerationPhaseTimings(normalized, {
+    resolveMs,
+    submitMs,
+    pollMs,
+    finalizeMs,
+    totalMs: Date.now() - totalStartedAt,
+  })
 }

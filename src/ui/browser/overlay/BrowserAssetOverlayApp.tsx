@@ -506,6 +506,7 @@ export function BrowserAssetOverlayApp(): JSX.Element {
         onDockModeChange={setDockMode}
         dockPresentation="edge"
         onImportRemoteAsset={importBrowserAssetToLibrary}
+        canvasImportEnabled={Boolean(overlayBridge?.importToCanvas)}
         browserCaptureEnabled={captureEnabled}
         browserCaptureDisabled={!config.viewId}
         browserCaptureRequest={browserCaptureRequest}

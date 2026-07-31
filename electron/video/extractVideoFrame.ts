@@ -29,6 +29,17 @@ export type ExtractVideoFramePayload = {
 
 export type ExtractVideoFrameResult = { url: string };
 
+export type ExtractVideoFramesPayload = {
+  videoUrl: string;
+  times: number[];
+  projectId: string;
+  forceRerun?: boolean;
+};
+
+export type ExtractVideoFramesResult = {
+  frames: Array<{ timeSeconds: number; url: string }>;
+};
+
 export class VideoFrameError extends Error {
   constructor(message: string) {
     super(message);
@@ -69,6 +80,17 @@ function persistentFrameLocation(payload: ExtractVideoFramePayload): {
     absolutePath: resolveProjectRelativePath(payload.projectId, relativePath),
     url: localAssetUrl(payload.projectId, relativePath),
   };
+}
+
+function readCachedFrame(payload: ExtractVideoFramePayload): string | null {
+  if (payload.forceRerun) return null;
+  const key = cacheKey(payload);
+  const cached = frameCache.get(key);
+  if (cached) return cached;
+  const persistent = persistentFrameLocation(payload);
+  if (!isUsableFrameFile(persistent.absolutePath)) return null;
+  frameCache.set(key, persistent.url);
+  return persistent.url;
 }
 
 function writePersistentFrame(payload: ExtractVideoFramePayload, sourcePath: string): string {
@@ -152,33 +174,14 @@ function runFfmpeg(ffmpegPath: string, args: string[]): Promise<void> {
   });
 }
 
-/**
- * 抽一帧落成项目素材。失败一律抛 VideoFrameError —— **绝不返回视频/封面冒充**
- * （resolver 的「不冒充」不变量靠这里兜底：上游拿到 error 就标人话错误、不裸跑）。
- */
-export async function extractVideoFrameToAsset(payload: ExtractVideoFramePayload): Promise<ExtractVideoFrameResult> {
-  const { videoUrl, which, projectId } = payload;
-  if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
-  if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");
-
-  const key = cacheKey(payload);
-  if (!payload.forceRerun) {
-    const cached = frameCache.get(key);
-    if (cached) return { url: cached };
-    const persistent = persistentFrameLocation(payload);
-    if (isUsableFrameFile(persistent.absolutePath)) {
-      frameCache.set(key, persistent.url);
-      return { url: persistent.url };
-    }
-  }
-
-  const ffmpegPath = resolveFfmpegPath();
-  if (!ffmpegPath) throw new VideoFrameError("找不到 ffmpeg 可执行文件");
-
-  const { filePath, cleanup } = await resolveVideoLocalPath(videoUrl, projectId);
+async function extractResolvedVideoFrame(
+  payload: ExtractVideoFramePayload,
+  ffmpegPath: string,
+  filePath: string,
+): Promise<ExtractVideoFrameResult> {
   const outPath = path.join(os.tmpdir(), `nomi-frame-${crypto.randomUUID()}.png`);
   try {
-    const ss = await resolveSeekSeconds(filePath, which);
+    const ss = await resolveSeekSeconds(filePath, payload.which);
     // 输入端粗 seek（快速跳过）+ 输出端精 seek（解码精确到目标帧）—— 又快又准，
     // 避开 -sseof 在部分封装上的不稳（handoff §5 坑）。
     const inputSeek = Math.max(0, ss - 2);
@@ -198,12 +201,85 @@ export async function extractVideoFrameToAsset(payload: ExtractVideoFramePayload
       throw new VideoFrameError("ffmpeg 未产出有效帧图");
     }
     const url = writePersistentFrame(payload, outPath);
-    frameCache.set(key, url);
+    frameCache.set(cacheKey(payload), url);
     return { url };
   } finally {
-    cleanup();
     try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch { /* non-fatal */ }
   }
+}
+
+/**
+ * 抽一帧落成项目素材。失败一律抛 VideoFrameError —— **绝不返回视频/封面冒充**
+ * （resolver 的「不冒充」不变量靠这里兜底：上游拿到 error 就标人话错误、不裸跑）。
+ */
+export async function extractVideoFrameToAsset(payload: ExtractVideoFramePayload): Promise<ExtractVideoFrameResult> {
+  const { videoUrl, which, projectId } = payload;
+  if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
+  if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");
+
+  const cached = readCachedFrame(payload);
+  if (cached) return { url: cached };
+
+  const ffmpegPath = resolveFfmpegPath();
+  if (!ffmpegPath) throw new VideoFrameError("找不到 ffmpeg 可执行文件");
+
+  const { filePath, cleanup } = await resolveVideoLocalPath(videoUrl, projectId);
+  try {
+    return await extractResolvedVideoFrame(payload, ffmpegPath, filePath);
+  } finally {
+    cleanup();
+  }
+}
+
+export function normalizeVideoFrameTimes(times: readonly number[]): number[] {
+  const unique = new Set<number>();
+  for (const raw of times) {
+    if (!Number.isFinite(raw)) continue;
+    unique.add(Math.round(Math.max(0, raw) * 1000) / 1000);
+  }
+  return [...unique].sort((a, b) => a - b);
+}
+
+/**
+ * 批量抽取指定时间帧。远程视频只下载一次，随后在同一本地源上顺序抽帧；
+ * 顺序执行刻意限制 FFmpeg 并发，避免检查器打开时抢占画布渲染资源。
+ */
+export async function extractVideoFramesToAssets(payload: ExtractVideoFramesPayload): Promise<ExtractVideoFramesResult> {
+  const { videoUrl, projectId } = payload;
+  if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
+  if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");
+  if (!Array.isArray(payload.times)) throw new VideoFrameError("缺少抽帧时间点");
+
+  const times = normalizeVideoFrameTimes(payload.times);
+  if (!times.length) throw new VideoFrameError("没有有效的抽帧时间点");
+  if (times.length > 24) throw new VideoFrameError("一次最多抽取 24 帧");
+
+  const results = new Map<number, string>();
+  const pending: ExtractVideoFramePayload[] = [];
+  for (const timeSeconds of times) {
+    const framePayload = { videoUrl, projectId, which: timeSeconds, forceRerun: payload.forceRerun };
+    const cached = readCachedFrame(framePayload);
+    if (cached) results.set(timeSeconds, cached);
+    else pending.push(framePayload);
+  }
+
+  if (pending.length) {
+    const ffmpegPath = resolveFfmpegPath();
+    if (!ffmpegPath) throw new VideoFrameError("找不到 ffmpeg 可执行文件");
+    const { filePath, cleanup } = await resolveVideoLocalPath(videoUrl, projectId);
+    try {
+      for (const framePayload of pending) {
+        const result = await extractResolvedVideoFrame(framePayload, ffmpegPath, filePath);
+        results.set(framePayload.which as number, result.url);
+      }
+    } finally {
+      cleanup();
+    }
+  }
+
+  return {
+    frames: times.map((timeSeconds) => ({ timeSeconds, url: results.get(timeSeconds) || "" })),
+  };
 }
 
 /** 测试用：清缓存。 */

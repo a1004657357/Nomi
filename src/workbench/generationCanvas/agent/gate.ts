@@ -51,6 +51,12 @@ const TOOL_META: Record<string, ToolMeta> = {
   create_staging_reference: { writes: true },
   // 运镜参考:建 scene3d 节点 + 离屏渲运镜小片(零扣费),但写画布有可见副作用→按写操作走确认门(ask)。
   create_camera_move: { writes: true },
+  // 配方目录只描述能力/兼容模型，不写状态、不发请求。
+  list_capability_recipes: { writes: false },
+  // 配方执行始终创建派生节点并可能调用付费模型，必须先确认。
+  apply_capability_recipe: { writes: true, costy: true },
+  save_creative_resource: { writes: true },
+  handoff_model3d: { writes: true },
 }
 
 /**

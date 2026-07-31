@@ -60,7 +60,7 @@ export const HANDBOOK_INTENT_ROUTES: HandbookIntentRoute[] = [
   {
     iconKey: 'gift',
     title: '没有 API 额度，想先白嫖试试',
-    body: '模型设置接 Agnes AI，一个 Key 解锁文本 / 图 / 视频，无限期免费。',
+    body: '模型设置接 Agnes AI，一个 Key 解锁文本 / 图 / 视频的免费额度；视频免费/default通道限 1 RPM，实际额度与价格以官方控制台为准。',
     badge: '0.16 新',
   },
   {

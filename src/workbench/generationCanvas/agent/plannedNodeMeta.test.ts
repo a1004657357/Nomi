@@ -2,12 +2,34 @@ import { describe, it, expect } from "vitest";
 import { buildPlannedNodeMeta, resolvePlannedNodeArgs } from "./plannedNodeMeta";
 import { buildAgentModelEntries, type AgentModelEntry } from "./availableModels";
 import type { ModelOption } from "../../../config/models";
+import { getArchetypeById } from "../../../config/modelArchetypes";
+import { buildArchetypeInputParams } from "../nodes/controls/archetypeMeta";
 
 function entryByKey(): Map<string, AgentModelEntry> {
   const entries = buildAgentModelEntries([
     { value: "seedance-2", label: "即梦 Seedance", vendor: "kie", meta: { archetypeId: "seedance-2" } } as ModelOption,
   ]);
   return new Map(entries.map((e) => [e.modelKey, e]));
+}
+
+function jimengEntryByKey(): Map<string, AgentModelEntry> {
+  const entries = buildAgentModelEntries([
+    {
+      value: "jimeng-web-image",
+      modelKey: "jimeng-web-image",
+      label: "即梦 Web 图片",
+      vendor: "jimeng-web",
+      meta: { archetypeId: "jimeng-web-image" },
+    } as ModelOption,
+    {
+      value: "jimeng-web-seedance-2.0",
+      modelKey: "jimeng-web-seedance-2.0",
+      label: "即梦 Web Seedance 2.0",
+      vendor: "jimeng-web",
+      meta: { archetypeId: "jimeng-web-seedance-2" },
+    } as ModelOption,
+  ]);
+  return new Map(entries.map((entry) => [entry.modelKey, entry]));
 }
 
 describe("buildPlannedNodeMeta", () => {
@@ -53,6 +75,68 @@ describe("buildPlannedNodeMeta", () => {
     );
     expect(meta!.aspect_ratio).toBe("16:9");
   });
+
+  it("Agent 选择图片 5.0 Lite 后写入 variantId，并映射到实际即梦模型", () => {
+    const meta = buildPlannedNodeMeta(
+      {
+        modelKey: "jimeng-web-image",
+        variantId: "v5_0_lite",
+        modeId: "t2i",
+        params: { ratio: "9:16", resolution_type: "4K" },
+      },
+      jimengEntryByKey(),
+    )!;
+
+    expect(meta.modelKey).toBe("jimeng-web-image");
+    expect(meta.archetype).toEqual({
+      id: "jimeng-web-image",
+      modeId: "t2i",
+      variantId: "v5_0_lite",
+    });
+    expect(meta.ratio).toBe("9:16");
+    expect(meta.resolution_type).toBe("4K");
+
+    const archetype = getArchetypeById("jimeng-web-image")!;
+    expect(buildArchetypeInputParams(meta, archetype).model).toBe("jimeng-image-5.0-lite");
+  });
+
+  it("图片 3.0 不支持参考图改图时回落到 t2i，并使用旧型号参数约束", () => {
+    const meta = buildPlannedNodeMeta(
+      {
+        modelKey: "jimeng-web-image",
+        variantId: "v3_0",
+        modeId: "edit",
+        params: { ratio: "智能", resolution_type: "4K" },
+      },
+      jimengEntryByKey(),
+    )!;
+
+    expect(meta.archetype).toEqual({
+      id: "jimeng-web-image",
+      modeId: "t2i",
+      variantId: "v3_0",
+    });
+    expect(meta.ratio).toBe("1:1");
+    expect(meta.resolution_type).toBe("2K");
+  });
+
+  it("即梦视频 VIP 保留 4K 和生成数量参数", () => {
+    const meta = buildPlannedNodeMeta(
+      {
+        modelKey: "jimeng-web-seedance-2.0",
+        variantId: "vip",
+        modeId: "i2v",
+        params: { ratio: "9:16", video_resolution: "4K", duration: 8, generation_count: 3 },
+      },
+      jimengEntryByKey(),
+    )!;
+
+    expect(meta.archetype).toMatchObject({ variantId: "vip", modeId: "i2v" });
+    expect(meta.video_resolution).toBe("4K");
+    expect(meta.generation_count).toBe(3);
+    const archetype = getArchetypeById("jimeng-web-seedance-2")!;
+    expect(buildArchetypeInputParams(meta, archetype).model).toBe("jimeng-seedance-2.0-vip");
+  });
 });
 
 describe("resolvePlannedNodeArgs — 批准≡执行(消灭对账出入)", () => {
@@ -80,11 +164,29 @@ describe("resolvePlannedNodeArgs — 批准≡执行(消灭对账出入)", () =>
   });
 
   it("模型不可用 → 剥掉 modelKey/modeId/params(与执行回退自动选一致)", () => {
-    const node = { clientId: "k1", kind: "video", title: "镜头", modelKey: "not-available", modeId: "i2v", params: { x: 1 } };
+    const node = { clientId: "k1", kind: "video", title: "镜头", modelKey: "not-available", variantId: "vip", modeId: "i2v", params: { x: 1 } };
     const resolved = resolvePlannedNodeArgs(node, entryByKey());
     expect(resolved.modelKey).toBeUndefined();
+    expect(resolved.variantId).toBeUndefined();
     expect(resolved.modeId).toBeUndefined();
     expect(resolved.params).toBeUndefined();
     expect(resolved.title).toBe("镜头");
+  });
+
+  it("批准参数保留 Agent 选择的型号", () => {
+    const resolved = resolvePlannedNodeArgs(
+      {
+        clientId: "i1",
+        kind: "image",
+        modelKey: "jimeng-web-image",
+        variantId: "v5_0_lite",
+        modeId: "t2i",
+        params: { resolution_type: "4K" },
+      },
+      jimengEntryByKey(),
+    );
+
+    expect(resolved.variantId).toBe("v5_0_lite");
+    expect(resolved.params).toMatchObject({ resolution_type: "4K" });
   });
 });

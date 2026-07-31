@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { BLENDER_RENDER_SCRIPT } from "./blenderRenderScript";
 import { writeAsset } from "../runtime";
+import { inspectGlb } from "../assets/glbValidation";
 
 type BlenderAssetRef = { url: string; assetId?: string };
 
@@ -26,7 +27,7 @@ export type BlenderSceneRenderResult = {
 
 type ActiveBlenderJob = {
   child: ChildProcess;
-  cancelled: boolean;
+  terminationReason?: "cancelled" | "timeout";
   forceKillTimer?: NodeJS.Timeout;
 };
 
@@ -94,7 +95,15 @@ function persistOutputs(request: BlenderSceneRenderRequest, outputDir: string, s
   const meta = { kind: "blender", ownerNodeId: request.ownerNodeId || null, blenderJobId: request.jobId };
   const preview = asAssetRef(writeAsset(request.projectId, readOutputFile(outputDir, "preview.png"), "blender-preview.png", "image/png", meta));
   const blend = asAssetRef(writeAsset(request.projectId, readOutputFile(outputDir, "scene.blend"), "blender-scene.blend", "application/x-blender", meta));
-  const model = asAssetRef(writeAsset(request.projectId, readOutputFile(outputDir, "scene.glb"), "blender-scene.glb", "model/gltf-binary", meta));
+  const modelBytes = readOutputFile(outputDir, "scene.glb");
+  const model3dValidation = inspectGlb(modelBytes);
+  const model = asAssetRef(writeAsset(
+    request.projectId,
+    modelBytes,
+    "blender-scene.glb",
+    "model/gltf-binary",
+    { ...meta, model3dValidation },
+  ));
   const version = stdout.match(/NOMI_BLENDER_VERSION=([^\r\n]+)/)?.[1]?.trim();
   return { jobId: request.jobId, ...(version ? { blenderVersion: version } : {}), preview, blend, model };
 }
@@ -124,7 +133,7 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
-      const job: ActiveBlenderJob = { child, cancelled: false };
+      const job: ActiveBlenderJob = { child };
       activeJobs.set(jobId, job);
       const finish = (error?: Error, result?: BlenderSceneRenderResult) => {
         if (settled) return;
@@ -136,17 +145,32 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
         else resolve(result as BlenderSceneRenderResult);
       };
       const timeout = setTimeout(() => {
-        job.cancelled = true;
-        child.kill("SIGKILL");
-        finish(new Error(`Blender 渲染超时（${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} 秒）`));
+        job.terminationReason = "timeout";
+        child.kill("SIGTERM");
+        job.forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 3_000);
+        job.forceKillTimer.unref?.();
       }, request.timeoutMs || DEFAULT_TIMEOUT_MS);
       timeout.unref?.();
 
       child.stdout?.on("data", (chunk) => { stdout = appendCapped(stdout, chunk); });
       child.stderr?.on("data", (chunk) => { stderr = appendCapped(stderr, chunk); });
-      child.once("error", (error) => finish(new Error(`Blender 启动失败：${error.message}`)));
+      child.once("error", (error) => {
+        if (job.terminationReason === "timeout") {
+          finish(new Error(`Blender 渲染超时（${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} 秒）`));
+          return;
+        }
+        if (job.terminationReason === "cancelled") {
+          finish(new Error("Blender 渲染已取消"));
+          return;
+        }
+        finish(new Error(`Blender 启动失败：${error.message}`));
+      });
       child.once("close", (code, signal) => {
-        if (job.cancelled) {
+        if (job.terminationReason === "timeout") {
+          finish(new Error(`Blender 渲染超时（${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} 秒）`));
+          return;
+        }
+        if (job.terminationReason === "cancelled") {
           finish(new Error("Blender 渲染已取消"));
           return;
         }
@@ -170,7 +194,7 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
 export function cancelBlenderSceneRender(jobId: string): boolean {
   const job = activeJobs.get(String(jobId || ""));
   if (!job) return false;
-  job.cancelled = true;
+  job.terminationReason = "cancelled";
   job.child.kill("SIGTERM");
   job.forceKillTimer = setTimeout(() => {
     if (activeJobs.has(jobId)) job.child.kill("SIGKILL");
@@ -183,4 +207,8 @@ export function cancelAllBlenderSceneRenders(): number {
   const jobIds = [...activeJobs.keys()];
   for (const jobId of jobIds) cancelBlenderSceneRender(jobId);
   return jobIds.length;
+}
+
+export function activeBlenderSceneRenderCount(): number {
+  return activeJobs.size;
 }

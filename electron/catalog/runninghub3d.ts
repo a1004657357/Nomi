@@ -9,6 +9,8 @@
 // joinUrl 约定（避双前缀，见 kieSeedance 注释）：baseUrl 裸到 /openapi/v2，op.path = /{endpoint}。
 // 本地图（图生3D）经通用 ANON_UPLOAD_CHAIN 自动传公网（resolveAssetIngestionWithFallback 兜底，零配置）。
 import type { HttpOperation, ProfileKind } from "./types";
+import { firstString, isJsonRecord } from "../jsonUtils";
+import { registerResponseTransform } from "../tasks/responseTransforms";
 
 /** RunningHub 供应商种子（裸 baseUrl 到 /openapi/v2 + bearer）。 */
 export const RUNNINGHUB_VENDOR_SEED = {
@@ -39,6 +41,39 @@ export const RUNNINGHUB_QUERY_OP: HttpOperation = {
     task_id: "taskId",
     status: "status",
     model_url: "results.0.fileUrl",
+    error_message: "errorMessage",
+  },
+};
+
+const RUNNINGHUB_3D_RESULT_TRANSFORM = "runninghub-3d-result";
+
+function isGlbResult(value: unknown): value is Record<string, unknown> {
+  if (!isJsonRecord(value)) return false;
+  const url = firstString(value.fileUrl, value.url);
+  if (!url) return false;
+  const fileType = firstString(value.fileType, value.type, value.mimeType).toLowerCase();
+  return fileType === "glb"
+    || fileType === "model"
+    || fileType === "gltf-binary"
+    || fileType === "model/gltf-binary"
+    || /\.glb(?:$|[?#])/i.test(url);
+}
+
+registerResponseTransform(RUNNINGHUB_3D_RESULT_TRANSFORM, (response) => {
+  if (!isJsonRecord(response)) return response;
+  const model = Array.isArray(response.results) ? response.results.find(isGlbResult) : undefined;
+  const modelUrl = model ? firstString(model.fileUrl, model.url) : "";
+  const { model_url: _ignored, ...rest } = response;
+  return modelUrl ? { ...rest, model_url: modelUrl } : rest;
+});
+
+const RUNNINGHUB_3D_QUERY_OP: HttpOperation = {
+  ...RUNNINGHUB_QUERY_OP,
+  response_transform: RUNNINGHUB_3D_RESULT_TRANSFORM,
+  response_mapping: {
+    task_id: "taskId",
+    status: "status",
+    model_url: "model_url",
     error_message: "errorMessage",
   },
 };
@@ -80,7 +115,7 @@ export const RUNNINGHUB_3D_CURATED_MODELS = [
 
 const mk = (id: string, taskKind: ProfileKind, modelKey: string, name: string, create: HttpOperation) => ({
   id, vendorKey: RUNNINGHUB_VENDOR_SEED.key, taskKind, modelKey, name, create,
-  query: RUNNINGHUB_QUERY_OP, statusMapping: RUNNINGHUB_STATUS_MAPPING,
+  query: RUNNINGHUB_3D_QUERY_OP, statusMapping: RUNNINGHUB_STATUS_MAPPING,
 });
 
 // 同 vendor 多模型同 taskKind 不撞：mapping 身份 = (vendor, taskKind, modelKey)，modelKey 区分。

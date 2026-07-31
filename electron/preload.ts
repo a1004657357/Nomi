@@ -12,6 +12,9 @@ function invokeSync<T>(channel: string, ...args: unknown[]): T {
 
 contextBridge.exposeInMainWorld("nomiDesktop", {
   platform: process.platform,
+  runtime: {
+    sourceRun: process.env.NOMI_SOURCE_RUN === "1",
+  },
   // 窗口控制（Windows 自绘标题栏用；mac 原生 chrome 不调用）。窄面：仅 min/max/close + 最大化态订阅。
   window: {
     minimize: () => ipcRenderer.invoke("nomi:window:minimize"),
@@ -49,6 +52,10 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     deleteFiles: (payload: unknown) => ipcRenderer.invoke("nomi:workspace:delete-files", payload),
     revealProjectFolder: (payload: unknown) => ipcRenderer.invoke("nomi:workspace:reveal-project-folder", payload),
   },
+  files: {
+    extractText: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:files:extract-text", payload) as Promise<{ text: string }>,
+  },
   projects: {
     list: () => invokeSync("nomi:projects:list"),
     listAsync: () => ipcRenderer.invoke("nomi:projects:list-async"),
@@ -72,14 +79,27 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     importRemoteUrl: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-remote-url", payload),
     importFile: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-file", payload),
     importLocalPath: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-local-path", payload),
+    inspectModel3d: (payload: unknown) => ipcRenderer.invoke("nomi:assets:inspect-model3d", payload),
+    inspectVideo: (payload: unknown) => ipcRenderer.invoke("nomi:assets:inspect-video", payload),
     download: (payload: unknown) =>
       ipcRenderer.invoke("nomi:assets:download", payload) as Promise<{
         ok: boolean;
         canceled?: boolean;
         path?: string;
       }>,
+    archiveOutputCollection: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:assets:archive-output-collection", payload),
   },
   browser: {
+    startAssetDrag: (payload: unknown) => ipcRenderer.send("browser:asset-drag:start", payload),
+    endAssetDrag: () => ipcRenderer.send("browser:asset-drag:end"),
+    onAssetDragError: (callback: (event: unknown) => void) => {
+      const listener = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on("browser:asset-drag:error", listener as never);
+      return () => {
+        ipcRenderer.removeListener("browser:asset-drag:error", listener as never);
+      };
+    },
     createView: (payload: unknown) => ipcRenderer.invoke("browser:view:create", payload) as Promise<{ viewId: number }>,
     destroyView: (payload: unknown) => ipcRenderer.send("browser:view:destroy", payload),
     navigate: (payload: unknown) => ipcRenderer.send("browser:view:navigate", payload),
@@ -168,6 +188,8 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
   video: {
     extractFrame: (payload: unknown) =>
       ipcRenderer.invoke("nomi:video:extract-frame", payload) as Promise<{ url: string }>,
+    extractFrames: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:video:extract-frames", payload) as Promise<{ frames: Array<{ timeSeconds: number; url: string }> }>,
   },
   image: {
     decomposeLayers: (payload: unknown) =>
@@ -198,10 +220,13 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
   vibingDirector: {
     applyBlenderPlan: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:apply-blender-plan", payload),
     importAsset: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:import-asset", payload),
+    importExistingAsset: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:import-existing-asset", payload),
+    listCatalogAssets: (payload?: unknown) => ipcRenderer.invoke("nomi:vibing-director:list-catalog-assets", payload),
+    importCatalogAsset: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:import-catalog-asset", payload),
     openBlender: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:open-blender", payload) as Promise<{ opened: boolean }>,
     cancelBlenderPlan: (jobId: string) =>
       ipcRenderer.invoke("nomi:vibing-director:cancel-blender-plan", jobId) as Promise<{ cancelled: boolean }>,
-    openAssetSource: (source: "polyhaven" | "quaternius" | "blenderkit") =>
+    openAssetSource: (source: "kenney" | "polyhaven" | "quaternius" | "blenderkit") =>
       ipcRenderer.invoke("nomi:vibing-director:open-asset-source", source) as Promise<{ opened: boolean }>,
   },
   exports: {

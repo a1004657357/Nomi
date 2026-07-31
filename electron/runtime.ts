@@ -1,36 +1,24 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { localizeAssetsForVendor, resolveAssetIngestionWithFallback } from "./catalog/assetLocalization";
 import { contentTypeFromPath, extensionFromMime } from "./assets/assetPaths";
-import { readNomiLocalAsset, postJsonForAssetUpload, postMultipartForAssetUpload } from "./assets/localAssetFile";
-import { importRemoteAsset, writeAsset } from "./assets/projectAssetStore";
+import { writeAsset } from "./assets/projectAssetStore";
 import { endpoint } from "./vendorEndpoint";
 import { requestJson } from "./vendor/vendorHttp";
 import { buildNormalizedRecipe, buildTaskProvenance } from "./vendor/provenance";
 import { traceVendorCompleted, traceVendorRequested } from "./events/vendorCallTrace";
-import { scheduleTechnicalReview } from "./review/reviewTrace";
 import {
   type AuthType,
   authHeaders as buildAuthHeaders,
-  buildHttpRequest,
-  buildTemplateContext,
   extractTaskId as extractTaskIdShared,
 } from "./ai/requestPipeline";
-import { executeProcessOperation } from "./catalog/processOperation";
 import { executeTextTask } from "./textTaskRunner";
 import { runAudioTask } from "./audioTaskRunner";
 import { runCodexImageGeneration } from "./ai/codexImagegenRunner";
 import { submitJimengWebTask } from "./jimengWeb/seedanceBridge";
-import { firstString, isJsonRecord, trim, type JsonRecord } from "./jsonUtils";
-import {
-  collectAssetUrls,
-  firstMappedString,
-  providerMetaFromResponse,
-  taskStatusFromResponse,
-  valuesFromMapping,
-} from "./tasks/responseParsing";
+import { jimengWebStartRunner } from "./jimengWeb/runner";
+import { firstString, trim, type JsonRecord } from "./jsonUtils";
 import { extractAssetUrl } from "./tasks/assetUrlExtract";
-import { applyResponseTransform } from "./tasks/responseTransforms";
+import type { GlbValidationReport } from "./assets/glbValidation";
 import { TtlLruCache } from "./tasks/taskCache";
 import { markTaskAdmitted } from "./tasks/taskAdmission";
 import { readCachedTaskResult, recipeFingerprint, rememberTaskResult } from "./vendor/fingerprintCache";
@@ -51,13 +39,26 @@ export { importRemoteAsset, listProjectAssets, moveAssetFile, writeAsset } from 
 // catalogStore 反向复用本文件任务引擎 → 运行期循环引用（CommonJS 安全）。
 import { extractVendorExtraHeaders, readCatalog } from "./catalog/catalogStore";
 
-import type { BillingModelKind, HttpOperation, Mapping, Model, ProfileKind, Vendor } from "./catalog/types";
-import { billingKindForTaskKind, selectExecutableModel, selectTaskMapping } from "./catalog/types";
-import { applyHeadlessParamDefaults, imageEditGuardError, taskTemplateParams } from "./catalog/taskParams";
-import { applyParamMap, type ParamMap } from "./catalog/paramTranslate";
+import type { BillingModelKind, Mapping, Model, ProfileKind, Vendor } from "./catalog/types";
+import { billingKindForTaskKind, selectExecutableModel } from "./catalog/types";
+import { applyHeadlessParamDefaults, imageEditGuardError } from "./catalog/taskParams";
 import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
 import { JIMENG_WEB_VENDOR_SEED } from "./catalog/jimengWeb";
 import { assertAndConsumeSpendGrant } from "./spendGrant";
+import { waitForVendorSubmissionWindow } from "./vendorSubmissionRateLimiter";
+import {
+  buildProfileTaskResult,
+  executeProfileOperation,
+  findTaskMapping,
+  localizeTaskAsset,
+} from "./tasks/profileTaskExecution";
+export {
+  buildProfileHttpRequest,
+  buildProfileTaskResult,
+  executeProfileOperation,
+  findTaskMapping,
+  localizeTaskAsset,
+} from "./tasks/profileTaskExecution";
 export type {
   AiSdkProviderKind,
   BillingModelKind,
@@ -140,6 +141,7 @@ export type TaskResult = {
     assetId?: string | null;
     assetRefId?: string | null;
     assetName?: string | null;
+    model3dValidation?: GlbValidationReport;
     /** 原始 CDN URL（https://...）。供后续生成直接用，无需上传。可能过期，过期后退回本地字节。 */
     providerUrl?: string | null;
   }>;
@@ -223,227 +225,6 @@ function authHeaders(vendor: Vendor, apiKey: string): Record<string, string> {
 export { billingKindForTaskKind } from "./catalog/types";
 export { extractAssetUrl } from "./tasks/assetUrlExtract";
 
-export async function localizeTaskAsset(
-  projectId: string,
-  assetUrl: string,
-  type: "image" | "video" | "audio" | "model3d",
-  nodeId?: string,
-): Promise<TaskResult["assets"][number]> {
-  const imported = (await importRemoteAsset({
-    projectId,
-    url: assetUrl,
-    kind: "generated",
-    ownerNodeId: nodeId || null,
-    fileName: `${type}-${Date.now()}.${type === "image" ? "png" : type === "video" ? "mp4" : type === "model3d" ? "glb" : "mp3"}`,
-  })) as { id?: string; name?: string; data?: { url?: string; absolutePath?: string } };
-  if (type === "image" || type === "video")
-    scheduleTechnicalReview({
-      projectId,
-      nodeId,
-      absolutePath: String(imported.data?.absolutePath || ""),
-      assetUrl: String(imported.data?.url || assetUrl),
-      type,
-    }); // S4-2b:落地技术自检,仅图像/视频（3D 模型不送 VLM）
-  return {
-    type,
-    url: String(imported.data?.url || assetUrl),
-    thumbnailUrl: type === "image" ? String(imported.data?.url || assetUrl) : null,
-    assetId: imported.id || null,
-    assetName: imported.name || null,
-    // 原始 CDN URL 留存：任何 vendor 都能直接使用，不需要再上传或转 base64。
-    providerUrl: /^https?:\/\//i.test(assetUrl) ? assetUrl : null,
-  };
-}
-
-export function findTaskMapping(vendorKey: string, taskKind: ProfileKind, modelKey?: string): Mapping | null {
-  // 按 (vendor, taskKind, modelKey) 选——同 vendor 下两个模型共用一个 taskKind 但请求形状不同时
-  // （如 HappyHorse 与 Kling 都 text_to_video），靠 modelKey 精确路由，不再「第一个赢、另一个套错模板」。
-  return selectTaskMapping(readCatalog().mappings, vendorKey, taskKind, modelKey);
-}
-
-// 共享 requestPipeline context 构造（wizard 测试与生产同一份；params 经 taskTemplateParams 归一）。
-function templateContext(
-  request: TaskRequest,
-  model: Model,
-  apiKey: string,
-  providerMeta: JsonRecord = {},
-  paramMap?: ParamMap,
-): JsonRecord {
-  // 铁律翻译层：渲染 body 前按本 codec 的 paramMap 把档案中性参数译成该站 wire 字段（见 catalog/paramTranslate）。
-  return buildTemplateContext({
-    request: request as unknown as JsonRecord,
-    params: applyParamMap(paramMap, taskTemplateParams(request)),
-    model: model as unknown as JsonRecord,
-    modelKey: model.modelAlias || model.modelKey,
-    apiKey,
-    providerMeta,
-  });
-}
-
-export function buildProfileHttpRequest(input: {
-  vendor: Vendor;
-  model: Model;
-  apiKey: string;
-  request: TaskRequest;
-  operation: HttpOperation;
-  providerMeta?: JsonRecord;
-}): {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-  query: Record<string, unknown>;
-  body: unknown;
-  preview: unknown;
-} {
-  // 共享 requestPipeline 构造请求；extraHeaders（relay/网关自定义鉴权头）透传进 profile 路径（与文本路径同源，修 P1）。
-  const extraHeaders = extractVendorExtraHeaders(input.vendor);
-  return buildHttpRequest({
-    baseUrl: String(input.vendor.baseUrlHint || ""),
-    authType: input.vendor.authType as AuthType,
-    authHeaderName: input.vendor.authHeader ?? undefined,
-    apiKey: input.apiKey,
-    context: templateContext(
-      input.request,
-      input.model,
-      input.apiKey,
-      input.providerMeta || {},
-      input.operation.paramMap,
-    ),
-    operation: input.operation,
-    ...(extraHeaders ? { extraHeaders } : {}),
-  });
-}
-
-export async function executeProfileOperation(input: {
-  vendor: Vendor;
-  model: Model;
-  apiKey: string;
-  request: TaskRequest;
-  operation: HttpOperation;
-  providerMeta?: JsonRecord;
-}): Promise<{ response: unknown; request: unknown }> {
-  // 进程型 transport（P4 声明驱动）：op 声明 process（本地 CLI dreamina）→ spawn，不走 HTTP。
-  // 渲染/spawn/本地文件导入全在 processOperation（注入 writeAsset，避免 ↔ runtime 循环依赖）。
-  if (input.operation.process) {
-    const context = templateContext(
-      input.request,
-      input.model,
-      input.apiKey,
-      input.providerMeta || {},
-      input.operation.paramMap,
-    );
-    return executeProcessOperation({
-      process: input.operation.process,
-      context,
-      projectId: trim(input.request.extras?.projectId),
-      writeAsset,
-    });
-  }
-
-  // R1：发送前把本地素材(nomi-local://)按策略变成 vendor 可达值。带跨供应商 fallback + 内容类型感知：
-  // 每素材按媒体类型挑通道(图→apimart/KIE base64;视频→KIE stream,apimart image-only 跳过)。上传 key 可异于生成 key。
-  const uploadCatalog = readCatalog();
-  const localized = await localizeAssetsForVendor(
-    input.request.extras,
-    (mediaKind) =>
-      resolveAssetIngestionWithFallback(
-        input.vendor,
-        uploadCatalog.vendors,
-        (key) => decryptApiKeyRecord(uploadCatalog.apiKeysByVendor[key]),
-        mediaKind,
-      ),
-    readNomiLocalAsset,
-    postJsonForAssetUpload,
-    postMultipartForAssetUpload,
-  );
-  const effectiveInput =
-    localized.uploaded > 0
-      ? { ...input, request: { ...input.request, extras: localized.value as TaskRequest["extras"] } }
-      : input;
-  const built = buildProfileHttpRequest(effectiveInput);
-  const response = await requestJson(
-    effectiveInput.vendor,
-    effectiveInput.apiKey,
-    built.method,
-    built.url,
-    built.headers,
-    built.query,
-    built.body,
-  );
-  return {
-    response,
-    request: built.preview,
-  };
-}
-
-/** 归一上游响应成 TaskResult：命名响应变换（可选）→ 点路径 mapping（kie 等返 JSON 字符串已透明 parse）。 */
-export async function buildProfileTaskResult(input: {
-  response: unknown;
-  mapping: Mapping;
-  operation: HttpOperation;
-  request: TaskRequest;
-  taskIdFallback: string;
-  wantedKind: BillingModelKind;
-  projectId?: string;
-  nodeId?: string;
-  /** S4-1:provenance 统一在本出口写(修主路径漏写根因),需要 vendor/model。 */
-  vendor?: Vendor;
-  model?: Model;
-}): Promise<{ result: TaskResult; providerMeta: JsonRecord }> {
-  // 命名响应变换（P4，如 ComfyUI /history 归一）：response_mapping 前对 raw response 应用一次；未声明→原样。
-  const response = applyResponseTransform(input.operation.response_transform, input.response, {
-    baseUrl: String(input.vendor?.baseUrlHint || ""),
-  });
-  const responseMapping = isJsonRecord(input.operation.response_mapping) ? input.operation.response_mapping : null;
-  const providerMetaMapping = isJsonRecord(input.operation.provider_meta_mapping)
-    ? input.operation.provider_meta_mapping
-    : null;
-  const providerMeta = providerMetaFromResponse(response, providerMetaMapping);
-  const taskId = firstString(
-    firstMappedString(response, responseMapping, "task_id"),
-    providerMeta.task_id,
-    providerMeta.query_id,
-    extractTaskIdShared(response),
-    input.taskIdFallback,
-  );
-  const mappedAssetValues = [
-    ...valuesFromMapping(response, responseMapping, "assets"),
-    ...valuesFromMapping(response, responseMapping, "image_url"),
-    ...valuesFromMapping(response, responseMapping, "video_url"),
-    ...valuesFromMapping(response, responseMapping, "model_url"),
-  ];
-  const assetUrls = Array.from(
-    new Set([...mappedAssetValues.flatMap(collectAssetUrls), ...collectAssetUrls(extractAssetUrl(response))]),
-  );
-  const status = taskStatusFromResponse(response, responseMapping, input.mapping.statusMapping, assetUrls);
-  const type: "image" | "video" | "model3d" =
-    input.wantedKind === "video" ? "video" : input.wantedKind === "model3d" ? "model3d" : "image";
-  const assets = input.projectId
-    ? await Promise.all(assetUrls.map((url) => localizeTaskAsset(input.projectId || "", url, type, input.nodeId)))
-    : assetUrls.map((url) => ({ type, url, thumbnailUrl: type === "image" ? url : null }));
-  return {
-    providerMeta,
-    result: {
-      id: taskId,
-      kind: input.request.kind,
-      status,
-      assets,
-      raw: input.response,
-      // S4-1:profile 主路径补 provenance(与 fallback 共用 buildTaskProvenance,单一真相)。
-      ...(status === "succeeded" && input.vendor && input.model
-        ? {
-            provenance: buildTaskProvenance({
-              vendor: input.vendor,
-              model: input.model,
-              request: input.request,
-              vendorRequestId: taskId,
-            }),
-          }
-        : {}),
-    },
-  };
-}
-
 export async function runTask(payload: unknown): Promise<TaskResult> {
   const raw = payload as { vendor?: string; request?: TaskRequest };
   const vendorKey = trim(raw.vendor);
@@ -471,13 +252,19 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       const assetWriteStartedAt = Date.now();
       const contentType = contentTypeFromPath(generated.outputPath);
       const ext = extensionFromMime(contentType, "png");
-      const saved = writeAsset(projectId, fs.readFileSync(generated.outputPath), `codex-img2-${Date.now()}.${ext}`, contentType, {
-        kind: "generated",
-        generator: "codex-img2",
-        originalPath: generated.outputPath,
-        ownerNodeId: nodeId || null,
-        codexThreadId: generated.threadId || null,
-      }) as { id?: string; name?: string; data?: { url?: string } };
+      const saved = writeAsset(
+        projectId,
+        fs.readFileSync(generated.outputPath),
+        `codex-img2-${Date.now()}.${ext}`,
+        contentType,
+        {
+          kind: "generated",
+          generator: "codex-img2",
+          originalPath: generated.outputPath,
+          ownerNodeId: nodeId || null,
+          codexThreadId: generated.threadId || null,
+        },
+      ) as { id?: string; name?: string; data?: { url?: string } };
       const assetUrl = trim(saved.data?.url);
       if (!assetUrl) throw new Error("Codex Img2 生成成功但资产落盘失败");
       const timings = {
@@ -507,16 +294,26 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       console.info("[nomi:codex-img2]", JSON.stringify({ runId, nodeId, timings }));
       return finalResult;
     } finally {
-      try { fs.rmSync(generated.tempDir, { recursive: true, force: true }); } catch { /* non-fatal cleanup */ }
+      try {
+        fs.rmSync(generated.tempDir, { recursive: true, force: true });
+      } catch {
+        /* non-fatal cleanup */
+      }
     }
   }
   if (vendor.key === JIMENG_WEB_VENDOR_SEED.key) {
-    if (wantedKind !== "video") throw new Error("即梦 Web 目前只支持视频生成");
+    if (wantedKind !== "video" && wantedKind !== "image") {
+      throw new Error("即梦 Web 目前只支持图片和视频生成");
+    }
     if (!projectId) throw new Error("即梦 Web 需要先打开并保存到本地项目后再生成");
     const recipe = buildNormalizedRecipe({ vendor, model, request });
     const fingerprint = recipeFingerprint(recipe);
     const cachedHit = readCachedTaskResult({ projectId, fingerprint, nodeId, extras: request.extras });
     if (cachedHit) return cachedHit as TaskResult;
+    const runner = await jimengWebStartRunner(vendor.baseUrlHint);
+    if (!runner.clientOnline) {
+      throw new Error(`即梦 Web 扩展运行器启动失败：${runner.error || "扩展客户端没有建立任务连接"}`);
+    }
     assertAndConsumeSpendGrant(grantId, nodeId);
     const submitted = await submitJimengWebTask({ request, vendorBaseUrl: vendor.baseUrlHint });
     const queued: TaskResult = {
@@ -524,7 +321,14 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       kind,
       status: "queued",
       assets: [],
-      raw: { jimengWeb: { taskCode: submitted.taskCode, serverUrl: submitted.serverUrl, payload: submitted.payload, submit: submitted.raw } },
+      raw: {
+        jimengWeb: {
+          taskCode: submitted.taskCode,
+          serverUrl: submitted.serverUrl,
+          payload: submitted.payload,
+          submit: submitted.raw,
+        },
+      },
     };
     traceVendorRequested(projectId, { runId: submitted.taskCode, nodeId, recipe });
     admitTask(submitted.taskCode, {
@@ -555,6 +359,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   // 第四路 audio：TTS/Whisper 同步收口（二进制/multipart）。付费守卫：必发 vendor，进来即校验消费令牌。
   if (wantedKind === "audio") {
     assertAndConsumeSpendGrant(grantId, nodeId);
+    await waitForVendorSubmissionWindow(vendor.key, wantedKind);
     return runAudioTask({ vendor, model, apiKey, request, kind, taskId, projectId, nodeId, mapping });
   }
   if (mapping) {
@@ -569,7 +374,14 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     const cachedHit = readCachedTaskResult({ projectId, fingerprint, nodeId, extras: request.extras });
     if (cachedHit) return cachedHit as TaskResult;
     assertAndConsumeSpendGrant(grantId, nodeId); // 付费守卫：缓存未命中=真发 vendor，发前校验消费令牌
-    const executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: mapping.create });
+    const executed = await executeProfileOperation({
+      vendor,
+      model,
+      apiKey,
+      request,
+      operation: mapping.create,
+      enforceSubmissionRateLimit: true,
+    });
     const normalized = await buildProfileTaskResult({
       response: executed.response,
       mapping,
@@ -581,6 +393,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       nodeId,
       vendor,
       model,
+      operationTimings: executed.timings,
     });
     traceVendorRequested(projectId, { runId: normalized.result.id, nodeId, recipe });
     if (["succeeded", "failed"].includes(normalized.result.status)) {
@@ -610,7 +423,10 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   }
 
   // 路径 B 文本任务走 AI SDK（引擎在 textTaskRunner）；逐字流式由 runTextTaskStream 消费。
-  if (wantedKind === "text") return executeTextTask({ vendor, model, apiKey, kind, request, taskId });
+  if (wantedKind === "text") {
+    await waitForVendorSubmissionWindow(vendor.key, wantedKind);
+    return executeTextTask({ vendor, model, apiKey, kind, request, taskId });
+  }
 
   const suffix = wantedKind === "video" ? "/v1/videos/generations" : "/v1/images/generations";
   // S8 指纹缓存(fallback 路径同语义)。
@@ -624,6 +440,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   });
   if (fallbackHit) return fallbackHit as TaskResult;
   assertAndConsumeSpendGrant(grantId, nodeId); // 付费守卫：fallback 缓存未命中=真发 vendor，发前校验
+  await waitForVendorSubmissionWindow(vendor.key, wantedKind);
   // 与 profile 路径同源走 requestJson（单一真相）：错误在抛出那刻即为结构化
   // VendorRequestError（401→auth/402→balance 查表），不再裸 Error 让下游正则反猜（修 #1）；
   // extraHeaders（网关头）也一并带上，与 profile 路径一致（修 #2 的 fallback 分支）。

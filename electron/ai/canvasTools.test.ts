@@ -4,6 +4,9 @@ import {
   canvasToolNames,
   canvasTools,
   batchUpdateStoryboardShotsParamsSchema,
+  capabilityRecipeRunParamsSchema,
+  model3dHandoffParamsSchema,
+  saveCreativeResourceParamsSchema,
   plannedEdgeSchema,
   plannedNodeSchema,
   updateStoryboardShotParamsSchema,
@@ -64,6 +67,19 @@ describe("canvasTools schemas", () => {
     it("rejects unknown kind", () => {
       expect(plannedNodeSchema.safeParse(makeValidNode({ kind: "audio" })).success).toBe(false);
     });
+
+    it("accepts an explicit model variant", () => {
+      const parsed = plannedNodeSchema.safeParse(
+        makeValidNode({
+          modelKey: "jimeng-web-image",
+          variantId: "v5_0_lite",
+          modeId: "t2i",
+          params: { ratio: "9:16", resolution_type: "4K" },
+        }),
+      );
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(parsed.data.variantId).toBe("v5_0_lite");
+    });
   });
 
   describe("plannedEdgeSchema", () => {
@@ -95,6 +111,10 @@ describe("canvasTools schemas", () => {
         "tidy_canvas", // 助手一键整理画布（复用 tidyCategory）
         "create_staging_reference", // 3D 站位参考图（站位+动作+机位）
         "create_camera_move", // 3D 运镜参考小片（喂 video_ref / 降级 prompt）
+        "list_capability_recipes", // 查看统一创作能力配方及兼容模型
+        "apply_capability_recipe", // 非破坏地执行配方并保留结果集合
+        "save_creative_resource", // 把现有结果保存成可复用风格/效果/身份/色板资源
+        "handoff_model3d", // 把生成 GLB 交给 Scene3D 或 Blender Director
       ]);
     });
 
@@ -176,6 +196,7 @@ describe("canvasTools schemas", () => {
           sound: "轻柔爵士乐",
           notes: "手机背面朝向镜头时不得写屏幕内容",
           modelKey: "agnes-video-v2.0",
+          variantId: "vip",
           params: { duration: 5 },
         }).success,
       ).toBe(true);
@@ -227,6 +248,103 @@ describe("canvasTools schemas", () => {
   describe("read_canvas_state parameters", () => {
     it("accepts empty object", () => {
       expect(canvasTools.read_canvas_state.parameters.safeParse({}).success).toBe(true);
+    });
+  });
+
+  describe("capability recipe parameters", () => {
+    it("accepts a source, recipe, model override, resources and custom cameras", () => {
+      const parsed = capabilityRecipeRunParamsSchema.safeParse({
+        sourceNodeId: "image-1",
+        recipeId: "image.multiview.custom",
+        modelKey: "gpt-image-2",
+        variantId: "v5_0_lite",
+        modeId: "image-edit",
+        requestedOutputs: 2,
+        resourceIds: ["style-cinematic"],
+        params: { identityLock: true, realismStrength: 65 },
+        outputs: [
+          { id: "front", label: "正面", azimuth: 0, elevation: 0, shotSize: "中景" },
+          { id: "side", label: "右侧", azimuth: 90, elevation: 10, shotSize: "近景" },
+        ],
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(parsed.data.variantId).toBe("v5_0_lite");
+    });
+
+    it("bounds custom cameras and requested output count", () => {
+      const cameras = Array.from({ length: 7 }, (_, index) => ({
+        id: `view-${index}`,
+        label: `机位 ${index}`,
+        azimuth: index * 10,
+      }));
+      expect(
+        capabilityRecipeRunParamsSchema.safeParse({
+          sourceNodeId: "image-1",
+          recipeId: "image.multiview.custom",
+          outputs: cameras,
+        }).success,
+      ).toBe(false);
+      expect(
+        capabilityRecipeRunParamsSchema.safeParse({
+          sourceNodeId: "image-1",
+          recipeId: "image.multiview.custom",
+          outputs: [{ id: "bad", label: "坏机位", azimuth: 181, elevation: 0 }],
+        }).success,
+      ).toBe(false);
+      expect(
+        capabilityRecipeRunParamsSchema.safeParse({
+          sourceNodeId: "image-1",
+          recipeId: "image.multiview.grid9",
+          requestedOutputs: 10,
+        }).success,
+      ).toBe(false);
+    });
+
+    it("accepts an agent-requested 5x5 mood matrix without custom output descriptors", () => {
+      const parsed = capabilityRecipeRunParamsSchema.safeParse({
+        sourceNodeId: "portrait-1",
+        recipeId: "portrait.mood",
+        params: {
+          generationMode: "matrix5x5",
+          expressionStrength: 50,
+          identityLock: true,
+        },
+      });
+      expect(parsed.success).toBe(true);
+    });
+  });
+
+  describe("creative resource parameters", () => {
+    it("captures provenance and license without accepting an empty label", () => {
+      expect(saveCreativeResourceParamsSchema.safeParse({
+        sourceNodeId: "image-1",
+        kind: "style",
+        label: "柔和胶片",
+        promptTokens: ["35mm film", "soft highlight rolloff"],
+        license: { source: "用户自有素材", commercialUse: "allowed" },
+      }).success).toBe(true);
+      expect(saveCreativeResourceParamsSchema.safeParse({
+        sourceNodeId: "image-1",
+        kind: "style",
+        label: "",
+        promptTokens: [],
+        license: { commercialUse: "unknown" },
+      }).success).toBe(false);
+    });
+  });
+
+  describe("model3d handoff parameters", () => {
+    it("accepts a new Scene3D target or an existing Blender Director target", () => {
+      expect(model3dHandoffParamsSchema.safeParse({
+        sourceNodeId: "model-1",
+        target: "scene3d",
+      }).success).toBe(true);
+      expect(model3dHandoffParamsSchema.safeParse({
+        sourceNodeId: "model-1",
+        target: "vibingDirector",
+        targetNodeId: "director-1",
+        license: "user-owned",
+      }).success).toBe(true);
     });
   });
 });

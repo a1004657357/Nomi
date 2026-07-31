@@ -204,6 +204,17 @@ describe('buildCatalogTaskRequest — 档案驱动 input（extras.archetypeInput
     expect(ai.reference_video_urls).toEqual(['v1.mp4'])
     expect(ai.first_frame_url).toBeUndefined()
   })
+
+  it('把全能参考图片用途按上传顺序带给网页桥', () => {
+    const node = seedanceVideoNode('omni', {})
+    const built = buildCatalogTaskRequest(node, {
+      references: {
+        referenceImages: ['A.png', 'B.png'],
+        referenceImageRoles: ['角色 A', '分镜构图'],
+      },
+    })
+    expect(built.request.extras?.referenceImageRoles).toEqual(['角色 A', '分镜构图'])
+  })
 })
 
 describe('buildCatalogTaskRequest — 档案 mapping 桶由 transportTaskKind 显式决定（修 omni 误路由）', () => {
@@ -244,6 +255,52 @@ describe('buildCatalogTaskRequest — 档案 mapping 桶由 transportTaskKind �
     expect(buildCatalogTaskRequest(videoNode('happyhorse', 'i2v', { firstFrameUrl: 'F' })).request.kind).toBe(
       'text_to_video',
     )
+  })
+})
+
+describe('video-to-video recipe transport', () => {
+  it('routes a connected source video into HappyHorse video_url and keeps image resources separate', () => {
+    const sourceVideo = {
+      id: 'source-video',
+      kind: 'video',
+      title: 'Source video',
+      prompt: '',
+      position: { x: 0, y: 0 },
+      result: { id: 'source-result', type: 'video', url: 'https://cdn/source.mp4', createdAt: 1 },
+    } as GenerationCanvasNode
+    const style = {
+      id: 'style-image',
+      kind: 'image',
+      title: 'Style',
+      prompt: '',
+      position: { x: 0, y: 0 },
+      result: { id: 'style-result', type: 'image', url: 'https://cdn/style.png', createdAt: 1 },
+    } as GenerationCanvasNode
+    const target = {
+      id: 'target-video',
+      kind: 'video',
+      title: 'Edited video',
+      prompt: 'Apply the look while preserving the original motion.',
+      position: { x: 0, y: 0 },
+      meta: {
+        modelKey: 'happyhorse',
+        modelVendor: 'kie',
+        vendor: 'kie',
+        archetype: { id: 'happyhorse', modeId: 'edit' },
+      },
+    } as GenerationCanvasNode
+    const edges = [
+      { id: 'source-edge', source: sourceVideo.id, target: target.id, mode: 'reference' },
+      { id: 'style-edge', source: style.id, target: target.id, mode: 'style_ref' },
+    ] as GenerationCanvasEdge[]
+    const references = resolveGenerationReferences(target, { nodes: [sourceVideo, style, target], edges })
+    const built = buildCatalogTaskRequest(target, { references })
+    const input = built.request.extras?.archetypeInput as Record<string, unknown>
+
+    expect(built.request.kind).toBe('text_to_video')
+    expect(input.model).toBe('happyhorse/video-edit')
+    expect(input.video_url).toBe('https://cdn/source.mp4')
+    expect(input.reference_image).toEqual(['https://cdn/style.png'])
   })
 })
 
@@ -612,6 +669,66 @@ describe('normalizeCatalogTaskResult — image path unaffected', () => {
   })
 })
 
+describe('normalizeCatalogTaskResult — model3d validation evidence', () => {
+  it('keeps the localized GLB inspection summary on the generated node result', () => {
+    const node: GenerationCanvasNode = {
+      id: 'model-node',
+      kind: 'model3d',
+      title: '3D',
+      position: { x: 0, y: 0 },
+      prompt: 'robot',
+      meta: { modelKey: 'hunyuan3d-v3.1', modelVendor: 'runninghub' },
+    }
+    const model3dValidation = {
+      version: 1 as const,
+      glbVersion: 2,
+      byteLength: 1024,
+      meshCount: 1,
+      primitiveCount: 2,
+      nodeCount: 3,
+      materialCount: 1,
+      textureCount: 1,
+      imageCount: 1,
+      embeddedImageCount: 1,
+      externalImageCount: 0,
+      externalImageUris: [],
+      externalBufferCount: 0,
+      externalBufferUris: [],
+      animationCount: 0,
+      skinCount: 0,
+      bounds: {
+        min: [0, 0, 0] as [number, number, number],
+        max: [1, 2, 1] as [number, number, number],
+        size: [1, 2, 1] as [number, number, number],
+        diagonal: Math.sqrt(6),
+      },
+      warnings: [],
+    }
+
+    const result = normalizeCatalogTaskResult({
+      id: 'task-3d',
+      kind: 'image_to_3d',
+      status: 'succeeded',
+      assets: [{
+        type: 'model3d',
+        url: 'nomi-local://asset/project/model.glb',
+        model3dValidation,
+      }],
+      raw: {},
+    }, node)
+
+    expect(result).toMatchObject({
+      type: 'model3d',
+      url: 'nomi-local://asset/project/model.glb',
+      model3dValidation: {
+        meshCount: 1,
+        primitiveCount: 2,
+        bounds: { diagonal: Math.sqrt(6) },
+      },
+    })
+  })
+})
+
 describe('GPT Image 2 档案（图像，2 模式打不同 taskKind 桶 + input_urls）', () => {
   const gptNode = (modeId: string, extra: Record<string, unknown> = {}): GenerationCanvasNode => ({
     id: 'g1',
@@ -734,6 +851,65 @@ describe('接入即验证（零额度）：每个档案/模式声明的参考槽
 })
 
 describe('runCatalogGenerationTask — 同步生成等待心跳', () => {
+  it('persists renderer phase timings while preserving main-process provider timings', async () => {
+    const node: GenerationCanvasNode = {
+      id: 'timed-video',
+      kind: 'video',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: '咖啡杯旁有轻微蒸汽',
+      meta: { modelKey: 'agnes-video-v2.0', vendor: 'agnes' },
+    }
+    const result = await runCatalogGenerationTask(node, {
+      runTask: async (_vendor, request) => ({
+        id: 'agnes-task-1',
+        kind: request.kind,
+        status: 'queued',
+        assets: [],
+        raw: {},
+      }),
+      fetchTaskResult: async () => ({
+        vendor: 'agnes',
+        result: {
+          id: 'agnes-task-1',
+          kind: 'image_to_video',
+          status: 'succeeded',
+          assets: [{ type: 'video', url: 'nomi-local://asset/project/out.mp4' }],
+          raw: {
+            __nomi: {
+              profileOperation: {
+                assetLocalizationMs: 20,
+                localizedAssetCount: 1,
+                publicAssetProbeMs: 12,
+                submissionRateLimitMs: 0,
+                providerRequestMs: 80,
+                totalMs: 112,
+              },
+            },
+          },
+        },
+      }),
+      pollIntervalMs: 1,
+    })
+
+    expect(result.raw).toMatchObject({
+      __nomi: {
+        profileOperation: {
+          assetLocalizationMs: 20,
+          publicAssetProbeMs: 12,
+          providerRequestMs: 80,
+        },
+        generationPhases: {
+          resolveMs: expect.any(Number),
+          submitMs: expect.any(Number),
+          pollMs: expect.any(Number),
+          finalizeMs: expect.any(Number),
+          totalMs: expect.any(Number),
+        },
+      },
+    })
+  })
+
   it('runTask 长时间未返回时持续回报已等待状态', async () => {
     const phases: string[] = []
     const node: GenerationCanvasNode = {

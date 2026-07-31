@@ -55,7 +55,12 @@ import { VOLCENGINE_IMAGE_MODELS } from "./volcengineImages";
 import { VOLCENGINE_AUDIO_MODELS } from "./volcengineAudios";
 import { VOLCENGINE_SEEDANCE_QUERY_OP, VOLCENGINE_SEEDANCE_STATUS_MAPPING, VOLCENGINE_VIDEO_MODELS } from "./volcengineVideos";
 import { CODEX_IMG2_MODEL_SEED, CODEX_VENDOR_SEED } from "./codexImagegen";
-import { JIMENG_WEB_SEEDANCE_MODEL_SEED, JIMENG_WEB_VENDOR_SEED } from "./jimengWeb";
+import {
+  JIMENG_WEB_IMAGE_MODEL_SEED,
+  JIMENG_WEB_LEGACY_BASE_URLS,
+  JIMENG_WEB_SEEDANCE_MODEL_SEED,
+  JIMENG_WEB_VENDOR_SEED,
+} from "./jimengWeb";
 
 /** curated 模型/mapping 的内部类型（reconcile 两函数的输入）。 */
 type CuratedModel = {
@@ -145,7 +150,7 @@ const APIMART_CURATED_MAPPINGS: CuratedMapping[] = [
   ),
 ];
 
-/** Agnes AI（全模态免费网关）curated 模型 + mapping。文本：免费大脑(无 mapping，直连 chat)；
+/** Agnes AI（带免费/default 配额的全模态网关）curated 模型 + mapping。文本：免费大脑(无 mapping，直连 chat)；
  *  图片：同步 create(无 query)；视频：异步 create→poll(query 参数版轮询，见 agnesVendor)。 */
 const AGNES_CURATED_MODELS: CuratedModel[] = [
   ...AGNES_TEXT_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "text" as const })),
@@ -216,6 +221,12 @@ const CODEX_CURATED_MODELS: CuratedModel[] = [
 /** 即梦 Web 扩展桥：只种可见模型身份，不种 HTTP mapping。runtime 走本地 Seedance bridge。 */
 const JIMENG_WEB_CURATED_MODELS: CuratedModel[] = [
   {
+    modelKey: JIMENG_WEB_IMAGE_MODEL_SEED.modelKey,
+    labelZh: JIMENG_WEB_IMAGE_MODEL_SEED.labelZh,
+    kind: JIMENG_WEB_IMAGE_MODEL_SEED.kind,
+    archetypeId: JIMENG_WEB_IMAGE_MODEL_SEED.archetypeId,
+  },
+  {
     modelKey: JIMENG_WEB_SEEDANCE_MODEL_SEED.modelKey,
     labelZh: JIMENG_WEB_SEEDANCE_MODEL_SEED.labelZh,
     kind: JIMENG_WEB_SEEDANCE_MODEL_SEED.kind,
@@ -285,6 +296,20 @@ function seedVendor(vendors: Vendor[], seed: typeof KIE_VENDOR_SEED | typeof API
     ...("assetIngestion" in seed && seed.assetIngestion ? { assetIngestion: seed.assetIngestion } : {}),
     createdAt: now, updatedAt: now,
   });
+  return true;
+}
+
+/** 3456 曾由 Fimer 与 Nomi 共用；只迁移这两个历史默认值，保留用户显式配置的其他地址。 */
+function reconcileJimengWebVendorUrl(vendors: Vendor[], now: string): boolean {
+  const index = vendors.findIndex((vendor) => vendor.key === JIMENG_WEB_VENDOR_SEED.key);
+  if (index < 0) return false;
+  const current = String(vendors[index].baseUrlHint || "").trim().replace(/\/+$/, "");
+  if (!JIMENG_WEB_LEGACY_BASE_URLS.some((legacyUrl) => legacyUrl === current)) return false;
+  vendors[index] = {
+    ...vendors[index],
+    baseUrlHint: JIMENG_WEB_VENDOR_SEED.baseUrl,
+    updatedAt: now,
+  };
   return true;
 }
 
@@ -371,7 +396,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   // 供应商：kie + apimart（apimart 为核心变现通道）。
   if (seedVendor(vendors, KIE_VENDOR_SEED, now)) changed = true;
   if (seedVendor(vendors, APIMART_VENDOR_SEED, now)) changed = true;
-  if (seedVendor(vendors, AGNES_VENDOR_SEED, now)) changed = true; // Agnes AI（全模态免费网关）
+  if (seedVendor(vendors, AGNES_VENDOR_SEED, now)) changed = true; // Agnes AI（带免费/default 配额的全模态网关）
   if (seedVendor(vendors, MODELSCOPE_VENDOR_SEED, now)) changed = true;
   if (seedVendor(vendors, VOLCENGINE_VENDOR_SEED, now)) changed = true;
   if (seedVendor(vendors, VOLCENGINE_SPEECH_VENDOR_SEED, now)) changed = true;
@@ -381,6 +406,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (seedVendor(vendors, COMFYUI_VENDOR_SEED, now)) changed = true; // 本地 ComfyUI（无鉴权本地后端，默认关、用户显式启用）
   if (seedVendor(vendors, CODEX_VENDOR_SEED, now)) changed = true; // Codex Img2（本机 Codex CLI 生成，无需 Nomi API key）
   if (seedVendor(vendors, JIMENG_WEB_VENDOR_SEED, now)) changed = true; // 即梦 Web 扩展桥（本机网页登录/任务服务器）
+  if (reconcileJimengWebVendorUrl(vendors, now)) changed = true;
 
   // 退役 curated 记录清理（变体合并迁移：删 Seedance 旧变体模型 + mapping 孤儿，picker 收成 1 项）。
   if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_VIDEO_MODEL_KEYS)) changed = true;

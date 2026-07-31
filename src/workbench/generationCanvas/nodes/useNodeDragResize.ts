@@ -394,6 +394,23 @@ export function useNodeDragResize({
         }
     };
 
+    const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>) => {
+        flushScheduledMove();
+        const dragStart = dragStartRef.current;
+        const hadResize = Boolean(resizeStartRef.current);
+        if (dragStart?.dragging) emitDragSettled(dragStart.multi);
+        if (dragStart?.dragging || hadResize) commitPersistedChange();
+        dragStartRef.current = null;
+        resizeStartRef.current = null;
+        if (
+            typeof event.currentTarget.hasPointerCapture === "function" &&
+            typeof event.currentTarget.releasePointerCapture === "function" &&
+            event.currentTarget.hasPointerCapture(event.pointerId)
+        ) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+    };
+
     const handleResizePointerDown =
         (direction: ResizeDirection) =>
         (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -414,5 +431,11 @@ export function useNodeDragResize({
                 event.currentTarget.setPointerCapture(event.pointerId);
             }
         };
-    return { handlePointerDown, handlePointerMove, handlePointerUp, handleResizePointerDown };
+    return {
+        handlePointerDown,
+        handlePointerMove,
+        handlePointerUp,
+        handlePointerCancel,
+        handleResizePointerDown,
+    };
 }

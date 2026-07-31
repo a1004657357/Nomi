@@ -13,6 +13,7 @@ const mockedProjectId = vi.mocked(getActiveWorkbenchProjectId)
 function refs(partial: Partial<ResolvedGenerationReferences>): ResolvedGenerationReferences {
   return {
     referenceImages: [],
+    referenceImageRoles: [],
     styleReferenceImages: [],
     characterReferenceImages: [],
     compositionReferenceImages: [],

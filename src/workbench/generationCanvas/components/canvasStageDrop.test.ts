@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { getGenerationNodeDefaultSize, getGenerationNodeFootprintSize } from '../model/generationNodeKinds'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import {
+  importBrowserMediaDragToGenerationCanvas,
   importBrowserAssetsToGenerationCanvas,
   layoutBrowserAssetDropPositions,
+  parseBrowserMediaDrag,
   resolveAssetLibraryDropPosition,
 } from './canvasStageDrop'
 
@@ -64,5 +66,71 @@ describe('importBrowserAssetsToGenerationCanvas', () => {
     expect(state.nodes[2]?.prompt).toBe('雨夜街道\n霓虹反光')
     expect(state.nodes[2]?.contentJson?.content).toHaveLength(2)
     expect(state.selectedNodeIds).toEqual(result.nodeIds)
+  })
+})
+
+describe('browser media drag', () => {
+  it('keeps the source browser view and media kind in the drag payload', () => {
+    expect(parseBrowserMediaDrag(JSON.stringify({
+      viewId: 17,
+      url: 'blob:https://chatgpt.com/generated-image',
+      mediaType: 'image',
+      title: 'ChatGPT result',
+      pageUrl: 'https://chatgpt.com/images/',
+    }))).toEqual({
+      viewId: 17,
+      url: 'blob:https://chatgpt.com/generated-image',
+      mediaType: 'image',
+      title: 'ChatGPT result',
+      pageUrl: 'https://chatgpt.com/images/',
+      fileName: undefined,
+      pageTitle: undefined,
+    })
+  })
+
+  it('imports a dragged web video through its authenticated browser session', async () => {
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [], edges: [], groups: [], selectedNodeIds: [] })
+    const result = await importBrowserMediaDragToGenerationCanvas(
+      {
+        viewId: 8,
+        url: 'https://jimeng.jianying.com/result/video',
+        mediaType: 'video',
+        title: '即梦生成视频',
+      },
+      { basePosition: { x: 180, y: 220 }, categoryId: 'shots' },
+      {
+        projectId: 'project-1',
+        importMedia: async (payload) => ({
+          id: 'asset-web-video',
+          name: 'jimeng.mp4',
+          userId: 'local',
+          projectId: payload.projectId,
+          createdAt: '',
+          updatedAt: '',
+          data: {
+            url: 'nomi-local://asset/project-1/assets/imported/jimeng.mp4',
+            contentType: 'video/mp4',
+            mediaType: 'video',
+          },
+        }),
+      },
+    )
+
+    const node = useGenerationCanvasStore.getState().nodes[0]
+    expect(result.ok).toBe(true)
+    expect(node).toMatchObject({
+      position: { x: 180, y: 220 },
+      categoryId: 'shots',
+      status: 'success',
+      result: {
+        type: 'video',
+        url: 'nomi-local://asset/project-1/assets/imported/jimeng.mp4',
+        assetId: 'asset-web-video',
+      },
+      meta: {
+        source: 'browser-view-drag',
+        uploadStatus: 'uploaded',
+      },
+    })
   })
 })

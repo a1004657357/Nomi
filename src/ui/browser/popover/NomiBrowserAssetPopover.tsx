@@ -14,7 +14,6 @@ import {
 } from '../assets/browserAssetLibraryStorage'
 import { dispatchBrowserAssetsImportToCanvas } from '../overlay/globalAssetPopoverEvents'
 import {
-  BROWSER_DIALOG_ROOT_SELECTOR,
   BROWSER_IMAGE_DRAG_MIME,
   CANVAS_IMPORT_TARGET_SELECTOR,
   LEGACY_BROWSER_ASSET_DRAG_MIME,
@@ -82,6 +81,7 @@ export function NomiBrowserAssetPopover({
   onAssetSelect,
   onCreateFolder,
   onImportRemoteAsset,
+  canvasImportEnabled,
   browserCaptureEnabled = false,
   browserCaptureDisabled = false,
   browserCaptureRequest,
@@ -273,15 +273,20 @@ export function NomiBrowserAssetPopover({
   }, [popoverOpen])
 
   React.useEffect(() => {
-    if (!popoverOpen || contained || typeof document === 'undefined') {
+    if (!popoverOpen) {
+      setCanvasImportAvailable(false)
+      return undefined
+    }
+    if (typeof canvasImportEnabled === 'boolean') {
+      setCanvasImportAvailable(canvasImportEnabled)
+      return undefined
+    }
+    if (contained || typeof document === 'undefined') {
       setCanvasImportAvailable(false)
       return undefined
     }
     const updateCanvasImportAvailability = (): void => {
-      setCanvasImportAvailable(
-        Boolean(document.querySelector(CANVAS_IMPORT_TARGET_SELECTOR)) &&
-          !document.querySelector(BROWSER_DIALOG_ROOT_SELECTOR),
-      )
+      setCanvasImportAvailable(Boolean(document.querySelector(CANVAS_IMPORT_TARGET_SELECTOR)))
     }
     updateCanvasImportAvailability()
     const observer = new MutationObserver(updateCanvasImportAvailability)
@@ -292,7 +297,7 @@ export function NomiBrowserAssetPopover({
       attributeFilter: ['class', 'data-nomi-generation-canvas-import-target'],
     })
     return () => observer.disconnect()
-  }, [contained, popoverOpen])
+  }, [canvasImportEnabled, contained, popoverOpen])
 
   const loadPromptExtractionSettings = React.useCallback(async (): Promise<void> => {
     const projectId = getDesktopActiveProjectId()

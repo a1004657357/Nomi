@@ -11,6 +11,11 @@ type AssetRecord = {
     absolutePath: string;
     url: string;
     contentType: string;
+    model3dValidation?: {
+      meshCount: number;
+      primitiveCount: number;
+      bounds: { diagonal: number };
+    };
   };
 };
 
@@ -72,6 +77,42 @@ describe("runtime workspace asset storage", () => {
     expect(asset.data.absolutePath).toBe(path.join(workspace.rootPath, "assets", "generated", "2026-05-31", "render.png"));
     expect(fs.readFileSync(asset.data.absolutePath, "utf8")).toBe("hello");
     expect(asset.data.url).toBe(`nomi-local://asset/${encodeURIComponent(workspace.id)}/assets/generated/2026-05-31/render.png`);
+  });
+
+  it("validates a generated GLB before writing it and persists the inspection summary", async () => {
+    const workspace = createWorkspace();
+    const bytes = fs.readFileSync(path.resolve(process.cwd(), "src/assets/nomi-mannequin.glb"));
+
+    const asset = (await importRemoteAsset({
+      projectId: workspace.id,
+      url: `data:model/gltf-binary;base64,${bytes.toString("base64")}`,
+      fileName: "generated-model.glb",
+      kind: "generated",
+      mediaType: "model3d",
+    })) as AssetRecord;
+
+    expect(asset.data.contentType).toBe("model/gltf-binary");
+    expect(asset.data.model3dValidation).toMatchObject({
+      meshCount: expect.any(Number),
+      primitiveCount: expect.any(Number),
+      bounds: { diagonal: expect.any(Number) },
+    });
+    expect(asset.data.model3dValidation?.meshCount).toBeGreaterThan(0);
+    expect(asset.data.model3dValidation?.bounds.diagonal).toBeGreaterThan(0);
+  });
+
+  it("rejects an invalid generated GLB before it reaches the project asset library", async () => {
+    const workspace = createWorkspace();
+
+    await expect(importRemoteAsset({
+      projectId: workspace.id,
+      url: "data:model/gltf-binary;base64,Z2xURg==",
+      fileName: "broken.glb",
+      kind: "generated",
+      mediaType: "model3d",
+    })).rejects.toThrow(/GLB.*过短/);
+
+    expect(fs.existsSync(path.join(workspace.rootPath, "assets", "generated", "2026-05-31", "broken.glb"))).toBe(false);
   });
 
   it("writes imported user files under assets/imported/YYYY-MM-DD", async () => {

@@ -89,6 +89,7 @@ export type NomiBrowserAssetPopoverProps = {
   onAssetSelect?: (asset: NomiBrowserAsset) => void
   onCreateFolder?: (folder: NomiBrowserAsset) => void
   onImportRemoteAsset?: (input: BrowserAssetRemoteImportInput) => Promise<NomiBrowserAsset>
+  canvasImportEnabled?: boolean
   browserCaptureEnabled?: boolean
   browserCaptureDisabled?: boolean
   browserCaptureRequest?: BrowserAssetCaptureRequest | null

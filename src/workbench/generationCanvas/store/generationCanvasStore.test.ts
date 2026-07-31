@@ -499,6 +499,30 @@ describe('generationCanvasStore clipboard paste placement', () => {
 })
 
 describe('generationCanvasStore result history', () => {
+  it('appends new recipe collections and replaces a retried collection with the same id', () => {
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [{ ...node('image-1', 'shots'), status: 'idle' }],
+      edges: [],
+      selectedNodeIds: [],
+      groups: [],
+    })
+    const initial = {
+      id: 'collection-1', recipeId: 'image.multiview.custom', createdAt: 1,
+      items: [{ id: 'front', label: '正面', status: 'error' as const, error: 'timeout' }],
+    }
+    const retried = {
+      ...initial,
+      items: [{ id: 'front', label: '正面', status: 'success' as const, result: imageResult('front', 'https://cdn/front.png') }],
+    }
+
+    useGenerationCanvasStore.getState().addNodeResultCollection('image-1', initial)
+    useGenerationCanvasStore.getState().addNodeResultCollection('image-1', retried)
+
+    const stateNode = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === 'image-1')
+    expect(stateNode?.resultCollections).toHaveLength(1)
+    expect(stateNode?.resultCollections?.[0]?.items[0]?.status).toBe('success')
+  })
+
   it('keeps the previous main image when a new result is added', () => {
     const first = imageResult('r-old', 'https://cdn/old.png')
     const next = imageResult('r-new', 'https://cdn/new.png')

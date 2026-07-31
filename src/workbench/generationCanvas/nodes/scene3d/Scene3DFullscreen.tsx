@@ -1,10 +1,7 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import {
-  IconArrowsMove, IconCube, IconListTree, IconPhoto, IconPlayerPause, IconPlayerPlay,
-  IconRoute, IconRotate, IconSettings, IconWorld, IconX,
-} from '@tabler/icons-react'
+import { IconListTree, IconSettings } from '@tabler/icons-react'
 import { toast } from '../../../../ui/toast'
 import { FencedCanvas } from '../fencedCanvas'
 import { Scene3DWindowBar } from './Scene3DWindowBar'
@@ -21,7 +18,8 @@ import {
   type Scene3DTransformMode,
 } from './scene3dTypes'
 import { FULLSCREEN_Z_INDEX } from './scene3dConstants'
-import { PanelButton, CanvasPanelRestoreButton } from './scene3dToolbar'
+import { CanvasPanelRestoreButton } from './scene3dToolbar'
+import { Scene3DFullscreenToolbar } from './Scene3DFullscreenToolbar'
 import {
   levelEditorCameraRotation,
   applyEditorCameraPose,
@@ -523,63 +521,20 @@ export default function Scene3DFullscreen({
       onWheel={(event) => event.stopPropagation()}
     >
       <Scene3DWindowBar />
-      <header className="relative z-[2] flex min-h-[52px] shrink-0 items-center gap-3 border-b border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] px-4 shadow-nomi-sm">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <IconCube size={18} className="shrink-0 text-[var(--workbench-muted)]" />
-          <div className="min-w-0 truncate text-body-sm font-medium text-[var(--workbench-ink)]">{nodeTitle}</div>
-        </div>
-        <div className="ml-auto flex min-w-0 max-w-[72vw] items-center gap-2 overflow-x-auto">
-          <div className="flex items-center gap-1 rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-0.5">
-            <PanelButton title="移动" active={transformMode === 'translate'} onClick={() => setTransformMode('translate')}>
-              <IconArrowsMove size={15} />
-            </PanelButton>
-            <PanelButton title="旋转" active={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')}>
-              <IconRotate size={15} />
-            </PanelButton>
-          </div>
-          <div className="flex items-center gap-1 rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-0.5">
-            <PanelButton title="当前视口截图" onClick={captureViewport}>
-              <IconPhoto size={15} />
-              <span>截图</span>
-            </PanelButton>
-          </div>
-          <div className="flex items-center gap-1 rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-0.5">
-            <PanelButton title={trajectoryMode ? '退出轨迹模式' : '进入轨迹模式'} active={trajectoryMode} onClick={toggleTrajectoryMode}>
-              <IconRoute size={15} />
-              <span>轨迹</span>
-            </PanelButton>
-            <PanelButton
-              title={trajectory.isPlaying ? '暂停轨迹播放' : '播放轨迹'}
-              active={trajectory.isPlaying}
-              onClick={() => requestTrajectoryPlayChange(!trajectory.isPlaying)}
-            >
-              {trajectory.isPlaying ? <IconPlayerPause size={15} /> : <IconPlayerPlay size={15} />}
-            </PanelButton>
-          </div>
-          {!readOnly ? <CharacterPossessButton drive={characterDrive} /> : null}
-          <label className="inline-flex h-8 shrink-0 items-center gap-2 rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] px-2 text-caption text-[var(--workbench-muted)]">
-            <IconWorld size={14} />
-            <span>速度</span>
-            <input
-              className="h-1.5 w-24 accent-[var(--nomi-ink)]"
-              max={16}
-              min={1}
-              step={0.5}
-              type="range"
-              value={flySpeed}
-              onChange={(event) => setFlySpeed(Number(event.currentTarget.value))}
-            />
-          </label>
-          <button
-            className="grid size-8 shrink-0 place-items-center rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-ink-05)] text-[var(--nomi-ink-60)] hover:bg-[var(--nomi-ink-10)] hover:text-[var(--nomi-ink)]"
-            type="button"
-            title="退出 3D 场景"
-            onClick={handleClose}
-          >
-            <IconX size={16} />
-          </button>
-        </div>
-      </header>
+      <Scene3DFullscreenToolbar
+        nodeTitle={nodeTitle}
+        transformMode={transformMode}
+        onTransformModeChange={setTransformMode}
+        onCaptureViewport={captureViewport}
+        trajectoryMode={trajectoryMode}
+        trajectoryPlaying={trajectory.isPlaying}
+        onToggleTrajectoryMode={toggleTrajectoryMode}
+        onTrajectoryPlayChange={requestTrajectoryPlayChange}
+        characterPossessButton={!readOnly ? <CharacterPossessButton drive={characterDrive} /> : undefined}
+        flySpeed={flySpeed}
+        onFlySpeedChange={setFlySpeed}
+        onClose={handleClose}
+      />
 
       <main className="relative flex min-h-0 flex-1 overflow-hidden bg-[var(--workbench-bg)]">
         <AnimatePresence initial={false}>

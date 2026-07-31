@@ -25,7 +25,11 @@ export function completeNodeConnection(targetNodeId: string): void {
     return
   }
   if (!verdict.ok && verdict.reason === 'unsupported_reference') {
-    showInfoToast('目标模型不支持这种参考连线')
+    showInfoToast('这个节点不支持这种输入，只能连接图片')
+    return
+  }
+  if (!verdict.ok && verdict.reason === 'target_input_full') {
+    showInfoToast('图像对比已有两张输入，请先断开一条连线')
     return
   }
   // D4：边建了，但目标参考槽已满 → placeAt 把它丢弃（显示/发送都不含它）= 连了等于没连。
@@ -34,6 +38,10 @@ export function completeNodeConnection(targetNodeId: string): void {
     const { nodes, edges } = useGenerationCanvasStore.getState()
     const source = nodes.find((n) => n.id === sourceNodeId)
     const target = nodes.find((n) => n.id === targetNodeId)
+    // SkillNode is an orchestration target, not a provider reference slot.
+    // Its incoming edges are consumed by the skill body/Agent, so the generic
+    // reference-slot fullness check below does not apply.
+    if (target?.kind === 'skill' || target?.kind === 'compare') return
     const hasPromptEdge = source && target && edges.some(
       (edge) => edge.source === sourceNodeId && edge.target === targetNodeId && isTextPromptEdge(source, target, edge.mode),
     )

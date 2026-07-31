@@ -55,6 +55,35 @@ describe('VIBING Director Blender runner', () => {
       ok: true,
       jobId: 'director-job-1',
       blenderVersion: '4.0.1',
+      previewCamera: {
+        id: 'director-camera',
+        name: '主机位',
+        position: [4, 2, 5],
+        lookAt: [0, 1, 0],
+        fov: 45,
+        aspectRatio: '16:9',
+        framing: 'target',
+        targetRef: 'actor-A',
+      },
+      spatialReport: {
+        version: 1,
+        passed: true,
+        checks: [{
+          relationId: 'chair-follows-actor',
+          kind: 'offset',
+          status: 'passed',
+          message: '相对位置误差 0m，朝向误差 0.1°',
+          rotationMeasured: 0.1,
+          rotationExpected: 0,
+        }],
+      },
+      objectTransforms: [{
+        id: 'cup-A',
+        name: '咖啡杯A',
+        position: [0.62, 0.85, 0.22],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      }],
       artifacts: {
         preview: '/tmp/director-output/preview.png',
         blend: '/tmp/director-output/scene.blend',
@@ -65,9 +94,38 @@ describe('VIBING Director Blender runner', () => {
     expect(output).toMatchObject({
       jobId: 'director-job-1',
       blenderVersion: '4.0.1',
+      previewCamera: expect.objectContaining({ framing: 'target', targetRef: 'actor-A' }),
+      spatialReport: expect.objectContaining({
+        passed: true,
+        checks: [expect.objectContaining({
+          relationId: 'chair-follows-actor',
+          kind: 'offset',
+          status: 'passed',
+          rotationMeasured: 0.1,
+          rotationExpected: 0,
+        })],
+      }),
+      objectTransforms: [
+        expect.objectContaining({ id: 'cup-A', position: [0.62, 0.85, 0.22] }),
+      ],
       artifacts: { blend: '/tmp/director-output/scene.blend' },
     })
     expect(() => parseVibingDirectorBridgeOutput('{"ok":true,"jobId":"x","artifacts":{}}')).toThrow(/无效/)
+  })
+
+  it('ignores malformed optional preview-camera diagnostics without rejecting valid artifacts', () => {
+    const output = parseVibingDirectorBridgeOutput(JSON.stringify({
+      ok: true,
+      jobId: 'director-job-camera-fallback',
+      previewCamera: { position: ['bad'] },
+      artifacts: {
+        preview: '/tmp/director-output/preview.png',
+        blend: '/tmp/director-output/scene.blend',
+        model: '/tmp/director-output/scene.glb',
+      },
+    }))
+
+    expect(output.previewCamera).toBeUndefined()
   })
 
   it('finds the bridge JSON even when Blender appends a shutdown log after it', () => {

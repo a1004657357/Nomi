@@ -4,6 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // (本测试的 case 不带 modelKey,真实代码路径也不会调它)。
 vi.mock('./availableModels', () => ({ listAvailableModelsForAgent: vi.fn(async () => []) }))
 vi.mock('../../../desktop/bridge', () => ({ getDesktopBridge: vi.fn() }))
+vi.mock('../runner/capabilityRecipeController', () => ({
+  runCapabilityRecipeOnNode: vi.fn(async (_sourceNodeId: string, plan: { id: string }, options: { onTargetCreated?: (nodeId: string) => void }) => {
+    options.onTargetCreated?.('derived-recipe-node')
+    return { nodeId: 'derived-recipe-node', collectionId: plan.id, successCount: 1, failureCount: 0 }
+  }),
+}))
+vi.mock('../../api/taskApi', () => ({ mintSpendGrant: vi.fn(async () => 'grant-1') }))
+vi.mock('./model3dHandoff', () => ({
+  handoffModel3dNode: vi.fn(async () => ({ targetNodeId: 'director-node', objectId: 'object-1', createdTarget: true })),
+}))
 
 import { applyCanvasToolCall, parseCameraMoveSpec, parseStagingSpec, resetClientIdRegistry, resolveCanvasToolNodeId } from './applyCanvasToolCall'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
@@ -12,20 +22,68 @@ import { setDesktopActiveProjectId } from '../../../desktop/activeProject'
 import { getDesktopBridge, type DesktopBridge } from '../../../desktop/bridge'
 import type { StoryboardPlan } from './storyboardPlan'
 import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
+import { listAvailableModelsForAgent, type AgentModelEntry } from './availableModels'
+import { runCapabilityRecipeOnNode } from '../runner/capabilityRecipeController'
+import { mintSpendGrant } from '../../api/taskApi'
+import { handoffModel3dNode } from './model3dHandoff'
 
 const mockedGetDesktopBridge = vi.mocked(getDesktopBridge)
+const mockedListAvailableModels = vi.mocked(listAvailableModelsForAgent)
+const mockedRunCapabilityRecipe = vi.mocked(runCapabilityRecipeOnNode)
+const mockedMintSpendGrant = vi.mocked(mintSpendGrant)
+const mockedHandoffModel3d = vi.mocked(handoffModel3dNode)
 
 function resetCanvas() {
   const state = useGenerationCanvasStore.getState()
   for (const node of [...state.nodes]) state.deleteNode(node.id)
   setDesktopActiveProjectId(null)
   mockedGetDesktopBridge.mockReset()
+  mockedListAvailableModels.mockReset()
+  mockedListAvailableModels.mockResolvedValue([])
+  mockedRunCapabilityRecipe.mockClear()
+  mockedMintSpendGrant.mockClear()
+  mockedHandoffModel3d.mockClear()
 }
+
+const capabilityModels: AgentModelEntry[] = [
+  {
+    modelKey: 'gpt-image-2',
+    modelAlias: 'GPT Image 2',
+    vendor: 'openai',
+    label: 'GPT Image 2',
+    kind: 'image',
+    archetypeId: 'gpt-image-2',
+    defaultModeId: 't2i',
+    modes: [
+      { modeId: 't2i', vendorTerm: '文生图', intent: 'text', hint: '', params: [], slots: [], capabilities: [] },
+      {
+        modeId: 'i2i', vendorTerm: '图生图', intent: 'single', hint: '', params: [], capabilities: [],
+        slots: [{ kind: 'image_ref', label: '输入图', max: 1 }],
+      },
+    ],
+    variants: [],
+  },
+]
 
 // 回归锁(评测 sb-001 抓出):agent 用 clientId(n1/n2)连边,渲染层曾不翻译直接
 // 入 store → 落盘 "n1→n2" 吊边(指向不存在节点,连线静默丢失)。
 describe('applyCanvasToolCall clientId 翻译', () => {
   beforeEach(resetCanvas)
+
+  it('create_canvas_nodes 尊重 Agent 指定的角色/场景/道具分类', async () => {
+    const created = (await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [
+        { clientId: 'cast-1', kind: 'character', title: '老板', prompt: '角色参考图', categoryId: 'cast' },
+        { clientId: 'scene-1', kind: 'scene', title: '月饼店', prompt: '场景参考图', categoryId: 'scene' },
+        { clientId: 'prop-1', kind: 'image', title: '月饼盒', prompt: '道具参考图', categoryId: 'prop' },
+      ],
+    })) as { clientIdToNodeId: Record<string, string> }
+
+    const nodes = useGenerationCanvasStore.getState().nodes
+    expect(nodes.find((node) => node.id === created.clientIdToNodeId['cast-1'])?.categoryId).toBe('cast')
+    expect(nodes.find((node) => node.id === created.clientIdToNodeId['scene-1'])?.categoryId).toBe('scene')
+    expect(nodes.find((node) => node.id === created.clientIdToNodeId['prop-1'])?.categoryId).toBe('prop')
+  })
 
   it('resetClientIdRegistry 清表后旧 clientId 不再解析到旧项目节点(P1 治跨项目串台)', async () => {
     const created = (await applyCanvasToolCall('create_canvas_nodes', {
@@ -409,8 +467,8 @@ describe('applyCanvasToolCall update_storyboard_shot', () => {
     const shot1 = nextPlan?.shots[0]
     const shot2 = nextPlan?.shots[1]
     expect(shot1?.scene).toBe('清晨咖啡馆吧台')
-    expect(shot1?.videoPrompt).toContain('视频生成提示词：镜头 1，时长 5 秒')
-    expect(shot1?.videoPrompt).toContain('关键词：场景：清晨咖啡馆吧台')
+    expect(shot1?.videoPrompt).toContain('图生视频导演提示词：镜头 1，时长 5 秒')
+    expect(shot1?.videoPrompt).toContain('首帧继承：以已连接的首帧作为唯一视觉起点')
     expect(shot1?.prompt).toBe(shot1?.videoPrompt)
     expect(shot2?.imagePrompt).toBe('旧图片提示词')
     expect(shot2?.scene).toBe('咖啡豆麻袋旁')
@@ -602,6 +660,216 @@ describe('applyCanvasToolCall create_camera_move 执行', () => {
     await expect(applyCanvasToolCall('create_camera_move', {
       shotClientId: 'v10', move: 'push_in', customMove: '快速甩镜',
     })).rejects.toThrow(/互斥/)
+  })
+})
+
+describe('applyCanvasToolCall capability recipes', () => {
+  beforeEach(resetCanvas)
+
+  it('lists recipes with the connected compatible model modes', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+
+    const result = await applyCanvasToolCall('list_capability_recipes', {}) as {
+      recipes: Array<{ id: string; compatibleModels: Array<{ modelKey: string; modeId: string }> }>
+    }
+
+    const multiview = result.recipes.find((recipe) => recipe.id === 'image.multiview.grid9')
+    expect(result.recipes).toHaveLength(11)
+    expect(multiview?.compatibleModels).toContainEqual(expect.objectContaining({
+      modelKey: 'gpt-image-2',
+      modeId: 'i2i',
+    }))
+  })
+
+  it('lists compact reusable creative resources alongside recipes', async () => {
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'style-source', kind: 'image', title: '风格样张', prompt: 'soft film' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+    const sourceNodeId = created.clientIdToNodeId['style-source']
+    useGenerationCanvasStore.getState().addNodeResult(sourceNodeId, {
+      id: 'style-result', type: 'image', url: 'nomi-local://style.png', assetId: 'asset-style', createdAt: 1,
+    })
+    const saved = await applyCanvasToolCall('save_creative_resource', {
+      sourceNodeId,
+      kind: 'style',
+      label: '柔和胶片',
+      description: '低反差高光',
+      promptTokens: ['soft highlight', 'fine grain'],
+      license: { source: '用户自有素材', commercialUse: 'allowed' },
+    }) as { nodeId: string }
+
+    const result = await applyCanvasToolCall('list_capability_recipes', {}) as {
+      resources: Array<Record<string, unknown>>
+    }
+    expect(result.resources).toContainEqual({
+      id: saved.nodeId,
+      kind: 'style',
+      label: '柔和胶片',
+      description: '低反差高光',
+      promptTokens: ['soft highlight', 'fine grain'],
+      commercialUse: 'allowed',
+      hasAsset: true,
+    })
+  })
+
+  it('builds a run plan and starts a non-destructive background recipe run', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'source-image', kind: 'image', title: '人物原图', prompt: 'same person' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+    const sourceNodeId = created.clientIdToNodeId['source-image']
+    useGenerationCanvasStore.getState().addNodeResult(sourceNodeId, {
+      id: 'source-result', type: 'image', url: 'nomi-local://source.png', createdAt: 1,
+    })
+
+    const result = await applyCanvasToolCall('apply_capability_recipe', {
+      sourceNodeId: 'source-image',
+      recipeId: 'image.multiview.custom',
+      modelKey: 'gpt-image-2',
+      modeId: 'i2i',
+      requestedOutputs: 2,
+      params: { identityLock: true },
+      outputs: [
+        { id: 'front', label: '正面', azimuth: 0, elevation: 0, shotSize: '中景' },
+        { id: 'side', label: '右侧', azimuth: 90, elevation: 5, shotSize: '近景' },
+      ],
+    }) as { accepted: boolean; targetNodeId: string; taskCount: number }
+
+    expect(result).toMatchObject({ accepted: true, targetNodeId: 'derived-recipe-node', taskCount: 2 })
+    expect(mockedRunCapabilityRecipe).toHaveBeenCalledTimes(1)
+    const [calledSource, plan, options] = mockedRunCapabilityRecipe.mock.calls[0]
+    expect(calledSource).toBe(sourceNodeId)
+    expect(plan).toMatchObject({
+      recipeId: 'image.multiview.custom',
+      sourceNodeIds: [sourceNodeId],
+      model: { vendorKey: 'openai', modelKey: 'gpt-image-2', modeId: 'i2i' },
+      outputCount: 2,
+      taskCount: 2,
+      params: expect.objectContaining({ identityLock: true }),
+    })
+    expect(options.concurrency).toBe(2)
+    await expect(options.grantFactory?.('new-node', 2)).resolves.toBe('grant-1')
+    expect(mockedMintSpendGrant).toHaveBeenCalledWith(['new-node'], 2)
+  })
+
+  it('expands an Agent-requested mood matrix to 25 ordered tasks with bounded concurrency', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'portrait-source', kind: 'image', title: '人物原图', prompt: 'same person' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+    const sourceNodeId = created.clientIdToNodeId['portrait-source']
+    useGenerationCanvasStore.getState().addNodeResult(sourceNodeId, {
+      id: 'portrait-source-result',
+      type: 'image',
+      url: 'nomi-local://portrait-source.png',
+      createdAt: 1,
+    })
+
+    const result = await applyCanvasToolCall('apply_capability_recipe', {
+      sourceNodeId: 'portrait-source',
+      recipeId: 'portrait.mood',
+      modelKey: 'gpt-image-2',
+      modeId: 'i2i',
+      params: {
+        generationMode: 'matrix5x5',
+        expressionStrength: 50,
+        identityLock: true,
+      },
+    }) as { outputCount: number; taskCount: number }
+
+    expect(result).toMatchObject({ outputCount: 25, taskCount: 25 })
+    const [, plan, options] = mockedRunCapabilityRecipe.mock.calls[0]
+    expect(plan.outputs).toHaveLength(25)
+    expect(plan.outputs[0]).toMatchObject({ id: 'mood-e0-a0', energy: 0, affinity: 0 })
+    expect(plan.outputs[24]).toMatchObject({ id: 'mood-e4-a4', energy: 4, affinity: 4 })
+    expect(options.concurrency).toBe(2)
+  })
+
+  it('rejects unknown recipes before creating a run', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'source-image', kind: 'image', title: '人物原图', prompt: 'same person' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+
+    await expect(applyCanvasToolCall('apply_capability_recipe', {
+      sourceNodeId: created.clientIdToNodeId['source-image'],
+      recipeId: 'unknown.recipe',
+    })).rejects.toThrow('未知创作能力配方')
+    expect(mockedRunCapabilityRecipe).not.toHaveBeenCalled()
+  })
+
+  it('rejects missing and mismatched creative resources before starting a paid run', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'source-image', kind: 'image', title: '人物原图', prompt: 'same person' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+    const sourceNodeId = created.clientIdToNodeId['source-image']
+    useGenerationCanvasStore.getState().addNodeResult(sourceNodeId, {
+      id: 'source-result', type: 'image', url: 'nomi-local://source.png', createdAt: 1,
+    })
+    const saved = await applyCanvasToolCall('save_creative_resource', {
+      sourceNodeId,
+      kind: 'identity',
+      label: '角色身份',
+      promptTokens: ['same identity'],
+      license: { source: '用户自有素材', commercialUse: 'allowed' },
+    }) as { nodeId: string }
+
+    await expect(applyCanvasToolCall('apply_capability_recipe', {
+      sourceNodeId,
+      recipeId: 'image.style.transfer',
+      resourceIds: ['missing-resource'],
+    })).rejects.toThrow(/资源不存在/)
+    await expect(applyCanvasToolCall('apply_capability_recipe', {
+      sourceNodeId,
+      recipeId: 'image.style.transfer',
+      resourceIds: [saved.nodeId],
+    })).rejects.toThrow(/需要.*style.*palette|仅接受.*style.*palette/)
+    expect(mockedRunCapabilityRecipe).not.toHaveBeenCalled()
+  })
+
+  it('saves a generated node as a reusable creative resource', async () => {
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'source-style', kind: 'image', title: '风格样张', prompt: 'soft film' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+    const sourceNodeId = created.clientIdToNodeId['source-style']
+    useGenerationCanvasStore.getState().addNodeResult(sourceNodeId, {
+      id: 'style-result', type: 'image', url: 'nomi-local://style.png', assetId: 'asset-style', createdAt: 1,
+    })
+
+    const result = await applyCanvasToolCall('save_creative_resource', {
+      sourceNodeId: 'source-style',
+      kind: 'style',
+      label: '柔和胶片',
+      description: '低反差高光与细颗粒',
+      promptTokens: ['35mm film', 'soft highlight rolloff'],
+      license: { source: '用户自有素材', commercialUse: 'allowed' },
+    }) as { nodeId: string }
+
+    const resource = useGenerationCanvasStore.getState().nodes.find((node) => node.id === result.nodeId)
+    expect(resource).toMatchObject({
+      kind: 'resource',
+      creativeResource: { kind: 'style', label: '柔和胶片', assetIds: ['asset-style'] },
+    })
+  })
+
+  it('hands a generated model to Blender Director through the shared action', async () => {
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'generated-model', kind: 'image', title: '生成模型', prompt: '3d' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+
+    const result = await applyCanvasToolCall('handoff_model3d', {
+      sourceNodeId: 'generated-model',
+      target: 'vibingDirector',
+      license: 'user-owned',
+    })
+
+    expect(result).toEqual({ targetNodeId: 'director-node', objectId: 'object-1', createdTarget: true })
+    expect(mockedHandoffModel3d).toHaveBeenCalledWith(expect.objectContaining({
+      sourceNodeId: created.clientIdToNodeId['generated-model'],
+      target: 'vibingDirector',
+      license: 'user-owned',
+    }))
   })
 })
 

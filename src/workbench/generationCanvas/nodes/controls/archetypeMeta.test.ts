@@ -315,6 +315,14 @@ describe('C4 HappyHorse — 档案 + per-mode enum + 模型契约 input 键', ()
     const meta = { archetype: { id: 'happyhorse', modeId: 'edit' }, sourceVideoUrl: 'src.mp4', referenceImageUrls: ['r1'] }
     expect(buildArchetypeInputParams(meta, HAPPY)).toEqual({ video_url: 'src.mp4', reference_image: ['r1'], model: 'happyhorse/video-edit' })
   })
+  it('edit：画布视频边可填充 source_video，不要求重复手工上传', () => {
+    const meta = { archetype: { id: 'happyhorse', modeId: 'edit' }, referenceImageUrls: ['r1'] }
+    expect(buildArchetypeInputParams(meta, HAPPY, { referenceVideos: ['edge-source.mp4'] })).toEqual({
+      video_url: 'edge-source.mp4',
+      reference_image: ['r1'],
+      model: 'happyhorse/video-edit',
+    })
+  })
 
   it('t2v：无参考槽，只带 model enum', () => {
     const meta = { archetype: { id: 'happyhorse', modeId: 't2v' } }
@@ -439,6 +447,25 @@ describe('变体轴 — currentArchetypeVariant 回落', () => {
   })
   it('无 variants 档案 → null（如 HappyHorse）', () => {
     expect(currentArchetypeVariant(getArchetypeById('happyhorse')!, {})).toBeNull()
+  })
+  it('按当前模式隐藏不兼容型号，并在切模式时回落到可用默认型号', () => {
+    const jimengImage = getArchetypeById('jimeng-web-image')!
+    expect(archetypeVariantChoices(jimengImage, 't2i').map((variant) => variant.id)).toContain('v3_0')
+    expect(archetypeVariantChoices(jimengImage, 'edit').map((variant) => variant.id)).not.toContain('v3_0')
+
+    const switched = applyArchetypeModeSwitch(
+      { archetype: { id: 'jimeng-web-image', modeId: 't2i', variantId: 'v3_0' } },
+      jimengImage,
+      'edit',
+    )
+    expect(switched.archetype).toEqual({
+      id: 'jimeng-web-image',
+      modeId: 'edit',
+      variantId: 'v5_0_pro',
+    })
+    expect(currentArchetypeVariant(jimengImage, {
+      archetype: { id: 'jimeng-web-image', modeId: 'edit', variantId: 'v3_0' },
+    })?.id).toBe('v5_0_pro')
   })
   it('kie Seedance 合并后有标准/快速两变体（默认标准）', () => {
     const kie = getArchetypeById('seedance-2')!

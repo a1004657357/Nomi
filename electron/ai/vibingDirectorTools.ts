@@ -5,6 +5,8 @@ const vector3Schema = z.tuple([finiteNumber, finiteNumber, finiteNumber])
 const stagePresetSchema = z.enum(['empty', 'studio', 'coffee_shop', 'city_street', 'interior_room'])
 const blockingTemplateSchema = z.enum(['coffee_two_person_conversation'])
 const aspectRatioSchema = z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '2.39:1'])
+const cameraFramingSchema = z.enum(['all', 'target', 'fixed'])
+const relationKindSchema = z.enum(['facing', 'distance', 'support', 'offset', 'line_of_sight'])
 const identifierSchema = z.string().min(1).max(160).regex(/^(?!https?:\/\/)(?!file:)[a-zA-Z0-9_\-.:\u4e00-\u9fff ]+$/i)
 
 const canonicalActionSchema = z.discriminatedUnion('op', [
@@ -44,6 +46,16 @@ const canonicalActionSchema = z.discriminatedUnion('op', [
   }),
   z.object({ op: z.literal('remove_object'), objectRef: identifierSchema }),
   z.object({
+    op: z.literal('set_relation'),
+    id: identifierSchema,
+    kind: relationKindSchema,
+    subjectRef: identifierSchema,
+    targetRef: identifierSchema,
+    distance: finiteNumber.min(0.05).max(1000).optional(),
+    mutual: z.boolean().optional(),
+  }),
+  z.object({ op: z.literal('remove_relation'), relationRef: identifierSchema }),
+  z.object({
     op: z.literal('set_camera'),
     cameraRef: identifierSchema.optional(),
     name: z.string().min(1).max(160).optional(),
@@ -51,6 +63,8 @@ const canonicalActionSchema = z.discriminatedUnion('op', [
     lookAt: vector3Schema.optional(),
     fov: finiteNumber.min(1).max(160).optional(),
     aspectRatio: aspectRatioSchema.optional(),
+    framing: cameraFramingSchema.optional(),
+    targetRef: identifierSchema.optional(),
   }),
   z.object({
     op: z.literal('set_camera_path'),
@@ -79,8 +93,17 @@ const canonicalPlanSchema = z.object({
     if (action.op === 'move_object' && action.position === undefined && action.rotation === undefined && action.scale === undefined && action.name === undefined) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'move_object 至少需要一个要修改的字段', path: ['actions', index] })
     }
-    if (action.op === 'set_camera' && action.cameraRef === undefined && action.name === undefined && action.position === undefined && action.lookAt === undefined && action.fov === undefined && action.aspectRatio === undefined) {
+    if (action.op === 'set_camera' && action.cameraRef === undefined && action.name === undefined && action.position === undefined && action.lookAt === undefined && action.fov === undefined && action.aspectRatio === undefined && action.framing === undefined && action.targetRef === undefined) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'set_camera 至少需要一个要修改的字段', path: ['actions', index] })
+    }
+    if (action.op === 'set_camera' && action.framing === 'target' && action.targetRef === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'target 取景必须指定 targetRef', path: ['actions', index, 'targetRef'] })
+    }
+    if (action.op === 'set_relation' && action.kind === 'distance' && action.distance === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'distance 空间关系必须指定 distance', path: ['actions', index, 'distance'] })
+    }
+    if (action.op === 'set_relation' && action.subjectRef === action.targetRef) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: '空间关系不能引用同一个对象', path: ['actions', index, 'targetRef'] })
     }
   })
 })
@@ -91,7 +114,7 @@ const canonicalPlanSchema = z.object({
  * a simple object and the canonical schema below is the trust boundary.
  */
 const planActionWireSchema = z.object({
-  op: z.enum(['set_stage', 'set_blocking_layout', 'place_asset', 'add_marker', 'move_object', 'remove_object', 'set_camera', 'set_camera_path', 'set_beat']),
+  op: z.enum(['set_stage', 'set_blocking_layout', 'place_asset', 'add_marker', 'move_object', 'remove_object', 'set_relation', 'remove_relation', 'set_camera', 'set_camera_path', 'set_beat']),
   preset: stagePresetSchema.optional(),
   template: blockingTemplateSchema.optional(),
   actorAName: z.string().max(160).optional(),
@@ -105,10 +128,17 @@ const planActionWireSchema = z.object({
   scale: vector3Schema.optional(),
   color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
   objectRef: identifierSchema.optional(),
+  kind: relationKindSchema.optional(),
+  subjectRef: identifierSchema.optional(),
+  targetRef: identifierSchema.optional(),
+  distance: finiteNumber.min(0.05).max(1000).optional(),
+  mutual: z.boolean().optional(),
+  relationRef: identifierSchema.optional(),
   cameraRef: identifierSchema.optional(),
   lookAt: vector3Schema.optional(),
   fov: finiteNumber.min(1).max(160).optional(),
   aspectRatio: aspectRatioSchema.optional(),
+  framing: cameraFramingSchema.optional(),
   points: z.array(vector3Schema).min(2).max(32).optional(),
   durationSec: finiteNumber.min(0.1).max(300).optional(),
   action: z.string().max(2000).optional(),

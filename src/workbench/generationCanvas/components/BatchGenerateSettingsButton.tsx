@@ -137,26 +137,37 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
       toast(`选中的${label}节点都已经有结果`, 'warning')
       return
     }
+    const regenerationTargetIds = new Set(
+      run ? generationTargets.filter(hasResult).map((node) => node.id) : [],
+    )
     const expandedIds = expandNodeIdsWithUngeneratedReferenceAncestors(generationTargets.map((node) => node.id), { nodes: state.nodes, edges: state.edges })
     const applySet = new Set(run
       ? [...selectedTargets.map((node) => node.id), ...expandedIds]
       : selectedTargets.map((node) => node.id))
     const applyTargets = state.nodes.filter((node) => applySet.has(node.id) && isTargetKindNode(node, targetKind))
     const nextOption = findModelOptionByIdentifier(modelOptions, modelValue)
-    for (const node of applyTargets) {
+    const applySettings = (
+      node: GenerationCanvasNode,
+      contextNodes: readonly GenerationCanvasNode[],
+      contextEdges: typeof state.edges,
+    ) => {
       const currentValue = firstSelectedModelValue([node], targetKind)
       const currentOption = findModelOptionByIdentifier(modelOptions, currentValue)
       updateNode(node.id, {
         meta: applyBatchSettingsToNode({
           node,
-          nodes: state.nodes,
-          edges: state.edges,
+          nodes: contextNodes,
+          edges: contextEdges,
           modelOption: nextOption,
           currentModelOption: currentOption,
           draftMeta,
           mediaKind: targetKind,
         }),
       })
+    }
+    for (const node of applyTargets) {
+      if (regenerationTargetIds.has(node.id)) continue
+      applySettings(node, state.nodes, state.edges)
     }
     if (!run) {
       toast(`已应用到 ${applyTargets.length} 个${label}节点`, 'success')
@@ -166,7 +177,19 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
     const afterState = useGenerationCanvasStore.getState()
     const plan = buildDependencyWaves(expandedIds, { nodes: afterState.nodes, edges: afterState.edges })
     setOpen(false)
-    await confirmAndRunPlan(plan)
+    await confirmAndRunPlan(plan, {
+      regenerationNodeIds: [...regenerationTargetIds],
+      onForked: (sourceToVariant) => {
+        const forkState = useGenerationCanvasStore.getState()
+        for (const sourceNodeId of regenerationTargetIds) {
+          const variantNodeId = sourceToVariant.get(sourceNodeId)
+          const variant = variantNodeId
+            ? forkState.nodes.find((candidate) => candidate.id === variantNodeId)
+            : null
+          if (variant) applySettings(variant, forkState.nodes, forkState.edges)
+        }
+      },
+    })
   }, [draftMeta, modelOptions, modelValue, selectedIdSet, skipExisting, targetKind, updateNode])
 
   const renderControl = (control: DynamicModelControl): JSX.Element => {

@@ -1,52 +1,39 @@
 import React from 'react'
 import { IconCopy, IconFileText, IconFolderShare, IconMovie, IconPlayerPlay, IconTimeline } from '@tabler/icons-react'
-import { confirmDialog, promptDialog, WorkbenchIconButton } from '../../../design'
-import { useNavigate } from 'react-router-dom'
+import { WorkbenchIconButton } from '../../../design'
 import { toast } from '../../../ui/toast'
 import { cn } from '../../../utils/cn'
-import { buildStudioUrl } from '../../../utils/appRoutes'
 import CanvasToolbar, { NodeAddMenu } from './CanvasToolbar'
 import { WORKSPACE_FILE_DRAG_MIME } from '../../explorer/workspaceFileDrag'
 import { ASSET_LIBRARY_DRAG_MIME } from '../../assets/assetLibraryDrag'
 import {
   BROWSER_ASSET_DRAG_MIME,
+  BROWSER_MEDIA_DRAG_MIME,
   LEGACY_BROWSER_ASSET_DRAG_MIME,
-  handleCanvasStageDrop,
   importBrowserAssetsToGenerationCanvas,
 } from './canvasStageDrop'
+import { CANVAS_SKILL_DRAG_MIME } from '../skills/canvasSkillModel'
 import {
   subscribeBrowserAssetsImportToCanvas,
   type BrowserAssetCanvasImportItem,
 } from '../../../ui/browser/overlay/globalAssetPopoverEvents'
 import { getDesktopBridge } from '../../../desktop/bridge'
-import type { GenerationNodeKind } from '../model/generationCanvasTypes'
-import { isImageLikeGenerationNodeKind } from '../model/generationNodeKinds'
 import { getGenerationNodeComponent } from '../nodes/renderRegistry'
-import { completeNodeConnection } from '../nodes/completeNodeConnection'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import {
   isStoryboardContainedNodeHidden,
   shouldRenderEdgeInStoryboardContainment,
 } from '../model/storyboardContainedNodes'
-import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
-import { buildDependencyWaves } from '../runner/dependencyWaves'
-import { expandNodeIdsWithUngeneratedReferenceAncestors } from '../runner/referenceAncestors'
-import { confirmAndRunPlan, useBatchPlanPreviewStore } from './batchPlanPreview'
+import { useBatchPlanPreviewStore } from './batchPlanPreview'
 import { BatchGenerateSettingsButton } from './BatchGenerateSettingsButton'
-import { convertImageShotsToVideos, isConvertibleImageShotNode } from '../agent/convertShotToVideo'
-import { sendStoryboardToTimeline } from '../agent/sendStoryboardToTimeline'
-import { storyboardPlanToCreateNodesArgs, type StoryboardPlan } from '../agent/storyboardPlan'
+import { isConvertibleImageShotNode } from '../agent/convertShotToVideo'
 import { useWorkbenchStore } from '../../workbenchStore'
 import StoryboardScriptShortcutButton from '../../creation/storyboard/StoryboardScriptShortcutButton'
-import { buildStoryboardScriptRows, hasStoryboardScriptSource } from '../../creation/storyboard/storyboardScriptViewModel'
-import { defaultSelectedNodeProjectName } from '../../project/selectedNodeProjectPayload'
-import { createProjectFromSelectedNodes, type SelectedNodeProjectTransferMode } from '../../project/selectedNodeProjectTransfer'
-import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import { hasStoryboardScriptSource } from '../../creation/storyboard/storyboardScriptViewModel'
 import { GroupFrameList } from './GroupFrame'
 import { useAutoFitOnLoad } from './useAutoFitOnLoad'
 import { useCanvasShortcuts } from './useCanvasShortcuts'
 import { useCanvasPointerInteractions } from './useCanvasPointerInteractions'
-import { useDragToConnect } from './useDragToConnect'
 import { CanvasEmptyState } from './CanvasEmptyState'
 import { CanvasNavigationStack } from './CanvasNavigationStack'
 import { CanvasGestureHint } from './CanvasGestureHint'
@@ -55,20 +42,25 @@ import { useNodeAppearTracking } from './useNodeAppearTracking'
 import { useTidyCanvas } from './useTidyCanvas'
 import {
   centerNodeOffset,
-  clampNumber,
   getCanvasGroupBoxes,
   getNodeSize,
   getSelectedBounds,
 } from './generationCanvasGeometry'
 import { useCanvasViewport } from './useCanvasViewport'
 import CanvasEdgeLayer, { type ActiveEdge } from './CanvasEdgeLayer'
-import type { ConnectionAnchorSide } from '../store/canvasStoreTypes'
-import { shouldRenderFullNodeContent, shouldUseLightweightNodeRendering } from './canvasNodeLevelOfDetail'
+import {
+  resolveCanvasPerformanceProfile,
+  shouldRenderFullNodeContent,
+  type CanvasPerformancePreference,
+} from './canvasNodeLevelOfDetail'
 import { LightweightGenerationNode } from './LightweightGenerationNode'
 import { hasPendingScene3DCameraMoveCapture, hasPendingScene3DStagingCapture } from './scene3dCaptureHostActivation'
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
+import { isCapabilityRecipesEnabled } from '../../../config/featureFlags'
 import { useCanvasSelectionDrag } from './useCanvasSelectionDrag'
 import { CanvasSelectionToolbar } from './CanvasSelectionToolbar'
+import { useCanvasContextMenus, type CanvasNodeMenuState } from './useCanvasContextMenus'
+import { useCanvasSelectionActions } from './useCanvasSelectionActions'
 import '../styles/generationCanvas.css'
 
 const FOCUS_GENERATION_NODE_EVENT = 'nomi-focus-generation-node'
@@ -81,9 +73,19 @@ const CameraMoveCaptureHost = lazyWithChunkBoundary('3D 运镜捕获', () =>
 const BatchPlanOverlay = lazyWithChunkBoundary('批量生成面板', () =>
   import('./BatchPlanOverlay').then((module) => ({ default: module.BatchPlanOverlay })),
 )
+const CapabilityRecipeInspector = lazyWithChunkBoundary('创作能力', () => import('./CapabilityRecipeInspector'))
 
 const MULTI_SELECTION_BOUNDS_PADDING = 16
 const MULTI_SELECTION_TOOLBAR_OFFSET = 58
+const CANVAS_PERFORMANCE_PREFERENCE_KEY = 'nomi-canvas-performance-preference'
+
+function readCanvasPerformancePreference(): CanvasPerformancePreference {
+  try {
+    return window.localStorage.getItem(CANVAS_PERFORMANCE_PREFERENCE_KEY) === 'smooth' ? 'smooth' : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
 
 type GenerationCanvasProps = {
   readOnly?: boolean
@@ -91,7 +93,9 @@ type GenerationCanvasProps = {
 }
 
 export default function GenerationCanvas({ readOnly = false, projectName }: GenerationCanvasProps): JSX.Element {
-  const navigate = useNavigate()
+  const [performancePreference, setPerformancePreference] = React.useState<CanvasPerformancePreference>(
+    readCanvasPerformancePreference,
+  )
   const isReady = useGenerationCanvasStore((state) => state.isReady)
   const allNodes = useGenerationCanvasStore((state) => state.nodes)
   const allEdges = useGenerationCanvasStore((state) => state.edges)
@@ -139,7 +143,6 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
   )
   const selectedNodeIds = useGenerationCanvasStore((state) => state.selectedNodeIds)
   const addNode = useGenerationCanvasStore((state) => state.addNode)
-  const startConnection = useGenerationCanvasStore((state) => state.startConnection)
   const clearSelection = useGenerationCanvasStore((state) => state.clearSelection)
   const selectNodesInRect = useGenerationCanvasStore((state) => state.selectNodesInRect)
   const setCanvasTransform = useGenerationCanvasStore((state) => state.setCanvasTransform)
@@ -149,8 +152,6 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
   const pasteNodes = useGenerationCanvasStore((state) => state.pasteNodes)
   const selectNode = useGenerationCanvasStore((state) => state.selectNode)
   const selectNodes = useGenerationCanvasStore((state) => state.selectNodes)
-  const groupSelectedNodes = useGenerationCanvasStore((state) => state.groupSelectedNodes)
-  const ungroupGroups = useGenerationCanvasStore((state) => state.ungroupGroups)
   const moveSelectedNodes = useGenerationCanvasStore((state) => state.moveSelectedNodes)
   const moveGroupNodes = useGenerationCanvasStore((state) => state.moveGroupNodes)
   const captureHistory = useGenerationCanvasStore((state) => state.captureHistory)
@@ -189,12 +190,14 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     zoom,
     offset,
     stageRef,
+    canvasRef,
     stageSize,
     visibleNodesForRender,
     visibleEdgeNodeIds,
     offsetRef,
     zoomRef,
     stageSizeRef,
+    applyCanvasTransform,
   } = useCanvasViewport(activeCategoryId, nodes)
   const edgesForRender = React.useMemo(() => {
     if (!visibleEdgeNodeIds) return edges
@@ -203,31 +206,12 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
   // 出现动画：只让**新落点**节点弹入（add/paste/Agent），开项目时已有节点不齐闪（实现见 hook）。
   const appearNodeIds = useNodeAppearTracking(allNodes)
   const { isTidying, tidy } = useTidyCanvas(activeCategoryId)
-  const [contextNodeMenu, setContextNodeMenu] = React.useState<{
-    stageX: number
-    stageY: number
-    canvasX: number
-    canvasY: number
-  } | null>(null)
-  const [selectionContextMenu, setSelectionContextMenu] = React.useState<{
-    stageX: number
-    stageY: number
-    nodeIds: string[]
-  } | null>(null)
-  const [connectionCreateMenu, setConnectionCreateMenu] = React.useState<{
-    sourceNodeId: string
-    sourceSide: ConnectionAnchorSide
-    stageX: number
-    stageY: number
-    canvasX: number
-    canvasY: number
-  } | null>(null)
+  const [contextNodeMenu, setContextNodeMenu] = React.useState<CanvasNodeMenuState | null>(null)
   const [activeEdge, setActiveEdge] = React.useState<ActiveEdge | null>(null)
   const activeEdgeId = activeEdge?.id ?? null
   const [focusFlashNodeId, setFocusFlashNodeId] = React.useState<string | null>(null)
   const [pendingFocusNodeId, setPendingFocusNodeId] = React.useState<string | null>(null)
   const [minimapVisible, setMinimapVisible] = React.useState(true)
-  const [transferringSelectionMode, setTransferringSelectionMode] = React.useState<SelectedNodeProjectTransferMode | null>(null)
   const focusFlashTimerRef = React.useRef<number | null>(null)
 
   React.useEffect(() => {
@@ -249,6 +233,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     offsetRef,
     zoomRef,
     setViewport,
+    applyCanvasTransform,
     activeCategoryId,
     clearSelection,
     cancelConnection,
@@ -258,7 +243,7 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     activeEdgeId,
     selectNodesInRect,
   })
-  const { isPanning, isSpaceHeld, setViewportTransform, animateViewportTo, zoomAtStagePoint } = pointer
+  const { setViewportTransform, animateViewportTo, zoomAtStagePoint } = pointer
   const { handleGroupFramePointerDown, handleSelectionBoundsPointerDown } = useCanvasSelectionDrag({
     readOnly,
     selectedNodeCount: selectedNodeIds.length,
@@ -268,6 +253,58 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     moveGroupNodes,
     moveSelectedNodes,
     selectNodes,
+  })
+  const {
+    connectionCreateMenu,
+    closeContextNodeMenu,
+    pendingCursorPos,
+    getCanvasPointFromClientPoint,
+    getToolbarInsertionPosition,
+    getPastePosition,
+    handleStageDrop,
+    handleStagePointerDown,
+    handleStagePointerMove,
+    handleStageContextMenu,
+    handleAddContextNode,
+    handleAddStoryboardTableNode,
+    handleAddConnectedNode,
+  } = useCanvasContextMenus({
+    readOnly,
+    activeCategoryId,
+    allNodes,
+    allEdges,
+    storyboardPlan,
+    offset,
+    zoom,
+    stageRef,
+    offsetRef,
+    zoomRef,
+    pointer,
+    pendingConnectionSourceId,
+    pendingConnectionSourceSide,
+    contextNodeMenu,
+    setContextNodeMenu,
+  })
+  const {
+    selectionContextMenu,
+    setSelectionContextMenu,
+    transferringSelectionMode,
+    handleGroupSelectedNodes,
+    handleUngroupSelectedNodes,
+    handleBatchGenerate,
+    handleBatchConvertSelectedImagesToVideos,
+    handleSendSelectedToTimeline,
+    handleTransferSelectedNodes,
+    openSelectionContextMenu,
+  } = useCanvasSelectionActions({
+    readOnly,
+    activeCategoryId,
+    projectName,
+    selectedNodeIds,
+    selectedSet,
+    selectedGroupIds,
+    stageRef,
+    closeContextNodeMenu,
   })
 
   React.useEffect(() => {
@@ -321,253 +358,6 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     setCanvasTransform(zoom, offset)
   }, [offset, setCanvasTransform, zoom])
 
-  React.useEffect(() => {
-    if (!contextNodeMenu) return undefined
-    const closeMenu = () => setContextNodeMenu(null)
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeMenu()
-    }
-    window.addEventListener('pointerdown', closeMenu)
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('blur', closeMenu)
-    return () => {
-      window.removeEventListener('pointerdown', closeMenu)
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('blur', closeMenu)
-    }
-  }, [contextNodeMenu])
-
-  React.useEffect(() => {
-    if (!selectionContextMenu) return undefined
-    const closeMenu = () => setSelectionContextMenu(null)
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeMenu()
-    }
-    window.addEventListener('pointerdown', closeMenu)
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('blur', closeMenu)
-    return () => {
-      window.removeEventListener('pointerdown', closeMenu)
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('blur', closeMenu)
-    }
-  }, [selectionContextMenu])
-
-  React.useEffect(() => {
-    if (!connectionCreateMenu) return undefined
-    const closeMenu = () => {
-      setConnectionCreateMenu(null)
-      cancelConnection()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeMenu()
-    }
-    window.addEventListener('pointerdown', closeMenu)
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('blur', closeMenu)
-    return () => {
-      window.removeEventListener('pointerdown', closeMenu)
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('blur', closeMenu)
-    }
-  }, [cancelConnection, connectionCreateMenu])
-
-  React.useEffect(() => {
-    if (!connectionCreateMenu) return
-    if (!pendingConnectionSourceId) return
-    if (pendingConnectionSourceId === connectionCreateMenu.sourceNodeId) return
-    setConnectionCreateMenu(null)
-  }, [connectionCreateMenu, pendingConnectionSourceId])
-
-  // 拖拽连线跟踪（含 rAF 节流预览线）抽到 useDragToConnect（R9/B3）
-  const { pendingCursorPos } = useDragToConnect({
-    readOnly,
-    pendingConnectionSourceId,
-    pendingConnectionSourceSide,
-    stageRef,
-    offsetRef,
-    zoomRef,
-    cancelConnection,
-    onDropOnEmpty: ({ sourceNodeId, sourceSide, stagePoint, canvasPoint }) => {
-      const sourceNode = allNodesRef.current.find((node) => node.id === sourceNodeId)
-      const sourceCanCreateMedia =
-        sourceNode?.kind === 'text' ||
-        sourceNode?.kind === 'image' ||
-        Boolean(sourceNode && isImageLikeGenerationNodeKind(sourceNode.kind))
-      if (!sourceCanCreateMedia || !stageRef.current) {
-        cancelConnection()
-        return
-      }
-      const rect = stageRef.current.getBoundingClientRect()
-      const menuWidth = 132
-      const menuHeight = 76
-      setContextNodeMenu(null)
-      cancelConnection()
-      setConnectionCreateMenu({
-        sourceNodeId,
-        sourceSide,
-        stageX: clampNumber(stagePoint.x, 8, Math.max(8, rect.width - menuWidth - 8)),
-        stageY: clampNumber(stagePoint.y, 8, Math.max(8, rect.height - menuHeight - 8)),
-        canvasX: Math.round(canvasPoint.x),
-        canvasY: Math.round(canvasPoint.y),
-      })
-    },
-  })
-
-  const handleGroupSelectedNodes = React.useCallback(() => {
-    const group = groupSelectedNodes(activeCategoryId)
-    if (!group) return
-    // 编组结果即时显示为画布上的组框 → 成功 toast 是噪音（弹窗审计 R2）。
-  }, [activeCategoryId, groupSelectedNodes])
-
-  // 批量生成（「生成选中」唯一入口）。不傻批量：先算依赖波次（参考先生成→镜头后生成）。
-  // 用户拍板「不弹窗+缺啥提示啥」：点了就直接跑能跑的（不再弹模态确认条）；上游参考没生成
-  // 而被拦下的，由 runPlanWithToasts 用人话 toast 告诉你「哪些没跑、为什么」(describeBlockedNotice)。
-  const handleBatchGenerate = React.useCallback(() => {
-    const ids = [...selectedNodeIds]
-    if (ids.length === 0) return
-    const state = useGenerationCanvasStore.getState()
-    const expandedIds = expandNodeIdsWithUngeneratedReferenceAncestors(ids, { nodes: state.nodes, edges: state.edges })
-    const plan = buildDependencyWaves(expandedIds, { nodes: state.nodes, edges: state.edges })
-    void confirmAndRunPlan(plan)
-  }, [selectedNodeIds])
-
-  const handleBatchConvertSelectedImagesToVideos = React.useCallback(() => {
-    const state = useGenerationCanvasStore.getState()
-    const selectedImages = state.nodes.filter((node) => selectedSet.has(node.id) && isConvertibleImageShotNode(node))
-    const result = convertImageShotsToVideos(selectedImages)
-    if (result.nodeIds.length === 0) {
-      toast('选中内容里没有可转视频的图片镜头', 'warning')
-      return
-    }
-    if (result.created > 0) {
-      const reused = result.existing > 0 ? `，复用 ${result.existing} 个已有视频` : ''
-      toast(`已转出 ${result.created} 个视频镜头${reused}`, 'success')
-      return
-    }
-    toast(`选中镜头已转过视频，已选中 ${result.existing} 个视频节点`, 'info')
-  }, [selectedSet])
-
-  const handleSendSelectedToTimeline = React.useCallback(() => {
-    const result = sendStoryboardToTimeline(selectedNodeIds)
-    if (result.sent.length > 0) {
-      toast(`已按镜序送入时间轴 ${result.sent.length} 段`, 'success')
-      return
-    }
-    toast(result.skipped.length > 0 ? '选中节点还没有可发送到时间轴的图片或视频结果' : '没有可发送到时间轴的节点', 'warning')
-  }, [selectedNodeIds])
-
-  const handleTransferSelectedNodes = React.useCallback(async (mode: SelectedNodeProjectTransferMode, explicitNodeIds?: readonly string[]) => {
-    const ids = [...(explicitNodeIds ?? selectedNodeIds)]
-    if (!ids.length) {
-      toast('请先选中要放入新项目的节点。', 'warning')
-      return
-    }
-    const defaultName = defaultSelectedNodeProjectName(projectName, mode)
-    const requestedName = await promptDialog({
-      title: mode === 'move' ? '移动到新项目' : '复制到新项目',
-      message: `将 ${ids.length} 个选中节点放入一个新的项目。`,
-      placeholder: '新项目名称',
-      initialValue: defaultName,
-      confirmLabel: mode === 'move' ? '继续移动' : '创建副本',
-    })
-    const targetProjectName = requestedName?.trim()
-    if (!targetProjectName) return
-    if (mode === 'move') {
-      const confirmed = await confirmDialog({
-        title: '确认移动节点',
-        message: `会先创建「${targetProjectName}」，成功后从当前项目删除这 ${ids.length} 个节点。`,
-        confirmLabel: '移动',
-        danger: true,
-      })
-      if (!confirmed) return
-    }
-    setTransferringSelectionMode(mode)
-    try {
-      const result = createProjectFromSelectedNodes({
-        selectedNodeIds: ids,
-        sourceProjectName: projectName,
-        targetProjectName,
-        mode,
-      })
-      if (mode === 'move') {
-        for (const nodeId of ids) {
-          useGenerationCanvasStore.getState().deleteNode(nodeId)
-        }
-        await persistActiveWorkbenchProjectNow()
-      }
-      toast(`${mode === 'move' ? '已移动' : '已复制'} ${result.nodeCount} 个节点到「${result.project.name}」`, 'success')
-      navigate(buildStudioUrl(result.project.id), { replace: false })
-    } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), 'error')
-    } finally {
-      setTransferringSelectionMode(null)
-    }
-  }, [navigate, projectName, selectedNodeIds])
-
-  const openSelectionContextMenu = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (readOnly || !stageRef.current) return
-    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.generation-canvas-v2-node') : null
-    if (!target) return
-    const nodeId = target.getAttribute('data-node-id') || ''
-    if (!nodeId) return
-    const nodeIds = selectedSet.has(nodeId) ? [...selectedNodeIds] : [nodeId]
-    if (!selectedSet.has(nodeId)) selectNode(nodeId)
-    event.preventDefault()
-    event.stopPropagation()
-    const rect = stageRef.current.getBoundingClientRect()
-    const stageX = event.clientX - rect.left
-    const stageY = event.clientY - rect.top
-    const menuWidth = 172
-    const menuHeight = 92
-    setContextNodeMenu(null)
-    setSelectionContextMenu({
-      stageX: clampNumber(stageX, 8, Math.max(8, rect.width - menuWidth - 8)),
-      stageY: clampNumber(stageY, 8, Math.max(8, rect.height - menuHeight - 8)),
-      nodeIds,
-    })
-  }, [readOnly, selectedNodeIds, selectedSet, selectNode, stageRef])
-
-  const handleUngroupSelectedNodes = React.useCallback(() => {
-    if (!selectedGroupIds.length) return
-    ungroupGroups(selectedGroupIds)
-    // 解组结果画布即时可见 → 成功 toast 是噪音（弹窗审计 R2）。
-  }, [selectedGroupIds, ungroupGroups])
-
-  const lastPastePositionRef = React.useRef<{ x: number; y: number } | null>(null)
-
-  const getCanvasPointFromClientPoint = React.useCallback((clientX: number, clientY: number) => {
-    if (!stageRef.current) return null
-    const rect = stageRef.current.getBoundingClientRect()
-    return {
-      x: (clientX - rect.left - offsetRef.current.x) / zoomRef.current,
-      y: (clientY - rect.top - offsetRef.current.y) / zoomRef.current,
-    }
-  }, [offsetRef, stageRef, zoomRef])
-
-  const rememberPastePositionFromClientPoint = React.useCallback((clientX: number, clientY: number) => {
-    const point = getCanvasPointFromClientPoint(clientX, clientY)
-    if (!point) return
-    lastPastePositionRef.current = {
-      x: Math.max(40, Math.round(point.x)),
-      y: Math.max(40, Math.round(point.y)),
-    }
-  }, [getCanvasPointFromClientPoint])
-
-  const getToolbarInsertionPosition = React.useCallback(
-    () => {
-      const rect = stageRef.current?.getBoundingClientRect()
-      const viewportAnchor = rect
-        ? { x: rect.width * 0.38, y: rect.height * 0.42 }
-        : { x: 360, y: 280 }
-      return {
-        x: Math.round((viewportAnchor.x - offset.x) / zoom),
-        y: Math.round((viewportAnchor.y - offset.y) / zoom),
-      }
-    },
-    [offset.x, offset.y, zoom, stageRef],
-  )
-
   const handleBrowserAssetsImportToCanvas = React.useCallback(
     (assets: readonly BrowserAssetCanvasImportItem[]) => {
       if (readOnly) return
@@ -598,11 +388,6 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     })
   }, [handleBrowserAssetsImportToCanvas])
 
-  const getPastePosition = React.useCallback(
-    () => lastPastePositionRef.current ?? getToolbarInsertionPosition(),
-    [getToolbarInsertionPosition],
-  )
-
   useCanvasShortcuts({
     readOnly,
     stageRef,
@@ -621,112 +406,6 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     undo,
     redo,
   })
-
-  const handleStageDrop = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    handleCanvasStageDrop(event, { readOnly, offset, zoom, activeCategoryId })
-  }, [activeCategoryId, offset, readOnly, zoom])
-
-  const handleStagePointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    rememberPastePositionFromClientPoint(event.clientX, event.clientY)
-    pointer.onPointerDown(event)
-  }, [pointer, rememberPastePositionFromClientPoint])
-
-  const handleStagePointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    rememberPastePositionFromClientPoint(event.clientX, event.clientY)
-    pointer.onPointerMove(event)
-  }, [pointer, rememberPastePositionFromClientPoint])
-
-  const handleStageContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (readOnly || !stageRef.current) return
-    if (pointer.shouldSuppressContextMenu()) {
-      event.preventDefault()
-      return
-    }
-    const target = event.target instanceof Element ? event.target : null
-    if (target?.closest(
-      '.generation-canvas-v2-node, .generation-canvas-v2-toolbar, .generation-canvas-v2__zoom-bar, .generation-canvas-v2__selection-toolbar, .generation-canvas-v2__edge, .generation-canvas-v2__edge-preview, button, input, textarea, select, [role="menu"], [role="menuitem"]',
-    )) {
-      return
-    }
-    event.preventDefault()
-    event.stopPropagation()
-    clearSelection()
-    const rect = stageRef.current.getBoundingClientRect()
-    const stageX = event.clientX - rect.left
-    const stageY = event.clientY - rect.top
-    const canvasPoint = getCanvasPointFromClientPoint(event.clientX, event.clientY)
-    if (!canvasPoint) return
-    const menuWidth = 148
-    const menuHeight = 366
-    setContextNodeMenu({
-      stageX: clampNumber(stageX, 8, Math.max(8, rect.width - menuWidth - 8)),
-      stageY: clampNumber(stageY, 8, Math.max(8, rect.height - menuHeight - 8)),
-      canvasX: Math.round(canvasPoint.x),
-      canvasY: Math.round(canvasPoint.y),
-    })
-  }
-
-  const handleAddContextNode = (kind: GenerationNodeKind) => {
-    if (!contextNodeMenu) return
-    addNode({
-      kind,
-      position: { x: contextNodeMenu.canvasX, y: contextNodeMenu.canvasY },
-      categoryId: activeCategoryId,
-    })
-    setContextNodeMenu(null)
-  }
-
-  const handleAddStoryboardTableNode = () => {
-    if (!contextNodeMenu) return
-    const fallbackPlan: StoryboardPlan | null = storyboardPlan
-      ? null
-      : (() => {
-          const rows = buildStoryboardScriptRows(null, allNodes, allEdges)
-          return rows.length
-            ? {
-                title: '画布分镜脚本',
-                anchors: [],
-                shots: rows.map((row) => row.shot),
-              }
-            : null
-        })()
-    const plan = storyboardPlan ?? fallbackPlan
-    if (!plan) {
-      toast('当前画布还没有可整理成脚本的分镜', 'info')
-      setContextNodeMenu(null)
-      return
-    }
-    const groupNode = storyboardPlanToCreateNodesArgs(plan).nodes.find((node) => node.clientId === 'storyboard-group')
-    addNode({
-      kind: 'text',
-      title: `分镜组：${plan.title.trim() || '未命名分镜'}`,
-      prompt: groupNode?.prompt || '',
-      position: { x: contextNodeMenu.canvasX, y: contextNodeMenu.canvasY },
-      categoryId: activeCategoryId,
-      size: { ...STORYBOARD_TABLE_DEFAULT_SIZE },
-      meta: {
-        storyboardGroup: true,
-        storyboardPlanSnapshot: plan,
-      },
-    })
-    setContextNodeMenu(null)
-  }
-
-  const handleAddConnectedNode = (kind: GenerationNodeKind) => {
-    if (!connectionCreateMenu) return
-    const sourceNodeId = connectionCreateMenu.sourceNodeId
-    const sourceSide = connectionCreateMenu.sourceSide
-    const created = addNode({
-      kind,
-      position: { x: connectionCreateMenu.canvasX, y: connectionCreateMenu.canvasY },
-      categoryId: activeCategoryId,
-      exactPosition: true,
-      select: true,
-    })
-    startConnection(sourceNodeId, sourceSide)
-    completeNodeConnection(created.id)
-    setConnectionCreateMenu(null)
-  }
 
   // animate=true：用户点「适应视图」按钮，平滑过渡；自动加载（useAutoFitOnLoad）传 false 即时定位，避免每次开项目都「飞入」。
   const fitView = React.useCallback((animate = false) => {
@@ -784,7 +463,49 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
 
   const zoomPercent = Math.round(zoom * 100)
   const selectedCount = selectedNodeIds.length
-  const lightweightNodeMode = shouldUseLightweightNodeRendering(nodes.length, zoom)
+  const capabilityRecipesEnabled = isCapabilityRecipesEnabled()
+  const mediaLoad = React.useMemo(() => {
+    let mediaNodeCount = 0
+    let videoNodeCount = 0
+    for (const node of nodes) {
+      const resultType = node.result?.type
+      if (resultType === 'video' || node.kind === 'video') {
+        mediaNodeCount += 1
+        videoNodeCount += 1
+      } else if (
+        resultType === 'image'
+        || node.kind === 'image'
+        || node.kind === 'character'
+        || node.kind === 'scene'
+        || node.kind === 'keyframe'
+        || node.kind === 'panorama'
+      ) {
+        mediaNodeCount += 1
+      }
+    }
+    return { mediaNodeCount, videoNodeCount }
+  }, [nodes])
+  const performanceProfile = resolveCanvasPerformanceProfile({
+    preference: performancePreference,
+    nodeCount: nodes.length,
+    edgeCount: edgesForRender.length,
+    mediaNodeCount: mediaLoad.mediaNodeCount,
+    videoNodeCount: mediaLoad.videoNodeCount,
+    zoom,
+  })
+  const lightweightNodeMode = performanceProfile.lightweightNodes
+  const deferEdgesWhilePanning = performanceProfile.deferEdgesWhileMoving
+  const togglePerformancePreference = React.useCallback(() => {
+    setPerformancePreference((current) => {
+      const next = current === 'smooth' ? 'auto' : 'smooth'
+      try {
+        window.localStorage.setItem(CANVAS_PERFORMANCE_PREFERENCE_KEY, next)
+      } catch {
+        // Local storage is optional; the current session still switches immediately.
+      }
+      return next
+    })
+  }, [])
   const handleSelectLightweightNode = React.useCallback(
     (nodeId: string, additive: boolean) => {
       if (readOnly) return
@@ -813,19 +534,41 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
             {hasPendingCameraMoveCapture ? <CameraMoveCaptureHost /> : null}
           </React.Suspense>
         ) : null}
-        {!readOnly ? <CanvasToolbar getInsertionPosition={getToolbarInsertionPosition} categoryId={activeCategoryId} /> : null}
+        {!readOnly ? (
+          <CanvasToolbar
+            getInsertionPosition={getToolbarInsertionPosition}
+            categoryId={activeCategoryId}
+            performancePreference={performancePreference}
+            performanceActive={performanceProfile.reduceEffects}
+            onTogglePerformancePreference={togglePerformancePreference}
+            capabilityControl={
+              capabilityRecipesEnabled ? (
+                <React.Suspense fallback={null}>
+                  <CapabilityRecipeInspector
+                    selectedNodeId={selectedNodeIds.length === 1 ? selectedNodeIds[0] : null}
+                    triggerVariant="toolbar"
+                  />
+                </React.Suspense>
+              ) : undefined
+            }
+          />
+        ) : null}
         {!readOnly ? (
           <StoryboardScriptShortcutButton className="absolute top-4 left-[184px] z-[18]" label="分镜脚本" />
         ) : null}
         <div
           className="generation-canvas-v2__stage"
           ref={stageRef}
-          data-panning={isPanning ? 'true' : undefined}
-          data-space-pan={isSpaceHeld ? 'true' : undefined}
+          data-dense-edges={deferEdgesWhilePanning ? 'true' : undefined}
+          data-performance-preference={performancePreference}
+          data-reduce-effects={performanceProfile.reduceEffects ? 'true' : undefined}
+          data-suspend-media-while-moving={performanceProfile.suspendMediaWhileMoving ? 'true' : undefined}
           onPointerDownCapture={pointer.onPointerDownCapture}
           onPointerDown={handleStagePointerDown}
           onPointerMove={handleStagePointerMove}
           onPointerUp={pointer.onPointerUp}
+          onPointerCancel={pointer.onPointerCancel}
+          onLostPointerCapture={pointer.onPointerCancel}
           onContextMenu={handleStageContextMenu}
           onDragOver={(event) => {
             if (readOnly) return
@@ -835,17 +578,25 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
               types.includes(WORKSPACE_FILE_DRAG_MIME) ||
               types.includes(ASSET_LIBRARY_DRAG_MIME) ||
               types.includes(BROWSER_ASSET_DRAG_MIME) ||
-              types.includes(LEGACY_BROWSER_ASSET_DRAG_MIME)
+              types.includes(BROWSER_MEDIA_DRAG_MIME) ||
+              types.includes(LEGACY_BROWSER_ASSET_DRAG_MIME) ||
+              types.includes(CANVAS_SKILL_DRAG_MIME) ||
+              types.includes('text/uri-list') ||
+              types.includes('text/html')
             ) {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'copy'
             }
           }}
+          onDragEnd={() => {
+            pointer.cancelActiveInteractions()
+            window.nomiDesktop?.browser?.endAssetDrag?.()
+          }}
           onDrop={handleStageDrop}
         >
           <div
+            ref={canvasRef}
             className={cn('generation-canvas-v2__canvas', 'absolute inset-0 origin-top-left')}
-            style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
           >
             {selectedBounds && selectedCount > 1 ? (
               <div

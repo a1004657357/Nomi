@@ -31,23 +31,53 @@ describe('VIBING Director structured-text compatibility protocol', () => {
     expect(request?.plan.actions).toHaveLength(3)
   })
 
+  it('unwraps a JSON Director plan returned through a provider answer field', () => {
+    const raw = parseVibingDirectorStructuredPlanResponse(JSON.stringify({
+      answer: JSON.stringify({
+        directorNodeId: 'director-1',
+        summary: '修复咖啡店人物摆位。',
+        plan: {
+          mode: 'amend',
+          actions: [
+            { op: 'move_object', objectRef: 'actor-A', position: [-1.2, 0, 0] },
+          ],
+        },
+      }),
+    }))
+
+    expect(parseVibingDirectorPlanRequest(raw)).toEqual(expect.objectContaining({
+      directorNodeId: 'director-1',
+      summary: '修复咖啡店人物摆位。',
+    }))
+  })
+
   it('accepts a relationship-first coffee conversation layout from the compatibility protocol', () => {
     const request = parseVibingDirectorPlanRequest({
       directorNodeId: 'director-1',
       summary: '按双人咖啡桌关系重新整理摆位。',
       plan: {
         mode: 'replace',
-        actions: [{
-          op: 'set_blocking_layout',
-          template: 'coffee_two_person_conversation',
-          actorAName: '角色A',
-          actorBName: '角色B',
-        }],
+        actions: [
+          {
+            op: 'set_blocking_layout',
+            template: 'coffee_two_person_conversation',
+            actorAName: '角色A',
+            actorBName: '角色B',
+          },
+          {
+            op: 'set_relation',
+            id: 'chair-follows-actor',
+            kind: 'offset',
+            subjectRef: 'chair-A',
+            targetRef: 'actor-A',
+          },
+        ],
       },
     })
 
     expect(request?.plan.actions).toEqual([
       expect.objectContaining({ op: 'set_blocking_layout', template: 'coffee_two_person_conversation' }),
+      expect.objectContaining({ op: 'set_relation', kind: 'offset' }),
     ])
   })
 
@@ -76,8 +106,90 @@ describe('VIBING Director structured-text compatibility protocol', () => {
 
     expect(request?.plan.actions).toEqual([
       { op: 'set_stage', preset: 'interior_room' },
-      expect.objectContaining({ op: 'add_marker', name: '咖啡师' }),
+      expect.objectContaining({ op: 'add_marker', name: '咖啡师', role: 'actor_standing' }),
       expect.objectContaining({ op: 'set_camera', cameraRef: 'director-camera', fov: 42 }),
+    ])
+  })
+
+  it('migrates the persisted patches dialect without losing semantic roles or camera motion', () => {
+    const request = parseVibingDirectorPlanRequest({
+      directorNodeId: 'director-1',
+      summary: '雨后咖啡街景。',
+      patches: [
+        { op: 'set_brief', value: '雨后咖啡店递杯场景' },
+        { op: 'add_scene', id: 'street', type: 'city_street', name: '雨后街道' },
+        {
+          op: 'add_object',
+          id: 'barista',
+          type: 'mannequin',
+          name: '咖啡师',
+          position: { x: -1, y: 0, z: 0 },
+          rotation: { x: 0, y: 90, z: 0 },
+          scale: 0.9,
+          pose: '右手递物，站立并微微前倾',
+        },
+        {
+          op: 'add_object',
+          id: 'customer',
+          type: 'mannequin',
+          name: '顾客',
+          position: { x: 1, y: 0, z: 0 },
+          pose: '隔桌对坐并伸手接物',
+        },
+        {
+          op: 'set_camera_track',
+          id: 'legacy-camera',
+          keyframes: [
+            { time: 0, position: { x: 4, y: 2.2, z: 6 } },
+            { time: 4, position: { x: 2.2, y: 1.7, z: 3.2 } },
+          ],
+        },
+      ],
+    })
+
+    expect(request?.plan.brief).toBe('雨后咖啡店递杯场景')
+    expect(request?.plan.actions).toEqual([
+      { op: 'set_stage', preset: 'city_street' },
+      expect.objectContaining({
+        op: 'add_marker',
+        id: 'barista',
+        role: 'actor_standing',
+        position: [-1, 0, 0],
+        rotation: [0, 90, 0],
+        scale: [0.9, 0.9, 0.9],
+      }),
+      expect.objectContaining({
+        op: 'add_marker',
+        id: 'customer',
+        role: 'actor_seated',
+        position: [1, 0, 0],
+      }),
+      {
+        op: 'set_camera_path',
+        points: [[4, 2.2, 6], [2.2, 1.7, 3.2]],
+        durationSec: 4,
+      },
+    ])
+  })
+
+  it('maps legacy character and prop markers to Blender semantic proxies', () => {
+    const request = parseVibingDirectorPlanRequest({
+      directorNodeId: 'director-1',
+      summary: '恢复旧版咖啡桌摆位。',
+      plan: {
+        mode: 'replace',
+        actions: [
+          { type: 'addObject', objectId: 'actor-A', kind: 'character_marker', label: '角色A', position: [0, 0, 1], pose: 'seated', scale: 1 },
+          { type: 'addObject', objectId: 'table-main', kind: 'prop_marker', label: '咖啡桌', position: [0, 0, 0], scale: 1.25 },
+          { type: 'addObject', objectId: 'cup-A', kind: 'prop_marker', label: '咖啡杯A', position: [-0.3, 0.76, 0], scale: 0.8 },
+        ],
+      },
+    })
+
+    expect(request?.plan.actions).toEqual([
+      expect.objectContaining({ op: 'add_marker', id: 'actor-A', role: 'actor_seated', scale: [1, 1, 1] }),
+      expect.objectContaining({ op: 'add_marker', id: 'table-main', role: 'table', scale: [1.25, 1.25, 1.25] }),
+      expect.objectContaining({ op: 'add_marker', id: 'cup-A', role: 'cup', scale: [0.8, 0.8, 0.8] }),
     ])
   })
 
@@ -121,7 +233,7 @@ describe('VIBING Director structured-text compatibility protocol', () => {
 
     expect(request?.plan.actions).toEqual([
       { op: 'set_stage', preset: 'coffee_shop' },
-      expect.objectContaining({ op: 'add_marker', id: 'barista', name: '咖啡师', role: 'mannequin' }),
+      expect.objectContaining({ op: 'add_marker', id: 'barista', name: '咖啡师', role: 'actor_standing' }),
       expect.objectContaining({ op: 'set_camera', cameraRef: 'director-camera', name: '主机位', fov: 42 }),
       expect.objectContaining({ op: 'set_beat', id: 'beat-1', durationSec: 3, notes: '保留杯口热气。' }),
     ])

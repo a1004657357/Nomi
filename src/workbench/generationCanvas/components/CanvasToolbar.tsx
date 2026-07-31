@@ -1,10 +1,11 @@
 import React from 'react'
-import { IconPlayerStopFilled } from '@tabler/icons-react'
+import { IconBolt, IconPlayerStopFilled } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import type { GenerationNodeKind } from '../model/generationCanvasTypes'
 import { getQuickAddGenerationNodePlugins } from '../nodes/renderRegistry'
 import { cancelAllGenerationRuns } from '../runner/generationRunController'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import type { CanvasPerformancePreference } from './canvasNodeLevelOfDetail'
 
 const QUICK_ADD_NODE_ITEMS = getQuickAddGenerationNodePlugins()
 
@@ -20,6 +21,8 @@ const PRIMARY_NODE_KINDS: GenerationNodeKind[] = [
   'video',
   'audio',
   'model3d',
+  'output',
+  'compare',
   'whiteboard',
   'panorama',
   'scene3d',
@@ -122,9 +125,20 @@ type CanvasToolbarProps = {
   // 只给「期望落点」（视口锚换算的画布坐标）；真实 AABB 碰撞避让统一收口在 store.addNode。
   getInsertionPosition: () => { x: number; y: number }
   categoryId?: string
+  capabilityControl?: React.ReactNode
+  performancePreference: CanvasPerformancePreference
+  performanceActive: boolean
+  onTogglePerformancePreference: () => void
 }
 
-export default function CanvasToolbar({ getInsertionPosition, categoryId }: CanvasToolbarProps): JSX.Element {
+export default function CanvasToolbar({
+  getInsertionPosition,
+  categoryId,
+  capabilityControl,
+  performancePreference,
+  performanceActive,
+  onTogglePerformancePreference,
+}: CanvasToolbarProps): JSX.Element {
   const addNode = useGenerationCanvasStore((state) => state.addNode)
   const hasActiveGeneration = useGenerationCanvasStore((state) =>
     state.nodes.some((node) => node.status === 'queued' || node.status === 'running'),
@@ -164,6 +178,35 @@ export default function CanvasToolbar({ getInsertionPosition, categoryId }: Canv
           </button>
         )
       })}
+      {capabilityControl ? (
+        <>
+          <span className="my-0.5 h-px w-5 bg-workbench-border" aria-hidden="true" />
+          {capabilityControl}
+        </>
+      ) : null}
+      <span className="my-0.5 h-px w-5 bg-workbench-border" aria-hidden="true" />
+      <button
+        type="button"
+        className={cn(
+          'relative grid size-8 min-h-8 place-items-center rounded-nomi-sm border-0 p-0 cursor-pointer',
+          'transition-colors hover:bg-nomi-ink-05',
+          performancePreference === 'smooth'
+            ? 'bg-nomi-accent-soft text-nomi-accent'
+            : 'bg-transparent text-nomi-ink-60',
+        )}
+        aria-label={performancePreference === 'smooth' ? '关闭流畅模式，改为自动优化' : '开启流畅模式'}
+        aria-pressed={performancePreference === 'smooth'}
+        title={performancePreference === 'smooth' ? '流畅模式：已开启' : '性能：自动优化'}
+        onClick={onTogglePerformancePreference}
+      >
+        <IconBolt size={17} stroke={1.8} aria-hidden />
+        {performanceActive ? (
+          <span
+            className="absolute right-1 top-1 size-1.5 rounded-full bg-nomi-accent"
+            aria-hidden="true"
+          />
+        ) : null}
+      </button>
       {hasActiveGeneration ? (
         <button
           type="button"

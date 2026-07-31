@@ -11,11 +11,15 @@ import { getActiveHttpProxyUrl } from "../systemProxy";
 
 export const CODEX_IMG2_GLOBAL_MAX_CONCURRENCY = 2;
 const CODEX_IMG2_TEMP_PREFIX = "nomi-codex-img2-";
+const CODEX_IMG2_HOME_TEMP_PREFIX = "nomi-codex-home-";
 const CODEX_IMG2_DIAGNOSTIC_MAX_AGE_MS = 24 * 60 * 60_000;
 const CODEX_IMG2_TERMINATION_GRACE_MS = 3_000;
 const CODEX_IMG2_IDLE_TIMEOUT_MS = 5 * 60_000;
+const CODEX_IMG2_DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const CODEX_IMG2_NETWORK_RETRY_DELAY_MS = 750;
-const CODEX_IMG2_MAX_NETWORK_ATTEMPTS = 2;
+// A retry can create a second paid image request after the first request's
+// outcome became ambiguous. Default to one attempt; callers must opt in.
+const CODEX_IMG2_MAX_NETWORK_ATTEMPTS = 1;
 const activeCodexChildren = new Set<ChildProcess>();
 const activeCodexChildrenByRunKey = new Map<string, ChildProcess>();
 const pendingCodexRunKeys = new Set<string>();
@@ -63,8 +67,9 @@ function mergedNoProxy(env: NodeJS.ProcessEnv): string {
   return Array.from(new Set(values)).join(",");
 }
 
-function codexChildEnv(): NodeJS.ProcessEnv {
+function codexChildEnv(codexHome?: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
+  if (codexHome) env.CODEX_HOME = codexHome;
   const proxyUrl = getActiveHttpProxyUrl();
   if (proxyUrl) {
     env.HTTPS_PROXY ||= proxyUrl;
@@ -162,7 +167,11 @@ export function cleanupStaleCodexImagegenTempDirs(
     return 0;
   }
   for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith(CODEX_IMG2_TEMP_PREFIX)) continue;
+    if (
+      !entry.isDirectory() ||
+      (!entry.name.startsWith(CODEX_IMG2_TEMP_PREFIX) && !entry.name.startsWith(CODEX_IMG2_HOME_TEMP_PREFIX))
+    )
+      continue;
     const target = path.join(rootDir, entry.name);
     try {
       if (now - fs.statSync(target).mtimeMs <= maxAgeMs) continue;
@@ -189,8 +198,53 @@ function readStringArray(value: unknown): string[] {
 function codexBinary(): string {
   const configured = trim(process.env.NOMI_CODEX_BIN || process.env.CODEX_BIN);
   if (configured) return configured;
-  const bundled = "/Applications/Codex.app/Contents/Resources/codex";
-  return fs.existsSync(bundled) ? bundled : "codex";
+  const bundled = [
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+  ].find((candidate) => fs.existsSync(candidate));
+  return bundled || "codex";
+}
+
+type IsolatedCodexHome = {
+  path: string;
+  cleanup: () => void;
+};
+
+export function prepareIsolatedCodexHome(
+  input: {
+    sourceHome?: string;
+    tempRoot?: string;
+  } = {},
+): IsolatedCodexHome | null {
+  const sourceHome = path.resolve(
+    input.sourceHome || trim(process.env.CODEX_HOME) || path.join(os.homedir(), ".codex"),
+  );
+  const authPath = path.join(sourceHome, "auth.json");
+  if (!fs.existsSync(authPath)) return null;
+
+  const isolatedHome = fs.mkdtempSync(path.join(input.tempRoot || os.tmpdir(), CODEX_IMG2_HOME_TEMP_PREFIX));
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    try {
+      fs.rmSync(isolatedHome, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  };
+  try {
+    fs.chmodSync(isolatedHome, 0o700);
+    fs.symlinkSync(authPath, path.join(isolatedHome, "auth.json"), "file");
+    for (const fileName of ["models_cache.json", "installation_id", "version.json"]) {
+      const sourcePath = path.join(sourceHome, fileName);
+      if (fs.existsSync(sourcePath)) fs.copyFileSync(sourcePath, path.join(isolatedHome, fileName));
+    }
+    return { path: isolatedHome, cleanup };
+  } catch {
+    cleanup();
+    return null;
+  }
 }
 
 export function collectCodexReferenceUrls(request: CodexImagegenRequest): string[] {
@@ -260,12 +314,13 @@ export function buildCodexImagegenPrompt(
       ? "edit/reference image generation"
       : "text-to-image generation";
   return [
-    "Use built-in imagegen only. Do not use the OpenAI API fallback.",
-    "Do not inspect project files, memory, profiles, or other skills. Do not read AGENTS files. Invoke imagegen immediately.",
+    "Use the built-in image_gen.imagegen tool only. Do not use the OpenAI API fallback.",
+    "Invoke image_gen.imagegen exactly once. If that call fails, times out, or reports a network/service error, do not retry; return the failure immediately.",
+    "Do not inspect project files, memory, profiles, or other skills. Do not read AGENTS files. Invoke image_gen.imagegen immediately.",
     `Task: ${mode}.`,
     referenceCount > 0
-      ? `Use ${referenceCount} attached image file(s) as references/edit targets.`
-      : "No reference images.",
+      ? `Use ${referenceCount} attached image file(s) as references/edit targets. Pass every attached local path through referenced_image_paths; do not use num_last_images_to_include.`
+      : "No reference images. This is a brand-new image: omit both referenced_image_paths and num_last_images_to_include entirely. Never pass either field as 0, null, or an empty array.",
     `Prompt: ${request.prompt}`,
     `Aspect ratio: ${aspectRatio}. Resolution: ${resolution}.`,
     "No watermark. Do not add text unless explicitly requested.",
@@ -317,6 +372,7 @@ function runCodexExec(
   timeoutMs: number,
   idleTimeoutMs: number,
   terminationGraceMs: number,
+  codexHome?: string,
   diagnostics?: ExecDiagnostics,
   runKey?: string,
 ): Promise<ExecResult> {
@@ -333,7 +389,7 @@ function runCodexExec(
     }
     const child = spawn(codexBinary(), args, {
       cwd,
-      env: codexChildEnv(),
+      env: codexChildEnv(codexHome),
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
@@ -415,7 +471,6 @@ function runCodexExec(
 }
 
 function isRetryableCodexNetworkFailure(result: ExecResult): boolean {
-  if (result.code === 0) return false;
   const detail = `${result.stderr}\n${result.stdout}`.toLowerCase();
   return (
     detail.includes("error sending request") ||
@@ -432,9 +487,69 @@ function normalizeAttemptCount(value: unknown): number {
   return Math.max(1, Math.min(3, Math.floor(value)));
 }
 
+export function resolveCodexImagegenTimeoutMs(
+  inputTimeoutMs: number | undefined,
+  envTimeoutMs = process.env.NOMI_CODEX_IMG2_TIMEOUT_MS,
+): number {
+  if (typeof inputTimeoutMs === "number" && Number.isFinite(inputTimeoutMs) && inputTimeoutMs > 0) {
+    return Math.floor(inputTimeoutMs);
+  }
+  const parsedEnvTimeoutMs = Number(envTimeoutMs);
+  if (Number.isFinite(parsedEnvTimeoutMs) && parsedEnvTimeoutMs > 0) {
+    return Math.floor(parsedEnvTimeoutMs);
+  }
+  return CODEX_IMG2_DEFAULT_TIMEOUT_MS;
+}
+
 async function waitForNetworkRetry(delayMs: number): Promise<void> {
   if (delayMs <= 0) return;
   await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+const RECOVERABLE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".avif"]);
+
+function recoverGeneratedImageFromCodexHome(
+  codexHome: string,
+  requestedOutputPath: string,
+  generatedAfterMs: number,
+): string | null {
+  const candidates: Array<{ path: string; mtimeMs: number }> = [];
+  const pending: Array<{ dir: string; depth: number }> = [{ dir: codexHome, depth: 0 }];
+  let visited = 0;
+  while (pending.length > 0 && visited < 2_000) {
+    const current = pending.pop();
+    if (!current) break;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      visited += 1;
+      const candidatePath = path.join(current.dir, entry.name);
+      if (entry.isDirectory() && current.depth < 6) {
+        pending.push({ dir: candidatePath, depth: current.depth + 1 });
+        continue;
+      }
+      if (!entry.isFile() || !RECOVERABLE_IMAGE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+      try {
+        const stat = fs.statSync(candidatePath);
+        if (stat.size > 0 && stat.mtimeMs >= generatedAfterMs - 5_000) {
+          candidates.push({ path: candidatePath, mtimeMs: stat.mtimeMs });
+        }
+      } catch {
+        // Ignore files that disappear while Codex is finalizing its output.
+      }
+    }
+  }
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const source = candidates[0]?.path;
+  if (!source) return null;
+  const ext = path.extname(source).toLowerCase() || ".png";
+  const recoveredPath = path.join(path.dirname(requestedOutputPath), `result-recovered${ext}`);
+  fs.copyFileSync(source, recoveredPath);
+  return recoveredPath;
 }
 
 export async function runCodexImageGeneration(input: {
@@ -469,15 +584,34 @@ export async function runCodexImageGeneration(input: {
       const promptStartedAt = Date.now();
       const prompt = buildCodexImagegenPrompt(input.request, outputPath, references.length);
       const promptBuildMs = Date.now() - promptStartedAt;
+      const isolatedCodexHome = prepareIsolatedCodexHome();
+      if (!isolatedCodexHome) {
+        try {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch {
+          /* best-effort */
+        }
+        throw new Error(
+          "Codex Img2 未检测到 ChatGPT/Codex 登录状态。请先打开 ChatGPT 或 Codex 完成登录，再回到 Nomi 重试；无需填写 API Key。",
+        );
+      }
+      const configuredModel = trim(process.env.NOMI_CODEX_IMG2_MODEL);
       const args = [
         "--ask-for-approval",
         "never",
         "exec",
+        ...(configuredModel ? ["--model", configuredModel] : []),
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",
+        "--enable",
+        "image_generation",
         "--disable",
         "apps",
+        "--disable",
+        "code_mode_host",
+        "--disable",
+        "code_mode",
         "--json",
         "--sandbox",
         "danger-full-access",
@@ -487,96 +621,111 @@ export async function runCodexImageGeneration(input: {
         ...references.flatMap((ref) => ["--image", ref.path]),
       ];
       const execStartedAt = Date.now();
-      const timeoutMs = input.timeoutMs ?? 10 * 60_000;
+      const timeoutMs = resolveCodexImagegenTimeoutMs(input.timeoutMs);
       const idleTimeoutMs = Math.max(0, input.idleTimeoutMs ?? CODEX_IMG2_IDLE_TIMEOUT_MS);
       const maxNetworkAttempts = normalizeAttemptCount(input.maxNetworkAttempts);
       const networkRetryDelayMs = Math.max(0, input.networkRetryDelayMs ?? CODEX_IMG2_NETWORK_RETRY_DELAY_MS);
       let result: ExecResult | null = null;
       let attemptCount = 0;
       try {
-        for (let attempt = 1; attempt <= maxNetworkAttempts; attempt += 1) {
-          attemptCount = attempt;
-          const remainingTimeoutMs = timeoutMs - (Date.now() - execStartedAt);
-          if (remainingTimeoutMs <= 0) throw new Error(`Codex Img2 生成超时（${Math.round(timeoutMs / 1000)} 秒）`);
-          if (attempt > 1) {
-            try {
-              fs.rmSync(outputPath, { force: true });
-            } catch {
-              /* ignore */
+        try {
+          for (let attempt = 1; attempt <= maxNetworkAttempts; attempt += 1) {
+            attemptCount = attempt;
+            const remainingTimeoutMs = timeoutMs - (Date.now() - execStartedAt);
+            if (remainingTimeoutMs <= 0) throw new Error(`Codex Img2 生成超时（${Math.round(timeoutMs / 1000)} 秒）`);
+            if (attempt > 1) {
+              try {
+                fs.rmSync(outputPath, { force: true });
+              } catch {
+                /* ignore */
+              }
+              try {
+                fs.rmSync(lastMessagePath, { force: true });
+              } catch {
+                /* ignore */
+              }
             }
-            try {
-              fs.rmSync(lastMessagePath, { force: true });
-            } catch {
-              /* ignore */
-            }
+            result = await runCodexExec(
+              args,
+              prompt,
+              codexCwd,
+              remainingTimeoutMs,
+              idleTimeoutMs > 0 && idleTimeoutMs < remainingTimeoutMs ? idleTimeoutMs : 0,
+              input.terminationGraceMs ?? CODEX_IMG2_TERMINATION_GRACE_MS,
+              isolatedCodexHome.path,
+              { stdoutPath, stderrPath, append: attempt > 1, attempt },
+              runKey,
+            );
+            if (runKey && cancelledCodexRunKeys.has(runKey)) throw new Error("Codex Img2 生成已取消");
+            if (!isRetryableCodexNetworkFailure(result) || attempt >= maxNetworkAttempts || fs.existsSync(outputPath))
+              break;
+            await waitForNetworkRetry(Math.min(networkRetryDelayMs, Math.max(0, remainingTimeoutMs - 1)));
           }
-          result = await runCodexExec(
-            args,
-            prompt,
-            codexCwd,
-            remainingTimeoutMs,
-            idleTimeoutMs > 0 && idleTimeoutMs < remainingTimeoutMs ? idleTimeoutMs : 0,
-            input.terminationGraceMs ?? CODEX_IMG2_TERMINATION_GRACE_MS,
-            { stdoutPath, stderrPath, append: attempt > 1, attempt },
-            runKey,
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            [message, `诊断目录：${tempDir}`, `stderr：${stderrPath}`, `stdout：${stdoutPath}`]
+              .filter(Boolean)
+              .join("\n"),
+            { cause: error },
           );
-          if (runKey && cancelledCodexRunKeys.has(runKey)) throw new Error("Codex Img2 生成已取消");
-          if (!isRetryableCodexNetworkFailure(result) || attempt >= maxNetworkAttempts || fs.existsSync(outputPath))
-            break;
-          await waitForNetworkRetry(Math.min(networkRetryDelayMs, Math.max(0, remainingTimeoutMs - 1)));
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          [message, `诊断目录：${tempDir}`, `stderr：${stderrPath}`, `stdout：${stdoutPath}`]
-            .filter(Boolean)
-            .join("\n"),
-          { cause: error },
-        );
+        if (!result) throw new Error("Codex Img2 生成失败：没有执行结果");
+        const codexExecMs = Date.now() - execStartedAt;
+        const verifyStartedAt = Date.now();
+        const lastMessage = fs.existsSync(lastMessagePath) ? fs.readFileSync(lastMessagePath, "utf8").trim() : "";
+        if (result.code !== 0) {
+          throw new Error(
+            [
+              `Codex Img2 生成失败：codex exec 退出码 ${result.code}`,
+              `诊断目录：${tempDir}`,
+              `stderr：${stderrPath}`,
+              `stdout：${stdoutPath}`,
+              (result.stderr || result.stdout).slice(-2000),
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          );
+        }
+        const resolvedOutputPath =
+          fs.existsSync(outputPath) && fs.statSync(outputPath).isFile()
+            ? outputPath
+            : recoverGeneratedImageFromCodexHome(isolatedCodexHome.path, outputPath, execStartedAt);
+        if (!resolvedOutputPath || !fs.existsSync(resolvedOutputPath) || !fs.statSync(resolvedOutputPath).isFile()) {
+          throw new Error(
+            [
+              `Codex Img2 生成失败：没有生成目标文件 ${outputPath}`,
+              `诊断目录：${tempDir}`,
+              `stderr：${stderrPath}`,
+              `stdout：${stdoutPath}`,
+              lastMessage || result.stdout.slice(-2000),
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          );
+        }
+        const outputVerifyMs = Date.now() - verifyStartedAt;
+        const timings: CodexImagegenTimings = {
+          queueMs,
+          referenceMs,
+          promptBuildMs,
+          codexExecMs,
+          outputVerifyMs,
+          totalMs: Date.now() - requestedAt,
+          referenceCount: references.length,
+          attemptCount,
+          cwd: codexCwd,
+        };
+        return {
+          outputPath: resolvedOutputPath,
+          lastMessage,
+          tempDir,
+          timings,
+          ...(result.threadId ? { threadId: result.threadId } : {}),
+        };
+      } finally {
+        isolatedCodexHome.cleanup();
       }
-      if (!result) throw new Error("Codex Img2 生成失败：没有执行结果");
-      const codexExecMs = Date.now() - execStartedAt;
-      const verifyStartedAt = Date.now();
-      const lastMessage = fs.existsSync(lastMessagePath) ? fs.readFileSync(lastMessagePath, "utf8").trim() : "";
-      if (result.code !== 0) {
-        throw new Error(
-          [
-            `Codex Img2 生成失败：codex exec 退出码 ${result.code}`,
-            `诊断目录：${tempDir}`,
-            `stderr：${stderrPath}`,
-            `stdout：${stdoutPath}`,
-            (result.stderr || result.stdout).slice(-2000),
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        );
-      }
-      if (!fs.existsSync(outputPath) || !fs.statSync(outputPath).isFile()) {
-        throw new Error(
-          [
-            `Codex Img2 生成失败：没有生成目标文件 ${outputPath}`,
-            `诊断目录：${tempDir}`,
-            `stderr：${stderrPath}`,
-            `stdout：${stdoutPath}`,
-            lastMessage || result.stdout.slice(-2000),
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        );
-      }
-      const outputVerifyMs = Date.now() - verifyStartedAt;
-      const timings: CodexImagegenTimings = {
-        queueMs,
-        referenceMs,
-        promptBuildMs,
-        codexExecMs,
-        outputVerifyMs,
-        totalMs: Date.now() - requestedAt,
-        referenceCount: references.length,
-        attemptCount,
-        cwd: codexCwd,
-      };
-      return { outputPath, lastMessage, tempDir, timings, ...(result.threadId ? { threadId: result.threadId } : {}) };
     });
   } finally {
     if (runKey) {

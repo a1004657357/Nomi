@@ -13,7 +13,7 @@
 //
 // 用法：node ./scripts/check-file-sizes.mjs
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,8 +25,6 @@ const SCAN_DIRS = ["src", "electron"];
 // 现存巨壳的基线行数（棘轮上限）。清空此表 = 巨壳债还清。
 // 改小某个数 = 你成功瘦身后锁定的新上限。新增条目应经人工评审。
 const ALLOWLIST = {
-  "electron/runtime.ts": 602, // 命名响应变换钩子接入时顺手压实注释（2026-07-04）→ 抽 projectAssetStore 锁到 602（2026-07-08 PR#36；与 main 的 629 合并取更紧值）
-  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 739, // 抽 NodeConnectionHandles + NodeTimelineDragHandles（2026-06-27）→ 抽 useNodePanoramaHandlers（2026-06-28 PR#26）→ 抽 ShotPreviewOverlays 锁到 741（2026-07-03）→ 抽 useNodeVideoHoverPreview 锁到 739（2026-07-08）
   // PR#21 白板节点引入（2026-06-25）：WhiteboardDrawingTool（1032）与 WhiteboardLeaferCanvas（3406）两巨壳
   // 已按 Rule 9 全部拆完、双双出白名单。LeaferCanvas → whiteboardCanvasTypes/Export/NodeOps/Geometry 四纯模块
   // + whiteboardSceneRender（渲染树）+ useWhiteboardDrawing/BoxSelection/SelectionActions/SceneSync 四交互 hook，
@@ -39,16 +37,21 @@ const ALLOWLIST = {
   // viewControllers/sceneView/sceneContent/cameraPreview 七个子模块后壳缩到 771 < 800，已出白名单。
 };
 
-function listFiles() {
-  // 用 git 列出受跟踪文件，天然排除 node_modules / dist / 未跟踪草稿。
-  const out = execSync("git ls-files " + SCAN_DIRS.join(" "), { cwd: ROOT, encoding: "utf8" });
+export function listSourceFiles({ root = ROOT, scanDirs = SCAN_DIRS } = {}) {
+  // 同时扫描受跟踪和新建源码；--exclude-standard 继续排除 node_modules、dist 和 .gitignore 内容。
+  const out = execFileSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "--", ...scanDirs],
+    { cwd: root, encoding: "utf8" },
+  );
   return out
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean)
     .filter((f) => /\.tsx?$/.test(f))
     .filter((f) => !/\.test\.tsx?$/.test(f))
-    .filter((f) => !/\.d\.ts$/.test(f));
+    .filter((f) => !/\.d\.ts$/.test(f))
+    .sort();
 }
 
 function countLines(absPath) {
@@ -57,28 +60,42 @@ function countLines(absPath) {
   return (content.match(/\n/g) || []).length;
 }
 
-const errors = [];
-const warnings = [];
-
-for (const rel of listFiles()) {
-  const lines = countLines(path.join(ROOT, rel));
-  const baseline = ALLOWLIST[rel];
-  if (baseline !== undefined) {
-    if (lines > baseline) {
-      errors.push(`✗ ${rel}: ${lines} 行 > 基线 ${baseline}（已知巨壳又长大了 —— 拆分或精简，别再喂）`);
-    } else if (lines < baseline) {
-      warnings.push(`↓ ${rel}: ${lines} 行 < 基线 ${baseline}（已瘦身，请把 check-file-sizes.mjs 里的基线下调到 ${lines} 以锁定）`);
+export function auditFileSizes({ root = ROOT, scanDirs = SCAN_DIRS } = {}) {
+  const errors = [];
+  const warnings = [];
+  const files = listSourceFiles({ root, scanDirs });
+  for (const rel of files) {
+    const lines = countLines(path.join(root, rel));
+    const baseline = ALLOWLIST[rel];
+    if (baseline !== undefined) {
+      if (lines > baseline) {
+        errors.push(`✗ ${rel}: ${lines} 行 > 基线 ${baseline}（已知巨壳又长大了 —— 拆分或精简，别再喂）`);
+      } else if (lines < baseline) {
+        warnings.push(`↓ ${rel}: ${lines} 行 < 基线 ${baseline}（已瘦身，请把 check-file-sizes.mjs 里的基线下调到 ${lines} 以锁定）`);
+      }
+    } else if (lines > MAX_LINES) {
+      errors.push(`✗ ${rel}: ${lines} 行 > 上限 ${MAX_LINES}（新巨型文件 —— 请拆分；确需保留须人工评审后入 ALLOWLIST）`);
     }
-  } else if (lines > MAX_LINES) {
-    errors.push(`✗ ${rel}: ${lines} 行 > 上限 ${MAX_LINES}（新巨型文件 —— 请拆分；确需保留须人工评审后入 ALLOWLIST）`);
   }
+  return { errors, warnings, files };
 }
 
-for (const w of warnings) console.warn(w);
+function runCli() {
+  const { errors, warnings, files } = auditFileSizes();
+  for (const warning of warnings) console.warn(warning);
 
-if (errors.length > 0) {
-  console.error("\n文件体积门岗未通过（规则 12）：\n" + errors.join("\n") + "\n");
-  process.exit(1);
+  if (errors.length > 0) {
+    console.error("\n文件体积门岗未通过（规则 12）：\n" + errors.join("\n") + "\n");
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(
+    `✓ 文件体积门岗通过：扫描 ${files.length} 个源码文件，上限 ${MAX_LINES} 行，`
+      + `巨壳白名单 ${Object.keys(ALLOWLIST).length} 个（棘轮只减不增）。`,
+  );
 }
 
-console.log(`✓ 文件体积门岗通过：上限 ${MAX_LINES} 行，巨壳白名单 ${Object.keys(ALLOWLIST).length} 个（棘轮只减不增）。`);
+if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+  runCli();
+}

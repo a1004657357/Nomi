@@ -80,9 +80,26 @@ function readJsonConfig(target: string): Record<string, unknown> {
   }
 }
 
-function jsonInstalled(target: string): boolean {
+function serverEntryMatches(actual: unknown, expected: McpServerEntry): boolean {
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) return false
+  const record = actual as Record<string, unknown>
+  if (record.command !== expected.command) return false
+  if (!Array.isArray(record.args) || record.args.length !== expected.args.length) return false
+  if (!record.args.every((arg, index) => arg === expected.args[index])) return false
+  if (expected.env) {
+    if (!record.env || typeof record.env !== 'object' || Array.isArray(record.env)) return false
+    const env = record.env as Record<string, unknown>
+    if (!Object.entries(expected.env).every(([key, value]) => env[key] === value)) return false
+  }
+  return true
+}
+
+function jsonConnectionState(target: string, expected: McpServerEntry): 'missing' | 'current' | 'stale' {
   const servers = readJsonConfig(target).mcpServers
-  return Boolean(servers && typeof servers === 'object' && (servers as Record<string, unknown>)[SERVER_NAME])
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return 'missing'
+  const entry = (servers as Record<string, unknown>)[SERVER_NAME]
+  if (!entry) return 'missing'
+  return serverEntryMatches(entry, expected) ? 'current' : 'stale'
 }
 
 function jsonSnippet(server: McpServerEntry): string {
@@ -139,8 +156,61 @@ function readText(target: string): string {
   }
 }
 
-function codexInstalled(target: string): boolean {
-  return readText(target).split('\n').some((line) => CODEX_HEADER_RE.test(line))
+function codexEntryBlock(text: string): string | null {
+  const lines: string[] = []
+  let collecting = false
+  for (const line of text.split('\n')) {
+    if (CODEX_HEADER_RE.test(line)) {
+      collecting = true
+      lines.push(line)
+      continue
+    }
+    if (collecting && /^\s*\[/.test(line)) break
+    if (collecting) lines.push(line)
+  }
+  return collecting ? lines.join('\n') : null
+}
+
+function codexHasEntry(target: string): boolean {
+  return codexEntryBlock(readText(target)) !== null
+}
+
+function tomlAssignment(block: string, key: string): string | null {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return block.match(new RegExp(`^\\s*${escaped}\\s*=\\s*(.+?)\\s*$`, 'm'))?.[1] ?? null
+}
+
+function parseTomlJsonValue(value: string | null): unknown {
+  if (!value) return undefined
+  try {
+    return JSON.parse(value)
+  } catch {
+    return undefined
+  }
+}
+
+function codexBlockMatches(block: string, expected: McpServerEntry): boolean {
+  const command = parseTomlJsonValue(tomlAssignment(block, 'command'))
+  const args = parseTomlJsonValue(tomlAssignment(block, 'args'))
+  if (command !== expected.command || !Array.isArray(args)) return false
+  if (args.length !== expected.args.length || !args.every((arg, index) => arg === expected.args[index])) {
+    return false
+  }
+  const env = tomlAssignment(block, 'env')
+  if (expected.env) {
+    if (!env) return false
+    for (const [key, value] of Object.entries(expected.env)) {
+      const pair = `${key} = "${tomlEscape(value)}"`
+      if (!env.includes(pair)) return false
+    }
+  }
+  return true
+}
+
+function codexConnectionState(target: string, expected: McpServerEntry): 'missing' | 'current' | 'stale' {
+  const block = codexEntryBlock(readText(target))
+  if (!block) return 'missing'
+  return codexBlockMatches(block, expected) ? 'current' : 'stale'
 }
 
 /** 删掉现有 [mcp_servers.nomi] 块（从该表头到下一个 [表头] 或 EOF），其它内容原样保留。 */
@@ -168,14 +238,21 @@ function codexInstall(target: string): string | null {
 
 function codexUninstall(target: string): void {
   if (!fs.existsSync(target)) return
-  if (!codexInstalled(target)) return
+  if (!codexHasEntry(target)) return
   const next = removeCodexBlock(readText(target)).replace(/\s*$/, '') + '\n'
   atomicWrite(target, next)
 }
 
 // ── 对外 API ───────────────────────────────────────────────────────────
 
-export type McpClientInfo = { installed: boolean; configPath: string; snippet: string }
+export type McpClientInfo = {
+  /** The configured entry points at this exact Nomi build. */
+  installed: boolean
+  /** A Nomi entry exists but points at another executable or source checkout. */
+  stale: boolean
+  configPath: string
+  snippet: string
+}
 
 export type McpInfo = {
   tokenReady: boolean
@@ -188,9 +265,16 @@ export type McpInfo = {
 function clientInfo(client: McpClientKey, server: McpServerEntry): McpClientInfo {
   const spec = CLIENTS[client]
   const target = spec.configPath()
-  const installed = spec.format === 'toml' ? codexInstalled(target) : jsonInstalled(target)
+  const state = spec.format === 'toml'
+    ? codexConnectionState(target, server)
+    : jsonConnectionState(target, server)
   const snippet = spec.format === 'toml' ? codexBlock(server) : jsonSnippet(server)
-  return { installed, configPath: target, snippet }
+  return {
+    installed: state === 'current',
+    stale: state === 'stale',
+    configPath: target,
+    snippet,
+  }
 }
 
 /** 读接入状态 + 各客户端配置片段。rpcPort 由调用方（appIntegration）传入。 */

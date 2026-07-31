@@ -23,16 +23,31 @@ type JimengReferenceFile = {
   fileType: string;
 };
 
+type JimengReferenceKind = "image" | "video" | "audio";
+
+type JimengReferenceSource = {
+  kind: JimengReferenceKind;
+  url: string;
+};
+
+export type JimengWebMediaType = "image" | "video";
+
 type JimengTaskPayload = {
+  idempotencyKey?: string;
+  mediaType: JimengWebMediaType;
+  /** Exact number requested from the JiMeng image page. Video nodes are always one task/result. */
+  expectedResultCount: number;
   description: string;
   prompt: string;
   tags: string[];
   priority: number;
   modelConfig: {
-    model: string;
-    referenceMode: string;
+    model?: string;
+    referenceMode?: string;
     aspectRatio: string;
-    duration: string;
+    resolution?: string;
+    count?: number;
+    duration?: string;
   };
   referenceFiles: JimengReferenceFile[];
   realSubmit: boolean;
@@ -142,28 +157,69 @@ function stringArray(value: unknown): string[] {
   return value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean);
 }
 
-function collectReferenceUrls(params: JsonRecord): string[] {
-  const refs: string[] = [];
-  const add = (value: unknown) => {
+function collectReferenceSources(params: JsonRecord): JimengReferenceSource[] {
+  const refs: JimengReferenceSource[] = [];
+  const seen = new Set<string>();
+  const add = (kind: JimengReferenceKind, value: unknown) => {
     const url = typeof value === "string" ? value.trim() : "";
-    if (url && !refs.includes(url)) refs.push(url);
+    const key = `${kind}:${url}`;
+    if (url && !seen.has(key)) {
+      refs.push({ kind, url });
+      seen.add(key);
+    }
   };
-  const addArray = (value: unknown) => stringArray(value).forEach(add);
-  add(params.i2v_image);
-  add(params.frames_first);
-  add(params.frames_last);
-  add(params.first_frame_url);
-  add(params.last_frame_url);
-  addArray(params.mm_images);
-  addArray(params.reference_image_urls);
-  addArray(params.reference_images);
+  const addArray = (kind: JimengReferenceKind, value: unknown) => stringArray(value).forEach((url) => add(kind, url));
+  add("image", params.i2v_image);
+  add("image", params.frames_first);
+  add("image", params.frames_last);
+  add("image", params.first_frame_url);
+  add("image", params.last_frame_url);
+  addArray("image", params.mm_images);
+  addArray("image", params.reference_image_urls);
+  addArray("image", params.reference_images);
+  addArray("image", params.input_images);
+  add("image", params.image);
+  addArray("image", params.image);
+  add("image", params.input_image);
+  addArray("video", params.mm_videos);
+  addArray("video", params.reference_video_urls);
+  addArray("video", params.reference_videos);
+  addArray("audio", params.mm_audios);
+  addArray("audio", params.reference_audio_urls);
+  addArray("audio", params.reference_audios);
   return refs;
 }
 
-function modelLabelFromParams(params: JsonRecord): string {
-  const value = firstString(params.model).toLowerCase();
-  if (value.includes("fast")) return "Seedance 2.0 Fast";
-  return "Seedance 2.0";
+function mediaTypeFromRequest(request: TaskRequest): JimengWebMediaType {
+  return request.kind === "text_to_image" || request.kind === "image_edit" ? "image" : "video";
+}
+
+const JIMENG_MODEL_LABELS: Readonly<Record<string, string>> = {
+  "jimeng-image-5.0-pro": "图片 5.0 Pro",
+  "jimeng-image-5.0-lite": "图片 5.0 Lite",
+  "jimeng-image-4.7": "图片 4.7",
+  "jimeng-image-4.6": "图片 4.6",
+  "jimeng-image-4.5": "图片 4.5",
+  "jimeng-image-4.1": "图片 4.1",
+  "jimeng-image-4.0": "图片 4.0",
+  "jimeng-image-3.1": "图片 3.1",
+  "jimeng-image-3.0": "图片 3.0",
+  "jimeng-seedance-2.0-mini": "即梦 Seedance 2.0 mini",
+  "jimeng-seedance-2.0-fast-vip": "即梦 Seedance 2.0 Fast VIP",
+  "jimeng-seedance-2.0-vip": "即梦 Seedance 2.0 VIP",
+  "jimeng-seedance-2.0-fast": "即梦 Seedance 2.0 Fast",
+  "jimeng-seedance-2.0": "即梦 Seedance 2.0",
+  "seedance2.0mini": "即梦 Seedance 2.0 mini",
+  "seedance2.0fast_vip": "即梦 Seedance 2.0 Fast VIP",
+  "seedance2.0_vip": "即梦 Seedance 2.0 VIP",
+  "seedance2.0fast": "即梦 Seedance 2.0 Fast",
+  "seedance2.0": "即梦 Seedance 2.0",
+};
+
+function modelLabelFromParams(params: JsonRecord): string | undefined {
+  const value = firstString(params.model).trim();
+  if (!value) return undefined;
+  return JIMENG_MODEL_LABELS[value.toLowerCase()] || value;
 }
 
 function referenceModeFromParams(params: JsonRecord): string {
@@ -180,74 +236,179 @@ function durationFromParams(params: JsonRecord): string {
   return /\ds$/i.test(text) ? text : `${text}s`;
 }
 
-function contentTypeToName(index: number, contentType: string, source: string): string {
-  const ext = extensionFromMime(contentType, extensionFromSource(source, contentType));
-  return `图片${index + 1}.${ext}`;
+function generationCountFromParams(params: JsonRecord): number | undefined {
+  const raw = params.generation_count ?? params.count;
+  const value = typeof raw === "number" ? raw : Number.parseInt(firstString(raw), 10);
+  if (!Number.isFinite(value)) return undefined;
+  return Math.max(1, Math.min(4, Math.floor(value)));
 }
 
-function extensionFromSource(source: string, contentType: string): string {
-  if (source.startsWith("nomi-local://")) return extensionFromMime(contentType, "png");
-  if (source.startsWith("data:")) return extensionFromMime(contentType, "png");
+function fullReferencePrompt(
+  prompt: string,
+  params: JsonRecord,
+  referenceFiles: JimengReferenceFile[],
+  roles: string[],
+): string {
+  const command = firstString(params.dreamina_cmd);
+  const fullReference = command === "multimodal2video" || Array.isArray(params.mm_images);
+  if (!fullReference) return prompt;
+  const imageCount = referenceFiles.filter((file) => file.fileType.startsWith("image/")).length;
+  if (imageCount === 0) return prompt;
+
+  // Nomi 内联引用会先投影成 characterN；即梦网页桥真正识别的是 ProseMirror
+  // mention，因此在桥边界转换成 (@图片N)，由扩展映射到上传后的图片 UUID。
+  const withMentions = prompt.replace(/\bcharacter(\d+)\b/gi, (full, rawIndex: string) => {
+    const index = Number.parseInt(rawIndex, 10);
+    return index >= 1 && index <= imageCount ? `(@图片${index})` : full;
+  });
+  const lines = Array.from({ length: imageCount }, (_, index) => {
+    const role = roles[index]?.trim() || `参考图片 ${index + 1}，只按提示词指定的用途参考`;
+    return `- (@图片${index + 1})：${role}`;
+  });
+  return [
+    withMentions.trim(),
+    "",
+    "参考素材分工（必须按以下用途使用，不得把分镜图默认锁成首帧）：",
+    ...lines,
+  ].join("\n");
+}
+
+const JIMENG_WEB_REFERENCE_MIME_TYPES: Record<Exclude<JimengReferenceKind, "audio">, ReadonlySet<string>> = {
+  image: new Set(["image/jpeg", "image/png", "image/webp", "image/bmp"]),
+  video: new Set(["video/mp4", "video/quicktime"]),
+};
+
+function normalizedContentType(contentType: string): string {
+  return contentType.toLowerCase().split(";")[0]?.trim() || "application/octet-stream";
+}
+
+function assertSupportedReferenceType(kind: Exclude<JimengReferenceKind, "audio">, contentType: string): string {
+  const normalized = normalizedContentType(contentType);
+  if (!JIMENG_WEB_REFERENCE_MIME_TYPES[kind].has(normalized)) {
+    const label = kind === "video" ? "视频" : "图片";
+    throw new Error(`即梦 Web ${label}参考格式不支持：${normalized}`);
+  }
+  return normalized;
+}
+
+function contentTypeToName(
+  kind: Exclude<JimengReferenceKind, "audio">,
+  index: number,
+  contentType: string,
+  source: string,
+): string {
+  const fallback = kind === "video" ? "mp4" : "png";
+  const ext = extensionFromMime(contentType, extensionFromSource(source, contentType, fallback));
+  return `${kind === "video" ? "视频" : "图片"}${index + 1}.${ext}`;
+}
+
+function extensionFromSource(source: string, contentType: string, fallback: string): string {
+  if (source.startsWith("nomi-local://")) return extensionFromMime(contentType, fallback);
+  if (source.startsWith("data:")) return extensionFromMime(contentType, fallback);
   try {
     const ext = path.extname(new URL(source).pathname).replace(/^\./, "");
-    return ext || extensionFromMime(contentType, "png");
+    return ext || extensionFromMime(contentType, fallback);
   } catch {
-    return extensionFromMime(contentType, "png");
+    return extensionFromMime(contentType, fallback);
   }
 }
 
-async function referenceFileFromUrl(url: string, index: number): Promise<JimengReferenceFile> {
+async function referenceFileFromSource(
+  source: JimengReferenceSource & { kind: Exclude<JimengReferenceKind, "audio"> },
+  index: number,
+): Promise<JimengReferenceFile> {
+  const { kind, url } = source;
   if (url.startsWith("data:")) {
     const parsed = parseDataUrl(url);
+    const contentType = assertSupportedReferenceType(kind, parsed.contentType);
     return {
-      fileName: contentTypeToName(index, parsed.contentType, url),
+      fileName: contentTypeToName(kind, index, contentType, url),
       base64: url,
-      fileType: parsed.contentType,
+      fileType: contentType,
     };
   }
 
   if (url.startsWith("nomi-local://")) {
     const local = readNomiLocalAsset(url);
-    if (!local) throw new Error("即梦 Web 参考图读取失败：本地素材不存在或项目不匹配");
+    if (!local) throw new Error("即梦 Web 参考素材读取失败：本地素材不存在或项目不匹配");
+    const contentType = assertSupportedReferenceType(kind, local.contentType);
     return {
-      fileName: local.fileName || contentTypeToName(index, local.contentType, url),
-      base64: `data:${local.contentType};base64,${local.bytes.toString("base64")}`,
-      fileType: local.contentType,
+      fileName: local.fileName || contentTypeToName(kind, index, contentType, url),
+      base64: `data:${contentType};base64,${local.bytes.toString("base64")}`,
+      fileType: contentType,
     };
   }
 
   if (/^https?:\/\//i.test(url)) {
+    const video = kind === "video";
     const fetched = await hardenedFetch(url, {
       timeoutMs: 30_000,
-      maxBytes: 25 * 1024 * 1024,
-      allowContentTypes: ["image/"],
+      maxBytes: (video ? 100 : 25) * 1024 * 1024,
+      allowContentTypes: [...JIMENG_WEB_REFERENCE_MIME_TYPES[kind]],
     });
+    const fallbackType = video ? "video/mp4" : "image/png";
+    const contentType = assertSupportedReferenceType(kind, fetched.contentType || fallbackType);
     return {
-      fileName: contentTypeToName(index, fetched.contentType || "image/png", fetched.finalUrl || url),
-      base64: `data:${fetched.contentType || "image/png"};base64,${fetched.bytes.toString("base64")}`,
-      fileType: fetched.contentType || "image/png",
+      fileName: contentTypeToName(kind, index, contentType, fetched.finalUrl || url),
+      base64: `data:${contentType};base64,${fetched.bytes.toString("base64")}`,
+      fileType: contentType,
     };
   }
 
-  throw new Error(`即梦 Web 不支持的参考图地址：${url.slice(0, 80)}`);
+  throw new Error(`即梦 Web 不支持的参考素材地址：${url.slice(0, 80)}`);
+}
+
+async function materializeReferenceFiles(sources: JimengReferenceSource[]): Promise<JimengReferenceFile[]> {
+  if (sources.some((source) => source.kind === "audio")) {
+    throw new Error(
+      "即梦 Web 扩展暂不支持音频参考；请改选「即梦 Seedance 2.0（会员）」即梦 CLI 模型并使用全能参考模式。",
+    );
+  }
+  const indices = { image: 0, video: 0 };
+  return Promise.all(sources.map((source) => {
+    const kind = source.kind as Exclude<JimengReferenceKind, "audio">;
+    const index = indices[kind];
+    indices[kind] += 1;
+    return referenceFileFromSource({ kind, url: source.url }, index);
+  }));
 }
 
 export async function buildJimengWebTaskPayload(request: TaskRequest): Promise<JimengTaskPayload> {
   const params = taskTemplateParams(request);
-  const referenceUrls = collectReferenceUrls(params);
-  const referenceFiles = await Promise.all(referenceUrls.map(referenceFileFromUrl));
+  const referenceFiles = await materializeReferenceFiles(collectReferenceSources(params));
   const extras = requestExtras(request);
+  const referenceImageRoles = stringArray(extras.referenceImageRoles);
+  const mediaType = mediaTypeFromRequest(request);
+  const modelConfig: JimengTaskPayload["modelConfig"] = {
+    aspectRatio: firstString(
+      params.ratio,
+      params.aspectRatio,
+      params.size,
+      mediaType === "image" ? "1:1" : "16:9",
+    ),
+  };
+  const model = modelLabelFromParams(params);
+  const resolution = firstString(params.resolution_type, params.video_resolution, params.resolution).toUpperCase();
+  const count = generationCountFromParams(params);
+  const safeCount = mediaType === "image" ? count || 1 : 1;
+  if (model) modelConfig.model = model;
+  if (resolution) modelConfig.resolution = resolution;
+  modelConfig.count = safeCount;
+  if (mediaType === "video") {
+    modelConfig.referenceMode = referenceModeFromParams(params);
+    modelConfig.duration = durationFromParams(params);
+  }
   return {
+    ...(firstString(extras.idempotencyKey) ? { idempotencyKey: firstString(extras.idempotencyKey) } : {}),
+    mediaType,
+    expectedResultCount: safeCount,
     description: firstString(extras.nodeTitle, extras.title, "Nomi 画布生成"),
-    prompt: request.prompt,
-    tags: ["nomi", "jimeng-web"],
+    prompt: mediaType === "video"
+      ? fullReferencePrompt(request.prompt, params, referenceFiles, referenceImageRoles)
+      : request.prompt,
+    tags: ["nomi", "jimeng-web", mediaType],
     priority: 1,
-    modelConfig: {
-      model: modelLabelFromParams(params),
-      referenceMode: referenceModeFromParams(params),
-      aspectRatio: firstString(params.ratio, params.aspectRatio, params.size, "16:9"),
-      duration: durationFromParams(params),
-    },
+    modelConfig,
     referenceFiles,
     // 这是画布真实生成入口；调试时可在节点 extras 或环境变量里显式关掉提交。
     realSubmit: extras.realSubmit === false || process.env.NOMI_JIMENG_WEB_REAL_SUBMIT === "0" ? false : true,
@@ -293,11 +454,19 @@ export async function submitJimengWebTask(input: {
   vendorBaseUrl?: unknown;
   fetchImpl?: FetchLike;
 }): Promise<JimengWebSubmitResult> {
+  const fetchImpl = input.fetchImpl || fetch;
   const serverUrl = resolveJimengWebBaseUrl(
     firstString(requestExtras(input.request).jimengWebApiBaseUrl, input.vendorBaseUrl),
   );
+  const bridgeStatus = await probeJimengWebServer(serverUrl, fetchImpl);
+  if (!bridgeStatus.ok) {
+    throw new Error(`即梦 Web 网页桥不可用：${bridgeStatus.error || "本地服务未就绪"}`);
+  }
+  if ((bridgeStatus.sseClients || 0) < 1) {
+    throw new Error("即梦 Web 扩展运行器未连接：请先在「模型接入」启动即梦 Web 运行器");
+  }
   const payload = await buildJimengWebTaskPayload(input.request);
-  const raw = await fetchJson(input.fetchImpl || fetch, serverUrl, "/api/tasks/push", {
+  const raw = await fetchJson(fetchImpl, serverUrl, "/api/tasks/push", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -317,6 +486,8 @@ function normalizeTaskStatus(value: unknown): TaskResult["status"] {
     status === "uploading" ||
     status === "upscaling" ||
     status === "uploading_hd" ||
+    status === "submitting" ||
+    status === "awaiting_result" ||
     status === "acked" ||
     status === "occupied"
   )
@@ -360,16 +531,31 @@ function filesFromList(raw: unknown): JimengFileSummary[] {
   });
 }
 
-function chooseBestFile(files: JimengFileSummary[]): JimengFileSummary | null {
-  if (files.length === 0) return null;
+function chooseBestFile(
+  files: JimengFileSummary[],
+  mediaType?: JimengWebMediaType,
+): JimengFileSummary | null {
+  const compatible = compatibleFiles(files, mediaType);
+  if (compatible.length === 0) return null;
   return (
-    [...files].sort((a, b) => {
+    [...compatible].sort((a, b) => {
       const score = (f: JimengFileSummary) => (/hd|high|upscale/i.test(f.quality || "") ? 2 : 1);
       const diff = score(b) - score(a);
       if (diff) return diff;
       return Date.parse(b.uploadedAt || "") - Date.parse(a.uploadedAt || "");
     })[0] || null
   );
+}
+
+function compatibleFiles(
+  files: JimengFileSummary[],
+  mediaType?: JimengWebMediaType,
+): JimengFileSummary[] {
+  if (!mediaType) return files;
+  return files.filter((file) => {
+    const mimeType = normalizedContentType(file.mimeType || "");
+    return mediaType === "image" ? mimeType.startsWith("image/") : mimeType.startsWith("video/");
+  });
 }
 
 async function fetchFilesForTask(
@@ -389,13 +575,14 @@ async function fetchFilesForCompletedTask(input: {
   taskCode: string;
   attempts?: number;
   delayMs?: number;
+  mediaType?: JimengWebMediaType;
 }): Promise<JimengFileSummary[]> {
   const attempts = Math.max(1, Math.floor(input.attempts ?? DEFAULT_FILE_READY_RETRY_ATTEMPTS));
   const delayMs = Math.max(0, Math.floor(input.delayMs ?? DEFAULT_FILE_READY_RETRY_DELAY_MS));
   let lastFiles: JimengFileSummary[] = [];
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     lastFiles = await fetchFilesForTask(input.fetchImpl, input.serverUrl, input.taskCode);
-    if (chooseBestFile(lastFiles) || attempt === attempts - 1) return lastFiles;
+    if (chooseBestFile(lastFiles, input.mediaType) || attempt === attempts - 1) return lastFiles;
     if (delayMs > 0) await sleep(delayMs);
   }
   return lastFiles;
@@ -411,11 +598,11 @@ async function downloadLocalServerFile(
     headers: jimengWebAuthHeaders(),
     signal: withTimeout(120_000),
   });
-  if (!response.ok) throw new Error(`即梦 Web 视频下载失败：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`即梦 Web 生成结果下载失败：HTTP ${response.status}`);
   const arrayBuffer = await response.arrayBuffer();
   return {
     bytes: Buffer.from(arrayBuffer),
-    contentType: response.headers.get("content-type") || "video/mp4",
+    contentType: response.headers.get("content-type") || "application/octet-stream",
   };
 }
 
@@ -431,6 +618,7 @@ export async function queryJimengWebTask(input: {
   fileReadyRetryDelayMs?: number;
 }): Promise<TaskResult> {
   const fetchImpl = input.fetchImpl || fetch;
+  const mediaType = mediaTypeFromRequest(input.request);
   const serverUrl = resolveJimengWebBaseUrl(
     firstString(input.serverUrl, requestExtras(input.request).jimengWebApiBaseUrl),
   );
@@ -445,50 +633,67 @@ export async function queryJimengWebTask(input: {
           taskCode: input.taskCode,
           attempts: input.fileReadyRetryAttempts,
           delayMs: input.fileReadyRetryDelayMs,
+          mediaType,
         })
       : await fetchFilesForTask(fetchImpl, serverUrl, input.taskCode);
-  const bestFile = chooseBestFile(files);
+  const bestFile = chooseBestFile(files, mediaType);
 
   if (status === "failed") {
+    const bridgeError = task?.error || "扩展没有返回具体失败原因";
     return {
       id: input.taskCode,
       kind: input.request.kind,
       status: "failed",
       assets: [],
-      raw: { jimengWeb: { task, files, serverUrl, error: task?.error || null } },
+      raw: {
+        error: `即梦 Web 网页桥任务失败：${bridgeError}`,
+        errorStage: "web-bridge",
+        jimengWeb: { task, files, serverUrl, error: task?.error || null },
+      },
     };
   }
 
   if (status === "succeeded" && bestFile) {
-    const downloaded = await downloadLocalServerFile(fetchImpl, serverUrl, bestFile.fileId);
-    const contentType = bestFile.mimeType || downloaded.contentType || "video/mp4";
-    const ext = extensionFromMime(contentType, "mp4");
-    const fileName = bestFile.filename || `jimeng-web-${input.taskCode}.${ext}`;
-    const saved = input.writeAsset(input.projectId || "", downloaded.bytes, fileName, contentType, {
-      kind: "generated",
-      generator: "jimeng-web",
-      ownerNodeId: input.nodeId || null,
-      jimengTaskCode: input.taskCode,
-      sourceServerUrl: serverUrl,
-      sourceFileId: bestFile.fileId,
-      sourceQuality: bestFile.quality || null,
-    }) as { id?: string; name?: string; data?: { url?: string } };
-    const url = trim(saved.data?.url);
-    if (!url) throw new Error("即梦 Web 视频已生成，但写入 Nomi 项目资产失败");
+    const resultFiles = mediaType === "image" ? compatibleFiles(files, mediaType) : [bestFile];
+    const savedAssets = await Promise.all(resultFiles.map(async (file) => {
+      const downloaded = await downloadLocalServerFile(fetchImpl, serverUrl, file.fileId);
+      const fallbackContentType = mediaType === "image" ? "image/png" : "video/mp4";
+      const contentType = file.mimeType || downloaded.contentType || fallbackContentType;
+      const ext = extensionFromMime(contentType, mediaType === "image" ? "png" : "mp4");
+      const fileName = file.filename || `jimeng-web-${input.taskCode}-${file.fileId}.${ext}`;
+      const saved = input.writeAsset(input.projectId || "", downloaded.bytes, fileName, contentType, {
+        kind: "generated",
+        generator: "jimeng-web",
+        ownerNodeId: input.nodeId || null,
+        jimengTaskCode: input.taskCode,
+        sourceServerUrl: serverUrl,
+        sourceFileId: file.fileId,
+        sourceQuality: file.quality || null,
+      }) as { id?: string; name?: string; data?: { url?: string } };
+      const url = trim(saved.data?.url);
+      if (!url) throw new Error("即梦 Web 结果已生成，但写入 Nomi 项目资产失败");
+      return {
+        type: mediaType,
+        url,
+        thumbnailUrl: null,
+        assetId: saved.id || null,
+        assetName: saved.name || null,
+      };
+    }));
     return {
       id: input.taskCode,
       kind: input.request.kind,
       status: "succeeded",
-      assets: [
-        {
-          type: "video",
-          url,
-          thumbnailUrl: null,
-          assetId: saved.id || null,
-          assetName: saved.name || null,
+      assets: savedAssets,
+      raw: {
+        jimengWeb: {
+          task,
+          files,
+          pickedFileId: bestFile.fileId,
+          pickedFileIds: resultFiles.map((file) => file.fileId),
+          serverUrl,
         },
-      ],
-      raw: { jimengWeb: { task, files, pickedFileId: bestFile.fileId, serverUrl } },
+      },
     };
   }
 

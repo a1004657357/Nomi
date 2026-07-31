@@ -2,7 +2,7 @@
 // 单一真相：缓存命中与无状态重建共用同一段 query。与 runtime 是调用时（函数体内）的循环依赖——
 // ESM/CJS 都按 live binding 在调用时取值，加载期不触碰，安全。
 import { trim, type JsonRecord } from "../jsonUtils";
-import type { Mapping, Model, ProfileKind } from "../catalog/types";
+import type { Model, ProfileKind } from "../catalog/types";
 import { JIMENG_WEB_VENDOR_SEED } from "../catalog/jimengWeb";
 import { queryJimengWebTask } from "../jimengWeb/seedanceBridge";
 import { classifyTaskCacheMiss, wasTaskAdmitted } from "./taskAdmission";
@@ -81,7 +81,12 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
       writeAsset,
     });
     if (result.status === "succeeded" || result.status === "failed") {
-      traceVendorCompleted(cached.projectId, { runId: taskId, nodeId: cached.nodeId, status: result.status, assetCount: result.assets.length });
+      traceVendorCompleted(cached.projectId, {
+        runId: taskId,
+        nodeId: cached.nodeId,
+        status: result.status,
+        assetCount: result.assets.length,
+      });
       rememberTaskResult(cached.projectId || "", cached.fingerprint, result);
       taskCache.delete(taskId);
     } else {
@@ -118,10 +123,16 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
       nodeId: cached.nodeId,
       vendor,
       model,
+      operationTimings: executed.timings,
     });
     if (normalized.result.status === "succeeded" || normalized.result.status === "failed") {
       // 终态才入日志(轮询 tick 不记);cache.delete 保证单次触发
-      traceVendorCompleted(cached.projectId, { runId: taskId, nodeId: cached.nodeId, status: normalized.result.status, assetCount: normalized.result.assets.length });
+      traceVendorCompleted(cached.projectId, {
+        runId: taskId,
+        nodeId: cached.nodeId,
+        status: normalized.result.status,
+        assetCount: normalized.result.assets.length,
+      });
       rememberTaskResult(cached.projectId || "", cached.fingerprint, normalized.result);
       taskCache.delete(taskId);
     } else {
@@ -139,12 +150,19 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
 
   const assetUrl = extractAssetUrl(cached.raw);
   if (assetUrl) {
-    const type: "image" | "video" | "model3d" = cached.wantedKind === "video" ? "video" : cached.wantedKind === "model3d" ? "model3d" : "image";
+    const type: "image" | "video" | "model3d" =
+      cached.wantedKind === "video" ? "video" : cached.wantedKind === "model3d" ? "model3d" : "image";
     const asset = cached.projectId
       ? await localizeTaskAsset(cached.projectId, assetUrl, type, cached.nodeId)
       : { type, url: assetUrl, thumbnailUrl: type === "image" ? assetUrl : null };
     taskCache.delete(taskId);
-    const lateResult: TaskResult = { id: taskId, kind: cached.request.kind, status: "succeeded", assets: [asset], raw: cached.raw };
+    const lateResult: TaskResult = {
+      id: taskId,
+      kind: cached.request.kind,
+      status: "succeeded",
+      assets: [asset],
+      raw: cached.raw,
+    };
     rememberTaskResult(cached.projectId || "", cached.fingerprint, lateResult);
     return { vendor: cached.vendor, result: lateResult };
   }
@@ -175,6 +193,12 @@ export async function fetchTaskResult(payload: unknown): Promise<{ vendor: strin
   const miss = classifyTaskCacheMiss(taskId, wasTaskAdmitted(taskId));
   return {
     vendor: trim(raw.vendor),
-    result: { id: taskId, kind: (raw.taskKind as ProfileKind) || "text_to_image", status: miss.status, assets: [], raw: miss.raw },
+    result: {
+      id: taskId,
+      kind: (raw.taskKind as ProfileKind) || "text_to_image",
+      status: miss.status,
+      assets: [],
+      raw: miss.raw,
+    },
   };
 }

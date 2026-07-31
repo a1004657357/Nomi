@@ -8,26 +8,52 @@ export const BROWSER_TEXT_PROMPT_CONSOLE_PREFIX = "__NOMI_BROWSER_TEXT_PROMPT__"
 
 export async function installBrowserImageDragBridge(record: BrowserViewRecord): Promise<void> {
   const contents = record.view.webContents;
-  if (contents.isDestroyed()) return;
+  if (contents.isDestroyed() || contents.isLoading()) return;
   const script = `
 (() => {
   const dragMime = ${JSON.stringify(BROWSER_IMAGE_DRAG_MIME)};
+  const viewId = ${JSON.stringify(record.viewId)};
   if (window.__nomiBrowserImageDragBridgeInstalled) return true;
   window.__nomiBrowserImageDragBridgeInstalled = true;
-  const pickImageElement = (target) => {
+  const pickMediaElement = (target) => {
     if (!(target instanceof Element)) return null;
-    if (target instanceof HTMLImageElement) return target;
-    return target.closest ? target.closest('img') : null;
+    if (target instanceof HTMLImageElement || target instanceof HTMLVideoElement) return target;
+    return target.closest ? target.closest('img,video') : null;
   };
-  const readImageUrl = (image) => {
-    if (!image) return '';
-    return image.currentSrc || image.src || image.getAttribute('data-src') || image.getAttribute('data-original') || '';
+  const readMediaUrl = (media) => {
+    if (!media) return '';
+    if (media instanceof HTMLVideoElement) {
+      return media.currentSrc || media.src || media.querySelector('source[src]')?.getAttribute('src') || '';
+    }
+    return media.currentSrc || media.src || media.getAttribute('data-src') || media.getAttribute('data-original') || '';
   };
+  const mediaType = (media) => media instanceof HTMLVideoElement ? 'video' : 'image';
+  const mediaTitle = (media) => (
+    media.getAttribute('alt') ||
+    media.getAttribute('title') ||
+    media.getAttribute('aria-label') ||
+    document.title ||
+    ''
+  ).trim();
+  const fileNameFromUrl = (url, type) => {
+    try {
+      const name = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || '');
+      if (name) return name;
+    } catch {}
+    return 'browser-' + type + '-' + Date.now() + (type === 'video' ? '.mp4' : '.png');
+  };
+  document.addEventListener('pointerover', (event) => {
+    const media = pickMediaElement(event.target);
+    if (!media) return;
+    const rect = media.getBoundingClientRect();
+    if (rect.width < 64 || rect.height < 64 || !readMediaUrl(media)) return;
+    media.draggable = true;
+  }, true);
   document.addEventListener('dragstart', (event) => {
     const transfer = event.dataTransfer;
     if (!transfer) return;
-    const image = pickImageElement(event.target);
-    const rawUrl = readImageUrl(image);
+    const media = pickMediaElement(event.target);
+    const rawUrl = readMediaUrl(media);
     if (!rawUrl) return;
     let url = '';
     try {
@@ -35,10 +61,14 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
     } catch {
       return;
     }
-    const title = (image.getAttribute('alt') || image.getAttribute('title') || document.title || '').trim();
+    const type = mediaType(media);
+    const title = mediaTitle(media);
     const payload = {
+      viewId,
       url,
       title,
+      fileName: fileNameFromUrl(url, type),
+      mediaType: type,
       pageUrl: window.location.href,
       pageTitle: document.title || '',
     };
@@ -63,7 +93,7 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
 
 export async function installBrowserPromptHoverBridge(record: BrowserViewRecord): Promise<void> {
   const contents = record.view.webContents;
-  if (contents.isDestroyed()) return;
+  if (contents.isDestroyed() || contents.isLoading()) return;
   const script = `
 (() => {
   const consolePrefix = ${JSON.stringify(BROWSER_IMAGE_PROMPT_CONSOLE_PREFIX)};
@@ -479,7 +509,7 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
 
 export async function installBrowserResourceCaptureBridge(record: BrowserViewRecord, enabled: boolean): Promise<void> {
   const contents = record.view.webContents;
-  if (contents.isDestroyed()) return;
+  if (contents.isDestroyed() || contents.isLoading()) return;
   const script = `
 (() => {
   const enabled = ${enabled ? "true" : "false"};

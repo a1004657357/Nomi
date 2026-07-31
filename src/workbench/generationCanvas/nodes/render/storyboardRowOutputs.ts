@@ -217,6 +217,9 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot): Record<
     const supportsImageInput = (mode: (typeof resolved.modes)[number]): boolean => (
       mode.slots.some((slot) => slot.kind === 'first_frame' || slot.kind === 'image_ref')
     )
+    const supportsFullReference = (mode: (typeof resolved.modes)[number]): boolean => (
+      mode.slots.some((slot) => slot.kind === 'image_ref' && slot.max > 1)
+    )
     const requestedModeId = String(shot.modeId || '').trim()
     const requestedMode = resolved.modes.find((mode) => mode.id === requestedModeId && supportsImageInput(mode))
     const currentMode = !modelChanged && currentArchetype.id === resolved.id
@@ -224,6 +227,7 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot): Record<
       : undefined
     const referenceMode = requestedMode
       || currentMode
+      || resolved.modes.find(supportsFullReference)
       || resolved.modes.find(supportsImageInput)
       || resolved.modes.find((mode) => mode.id === requestedModeId)
       || resolved.modes.find((mode) => mode.id === resolved.defaultModeId)
@@ -242,6 +246,68 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot): Record<
   return next
 }
 
+function selectedVideoMode(target: GenerationCanvasNode) {
+  const meta = metaRecord(target)
+  const resolved = resolveArchetypeForModel({
+    modelKey: String(meta.modelKey || ''),
+    modelAlias: String(meta.modelAlias || ''),
+    meta,
+  })
+  if (!resolved) return null
+  const archetypeMeta = meta.archetype && typeof meta.archetype === 'object'
+    ? meta.archetype as Record<string, unknown>
+    : {}
+  const modeId = String(archetypeMeta.modeId || '')
+  return resolved.modes.find((mode) => mode.id === modeId)
+    || resolved.modes.find((mode) => mode.id === resolved.defaultModeId)
+    || resolved.modes[0]
+    || null
+}
+
+function syncStoryboardReferenceEdges(imageNodeId: string, videoNodeId: string): void {
+  const store = useGenerationCanvasStore.getState()
+  const video = store.nodes.find((node) => node.id === videoNodeId)
+  if (!video) return
+  const mode = selectedVideoMode(video)
+  const fullReference = Boolean(mode?.slots.some((slot) => slot.kind === 'image_ref'))
+  const imageEdge = store.edges.find((edge) => (
+    edge.source === imageNodeId
+    && edge.target === videoNodeId
+    && (edge.mode === 'first_frame' || edge.mode === 'composition_ref')
+  ))
+  const targetMode = fullReference ? 'composition_ref' : 'first_frame'
+  if (imageEdge && imageEdge.mode !== targetMode) {
+    store.updateEdgeMode(imageEdge.id, targetMode)
+  } else if (!imageEdge) {
+    store.connectNodes(imageNodeId, videoNodeId, targetMode)
+  }
+
+  if (fullReference) {
+    // 全能参考要直接收到角色、场景和道具，不能只通过分镜图的祖先关系碰运气。
+    // 保留原边语义，确保上传顺序和后续 @图片N 的用途说明都可追溯。
+    const imageInputs = useGenerationCanvasStore.getState().edges.filter((edge) => edge.target === imageNodeId)
+    for (const edge of imageInputs) {
+      if (
+        edge.mode === 'character_ref'
+        || edge.mode === 'style_ref'
+        || edge.mode === 'composition_ref'
+        || edge.mode === 'reference'
+      ) {
+        useGenerationCanvasStore.getState().connectNodes(edge.source, videoNodeId, edge.mode)
+      }
+    }
+  }
+  const current = useGenerationCanvasStore.getState().nodes.find((node) => node.id === videoNodeId)
+  if (current) {
+    useGenerationCanvasStore.getState().updateNode(videoNodeId, {
+      meta: {
+        ...metaRecord(current),
+        storyboardVideoReferenceStrategy: fullReference ? 'full_reference' : 'first_frame',
+      },
+    })
+  }
+}
+
 function syncVideoOutput(target: GenerationCanvasNode, shot: PlanShot): GenerationCanvasNode {
   useGenerationCanvasStore.getState().updateNode(target.id, {
     title: `镜头 ${shot.index} · 视频`,
@@ -249,14 +315,6 @@ function syncVideoOutput(target: GenerationCanvasNode, shot: PlanShot): Generati
     meta: videoMetaForShot(target, shot),
   })
   return useGenerationCanvasStore.getState().nodes.find((node) => node.id === target.id) || target
-}
-
-function ensureFirstFrameEdge(imageNodeId: string, videoNodeId: string): void {
-  const state = useGenerationCanvasStore.getState()
-  const exists = state.edges.some((edge) => (
-    edge.source === imageNodeId && edge.target === videoNodeId && edge.mode === 'first_frame'
-  ))
-  if (!exists) state.connectNodes(imageNodeId, videoNodeId, 'first_frame')
 }
 
 export function ensureStoryboardRowImageOutput(input: EnsureRowOutputInput): StoryboardRowImageOutput {
@@ -347,8 +405,9 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
       shot,
     )
     const node = markRowOutput(input.tableNode, shot, synced, 'video', expanded)
-    ensureFirstFrameEdge(image.nodeId, node.id)
-    return { nodeId: node.id, node, imageNodeId: image.nodeId, created: false, imageCreated: image.created }
+    syncStoryboardReferenceEdges(image.nodeId, node.id)
+    const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id) || node
+    return { nodeId: current.id, node: current, imageNodeId: image.nodeId, created: false, imageCreated: image.created }
   }
 
   const converted = convertImageShotToVideo(image.node)
@@ -356,11 +415,12 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
   const video = useGenerationCanvasStore.getState().nodes.find((node) => node.id === converted.nodeId)
   if (!video) throw new Error('视频节点创建失败')
   const synced = syncVideoOutput(video, shot)
-  ensureFirstFrameEdge(image.nodeId, synced.id)
   const node = markRowOutput(input.tableNode, shot, synced, 'video', Boolean(input.expanded))
+  syncStoryboardReferenceEdges(image.nodeId, node.id)
+  const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id) || node
   return {
-    nodeId: node.id,
-    node,
+    nodeId: current.id,
+    node: current,
     imageNodeId: image.nodeId,
     created: !converted.existed,
     imageCreated: image.created,

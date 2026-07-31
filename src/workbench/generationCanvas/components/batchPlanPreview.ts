@@ -4,7 +4,7 @@ import { create } from 'zustand'
 import { toast } from '../../../ui/toast'
 import { runGenerationNodesByPlan, spendCostKindForNodes } from '../runner/generationRunController'
 import { mintSpendGrant } from '../../api/taskApi'
-import { confirmAndMintGrant, describeGenerationCost } from '../spend/spendConfirm'
+import { describeGenerationCost, useSpendConfirmStore } from '../spend/spendConfirm'
 import { buildDependencyWaves, type DependencyWavePlan } from '../runner/dependencyWaves'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { verifyShotsAndReport } from '../agent/shotVerifyStore'
@@ -18,19 +18,72 @@ type BatchPlanPreviewState = {
   confirm: () => Promise<void>
 }
 
+export type ForkRegenerationNodesResult = {
+  plan: DependencyWavePlan
+  sourceToVariant: ReadonlyMap<string, string>
+}
+
+function hasUsableResult(nodeId: string): boolean {
+  const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId)
+  return Boolean(node?.result?.url || node?.result?.thumbnailUrl || node?.result?.providerUrl)
+}
+
+export function forkRegenerationNodesInPlan(
+  plan: DependencyWavePlan,
+  requestedSourceNodeIds: readonly string[],
+): ForkRegenerationNodesResult | null {
+  const requestedIds = [...plan.waves.flat(), ...plan.blocked.map((item) => item.nodeId)]
+  const requestedSet = new Set(requestedSourceNodeIds)
+  const orderedSources = requestedIds.filter((nodeId) => requestedSet.has(nodeId) && hasUsableResult(nodeId))
+  if (orderedSources.length === 0) return { plan, sourceToVariant: new Map() }
+
+  const state = useGenerationCanvasStore.getState()
+  if (orderedSources.some((nodeId) => !state.nodes.some((node) => node.id === nodeId))) return null
+
+  const sourceToVariant = new Map<string, string>()
+  for (const sourceNodeId of orderedSources) {
+    const duplicated = useGenerationCanvasStore.getState().duplicateNodeForRegeneration(sourceNodeId)
+    if (!duplicated) return null
+    sourceToVariant.set(sourceNodeId, duplicated.id)
+  }
+
+  // Each duplicate initially inherits the original incoming edges. If both
+  // ends are versioned, point V2 at V2 so the new chain does not consume V1.
+  for (const edge of plan.edgesUsed) {
+    const variantSource = sourceToVariant.get(edge.source)
+    const variantTarget = sourceToVariant.get(edge.target)
+    if (!variantSource || !variantTarget) continue
+    const current = useGenerationCanvasStore.getState()
+    const copiedEdges = current.edges.filter((candidate) => (
+      candidate.source === edge.source
+      && candidate.target === variantTarget
+      && (candidate.mode ?? 'reference') === (edge.mode ?? 'reference')
+    ))
+    for (const copiedEdge of copiedEdges) current.disconnectEdge(copiedEdge.id)
+    useGenerationCanvasStore.getState().connectNodes(variantSource, variantTarget, edge.mode)
+  }
+
+  const nextIds = requestedIds.map((nodeId) => sourceToVariant.get(nodeId) ?? nodeId)
+  const nextState = useGenerationCanvasStore.getState()
+  return {
+    plan: buildDependencyWaves(Array.from(new Set(nextIds)), {
+      nodes: nextState.nodes,
+      edges: nextState.edges,
+    }),
+    sourceToVariant,
+  }
+}
+
 export function forkRegenerationPlan(
   plan: DependencyWavePlan,
   sourceNodeId: string,
 ): { plan: DependencyWavePlan; variantNodeId: string } | null {
-  const duplicated = useGenerationCanvasStore.getState().duplicateNodeForRegeneration(sourceNodeId)
-  if (!duplicated) return null
-  const requestedIds = [...plan.waves.flat(), ...plan.blocked.map((item) => item.nodeId)]
-  const nextIds = requestedIds.map((nodeId) => (nodeId === sourceNodeId ? duplicated.id : nodeId))
-  if (!nextIds.includes(duplicated.id)) nextIds.push(duplicated.id)
-  const state = useGenerationCanvasStore.getState()
+  const forked = forkRegenerationNodesInPlan(plan, [sourceNodeId])
+  const variantNodeId = forked?.sourceToVariant.get(sourceNodeId)
+  if (!forked || !variantNodeId) return null
   return {
-    plan: buildDependencyWaves(Array.from(new Set(nextIds)), { nodes: state.nodes, edges: state.edges }),
-    variantNodeId: duplicated.id,
+    plan: forked.plan,
+    variantNodeId,
   }
 }
 
@@ -92,21 +145,52 @@ export function describeBlockedNotice(plan: DependencyWavePlan): string | null {
  * 用户直发批量（框选「生成 N 个」）：轻确认 + 铸令牌 + 跑。取消则零调用零扣费。
  * 抽到此处而非内联进 GenerationCanvas（巨壳 800 行顶格，不喂）。
  */
-export async function confirmAndRunPlan(plan: DependencyWavePlan): Promise<void> {
+export async function confirmAndRunPlan(
+  plan: DependencyWavePlan,
+  options: {
+    regenerationNodeIds?: readonly string[]
+    onForked?: (sourceToVariant: ReadonlyMap<string, string>) => void
+  } = {},
+): Promise<void> {
   const ids = plan.waves.flat()
   if (ids.length === 0) {
     await runPlanWithToasts(plan) // 无可跑 → 复用人话 toast 报「为什么不能跑」
     return
   }
-  const grantId = await confirmAndMintGrant({
-    nodeIds: ids,
+  const regenerationNodeIds = options.regenerationNodeIds
+    ? ids.filter((nodeId) => options.regenerationNodeIds?.includes(nodeId) && hasUsableResult(nodeId))
+    : ids.filter(hasUsableResult)
+  const ok = await useSpendConfirmStore.getState().requestConfirm({
     title: '开始生成',
     message: describeGenerationCost(ids.length, spendCostKindForNodes(ids)),
     confirmLabel: '生成',
     light: true,
+    ...(regenerationNodeIds.length
+      ? { details: [{ label: '版本保护', value: `${regenerationNodeIds.length} 个已有结果会新建版本，旧结果保留` }] }
+      : {}),
   })
-  if (!grantId) return
-  await runPlanWithToasts(plan, grantId)
+  if (!ok) return
+
+  const forked = forkRegenerationNodesInPlan(plan, regenerationNodeIds)
+  if (!forked) {
+    toast('无法创建批量生成的新版本节点', 'error')
+    return
+  }
+  try {
+    options.onForked?.(forked.sourceToVariant)
+  } catch (error) {
+    toast(error instanceof Error && error.message ? error.message : '无法应用新版本参数', 'error')
+    return
+  }
+
+  let grantId: string
+  try {
+    grantId = await mintSpendGrant(forked.plan.waves.flat())
+  } catch (error) {
+    toast(error instanceof Error && error.message ? error.message : '付费授权失败', 'error')
+    return
+  }
+  await runPlanWithToasts(forked.plan, grantId)
 }
 
 /** 按计划真实生成 + 进度人话 toast。「全部生成」与 S6b agent 受理路径共用(单一执行口)。

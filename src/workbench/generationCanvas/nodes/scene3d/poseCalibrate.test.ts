@@ -56,13 +56,14 @@ const TASKS: SolveTask[] = [
   {
     presetId: 'single-knee',
     axes: [
-      { bone: 'mixamorigRightLeg', axis: 0, values: range(96, 132, 4) },
-      { bone: 'mixamorigRightFoot', axis: 0, values: range(-12, 8, 4) },
-      { bone: 'mixamorigRightUpLeg', axis: 0, values: [0, 6, 12] },
-      { bone: 'mixamorigLeftUpLeg', axis: 0, values: range(64, 84, 4) },
-      { bone: 'mixamorigLeftLeg', axis: 0, values: range(88, 108, 4) },
+      { bone: 'mixamorigHips', axis: 0, values: [-12, -8, -4, 0, 4] },
+      { bone: 'mixamorigRightLeg', axis: 0, values: [72, 78, 84, 90, 96] },
+      { bone: 'mixamorigRightFoot', axis: 0, values: [0] },
+      { bone: 'mixamorigRightUpLeg', axis: 0, values: [-12, -8, -4, 0, 4, 8] },
+      { bone: 'mixamorigLeftUpLeg', axis: 0, values: [76, 84, 92, 100] },
+      { bone: 'mixamorigLeftLeg', axis: 0, values: [80, 88, 96, 104] },
     ],
-    wantGrounded: ['right-shank', 'right-toe', 'left-foot', 'left-toe'],
+    wantGrounded: ['right-shank', 'left-foot', 'left-toe'],
     comMarginMin: 0.01,
     intersectWeight: 0.3,
   },
@@ -138,7 +139,7 @@ describe.skipIf(process.env.POSE_SOLVE !== '1')('姿势参数网格求解（POSE
   let rig: PoseMetricsRig
 
   beforeAll(async () => {
-    const url = new URL('../../../../assets/x-bot.glb', import.meta.url)
+    const url = new URL('../../../../assets/nomi-mannequin.glb', import.meta.url)
     const buffer = readFileSync(url)
     const gltf = await new Promise<GLTF>((resolve, reject) => {
       new GLTFLoader().parse(
@@ -158,7 +159,8 @@ describe.skipIf(process.env.POSE_SOLVE !== '1')('姿势参数网格求解（POSE
   }, 30000)
 
   it('逐任务扫描并打印最优参数', () => {
-    for (const task of TASKS) {
+    const taskFilter = process.env.POSE_SOLVE_TASK
+    for (const task of TASKS.filter((item) => !taskFilter || item.presetId === taskFilter)) {
       const preset = MANNEQUIN_POSE_PRESETS.find((p) => p.id === task.presetId)
       if (!preset?.pose) continue
       const combos: number[][] = task.axes.reduce<number[][]>(

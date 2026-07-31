@@ -24,6 +24,8 @@ import { useBrowserDialogActions } from './useBrowserDialogActions'
 
 import {
   BROWSER_VIEW_POPOVER_GAP,
+  BROWSER_SIDE_MAX_WIDTH_RATIO,
+  BROWSER_SIDE_MIN_WIDTH,
   USE_NATIVE_BROWSER_ASSET_OVERLAY,
   browserBoundsFromRect,
   browserViewRectAroundPopover,
@@ -36,10 +38,14 @@ import {
   measureBrowserDialogTopOffset,
   overlayCaptureRequestFromBrowserEvent,
   readBookmarks,
+  readBrowserSideWidth,
+  readBrowserWorkspaceMode,
   sameBoundsRect,
   sameBrowserViewBounds,
   toViewportRect,
   viewportRectFromEdges,
+  writeBrowserSideWidth,
+  writeBrowserWorkspaceMode,
   type BrowserBookmark,
   type BrowserBookmarkContextMenu,
   type BrowserCaptureFlyout,
@@ -62,8 +68,11 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
   const [browserAssetPopoverDockMode, setBrowserAssetPopoverDockMode] =
     React.useState<DesktopBrowserAssetOverlayDockMode>(null)
   const [dockPanelWidth, setDockPanelWidth] = React.useState(500)
+  const [workspaceMode, setWorkspaceMode] = React.useState(readBrowserWorkspaceMode)
+  const [browserSideWidth, setBrowserSideWidth] = React.useState(readBrowserSideWidth)
   const [webContentBounds, setWebContentBounds] = React.useState<FloatingWindowBoundsRect | null>(null)
   const dockResizingRef = React.useRef<{ startX: number; startWidth: number } | null>(null)
+  const browserSideResizingRef = React.useRef<{ startX: number; startWidth: number } | null>(null)
   const [browserResourceCaptureEnabled, setBrowserResourceCaptureEnabled] = React.useState(false)
   const [browserCaptureRequest, setBrowserCaptureRequest] = React.useState<BrowserAssetCaptureRequest | null>(null)
   const [browserPromptCaptureRequest, setBrowserPromptCaptureRequest] =
@@ -120,6 +129,14 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
     if (!opened) return
     setPromptCategories(readBrowserPromptCategories(getDesktopActiveProjectId()))
   }, [opened])
+
+  React.useEffect(() => {
+    writeBrowserWorkspaceMode(workspaceMode)
+  }, [workspaceMode])
+
+  React.useEffect(() => {
+    writeBrowserSideWidth(browserSideWidth)
+  }, [browserSideWidth])
 
   React.useEffect(() => {
     if (!promptModePicker) return undefined
@@ -602,6 +619,32 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
     dockResizingRef.current = null
   }, [])
 
+  const handleBrowserSideResizeStart = React.useCallback((event: React.PointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || workspaceMode !== 'side') return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    browserSideResizingRef.current = { startX: event.clientX, startWidth: browserSideWidth }
+  }, [browserSideWidth, workspaceMode])
+
+  const handleBrowserSideResizeMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>): void => {
+    if (!browserSideResizingRef.current) return
+    const maxWidth = Math.max(BROWSER_SIDE_MIN_WIDTH, Math.floor(window.innerWidth * BROWSER_SIDE_MAX_WIDTH_RATIO))
+    const dx = browserSideResizingRef.current.startX - event.clientX
+    setBrowserSideWidth(Math.max(
+      BROWSER_SIDE_MIN_WIDTH,
+      Math.min(maxWidth, browserSideResizingRef.current.startWidth + dx),
+    ))
+  }, [])
+
+  const handleBrowserSideResizeEnd = React.useCallback((): void => {
+    browserSideResizingRef.current = null
+  }, [])
+
+  const toggleWorkspaceMode = React.useCallback((): void => {
+    setWorkspaceMode((current) => current === 'side' ? 'full' : 'side')
+  }, [])
+
   React.useEffect(() => {
     tabs.forEach((tab) => {
       if (tab.id === activeTabId) return
@@ -682,6 +725,7 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
       browserCaptureRequest={browserCaptureRequest}
       browserPromptCaptureRequest={browserPromptCaptureRequest}
       browserResourceCaptureEnabled={browserResourceCaptureEnabled}
+      browserSideWidth={browserSideWidth}
       browserViewHostRef={browserViewHostRef}
       captureFlyouts={captureFlyouts}
       closeAllTabs={closeAllTabs}
@@ -697,6 +741,9 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
       handleAddressFocus={handleAddressFocus}
       handleBrowserAssetPopoverOpenChange={handleBrowserAssetPopoverOpenChange}
       handleBrowserAssetPopoverRectChange={handleBrowserAssetPopoverRectChange}
+      handleBrowserSideResizeEnd={handleBrowserSideResizeEnd}
+      handleBrowserSideResizeMove={handleBrowserSideResizeMove}
+      handleBrowserSideResizeStart={handleBrowserSideResizeStart}
       handleDockResizeEnd={handleDockResizeEnd}
       handleDockResizeMove={handleDockResizeMove}
       handleDockResizeStart={handleDockResizeStart}
@@ -726,10 +773,12 @@ export function NomiBrowserDialog({ opened, onClose }: NomiBrowserDialogProps): 
       tabContextMenu={tabContextMenu}
       tabContextMenuRef={tabContextMenuRef}
       tabs={tabs}
+      toggleWorkspaceMode={toggleWorkspaceMode}
       toggleBrowserResourceCapture={toggleBrowserResourceCapture}
       useNativeBrowserAssetOverlay={useNativeBrowserAssetOverlay}
       webContainerRef={webContainerRef}
       webContentBounds={webContentBounds}
+      workspaceMode={workspaceMode}
     />
   )
 }

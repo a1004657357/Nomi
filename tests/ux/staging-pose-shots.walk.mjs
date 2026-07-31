@@ -40,6 +40,21 @@ const PORT = 5191
 const HOST = '127.0.0.1'
 const BASE = `http://${HOST}:${PORT}`
 
+function localChromiumLaunchOptions() {
+  const configured = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+  const defaultExecutable = chromium.executablePath()
+  const candidates = [
+    configured,
+    defaultExecutable,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ].filter(Boolean)
+  const executablePath = candidates.find((candidate) => fs.existsSync(candidate))
+  if (!executablePath) {
+    throw new Error(`未找到可用 Chromium：Playwright 期望 ${defaultExecutable}`)
+  }
+  return executablePath === defaultExecutable ? {} : { executablePath }
+}
+
 function waitForServer(url, timeoutMs = 60000) {
   const start = Date.now()
   return new Promise((resolve, reject) => {
@@ -70,7 +85,7 @@ try {
   await waitForServer(`${BASE}/staging-shots.html`)
   console.log(`  ✓ dev server up @ ${BASE}`)
 
-  browser = await chromium.launch()
+  browser = await chromium.launch(localChromiumLaunchOptions())
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 })
   const page = await ctx.newPage()
   const errors = []

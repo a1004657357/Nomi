@@ -1,6 +1,7 @@
 import React from 'react'
 import { IconBrandBlender, IconMaximize } from '@tabler/icons-react'
 import { getDesktopBridge } from '../../../desktop/bridge'
+import type { VibingDirectorCatalogAsset } from '../../../desktop/vibingDirectorBridgeTypes'
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
 import { toast } from '../../../ui/toast'
 import { cn } from '../../../utils/cn'
@@ -18,6 +19,7 @@ import {
   type VibingDirectorPlanResult,
   type VibingDirectorState,
 } from './vibingDirector/vibingDirectorState'
+import { formatVibingDirectorNodeStats } from './vibingDirector/vibingDirectorPresentation'
 
 const VibingDirectorFullscreen = lazyWithChunkBoundary(
   'VIBING Director',
@@ -31,12 +33,52 @@ type VibingDirectorEditorProps = {
   readOnly?: boolean
 }
 
-/** Explicitly reads its own Blender-return document only; old scene3d metadata is ignored. */
-export function readVibingDirectorState(node: GenerationCanvasNode): VibingDirectorState {
-  return normalizeVibingDirectorState(node.meta?.vibingDirectorState)
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
 }
 
-function previewResult(nodeId: string, output: BlenderDirectorOutput): GenerationNodeResult {
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/** Explicitly reads its own Blender-return document only; old scene3d metadata is ignored. */
+export function readVibingDirectorState(node: GenerationCanvasNode): VibingDirectorState {
+  const current = normalizeVibingDirectorState(node.meta?.vibingDirectorState)
+  const selectedResult = node.result
+  const raw = record(selectedResult?.raw)
+  if (raw.source !== 'vibing-director') return current
+
+  const snapshot = record(raw.directorState)
+  if (snapshot.version === 2 && snapshot.backend === 'blender') {
+    return normalizeVibingDirectorState(snapshot)
+  }
+
+  const previewUrl = stringValue(selectedResult?.url)
+  const blendUrl = stringValue(raw.blendUrl)
+  const modelUrl = stringValue(raw.modelUrl)
+  const blendRelativePath = stringValue(raw.blendRelativePath)
+  if (!previewUrl || !blendUrl || !modelUrl || !blendRelativePath) return current
+  return {
+    ...current,
+    output: {
+      jobId: stringValue(raw.jobId) || selectedResult?.id || `director-history-${selectedResult?.createdAt || Date.now()}`,
+      previewUrl,
+      blendUrl,
+      modelUrl,
+      blendRelativePath,
+      ...(stringValue(raw.blenderVersion) ? { blenderVersion: stringValue(raw.blenderVersion) } : {}),
+      createdAt: selectedResult?.createdAt || Date.now(),
+    },
+  }
+}
+
+export function createVibingDirectorPreviewResult(
+  nodeId: string,
+  state: VibingDirectorState & { output: BlenderDirectorOutput },
+): GenerationNodeResult {
+  const output = state.output
   return {
     id: `vibing-director-${nodeId}-${output.jobId}`,
     type: 'image',
@@ -45,10 +87,12 @@ function previewResult(nodeId: string, output: BlenderDirectorOutput): Generatio
     taskKind: 'model3d',
     raw: {
       source: 'vibing-director',
+      jobId: output.jobId,
       blendUrl: output.blendUrl,
       modelUrl: output.modelUrl,
       blendRelativePath: output.blendRelativePath,
       blenderVersion: output.blenderVersion,
+      directorState: state,
     },
     createdAt: output.createdAt,
   }
@@ -77,7 +121,10 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
       },
     }
     if (nextState.output && nextState.output.jobId !== previous.output?.jobId) {
-      const result = previewResult(node.id, nextState.output)
+      const result = createVibingDirectorPreviewResult(
+        node.id,
+        nextState as VibingDirectorState & { output: BlenderDirectorOutput },
+      )
       patch.result = result
       patch.history = [result, ...(current?.history || []).filter((item) => item.id !== result.id)].slice(0, 20)
       patch.status = 'success'
@@ -130,6 +177,9 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
         ...(result.model.assetId ? { modelAssetId: result.model.assetId } : {}),
         blendRelativePath: result.blendRelativePath,
         ...(result.blenderVersion ? { blenderVersion: result.blenderVersion } : {}),
+        ...(result.previewCamera ? { previewCamera: result.previewCamera } : {}),
+        ...(result.spatialReport ? { spatialReport: result.spatialReport } : {}),
+        ...(result.objectTransforms ? { objectTransforms: result.objectTransforms } : {}),
         createdAt: Date.now(),
       }
       const applied = applyVibingDirectorPlan(directorState, executablePlan, output)
@@ -164,6 +214,25 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     if (!projectId) throw new Error('请先打开一个本地项目')
     const result = await desktop.vibingDirector.importAsset({ projectId, directorNodeId: node.id, source, ...(license ? { license } : {}) })
     return result.canceled ? null : result.asset ?? null
+  }, [node.id])
+
+  const listCatalogAssets = React.useCallback(async (query: string): Promise<VibingDirectorCatalogAsset[]> => {
+    const director = getDesktopBridge()?.vibingDirector
+    if (!director) throw new Error('当前运行环境不支持 Director 开源资产目录')
+    return director.listCatalogAssets({ query, limit: 60 })
+  }, [])
+
+  const importCatalogAsset = React.useCallback(async (catalogAssetId: string): Promise<BlenderDirectorAsset> => {
+    const director = getDesktopBridge()?.vibingDirector
+    if (!director) throw new Error('当前运行环境不支持 Director 开源资产目录')
+    const projectId = getActiveWorkbenchProjectId()
+    if (!projectId) throw new Error('请先打开一个本地项目')
+    const result = await director.importCatalogAsset({
+      projectId,
+      directorNodeId: node.id,
+      catalogAssetId,
+    })
+    return result.asset
   }, [node.id])
 
   const openBlender = React.useCallback((directorState: VibingDirectorState) => {
@@ -219,7 +288,7 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
         <div className="flex shrink-0 items-center gap-2 border-t border-[var(--workbench-border)] px-3 py-2">
           <div className="min-w-0 flex-1">
             <div className="truncate text-caption font-medium">{state.brief || '未设置创作简述'}</div>
-            <div className="mt-0.5 text-micro text-[var(--workbench-muted)]">{state.assets.length} 资产 · {state.objects.length} 对象 · {state.beats.length} 节拍</div>
+            <div className="mt-0.5 text-micro text-[var(--workbench-muted)]">{formatVibingDirectorNodeStats(state)}</div>
           </div>
           <IconBrandBlender size={17} className={cn('shrink-0 text-[var(--workbench-muted)]', blenderJobId && 'text-[var(--nomi-accent)]')} />
         </div>
@@ -239,6 +308,8 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
             onStateChange={persistDirectorState}
             onApplyPlan={applyPlan}
             onImportAsset={importAsset}
+            onListCatalogAssets={listCatalogAssets}
+            onImportCatalogAsset={importCatalogAsset}
             onOpenBlender={openBlender}
             onCancelBlender={cancelBlender}
             onOpenAssetSource={openAssetSource}

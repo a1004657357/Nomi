@@ -22,6 +22,7 @@ import {
   normalizeCaptureSourceRect,
   selectBrowserPromptScreenshotRect,
 } from "../media/browserViewMedia";
+import { startBrowserAssetNativeDrag } from "../media/browserAssetNativeDrag";
 import {
   applyBrowserAssetOverlayMouseEvents,
   applyBrowserAssetOverlayShape,
@@ -96,21 +97,25 @@ function trackBrowserView(win: BrowserWindow, record: BrowserViewRecord): void {
 
 function attachBrowserViewEvents(record: BrowserViewRecord): void {
   const contents = record.view.webContents;
-  const notify = () => {
-    sendBrowserViewState(record);
-    void installBrowserImageDragBridge(record);
-    void installBrowserPromptHoverBridge(record);
-    if (record.resourceCaptureEnabled) void installBrowserResourceCaptureBridge(record, true);
+  let pageBridgeInstallScheduled = false;
+  const schedulePageBridgeInstall = () => {
+    if (pageBridgeInstallScheduled) return;
+    pageBridgeInstallScheduled = true;
+    setImmediate(() => {
+      pageBridgeInstallScheduled = false;
+      if (contents.isDestroyed() || contents.isLoading()) return;
+      void installBrowserImageDragBridge(record);
+      void installBrowserPromptHoverBridge(record);
+      if (record.resourceCaptureEnabled) void installBrowserResourceCaptureBridge(record, true);
+    });
   };
-  contents.on("did-start-loading", notify);
-  contents.on("did-stop-loading", notify);
-  contents.on("did-navigate", notify);
-  contents.on("did-navigate-in-page", notify);
-  contents.on("dom-ready", () => {
-    void installBrowserImageDragBridge(record);
-    void installBrowserPromptHoverBridge(record);
-    if (record.resourceCaptureEnabled) void installBrowserResourceCaptureBridge(record, true);
+  contents.on("did-start-loading", () => sendBrowserViewState(record));
+  contents.on("did-stop-loading", () => {
+    sendBrowserViewState(record);
+    schedulePageBridgeInstall();
   });
+  contents.on("did-navigate", () => sendBrowserViewState(record));
+  contents.on("did-navigate-in-page", () => sendBrowserViewState(record));
   contents.on("before-input-event", (event, input) => {
     if (!record.resourceCaptureEnabled) return;
     if (input.type !== "keyDown") return;
@@ -205,7 +210,7 @@ function attachBrowserViewEvents(record: BrowserViewRecord): void {
     }
     setBrowserAssetOverlayDragInteractive(overlay, true);
   });
-  contents.on("page-title-updated", notify);
+  contents.on("page-title-updated", () => sendBrowserViewState(record));
   contents.on("page-favicon-updated", (_event, favicons) => {
     const win = BrowserWindow.fromId(record.ownerWindowId);
     if (!win || win.isDestroyed()) return;
@@ -241,6 +246,18 @@ function attachBrowserViewEvents(record: BrowserViewRecord): void {
 
 export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void {
   setBrowserAssetOverlayRendererUrlResolver(rendererUrlResolver);
+
+  ipcMain.on("browser:asset-drag:start", (event, payload: unknown) => {
+    const result = startBrowserAssetNativeDrag(
+      event.sender,
+      payload && typeof payload === "object" ? payload : {},
+    );
+    if (!result.ok) event.sender.send("browser:asset-drag:error", { message: result.error });
+  });
+  ipcMain.on("browser:asset-drag:end", (event) => {
+    const overlay = getOverlayForSender(event.sender);
+    if (overlay) setBrowserAssetOverlayDragInteractive(overlay, false);
+  });
 
   ipcMain.handle("browser:view:create", async (event, payload: BrowserViewCreatePayload = {}) => {
     const win = getSenderWindow(event.sender);

@@ -54,6 +54,13 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
     const mode: GenerationCanvasEdge['mode'] = sourceNode && targetNode
       ? selectConnectionEdgeMode(sourceNode, targetNode, pre.edges.filter((e) => e.target === targetNodeId))
       : 'reference'
+    if (targetNode?.kind === 'compare' && pre.edges.filter((edge) => edge.target === targetNodeId).length >= 2) {
+      set((state) => {
+        state.pendingConnectionSourceId = ''
+        state.pendingConnectionSourceSide = 'right'
+      })
+      return { ok: false, reason: 'target_input_full' }
+    }
     // 连边能力校验收口到此(手动连线总闸):错配参考槽等盲连在创建期就拦；
     // 文本→图片/视频的通用 reference 边作为 prompt 上下文放行。
     // T8 此前只补了 agent 入口,手动拖把柄/点输入口的边落库后才在生成期被静默丢弃。

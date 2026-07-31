@@ -1,7 +1,7 @@
 import React from 'react'
 import {
-  IconBooks,
   IconBulb,
+  IconComponents,
   IconFolder,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
@@ -20,7 +20,7 @@ const PromptLibraryContent = lazyWithChunkBoundary('提示词库', () =>
     default: module.PromptLibraryContent,
   })),
 )
-const SkillLibraryContent = lazyWithChunkBoundary('技能库', () =>
+const SkillLibraryContent = lazyWithChunkBoundary('能力组件', () =>
   import('../skillLibrary/SkillLibraryPanel').then((module) => ({
     default: module.SkillLibraryContent,
   })),
@@ -69,7 +69,7 @@ const PANEL_ICON_BUTTON_CLASS = cn(
 function sidebarPanelTitle(tab: ProjectSidebarTab): string {
   if (tab === 'categories') return '分组'
   if (tab === 'prompt-library') return '提示词库'
-  if (tab === 'skill-library') return '技能库'
+  if (tab === 'skill-library') return '能力组件'
   return '素材库'
 }
 
@@ -138,9 +138,9 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
       },
       {
         id: 'skill-library' as const,
-        label: '技能库',
-        railLabel: '技能',
-        icon: IconBooks,
+        label: '能力组件',
+        railLabel: '组件',
+        icon: IconComponents,
       },
     ],
     [],
@@ -277,7 +277,7 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
                   </React.Suspense>
                 ) : tab === 'skill-library' ? (
                   <React.Suspense fallback={null}>
-                    <SkillLibraryContent active compact showHeader={false} />
+                    <SkillLibraryContent active compact showHeader={false} componentFirst />
                   </React.Suspense>
                 ) : (
                   <React.Suspense fallback={null}>

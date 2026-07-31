@@ -15,6 +15,7 @@ type Args = {
   offsetRef: React.MutableRefObject<Offset>
   zoomRef: React.MutableRefObject<number>
   setViewport: React.Dispatch<React.SetStateAction<{ zoom: number; offset: Offset }>>
+  applyCanvasTransform: (zoom: number, offset: Offset) => void
   activeCategoryId: string
   clearSelection: () => void
   cancelConnection: () => void
@@ -26,8 +27,6 @@ type Args = {
 }
 
 export type CanvasPointerInteractions = {
-  isPanning: boolean
-  isSpaceHeld: boolean
   marqueeRect: MarqueeRect | null
   setViewportTransform: (zoom: number, offset: Offset) => void
   animateViewportTo: (zoom: number, offset: Offset, duration?: number) => void
@@ -37,6 +36,8 @@ export type CanvasPointerInteractions = {
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void
   onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void
   onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void
+  onPointerCancel: (event: React.PointerEvent<HTMLDivElement>) => void
+  cancelActiveInteractions: () => void
 }
 
 export function useCanvasPointerInteractions(args: Args): CanvasPointerInteractions {
@@ -46,6 +47,7 @@ export function useCanvasPointerInteractions(args: Args): CanvasPointerInteracti
     offsetRef: args.offsetRef,
     zoomRef: args.zoomRef,
     setViewport: args.setViewport,
+    applyCanvasTransform: args.applyCanvasTransform,
     clearSelection: args.clearSelection,
     cancelConnection: args.cancelConnection,
     pendingConnectionSourceId: args.pendingConnectionSourceId,
@@ -76,10 +78,16 @@ export function useCanvasPointerInteractions(args: Args): CanvasPointerInteracti
     gestures.handlePointerUp(event)
     marquee.handlePointerUp(event)
   }, [gestures, marquee])
+  const onPointerCancel = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    gestures.handlePointerCancel(event)
+    marquee.handlePointerCancel(event)
+  }, [gestures, marquee])
+  const cancelActiveInteractions = React.useCallback(() => {
+    gestures.cancelActivePan()
+    marquee.cancel()
+  }, [gestures, marquee])
 
   return {
-    isPanning: gestures.isPanning,
-    isSpaceHeld: gestures.isSpaceHeld,
     marqueeRect: marquee.marqueeRect,
     setViewportTransform: gestures.setViewportTransform,
     animateViewportTo: gestures.animateViewportTo,
@@ -89,5 +97,7 @@ export function useCanvasPointerInteractions(args: Args): CanvasPointerInteracti
     onPointerDown,
     onPointerMove,
     onPointerUp,
+    onPointerCancel,
+    cancelActiveInteractions,
   }
 }

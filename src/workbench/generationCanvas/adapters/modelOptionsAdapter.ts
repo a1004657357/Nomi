@@ -1,8 +1,4 @@
-import {
-  formatVideoOptionLabel,
-  parseImageModelCatalogConfig,
-  parseVideoModelCatalogConfig,
-} from '../../../config/modelCatalogMeta'
+import { parseImageModelCatalogConfig, parseVideoModelCatalogConfig } from '../../../config/modelCatalogMeta'
 import {
   getModelOptionRequestAlias,
   deriveModelCatalogStatus,
@@ -82,7 +78,9 @@ export function readVideoCatalogConfig(option: ModelOption | null | undefined) {
 }
 
 export function getNodeSelectedModelValue(node: GenerationCanvasNode): string {
-  return String(node.meta?.modelKey || node.meta?.modelAlias || node.meta?.imageModel || node.meta?.videoModel || '').trim()
+  return String(
+    node.meta?.modelKey || node.meta?.modelAlias || node.meta?.imageModel || node.meta?.videoModel || '',
+  ).trim()
 }
 
 export function updateNodeModelMeta(
@@ -102,7 +100,10 @@ export function updateNodeModelMeta(
   return base
 }
 
-export function updateNodeModelParams(node: GenerationCanvasNode, patch: Record<string, unknown>): Record<string, unknown> {
+export function updateNodeModelParams(
+  node: GenerationCanvasNode,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
   return {
     ...(node.meta || {}),
     ...patch,
@@ -110,11 +111,15 @@ export function updateNodeModelParams(node: GenerationCanvasNode, patch: Record<
 }
 
 export function normalizeImageAspect(value: string): string {
-  return String(value || '').trim().replace(/\s+/g, '')
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, '')
 }
 
 export function normalizeImageSize(value: string): string {
-  return String(value || '').trim().replace(/\s+/g, '')
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, '')
 }
 
 export function normalizeVideoDuration(value: string | number): number | null {

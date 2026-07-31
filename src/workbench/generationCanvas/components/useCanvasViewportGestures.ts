@@ -13,6 +13,24 @@ type Offset = { x: number; y: number }
 type Viewport = { zoom: number; offset: Offset }
 
 const PAN_CLICK_THRESHOLD = 4
+const VIEWPORT_COMMIT_INTERVAL_MS = 180
+const VIEWPORT_IDLE_COMMIT_MS = 120
+const VIEWPORT_MOVING_IDLE_MS = 120
+const MAX_UNCOMMITTED_CANVAS_PAN_PX = 320
+
+export function viewportOffsetNeedsCommit(params: {
+  committedOffset: Offset
+  nextOffset: Offset
+  zoom: number
+  elapsedMs: number
+}): boolean {
+  const z = params.zoom || 1
+  const driftCanvasPx = Math.max(
+    Math.abs(params.nextOffset.x - params.committedOffset.x),
+    Math.abs(params.nextOffset.y - params.committedOffset.y),
+  ) / z
+  return driftCanvasPx >= MAX_UNCOMMITTED_CANVAS_PAN_PX || params.elapsedMs >= VIEWPORT_COMMIT_INTERVAL_MS
+}
 
 type UseCanvasViewportGesturesArgs = {
   readOnly: boolean
@@ -20,6 +38,7 @@ type UseCanvasViewportGesturesArgs = {
   offsetRef: React.MutableRefObject<Offset>
   zoomRef: React.MutableRefObject<number>
   setViewport: React.Dispatch<React.SetStateAction<Viewport>>
+  applyCanvasTransform: (zoom: number, offset: Offset) => void
   /** 左键点空白（未拖动）= 清空选择 */
   clearSelection: () => void
   cancelConnection: () => void
@@ -32,8 +51,6 @@ type UseCanvasViewportGesturesArgs = {
 }
 
 export type CanvasViewportGestures = {
-  isPanning: boolean
-  isSpaceHeld: boolean
   scheduleOffset: (offset: Offset) => void
   setViewportTransform: (zoom: number, offset: Offset) => void
   animateViewportTo: (zoom: number, offset: Offset, duration?: number) => void
@@ -42,6 +59,8 @@ export type CanvasViewportGestures = {
   handlePointerDown: (event: React.PointerEvent<HTMLDivElement>) => void
   handlePointerMove: (event: React.PointerEvent<HTMLDivElement>) => void
   handlePointerUp: (event: React.PointerEvent<HTMLDivElement>) => void
+  handlePointerCancel: (event: React.PointerEvent<HTMLDivElement>) => void
+  cancelActivePan: () => void
   /** onContextMenu 先调它：右键拖平移后返回 true 表示该吞掉菜单 */
   shouldSuppressContextMenu: () => boolean
 }
@@ -52,6 +71,7 @@ export function useCanvasViewportGestures({
   offsetRef,
   zoomRef,
   setViewport,
+  applyCanvasTransform,
   clearSelection,
   cancelConnection,
   pendingConnectionSourceId,
@@ -62,13 +82,40 @@ export function useCanvasViewportGestures({
 }: UseCanvasViewportGesturesArgs): CanvasViewportGestures {
   const offsetFrameRef = React.useRef<number | null>(null)
   const pendingOffsetRef = React.useRef<Offset | null>(null)
+  const offsetCommitTimerRef = React.useRef<number | null>(null)
+  const stageMovementTimerRef = React.useRef<number | null>(null)
+  const lastCommittedOffsetRef = React.useRef<Offset>({ ...offsetRef.current })
+  const lastOffsetCommitAtRef = React.useRef(0)
   const animFrameRef = React.useRef<number | null>(null)
   const isPanningRef = React.useRef(false)
-  const panStartRef = React.useRef<{ clientX: number; clientY: number; offsetX: number; offsetY: number; button: number; moved: boolean } | null>(null)
+  const panStartRef = React.useRef<{
+    pointerId: number
+    clientX: number
+    clientY: number
+    offsetX: number
+    offsetY: number
+    button: number
+    moved: boolean
+  } | null>(null)
   const suppressContextMenuRef = React.useRef(false)
   const spaceHeldRef = React.useRef(false)
-  const [isPanning, setIsPanning] = React.useState(false)
-  const [isSpaceHeld, setIsSpaceHeld] = React.useState(false)
+
+  const setStageInteractionState = React.useCallback((name: 'panning' | 'space-pan' | 'viewport-moving', active: boolean) => {
+    const stage = stageRef.current
+    if (!stage) return
+    const attribute = `data-${name}`
+    if (active) stage.setAttribute(attribute, 'true')
+    else stage.removeAttribute(attribute)
+  }, [stageRef])
+
+  const markStageViewportMoving = React.useCallback(() => {
+    setStageInteractionState('viewport-moving', true)
+    if (stageMovementTimerRef.current !== null) window.clearTimeout(stageMovementTimerRef.current)
+    stageMovementTimerRef.current = window.setTimeout(() => {
+      stageMovementTimerRef.current = null
+      setStageInteractionState('viewport-moving', false)
+    }, VIEWPORT_MOVING_IDLE_MS)
+  }, [setStageInteractionState])
 
   const cancelAnim = React.useCallback(() => {
     if (animFrameRef.current !== null) {
@@ -77,8 +124,35 @@ export function useCanvasViewportGestures({
     }
   }, [])
 
+  const clearOffsetCommitTimer = React.useCallback(() => {
+    if (offsetCommitTimerRef.current !== null) {
+      window.clearTimeout(offsetCommitTimerRef.current)
+      offsetCommitTimerRef.current = null
+    }
+  }, [])
+
+  const commitViewportOffset = React.useCallback((nextOffset: Offset) => {
+    lastCommittedOffsetRef.current = nextOffset
+    lastOffsetCommitAtRef.current = performance.now()
+    setViewport((current) => {
+      if (current.offset.x === nextOffset.x && current.offset.y === nextOffset.y) return current
+      return { ...current, offset: nextOffset }
+    })
+  }, [setViewport])
+
+  const scheduleIdleOffsetCommit = React.useCallback(() => {
+    clearOffsetCommitTimer()
+    offsetCommitTimerRef.current = window.setTimeout(() => {
+      offsetCommitTimerRef.current = null
+      const latest = offsetRef.current
+      applyCanvasTransform(zoomRef.current, latest)
+      commitViewportOffset(latest)
+    }, VIEWPORT_IDLE_COMMIT_MS)
+  }, [applyCanvasTransform, clearOffsetCommitTimer, commitViewportOffset, offsetRef, zoomRef])
+
   const scheduleOffset = React.useCallback((nextOffset: Offset) => {
     cancelAnim() // 任何手动平移立即接管，打断进行中的动画
+    markStageViewportMoving()
     offsetRef.current = nextOffset
     pendingOffsetRef.current = nextOffset
     if (offsetFrameRef.current !== null) return
@@ -86,12 +160,24 @@ export function useCanvasViewportGestures({
       offsetFrameRef.current = null
       const pending = pendingOffsetRef.current
       pendingOffsetRef.current = null
-      if (pending) setViewport((current) => ({ ...current, offset: pending }))
+      if (!pending) return
+      applyCanvasTransform(zoomRef.current, pending)
+      const now = performance.now()
+      if (viewportOffsetNeedsCommit({
+        committedOffset: lastCommittedOffsetRef.current,
+        nextOffset: pending,
+        zoom: zoomRef.current,
+        elapsedMs: now - lastOffsetCommitAtRef.current,
+      })) {
+        commitViewportOffset(pending)
+      }
+      if (!isPanningRef.current) scheduleIdleOffsetCommit()
     })
-  }, [cancelAnim, offsetRef, setViewport])
+  }, [applyCanvasTransform, cancelAnim, commitViewportOffset, markStageViewportMoving, offsetRef, scheduleIdleOffsetCommit, zoomRef])
 
   const setViewportTransform = React.useCallback((nextZoom: number, nextOffset: Offset) => {
     cancelAnim()
+    clearOffsetCommitTimer()
     if (offsetFrameRef.current !== null) {
       window.cancelAnimationFrame(offsetFrameRef.current)
       offsetFrameRef.current = null
@@ -99,8 +185,11 @@ export function useCanvasViewportGestures({
     pendingOffsetRef.current = null
     zoomRef.current = nextZoom
     offsetRef.current = nextOffset
+    lastCommittedOffsetRef.current = nextOffset
+    lastOffsetCommitAtRef.current = performance.now()
+    applyCanvasTransform(nextZoom, nextOffset)
     setViewport({ zoom: nextZoom, offset: nextOffset })
-  }, [cancelAnim, offsetRef, setViewport, zoomRef])
+  }, [applyCanvasTransform, cancelAnim, clearOffsetCommitTimer, offsetRef, setViewport, zoomRef])
 
   // 离散跳转（适应视图 / 重置 / 聚焦节点）的平滑过渡：rAF 在 ~140ms（--nomi-transition-fast）
   // 内 easeOutCubic 插值 zoom+offset。连续控件（缩放条/捏合）不走这里，保持即时跟手。
@@ -126,11 +215,12 @@ export function useCanvasViewportGestures({
       }
       zoomRef.current = zoom
       offsetRef.current = offset
+      applyCanvasTransform(zoom, offset)
       setViewport({ zoom, offset })
       animFrameRef.current = progress < 1 ? window.requestAnimationFrame(step) : null
     }
     animFrameRef.current = window.requestAnimationFrame(step)
-  }, [cancelAnim, offsetRef, setViewport, zoomRef])
+  }, [applyCanvasTransform, cancelAnim, offsetRef, setViewport, zoomRef])
 
   const zoomAtStagePoint = React.useCallback((nextZoom: number, point: { x: number; y: number }) => {
     const currentZoom = zoomRef.current || 1
@@ -151,7 +241,13 @@ export function useCanvasViewportGestures({
       window.cancelAnimationFrame(animFrameRef.current)
       animFrameRef.current = null
     }
-  }, [])
+    if (stageMovementTimerRef.current !== null) {
+      window.clearTimeout(stageMovementTimerRef.current)
+      stageMovementTimerRef.current = null
+    }
+    setStageInteractionState('viewport-moving', false)
+    clearOffsetCommitTimer()
+  }, [clearOffsetCommitTimer, setStageInteractionState])
 
   // 空格按住 = 平移模式（光标 grab）。输入框/可编辑区放行，别抢空格输入。
   React.useEffect(() => {
@@ -164,14 +260,14 @@ export function useCanvasViewportGestures({
       if (!stageRef.current || stageRef.current.offsetParent === null) return
       if (!spaceHeldRef.current) {
         spaceHeldRef.current = true
-        setIsSpaceHeld(true)
+        setStageInteractionState('space-pan', true)
       }
       event.preventDefault() // 否则空格会滚页 / 触发按钮
     }
     const release = () => {
       if (!spaceHeldRef.current) return
       spaceHeldRef.current = false
-      setIsSpaceHeld(false)
+      setStageInteractionState('space-pan', false)
     }
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.code === 'Space' || event.key === ' ') release()
@@ -184,15 +280,19 @@ export function useCanvasViewportGestures({
       window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', release)
     }
-  }, [readOnly, stageRef])
+  }, [readOnly, setStageInteractionState, stageRef])
 
   const beginPan = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     setContextNodeMenu(null)
     setActiveEdge(null)
     if (pendingConnectionSourceId && !readOnly) cancelConnection()
+    clearOffsetCommitTimer()
     isPanningRef.current = true
-    setIsPanning(true)
+    lastOffsetCommitAtRef.current = performance.now()
+    setStageInteractionState('panning', true)
+    markStageViewportMoving()
     panStartRef.current = {
+      pointerId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
       offsetX: offsetRef.current.x,
@@ -201,7 +301,7 @@ export function useCanvasViewportGestures({
       moved: false,
     }
     try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 无活动指针时忽略 */ }
-  }, [cancelConnection, offsetRef, pendingConnectionSourceId, readOnly, setActiveEdge, setContextNodeMenu])
+  }, [cancelConnection, clearOffsetCommitTimer, markStageViewportMoving, offsetRef, pendingConnectionSourceId, readOnly, setActiveEdge, setContextNodeMenu, setStageInteractionState])
 
   // 捕获阶段：空格/中键/右键拖在节点之上也能平移（抢在节点 pointerdown 前）。
   const handlePointerDownCapture = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -251,14 +351,15 @@ export function useCanvasViewportGestures({
     })
   }, [scheduleOffset])
 
-  const handlePointerUp = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+  const finishPan = React.useCallback((event: React.PointerEvent<HTMLDivElement> | null, clearOnClick: boolean) => {
     const start = panStartRef.current
-    if (isPanningRef.current && start) {
+    const hadActivePan = isPanningRef.current || Boolean(start)
+    if (clearOnClick && isPanningRef.current && start) {
       // 左键纯点击空白（未拖动）= 清空选择
       if (start.button === 0 && !start.moved) clearSelection()
     }
     isPanningRef.current = false
-    setIsPanning(false)
+    setStageInteractionState('panning', false)
     panStartRef.current = null
     if (offsetFrameRef.current !== null) {
       window.cancelAnimationFrame(offsetFrameRef.current)
@@ -266,17 +367,47 @@ export function useCanvasViewportGestures({
     }
     if (pendingOffsetRef.current) {
       const pending = pendingOffsetRef.current
-      setViewport((current) => ({ ...current, offset: pending }))
+      applyCanvasTransform(zoomRef.current, pending)
+      offsetRef.current = pending
       pendingOffsetRef.current = null
     }
+    if (hadActivePan) commitViewportOffset(offsetRef.current)
+    const captureTarget = event?.currentTarget ?? stageRef.current
+    const pointerId = event?.pointerId ?? start?.pointerId
     if (
-      typeof event.currentTarget.hasPointerCapture === 'function' &&
-      typeof event.currentTarget.releasePointerCapture === 'function' &&
-      event.currentTarget.hasPointerCapture(event.pointerId)
+      captureTarget &&
+      pointerId !== undefined &&
+      typeof captureTarget.hasPointerCapture === 'function' &&
+      typeof captureTarget.releasePointerCapture === 'function' &&
+      captureTarget.hasPointerCapture(pointerId)
     ) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+      captureTarget.releasePointerCapture(pointerId)
     }
-  }, [clearSelection, setViewport])
+  }, [applyCanvasTransform, clearSelection, commitViewportOffset, offsetRef, setStageInteractionState, stageRef, zoomRef])
+
+  const handlePointerUp = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    finishPan(event, true)
+  }, [finishPan])
+
+  const handlePointerCancel = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    finishPan(event, false)
+  }, [finishPan])
+
+  const cancelActivePan = React.useCallback(() => {
+    finishPan(null, false)
+  }, [finishPan])
+
+  React.useEffect(() => {
+    const cancel = () => cancelActivePan()
+    window.addEventListener('blur', cancel)
+    window.addEventListener('dragend', cancel, true)
+    window.addEventListener('drop', cancel, true)
+    return () => {
+      window.removeEventListener('blur', cancel)
+      window.removeEventListener('dragend', cancel, true)
+      window.removeEventListener('drop', cancel, true)
+    }
+  }, [cancelActivePan])
 
   const shouldSuppressContextMenu = React.useCallback(() => {
     if (suppressContextMenuRef.current) {
@@ -317,8 +448,6 @@ export function useCanvasViewportGestures({
   }, [handleWheel, stageRef])
 
   return {
-    isPanning,
-    isSpaceHeld,
     scheduleOffset,
     setViewportTransform,
     animateViewportTo,
@@ -327,6 +456,8 @@ export function useCanvasViewportGestures({
     handlePointerDown,
     handlePointerMove,
     handlePointerUp,
+    handlePointerCancel,
+    cancelActivePan,
     shouldSuppressContextMenu,
   }
 }

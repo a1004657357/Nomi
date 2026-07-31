@@ -71,6 +71,37 @@ describe('reconcileProposal — S6-3 对账纯函数(N12)', () => {
     expect(result.deviations[0]).toMatchObject({ where: '镜头 2', field: '模型', expected: 'ghost-model' })
   })
 
+  it('批准的型号 variantId 没有写入节点时必须报告偏差', () => {
+    const result = reconcileProposal({
+      steps: [{
+        toolName: 'create_canvas_nodes',
+        effectiveArgs: {
+          nodes: [{
+            clientId: 'c1',
+            kind: 'image',
+            title: '镜头 1',
+            prompt: 'sunrise',
+            modelKey: 'm1',
+            variantId: 'v5_0_lite',
+            params: { aspect_ratio: '16:9' },
+          }],
+        },
+        result: null,
+      }],
+      clientIdToNodeId,
+      nodes,
+      edges,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.deviations).toContainEqual({
+      where: '镜头 1',
+      field: '型号',
+      expected: 'v5_0_lite',
+      actual: '(默认型号)',
+    })
+  })
+
   it('position/categoryId/空标题兜底在派生白名单内 → 不算偏差', () => {
     const result = reconcileProposal({
       steps: [

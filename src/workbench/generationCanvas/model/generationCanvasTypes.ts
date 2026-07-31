@@ -1,5 +1,6 @@
 import type { GenerationNodeKind } from './generationNodeKinds'
 import type { NodeRenderKind } from '../../project/projectCategories'
+import type { CreativeResource } from '../../../config/capabilityRecipes'
 
 export type { GenerationNodeKind } from './generationNodeKinds'
 
@@ -10,6 +11,32 @@ export type GenerationNodeStatus = 'idle' | 'queued' | 'running' | 'success' | '
 export type GenerationResultType = 'image' | 'video' | 'text' | 'audio' | 'model3d'
 
 export type GenerationNodeTaskKind = 'text' | 'image' | 'video' | 'audio' | 'model3d' | 'workflow' | 'asset' | 'unknown'
+
+export type Model3dValidationSummary = {
+  version: 1
+  glbVersion: number
+  byteLength: number
+  meshCount: number
+  primitiveCount: number
+  nodeCount: number
+  materialCount: number
+  textureCount: number
+  imageCount: number
+  embeddedImageCount: number
+  externalImageCount: number
+  externalImageUris: string[]
+  externalBufferCount: number
+  externalBufferUris: string[]
+  animationCount: number
+  skinCount: number
+  bounds: {
+    min: [number, number, number]
+    max: [number, number, number]
+    size: [number, number, number]
+    diagonal: number
+  }
+  warnings: string[]
+}
 
 export const CATEGORY_IDS = ['shots', 'cast', 'scene', 'prop', 'audio'] as const
 
@@ -37,6 +64,7 @@ export function getDefaultCategoryForNodeKind(kind: GenerationNodeKind): Builtin
     case 'scene3d':
     case 'vibingDirector':
     case 'model3d':
+    case 'resource':
       return 'scene'
     case 'audio':
       return 'audio'
@@ -81,12 +109,78 @@ export type GenerationNodeResult = {
   taskKind?: GenerationNodeTaskKind
   assetId?: string
   assetRefId?: string
+  model3dValidation?: Model3dValidationSummary
   raw?: unknown
   createdAt: number
   /** Additional assets returned by the same provider request; folded into node.history when persisted. */
   alternatives?: GenerationNodeResult[]
   /** Phase E E11: Complete provenance for reproducibility. */
   provenance?: GenerationProvenance
+}
+
+export type GenerationResultCollectionItem = {
+  id: string
+  label: string
+  azimuth?: number
+  elevation?: number
+  shotSize?: string
+  energy?: number
+  affinity?: number
+  status: 'pending' | 'running' | 'success' | 'error'
+  result?: GenerationNodeResult
+  /** All assets returned for this logical output by one provider request. */
+  candidates?: GenerationNodeResult[]
+  /** The candidate currently used as this output and as the node's downstream result. */
+  selectedResultId?: string
+  error?: string
+}
+
+export type GenerationResultCollectionSource = {
+  nodeId: string
+  resultId: string
+  label: string
+  url?: string
+  thumbnailUrl?: string
+  providerUrl?: string
+}
+
+export type GenerationQualityStatus = 'pass' | 'warning' | 'fail' | 'unavailable'
+
+export type GenerationQualityCheck = {
+  id: string
+  label: string
+  status: GenerationQualityStatus
+  summary: string
+  details?: string[]
+  itemIds?: string[]
+  metrics?: Record<string, string | number | boolean>
+}
+
+export type GenerationQualityHumanReview = {
+  verdict: 'accepted' | 'rejected'
+  reviewedAt: number
+  note?: string
+}
+
+export type GenerationQualityReport = {
+  version: 1
+  kind: 'grid9' | 'multiview' | 'panorama' | 'portrait' | 'mood' | 'style' | 'video' | 'model3d'
+  evaluator: string
+  status: GenerationQualityStatus
+  evaluatedAt: number
+  checks: GenerationQualityCheck[]
+  metrics?: Record<string, string | number | boolean>
+  /** Human acceptance is recorded separately and never rewrites automatic checks. */
+  humanReview?: GenerationQualityHumanReview
+}
+
+export type GenerationResultCollection = {
+  id: string
+  recipeId: string
+  createdAt: number
+  source?: GenerationResultCollectionSource
+  items: GenerationResultCollectionItem[]
+  quality?: GenerationQualityReport
 }
 
 export type GenerationNodeProgress = {
@@ -135,6 +229,10 @@ export type GenerationCanvasNode = {
   references?: string[]
   result?: GenerationNodeResult
   history?: GenerationNodeResult[]
+  /** Optional reusable style/effect/identity/palette resource pinned to the canvas. */
+  creativeResource?: CreativeResource
+  /** Multi-output recipe runs stay grouped instead of expanding into many overlapping nodes. */
+  resultCollections?: GenerationResultCollection[]
   progress?: GenerationNodeProgress
   runs?: GenerationNodeRunRecord[]
   status?: GenerationNodeStatus

@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { describeBlockedNotice, forkRegenerationPlan } from './batchPlanPreview'
+import {
+  describeBlockedNotice,
+  forkRegenerationNodesInPlan,
+  forkRegenerationPlan,
+} from './batchPlanPreview'
 import type { DependencyWavePlan } from '../runner/dependencyWaves'
 import { buildDependencyWaves } from '../runner/dependencyWaves'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
@@ -86,5 +90,39 @@ describe('regeneration dependency plan', () => {
       target: forked?.variantNodeId,
       mode: 'reference',
     }))
+  })
+
+  it('forks every completed node and rewires a regenerated dependency chain', () => {
+    const nodes = [imageNode('source-v1', true), imageNode('target-v1', true)]
+    const edges = [{
+      id: 'edge-source-target',
+      source: 'source-v1',
+      target: 'target-v1',
+      mode: 'reference' as const,
+      order: 0,
+    }]
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes, edges, groups: [], selectedNodeIds: [] })
+    const originalPlan = buildDependencyWaves(['source-v1', 'target-v1'], { nodes, edges })
+
+    const forked = forkRegenerationNodesInPlan(originalPlan, ['source-v1', 'target-v1'])
+
+    expect(forked).toBeTruthy()
+    const sourceV2 = forked?.sourceToVariant.get('source-v1')
+    const targetV2 = forked?.sourceToVariant.get('target-v1')
+    expect(sourceV2).toBeTruthy()
+    expect(targetV2).toBeTruthy()
+    expect(forked?.plan.waves).toEqual([[sourceV2], [targetV2]])
+    expect(forked?.plan.waves.flat()).not.toContain('source-v1')
+    expect(forked?.plan.waves.flat()).not.toContain('target-v1')
+
+    const state = useGenerationCanvasStore.getState()
+    expect(state.nodes.find((node) => node.id === 'source-v1')?.result?.id).toBe('source-v1-result')
+    expect(state.nodes.find((node) => node.id === 'target-v1')?.result?.id).toBe('target-v1-result')
+    expect(state.edges).toContainEqual(expect.objectContaining({
+      source: sourceV2,
+      target: targetV2,
+      mode: 'reference',
+    }))
+    expect(state.edges.some((edge) => edge.source === 'source-v1' && edge.target === targetV2)).toBe(false)
   })
 })

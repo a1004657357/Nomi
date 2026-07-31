@@ -5,6 +5,8 @@ import { asUrl, findNodeResultUrl, resolveReferenceUrl } from './referenceUrl'
 
 export type ResolvedGenerationReferences = {
   referenceImages: string[]
+  /** 与 referenceImages 同序，供网页桥生成真正的 (@图片N) 引用和用途说明。 */
+  referenceImageRoles: string[]
   /** 连线进来的视频/音频参考（按源节点类型分流，不混进 referenceImages）。喂 omni 的 video_ref/audio_ref
    *  槽——B4 修：此前视频源 URL 漏进 referenceImages 当图片/首帧发，且 video_ref 槽只收 meta 上传。 */
   referenceVideos: string[]
@@ -29,6 +31,46 @@ export type ResolvedGenerationReferences = {
 function pushUnique(output: string[], value: unknown) {
   const url = asUrl(value)
   if (url && !output.includes(url)) output.push(url)
+}
+
+function referenceImageRole(
+  targetNodeId: string,
+  url: string,
+  index: number,
+  nodes: GenerationCanvasNode[],
+  edges: GenerationCanvasEdge[],
+  nodesById: Map<string, GenerationCanvasNode>,
+): string {
+  const source = nodes.find((candidate) => findNodeResultUrl(nodesById, candidate.id) === url)
+  if (!source) return `参考图片 ${index + 1}，只按提示词指定的用途参考`
+  const directEdge = sortEdgesByOrder(edges).find((edge) => (
+    edge.source === source.id && edge.target === targetNodeId
+  ))
+  const mode = directEdge?.mode
+  const title = String(source.title || `图片 ${index + 1}`).trim()
+  const meta = source.meta && typeof source.meta === 'object' ? source.meta as Record<string, unknown> : {}
+  if (mode === 'first_frame') return `首帧「${title}」，作为视频起点并保持起始构图`
+  if (mode === 'last_frame') return `尾帧「${title}」，作为视频结束状态`
+  if (mode === 'character_ref' || source.kind === 'character') {
+    return `角色「${title}」的身份、脸、发型和服装参考，不锁定动作与构图`
+  }
+  if (mode === 'style_ref' || source.kind === 'scene') {
+    return `场景/风格「${title}」的空间、材质、色调和固定参照物参考`
+  }
+  const storyboardImage = meta.storyboardContainedRole === 'image'
+    || meta.storyboardRowOutputRole === 'image'
+    || (typeof source.shotIndex === 'number' && !meta.referenceSheet)
+    || /^镜头\s*\d+/.test(title)
+  if (mode === 'composition_ref' && storyboardImage) {
+    return `分镜图「${title}」，只参考景别、机位、空间关系和动作意图，不作为首帧`
+  }
+  if (mode === 'composition_ref') {
+    return `构图/场景「${title}」参考，只锁定空间关系和机位`
+  }
+  if (mode === 'reference' || meta.referenceSheet) {
+    return `道具/视觉资产「${title}」的造型、材质和尺度参考`
+  }
+  return `参考图片「${title}」，只按提示词指定的用途参考`
 }
 
 export function resolveGenerationReferences(
@@ -147,6 +189,9 @@ export function resolveGenerationReferences(
 
   return {
     referenceImages: imageReferenceImages,
+    referenceImageRoles: imageReferenceImages.map((url, index) => (
+      referenceImageRole(node.id, url, index, nodes, edges, nodesById)
+    )),
     referenceVideos,
     referenceAudios,
     firstFrameUrl,

@@ -116,12 +116,12 @@ export const WHEEL_TRAVEL_SPEED = 0.0045
 export const FOLLOW_ORBIT_MIN_POLAR_ANGLE = THREE.MathUtils.degToRad(26)
 export const FOLLOW_ORBIT_MAX_POLAR_ANGLE = THREE.MathUtils.degToRad(100)
 export const CAMERA_LENS_DEPTH_MAX_FACTOR = 0.85
-export const MANNEQUIN_MODEL_URL = new URL('../../../../assets/x-bot.glb', import.meta.url).href
-// 假人 locomotion 动画 clip（idle/walk/run 等）的来源。和 x-bot 同骨架（mixamorig: 带冒号），
-// 这里只用它的 animations，几何/蒙皮仍来自 x-bot。建议后续把它剥成纯动画（去掉冗余 mesh）减体积。
-export const MANNEQUIN_ANIMATION_URL = new URL('../../../../assets/mannequin-animations.glb', import.meta.url).href
+export const MANNEQUIN_MODEL_URL = new URL('../../../../assets/nomi-mannequin.glb', import.meta.url).href
+// 第一方程序化假人的 locomotion 动画。模型与动画由同一个生成脚本和骨架契约产出，
+// mixamorig 名称只用于旧项目姿势兼容，不包含外部 Mixamo 网格或动作数据。
+export const MANNEQUIN_ANIMATION_URL = new URL('../../../../assets/nomi-mannequin-animations.glb', import.meta.url).href
 
-// possess 态自动 locomotion：clip 名（须与 mannequin-animations.glb 内 clip 名逐字一致）。
+// possess 态自动 locomotion：clip 名（须与 nomi-mannequin-animations.glb 内 clip 名逐字一致）。
 export type Scene3DLocomotionClip = 'idle' | 'walk' | 'run'
 export const LOCOMOTION_CLIP_IDLE: Scene3DLocomotionClip = 'idle'
 export const LOCOMOTION_CLIP_WALK: Scene3DLocomotionClip = 'walk'
@@ -154,8 +154,8 @@ export const CAMERA_AIM_HANDLE_POSITIONS = new Float32Array([
 
 export const MANNEQUIN_DEFAULT_POSE: Record<string, Scene3DVector3> = {
   mixamorigSpine: [degreesToRadians(2), 0, 0],
-  // 头颈基线：x-bot bind 头颈天然前倾（度量核实测默认头前俯 18.8°，人眼即「垂头丧气」G1）。
-  // 分摊到颈+头两节抬回自然平视（poseMetrics neckPitchFwd 目标 ≈ +2°～+6°）；轴向实测 −x = 抬头。
+  // 头颈基线：第一方骨架保留约 18° 的自然 bind 前倾，用颈+头两节抬回平视。
+  // 该契约保持旧项目姿势偏移兼容；poseMetrics 的默认目标约为 -2°～+6°。
   mixamorigNeck: [degreesToRadians(-8), 0, 0],
   mixamorigHead: [degreesToRadians(-10), 0, 0],
   mixamorigLeftArm: [degreesToRadians(67.5), degreesToRadians(11.4), degreesToRadians(-6.8)],
@@ -368,16 +368,16 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
       // 肘外张 + 前臂少屈：手落在大腿外上方而非插进大腿（度量核胶囊层曾抓出前臂×大腿穿插 85%）。
       mixamorigLeftArm: [-4, -14, 0],
       mixamorigRightArm: [-4, 14, 0],
-      mixamorigLeftForeArm: [46, -6, 0],
-      mixamorigRightForeArm: [46, 6, 0],
+      mixamorigLeftForeArm: [32, -6, 0],
+      mixamorigRightForeArm: [32, 6, 0],
       mixamorigLeftHand: [2, 0, -4],
       mixamorigRightHand: [2, 0, 4],
       mixamorigLeftUpLeg: [86, 4, 0],
       mixamorigRightUpLeg: [86, -4, 0],
       mixamorigLeftLeg: [94, 0, 0],
       mixamorigRightLeg: [94, 0, 0],
-      mixamorigLeftFoot: [-14, 0, 0],
-      mixamorigRightFoot: [-14, 0, 0],
+      mixamorigLeftFoot: [-6, 0, 0],
+      mixamorigRightFoot: [-6, 0, 0],
     }),
   },
   {
@@ -393,14 +393,14 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
       mixamorigHead: [-6, 0, 0],
       mixamorigLeftArm: [12, 28, 0],
       mixamorigRightArm: [12, -28, 0],
-      mixamorigLeftForeArm: [44, -8, 0],
-      mixamorigRightForeArm: [44, 8, 0],
-      mixamorigLeftUpLeg: [98, 8, 0],
-      mixamorigRightUpLeg: [98, -8, 0],
+      mixamorigLeftForeArm: [20, -8, 0],
+      mixamorigRightForeArm: [20, 8, 0],
+      mixamorigLeftUpLeg: [108, 8, 0],
+      mixamorigRightUpLeg: [108, -8, 0],
       mixamorigLeftLeg: [124, 0, 0],
       mixamorigRightLeg: [124, 0, 0],
-      mixamorigLeftFoot: [-26, 0, 0],
-      mixamorigRightFoot: [-26, 0, 0],
+      mixamorigLeftFoot: [-20, 0, 0],
+      mixamorigRightFoot: [-20, 0, 0],
     }),
   },
   {
@@ -423,46 +423,42 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
       mixamorigRightArm: [8, 4, 0],
       mixamorigLeftUpLeg: [58, 5, 0],
       mixamorigRightUpLeg: [58, -5, 0],
-      mixamorigLeftLeg: [80, 0, 0],
-      mixamorigRightLeg: [80, 0, 0],
-      mixamorigLeftFoot: [-26, 0, 0],
-      mixamorigRightFoot: [-26, 0, 0],
+      mixamorigLeftLeg: [78, 0, 0],
+      mixamorigRightLeg: [78, 0, 0],
+      mixamorigLeftFoot: [-22, 0, 0],
+      mixamorigRightFoot: [-22, 0, 0],
     }),
   },
   {
     id: 'single-knee',
     label: '单膝跪',
     // 前腿(左)：大腿近水平、小腿近垂直、脚掌踩平。后腿(右)：大腿近垂直略后、膝着地、小腿向后**平贴地面**、
-    // 脚背贴地（= 大幅跖屈）。
-    // ⚠️ 脚轴向（poseMetrics 实测锚定）：+x = 背屈（脚尖上翘）/ −x = 跖屈（脚背压平）。
-    // 旧值 Foot +74 实为把脚尖朝上抬 → 后小腿离地 10.7% 身高、整条后腿悬空（度量核抓出）。
-    // 后小腿要横平：膝屈 ≈ 90°+大腿后倾量（Leg 96 配 UpLeg −8）。
+    // 后脚自然延伸。连续鞋楦不能再靠独立脚趾块充当地面支点；约束求解同时保证前脚、后小腿和重心成立。
     pose: makePoseOffset({
-      mixamorigHips: [-4, 0, 0],
+      mixamorigHips: [-8, 0, 0],
       mixamorigSpine: [5, 0, 0],
-      mixamorigLeftUpLeg: [76, 4, 0],
-      mixamorigLeftLeg: [88, 0, 0],
-      mixamorigLeftFoot: [-20, 0, 0],
+      mixamorigLeftUpLeg: [100, 4, 0],
+      mixamorigLeftLeg: [104, 0, 0],
+      mixamorigLeftFoot: [-14, 0, 0],
       mixamorigRightUpLeg: [8, -2, 0],
-      mixamorigRightLeg: [80, 0, 0],
-      mixamorigRightFoot: [-54, 0, 0],
+      mixamorigRightLeg: [90, 0, 0],
+      mixamorigRightFoot: [0, 0, 0],
     }),
   },
   {
     id: 'double-knee',
     label: '双膝跪',
     // 直身双膝跪（非跪坐/趴伏）：大腿近垂直略后，小腿向后平贴地、脚背贴地。
-    // ⚠️ 脚轴向（poseMetrics 实测锚定）：+x = 背屈 / −x = 跖屈；旧值 +66 把脚尖朝上抬
-    // → 双脚背离地 35.7% 身高（度量核抓出）。小腿横平：Leg ≈ 90°+大腿后倾量。
+    // 连续鞋楦下采用接近中立位的脚踝，避免长鞋头成为最低点而把双膝整体抬离地面。
     pose: makePoseOffset({
       mixamorigHips: [-4, 0, 0],
-      mixamorigSpine: [6, 0, 0],
-      mixamorigLeftUpLeg: [8, 4, 0],
-      mixamorigRightUpLeg: [8, -4, 0],
-      mixamorigLeftLeg: [96, 0, 0],
-      mixamorigRightLeg: [96, 0, 0],
-      mixamorigLeftFoot: [-54, 0, 0],
-      mixamorigRightFoot: [-54, 0, 0],
+      mixamorigSpine: [2, 0, 0],
+      mixamorigLeftUpLeg: [12, 4, 0],
+      mixamorigRightUpLeg: [12, -4, 0],
+      mixamorigLeftLeg: [100, 0, 0],
+      mixamorigRightLeg: [100, 0, 0],
+      mixamorigLeftFoot: [-4, 0, 0],
+      mixamorigRightFoot: [-4, 0, 0],
     }),
   },
   {

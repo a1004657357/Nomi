@@ -351,12 +351,71 @@ export function LightObject({ object }: { object: Scene3DObject }): JSX.Element 
   return <pointLight color={color} intensity={intensity} distance={12} />
 }
 
-// 非假人静态对象（灯/道具/几何）的统一内容渲染。四个渲染点（编辑器主视图之外的
-// 相机预览 / 运镜离屏采帧 / 站位离屏截图）共用这一份——此前离屏两处只渲假人，
-// 几何体和灯在运镜小片/站位图里凭空消失（根因：各写各的渲染分支漏了 else）。
-export function StaticObjectVisual({ object }: { object: Scene3DObject }): JSX.Element {
-  if (object.type === 'light') return <LightObject object={object} />
-  if (object.type === 'prop') return <PropObject object={object} />
+type BoundsPoint = { x: number; y: number; z: number }
+
+export function modelNormalizationFromBounds(
+  min: BoundsPoint,
+  max: BoundsPoint,
+): { offset: Scene3DVector3; scale: number } {
+  const width = Math.max(0, max.x - min.x)
+  const height = Math.max(0, max.y - min.y)
+  const depth = Math.max(0, max.z - min.z)
+  const largestDimension = Math.max(width, height, depth, 0.001)
+  return {
+    offset: [-(min.x + max.x) / 2, -min.y, -(min.z + max.z) / 2],
+    scale: 2 / largestDimension,
+  }
+}
+
+export function staticObjectVisualKind(object: Scene3DObject): 'light' | 'prop' | 'model' | 'mesh' {
+  if (object.type === 'light') return 'light'
+  if (object.type === 'prop') return 'prop'
+  if (object.type === 'model' && object.modelUrl) return 'model'
+  return 'mesh'
+}
+
+function GeneratedModelVisual({ url }: { url: string }): JSX.Element {
+  const { scene } = useGLTF(url)
+  const model = React.useMemo(() => {
+    const object = scene.clone(true)
+    const bounds = new THREE.Box3().setFromObject(object)
+    if (bounds.isEmpty()) return { object, scale: 1 }
+    const normalization = modelNormalizationFromBounds(bounds.min, bounds.max)
+    object.position.fromArray(normalization.offset)
+    object.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return
+      child.castShadow = true
+      child.receiveShadow = true
+    })
+    return { object, scale: normalization.scale }
+  }, [scene])
+  return (
+    <group scale={[model.scale, model.scale, model.scale]}>
+      <primitive object={model.object} />
+    </group>
+  )
+}
+
+class GeneratedModelBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false }
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true }
+  }
+
+  componentDidCatch(error: unknown): void {
+    console.error('Failed to load a generated Scene3D model.', error)
+  }
+
+  render(): React.ReactNode {
+    return this.state.failed ? this.props.fallback : this.props.children
+  }
+}
+
+function StaticMeshVisual({ object }: { object: Scene3DObject }): JSX.Element {
   return (
     <mesh>
       <Scene3DMeshGeometry geometry={object.geometry} />
@@ -368,6 +427,26 @@ export function StaticObjectVisual({ object }: { object: Scene3DObject }): JSX.E
       />
     </mesh>
   )
+}
+
+// 非假人静态对象（灯/道具/几何）的统一内容渲染。四个渲染点（编辑器主视图之外的
+// 相机预览 / 运镜离屏采帧 / 站位离屏截图）共用这一份——此前离屏两处只渲假人，
+// 几何体和灯在运镜小片/站位图里凭空消失（根因：各写各的渲染分支漏了 else）。
+export function StaticObjectVisual({ object }: { object: Scene3DObject }): JSX.Element {
+  const kind = staticObjectVisualKind(object)
+  if (kind === 'light') return <LightObject object={object} />
+  if (kind === 'prop') return <PropObject object={object} />
+  if (kind === 'model') {
+    const fallback = <StaticMeshVisual object={{ ...object, geometry: 'box' }} />
+    return (
+      <GeneratedModelBoundary key={object.modelUrl} fallback={fallback}>
+        <React.Suspense fallback={fallback}>
+          <GeneratedModelVisual url={object.modelUrl!} />
+        </React.Suspense>
+      </GeneratedModelBoundary>
+    )
+  }
+  return <StaticMeshVisual object={object} />
 }
 
 export function mannequinLabelHeight(object: Scene3DObject): number {

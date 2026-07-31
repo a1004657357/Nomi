@@ -353,6 +353,44 @@ export const ARCHETYPE_WIRE_DEFAULTS: Record<string, Record<string, Record<strin
       }
     }
   },
+  "jimeng-web-seedance-2": {
+    "text_to_video": {
+      "*": {
+        "dreamina_cmd": "text2video",
+        "ratio": "16:9",
+        "video_resolution": "720P",
+        "duration": 5,
+        "generation_count": 1,
+        "model": "jimeng-seedance-2.0-mini"
+      }
+    },
+    "image_to_video": {
+      "*": {
+        "dreamina_cmd": "multimodal2video",
+        "ratio": "16:9",
+        "video_resolution": "720P",
+        "duration": 5,
+        "generation_count": 1,
+        "model": "jimeng-seedance-2.0-mini"
+      }
+    }
+  },
+  "jimeng-web-image": {
+    "text_to_image": {
+      "*": {
+        "ratio": "智能",
+        "resolution_type": "2K",
+        "model": "jimeng-image-5.0-pro"
+      }
+    },
+    "image_edit": {
+      "*": {
+        "ratio": "智能",
+        "resolution_type": "2K",
+        "model": "jimeng-image-5.0-pro"
+      }
+    }
+  },
   "dreamina-image": {
     "text_to_image": {
       "*": {

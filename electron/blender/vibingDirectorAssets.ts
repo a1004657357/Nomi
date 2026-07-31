@@ -2,10 +2,23 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { projectDirById } from '../projects/repository'
+import { absolutePathFromLocalAssetUrlAnyProject } from '../assets/localAssetFile'
+import { inspectGlb, type GlbValidationReport } from '../assets/glbValidation'
 import { vibingDirectorAssetPath } from './vibingDirectorRunner'
 
-export type VibingDirectorAssetSource = 'local' | 'polyhaven' | 'quaternius' | 'blenderkit'
+export type VibingDirectorAssetSource = 'local' | 'kenney' | 'polyhaven' | 'quaternius' | 'blenderkit'
 export type VibingDirectorAssetFormat = 'blend' | 'glb' | 'gltf' | 'fbx' | 'obj'
+
+export type VibingDirectorAssetProvenance = {
+  provider: 'kenney'
+  catalogAssetId: string
+  packId: string
+  sourcePageUrl: string
+  downloadUrl: string
+  licenseUrl: string
+  archiveSha256: string
+  fileSha256: string
+}
 
 export type ImportedVibingDirectorAsset = {
   id: string
@@ -15,6 +28,8 @@ export type ImportedVibingDirectorAsset = {
   source: VibingDirectorAssetSource
   license: string
   importedAt: number
+  model3dValidation?: GlbValidationReport
+  provenance?: VibingDirectorAssetProvenance
 }
 
 export type ImportVibingDirectorAssetInput = {
@@ -23,6 +38,11 @@ export type ImportVibingDirectorAssetInput = {
   sourcePath: string
   source: VibingDirectorAssetSource
   license?: string
+  provenance?: VibingDirectorAssetProvenance
+}
+
+export type ImportVibingDirectorAssetFromUrlInput = Omit<ImportVibingDirectorAssetInput, 'sourcePath'> & {
+  sourceUrl: string
 }
 
 const FORMAT_BY_EXTENSION: Record<string, VibingDirectorAssetFormat> = {
@@ -35,13 +55,14 @@ const FORMAT_BY_EXTENSION: Record<string, VibingDirectorAssetFormat> = {
 
 const DEFAULT_LICENSE: Record<VibingDirectorAssetSource, string> = {
   local: '需确认',
-  polyhaven: 'CC0',
-  quaternius: 'CC0',
-  blenderkit: 'Royalty Free',
+  kenney: 'CC0 1.0',
+  polyhaven: '需确认',
+  quaternius: '需确认',
+  blenderkit: '需确认',
 }
 
 function sourceType(value: unknown): VibingDirectorAssetSource {
-  if (value === 'polyhaven' || value === 'quaternius' || value === 'blenderkit' || value === 'local') return value
+  if (value === 'kenney' || value === 'polyhaven' || value === 'quaternius' || value === 'blenderkit' || value === 'local') return value
   throw new Error('资产来源不受支持')
 }
 
@@ -65,6 +86,10 @@ export function importVibingDirectorAsset(input: ImportVibingDirectorAssetInput)
   const fileName = path.basename(sourcePath)
   const format = fileFormat(fileName)
   const source = sourceType(input.source)
+  if (source === 'kenney' && input.provenance?.provider !== 'kenney') {
+    throw new Error('Kenney 资产必须通过受控目录导入')
+  }
+  const model3dValidation = format === 'glb' ? inspectGlb(fs.readFileSync(sourcePath)) : undefined
   const asset: ImportedVibingDirectorAsset = {
     id: `asset-${crypto.randomUUID().slice(0, 12)}`,
     name: path.basename(fileName, path.extname(fileName)) || '未命名资产',
@@ -73,9 +98,27 @@ export function importVibingDirectorAsset(input: ImportVibingDirectorAssetInput)
     source,
     license: String(input.license || '').trim() || DEFAULT_LICENSE[source],
     importedAt: Date.now(),
+    ...(model3dValidation ? { model3dValidation } : {}),
+    ...(input.provenance ? { provenance: input.provenance } : {}),
   }
   const targetPath = vibingDirectorAssetPath(projectDir, input.directorNodeId, asset)
   fs.mkdirSync(path.dirname(targetPath), { recursive: true })
   fs.copyFileSync(sourcePath, targetPath)
   return { asset, relativePath: path.relative(projectDir, targetPath) }
+}
+
+export function importVibingDirectorAssetFromUrl(input: ImportVibingDirectorAssetFromUrlInput): {
+  asset: ImportedVibingDirectorAsset
+  relativePath: string
+} {
+  const sourcePath = absolutePathFromLocalAssetUrlAnyProject(input.sourceUrl)
+  if (!sourcePath) throw new Error('生成的 3D 模型本地资产不存在或已失效')
+  return importVibingDirectorAsset({
+    projectId: input.projectId,
+    directorNodeId: input.directorNodeId,
+    sourcePath,
+    source: input.source,
+    ...(input.license ? { license: input.license } : {}),
+    ...(input.provenance ? { provenance: input.provenance } : {}),
+  })
 }

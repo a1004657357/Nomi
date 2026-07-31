@@ -23,6 +23,33 @@
   position: absolute;
   inset: 0;
   transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* 高密度 SVG 连线是大画布平移时的主要合成瓶颈。视口移动期间不可操作连线，
+   暂停绘制并在停止 120ms 后恢复；小图保持连线全程可见。 */
+.generation-canvas-v2__stage[data-dense-edges][data-viewport-moving] .generation-canvas-v2__edges {
+  visibility: hidden;
+}
+
+/* 自动/流畅模式只在交互最重的一小段时间暂停媒体合成，松手后立即恢复。 */
+.generation-canvas-v2__stage[data-suspend-media-while-moving][data-viewport-moving]
+  .generation-canvas-v2-node :is(img, video, canvas) {
+  visibility: hidden;
+}
+
+.generation-canvas-v2__stage[data-reduce-effects] .generation-canvas-v2-node {
+  contain: layout style;
+}
+
+.generation-canvas-v2__stage[data-reduce-effects] .generation-canvas-v2-node[data-appear='true'] {
+  animation: none;
+}
+
+.generation-canvas-v2__stage[data-performance-preference='smooth']
+  .generation-canvas-v2-node :is([class*='shadow-'], [class*='backdrop-']) {
+  box-shadow: none !important;
+  backdrop-filter: none !important;
 }
 
 .generation-canvas-v2__edges,

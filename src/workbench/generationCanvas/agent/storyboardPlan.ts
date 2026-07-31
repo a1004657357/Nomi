@@ -75,6 +75,8 @@ export type PlanShot = {
   notes?: string
   /** 用户在分镜编辑器为该镜选的视频模型 catalog key；没选 → 落画布用默认视频模型兜底。 */
   modelKey?: string
+  /** 用户或 Agent 为该镜选择的模型型号 id（如 v5_0_lite / vip）。 */
+  variantId?: string
   /** 用户为该镜选的模型模式 id（随 modelKey 一起）；没选 → 默认模式。 */
   modeId?: string
   /** 用户为该镜调的模型参数（archetype 控件键 → 值，如 aspect_ratio/resolution）；落画布铺进节点 meta。留空=用模型默认。 */
@@ -136,6 +138,7 @@ export const planShotSchema = z.object({
   sound: z.string().optional(),
   notes: z.string().optional(),
   modelKey: z.string().optional(),
+  variantId: z.string().optional(),
   modeId: z.string().optional(),
   params: z.record(z.unknown()).optional(),
 })
@@ -169,6 +172,7 @@ export type PlanCreatedNode = {
   title: string
   prompt: string
   modelKey?: string
+  variantId?: string
   modeId?: string
   params?: Record<string, string | number | boolean>
   /** 参考卡身份（角色/场景/道具锚）：落画布写进 node.meta.referenceSheet → 永不占镜头编号（shotNumbering）。 */
@@ -254,7 +258,17 @@ export function storyboardShotImagePrompt(shot: PlanShot): string {
 }
 
 export function storyboardShotVideoPrompt(shot: PlanShot): string {
-  return firstNonEmptyText(shot.videoPrompt, shot.prompt, shot.imagePrompt, buildStoryboardShotVideoPrompt(shot))
+  const existing = firstNonEmptyText(shot.videoPrompt, shot.prompt, shot.imagePrompt)
+  // 旧版确定性扩写把所有参考图都写成“唯一首帧”。当节点切到全能参考时必须重编，
+  // 否则模式虽正确，提示词仍会要求模型锁死构图，继续产出照片动效。
+  if (
+    usesFullReferenceMode(shot)
+    && isDerivedVideoPrompt(existing)
+    && /首帧继承|唯一视觉起点|图生视频导演提示词/.test(existing)
+  ) {
+    return buildDetailedStoryboardShotVideoPrompt(shot)
+  }
+  return existing || buildStoryboardShotVideoPrompt(shot)
 }
 
 export function storyboardShotPromptForKind(shot: PlanShot): string {
@@ -274,23 +288,29 @@ function finitePositiveDuration(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
-function shotKeywordLine(shot: PlanShot): string {
-  return [
-    compactShotField('场景', shot.scene),
-    compactShotField('景别', shot.shotSize),
-    compactShotField('机位', shot.cameraAngle),
-    compactShotField('运镜', shot.cameraMove),
-    compactShotField('角色', shot.characters),
-    compactShotField('表演', shot.performance),
-    compactShotField('对白', shot.dialogue),
-    compactShotField('道具', shot.props),
-    compactShotField('声音', shot.sound),
-    compactShotField('备注', shot.notes),
-  ].filter(Boolean).join('；')
+function isDerivedVideoPrompt(value: string): boolean {
+  return /^(?:图生|文生)?视频导演提示词：|^视频生成提示词：/.test(value)
+}
+
+function formatPromptTime(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
+function dialogueDirection(dialogue: string): string {
+  if (!dialogue) return ''
+  if (/画外音|旁白|后期(?:统一)?(?:口播|配音)|无现场对白/.test(dialogue)) {
+    return `声音与口型：${dialogue}；这是后期声音，不驱动角色口型。人物保持闭口、自然呼吸和符合情境的微表情，画面内不生成字幕或UI。`
+  }
+  return `对白表演：角色说「${dialogue}」；口型只跟随这句对白，先有视线和呼吸反应再开口，不生成字幕、UI或额外台词。`
+}
+
+function usesFullReferenceMode(shot: PlanShot): boolean {
+  return /^(?:omni|multimodal|character|reference)$/i.test(shotFieldText(shot.modeId))
 }
 
 export function buildDetailedStoryboardShotVideoPrompt(shot: PlanShot): string {
   const duration = finitePositiveDuration(shot.durationSec)
+  const totalDuration = duration ?? 5
   const durationText = duration ? `${duration} 秒` : '约 5 秒'
   const scene = shotFieldText(shot.scene)
   const shotSize = shotFieldText(shot.shotSize)
@@ -304,35 +324,45 @@ export function buildDetailedStoryboardShotVideoPrompt(shot: PlanShot): string {
   const notes = shotFieldText(shot.notes)
   const imagePrompt = shotFieldText(shot.imagePrompt)
   const legacyPrompt = shotFieldText(shot.prompt)
-  const keywordLine = shotKeywordLine(shot)
+  const hasImageReference = Boolean(imagePrompt)
+  const fullReference = hasImageReference && usesFullReferenceMode(shot)
   const movement = cameraMove || '稳定自然运镜，保持主体连续清晰'
   const framing = [shotSize || '清晰可读的电影构图', cameraAngle || '自然平视机位'].join('，')
   const subject = characters || '画面主体'
-  const action = performance || legacyPrompt || imagePrompt || '按分镜意图完成一个清晰、连贯、可读的动作段落'
-  const opening = scene
-    ? `开场建立在「${scene}」中，先让环境、光线和主体位置清楚可见。`
-    : '开场先建立空间关系、光线方向和主体位置。'
-  const middle = `中段让「${subject}」执行动作：${action}。动作要有起势、停顿和细微反应，不要突然跳变。`
-  const ending = props
-    ? `结尾把注意力收束到「${props}」与主体动作的关系上，保留一瞬稳定画面作为剪辑点。`
-    : '结尾保留一瞬稳定画面作为剪辑点，主体姿态和视线保持连贯。'
+  const storyIntent = legacyPrompt && !isDerivedVideoPrompt(legacyPrompt) ? legacyPrompt : ''
+  const action = performance || storyIntent || '按剧情目的完成一个清晰、连贯、可读的动作段落'
+  const firstBeatEnd = Math.min(1, Math.max(0.2, totalDuration * 0.15), totalDuration * 0.35)
+  const settleStart = Math.max(firstBeatEnd, totalDuration - Math.min(1, totalDuration * 0.2))
+  const firstBeatLabel = formatPromptTime(firstBeatEnd)
+  const settleStartLabel = formatPromptTime(settleStart)
+  const totalLabel = formatPromptTime(totalDuration)
+  const plannedCuts = /切|转场/.test(cameraMove)
+  const referenceStrategy = fullReference
+    ? '全能参考策略：角色参考图只锁定身份、脸、发型和服装；场景参考图锁定空间、材质、色调和固定参照物；道具参考图锁定造型与尺度；分镜图片只表达景别、机位、空间关系和动作意图，不作为首帧，不要求像素级复刻。允许模型为动作重新组织构图。'
+    : hasImageReference
+      ? '首帧继承：以已连接的首帧作为唯一视觉起点，继承构图、人物身份与服装、场景、光线和道具初始位置；不要重建或重新设计这些静态信息。'
+      : `视觉建立：${scene ? `地点为「${scene}」；` : ''}使用「${framing}」，先明确空间关系、光线方向和主体初始位置。`
+  const openingAction = fullReference
+    ? `0-${firstBeatLabel} 秒，最强、最清楚的主体动作立即开始，不用静止画面或“缓缓推进”做铺垫；主体直接执行「${action}」的起势，并让动作目标在前 2 秒内可读。`
+    : `0-${firstBeatLabel} 秒，保持起始关系，主体完成视线、重心和动作起势，主动作随即发生。`
 
   const lines = [
-    `视频生成提示词：镜头 ${shot.index}，时长 ${durationText}，${framing}，${movement}。`,
-    keywordLine ? `关键词：${keywordLine}` : '',
-    imagePrompt ? `首帧基准：${imagePrompt}` : '',
-    legacyPrompt && legacyPrompt !== imagePrompt ? `原始分镜意图：${legacyPrompt}` : '',
-    scene
-      ? `场景画面：地点是「${scene}」，需要明确空间层次、前后景关系、光线来源和真实物理尺度。`
-      : '场景画面：明确空间层次、前后景关系、光线来源和真实物理尺度。',
-    `构图机位：使用「${framing}」，主体在画面中的位置稳定，边缘不要裁切关键肢体或关键道具。`,
-    `运镜节奏：${movement}；镜头运动要平滑、有重量感，速度随动作自然变化，不要机械漂移。`,
-    `动作时间线：0-1 秒，${opening} 1-${duration ? Math.max(2, Math.round(duration * 0.65)) : 3} 秒，${middle} 最后 1 秒，${ending}`,
-    props ? `道具细节：${props} 必须在正确位置出现，和角色手部、视线或动作发生明确关系，不能凭空变形或消失。` : '',
-    dialogue ? `对白处理：角色说「${dialogue}」，只表现自然口型和情绪，不要在画面中生成字幕、UI 或多余文字。` : '',
-    sound ? `声音氛围：${sound}；画面节奏要和声音情绪一致。` : '',
+    `${fullReference ? '全能参考视频' : hasImageReference ? '图生视频' : '文生视频'}导演提示词：镜头 ${shot.index}，时长 ${durationText}。`,
+    storyIntent ? `剧情目的：${storyIntent}` : '',
+    referenceStrategy,
+    `表演动机：主体为「${subject}」。动作不是摆拍展示，而是为了完成剧情中的具体任务；表演内容：${action}`,
+    `表演层次：先由视线确认动作目标，再发生呼吸、重心与肩肘变化，最后由手部完成动作。每个动作只发生一次，保留真实的起势、受力、短暂停顿和收势；微表情服从人物处境，不夸张、不机械。`,
+    `动作时间线：${openingAction}${firstBeatLabel}-${settleStartLabel} 秒，完成主要动作并让动作造成的位移、道具状态或人物反应清晰可见；${settleStartLabel}-${totalLabel} 秒，动作结果稳定成立，保留自然呼吸、视线余韵和可剪辑的结束姿态。`,
+    `运镜响应：${movement}；摄影机在主体动作启动后再响应，不抢先运动。速度变化要有加速、减速和停稳，保持参考图的空间轴线与主体尺度，避免无目的漂移。`,
+    `光影运动：光线必须响应主体动作或摄影机位移，遮挡、反光、阴影或光斑随运动连续变化；禁止把光影写成静止背景装饰。`,
+    `运动下限：这是一段真实叙事视频，不是照片动效。禁止只靠眨眼、呼吸、头发飘动、热气、粒子或轻微推镜冒充主要动作；主体必须完成「${action}」并产生可见结果。`,
+    props
+      ? `道具物理：涉及「${props}」。必须先发生准确接触，道具才随手部或身体移动；保持重量、惯性、承重、遮挡和落点连续，手指不穿模，道具不瞬移、不变形、不凭空增减。`
+      : '',
+    dialogueDirection(dialogue),
+    sound ? `声音节奏参考：${sound}；仅用来约束动作节拍与情绪，不在画面内生成声音说明文字。` : '',
     notes ? `导演备注：${notes}` : '',
-    '画面约束：保持角色外观、服装、道具、场景和光线连续一致；避免人物脸部漂移、手部畸形、道具穿帮、画面闪烁、无关文字、水印和突然切镜。',
+    `连续性约束：锁定参考图中的脸型、服装、道具造型、场景参照物、光线方向和色彩；${fullReference ? '构图可以随动作与运镜重新组织，不把分镜图锁成首帧。' : '保持首帧空间轴线和主体尺度。'}避免身份漂移、手部畸形、肢体穿插、动作重复、背景呼吸、画面闪烁、无关文字和水印；${plannedCuts ? '只允许按既定运镜描述中的切点切换，不增加额外镜头。' : '全段保持单镜连续，不突然切镜。'}`,
   ].filter(Boolean)
   const prompt = lines.join('\n')
   return needsScreenVisibilityRule(prompt) ? [prompt, SCREEN_VISIBILITY_PROMPT_RULE].join('\n') : prompt
@@ -529,6 +559,7 @@ export function storyboardPlanToCreateNodesArgs(
       title: `镜头 ${shot.index}`,
       prompt: buildShotPrompt(shot, anchorById),
       ...(modelKey ? { modelKey } : {}),
+      ...(shot.variantId ? { variantId: shot.variantId } : {}),
       ...(modeId ? { modeId } : {}),
       // duration 仅视频镜头写（由卡的「时长」选择器管）；图片镜头不写。其余模型参数（比例/清晰度/负向…）来自 shot.params。
       params: {

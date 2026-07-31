@@ -209,6 +209,9 @@ function normalizeObject(value: unknown, index: number): Scene3DObject | null {
     geometry,
     propKind: type === 'prop' ? rawPropKind : undefined,
     modelUrl: typeof raw.modelUrl === 'string' ? raw.modelUrl : undefined,
+    model3dValidation: raw.model3dValidation && typeof raw.model3dValidation === 'object'
+      ? raw.model3dValidation as Scene3DObject['model3dValidation']
+      : undefined,
     lightType,
     lightColor: colorValue(raw.lightColor, '#ffffff'),
     lightIntensity: Math.max(0, finiteNumber(raw.lightIntensity, 2)),

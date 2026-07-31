@@ -21,7 +21,7 @@ function seedImageShot() {
 }
 
 describe('convertImageShotToVideo（image-first 桥）', () => {
-  it('建派生视频节点：继承镜号 + first_frame 边 + sourceNodeId 指回源图', () => {
+  it('建派生视频节点：继承镜号 + 全能参考构图边 + sourceNodeId 指回源图', () => {
     const image = seedImageShot()
     const { nodeId, existed } = convertImageShotToVideo(image)
     expect(existed).toBe(false)
@@ -30,8 +30,9 @@ describe('convertImageShotToVideo（image-first 桥）', () => {
     expect(video.kind).toBe('video')
     expect(video.shotIndex).toBe(3) // 继承源图镜号（同镜两阶段，排片落剧本位置）
     expect(video.meta?.sourceNodeId).toBe(image.id) // 整理布局紧跟源镜头
+    expect(video.meta?.storyboardVideoReferenceStrategy).toBe('full_reference')
     expect(video.title).toBe('镜头 3 · 视频')
-    expect(state.edges.some((e) => e.source === image.id && e.target === nodeId && e.mode === 'first_frame')).toBe(true)
+    expect(state.edges.some((e) => e.source === image.id && e.target === nodeId && e.mode === 'composition_ref')).toBe(true)
   })
 
   it('幂等：已转过 → 返回已有视频节点，不重复建', () => {
@@ -46,7 +47,7 @@ describe('convertImageShotToVideo（image-first 桥）', () => {
     expect(videos).toHaveLength(1)
   })
 
-  it('普通 reference 边不是已转换标记，仍创建带 first_frame 的视频节点', () => {
+  it('普通 reference 边不是已转换标记，仍创建带 composition_ref 的视频节点', () => {
     const image = seedImageShot()
     const unrelatedVideo = useGenerationCanvasStore.getState().addNode({ kind: 'video', title: '参考目标' })
     useGenerationCanvasStore.getState().connectNodes(image.id, unrelatedVideo.id, 'reference')
@@ -58,8 +59,33 @@ describe('convertImageShotToVideo（image-first 桥）', () => {
     expect(state.edges).toContainEqual(expect.objectContaining({
       source: image.id,
       target: result.nodeId,
-      mode: 'first_frame',
+      mode: 'composition_ref',
     }))
+  })
+
+  it('把角色、场景和道具参考直接复制到全能参考视频节点', () => {
+    const image = seedImageShot()
+    const state = useGenerationCanvasStore.getState()
+    const character = state.addNode({ kind: 'character', title: '老板角色卡' })
+    const scene = useGenerationCanvasStore.getState().addNode({ kind: 'scene', title: '烘焙工作室' })
+    const prop = useGenerationCanvasStore.getState().addNode({ kind: 'image', title: '月饼道具卡' })
+    useGenerationCanvasStore.getState().connectNodes(character.id, image.id, 'character_ref')
+    useGenerationCanvasStore.getState().connectNodes(scene.id, image.id, 'style_ref')
+    useGenerationCanvasStore.getState().connectNodes(prop.id, image.id, 'reference')
+
+    const result = convertImageShotToVideo(
+      useGenerationCanvasStore.getState().nodes.find((node) => node.id === image.id)!,
+    )
+    const incoming = useGenerationCanvasStore.getState().edges
+      .filter((edge) => edge.target === result.nodeId)
+      .map((edge) => ({ source: edge.source, mode: edge.mode }))
+
+    expect(incoming).toEqual([
+      { source: character.id, mode: 'character_ref' },
+      { source: scene.id, mode: 'style_ref' },
+      { source: prop.id, mode: 'reference' },
+      { source: image.id, mode: 'composition_ref' },
+    ])
   })
 
   it('批量转视频：跳过非镜头节点，复用已有视频，并选中新视频集合', () => {

@@ -27,6 +27,10 @@ type UseNodeModelAutoSelectArgs = {
   updateNode: (nodeId: string, patch: Partial<GenerationCanvasNode>) => void
 }
 
+export function nodeAllowsModelAutoSelect(meta: Record<string, unknown>): boolean {
+  return meta.modelAutoSelectDisabled !== true
+}
+
 export function useNodeModelAutoSelect({
   node,
   meta,
@@ -39,8 +43,10 @@ export function useNodeModelAutoSelect({
   isVideoLike,
   updateNode,
 }: UseNodeModelAutoSelectArgs): void {
+  const autoSelectionAllowed = nodeAllowsModelAutoSelect(meta)
   React.useEffect(() => {
     if (!isGenerationNode) return
+    if (!autoSelectionAllowed) return
     if (selectedModelValue) return
     const firstOption = chooseDefaultModelOption(modelOptions, isImageLike, isVideoLike)
     if (!firstOption?.value) return
@@ -59,10 +65,10 @@ export function useNodeModelAutoSelect({
           : { imageModel: firstOption.value, imageModelVendor: firstOption.vendor || null }),
       },
     })
-  }, [isGenerationNode, isVideoLike, modelOptions, node.id, node.meta, selectedModelValue, updateNode])
+  }, [autoSelectionAllowed, isGenerationNode, isVideoLike, modelOptions, node.id, node.meta, selectedModelValue, updateNode])
 
   React.useEffect(() => {
-    if (!isGenerationNode || !selectedModelOption) return
+    if (!autoSelectionAllowed || !isGenerationNode || !selectedModelOption) return
     const optionVendor = typeof selectedModelOption.vendor === 'string' ? selectedModelOption.vendor.trim() : ''
     const currentVendor =
       readMeta(meta, 'modelVendor') ||
@@ -82,7 +88,7 @@ export function useNodeModelAutoSelect({
           : { imageModel: selectedModelOption.value, imageModelVendor: optionVendor }),
       },
     })
-  }, [isGenerationNode, isVideoLike, meta, node.id, node.meta, selectedModelOption, updateNode])
+  }, [autoSelectionAllowed, isGenerationNode, isVideoLike, meta, node.id, node.meta, selectedModelOption, updateNode])
 
   // ★变体合并迁移（2026-06-16，最大风险点）：旧项目 node.meta.modelKey 钉的是具体变体串
   // （如 doubao-seedance-2.0-fast），合并后 picker 只剩基础 modelKey。把旧变体 modelKey 归一成
@@ -91,7 +97,7 @@ export function useNodeModelAutoSelect({
   // 能在 picker 命中，自愈 effect 就不会误报「供应商已断开」toast。幂等：已归一 → no-op。
   // 据 selectedModelValue 解析档案（此时旧 modelKey 仍命中基础档案的 identifierPatterns）。
   React.useEffect(() => {
-    if (!isGenerationNode || !selectedModelValue) return
+    if (!autoSelectionAllowed || !isGenerationNode || !selectedModelValue) return
     const sourceArchetype = resolveArchetypeForModel({
       modelKey: selectedModelValue,
       modelAlias: readMeta(meta, 'modelAlias'),
@@ -109,13 +115,13 @@ export function useNodeModelAutoSelect({
         ...(isVideoLike ? { videoModel: patch.modelKey } : { imageModel: patch.modelKey }),
       },
     })
-  }, [isGenerationNode, isVideoLike, meta, node.id, node.meta, selectedModelValue, updateNode])
+  }, [autoSelectionAllowed, isGenerationNode, isVideoLike, meta, node.id, node.meta, selectedModelValue, updateNode])
 
   // 供应商断开后，节点钉死的旧模型已从下拉移除（selectedModelOption===null，但 selectedModelValue 仍在）。
   // 按 archetype 在当前可用 options 里找同款，自动改选并写回 meta —— 否则节点会卡在选不中的死供应商上，
   // 标签/参数全错。与运行时咽喉 resolveExecutableNodeFromCatalog 同策略（同 id 优先，family 兜底）。
   React.useEffect(() => {
-    if (!isGenerationNode || !selectedModelValue || selectedModelOption) return
+    if (!autoSelectionAllowed || !isGenerationNode || !selectedModelValue || selectedModelOption) return
     const sourceArchetype = resolveArchetypeForModel({
       modelKey: selectedModelValue,
       modelAlias: readMeta(meta, 'modelAlias'),
@@ -147,13 +153,13 @@ export function useNodeModelAutoSelect({
       },
     })
     showInfoToast(`原供应商已断开，已自动切换到「${target.label}」`)
-  }, [isGenerationNode, isVideoLike, meta, modelOptions, node.id, node.meta, selectedModelOption, selectedModelValue, updateNode])
+  }, [autoSelectionAllowed, isGenerationNode, isVideoLike, meta, modelOptions, node.id, node.meta, selectedModelOption, selectedModelValue, updateNode])
 
   // 选到一个有内置档案的模型、还没有命名空间 meta 时，初始化 node.meta.archetype（落到默认模式）。
   // 幂等：已是该档案则 no-op，不会循环。
   React.useEffect(() => {
-    if (!isGenerationNode || !archetype) return
+    if (!autoSelectionAllowed || !isGenerationNode || !archetype) return
     const patch = ensureArchetypeNodeMeta(node.meta || {}, archetype)
     if (patch) updateNode(node.id, { meta: patch })
-  }, [isGenerationNode, archetype, node.id, node.meta, updateNode])
+  }, [autoSelectionAllowed, isGenerationNode, archetype, node.id, node.meta, updateNode])
 }

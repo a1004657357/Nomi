@@ -14,6 +14,7 @@ export const STAGES = {
   e2e: stage("e2e", "pnpm", ["run", "test:e2e"]),
   "journeys-ci": stage("journeys-ci", "pnpm", ["run", "test:journeys"]),
   "journeys-all": stage("journeys-all", "pnpm", ["eval:journey"]),
+  "third-party-release": stage("third-party-release", "pnpm", ["run", "check:third-party:release"]),
   "real-generation": stage("real-generation", "node", ["tests/ux/camera-move-render-e2e.mjs"], {
     env: { APIMART_E2E: "1", NOMI_SPEND_OK: "1", NOMI_E2E: "1", NOMI_E2E_ALLOW_MULTI_INSTANCE: "1" },
   }),
@@ -24,5 +25,5 @@ export const PROFILES = {
   ci: ["matrix", "unit", "build", "e2e", "journeys-ci"],
   "full-local": ["matrix", "gates", "e2e", "journeys-ci"],
   "real-generation": ["real-generation"],
-  release: ["matrix", "gates", "e2e", "journeys-all", "real-generation"],
+  release: ["matrix", "gates", "third-party-release", "e2e", "journeys-all", "real-generation"],
 };

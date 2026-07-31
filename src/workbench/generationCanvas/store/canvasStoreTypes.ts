@@ -5,6 +5,7 @@ import type {
   GenerationCanvasSnapshot,
   GenerationNodeKind,
   GenerationNodeResult,
+  GenerationResultCollection,
   GenerationNodeRunRecord,
   GenerationNodeStatus,
   NodeGroup,
@@ -84,6 +85,7 @@ export type CanvasRunActions = {
   appendNodeRun: (nodeId: string, run: NodeRunRecordInput) => GenerationNodeRunRecord
   trackNodeRun: (nodeId: string, runId: string, patch: NodeRunRecordPatch) => void
   addNodeResult: (nodeId: string, result: GenerationNodeResult) => void
+  addNodeResultCollection: (nodeId: string, collection: GenerationResultCollection) => void
   rollbackHistory: (nodeId: string, resultId: string) => void
 }
 

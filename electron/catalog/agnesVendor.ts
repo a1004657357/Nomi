@@ -1,17 +1,19 @@
-// Agnes AI（Sapiens AI，新加坡）供应商种子 —— 全模态 OpenAI 兼容网关，文本/图片/视频**无限期免费**
-// （2026-06-01 起，免费层 RPM 20，邮箱注册不绑卡）。与 apimart 同构（curated 全模态 relay），
+// Agnes AI（Sapiens AI，新加坡）供应商种子 —— 带免费/default 配额的全模态 OpenAI 兼容网关。
+// 2026-06-28 公开实际限速：文本 20 RPM；图片 1K 20、2K 10 RPM；视频 1 RPM。
+// 与 apimart 同构（curated 全模态 relay），
 // 但形状有 AGNES 专属 quirk（已照官方文档核实：wiki.agnes-ai.com/en/docs/*.md + github.com/AgnesAI-Labs/Agnes-AI）：
 //   文本  POST /v1/chat/completions   —— 标准 OpenAI 同步（无 mapping，走 buildLanguageModelForVendor）
 //   图片  POST /v1/images/generations —— **同步** { created, data:[{ url | b64_json }] }（data.0.url）
 //   视频  POST /v1/videos             —— **异步** { video_id, task_id, status:"queued" }
 //   轮询  GET  /agnesapi?video_id=<ID> —— **不在 /v1 下，video_id 走 query 参数**（非路径）
-//         → { status, remixed_from_video_id:<mp4 URL（status=completed 时）>, error }
+//         → { status, url:<mp4 URL（status=completed 时）>, error }
+//           旧版 live 响应也曾使用 remixed_from_video_id，轮询映射需兼容两者。
 //   status: queued | in_progress | completed | failed
 //
 // 两个必处理坑（live + mock 盯死）：
 //   ① 轮询是 /agnesapi（非 /v1/...）+ query 参数 → 用绝对 URL + op.query.video_id。
-//   ② 成品 mp4 URL 在 **remixed_from_video_id**（不是 video_url，官方文档自己写错）；此字段不在
-//      runtime 防御式 extractAssetUrl 的兜底路径里 → 必须显式 response_mapping.video_url 取。
+//   ② 成品 mp4 URL 的官方字段是 **url**，但旧版 live 响应曾返回 remixed_from_video_id；
+//      两者都不应依赖 runtime 猜测，必须显式 response_mapping.video_url 依次取。
 //
 // baseUrl/path 约定（避 joinUrl 双前缀，见 apimartVendor.ts:12-14）：
 //   vendor.baseUrl = "https://apihub.agnes-ai.com"（**裸**，不带 /v1）
@@ -38,7 +40,7 @@ export const AGNES_STATUS_MAPPING: Record<string, string[]> = {
 
 /**
  * 视频轮询 op（所有 AGNES 视频模型共用）。video_id 走 **query 参数**（appendQueryParams 渲染）；
- * 成品 URL 在顶层 remixed_from_video_id（反常字段，必须显式映射，extractAssetUrl 兜底不到）。
+ * 成品 URL 优先取官方顶层 url，并兼容旧版 live 的 remixed_from_video_id。
  */
 export const AGNES_VIDEO_QUERY_OP: HttpOperation = {
   method: "GET",
@@ -48,7 +50,7 @@ export const AGNES_VIDEO_QUERY_OP: HttpOperation = {
   response_mapping: {
     task_id: "video_id",
     status: "status",
-    video_url: "remixed_from_video_id",
+    video_url: ["url", "remixed_from_video_id"],
     error_message: "error",
   },
 };

@@ -1,5 +1,5 @@
 // Pose Lab —— 仅 dev 的预设动作校准台（不进 prod 构建：vite build 只吃 index.html）。
-// 复用 App 里同一套 Mannequin 组件 + 同一个 x-bot.glb + 同一套骨骼姿势数学，
+// 复用 App 里同一套第一方 Mannequin 组件、生成资产和骨骼姿势数学，
 // 所以这里渲染出来的姿势 === 3D 导演图里看到的姿势。以截图为准校准 MANNEQUIN_POSE_PRESETS。
 // 支持任意方位角视角（front/side/q3 3/4 斜俯/back），图形沿「垂直于相机方位」的水平轴排开避免遮挡。
 import React, { Suspense } from 'react'

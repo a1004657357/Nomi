@@ -167,6 +167,20 @@ export function classifyGenerationError(message: string): GenerationErrorReport 
   // 老数据/非 vendor 错误退回 legacy 正则识别。两条路只产 kind,文案统一出自 narrate 词表。
   const structured = parseVendorErrorFromMessage(message)
   const cleanRaw = stripVendorErrorMarker(String(message || '')).split('\n→')[0].trim() || '生成失败'
+  const bridgeText = `${structured?.upstreamMsg || ''} ${cleanRaw}`.toLowerCase()
+  if (
+    (bridgeText.includes('即梦 web') || bridgeText.includes('即梦网页') || bridgeText.includes('web-bridge')) &&
+    (
+      bridgeText.includes('failed to fetch') ||
+      bridgeText.includes('网页桥任务失败') ||
+      bridgeText.includes('结果同步失败') ||
+      bridgeText.includes('扩展客户端')
+    )
+  ) {
+    const { reason, hint } = narrateGenerationError('web-bridge')
+    const providerMessage = pickProviderMessage(extractReadableErrorLine(cleanRaw), reason)
+    return { reason, hint, raw: cleanRaw, ...(providerMessage ? { providerMessage } : {}) }
+  }
   // 账号档位闸（会员/企业 Key/网页授权）**最先**判——它的关键词（会员/授权/开通即梦会员）比
   // model-not-open 更具体；反过来放后面会被宽词抢走（即梦 CLI 兜底文案曾被判成「模型未开通」
   // 并给出火山 Ark 指引，2026-07-06 真机走查抓出）。reason 出自 narrate，服务商原话单独提到可见区。

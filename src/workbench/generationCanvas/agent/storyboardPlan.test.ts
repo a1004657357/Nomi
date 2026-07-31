@@ -122,6 +122,33 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     expect(shots[2]).toMatchObject({ modelKey: 'seedance-2', modeId: 'seedance-i2v' }) // 没选 → 默认模型+默认模式
   })
 
+  it('分镜方案中的型号 variantId 会随镜头节点落到 create_canvas_nodes', () => {
+    const plan: StoryboardPlan = {
+      title: '即梦型号',
+      anchors: [],
+      shots: [{
+        index: 1,
+        shotKind: 'image',
+        durationSec: 0,
+        anchorIds: [],
+        prompt: '夏日街道',
+        modelKey: 'jimeng-web-image',
+        variantId: 'v5_0_lite',
+        modeId: 't2i',
+        params: { ratio: '9:16', resolution_type: '4K' },
+      }],
+    }
+    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
+    const shot = nodes.find((node) => node.clientId === 'shot-1')
+
+    expect(shot).toMatchObject({
+      modelKey: 'jimeng-web-image',
+      variantId: 'v5_0_lite',
+      modeId: 't2i',
+      params: { ratio: '9:16', resolution_type: '4K' },
+    })
+  })
+
   it('文本锚描述拼进引用它的镜头 prompt（不建边）', () => {
     const { nodes } = storyboardPlanToCreateNodesArgs(PLAN)
     const shot1 = nodes.find((n) => n.clientId === 'shot-1')!
@@ -186,6 +213,7 @@ describe('storyboardPlanToCreateNodesArgs', () => {
       anchorIds: [],
       prompt: '咖啡师把刚做好的拿铁推到顾客面前',
       imagePrompt: '暖色咖啡馆吧台，中近景，咖啡师双手推杯',
+      modeId: 'omni',
       scene: '清晨咖啡馆吧台，窗外有柔和自然光',
       shotSize: '中近景',
       cameraAngle: '吧台正面平视',
@@ -198,13 +226,76 @@ describe('storyboardPlanToCreateNodesArgs', () => {
       notes: '商业广告质感，动作干净，杯子不能变形',
     })
 
-    expect(prompt).toContain('视频生成提示词：镜头 4，时长 6 秒')
-    expect(prompt).toContain('关键词：场景：清晨咖啡馆吧台')
-    expect(prompt).toContain('构图机位：使用「中近景，吧台正面平视」')
-    expect(prompt).toContain('运镜节奏：缓慢推近后轻微下摇到咖啡杯')
-    expect(prompt).toContain('动作时间线：0-1 秒')
-    expect(prompt).toContain('对白处理：角色说「您的拿铁好了。」')
-    expect(prompt).toContain('画面约束：保持角色外观、服装、道具、场景和光线连续一致')
+    expect(prompt).toContain('全能参考视频导演提示词：镜头 4，时长 6 秒')
+    expect(prompt).toContain('分镜图片只表达景别、机位、空间关系和动作意图，不作为首帧')
+    expect(prompt).toContain('最强、最清楚的主体动作立即开始')
+    expect(prompt).toContain('这是一段真实叙事视频，不是照片动效')
+    expect(prompt).not.toContain('首帧基准：暖色咖啡馆吧台，中近景，咖啡师双手推杯')
+    expect(prompt).toContain('表演动机：主体为「咖啡师、顾客的手部」')
+    expect(prompt).toContain('动作时间线：0-0.9 秒')
+    expect(prompt).toContain('运镜响应：缓慢推近后轻微下摇到咖啡杯')
+    expect(prompt).toContain('道具物理：涉及「白瓷拿铁杯、杯碟、木质吧台、拉花」')
+    expect(prompt).toContain('对白表演：角色说「您的拿铁好了。」')
+    expect(prompt).toContain('连续性约束：锁定参考图中的脸型、服装、道具造型、场景参照物')
+  })
+
+  it('画外音不驱动人物口型，图生视频提示词不重复完整图片提示词', () => {
+    const imagePrompt = '9:16竖屏，海军蓝围裙老板站在工作台前，左侧馅料盒见底，背景是未完成礼盒。'
+    const prompt = buildDetailedStoryboardShotVideoPrompt({
+      index: 2,
+      shotKind: 'video',
+      durationSec: 8,
+      anchorIds: [],
+      prompt: '团购做到一半突然缺料',
+      imagePrompt,
+      scene: '私房烘焙工作室',
+      shotSize: '中近景',
+      cameraAngle: '平视',
+      cameraMove: '固定机位',
+      characters: '海军蓝围裙老板',
+      performance: '只完成一次压模，看到见底馅料盒后停住',
+      dialogue: '画外音：做到一半馅料不够。',
+      props: '月饼模具、见底馅料盒',
+    })
+
+    expect(prompt).not.toContain(imagePrompt)
+    expect(prompt).toContain('声音与口型：画外音：做到一半馅料不够。')
+    expect(prompt).toContain('这是后期声音，不驱动角色口型')
+    expect(prompt).not.toContain('角色说「画外音')
+  })
+
+  it('没有图片参考时保留场景与构图建立信息', () => {
+    const prompt = buildDetailedStoryboardShotVideoPrompt({
+      index: 1,
+      shotKind: 'video',
+      durationSec: 5,
+      anchorIds: [],
+      prompt: '人物走进空旷仓库',
+      scene: '清晨空旷仓库',
+      shotSize: '全景',
+      cameraAngle: '平视',
+      performance: '人物沿安全线走到货架前停住',
+    })
+
+    expect(prompt).toContain('文生视频导演提示词：镜头 1，时长 5 秒')
+    expect(prompt).toContain('视觉建立：地点为「清晨空旷仓库」；使用「全景，平视」')
+    expect(prompt).not.toContain('首帧继承')
+  })
+
+  it('极短镜头的动作时间线仍保持正序', () => {
+    const prompt = buildDetailedStoryboardShotVideoPrompt({
+      index: 1,
+      shotKind: 'video',
+      durationSec: 1,
+      anchorIds: [],
+      prompt: '人物抬眼',
+      imagePrompt: '人物低头的首帧',
+      performance: '人物抬眼看向镜头外',
+    })
+
+    expect(prompt).toContain('动作时间线：0-0.2 秒')
+    expect(prompt).toContain('0.2-0.8 秒')
+    expect(prompt).toContain('0.8-1 秒')
   })
 
   it('涉及手机/电脑屏幕的镜头 prompt 自动附加屏幕朝向可见性规则', () => {

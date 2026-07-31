@@ -7,14 +7,31 @@
 //   · 没开 → 进程内 dispatch（磁盘网关，本进程是唯一写者，安全）。付费经 elicitation 真人确认后铸令牌放行。
 // 取代旧 scripts/nomi-mcp.mjs + scripts/lib/nomiClient.mjs 的 MCP 路径：无 node 依赖、入口在包内永远存在（P1）。
 import readline from 'node:readline'
-import { app, session } from 'electron'
+import { app } from 'electron'
 import { createMcpProtocol, type McpInvokeOptions } from './mcpProtocol'
 import { dispatch } from './dispatcher'
 import { createDiskGateway, type ProjectGateway, type SpendConfirmInfo } from './gateway'
 import { readLiveInstance, type InstanceAdvertisement } from './lockfile'
-import { runTask, fetchTaskResult } from '../runtime'
 import { mintSpendGrant } from '../spendGrant'
-import { applySystemProxy } from '../systemProxy'
+
+let headlessRuntimePromise: Promise<typeof import('../runtime')> | null = null
+
+async function loadHeadlessRuntime(): Promise<typeof import('../runtime')> {
+  headlessRuntimePromise ??= app.whenReady().then(async () => {
+    const [{ session }, runtime, { applySystemProxy }] = await Promise.all([
+      import('electron'),
+      import('../runtime'),
+      import('../systemProxy'),
+    ])
+    try {
+      await applySystemProxy(session.defaultSession)
+    } catch {
+      // 代理设置失败时由 provider 自己按直连路径继续。
+    }
+    return runtime
+  })
+  return headlessRuntimePromise
+}
 
 // 传输兜底超时：须 ≥ 服务端最长合法耗时（core.ts 视频轮询 300s）才不误杀真生成；默认 360s，可经 env 调。
 function transportTimeoutMs(): number {
@@ -61,11 +78,12 @@ async function callViaRpc(instance: InstanceAdvertisement, method: string, param
 async function invoke(method: string, params: Record<string, unknown>, options?: McpInvokeOptions): Promise<unknown> {
   const instance = readLiveInstance()
   if (instance) return callViaRpc(instance, method, params)
+  const { runTask, fetchTaskResult } = await loadHeadlessRuntime()
   const makeGateway = options?.spendConfirmed ? makeConfirmedGateway : createDiskGateway
   return dispatch(method, params, { runTask, fetchTaskResult, makeGateway })
 }
 
-/** 启动 stdio JSON-RPC server。main.ts 在 NOMI_MCP_STDIO 模式的 app.whenReady 后调；不开窗、不抢单实例锁。 */
+/** 启动 stdio JSON-RPC server。GUI 在线时只做 RPC 转发，Provider runtime 与代理栈延迟到 headless 调用。 */
 export async function startMcpStdioServer(): Promise<void> {
   // 无窗口进程：mac 别在 dock 弹图标。
   app.dock?.hide?.()
@@ -76,13 +94,6 @@ export async function startMcpStdioServer(): Promise<void> {
   console.info = toErr
   console.warn = toErr
   console.debug = toErr
-
-  // 和主 app 一致设代理（vendor fetch 在代理环境才通）；失败直连兜底，不崩。
-  try {
-    await applySystemProxy(session.defaultSession)
-  } catch {
-    /* 代理设失败 → 直连兜底 */
-  }
 
   const protocol = createMcpProtocol({
     send: (message) => process.stdout.write(JSON.stringify(message) + '\n'),

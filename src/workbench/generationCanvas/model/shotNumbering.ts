@@ -29,7 +29,10 @@ export function isShotNumberedNode(
   // 参考卡（分镜方案的角色/场景/道具锚）永不占镜号——道具锚 kind=image 落 shots 分类,
   // 与镜头节点同 kind 无法靠 kind 区分,靠落画布时打的 meta.referenceSheet 身份标记
   // (R13 走查抓出:道具卡吃掉「镜头 1/2」,真镜头从 3 起编,编号与方案镜号错位)。
-  if (node.meta && (node.meta as Record<string, unknown>).referenceSheet === true) return false
+  if (node.meta) {
+    const meta = node.meta as Record<string, unknown>
+    if (meta.referenceSheet === true || meta.excludeFromShotNumbering === true) return false
+  }
   return (node.categoryId ?? 'shots') === 'shots' && SHOT_NUMBERED_KINDS.has(node.kind)
 }
 

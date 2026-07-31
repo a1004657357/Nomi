@@ -14,7 +14,7 @@ import { z } from "zod";
  * See `docs/skill-pack-format.md` for the human-facing spec.
  */
 
-export const skillProviderKindSchema = z.enum(["text", "image", "video"]);
+export const skillProviderKindSchema = z.enum(["text", "image", "video", "model3d"]);
 export type SkillProviderKind = z.infer<typeof skillProviderKindSchema>;
 
 export const skillPermissionSchema = z.enum([
@@ -40,6 +40,25 @@ export const skillExampleSchema = z.object({
 export type SkillExample = z.infer<typeof skillExampleSchema>;
 
 /**
+ * Optional canvas presentation for skills that should be instantiated as a
+ * first-class workflow node. Recipe ids stay provider-independent: the model
+ * catalog resolves a compatible provider only when the user runs the recipe.
+ */
+export const skillCanvasSchema = z.object({
+  recipeIds: z.array(z.string().min(1)).default([]),
+  defaultRecipeId: z.string().min(1).optional(),
+}).superRefine((value, ctx) => {
+  if (value.defaultRecipeId && !value.recipeIds.includes(value.defaultRecipeId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["defaultRecipeId"],
+      message: "defaultRecipeId must be included in recipeIds",
+    });
+  }
+});
+export type SkillCanvas = z.infer<typeof skillCanvasSchema>;
+
+/**
  * 阶段级模型偏好 —— **只声明能力身份（kind + 可选 family），绝不绑 vendor 专属 archetypeId，
  * 也不写死参数**（参数合法区间交模型档案给）。这是「通用第一（P4）」+「分享出去不绑死」的硬约束：
  * 用 `.strict()` 从结构上拒绝 `archetypeId` / `params` 等键，违规直接校验失败。
@@ -47,7 +66,7 @@ export type SkillExample = z.infer<typeof skillExampleSchema>;
  */
 export const skillStageModelPrefSchema = z
   .object({
-    /** 能力类别：text / image / video（机读，决定路由到哪类模型）。 */
+    /** 能力类别：text / image / video / model3d（机读，决定路由到哪类模型）。 */
     kind: skillProviderKindSchema,
     /** 软提示：模型家族，如 "seedance"（跨 vendor 通用；缺省=该 kind 任意可用模型）。 */
     family: z.string().min(1).optional(),
@@ -93,6 +112,8 @@ export const skillManifestSchema = z.object({
   inputs: z.array(skillInputSchema).optional(),
   /** Sample prompts shown in onboarding or the skill picker (optional). */
   examples: z.array(skillExampleSchema).optional(),
+  /** Canvas node presentation and executable capability recipes (optional). */
+  canvas: skillCanvasSchema.optional(),
   /**
    * Multi-stage playbook skeleton (optional). Absent ⇒ legacy single-stage pack
    * (current 5 built-ins are unaffected — full back-compat). Present ⇒ the

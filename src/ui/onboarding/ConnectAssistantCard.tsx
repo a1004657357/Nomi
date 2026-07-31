@@ -20,7 +20,7 @@ type ClientKey = 'claude' | 'codex' | 'cursor'
 const CLIENT_LABEL: Record<ClientKey, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' }
 const CLIENT_ORDER: ClientKey[] = ['claude', 'codex', 'cursor']
 
-type McpClientInfo = { installed: boolean; configPath: string; snippet: string }
+type McpClientInfo = { installed: boolean; stale: boolean; configPath: string; snippet: string }
 export type McpInfo = {
   tokenReady: boolean
   rpcRunning: boolean
@@ -97,7 +97,7 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
     })
   }
 
-  const statusLabel = client.installed ? '已接入' : info.tokenReady ? '就绪' : '未就绪'
+  const statusLabel = client.installed ? '已接入' : client.stale ? '需更新' : info.tokenReady ? '就绪' : '未就绪'
 
   return (
     <FoldableModelCard
@@ -148,7 +148,9 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
           ) : (
             <>
               <div className="text-caption text-nomi-ink-60 leading-relaxed">
-                一键把 Nomi 接进 {label}——之后你一句话，它就能在 Nomi 里建项目、拆镜头、用你配好的模型真出图。
+                {client.stale
+                  ? `${label} 仍指向另一份 Nomi。更新后，Agent 会使用当前打开的版本和能力。`
+                  : `一键把 Nomi 接进 ${label}——之后你一句话，它就能在 Nomi 里建项目、拆镜头、用你配好的模型真出图。`}
               </div>
               <button
                 type="button"
@@ -160,7 +162,8 @@ export function ConnectAssistantCard({ info, onChanged }: ConnectAssistantCardPr
                   'hover:bg-nomi-accent disabled:opacity-50 disabled:cursor-not-allowed',
                 )}
               >
-                <IconPlugConnected size={15} stroke={1.8} />一键接入 {label}
+                <IconPlugConnected size={15} stroke={1.8} />
+                {client.stale ? `更新 ${label} 接入` : `一键接入 ${label}`}
               </button>
               <div className="flex items-center gap-2">
                 <button

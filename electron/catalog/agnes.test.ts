@@ -61,10 +61,14 @@ describe("Agnes 图片（同步 create，形状锁）", () => {
 
 describe("Agnes 视频（异步 create→poll，形状锁 + 两个 quirk）", () => {
   const CREATE_OK = { id: "task_abc", task_id: "task_abc", video_id: "video_xyz", status: "queued" };
-  // 成品 URL 在反常字段 remixed_from_video_id（非 video_url），status=completed。
-  const QUERY_OK = {
+  const QUERY_OFFICIAL_OK = {
     id: "task_abc", video_id: "video_xyz", status: "completed", progress: 100,
-    remixed_from_video_id: "https://storage.googleapis.com/agnes-aigc/aigc/videos/out.mp4", error: null,
+    url: "https://storage.googleapis.com/agnes-aigc/aigc/videos/official.mp4", error: null,
+  };
+  // 旧版 live 响应曾把成品 URL 放在反常字段 remixed_from_video_id。
+  const QUERY_LEGACY_OK = {
+    id: "task_abc", video_id: "video_xyz", status: "completed", progress: 100,
+    remixed_from_video_id: "https://storage.googleapis.com/agnes-aigc/aigc/videos/legacy.mp4", error: null,
   };
 
   it("单款 v2.0；t2v/i2v 两条 mapping；提交抓 video_id 进 providerMeta；frame_rate 字面量 24", () => {
@@ -93,16 +97,22 @@ describe("Agnes 视频（异步 create→poll，形状锁 + 两个 quirk）", ()
     expect((AGNES_VIDEO_QUERY_OP.query as Record<string, unknown>)?.video_id).toBe("{{providerMeta.video_id}}");
   });
 
-  it("quirk②：成品 URL 从反常字段 remixed_from_video_id 取（extractAssetUrl 兜底不到，靠显式映射）", () => {
+  it("兼容官方 url 与旧版 remixed_from_video_id，且优先使用官方字段", () => {
     const createMap = AGNES_VIDEO_MODELS[0].mappings[0].create.response_mapping as Record<string, unknown>;
     expect(firstMappedString(CREATE_OK, createMap, "task_id")).toBe("video_xyz");
 
     const queryMap = AGNES_VIDEO_QUERY_OP.response_mapping as Record<string, unknown>;
-    const video = firstMappedString(QUERY_OK, queryMap, "video_url");
-    expect(video).toBe("https://storage.googleapis.com/agnes-aigc/aigc/videos/out.mp4");
-    expect(collectAssetUrls(video)).toEqual(["https://storage.googleapis.com/agnes-aigc/aigc/videos/out.mp4"]);
+    expect(queryMap.video_url).toEqual(["url", "remixed_from_video_id"]);
+    const officialVideo = firstMappedString(QUERY_OFFICIAL_OK, queryMap, "video_url");
+    expect(officialVideo).toBe("https://storage.googleapis.com/agnes-aigc/aigc/videos/official.mp4");
+    const legacyVideo = firstMappedString(QUERY_LEGACY_OK, queryMap, "video_url");
+    expect(legacyVideo).toBe("https://storage.googleapis.com/agnes-aigc/aigc/videos/legacy.mp4");
+    expect(collectAssetUrls([officialVideo, legacyVideo])).toEqual([
+      "https://storage.googleapis.com/agnes-aigc/aigc/videos/official.mp4",
+      "https://storage.googleapis.com/agnes-aigc/aigc/videos/legacy.mp4",
+    ]);
     // status "completed" 经 AGNES_STATUS_MAPPING 归一 succeeded。
-    expect(taskStatusFromResponse(QUERY_OK, queryMap, AGNES_STATUS_MAPPING, [video])).toBe("succeeded");
+    expect(taskStatusFromResponse(QUERY_OFFICIAL_OK, queryMap, AGNES_STATUS_MAPPING, [officialVideo])).toBe("succeeded");
   });
 
   it("status 归一：queued→queued、in_progress→running、failed→failed", () => {

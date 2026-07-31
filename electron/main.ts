@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, session, shell } from "electron";
 import type { Rectangle, WebContents } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,9 +24,6 @@ import {
 import { analyzeComfyWorkflowText, importComfyWorkflowToCatalog } from "./catalog/comfyuiWorkflowImportStore";
 import { runTaskWithIdempotency } from "./submissionLedger";
 import { mintSpendGrant } from "./spendGrant";
-import { openWorkspaceFolder, selectWorkspaceFolder } from "./workspace/workspaceIpc";
-import { listWorkspaceFiles, resolveWorkspaceFilePath } from "./workspace/workspaceFileIndex";
-import { registerWorkspaceFileDeleteIpc } from "./workspace/workspaceFileDelete";
 import { installCrashHandlers, logCrash } from "./crashLog";
 import { registerExportJobIpc } from "./export/exportJobIpc";
 import { registerAgentChatV2Ipc } from "./ai/agentChatV2Ipc";
@@ -45,6 +42,7 @@ import { setRendererTarget } from "./capabilityCore/rendererBridge";
 import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfig";
 import { registerLocalProtocol } from "./protocol/localProtocol";
 import { installWindowCloseConfirmation } from "./windowCloseConfirmation";
+import { registerDesktopIntegrationIpc } from "./desktopIntegrationIpc";
 
 // 尽早安装：捕获引导阶段起的 uncaughtException / unhandledRejection，落盘到 app logs（P0-8）。
 installCrashHandlers();
@@ -67,6 +65,14 @@ if (configuredUserDataDir) {
 const isMcpStdio = process.env.NOMI_MCP_STDIO === "1";
 const allowE2eMultiInstance = process.env.NOMI_E2E_ALLOW_MULTI_INSTANCE === "1";
 const hasSingleInstanceLock = isMcpStdio ? false : allowE2eMultiInstance ? true : app.requestSingleInstanceLock();
+if (isMcpStdio) {
+  // GUI 在线时 MCP 只做 localhost RPC 转发，不需要 Chromium 合成器。必须在 ready 前关闭，
+  // 否则每个 Codex/Claude MCP 会话都会常驻一组 GPU helper。
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-software-rasterizer");
+  app.commandLine.appendSwitch("in-process-gpu");
+}
 if (!isMcpStdio && !allowE2eMultiInstance) {
   if (!hasSingleInstanceLock) {
     app.quit();
@@ -81,12 +87,8 @@ if (!isMcpStdio && !allowE2eMultiInstance) {
   }
 }
 if (isMcpStdio) {
-  void app
-    .whenReady()
-    .then(async () => {
-      const { startMcpStdioServer } = await import("./capabilityCore/mcpStdioServer");
-      await startMcpStdioServer();
-    })
+  void import("./capabilityCore/mcpStdioServer")
+    .then(({ startMcpStdioServer }) => startMcpStdioServer())
     .catch((error) => {
       process.stderr.write(`[nomi:mcp-stdio] 启动失败: ${error instanceof Error ? error.message : String(error)}\n`);
       app.exit(1);
@@ -310,7 +312,10 @@ async function createWindow(
     },
   });
   mainWindowRef = mainWindow;
-  installWindowCloseConfirmation(mainWindow);
+  // Playwright closes the Electron application programmatically. Showing the
+  // user-facing confirmation there prevents app.close() from ever completing
+  // and forces every isolated run down the SIGKILL fallback.
+  if (process.env.NOMI_E2E !== "1") installWindowCloseConfirmation(mainWindow);
   mainWindow.on("closed", () => {
     if (mainWindowRef === mainWindow) mainWindowRef = null;
   });
@@ -360,7 +365,7 @@ async function createWindow(
 
   if (options.maximize) mainWindow.maximize();
 
-  if (isDev) {
+  if (isDev && process.env.NOMI_E2E !== "1") {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
   return mainWindow;
@@ -430,7 +435,9 @@ async function runTaskIpcGuard<T>(payload: unknown, thunk: () => Promise<T>): Pr
 }
 
 function registerIpc(): void {
-  const selectedWorkspaceRoots = new Set<string>();
+  registerDesktopIntegrationIpc({
+    setCancelBlenderRendersOnQuit: (cancel) => { cancelBlenderRendersOnQuit = cancel; },
+  });
   // 渲染层崩溃（RootErrorBoundary）也落到同一崩溃日志（P0-8）。
   ipcMain.on("nomi:log:renderer-crash", (_event, message: unknown) => logCrash("renderer", String(message)));
   // 窗口控制（Windows 自绘标题栏）：只注册一次，作用于发起请求的那个窗口（fromWebContents），
@@ -510,104 +517,6 @@ function registerIpc(): void {
     const { fetchModelCatalogDocs } = await import("./catalog/catalogCommit");
     return fetchModelCatalogDocs(payload);
   });
-  // 即梦会员（dreamina CLI）：设备码登录/账户检测/安装（异步，spawn 本地 CLI）。
-  ipcMain.handle("nomi:dreamina:status", async () => {
-    const { dreaminaStatus } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaStatus();
-  });
-  ipcMain.handle("nomi:dreamina:login-start", async () => {
-    const { dreaminaLoginStart } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaLoginStart();
-  });
-  ipcMain.handle("nomi:dreamina:login-poll", async (_event, deviceCode: unknown) => {
-    const { dreaminaLoginPoll } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaLoginPoll(String(deviceCode || ""));
-  });
-  ipcMain.handle("nomi:dreamina:logout", async () => {
-    const { dreaminaLogout } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaLogout();
-  });
-  ipcMain.handle("nomi:dreamina:install", async () => {
-    const { dreaminaInstall } = await import("./catalog/dreaminaLoginIpc");
-    return dreaminaInstall();
-  });
-  ipcMain.handle("nomi:jimeng-web:status", async () => {
-    const { jimengWebStatus } = await import("./jimengWeb/ipc");
-    return jimengWebStatus();
-  });
-  ipcMain.handle("nomi:jimeng-web:open-login", async () => {
-    const { jimengWebOpenLogin } = await import("./jimengWeb/ipc");
-    return jimengWebOpenLogin();
-  });
-  ipcMain.handle("nomi:jimeng-web:open-admin", async (_event, baseUrl: unknown) => {
-    const { jimengWebOpenAdmin } = await import("./jimengWeb/ipc");
-    return jimengWebOpenAdmin(baseUrl);
-  });
-  ipcMain.handle("nomi:jimeng-web:start-runner", async () => {
-    const { jimengWebStartExtensionRunner } = await import("./jimengWeb/ipc");
-    return jimengWebStartExtensionRunner();
-  });
-  ipcMain.handle("nomi:jimeng-web:stop-runner", async () => {
-    const { jimengWebStopExtensionRunner } = await import("./jimengWeb/ipc");
-    return jimengWebStopExtensionRunner();
-  });
-  ipcMain.handle("nomi:workspace:select-folder", async () => {
-    const selection = await selectWorkspaceFolder({ showOpenDialog: (options) => dialog.showOpenDialog(options) });
-    if (!selection.canceled) selectedWorkspaceRoots.add(selection.rootPath);
-    return selection;
-  });
-  ipcMain.handle("nomi:workspace:open-folder", (_event, payload) =>
-    openWorkspaceFolder(payload, {
-      createProject,
-      selectedRootPaths: selectedWorkspaceRoots,
-      confirmInitialize: async (rootPath) => {
-        const result = await dialog.showMessageBox({
-          type: "question",
-          buttons: ["取消", "初始化"],
-          defaultId: 1,
-          cancelId: 0,
-          message: "初始化 Nomi 项目文件夹？",
-          detail: `Nomi 会在此文件夹创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/.\n\n${rootPath}`,
-        });
-        return result.response === 1;
-      },
-    }),
-  );
-  ipcMain.handle("nomi:workspace:list-files", (_event, payload) => {
-    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
-    if (!projectId) throw new Error("projectId is required");
-    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null;
-    const rootPath = typeof project?.lastKnownRootPath === "string" ? project.lastKnownRootPath : "";
-    if (!rootPath) throw new Error("Project folder is unavailable");
-    return listWorkspaceFiles({
-      rootPath,
-      maxFiles:
-        typeof (payload as { limit?: unknown } | null)?.limit === "number"
-          ? (payload as { limit: number }).limit
-          : undefined,
-    });
-  });
-  ipcMain.handle("nomi:workspace:reveal-file", (_event, payload) => {
-    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
-    const relativePath = String((payload as { relativePath?: unknown } | null)?.relativePath || "").trim();
-    if (!projectId) throw new Error("projectId is required");
-    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null;
-    const rootPath = typeof project?.lastKnownRootPath === "string" ? path.resolve(project.lastKnownRootPath) : "";
-    if (!rootPath) throw new Error("Project folder is unavailable");
-    const absolutePath = resolveWorkspaceFilePath(rootPath, relativePath);
-    shell.showItemInFolder(absolutePath);
-    return { ok: true };
-  });
-  registerWorkspaceFileDeleteIpc({ readProject });
-  ipcMain.handle("nomi:workspace:reveal-project-folder", (_event, payload) => {
-    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
-    if (!projectId) throw new Error("projectId is required");
-    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null;
-    const rootPath = typeof project?.lastKnownRootPath === "string" ? path.resolve(project.lastKnownRootPath) : "";
-    if (!rootPath) throw new Error("Project folder is unavailable");
-    void shell.openPath(rootPath);
-    return { ok: true };
-  });
   ipcMain.handle("nomi:model-catalog:mapping:test", async (_event, id, payload) => {
     const { testModelCatalogMapping } = await import("./catalog/catalogCommit");
     return testModelCatalogMapping(id, payload);
@@ -628,13 +537,48 @@ function registerIpc(): void {
     const { listProjectAssets } = await loadRuntimeModule();
     return listProjectAssets(payload);
   });
+  ipcMain.handle("nomi:assets:inspect-model3d", async (_event, payload) => {
+    const { inspectProjectModel3dAsset } = await import("./assets/projectAssetStore");
+    return inspectProjectModel3dAsset(payload);
+  });
+  ipcMain.handle("nomi:assets:inspect-video", async (_event, payload) => {
+    const { inspectProjectVideoAsset } = await import("./assets/projectAssetStore");
+    return inspectProjectVideoAsset(payload);
+  });
   ipcMain.handle("nomi:assets:download", async (_event, payload) => {
     const { downloadAssetToDisk } = await import("./assets/downloadAsset");
     return downloadAssetToDisk(payload);
   });
+  ipcMain.handle("nomi:assets:archive-output-collection", async (_event, payload) => {
+    const { archiveOutputCollection } = await import("./assets/archiveOutputCollection");
+    return archiveOutputCollection(payload);
+  });
+  ipcMain.handle("nomi:files:extract-text", async (_event, payload) => {
+    const raw = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    const source = raw.bytes;
+    const bytes = source instanceof ArrayBuffer
+      ? Buffer.from(source)
+      : ArrayBuffer.isView(source)
+        ? Buffer.from(source.buffer, source.byteOffset, source.byteLength)
+        : null;
+    if (!bytes || bytes.byteLength === 0) throw new Error("文件内容为空");
+    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("剧本文件不能超过 20 MB");
+    const { extractTextFromBytes } = await import("./files/extractText");
+    const text = await extractTextFromBytes(
+      bytes,
+      typeof raw.contentType === "string" ? raw.contentType : "",
+      typeof raw.fileName === "string" ? raw.fileName : "script.txt",
+    );
+    if (!text?.trim()) throw new Error("当前文件格式不支持，或没有可读取的文字");
+    return { text };
+  });
   ipcMain.handle("nomi:video:extract-frame", async (_event, payload) => {
     const { extractVideoFrameToAsset } = await import("./video/extractVideoFrame");
     return extractVideoFrameToAsset(payload);
+  });
+  ipcMain.handle("nomi:video:extract-frames", async (_event, payload) => {
+    const { extractVideoFramesToAssets } = await import("./video/extractVideoFrame");
+    return extractVideoFramesToAssets(payload);
   });
   ipcMain.handle("nomi:image:decompose-layers", async (_event, payload) => {
     const { decomposeLayers } = await import("./image/decomposeLayers");
@@ -643,72 +587,6 @@ function registerIpc(): void {
   ipcMain.handle("nomi:scene3d:frames-to-video", async (_event, payload) => {
     const { framesToVideoAsset } = await import("./video/framesToVideo");
     return framesToVideoAsset(payload);
-  });
-  ipcMain.handle("nomi:scene3d:render-blender", async (_event, payload) => {
-    const blender = await import("./blender/blenderRunner");
-    const director = await import("./blender/directorCli");
-    cancelBlenderRendersOnQuit = () => blender.cancelAllBlenderSceneRenders() + director.cancelAllDirectorBlenderRenders();
-    return blender.runBlenderSceneRender(payload);
-  });
-  ipcMain.handle("nomi:scene3d:render-director-blender", async (_event, payload) => {
-    const blender = await import("./blender/blenderRunner");
-    const director = await import("./blender/directorCli");
-    cancelBlenderRendersOnQuit = () => blender.cancelAllBlenderSceneRenders() + director.cancelAllDirectorBlenderRenders();
-    return director.runDirectorBlenderRender(payload);
-  });
-  ipcMain.handle("nomi:scene3d:cancel-blender", async (_event, jobId) => {
-    const blender = await import("./blender/blenderRunner");
-    const director = await import("./blender/directorCli");
-    const normalizedJobId = String(jobId || "");
-    return { cancelled: blender.cancelBlenderSceneRender(normalizedJobId) || director.cancelDirectorBlenderRender(normalizedJobId) };
-  });
-  ipcMain.handle("nomi:vibing-director:apply-blender-plan", async (_event, payload) => {
-    const director = await import("./blender/vibingDirectorRunner");
-    const blender = await import("./blender/blenderRunner");
-    const legacyDirector = await import("./blender/directorCli");
-    cancelBlenderRendersOnQuit = () => (
-      blender.cancelAllBlenderSceneRenders()
-      + legacyDirector.cancelAllDirectorBlenderRenders()
-      + director.cancelAllVibingDirectorBlenderPlans()
-    );
-    return director.runVibingDirectorBlenderPlan(payload as Parameters<typeof director.runVibingDirectorBlenderPlan>[0]);
-  });
-  ipcMain.handle("nomi:vibing-director:cancel-blender-plan", async (_event, jobId) => {
-    const director = await import("./blender/vibingDirectorRunner");
-    return { cancelled: director.cancelVibingDirectorBlenderPlan(String(jobId || "").trim()) };
-  });
-  ipcMain.handle("nomi:vibing-director:import-asset", async (_event, payload) => {
-    const raw = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
-    const selection = await dialog.showOpenDialog({
-      title: "导入 Blender 资产",
-      buttonLabel: "导入到 Director 资产库",
-      properties: ["openFile"],
-      filters: [{ name: "Blender 资产", extensions: ["blend", "glb", "gltf", "fbx", "obj"] }],
-    });
-    if (selection.canceled || !selection.filePaths[0]) return { canceled: true };
-    const assets = await import("./blender/vibingDirectorAssets");
-    return assets.importVibingDirectorAsset({
-      projectId: String(raw.projectId || ""),
-      directorNodeId: String(raw.directorNodeId || ""),
-      sourcePath: selection.filePaths[0],
-      source: raw.source as Parameters<typeof assets.importVibingDirectorAsset>[0]["source"],
-      ...(typeof raw.license === "string" ? { license: raw.license } : {}),
-    });
-  });
-  ipcMain.handle("nomi:vibing-director:open-blender", async (_event, payload) => {
-    const director = await import("./blender/vibingDirectorRunner");
-    return director.openVibingDirectorBlend(payload as Parameters<typeof director.openVibingDirectorBlend>[0]);
-  });
-  ipcMain.handle("nomi:vibing-director:open-asset-source", async (_event, source) => {
-    const urls = {
-      polyhaven: "https://polyhaven.com/models",
-      quaternius: "https://quaternius.com/packs.html",
-      blenderkit: "https://www.blenderkit.com/asset-base/",
-    } as const;
-    const key = String(source || "") as keyof typeof urls;
-    if (!urls[key]) throw new Error("不支持的 Director 资产来源");
-    await shell.openExternal(urls[key]);
-    return { opened: true };
   });
   registerExportJobIpc();
   // 付费守卫铸令牌：仅由渲染层「真人确认」事件链调用（务实纵深：铸造面小而审计过 + 主进程硬闸兜底）。

@@ -25,7 +25,14 @@ function loadOnboardingAgentEnv() {
   return out;
 }
 
-const env = { ...process.env, ...loadOnboardingAgentEnv() };
+const env = {
+  ...process.env,
+  ...loadOnboardingAgentEnv(),
+  // `pnpm start` launches the built renderer from this source checkout. Mark
+  // that runtime explicitly so local Gate 8 slices do not disappear merely
+  // because Vite's production build has import.meta.env.DEV=false.
+  NOMI_SOURCE_RUN: process.env.NOMI_SOURCE_RUN ?? "1",
+};
 delete env.ELECTRON_RUN_AS_NODE;
 
 const args = process.argv.length > 2 ? process.argv.slice(2) : ["."];

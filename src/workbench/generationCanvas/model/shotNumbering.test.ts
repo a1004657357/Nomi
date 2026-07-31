@@ -57,6 +57,15 @@ describe('shotNumbering（镜头编号 = 存储身份，审计 A2）', () => {
     expect(nextShotIndex(nodes)).toBe(3)
   })
 
+  it('分镜行派生的时间关键帧不占用新的镜头编号', () => {
+    const keyframe = makeNode({
+      id: 'shot-2-t5',
+      kind: 'keyframe',
+      meta: { excludeFromShotNumbering: true, storyboardKeyframeTimeSec: 5 },
+    })
+    expect(isShotNumberedNode(keyframe)).toBe(false)
+  })
+
   it('backfill 幂等：已有编号原样保留，缺号按 (y,x,id) 确定性续编', () => {
     const nodes = [
       makeNode({ id: 'kept', kind: 'image', shotIndex: 3, x: 999, y: 999 }),

@@ -9,6 +9,7 @@ import {
   createNamedProject,
   deleteProjectNodes,
   generateOnProject,
+  listAvailableModels,
   listAllProjects,
   readProjectCanvas,
   referencesFromEdges,
@@ -77,6 +78,62 @@ afterEach(() => {
 })
 
 describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
+  it('models 只暴露已连接供应商的启用模型', () => {
+    const now = '2026-07-17T00:00:00.000Z'
+    const vendor = (key: string, patch: Record<string, unknown> = {}) => ({
+      key,
+      name: key,
+      enabled: true,
+      authType: 'bearer',
+      baseUrlHint: `https://${key}.example`,
+      createdAt: now,
+      updatedAt: now,
+      ...patch,
+    })
+    const model = (modelKey: string, vendorKey: string, patch: Record<string, unknown> = {}) => ({
+      modelKey,
+      vendorKey,
+      labelZh: modelKey,
+      kind: 'image',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      ...patch,
+    })
+    fs.writeFileSync(path.join(mockedUserDataRoot, 'model-catalog.json'), JSON.stringify({
+      version: 5,
+      vendors: [
+        vendor('local', { authType: 'none' }),
+        vendor('connected'),
+        vendor('missing-key'),
+        vendor('disabled-vendor', { enabled: false, authType: 'none' }),
+      ],
+      models: [
+        model('local-image', 'local'),
+        model('connected-image', 'connected'),
+        model('missing-key-image', 'missing-key'),
+        model('disabled-vendor-image', 'disabled-vendor'),
+        model('disabled-model', 'local', { enabled: false }),
+      ],
+      mappings: [],
+      apiKeysByVendor: {
+        connected: {
+          vendorKey: 'connected',
+          apiKey: 'opaque-test-value',
+          enc: 'plain',
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    }), 'utf8')
+
+    expect(listAvailableModels().map((entry) => `${entry.vendor}/${entry.modelKey}`)).toEqual([
+      'local/local-image',
+      'connected/connected-image',
+    ])
+  })
+
   it('建项目 → 加节点 → 连线 → 改提示词 → 读画布，全程落盘且重读一致', async () => {
     const project = createNamedProject('能力核测试项目')
     expect(project.id).toBeTruthy()

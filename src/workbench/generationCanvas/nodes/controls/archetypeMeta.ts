@@ -83,7 +83,8 @@ export function currentArchetypeMode(archetype: ModelArchetype, meta: Record<str
  * 再回落 variants[0]。无 variants 档案 → null（UI 不显示变体段，传输不带变体 model）。
  */
 export function currentArchetypeVariant(archetype: ModelArchetype, meta: Record<string, unknown> | undefined): ModelArchetypeVariant | null {
-  const variants = archetype.variants
+  const modeId = currentArchetypeMode(archetype, meta).id
+  const variants = variantsForMode(archetype, modeId)
   if (!variants || variants.length === 0) return null
   const stored = readArchetypeNodeMeta(meta)
   const variantId = stored?.id === archetype.id ? stored.variantId : ''
@@ -94,9 +95,17 @@ export function currentArchetypeVariant(archetype: ModelArchetype, meta: Record<
 
 export type ArchetypeVariantChoice = { id: string; label: string }
 
+function variantsForMode(archetype: ModelArchetype, modeId?: string): ModelArchetypeVariant[] {
+  const variants = archetype.variants || []
+  if (!modeId) return variants
+  return variants.filter((variant) =>
+    !variant.supportedModeIds || variant.supportedModeIds.includes(modeId),
+  )
+}
+
 /** 变体分段切换的选项（标签 = 变体自己的名字）。无 variants / 仅 1 个 → 空（UI 不显示该段）。 */
-export function archetypeVariantChoices(archetype: ModelArchetype): ArchetypeVariantChoice[] {
-  const variants = archetype.variants
+export function archetypeVariantChoices(archetype: ModelArchetype, modeId?: string): ArchetypeVariantChoice[] {
+  const variants = variantsForMode(archetype, modeId)
   if (!variants || variants.length <= 1) return []
   return variants.map((v) => ({ id: v.id, label: v.label }))
 }
@@ -217,18 +226,19 @@ export function archetypeModeModelEnum(archetype: ModelArchetype, meta: Record<s
 }
 
 /** 默认变体 id（无 variants → 空串；声明 variants 时取 defaultVariantId 回落 variants[0]）。 */
-function defaultVariantIdOf(archetype: ModelArchetype): string {
-  const variants = archetype.variants
+function defaultVariantIdOf(archetype: ModelArchetype, modeId?: string): string {
+  const variants = variantsForMode(archetype, modeId)
   if (!variants || variants.length === 0) return ''
   return (variants.find((v) => v.id === archetype.defaultVariantId) ?? variants[0]).id
 }
 
 /** 保留当前 variantId（同档案）或回落默认（换档案 / 旧 meta 无 variantId）。 */
-function preservedVariantId(meta: Record<string, unknown>, archetype: ModelArchetype): string {
+function preservedVariantId(meta: Record<string, unknown>, archetype: ModelArchetype, modeId?: string): string {
   const stored = readArchetypeNodeMeta(meta)
+  const variants = variantsForMode(archetype, modeId)
   const keep = stored?.id === archetype.id && stored.variantId
-    && archetype.variants?.some((v) => v.id === stored.variantId)
-  return keep ? stored!.variantId : defaultVariantIdOf(archetype)
+    && variants.some((v) => v.id === stored.variantId)
+  return keep ? stored!.variantId : defaultVariantIdOf(archetype, modeId)
 }
 
 /**
@@ -242,7 +252,7 @@ export function applyArchetypeModeSwitch(
   nextModeId: string,
 ): Record<string, unknown> {
   const nextMode = archetype.modes.find((m) => m.id === nextModeId) ?? archetype.modes[0]
-  const variantId = preservedVariantId(meta, archetype)
+  const variantId = preservedVariantId(meta, archetype, nextMode.id)
   return { ...meta, archetype: { id: archetype.id, modeId: nextMode.id, ...(variantId ? { variantId } : {}) } }
 }
 
@@ -280,7 +290,11 @@ export function applyArchetypeVariantSwitch(
   if (!variants || variants.length === 0) return meta
   const stored = readArchetypeNodeMeta(meta)
   const modeId = (stored?.id === archetype.id && stored.modeId) ? stored.modeId : archetype.defaultModeId
-  const nextVariant = variants.find((v) => v.id === nextVariantId) ?? variants.find((v) => v.id === archetype.defaultVariantId) ?? variants[0]
+  const modeVariants = variantsForMode(archetype, modeId)
+  const nextVariant = modeVariants.find((v) => v.id === nextVariantId)
+    ?? modeVariants.find((v) => v.id === archetype.defaultVariantId)
+    ?? modeVariants[0]
+  if (!nextVariant) return meta
   // 按新变体特化出当前模式的参数声明，把存量越界的 select 值夹回默认（D1：4k→fast 变体不再漏发）。
   const specialized = specializeArchetypeForVariant(archetype, nextVariant.id)
   const mode = specialized.modes.find((m) => m.id === modeId) ?? specialized.modes.find((m) => m.id === specialized.defaultModeId) ?? specialized.modes[0]
@@ -339,7 +353,7 @@ export function ensureArchetypeNodeMeta(
     const needsVariant = (archetype.variants?.length ?? 0) > 0
       && !archetype.variants!.some((v) => v.id === stored.variantId)
     if (!needsVariant) return null
-    return applyArchetypeVariantSwitch(meta, archetype, defaultVariantIdOf(archetype))
+    return applyArchetypeVariantSwitch(meta, archetype, defaultVariantIdOf(archetype, stored.modeId))
   }
   return applyArchetypeModeSwitch(meta, archetype, archetype.defaultModeId)
 }
@@ -500,6 +514,7 @@ export function buildArchetypeInputParams(
     if (!metaKey) continue
     const fromRef = metaKey === 'firstFrameUrl' ? references?.firstFrameUrl
       : metaKey === 'lastFrameUrl' ? references?.lastFrameUrl
+      : metaKey === 'sourceVideoUrl' ? references?.referenceVideos?.[0]
       : undefined
     const raw = (typeof fromRef === 'string' && fromRef.trim()) ? fromRef.trim()
       : (typeof meta[metaKey] === 'string' ? (meta[metaKey] as string).trim() : '')

@@ -24,10 +24,46 @@ import {
   captureMannequinGroundReference,
   groundMannequinModel,
   normalizeMannequinModel,
+  normalizeMannequinBoneName,
   rememberMannequinRestPose,
 } from './scene3dMath'
 
 const deg = (value: number): number => THREE.MathUtils.degToRad(value)
+
+function connectedDominantBonePairs(root: THREE.Object3D): Set<string> {
+  const connected = new Set<string>()
+  root.traverse((object) => {
+    if (!(object instanceof THREE.SkinnedMesh)) return
+    const index = object.geometry.getIndex()
+    const skinIndex = object.geometry.getAttribute('skinIndex')
+    const skinWeight = object.geometry.getAttribute('skinWeight')
+    if (!index || !skinIndex || !skinWeight) return
+    const dominantBone = (vertexIndex: number): string => {
+      let bestBoneIndex = 0
+      let bestWeight = -1
+      for (let component = 0; component < 4; component += 1) {
+        const weight = skinWeight.getComponent(vertexIndex, component)
+        if (weight <= bestWeight) continue
+        bestWeight = weight
+        bestBoneIndex = skinIndex.getComponent(vertexIndex, component)
+      }
+      return normalizeMannequinBoneName(object.skeleton.bones[bestBoneIndex]?.name || '')
+    }
+    for (let offset = 0; offset < index.count; offset += 3) {
+      const bones = Array.from(new Set([
+        dominantBone(index.getX(offset)),
+        dominantBone(index.getX(offset + 1)),
+        dominantBone(index.getX(offset + 2)),
+      ])).filter(Boolean)
+      for (let left = 0; left < bones.length; left += 1) {
+        for (let right = left + 1; right < bones.length; right += 1) {
+          connected.add([bones[left], bones[right]].sort().join('|'))
+        }
+      }
+    }
+  })
+  return connected
+}
 
 describe('几何工具', () => {
   it('凸包 + 带符号距离：点在内为正、在外为负', () => {
@@ -70,7 +106,7 @@ describe('假人度量（GLB 直载，零渲染）', () => {
   }
 
   beforeAll(async () => {
-    const url = new URL('../../../../assets/x-bot.glb', import.meta.url)
+    const url = new URL('../../../../assets/nomi-mannequin.glb', import.meta.url)
     const buffer = readFileSync(url)
     const gltf = await new Promise<GLTF>((resolve, reject) => {
       new GLTFLoader().parse(
@@ -100,6 +136,20 @@ describe('假人度量（GLB 直载，零渲染）', () => {
     expect(Math.abs(report.angles.torsoLeanFwd)).toBeLessThan(14)
     expect(report.angles.kneeFlexL).toBeLessThan(14)
     expect(report.angles.kneeFlexR).toBeLessThan(14)
+  })
+
+  it('每只鞋楦都有跨脚掌与脚趾蒙皮的连接面，不会渲染成分离方块', () => {
+    const connected = connectedDominantBonePairs(root)
+    expect(connected.has('mixamorigLeftFoot|mixamorigLeftToeBase')).toBe(true)
+    expect(connected.has('mixamorigRightFoot|mixamorigRightToeBase')).toBe(true)
+  })
+
+  it('每只手套连续跨过前臂、手掌与指端蒙皮，不会在手腕处悬空', () => {
+    const connected = connectedDominantBonePairs(root)
+    for (const side of ['Left', 'Right']) {
+      expect(connected.has(`mixamorig${side}ForeArm|mixamorig${side}Hand`)).toBe(true)
+      expect(connected.has(`mixamorig${side}Hand|mixamorig${side}HandMiddle1`)).toBe(true)
+    }
   })
 
   it('灵敏度·后仰：躯干猛向后 → 必报（后仰角/重心异常至少一项）', () => {
@@ -161,6 +211,14 @@ describe('假人度量（GLB 直载，零渲染）', () => {
   it('规格覆盖：每个预设都有意图规格', () => {
     for (const preset of MANNEQUIN_POSE_PRESETS) {
       expect(POSE_INTENT_SPECS[preset.id], `缺规格: ${preset.id}`).toBeTruthy()
+    }
+  })
+
+  it('所有发布预设均满足接触、平衡、关节和穿插规格', () => {
+    for (const preset of MANNEQUIN_POSE_PRESETS) {
+      applyPreset(preset.id)
+      const findings = evaluatePoseAgainstSpec(measurePose(rig), POSE_INTENT_SPECS[preset.id])
+      expect(findings, `${preset.id}\n${describePoseFindings(findings)}`).toEqual([])
     }
   })
 

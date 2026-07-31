@@ -19,7 +19,7 @@ export function resolveNodeRenderKind(
 ): string | undefined {
   // 编辑器型节点是一个独立工作区，不是分类卡。即使归在 scene 分类，也必须继续走
   // BaseGenerationNode 里的 Scene3DEditor / VibingDirectorEditor 分支。
-  if (node.kind === "asset" || node.kind === "scene3d" || node.kind === "vibingDirector") return undefined;
+  if (node.kind === "asset" || node.kind === "skill" || node.kind === "scene3d" || node.kind === "vibingDirector") return undefined;
   const explicit = node.renderKind as string | undefined;
   // 注：`shot-frame`（shots 分类默认 renderKind，历史迁移回填）不在 CARD_RENDER_KINDS，故按 explicit
   // 返回后走「媒体预览」路径——镜头节点就该显生成出的图/视频，不套卡片。分镜序号由 BaseGenerationNode

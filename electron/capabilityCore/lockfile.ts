@@ -31,12 +31,18 @@ export function writeInstanceAdvertisement(advertisement: InstanceAdvertisement)
   fs.writeFileSync(instancePath(), JSON.stringify(advertisement, null, 2), 'utf8')
 }
 
-/** app 退出时清掉广告（best-effort，不抛——退出路径绝不卡）。 */
-export function clearInstanceAdvertisement(): void {
+/**
+ * 只清理由指定进程写入的广告。多个源码实例可能共用默认 capability 目录；
+ * compare-before-delete 防止旧实例退出时抹掉仍在线的新实例。
+ */
+export function clearInstanceAdvertisement(ownerPid: number): boolean {
   try {
+    const parsed = JSON.parse(fs.readFileSync(instancePath(), 'utf8')) as Partial<InstanceAdvertisement>
+    if (parsed.pid !== ownerPid) return false
     fs.rmSync(instancePath(), { force: true })
+    return true
   } catch {
-    /* 退出清理失败无所谓：下次读会做 pid 存活校验兜底 */
+    return false
   }
 }
 
@@ -72,7 +78,7 @@ export function readLiveInstance(): InstanceAdvertisement | null {
     return null
   }
   if (!isProcessAlive(parsed.pid)) {
-    clearInstanceAdvertisement()
+    clearInstanceAdvertisement(parsed.pid)
     return null
   }
   return {

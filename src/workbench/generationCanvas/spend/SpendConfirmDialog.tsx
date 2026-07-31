@@ -1,4 +1,5 @@
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '../../../utils/cn'
 import { IconCoin, IconRobot } from '@tabler/icons-react'
 import { WorkbenchButton } from '../../../design'
@@ -48,16 +49,21 @@ export function SpendConfirmDialog() {
   const remainingSec = countdownTotal ? Math.ceil(remainingMs / 1000) : 0
   const remainingPct = countdownTotal ? Math.max(0, Math.min(100, (remainingMs / countdownTotal) * 100)) : 0
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
     <div
       // 全屏固定模态：付费确认是全局阻断性动作，要盖住整窗（含顶栏/侧栏），任意视图（库/studio）都能弹。
       // 之前 absolute 只盖画布层 → 只在 studio 可见，是「外部生成到非当前项目静默黑洞」的放大器之一。
       className={cn('fixed inset-0 z-[3500] flex items-center justify-center bg-nomi-ink/20 pointer-events-auto')}
+      style={{ zIndex: 10_000 }}
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) resolvePending(false)
       }}
     >
-      <div className={cn('w-[380px] max-w-[88%] rounded-nomi-lg border border-nomi-line bg-nomi-paper p-4 shadow-nomi-md')}>
+      <div
+        className={cn('w-[380px] max-w-[88%] rounded-nomi-lg border border-nomi-line bg-nomi-paper p-4 shadow-nomi-md')}
+      >
         <div className={cn('flex items-center gap-2.5 mb-2')}>
           <span
             className={cn(
@@ -94,12 +100,16 @@ export function SpendConfirmDialog() {
                 style={{ width: `${remainingPct}%` }}
               />
             </div>
-            <span className={cn('text-micro text-nomi-ink-60 tabular-nums shrink-0 w-[88px] text-right')}>{remainingSec}s 后自动忽略</span>
+            <span className={cn('text-micro text-nomi-ink-60 tabular-nums shrink-0 w-[88px] text-right')}>
+              {remainingSec}s 后自动忽略
+            </span>
           </div>
         ) : null}
 
         {pending.light ? (
-          <label className={cn('flex items-center gap-2 mb-4 cursor-pointer select-none text-caption text-nomi-ink-60')}>
+          <label
+            className={cn('flex items-center gap-2 mb-4 cursor-pointer select-none text-caption text-nomi-ink-60')}
+          >
             <input type="checkbox" checked={suppress} onChange={(event) => setSuppress(event.target.checked)} />
             本次会话不再提示
           </label>
@@ -110,13 +120,16 @@ export function SpendConfirmDialog() {
             {isAgent ? '忽略' : '取消'}
           </WorkbenchButton>
           <WorkbenchButton
-            className={cn('h-8 px-4 cursor-pointer bg-nomi-ink text-nomi-paper border-nomi-ink hover:bg-nomi-accent hover:text-nomi-paper')}
+            className={cn(
+              'h-8 px-4 cursor-pointer bg-nomi-ink text-nomi-paper border-nomi-ink hover:bg-nomi-accent hover:text-nomi-paper',
+            )}
             onClick={() => resolvePending(true, suppress)}
           >
             {pending.confirmLabel || '确认生成'}
           </WorkbenchButton>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

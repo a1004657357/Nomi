@@ -28,6 +28,9 @@ import {
   stagingReferenceParamsSchema,
   cameraMoveParamsSchema,
   externalImageAttachmentParamsSchema,
+  capabilityRecipeRunParamsSchema,
+  saveCreativeResourceParamsSchema,
+  model3dHandoffParamsSchema,
   type CanvasToolName,
 } from "./canvasTools";
 import {
@@ -329,7 +332,7 @@ function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
     // S6b:受理语义——批准前零网络调用,批准即受理并启动,回执不含生成结果。
     run_generation_batch: makeTool(
       "run_generation_batch",
-      "Start real generation for existing canvas nodes (costs credits; user must confirm). Returns an acceptance receipt.",
+      "Start real generation for existing canvas nodes (costs credits; user must confirm). Existing results are regenerated into new version nodes, leaving prior results and downstream edges unchanged. Returns an acceptance receipt.",
       z.object({
         nodeIds: z.array(z.string().min(1)).min(1).max(24),
       }),
@@ -360,6 +363,26 @@ function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
       "create_camera_move",
       "Create a 3D camera-move reference clip locking a shot's camera motion (orbit / push-in / pull-out / crane / track / arc / dolly-zoom), fed to the shot's VIDEO node as a reference video (or degraded to a camera-move prompt directive on models without a video_ref slot). Call ONLY when a shot has a specific camera-move intent; do NOT call for a static / locked-off shot or a simple talking-head. Tiered rule: the `move` enum is the precise first choice (3D camera-path render); if the intended move is OUTSIDE the enum (whip-pan, handheld follow, compound/sequenced moves, 'match this reference video'), do NOT force a wrong enum — leave move empty and use customMove (prompt-guided into the video prompt, honest about lower fidelity). shotClientId MUST point to the shot's VIDEO node — not its keyframe image; if none exists yet, create the video node first.",
       cameraMoveParamsSchema,
+    ),
+    list_capability_recipes: makeTool(
+      "list_capability_recipes",
+      "List Nomi's provider-independent creative recipes, controls, input/output contracts, and compatible connected models. Read-only and free. Use this before choosing a recipe or model when compatibility is unknown.",
+      z.object({}),
+    ),
+    apply_capability_recipe: makeTool(
+      "apply_capability_recipe",
+      "Apply a creative recipe to an existing source node. Always creates a new derived node and result collection; never overwrites earlier generations. May call a paid model and therefore requires user confirmation. Use recipe and compatible model ids returned by list_capability_recipes.",
+      capabilityRecipeRunParamsSchema,
+    ),
+    save_creative_resource: makeTool(
+      "save_creative_resource",
+      "Save an existing node result as a reusable style, effect, identity, or palette resource with provenance and license metadata. Creates a new resource node, leaves the source unchanged, and does not call a model.",
+      saveCreativeResourceParamsSchema,
+    ),
+    handoff_model3d: makeTool(
+      "handoff_model3d",
+      "Hand off an existing generated GLB to a new or existing Scene3D or Blender Director node. This is non-destructive and local: the source stays unchanged, Scene3D receives a real model object, and Blender Director copies the GLB into its licensed local asset library. Requires user confirmation because it changes the canvas.",
+      model3dHandoffParamsSchema,
     ),
     // Silence unused-import warning for canvasNodeKindSchema by re-exporting
     // it through the tool registry shape (it's enforced via plannedNodeSchema).
@@ -400,12 +423,12 @@ function buildVibingDirectorToolsForV2(hooks: AgentChatV2Hooks) {
   return {
     read_vibing_director: make(
       "read_vibing_director",
-      "Read the current Blender-backed VIBING Director state: creative brief, licensed local asset library, Blender objects, camera, beats and latest returned artifacts. Use it before changing an existing stage when the supplied context is not enough.",
+      "Read the current Blender-backed VIBING Director state: creative brief, licensed local asset library, Blender objects, persistent spatial relations, camera, beats and latest returned artifacts. You must call this once in the current turn before proposing any apply_vibing_director_plan call.",
       readVibingDirectorParamsSchema,
     ),
     apply_vibing_director_plan: make(
       "apply_vibing_director_plan",
-      "Propose one bounded Blender Director plan. It may only select the declared stage preset, place an asset already in this node's local asset library, add a blocking marker, move or remove a known object, set the director camera/path, and set beats. Never use code, Blender Python, shell commands, URLs, arbitrary files, downloads, or canvas operations. The user must confirm before Nomi starts local Blender.",
+      "After reading the current Director in this turn, propose one bounded Blender Director plan. It may only select the declared stage preset or blocking template, place an asset already in this node's local asset library, add a semantic blocking marker, move or remove a known object, set or remove persistent spatial relations, set the director camera/path, and set beats. Never use code, Blender Python, shell commands, URLs, arbitrary files, downloads, or canvas operations. The user must confirm before Nomi starts local Blender.",
       applyVibingDirectorPlanParamsSchema,
       parseVibingDirectorPlanRequest,
     ),

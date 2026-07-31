@@ -51,10 +51,20 @@ export const plannedNodeSchema = z.object({
       y: z.number(),
     })
     .optional(),
+  categoryId: z
+    .enum(["shots", "cast", "scene", "prop", "audio"])
+    .optional()
+    .describe(
+      "Optional canvas category. Use cast for character reference cards, scene for environment cards, prop for prop/product reference cards, and shots for shot/output nodes.",
+    ),
   // bug①：agent 为节点建议模型 + 模式 + 标量参数（比例/清晰度…），用户在计划卡可改可确认。
   // modelKey/modeId 必须取自系统提示词给出的「可用模型清单」；params 是宽松键值（schema 不按
   // 单个模型严格——一次 batch 可含多模型），合法性在写入时按档案逐字段校验（单字段，跨字段留二期）。
   modelKey: z.string().optional(),
+  variantId: z
+    .string()
+    .optional()
+    .describe("Optional model variant id paired with modelKey, such as v5_0_lite or vip. Use only ids from the available-models list."),
   modeId: z.string().optional(),
   params: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
 });
@@ -122,7 +132,8 @@ const storyboardShotSchema = z.object({
   // P0-9:让 AI 一并产出每镜的模型/模式/参数(含负面词)。取值必须来自用户消息里的「可用模型」清单,
   // 不要编不存在的 modelKey/参数名;不确定就留空,落画布时系统用默认视频模型兜底。
   modelKey: z.string().optional().describe("Video model key for this shot, chosen from the 「可用模型」 list in the user message. Omit to use the default video model."),
-  modeId: z.string().optional().describe("Model mode/variant id (paired with modelKey), from the same list. Omit to use the model's default mode."),
+  variantId: z.string().optional().describe("Optional model variant id paired with modelKey, from the same list (for example v5_0_lite / vip)."),
+  modeId: z.string().optional().describe("Model mode id (paired with modelKey), from the same list. Omit to use the model's default mode."),
   params: z.record(z.unknown()).optional().describe("Per-shot generation params keyed exactly as the chosen model exposes them in the 「可用模型」 list (e.g. aspect_ratio, resolution, and negative_prompt where the model supports it). Only use param keys that model actually lists; omit unknowns."),
 })
 
@@ -144,6 +155,7 @@ export const updateStoryboardShotParamsSchema = z.object({
   shotKind: z.enum(["image", "video"]).optional().describe("Optional change of this shot's kind."),
   durationSec: z.number().optional().describe("Optional duration update, mainly for video shots."),
   modelKey: z.string().optional().describe("Optional generation model key for this shot."),
+  variantId: z.string().optional().describe("Optional model variant id for this shot."),
   modeId: z.string().optional().describe("Optional model mode id for this shot."),
   params: z.record(z.unknown()).optional().describe("Optional generation params for this shot; replaces the shot params object."),
 })
@@ -312,6 +324,87 @@ export const externalImageAttachmentParamsSchema = z.object({
   modelKey: z.string().optional().describe("Image model key for provenance, e.g. gpt-image-2."),
 });
 
+const capabilityRecipeOutputSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  azimuth: z.number().min(-180).max(180).optional().describe("Horizontal camera angle in degrees."),
+  elevation: z.number().min(-30).max(30).optional().describe("Vertical camera angle in degrees."),
+  shotSize: z.string().min(1).optional().describe("Framing, for example 特写 / 近景 / 中景 / 全景."),
+});
+
+export const capabilityRecipeRunParamsSchema = z.object({
+  sourceNodeId: z
+    .string()
+    .min(1)
+    .describe("Existing source node id, or a clientId created in this turn. The source is never overwritten."),
+  recipeId: z.string().min(1).describe("Recipe id returned by list_capability_recipes."),
+  modelKey: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Optional connected model override. Omit to let Nomi choose a compatible model."),
+  variantId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Optional model variant paired with modelKey, such as v5_0_lite or vip."),
+  modeId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Optional mode paired with modelKey. Omit to let Nomi choose a compatible mode."),
+  params: z
+    .record(z.union([z.string(), z.number(), z.boolean()]))
+    .optional()
+    .describe("Recipe controls keyed exactly as listed by list_capability_recipes. For portrait.mood, use generationMode=single|sample5|matrix5x5; sample5 and matrix5x5 expand to 5 or 25 independent requests automatically."),
+  requestedOutputs: z
+    .number()
+    .int()
+    .min(1)
+    .max(9)
+    .optional()
+    .describe("Requested result count. Recipe and model limits still apply."),
+  resourceIds: z
+    .array(z.string().min(1))
+    .max(6)
+    .optional()
+    .describe("Saved style, effect, identity, or palette resource ids to apply."),
+  outputs: z
+    .array(capabilityRecipeOutputSchema)
+    .max(6)
+    .optional()
+    .describe("Custom camera outputs for image.multiview.custom. One descriptor per requested view."),
+});
+
+export const saveCreativeResourceParamsSchema = z.object({
+  sourceNodeId: z.string().min(1).describe("Existing canvas node whose current generated result becomes the resource source."),
+  kind: z.enum(["style", "effect", "identity", "palette"]),
+  label: z.string().min(1).max(80),
+  description: z.string().max(500).optional(),
+  promptTokens: z.array(z.string().min(1)).max(24).default([]),
+  license: z.object({
+    source: z.string().optional(),
+    license: z.string().optional(),
+    commercialUse: z.enum(["allowed", "restricted", "unknown"]),
+    attribution: z.string().optional(),
+  }),
+});
+
+export const model3dHandoffParamsSchema = z.object({
+  sourceNodeId: z.string().min(1).describe("Existing model3d node with a generated GLB result."),
+  target: z.enum(["scene3d", "vibingDirector"]),
+  targetNodeId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Optional existing target node. Omit to create a new Scene3D or Blender Director node."),
+  license: z
+    .string()
+    .max(200)
+    .optional()
+    .describe("License/provenance note used when copying the GLB into a Blender Director asset library."),
+});
+
 export const canvasToolNames = [
   "read_canvas_state",
   "propose_storyboard_plan",
@@ -327,6 +420,10 @@ export const canvasToolNames = [
   "tidy_canvas",
   "create_staging_reference",
   "create_camera_move",
+  "list_capability_recipes",
+  "apply_capability_recipe",
+  "save_creative_resource",
+  "handoff_model3d",
 ] as const;
 export type CanvasToolName = (typeof canvasToolNames)[number];
 
@@ -395,7 +492,7 @@ export const canvasTools = {
   // 生成进度走画布 run 域事件给用户看,不回喂 LLM(长生成不阻塞对话回合)。
   run_generation_batch: tool({
     description:
-      "Start real generation for a batch of existing canvas nodes (costs credits — the user must confirm). Provide real node ids from read_canvas_state, or clientIds from this turn's create_canvas_nodes. Nodes are scheduled in dependency waves (references generate first). Returns an acceptance receipt; generation progress is shown to the user on the canvas, not returned to you.",
+      "Start real generation for a batch of existing canvas nodes (costs credits — the user must confirm). Provide real node ids from read_canvas_state, or clientIds from this turn's create_canvas_nodes. Nodes are scheduled in dependency waves (references generate first). A node that already has a result is regenerated as a NEW version node; its prior result and downstream graph stay unchanged. Returns an acceptance receipt; generation progress is shown to the user on the canvas, not returned to you.",
     parameters: z.object({
       nodeIds: z.array(z.string().min(1)).min(1).max(24),
     }),
@@ -456,6 +553,26 @@ export const canvasTools = {
       "shotClientId MUST point to the shot's VIDEO node (the node that actually generates the clip) — NOT its keyframe image, and NOT a text/shot note. For an image-first storyboard that is the shot's video node downstream of the keyframe. If no video node exists for the shot yet, create it first; never aim this at an image node.\n" +
       "Optional gray-model backdrop: add sceneTemplate (street/room) and/or props when the move should read as happening in an environment (a camera pushing in on a person on a street). The backdrop lays under the subject; the camera path is unchanged (still orbits/pushes the subject).",
     parameters: cameraMoveParamsSchema,
+  }),
+  list_capability_recipes: tool({
+    description:
+      "List Nomi's provider-independent creative capability recipes, their controls, input requirements, output shape, compatible connected models, and compact summaries of reusable style/effect/identity/palette resources on the current canvas. Read-only and free. Use this before applying a recipe when model compatibility or resource ids are unknown.",
+    parameters: z.object({}),
+  }),
+  apply_capability_recipe: tool({
+    description:
+      "Apply one creative capability recipe to an existing source node. This creates a NEW derived node and result collection; it never overwrites or deletes the source or earlier generations. It may call a paid model, so the user must confirm before execution. Use recipe/model ids returned by list_capability_recipes. For Grid9, params.viewGenerationMode=independent makes nine camera-specific requests (default, more accurate), while contact_sheet makes one draft request then splits it locally; params.backgroundPolicy=preserve_scene keeps the source scene or neutral_turntable requests a studio turntable. For custom multiview, provide outputs with explicit azimuth/elevation/framing. For portrait.mood, set params.generationMode to single, sample5, or matrix5x5; the latter modes automatically fan out to 5 or 25 ordered coordinates, at most 2 concurrent requests.",
+    parameters: capabilityRecipeRunParamsSchema,
+  }),
+  save_creative_resource: tool({
+    description:
+      "Save an existing node's current generated result as a reusable style, effect, identity, or palette resource. Records prompt tokens, source and license metadata, and creates a new resource node without modifying the source. Does not call a model but writes the canvas, so the user must confirm.",
+    parameters: saveCreativeResourceParamsSchema,
+  }),
+  handoff_model3d: tool({
+    description:
+      "Hand off an already-generated model3d GLB to a NEW or existing Scene3D or Blender Director node. The source and its provenance remain unchanged. Scene3D gets a real orbitable model object; Blender Director copies the local GLB into its isolated asset library and places it at the origin. This is a local canvas mutation and does not call a paid model, but the user must confirm it.",
+    parameters: model3dHandoffParamsSchema,
   }),
 } as const;
 

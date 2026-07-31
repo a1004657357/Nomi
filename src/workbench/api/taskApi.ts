@@ -17,7 +17,7 @@ export type TaskKind =
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
 export type TaskAssetDto = {
-  type: 'image' | 'video' | 'audio'
+  type: 'image' | 'video' | 'audio' | 'model3d'
   url: string
   thumbnailUrl?: string | null
   assetId?: string | null
@@ -25,6 +25,33 @@ export type TaskAssetDto = {
   assetName?: string | null
   /** 原始 CDN URL（https://...）。供后续生成直接用，任何 vendor 都能接受，无需上传或转 base64。 */
   providerUrl?: string | null
+  model3dValidation?: Model3dValidationSummary
+}
+
+export type Model3dValidationSummary = {
+  version: 1
+  glbVersion: number
+  byteLength: number
+  meshCount: number
+  primitiveCount: number
+  nodeCount: number
+  materialCount: number
+  textureCount: number
+  imageCount: number
+  embeddedImageCount: number
+  externalImageCount: number
+  externalImageUris: string[]
+  externalBufferCount: number
+  externalBufferUris: string[]
+  animationCount: number
+  skinCount: number
+  bounds: {
+    min: [number, number, number]
+    max: [number, number, number]
+    size: [number, number, number]
+    diagonal: number
+  }
+  warnings: string[]
 }
 
 export type TaskResultDto = {

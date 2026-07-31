@@ -1,20 +1,22 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
 import {
+  IconAlertTriangle,
   IconBrandBlender,
+  IconCircleCheck,
   IconCube,
-  IconExternalLink,
-  IconFolderPlus,
   IconLayoutGrid,
   IconMovie,
   IconPhoto,
   IconRefresh,
   IconX,
 } from '@tabler/icons-react'
+import type { VibingDirectorCatalogAsset } from '../../../../desktop/vibingDirectorBridgeTypes'
 import { NomiLoadingMark, WorkbenchIconButton } from '../../../../design'
 import { toast } from '../../../../ui/toast'
 import { cn } from '../../../../utils/cn'
 import Model3DViewer from '../model3d/Model3DViewer'
+import VibingDirectorAssetLibrary from './VibingDirectorAssetLibrary'
 import VibingDirectorAssistantPanel from './VibingDirectorAssistantPanel'
 import {
   createCoffeeConversationLayoutPlan,
@@ -25,6 +27,7 @@ import {
   type VibingDirectorPlanResult,
   type VibingDirectorState,
 } from './vibingDirectorState'
+import { summarizeVibingDirectorSpatialReport } from './vibingDirectorPresentation'
 
 type VibingDirectorFullscreenProps = {
   directorNodeId: string
@@ -35,16 +38,11 @@ type VibingDirectorFullscreenProps = {
   onStateChange: (state: VibingDirectorState) => void
   onApplyPlan: (state: VibingDirectorState, plan: VibingDirectorPlan) => Promise<VibingDirectorPlanResult>
   onImportAsset: (source: BlenderDirectorAssetSource, license?: string) => Promise<BlenderDirectorAsset | null>
+  onListCatalogAssets: (query: string) => Promise<VibingDirectorCatalogAsset[]>
+  onImportCatalogAsset: (catalogAssetId: string) => Promise<BlenderDirectorAsset>
   onOpenBlender: (state: VibingDirectorState) => void
   onCancelBlender?: () => void
   onOpenAssetSource: (source: Exclude<BlenderDirectorAssetSource, 'local'>) => void
-}
-
-const ASSET_SOURCE_LABEL: Record<BlenderDirectorAssetSource, string> = {
-  local: '本地已授权文件',
-  polyhaven: 'Poly Haven',
-  quaternius: 'Quaternius',
-  blenderkit: 'BlenderKit',
 }
 
 function stateSummary(state: VibingDirectorState): string {
@@ -56,6 +54,7 @@ function stateSummary(state: VibingDirectorState): string {
 function ArtifactPreview({ state }: { state: VibingDirectorState }): JSX.Element {
   const output = state.output
   const hasSceneModel = Boolean(output?.modelUrl)
+  const spatial = summarizeVibingDirectorSpatialReport(output?.spatialReport)
   const [mode, setMode] = React.useState<'scene' | 'render'>(() => hasSceneModel ? 'scene' : 'render')
   const [sceneViewKey, setSceneViewKey] = React.useState(0)
 
@@ -107,6 +106,23 @@ function ArtifactPreview({ state }: { state: VibingDirectorState }): JSX.Element
             ) : null}
           </div>
         ) : null}
+        {spatial.status !== 'idle' ? (
+          <div
+            className={cn(
+              'absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-nomi-sm border px-2 py-1 text-micro shadow-nomi-sm',
+              spatial.status === 'passed'
+                ? 'border-workbench-success/30 bg-workbench-success-soft text-workbench-success'
+                : spatial.status === 'warning'
+                  ? 'border-[var(--tc-color-warning)] bg-[var(--workbench-surface-solid)] text-[var(--tc-color-warning)]'
+                  : 'border-workbench-danger/30 bg-workbench-danger-soft text-workbench-danger',
+            )}
+          >
+            {spatial.status === 'passed'
+              ? <IconCircleCheck size={14} />
+              : <IconAlertTriangle size={14} />}
+            {spatial.label}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -127,14 +143,13 @@ export default function VibingDirectorFullscreen({
   onStateChange,
   onApplyPlan,
   onImportAsset,
+  onListCatalogAssets,
+  onImportCatalogAsset,
   onOpenBlender,
   onCancelBlender,
   onOpenAssetSource,
 }: VibingDirectorFullscreenProps): JSX.Element | null {
   const [state, setState] = React.useState(() => normalizeVibingDirectorState(initialState))
-  const [assetSource, setAssetSource] = React.useState<BlenderDirectorAssetSource>('local')
-  const [assetLicense, setAssetLicense] = React.useState('')
-  const [assetBusy, setAssetBusy] = React.useState(false)
   const [planApplying, setPlanApplying] = React.useState(false)
   const stateRef = React.useRef(state)
 
@@ -170,25 +185,14 @@ export default function VibingDirectorFullscreen({
     }
   }, [commit, onApplyPlan])
 
-  const importAsset = React.useCallback(async () => {
-    if (assetBusy || readOnly) return
-    setAssetBusy(true)
-    try {
-      const asset = await onImportAsset(assetSource, assetLicense.trim() || undefined)
-      if (!asset || stateRef.current.assets.some((candidate) => candidate.id === asset.id)) return
-      commit({
-        ...stateRef.current,
-        assets: [...stateRef.current.assets, asset],
-        updatedAt: Date.now(),
-      })
-      setAssetLicense('')
-      toast(`已导入资产「${asset.name}」`, 'success')
-    } catch (error: unknown) {
-      toast(error instanceof Error ? error.message : '导入 Blender 资产失败', 'error')
-    } finally {
-      setAssetBusy(false)
-    }
-  }, [assetBusy, assetLicense, assetSource, commit, onImportAsset, readOnly])
+  const addImportedAsset = React.useCallback((asset: BlenderDirectorAsset) => {
+    if (stateRef.current.assets.some((candidate) => candidate.id === asset.id)) return
+    commit({
+      ...stateRef.current,
+      assets: [...stateRef.current.assets, asset],
+      updatedAt: Date.now(),
+    })
+  }, [commit])
 
   const rebuildCoffeeConversation = React.useCallback(() => {
     if (readOnly || planApplying) return
@@ -198,6 +202,7 @@ export default function VibingDirectorFullscreen({
   }, [applyPlan, planApplying, readOnly])
 
   const canRebuildCoffeeConversation = state.stagePreset === 'coffee_shop' || /咖啡|coffee/i.test(state.brief)
+  const spatial = summarizeVibingDirectorSpatialReport(state.output?.spatialReport)
 
   if (typeof document === 'undefined') return null
 
@@ -262,12 +267,35 @@ export default function VibingDirectorFullscreen({
           </div>
 
           <section className="shrink-0 border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)]">
-            <div className="grid grid-cols-2 divide-x divide-[var(--workbench-border)] md:grid-cols-4">
+            <div className="grid grid-cols-2 divide-x divide-y divide-[var(--workbench-border)] md:grid-cols-3 xl:grid-cols-6 xl:divide-y-0">
               <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">场景</div><div className="mt-1 truncate text-caption font-medium">{state.stagePreset}</div></div>
               <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">资产</div><div className="mt-1 text-caption font-medium">{state.assets.length}</div></div>
               <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">摆位对象</div><div className="mt-1 text-caption font-medium">{state.objects.length}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">空间关系</div><div className="mt-1 text-caption font-medium">{state.relations.length}</div></div>
               <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">镜头节拍</div><div className="mt-1 text-caption font-medium">{state.beats.length}</div></div>
+              <div className="px-4 py-3">
+                <div className="text-micro text-[var(--workbench-muted)]">空间质量</div>
+                <div className={cn(
+                  'mt-1 truncate text-caption font-medium',
+                  spatial.status === 'failed' && 'text-workbench-danger',
+                  spatial.status === 'warning' && 'text-[var(--tc-color-warning)]',
+                  spatial.status === 'passed' && 'text-workbench-success',
+                )}>
+                  {spatial.label}
+                </div>
+              </div>
             </div>
+            {spatial.issues.length ? (
+              <div className="border-t border-[var(--workbench-border)] px-4 py-2">
+                <div className={cn(
+                  'flex items-start gap-2 text-micro leading-5',
+                  spatial.status === 'warning' ? 'text-[var(--tc-color-warning)]' : 'text-workbench-danger',
+                )}>
+                  <IconAlertTriangle size={14} className="mt-0.5 shrink-0" />
+                  <span>{spatial.issues.join('；')}</span>
+                </div>
+              </div>
+            ) : null}
           </section>
 
           <section className="shrink-0 border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)]">
@@ -284,56 +312,15 @@ export default function VibingDirectorFullscreen({
           </section>
         </section>
 
-        <aside className="min-h-[400px] border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] xl:min-h-0 xl:border-l xl:border-t-0">
-          <header className="flex items-center gap-2 border-b border-[var(--workbench-border)] px-3 py-2.5">
-            <IconFolderPlus size={16} className="text-[var(--workbench-muted)]" />
-            <span className="min-w-0 flex-1 text-body-sm font-medium">Blender 资产库</span>
-            {assetSource !== 'local' ? (
-              <WorkbenchIconButton
-                label={`打开 ${ASSET_SOURCE_LABEL[assetSource]}`}
-                icon={<IconExternalLink size={15} />}
-                onClick={() => onOpenAssetSource(assetSource)}
-              />
-            ) : null}
-          </header>
-          {!readOnly ? (
-            <div className="space-y-2 border-b border-[var(--workbench-border)] p-3">
-              <select
-                className="h-8 w-full rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] px-2 text-caption text-[var(--workbench-ink)]"
-                aria-label="资产来源"
-                value={assetSource}
-                onChange={(event) => setAssetSource(event.target.value as BlenderDirectorAssetSource)}
-              >
-                {Object.entries(ASSET_SOURCE_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-              <input
-                className="h-8 w-full rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] px-2 text-caption text-[var(--workbench-ink)] placeholder:text-[var(--workbench-muted)]"
-                aria-label="资产许可证"
-                placeholder="许可证（可选，导入时记录）"
-                value={assetLicense}
-                onChange={(event) => setAssetLicense(event.target.value)}
-              />
-              <button
-                type="button"
-                className="flex h-8 w-full items-center justify-center gap-1.5 rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-transparent px-2 text-caption text-[var(--workbench-ink)] hover:bg-[var(--nomi-ink-05)] disabled:opacity-40"
-                disabled={assetBusy}
-                onClick={() => { void importAsset() }}
-              >
-                {assetBusy ? <NomiLoadingMark size={14} /> : <IconFolderPlus size={14} />}
-                导入本地模型
-              </button>
-            </div>
-          ) : null}
-          <div className="min-h-0 overflow-y-auto">
-            {state.assets.length ? state.assets.map((asset) => (
-              <div key={asset.id} className="border-b border-[var(--workbench-border)] px-3 py-2.5 last:border-b-0">
-                <div className="truncate text-caption font-medium">{asset.name}</div>
-                <div className="mt-1 flex items-center gap-1.5 text-micro text-[var(--workbench-muted)]"><IconPhoto size={12} />{asset.format} · {ASSET_SOURCE_LABEL[asset.source]}</div>
-                <div className="mt-1 truncate text-micro text-[var(--workbench-muted)]">{asset.license}</div>
-              </div>
-            )) : <div className="px-3 py-5 text-caption leading-5 text-[var(--workbench-muted)]">导入已授权的本地模型后，Agent 才能在计划里摆放它们。</div>}
-          </div>
-        </aside>
+        <VibingDirectorAssetLibrary
+          assets={state.assets}
+          readOnly={readOnly}
+          onImportAsset={onImportAsset}
+          onListCatalogAssets={onListCatalogAssets}
+          onImportCatalogAsset={onImportCatalogAsset}
+          onAssetImported={addImportedAsset}
+          onOpenAssetSource={onOpenAssetSource}
+        />
       </main>
     </div>,
     document.body,

@@ -24,6 +24,8 @@ export type MarqueeSelection = {
   handlePointerDown: (event: React.PointerEvent<HTMLDivElement>) => void
   handlePointerMove: (event: React.PointerEvent<HTMLDivElement>) => void
   handlePointerUp: (event: React.PointerEvent<HTMLDivElement>) => void
+  handlePointerCancel: (event: React.PointerEvent<HTMLDivElement>) => void
+  cancel: () => void
 }
 
 const EMPTY_TARGET_GUARD =
@@ -38,7 +40,13 @@ export function useMarqueeSelection({
   selectNodesInRect,
   clearSelection,
 }: UseMarqueeSelectionArgs): MarqueeSelection {
-  const startRef = React.useRef<{ clientX: number; clientY: number; additive: boolean; moved: boolean } | null>(null)
+  const startRef = React.useRef<{
+    pointerId: number
+    clientX: number
+    clientY: number
+    additive: boolean
+    moved: boolean
+  } | null>(null)
   const [marqueeRect, setMarqueeRect] = React.useState<MarqueeRect | null>(null)
 
   const computeStageRect = React.useCallback((clientX: number, clientY: number) => {
@@ -57,7 +65,13 @@ export function useMarqueeSelection({
     if (readOnly || event.button !== 0) return
     const target = event.target instanceof Element ? event.target : null
     if (target?.closest(EMPTY_TARGET_GUARD)) return
-    startRef.current = { clientX: event.clientX, clientY: event.clientY, additive: event.shiftKey, moved: false }
+    startRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      additive: event.shiftKey,
+      moved: false,
+    }
     setMarqueeRect(null)
     try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 无活动指针时忽略 */ }
   }, [readOnly])
@@ -101,5 +115,30 @@ export function useMarqueeSelection({
     selectNodesInRect({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, activeCategoryId, start.additive)
   }, [activeCategoryId, clearSelection, offsetRef, selectNodesInRect, stageRef, zoomRef])
 
-  return { marqueeRect, handlePointerDown, handlePointerMove, handlePointerUp }
+  const finishCancelledMarquee = React.useCallback((event: React.PointerEvent<HTMLDivElement> | null) => {
+    const start = startRef.current
+    startRef.current = null
+    setMarqueeRect(null)
+    const target = event?.currentTarget ?? stageRef.current
+    const pointerId = event?.pointerId ?? start?.pointerId
+    if (
+      target &&
+      pointerId !== undefined &&
+      typeof target.hasPointerCapture === 'function' &&
+      typeof target.releasePointerCapture === 'function' &&
+      target.hasPointerCapture(pointerId)
+    ) {
+      target.releasePointerCapture(pointerId)
+    }
+  }, [stageRef])
+
+  const handlePointerCancel = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    finishCancelledMarquee(event)
+  }, [finishCancelledMarquee])
+
+  const cancel = React.useCallback(() => {
+    finishCancelledMarquee(null)
+  }, [finishCancelledMarquee])
+
+  return { marqueeRect, handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel, cancel }
 }

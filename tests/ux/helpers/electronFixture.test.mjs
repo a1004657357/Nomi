@@ -8,8 +8,11 @@ describe("isolatedElectronLaunchOptions", () => {
     expect(options.env).toMatchObject({
       NOMI_E2E: "1",
       NOMI_E2E_ALLOW_MULTI_INSTANCE: "1",
+      NOMI_SOURCE_RUN: "1",
       NOMI_SETTINGS_DIR: "/tmp/case/settings",
       NOMI_PROJECTS_DIR: "/tmp/case/projects",
+      NOMI_CAPABILITY_DIR: "/tmp/case/capability-core",
     });
+    expect(options.paths.capabilityDir).toBe("/tmp/case/capability-core");
   });
 });

@@ -151,6 +151,7 @@ describe('StoryboardTableNode compact rendering budget', () => {
     const markup = renderStoryboardTable()
     expect(markup).toContain('aria-label="配置镜头 1 图片生成"')
     expect(markup).toContain('aria-label="配置镜头 1 视频生成"')
+    expect(markup).toContain('aria-label="打开镜头 1 创作能力"')
     expect(markup).not.toContain('aria-label="显示镜头 1 图片节点"')
     expect(markup).not.toContain('aria-label="显示镜头 1 视频节点"')
   })

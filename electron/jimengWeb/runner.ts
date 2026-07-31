@@ -7,8 +7,12 @@ import { JIMENG_WEB_BRIDGE_INSTANCE_ID, JIMENG_WEB_VENDOR_SEED } from "../catalo
 import { probeJimengWebServer, resolveJimengWebBaseUrl } from "./seedanceBridge";
 import { jimengWebAuthToken } from "./auth";
 
-const DEFAULT_JIMENG_PAGE_URL = "https://jimeng.jianying.com/ai-tool/home?activeTab=short_video&type=video";
+const DEFAULT_JIMENG_VIDEO_PAGE_URL =
+  "https://jimeng.jianying.com/ai-tool/generate?enter_from=ai_feature&from_page=explore&ai_feature_name=video";
+const DEFAULT_JIMENG_IMAGE_PAGE_URL =
+  "https://jimeng.jianying.com/ai-tool/image/generate";
 const DEFAULT_SEEDANCE_EXTENSION_DIR = "/Volumes/Ai/project/视频制作方向/Seedance2-Chrome-Extensions-master";
+const DEFAULT_NOMI_EXTENSION_DIR = path.join(os.homedir(), "Projects", "Nomi-jimeng-web-extension");
 export const JIMENG_WEB_RUNNER_PARTITION = "persist:nomi-jimeng-runner";
 
 type RunnerProcessStatus = {
@@ -31,6 +35,7 @@ type RunnerProcessStatus = {
 };
 
 export type JimengWebRunnerStatus = RunnerProcessStatus;
+export type ManagedJimengServerProcess = Pick<ChildProcess, "killed" | "exitCode" | "kill">;
 
 let serverProcess: ChildProcess | null = null;
 let jimengWindow: BrowserWindow | null = null;
@@ -40,6 +45,7 @@ let currentExtensionId = "";
 let currentPanelUrl = "";
 let lastError = "";
 let drawerReady = false;
+let runnerStartPromise: Promise<JimengWebRunnerStatus> | null = null;
 const recentLogs: string[] = [];
 
 function expandHome(input: string): string {
@@ -58,30 +64,28 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
 }
 
 function resolveJimengPageUrl(): string {
-  const raw = process.env.NOMI_JIMENG_WEB_PAGE_URL?.trim() || DEFAULT_JIMENG_PAGE_URL;
+  const raw = process.env.NOMI_JIMENG_WEB_PAGE_URL?.trim() || DEFAULT_JIMENG_VIDEO_PAGE_URL;
   try {
     const url = new URL(raw);
     if (url.protocol === "https:" && url.hostname === "jimeng.jianying.com") return url.toString();
   } catch {
     // Fall back to the known Jimeng video entry below.
   }
-  return DEFAULT_JIMENG_PAGE_URL;
+  return DEFAULT_JIMENG_VIDEO_PAGE_URL;
 }
 
-function shouldOpenJimengTarget(currentUrl: string): boolean {
-  if (!currentUrl) return true;
-  try {
-    const url = new URL(currentUrl);
-    if (url.protocol !== "https:" || url.hostname !== "jimeng.jianying.com") return true;
-    return url.pathname === "/ai-tool/home" && url.searchParams.get("type") !== "video";
-  } catch {
-    return true;
-  }
+export function jimengPageUrlForMediaType(mediaType: "image" | "video"): string {
+  return mediaType === "image" ? DEFAULT_JIMENG_IMAGE_PAGE_URL : DEFAULT_JIMENG_VIDEO_PAGE_URL;
+}
+
+export function jimengRunnerWindowAction(hasLiveWindow: boolean): "reuse" | "open-default" {
+  return hasLiveWindow ? "reuse" : "open-default";
 }
 
 export function seedanceExtensionCandidates(): string[] {
   return uniqueNonEmpty([
     process.env.NOMI_SEEDANCE_EXTENSION_DIR,
+    DEFAULT_NOMI_EXTENSION_DIR,
     DEFAULT_SEEDANCE_EXTENSION_DIR,
     path.join(os.homedir(), "Projects", "Seedance2-Chrome-Extensions-master"),
     path.join(os.homedir(), "Downloads", "Seedance2-Chrome-Extensions-master"),
@@ -150,12 +154,15 @@ async function waitForClient(serverUrl: string, timeoutMs = 12_000): Promise<boo
 export function jimengWebServerProcessEnv(serverUrl: string): NodeJS.ProcessEnv {
   const parsed = new URL(serverUrl);
   const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+  const runtimeDir = path.join(app.getPath("userData"), "jimeng-web-bridge");
   return {
     ...process.env,
     NOMI_JIMENG_WEB_TOKEN: jimengWebAuthToken(),
     NOMI_JIMENG_WEB_PARENT_PID: String(process.pid),
     NOMI_JIMENG_WEB_PORT: port,
     NOMI_JIMENG_WEB_INSTANCE_ID: JIMENG_WEB_BRIDGE_INSTANCE_ID,
+    NOMI_JIMENG_WEB_DATA_DIR: path.join(runtimeDir, "data"),
+    NOMI_JIMENG_WEB_UPLOADS_DIR: path.join(runtimeDir, "uploads"),
   };
 }
 
@@ -260,12 +267,10 @@ async function setExtensionApiBaseUrl(serverUrl: string): Promise<void> {
 
 async function ensureJimengWindow(): Promise<BrowserWindow> {
   const pageUrl = resolveJimengPageUrl();
-  if (jimengWindow && !jimengWindow.isDestroyed()) {
+  const hasLiveWindow = Boolean(jimengWindow && !jimengWindow.isDestroyed());
+  if (jimengRunnerWindowAction(hasLiveWindow) === "reuse" && jimengWindow) {
     jimengWindow.show();
     jimengWindow.focus();
-    if (shouldOpenJimengTarget(jimengWindow.webContents.getURL())) {
-      await jimengWindow.loadURL(pageUrl);
-    }
     return jimengWindow;
   }
 
@@ -312,7 +317,10 @@ async function openDrawerInJimengWindow(win: BrowserWindow, timeoutMs = 18_000):
 
 async function ensureFallbackPanelWindow(): Promise<void> {
   if (!currentPanelUrl) return;
-  if (fallbackPanelWindow && !fallbackPanelWindow.isDestroyed()) return;
+  if (fallbackPanelWindow && !fallbackPanelWindow.isDestroyed()) {
+    await fallbackPanelWindow.loadURL(currentPanelUrl);
+    return;
+  }
   fallbackPanelWindow = new BrowserWindow(
     runnerWindowOptions({
       title: "即梦 Web 扩展面板 - Nomi",
@@ -343,7 +351,9 @@ function statusFromState(extensionDir: string | null, clientOnline = false): Jim
     serverPid: serverProcess?.pid,
     extensionId: currentExtensionId || undefined,
     panelUrl: currentPanelUrl || undefined,
-    jimengUrl: resolveJimengPageUrl(),
+    jimengUrl: jimengWindow && !jimengWindow.isDestroyed()
+      ? jimengWindow.webContents.getURL() || resolveJimengPageUrl()
+      : resolveJimengPageUrl(),
     error: lastError || undefined,
     lastLog: recentLogs.at(-1),
   };
@@ -356,7 +366,7 @@ export async function jimengWebRunnerStatus(baseUrlInput?: unknown): Promise<Jim
   return statusFromState(extensionDir, server.ok && (server.sseClients || 0) > 0);
 }
 
-export async function jimengWebStartRunner(baseUrlInput?: unknown): Promise<JimengWebRunnerStatus> {
+async function startJimengWebRunner(baseUrlInput?: unknown): Promise<JimengWebRunnerStatus> {
   const serverUrl = resolveJimengWebBaseUrl(baseUrlInput || JIMENG_WEB_VENDOR_SEED.baseUrl);
   const extensionDir = resolveSeedanceExtensionDir();
   if (!extensionDir) {
@@ -387,6 +397,28 @@ export async function jimengWebStartRunner(baseUrlInput?: unknown): Promise<Jime
   }
 }
 
+export async function jimengWebStartRunner(baseUrlInput?: unknown): Promise<JimengWebRunnerStatus> {
+  if (runnerStartPromise) return runnerStartPromise;
+  runnerStartPromise = startJimengWebRunner(baseUrlInput);
+  try {
+    return await runnerStartPromise;
+  } finally {
+    runnerStartPromise = null;
+  }
+}
+
+export function terminateManagedJimengServerProcess(
+  proc: ManagedJimengServerProcess | null,
+  forceKillAfterMs = 2_000,
+): void {
+  if (!proc || proc.killed) return;
+  proc.kill("SIGTERM");
+  const forceKillTimer = setTimeout(() => {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }, forceKillAfterMs);
+  forceKillTimer.unref?.();
+}
+
 export function disposeJimengWebRunner(): void {
   if (fallbackPanelWindow && !fallbackPanelWindow.isDestroyed()) {
     fallbackPanelWindow.close();
@@ -407,19 +439,17 @@ export function disposeJimengWebRunner(): void {
   currentExtensionId = "";
   currentPanelUrl = "";
   drawerReady = false;
-  if (serverProcess && !serverProcess.killed) {
-    const proc = serverProcess;
-    proc.kill("SIGTERM");
-    const forceKillTimer = setTimeout(() => {
-      if (proc.exitCode === null) proc.kill("SIGKILL");
-    }, 2_000);
-    forceKillTimer.unref?.();
-  }
+  runnerStartPromise = null;
+  terminateManagedJimengServerProcess(serverProcess);
   serverProcess = null;
   lastError = "";
 }
 
-app.on("before-quit", disposeJimengWebRunner);
+// Vitest 的 electron mock 只提供被测 API，不一定实现 EventEmitter；正式 Electron
+// 仍会注册退出清理，纯模块测试则避免在 import 阶段因 mock 形状不完整而整套失败。
+if (typeof app?.on === "function") {
+  app.on("before-quit", disposeJimengWebRunner);
+}
 
 export async function jimengWebStopRunner(): Promise<JimengWebRunnerStatus> {
   const extensionDir = resolveSeedanceExtensionDir();

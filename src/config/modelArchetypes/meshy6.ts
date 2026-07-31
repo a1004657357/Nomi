@@ -51,6 +51,7 @@ export const MESHY6_ARCHETYPE: ModelArchetype = {
       hint: "上传/连接一张图生成 3D 模型",
       promptRequired: false,
       slots: [{ kind: "first_frame", label: "参考图", min: 1, max: 1, inputKey: "imageUrl" }],
+      capabilities: [{ capabilityId: "image.multiview.reconstruct3d", tier: "native", maxOutputs: 1 }],
       params: MESHY_IMAGE_PARAMS,
       transportTaskKind: "image_to_3d",
     },

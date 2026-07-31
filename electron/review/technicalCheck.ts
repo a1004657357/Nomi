@@ -5,28 +5,52 @@
 // OpenMontage 的"review 不过就不呈现")。异步旁路,任何失败吞掉,绝不挡结果呈现。
 import { spawn } from "node:child_process";
 import { resolveFfmpegPath } from "../export/ffmpegRunner";
-import { probeMediaMetadata } from "../export/mediaProbe";
+import { probeMediaMetadata, type MediaProbeMetadata } from "../export/mediaProbe";
 
 export type TechnicalCheckItem = {
-  id: "black-frames" | "silent-audio" | "zero-duration" | "undecodable";
+  id: "black-frames" | "frozen-video" | "silent-audio" | "zero-duration" | "undecodable";
   suspect: boolean;
   detail: string;
+  metrics?: Record<string, number>;
 };
 
 export type TechnicalCheckVerdict = {
   suspect: boolean;
   checks: TechnicalCheckItem[];
+  metadata?: MediaProbeMetadata;
 };
+
+export type TechnicalCheckOptions = {
+  probeMedia?: (absolutePath: string) => Promise<MediaProbeMetadata>;
+  runFfmpegStderr?: (args: string[]) => Promise<string>;
+};
+
+const FFMPEG_CHECK_TIMEOUT_MS = 30_000;
 
 function runFfmpegStderr(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(resolveFfmpegPath(), ["-hide_banner", "-nostats", ...args]);
     let stderr = "";
-    child.stderr.on("data", (chunk) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve(stderr);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      const forceKill = setTimeout(() => child.kill("SIGKILL"), 1_000);
+      forceKill.unref?.();
+      finish(new Error("媒体质量检查超时"));
+    }, FFMPEG_CHECK_TIMEOUT_MS);
+    timeout.unref?.();
+    child.stderr?.on("data", (chunk) => {
       stderr += String(chunk);
     });
-    child.on("error", reject);
-    child.on("close", () => resolve(stderr));
+    child.on("error", (error) => finish(error));
+    child.on("close", () => finish());
   });
 }
 
@@ -36,21 +60,64 @@ function sumMatches(stderr: string, pattern: RegExp): number {
   return total;
 }
 
+export type VideoTechnicalMetrics = {
+  blackSeconds: number;
+  blackRatio: number;
+  frozenSeconds: number;
+  freezeRatio: number;
+};
+
+export function parseVideoTechnicalMetrics(stderr: string, durationSeconds: number): VideoTechnicalMetrics {
+  const duration = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
+  const boundedSeconds = (value: number) => Math.max(0, Math.min(duration, value));
+  const blackSeconds = boundedSeconds(sumMatches(stderr, /black_duration:\s*([\d.]+)/g));
+  const freezeDurations = Array.from(
+    stderr.matchAll(/lavfi\.freezedetect\.freeze_duration:\s*([\d.]+)/g),
+    (match) => Number(match[1]) || 0,
+  );
+  const freezeStarts = Array.from(
+    stderr.matchAll(/lavfi\.freezedetect\.freeze_start:\s*([\d.]+)/g),
+    (match) => Number(match[1]) || 0,
+  );
+  let frozenSeconds = freezeDurations.reduce((sum, value) => sum + value, 0);
+  if (freezeStarts.length > freezeDurations.length && duration > 0) {
+    frozenSeconds += Math.max(0, duration - (freezeStarts.at(-1) ?? duration));
+  }
+  frozenSeconds = boundedSeconds(frozenSeconds);
+  return {
+    blackSeconds,
+    blackRatio: duration > 0 ? blackSeconds / duration : 0,
+    frozenSeconds,
+    freezeRatio: duration > 0 ? frozenSeconds / duration : 0,
+  };
+}
+
 /** 黑帧占比 >60% 才标记(保守阈值:夜景/淡入淡出不该被冤枉)。 */
 const BLACK_RATIO_THRESHOLD = 0.6;
 /** 静音占比 >90% 才标记。 */
 const SILENCE_RATIO_THRESHOLD = 0.9;
+/** 冻结占比 >65% 才标记，保留静态构图和慢镜头空间。 */
+const FREEZE_RATIO_THRESHOLD = 0.65;
 
-export async function runTechnicalCheck(absolutePath: string, type: "image" | "video"): Promise<TechnicalCheckVerdict> {
+export async function runTechnicalCheck(
+  absolutePath: string,
+  type: "image" | "video",
+  options: TechnicalCheckOptions = {},
+): Promise<TechnicalCheckVerdict> {
   const checks: TechnicalCheckItem[] = [];
   try {
-    const meta = await probeMediaMetadata(absolutePath);
+    const meta = await (options.probeMedia ?? probeMediaMetadata)(absolutePath);
+    const runFfmpeg = options.runFfmpegStderr ?? runFfmpegStderr;
     if (type === "image") {
       const decodable = (meta.width ?? 0) > 0 && (meta.height ?? 0) > 0;
       checks.push({
         id: "undecodable",
         suspect: !decodable,
         detail: decodable ? `${meta.width}×${meta.height}` : "图片无法解码或尺寸为 0",
+        metrics: {
+          width: meta.width ?? 0,
+          height: meta.height ?? 0,
+        },
       });
     } else {
       const duration = meta.durationSeconds ?? 0;
@@ -58,28 +125,56 @@ export async function runTechnicalCheck(absolutePath: string, type: "image" | "v
         id: "zero-duration",
         suspect: duration <= 0.1,
         detail: duration > 0.1 ? `时长 ${duration.toFixed(1)}s` : "视频时长为 0",
+        metrics: { durationSeconds: duration },
       });
       if (duration > 0.1) {
-        const blackStderr = await runFfmpegStderr(["-i", absolutePath, "-vf", "blackdetect=d=0.5:pix_th=0.10", "-an", "-f", "null", "-"]);
-        const blackSeconds = sumMatches(blackStderr, /black_duration:([\d.]+)/g);
-        const blackRatio = blackSeconds / duration;
+        const videoStderr = await runFfmpeg([
+          "-i",
+          absolutePath,
+          "-vf",
+          "blackdetect=d=0.5:pix_th=0.10,freezedetect=n=0.003:d=0.5",
+          "-an",
+          "-f",
+          "null",
+          "-",
+        ]);
+        const metrics = parseVideoTechnicalMetrics(videoStderr, duration);
         checks.push({
           id: "black-frames",
-          suspect: blackRatio > BLACK_RATIO_THRESHOLD,
-          detail: blackRatio > BLACK_RATIO_THRESHOLD ? `约 ${Math.round(blackRatio * 100)}% 画面是黑的` : `黑帧占比 ${Math.round(blackRatio * 100)}%`,
+          suspect: metrics.blackRatio > BLACK_RATIO_THRESHOLD,
+          detail: metrics.blackRatio > BLACK_RATIO_THRESHOLD
+            ? `约 ${Math.round(metrics.blackRatio * 100)}% 画面是黑的`
+            : `黑帧占比 ${Math.round(metrics.blackRatio * 100)}%`,
+          metrics: {
+            blackSeconds: metrics.blackSeconds,
+            blackRatio: metrics.blackRatio,
+          },
+        });
+        checks.push({
+          id: "frozen-video",
+          suspect: metrics.freezeRatio > FREEZE_RATIO_THRESHOLD,
+          detail: metrics.freezeRatio > FREEZE_RATIO_THRESHOLD
+            ? `约 ${Math.round(metrics.freezeRatio * 100)}% 画面保持冻结`
+            : `冻结占比 ${Math.round(metrics.freezeRatio * 100)}%`,
+          metrics: {
+            frozenSeconds: metrics.frozenSeconds,
+            freezeRatio: metrics.freezeRatio,
+          },
         });
         if (meta.hasAudio) {
-          const silenceStderr = await runFfmpegStderr(["-i", absolutePath, "-af", "silencedetect=n=-50dB:d=2", "-vn", "-f", "null", "-"]);
-          const silenceSeconds = sumMatches(silenceStderr, /silence_duration: ?([\d.]+)/g);
+          const silenceStderr = await runFfmpeg(["-i", absolutePath, "-af", "silencedetect=n=-50dB:d=2", "-vn", "-f", "null", "-"]);
+          const silenceSeconds = sumMatches(silenceStderr, /silence_duration:\s*([\d.]+)/g);
           const silenceRatio = silenceSeconds / duration;
           checks.push({
             id: "silent-audio",
             suspect: silenceRatio > SILENCE_RATIO_THRESHOLD,
             detail: silenceRatio > SILENCE_RATIO_THRESHOLD ? "音轨几乎全程静音" : `静音占比 ${Math.round(silenceRatio * 100)}%`,
+            metrics: { silenceSeconds, silenceRatio },
           });
         }
       }
     }
+    return { suspect: checks.some((check) => check.suspect), checks, metadata: meta };
   } catch (error) {
     // 探测本身失败 = 文件可疑(下载残缺/格式损坏)
     checks.push({

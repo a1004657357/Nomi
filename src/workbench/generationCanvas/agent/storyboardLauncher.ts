@@ -30,7 +30,7 @@ function shotModeDirective(mode: StoryboardShotMode): string {
     return [
       '本次拆的是**视频分镜**：每个 shot 的 shotKind 必须填 "video"，按方法论给时长（durationSec）、运镜与动作演进，modelKey 从可用清单里选视频模型。',
       '每个 shot 必须尽量填写结构化列：scene（场景）、shotSize（景别）、cameraAngle（机位）、cameraMove（运镜）、characters（角色）、performance（人物表演）、dialogue（对白，无则留空）、props（道具）、sound（音乐/音效）、notes（备注）。',
-      '每个 shot 同时填写 imagePrompt 和 videoPrompt：imagePrompt 写首帧/关键帧静态画面；videoPrompt 写动作演进、运镜、节奏和时长感。prompt 字段镜像 videoPrompt，兼容旧链路。',
+      '每个 shot 同时填写 imagePrompt 和 videoPrompt：imagePrompt 写分镜参考画面；叙事镜头默认按全能参考组织，videoPrompt 不把分镜图锁成首帧，重点写单一动作链、动作结果、明确运镜轴向、随动作变化的光影和结束姿态。只有接戏或明确首帧复刻时才写首帧继承。prompt 字段镜像 videoPrompt，兼容旧链路。',
     ].join('\n')
   }
   return [

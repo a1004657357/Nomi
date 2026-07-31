@@ -366,6 +366,12 @@ function normalizeEnabled(value: unknown, fallback = true): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+export function isModelCatalogVendorExecutable(
+  vendor: Pick<Vendor, "enabled" | "authType" | "hasApiKey"> | null | undefined,
+): boolean {
+  return Boolean(vendor?.enabled && (vendor.authType === "none" || vendor.hasApiKey));
+}
+
 export function normalizeProviderKind(value: unknown, fallback: AiSdkProviderKind = "openai-compatible"): AiSdkProviderKind {
   return value === "anthropic" || value === "openai-compatible" || value === "openai-responses" ? value : fallback;
 }
@@ -439,11 +445,10 @@ export function getModelCatalogHealth(): unknown {
   const enabledVendors = state.vendors.filter((vendor) => vendor.enabled);
   const enabledModels = state.models.filter((model) => model.enabled);
   const enabledApiKeys = Object.values(state.apiKeysByVendor).filter((key) => key.enabled && key.apiKey).length;
-  const executableModels = enabledModels.filter((model) => {
-    const vendor = state.vendors.find((item) => item.key === model.vendorKey);
-    const apiKey = state.apiKeysByVendor[model.vendorKey];
-    return Boolean(vendor?.enabled && (vendor.authType === "none" || (apiKey?.enabled && apiKey.apiKey)));
-  });
+  const vendorsByKey = new Map(state.vendors.map((vendor) => [vendor.key, vendor] as const));
+  const executableModels = enabledModels.filter((model) =>
+    isModelCatalogVendorExecutable(vendorsByKey.get(model.vendorKey)),
+  );
   const byKind = (["text", "image", "video", "audio"] as BillingModelKind[]).map((kind) => ({
     kind,
     enabledModels: enabledModels.filter((model) => model.kind === kind).length,
@@ -454,11 +459,10 @@ export function getModelCatalogHealth(): unknown {
     issues.push({ code: "catalog_empty", severity: "error", message: "Local model catalog is empty" });
   }
   for (const model of enabledModels) {
-    const vendor = state.vendors.find((item) => item.key === model.vendorKey);
-    const apiKey = state.apiKeysByVendor[model.vendorKey];
+    const vendor = vendorsByKey.get(model.vendorKey);
     if (!vendor?.enabled) {
       issues.push({ code: "vendor_disabled", severity: "error", message: `Vendor disabled: ${model.vendorKey}`, vendorKey: model.vendorKey, modelKey: model.modelKey, kind: model.kind });
-    } else if (vendor.authType !== "none" && !apiKey?.apiKey) {
+    } else if (!isModelCatalogVendorExecutable(vendor)) {
       issues.push({ code: "vendor_api_key_missing", severity: "error", message: `API key missing: ${model.vendorKey}`, vendorKey: model.vendorKey, modelKey: model.modelKey, kind: model.kind });
     }
   }

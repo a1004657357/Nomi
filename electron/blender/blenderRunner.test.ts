@@ -13,6 +13,7 @@ vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("../runtime", () => ({ writeAsset: mocks.writeAsset }));
 
 import {
+  activeBlenderSceneRenderCount,
   buildBlenderCommandArgs,
   cancelBlenderSceneRender,
   runBlenderSceneRender,
@@ -31,8 +32,49 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  expect(activeBlenderSceneRenderCount()).toBe(0);
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
+
+function minimalGlb(): Buffer {
+  const binary = Buffer.alloc(36);
+  [
+    [0, 0, 0],
+    [1, 0, 0],
+    [0, 1, 0],
+  ].flat().forEach((value, index) => binary.writeFloatLE(value, index * 4));
+  const source = Buffer.from(JSON.stringify({
+    asset: { version: "2.0" },
+    buffers: [{ byteLength: binary.length }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: binary.length }],
+    accessors: [{
+      bufferView: 0,
+      componentType: 5126,
+      count: 3,
+      type: "VEC3",
+      min: [0, 0, 0],
+      max: [1, 1, 0],
+    }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    nodes: [{ mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+    scene: 0,
+  }), "utf8");
+  const json = Buffer.concat([source, Buffer.alloc((4 - (source.length % 4)) % 4, 0x20)]);
+  const body = Buffer.alloc(8 + json.length + 8 + binary.length);
+  body.writeUInt32LE(json.length, 0);
+  body.writeUInt32LE(0x4e4f534a, 4);
+  json.copy(body, 8);
+  const binaryHeader = 8 + json.length;
+  body.writeUInt32LE(binary.length, binaryHeader);
+  body.writeUInt32LE(0x004e4942, binaryHeader + 4);
+  binary.copy(body, binaryHeader + 8);
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(header.length + body.length, 8);
+  return Buffer.concat([header, body]);
+}
 
 function fakeBlenderBinary(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-blender-bin-"));
@@ -58,7 +100,7 @@ function mockSuccessfulBlenderProcess(): void {
       fs.mkdirSync(outputDir, { recursive: true });
       fs.writeFileSync(path.join(outputDir, "preview.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
       fs.writeFileSync(path.join(outputDir, "scene.blend"), "BLENDER");
-      fs.writeFileSync(path.join(outputDir, "scene.glb"), Buffer.from("glTF"));
+      fs.writeFileSync(path.join(outputDir, "scene.glb"), minimalGlb());
       child.stdout.emit("data", "NOMI_BLENDER_VERSION=4.0.1\n");
       child.emit("close", 0, null);
     }, 0);
@@ -107,6 +149,9 @@ describe("blender scene runner", () => {
       expect.objectContaining({ windowsHide: true }),
     );
     expect(mocks.writeAsset).toHaveBeenCalledTimes(3);
+    expect(mocks.writeAsset.mock.calls.find((call) => call[2] === "blender-scene.glb")?.[4]).toMatchObject({
+      model3dValidation: { meshCount: 1, primitiveCount: 1 },
+    });
     expect(result).toMatchObject({
       jobId: "job-success",
       blenderVersion: "4.0.1",
@@ -157,7 +202,10 @@ describe("blender scene runner", () => {
       };
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
-      child.kill = vi.fn(() => true);
+      child.kill = vi.fn((signal: NodeJS.Signals) => {
+        setTimeout(() => child.emit("close", null, signal), 0);
+        return true;
+      });
       childRef = child;
       return child;
     });
@@ -169,7 +217,7 @@ describe("blender scene runner", () => {
       scene: { objects: [], cameras: [] },
       timeoutMs: 5,
     })).rejects.toThrow(/超时/);
-    expect(childRef?.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(childRef?.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("removes its temp directory when scene serialization fails", async () => {

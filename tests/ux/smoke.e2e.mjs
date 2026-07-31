@@ -38,6 +38,7 @@ const app = await electron.launch({
     NOMI_PROJECTS_DIR: projectsDir,
   },
 });
+const electronProcess = app.process();
 
 try {
   const win = await app.firstWindow();
@@ -86,8 +87,13 @@ try {
   console.log(`\nSMOKE PASS: ${passed} assertions`);
 } catch (error) {
   console.error(`\n${error?.message || error}`);
-  await app.close();
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
-  await app.close().catch(() => undefined);
+  const closed = await Promise.race([
+    app.close().then(() => true, () => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
+  ]);
+  if (!closed && electronProcess.exitCode == null) electronProcess.kill("SIGKILL");
 }
+
+process.exit(process.exitCode ?? 0);

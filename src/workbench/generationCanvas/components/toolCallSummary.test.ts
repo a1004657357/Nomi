@@ -19,6 +19,20 @@ describe('summarizeToolCall — 时间线步骤标题(人话,无 toolName 原文
     expect(summarizeToolCall('delete_canvas_nodes', { nodeIds: ['a'] })).toBe('删除 1 个节点')
     expect(summarizeToolCall('run_generation_batch', { nodeIds: ['a', 'b'] })).toContain('批量生成 2 个节点')
     expect(summarizeToolCall('attach_external_image_to_node', { nodeId: 'n1' })).toBe('导入外部图片到「镜1」')
+    expect(summarizeToolCall('list_capability_recipes', {})).toBe('查看创作能力配方')
+    expect(
+      summarizeToolCall('apply_capability_recipe', {
+        sourceNodeId: 'n1',
+        recipeId: 'portrait.refine',
+        requestedOutputs: 1,
+      }),
+    ).toBe('为「镜1」生成「人像真实化」新结果（将产生生成费用）')
+    expect(summarizeToolCall('save_creative_resource', {
+      sourceNodeId: 'n1', kind: 'style', label: '柔和胶片',
+    })).toBe('把「镜1」保存为风格资源「柔和胶片」')
+    expect(summarizeToolCall('handoff_model3d', {
+      sourceNodeId: 'n1', target: 'vibingDirector',
+    })).toBe('把「镜1」送入 Blender Director')
   })
 
   it('set_node_prompt 查不到节点 → 退回不带 id 的人话(不漏机器串)', () => {
@@ -68,6 +82,16 @@ describe('describeToolCallDetail — 副标题翻 args(杀 raw id/JSON)', () => 
     expect(describeToolCallDetail('delete_canvas_nodes', { nodeIds: ['a', 'b'] })).toBe('「镜A」、「镜B」')
     expect(describeToolCallDetail('attach_external_image_to_node', { source: '/tmp/codex-output.png' })).toBe('/tmp/codex-output.png')
     expect(describeToolCallDetail('read_canvas_state', {})).toBe('')
+    expect(
+      describeToolCallDetail('apply_capability_recipe', {
+        modelKey: 'gpt-image-2',
+        modeId: 'image-edit',
+        requestedOutputs: 3,
+      }),
+    ).toBe('gpt-image-2 · image-edit · 3 个结果')
+    expect(describeToolCallDetail('handoff_model3d', {
+      targetNodeId: 'director-1', license: 'user-owned',
+    })).toBe('追加到 director-1 · 许可 user-owned')
   })
 })
 

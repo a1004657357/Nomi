@@ -1,8 +1,17 @@
 import type { ExportJobEvent, ExportJobSnapshot } from '../../electron/export/exportJobManager'
 import type { WorkspaceFileListResult } from '../../electron/workspace/workspaceFileIndex'
+import type {
+  DesktopModel3dValidation,
+  DesktopVideoQualityInspection,
+} from './assetInspectionBridgeTypes'
 import type { ProviderKind } from './providerKind'
+import type { DesktopVibingDirectorBridge } from './vibingDirectorBridgeTypes'
 
 export type { ProviderKind }
+export type {
+  DesktopModel3dValidation,
+  DesktopVideoQualityInspection,
+} from './assetInspectionBridgeTypes'
 
 /** 落盘的对话消息(conversation 域;draft/附件是 session 域不落盘)。 */
 export type PersistedAiMessage = { id: string; role: string; content: string }
@@ -246,6 +255,10 @@ export type DesktopUpdateEvent =
 
 export type DesktopBridge = {
   platform: string
+  runtime?: {
+    /** True only when Electron was launched from a source checkout or isolated source E2E. */
+    sourceRun: boolean
+  }
   /** 窗口控制（Windows 自绘标题栏用；mac 原生 chrome 时不调用）。老 preload 可能无此口。 */
   window?: {
     minimize: () => Promise<void>
@@ -274,6 +287,13 @@ export type DesktopBridge = {
       relativePaths: string[]
     }) => Promise<{ ok: boolean; deletedCount: number; failedCount: number }>
     revealProjectFolder: (payload: { projectId: string }) => Promise<{ ok: boolean }>
+  }
+  files: {
+    extractText: (payload: {
+      fileName: string
+      contentType: string
+      bytes: ArrayBuffer
+    }) => Promise<{ text: string }>
   }
   projects: {
     list: () => unknown[]
@@ -316,12 +336,43 @@ export type DesktopBridge = {
       contentType?: string
       ownerNodeId?: string | null
     }) => Promise<DesktopAssetDto>
+    inspectModel3d?: (payload: { url: string }) => Promise<DesktopModel3dValidation>
+    inspectVideo?: (payload: { url: string }) => Promise<DesktopVideoQualityInspection>
     download: (payload: {
       url: string
       suggestedName?: string
     }) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>
+    archiveOutputCollection: (payload: {
+      projectId: string
+      collectionName: string
+      items: Array<{
+        nodeId: string
+        resultId?: string
+        title: string
+        type: string
+        url: string
+        createdAt?: number
+      }>
+    }) => Promise<{
+      archivedAt: string
+      relativeDirectory: string
+      manifestRelativePath: string
+      items: Array<{
+        nodeId: string
+        resultId?: string
+        title: string
+        type: string
+        relativePath: string
+        contentType: string
+        size: number
+        sha256: string
+      }>
+    }>
   }
   browser?: {
+    startAssetDrag?: (payload: { url: string }) => void
+    endAssetDrag?: () => void
+    onAssetDragError?: (callback: (event: { message?: string }) => void) => () => void
     createView: (payload: { tabId: string; partition?: string }) => Promise<{ viewId: number }>
     destroyView: (payload: { viewId: number }) => void
     navigate: (payload: { viewId: number; url: string }) => void
@@ -421,6 +472,13 @@ export type DesktopBridge = {
       projectId: string
       forceRerun?: boolean
     }) => Promise<{ url: string }>
+    /** 批量指定秒抽帧。桌面端只解析/下载一次源视频，避免检查器重复拉取远程文件。 */
+    extractFrames: (payload: {
+      videoUrl: string
+      times: number[]
+      projectId: string
+      forceRerun?: boolean
+    }) => Promise<{ frames: Array<{ timeSeconds: number; url: string }> }>
   }
   image: {
     /** 元素拆解：一张图 → Replicate qwen-image-layered → N 张落地 RGBA 图层 URL（对标 Lovart Edit Elements）。
@@ -476,45 +534,7 @@ export type DesktopBridge = {
     }>
     cancelBlender: (jobId: string) => Promise<{ cancelled: boolean }>
   }
-  vibingDirector: {
-    applyBlenderPlan: (payload: {
-      jobId: string
-      projectId: string
-      directorNodeId: string
-      plan: unknown
-      assets: Array<{ id: string; fileName: string }>
-      existingBlendRelativePath?: string
-      timeoutMs?: number
-    }) => Promise<{
-      jobId: string
-      blenderVersion?: string
-      preview: { url: string; assetId?: string }
-      blend: { url: string; assetId?: string }
-      model: { url: string; assetId?: string }
-      blendRelativePath: string
-    }>
-    importAsset: (payload: {
-      projectId: string
-      directorNodeId: string
-      source: 'local' | 'polyhaven' | 'quaternius' | 'blenderkit'
-      license?: string
-    }) => Promise<{
-      canceled?: boolean
-      asset?: {
-        id: string
-        name: string
-        fileName: string
-        format: 'blend' | 'glb' | 'gltf' | 'fbx' | 'obj'
-        source: 'local' | 'polyhaven' | 'quaternius' | 'blenderkit'
-        license: string
-        importedAt: number
-      }
-      relativePath?: string
-    }>
-    openBlender: (payload: { projectId: string; directorNodeId: string; blendRelativePath: string }) => Promise<{ opened: boolean }>
-    cancelBlenderPlan: (jobId: string) => Promise<{ cancelled: boolean }>
-    openAssetSource: (source: 'polyhaven' | 'quaternius' | 'blenderkit') => Promise<{ opened: boolean }>
-  }
+  vibingDirector: DesktopVibingDirectorBridge
   exports: {
     startJob: (payload: DesktopExportJobStartPayload) => Promise<DesktopExportJobStartResult>
     writeTempInput: (payload: DesktopExportTempInputWritePayload) => Promise<DesktopExportTempInputWriteResult>
@@ -694,6 +714,7 @@ export type DesktopBridge = {
   dreamina?: {
     status: () => Promise<{
       installed: boolean
+      stale: boolean
       loggedIn: boolean
       totalCredit: number | null
       vipLevel: string
@@ -778,7 +799,12 @@ export type DesktopBridge = {
       tokenReady: boolean
       rpcRunning: boolean
       server: { command: string; args: string[]; env?: Record<string, string> }
-      clients: Record<'claude' | 'codex' | 'cursor', { installed: boolean; configPath: string; snippet: string }>
+      clients: Record<'claude' | 'codex' | 'cursor', {
+        installed: boolean
+        stale: boolean
+        configPath: string
+        snippet: string
+      }>
     }
     /** 一键写入指定客户端配置的 nomi 条目（合并 + 备份）。默认 Claude Code。 */
     installMcp: (client?: string) => { ok: boolean; client: string; configPath: string; backupPath: string | null }

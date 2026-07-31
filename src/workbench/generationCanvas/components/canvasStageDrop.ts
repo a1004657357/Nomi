@@ -10,15 +10,28 @@ import {
   type AssetLibraryDragPayload,
 } from '../../assets/assetLibraryDrag'
 import { importLocalMediaFilesToGenerationCanvas } from '../adapters/assetImportAdapter'
+import {
+  extractClipboardMediaUrl,
+  pasteClipboardMediaToGenerationCanvas,
+  showClipboardMediaPasteNotes,
+} from '../adapters/clipboardImagePaste'
 import { getGenerationNodeDefaultSize, getGenerationNodeFootprintSize } from '../model/generationNodeKinds'
 import { dropKindFromMime } from '../model/nodeAssetDrop'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { toast } from '../../../ui/toast'
 import type { BrowserAssetCanvasImportItem } from '../../../ui/browser/overlay/globalAssetPopoverEvents'
 import type { TiptapDocJson } from '../model/generationCanvasTypes'
+import {
+  addCanvasSkillNode,
+  CANVAS_SKILL_DRAG_MIME,
+  parseCanvasSkillDrag,
+} from '../skills/canvasSkillModel'
+import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
+import { getDesktopBridge, type DesktopAssetDto } from '../../../desktop/bridge'
 
 export const BROWSER_ASSET_DRAG_MIME = 'application/x-nomi-assets'
 export const LEGACY_BROWSER_ASSET_DRAG_MIME = 'application/x-nomi-browser-assets'
+export const BROWSER_MEDIA_DRAG_MIME = 'application/x-nomi-browser-image'
 
 export type CanvasStageDropContext = {
   readOnly: boolean
@@ -33,6 +46,16 @@ type BrowserAssetCanvasItem = {
   title: string
   url?: string
   prompt?: string
+}
+
+export type BrowserMediaDragPayload = {
+  viewId: number
+  url: string
+  mediaType: 'image' | 'video'
+  title?: string
+  fileName?: string
+  pageUrl?: string
+  pageTitle?: string
 }
 
 function clampNodePos(value: number): number {
@@ -149,6 +172,134 @@ function parseBrowserAssetDrag(raw: string | null | undefined): BrowserAssetCanv
   }
 }
 
+export function parseBrowserMediaDrag(raw: string | null | undefined): BrowserMediaDragPayload | null {
+  if (!raw) return null
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>
+    const viewId = Number(value.viewId)
+    const url = typeof value.url === 'string' ? value.url.trim() : ''
+    if (!Number.isInteger(viewId) || viewId <= 0 || !/^(https?:\/\/|blob:)/i.test(url)) return null
+    const mediaType = value.mediaType === 'video' ? 'video' : 'image'
+    const optionalString = (key: string): string | undefined => {
+      const text = typeof value[key] === 'string' ? String(value[key]).trim() : ''
+      return text || undefined
+    }
+    return {
+      viewId,
+      url,
+      mediaType,
+      title: optionalString('title'),
+      fileName: optionalString('fileName'),
+      pageUrl: optionalString('pageUrl'),
+      pageTitle: optionalString('pageTitle'),
+    }
+  } catch {
+    return null
+  }
+}
+
+export type BrowserMediaDragImportDeps = {
+  projectId?: string
+  importMedia?: (payload: {
+    viewId: number
+    projectId: string
+    url: string
+    fileName?: string
+    title?: string
+    mediaType: 'image' | 'video'
+  }) => Promise<DesktopAssetDto>
+}
+
+export async function importBrowserMediaDragToGenerationCanvas(
+  payload: BrowserMediaDragPayload,
+  options: { basePosition: { x: number; y: number }; categoryId?: string },
+  deps: BrowserMediaDragImportDeps = {},
+): Promise<{ ok: boolean; nodeId: string; error?: string }> {
+  const projectId = deps.projectId ?? getDesktopActiveProjectId()
+  const importMedia = deps.importMedia ?? getDesktopBridge()?.browser?.importMedia
+  const store = useGenerationCanvasStore.getState()
+  const fallbackTitle = payload.mediaType === 'video' ? '网页视频' : '网页图片'
+  const displayTitle = payload.title || payload.fileName || payload.pageTitle || fallbackTitle
+  const node = store.addNode({
+    kind: 'asset',
+    title: displayTitle.replace(/\.[^.]+$/, '') || fallbackTitle,
+    prompt: '',
+    position: {
+      x: clampNodePos(options.basePosition.x),
+      y: clampNodePos(options.basePosition.y),
+    },
+    categoryId: options.categoryId,
+    exactPosition: true,
+    meta: {
+      source: 'browser-view-drag',
+      sourceUrl: payload.url,
+      pageUrl: payload.pageUrl,
+      uploadStatus: 'uploading',
+    },
+  })
+  store.updateNode(node.id, {
+    status: 'running',
+    progress: { phase: 'browser-import', message: '从网页保存中', updatedAt: Date.now() },
+  })
+
+  if (!projectId || !importMedia) {
+    const error = '当前浏览器会话导入通道不可用，请先拖到素材盒再导入画布。'
+    store.updateNode(node.id, { status: 'error', error, progress: undefined })
+    return { ok: false, nodeId: node.id, error }
+  }
+
+  try {
+    const asset = await importMedia({
+      viewId: payload.viewId,
+      projectId,
+      url: payload.url,
+      fileName: payload.fileName,
+      title: payload.title || payload.pageTitle,
+      mediaType: payload.mediaType,
+    })
+    const localUrl = typeof asset.data.url === 'string' ? asset.data.url.trim() : ''
+    if (!localUrl) throw new Error('网页媒体已经下载，但没有返回本地素材地址')
+    const contentType = typeof asset.data.contentType === 'string' ? asset.data.contentType : ''
+    const mediaType = contentType.startsWith('video/') || asset.data.mediaType === 'video'
+      ? 'video'
+      : payload.mediaType
+    const result = {
+      id: `browser-view-${node.id}-${Date.now()}`,
+      type: mediaType,
+      url: localUrl,
+      assetId: asset.id,
+      raw: { asset },
+      createdAt: Date.now(),
+    }
+    store.updateNode(node.id, {
+      status: 'success',
+      error: undefined,
+      progress: undefined,
+      result,
+      history: [result],
+      meta: {
+        ...(node.meta || {}),
+        source: 'browser-view-drag',
+        sourceUrl: undefined,
+        uploadStatus: 'uploaded',
+        fileName: asset.name || payload.fileName,
+        contentType,
+      },
+    })
+    return { ok: true, nodeId: node.id }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const detail = `网页媒体保存失败：${message}。可以打开素材盒，用“捕捞”后再导入画布。`
+    store.updateNode(node.id, {
+      status: 'error',
+      error: detail,
+      progress: undefined,
+      meta: { ...(node.meta || {}), uploadStatus: 'failed' },
+    })
+    return { ok: false, nodeId: node.id, error: detail }
+  }
+}
+
 export type BrowserAssetsToCanvasResult = {
   createdCount: number
   skippedCount: number
@@ -233,7 +384,19 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
     y: (event.clientY - rect.top - ctx.offset.y) / ctx.zoom,
   }
 
-  // 1) 项目文件树拖入：文件已在项目里，直接用 nomi-local 协议引用，按 kind 建图片/视频 asset 节点。
+  // 1) 技能库拖入：创建可持久化的 SkillNode，位置与当前画布分类保持一致。
+  const canvasSkill = parseCanvasSkillDrag(event.dataTransfer.getData(CANVAS_SKILL_DRAG_MIME))
+  if (canvasSkill) {
+    event.preventDefault()
+    event.stopPropagation()
+    addCanvasSkillNode(canvasSkill, {
+      x: clampNodePos(basePosition.x - 190),
+      y: clampNodePos(basePosition.y - 180),
+    }, ctx.activeCategoryId || 'shots')
+    return
+  }
+
+  // 2) 项目文件树拖入：文件已在项目里，直接用 nomi-local 协议引用，按 kind 建图片/视频 asset 节点。
   const workspaceDrag = parseWorkspaceFileDrag(event.dataTransfer.getData(WORKSPACE_FILE_DRAG_MIME))
   if (workspaceDrag) {
     event.preventDefault()
@@ -258,7 +421,7 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
     return
   }
 
-  // 2) 素材库拖入：素材已在池里（画布产出/项目文件），直接引用 renderUrl 建 asset 节点（图片/视频）。
+  // 3) 素材库拖入：素材已在池里（画布产出/项目文件），直接引用 renderUrl 建 asset 节点（图片/视频）。
   const assetDragItems = parseAssetLibraryDragItems(event.dataTransfer.getData(ASSET_LIBRARY_DRAG_MIME))
   if (assetDragItems.length) {
     event.preventDefault()
@@ -300,7 +463,7 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
     return
   }
 
-  // 3) 浏览器素材盒拖入：图片/视频创建媒体 asset 节点；提示词创建 text 节点。
+  // 4) 浏览器素材盒拖入：图片/视频创建媒体 asset 节点；提示词创建 text 节点。
   const browserAssets = parseBrowserAssetDrag(
     event.dataTransfer.getData(BROWSER_ASSET_DRAG_MIME) || event.dataTransfer.getData(LEGACY_BROWSER_ASSET_DRAG_MIME),
   )
@@ -320,12 +483,38 @@ export function handleCanvasStageDrop(event: DragEvent<HTMLDivElement>, ctx: Can
     return
   }
 
-  // 4) OS 文件拖入：复制进项目并上传，创建图片 / 视频素材节点（音频无可落节点，过滤）。
+  // 5) 内置浏览器媒体直拖：用来源 WebContentsView 的登录会话下载，支持防盗链与 blob:。
+  const browserMedia = parseBrowserMediaDrag(event.dataTransfer.getData(BROWSER_MEDIA_DRAG_MIME))
+  if (browserMedia) {
+    event.preventDefault()
+    event.stopPropagation()
+    void importBrowserMediaDragToGenerationCanvas(browserMedia, {
+      basePosition,
+      categoryId: ctx.activeCategoryId,
+    }).then((result) => {
+      if (result.ok) toast(browserMedia.mediaType === 'video' ? '网页视频已保存到画布' : '网页图片已保存到画布', 'success')
+      else toast(result.error || '网页媒体保存失败', 'error')
+    })
+    return
+  }
+
+  // 6) OS 文件拖入：复制进项目并上传，创建图片 / 视频素材节点（音频无可落节点，过滤）。
   const files = Array.from(event.dataTransfer.files || []).filter((file) => {
     const kind = dropKindFromMime(file.type)
     return kind === 'image' || kind === 'video'
   })
-  if (!files.length) return
+  if (!files.length) {
+    const mediaUrl = extractClipboardMediaUrl(event.dataTransfer)
+    if (!mediaUrl) return
+    event.preventDefault()
+    event.stopPropagation()
+    void pasteClipboardMediaToGenerationCanvas({
+      clipboardData: event.dataTransfer,
+      basePosition,
+      categoryId: ctx.activeCategoryId,
+    }).then(showClipboardMediaPasteNotes).catch(() => {})
+    return
+  }
   event.preventDefault()
   event.stopPropagation()
   void importLocalMediaFilesToGenerationCanvas(files, { basePosition, categoryId: ctx.activeCategoryId }).then((result) => {

@@ -99,7 +99,8 @@ export default function NodeParameterControls({
   const archetype = resolveArchetypeForOption(selectedModelOption)
   // 变体特化：选中变体可能收窄某 mode 的参数（如 Seedance fast 的 resolution 仅 480/720）——
   // 槽/参数全由特化后的档案派生，保证 UI 选项与发送一致。无 variants → 原样（零开销）。
-  const variantChoices = archetype ? archetypeVariantChoices(archetype) : []
+  const baseMode = archetype ? currentArchetypeMode(archetype, meta) : null
+  const variantChoices = archetype ? archetypeVariantChoices(archetype, baseMode?.id) : []
   const activeVariantId = archetype ? (currentArchetypeVariant(archetype, meta)?.id || '') : ''
   const effectiveArchetype = archetype ? specializeArchetypeForVariant(archetype, activeVariantId) : null
   const archMode = effectiveArchetype ? currentArchetypeMode(effectiveArchetype, meta) : null

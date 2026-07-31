@@ -57,6 +57,18 @@ export type ArchetypeIntent = "text" | "single" | "firstlast" | "character" | "e
  */
 export type ArchetypeTransportTaskKind = "text_to_video" | "image_to_video" | "text_to_image" | "image_edit" | "text_to_audio" | "transcribe" | "text_to_3d" | "image_to_3d";
 
+export type ModelCapabilityTier = "native" | "compatible" | "experimental";
+
+/**
+ * 模式级能力声明。能力 id 采用开放字符串，既允许内置配方，也允许用户导入的 ComfyUI
+ * 工作流声明自己的能力；声明只描述模型能力，不绑定供应商。
+ */
+export type ModelCapabilitySupport = {
+  capabilityId: string;
+  tier: ModelCapabilityTier;
+  maxOutputs?: number;
+};
+
 export type ArchetypeMode = {
   id: string;
   intent: ArchetypeIntent;
@@ -104,6 +116,8 @@ export type ArchetypeMode = {
    * 与 params 的区别：params 是用户可调的控件，fixedParams 是模式内嵌的常量，不渲染 UI（保持极简 R2）。
    */
   fixedParams?: Record<string, string>;
+  /** 该模式原生或经验证支持的高层创作能力。未声明时由配方按 taskKind/参考槽保守推断。 */
+  capabilities?: ModelCapabilitySupport[];
 };
 
 /**
@@ -127,6 +141,8 @@ export type ModelArchetypeVariant = {
   label: string;
   /** 选中该变体时实际发请求的 model 字符串（catalog body `{{request.params.model}}` 读它）。 */
   modelKey: string;
+  /** 该变体只支持哪些模式。缺省表示支持档案的全部模式。 */
+  supportedModeIds?: string[];
   /** 旧项目 node.meta.modelKey 命中这些串之一 → 归一到本变体（迁移层）。缺省 = 仅靠 modelKey 自身匹配。 */
   identifierPatterns?: string[];
   /** 按 modeId 把该 mode 的标量参数收窄（纯函数，仿 withFastRes）。缺省 = 不改任何 mode。 */

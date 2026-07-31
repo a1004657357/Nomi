@@ -15,13 +15,17 @@ import { useWorkbenchStore } from '../workbenchStore'
 import type { SkillListItemDto } from '../api/skillApi'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { SkillCard } from './SkillCard'
-
-type Source = 'mine' | 'builtin'
-
-const SOURCE_OPTIONS: { value: Source; label: string }[] = [
-  { value: 'mine', label: '我的技能' },
-  { value: 'builtin', label: 'Nomi 内置' },
-]
+import {
+  addCanvasSkillNode,
+  focusCanvasSkillNode,
+  isCanvasSkill,
+} from '../generationCanvas/skills/canvasSkillModel'
+import {
+  buildBuiltinCanvasComponentItems,
+  defaultSkillLibrarySource,
+  skillLibrarySourceOptions,
+  type SkillLibrarySource,
+} from './skillComponentPresentation'
 
 // 「让 AI 帮我写技能」激活的元 skill（与 ActiveSkillChip 的 SKILL_AUTHOR 同口径）。
 const SKILL_AUTHOR = { key: 'workbench.creation.skill-author', name: 'AI 写技能' }
@@ -37,6 +41,7 @@ type SkillLibraryContentProps = {
   showHeader?: boolean
   onClose?: () => void
   className?: string
+  componentFirst?: boolean
 }
 
 export function SkillLibraryContent({
@@ -45,23 +50,41 @@ export function SkillLibraryContent({
   showHeader = true,
   onClose,
   className,
+  componentFirst = false,
 }: SkillLibraryContentProps): JSX.Element {
-  const [source, setSource] = React.useState<Source>('mine')
+  const [source, setSource] = React.useState<SkillLibrarySource>(
+    () => defaultSkillLibrarySource({ componentFirst }),
+  )
   const [query, setQuery] = React.useState('')
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const sourceOptions = React.useMemo(
+    () => skillLibrarySourceOptions({ componentFirst }),
+    [componentFirst],
+  )
 
   const { items, available, remove, importPackage, exportPackage } = useWorkbenchSkills(active)
   const setWorkspaceMode = useWorkbenchStore((s) => s.setWorkspaceMode)
+  const setActiveCategoryId = useWorkbenchStore((s) => s.setActiveCategoryId)
   const setCreationActiveSkill = useWorkbenchStore((s) => s.setCreationActiveSkill)
 
   const visible = React.useMemo(() => {
     const q = query.trim().toLowerCase()
-    return items.filter((s) => {
-      if (source === 'mine' ? s.origin !== 'user' : s.origin !== 'builtin') return false
-      if (!q) return true
-      return s.label.toLowerCase().includes(q) || (s.description ?? '').toLowerCase().includes(q)
-    })
-  }, [items, source, query])
+    const sourceSkills = items.filter((skill) => (
+      source === 'mine' ? skill.origin === 'user' : skill.origin === 'builtin'
+    ))
+    const entries = componentFirst && source === 'builtin'
+      ? buildBuiltinCanvasComponentItems(sourceSkills)
+      : sourceSkills.map((skill) => ({
+          id: `${skill.origin}::${skill.directoryName}`,
+          recipeId: null,
+          skill,
+        }))
+    return entries.filter(({ skill }) => (
+      !q
+      || skill.label.toLowerCase().includes(q)
+      || (skill.description ?? '').toLowerCase().includes(q)
+    ))
+  }, [componentFirst, items, source, query])
 
   React.useEffect(() => {
     if (!active || !onClose) return
@@ -83,8 +106,24 @@ export function SkillLibraryContent({
   )
 
   const handleUse = React.useCallback(
-    (skill: SkillListItemDto) => gotoCreationWith({ key: skill.name, name: skill.label }),
-    [gotoCreationWith],
+    (skill: SkillListItemDto) => {
+      if (!isCanvasSkill(skill)) {
+        gotoCreationWith({ key: skill.name, name: skill.label })
+        return
+      }
+      setWorkspaceMode('generation')
+      setActiveCategoryId('shots')
+      const node = addCanvasSkillNode(skill)
+      onClose?.()
+      if (!node) {
+        showInfoToast('这个技能没有可用的画布组件')
+        return
+      }
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => focusCanvasSkillNode(node.id))
+      })
+    },
+    [gotoCreationWith, onClose, setActiveCategoryId, setWorkspaceMode],
   )
 
   const handleNewWithAi = React.useCallback(() => gotoCreationWith(SKILL_AUTHOR), [gotoCreationWith])
@@ -149,14 +188,15 @@ export function SkillLibraryContent({
   )
 
   const showNewTile = source === 'mine' && !query.trim()
+  const showAuthoringControls = !componentFirst || source === 'mine'
 
   const sourceTabs = (
     <div
       className={cn('inline-flex bg-nomi-ink-05 rounded-full p-0.5', compact ? 'w-full' : 'shrink-0')}
       role="tablist"
-      aria-label="技能来源"
+      aria-label={componentFirst ? '组件来源' : '技能来源'}
     >
-      {SOURCE_OPTIONS.map((option) => {
+      {sourceOptions.map((option) => {
         const activeOption = source === option.value
         return (
           <button
@@ -240,22 +280,22 @@ export function SkillLibraryContent({
           {sourceTabs}
           <DesignSearchInput
             className={compact ? 'w-full' : 'flex-1'}
-            placeholder="搜技能…"
-            ariaLabel="搜索技能"
+            placeholder={componentFirst ? '搜组件…' : '搜技能…'}
+            ariaLabel={componentFirst ? '搜索组件' : '搜索技能'}
             value={query}
             onChange={setQuery}
           />
-          {compact ? (
+          {showAuthoringControls && compact ? (
             <div className={cn('grid grid-cols-2 gap-2')}>
               {importButton}
               {newWithAiButton}
             </div>
-          ) : (
+          ) : showAuthoringControls ? (
             <>
               {importButton}
               {newWithAiButton}
             </>
-          )}
+          ) : null}
           <input
             ref={fileInputRef}
             type="file"
@@ -273,7 +313,13 @@ export function SkillLibraryContent({
         <div className={cn('flex-1 overflow-y-auto', compact ? 'px-3 pb-3' : 'px-5 pb-5')}>
           {!visible.length && !showNewTile ? (
             <DesignEmptyState
-              title={query.trim() ? '没有匹配的技能' : source === 'mine' ? '你还没有自己的技能' : '没有内置技能'}
+              title={
+                query.trim()
+                  ? componentFirst ? '没有匹配的组件' : '没有匹配的技能'
+                  : source === 'mine'
+                    ? '你还没有自己的技能'
+                    : componentFirst ? '没有内置组件' : '没有内置技能'
+              }
               description={
                 query.trim()
                   ? '换个搜索词试试。'
@@ -297,14 +343,15 @@ export function SkillLibraryContent({
                   <span className={cn('text-caption')}>用 AI 新建一个</span>
                 </button>
               ) : null}
-              {visible.map((skill) => (
+              {visible.map((entry) => (
                 <SkillCard
-                  key={skill.directoryName}
-                  skill={skill}
+                  key={entry.id}
+                  skill={entry.skill}
                   available={available}
                   onUse={handleUse}
                   onExport={handleExport}
                   onDelete={handleDelete}
+                  showManagementActions={!(componentFirst && source === 'builtin')}
                 />
               ))}
             </div>

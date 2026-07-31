@@ -280,8 +280,46 @@ describe('storyboard row outputs', () => {
     const video = useGenerationCanvasStore.getState().nodes.find((node) => node.id === result.nodeId)!
     expect(video.meta).toMatchObject({
       modelKey: 'bytedance/seedance-2',
-      archetype: { id: 'seedance-2', modeId: 'first' },
+      archetype: { id: 'seedance-2', modeId: 'omni' },
+      storyboardVideoReferenceStrategy: 'full_reference',
     })
+    expect(useGenerationCanvasStore.getState().edges).toContainEqual(expect.objectContaining({
+      source: result.imageNodeId,
+      target: result.nodeId,
+      mode: 'composition_ref',
+    }))
+  })
+
+  it('uses full reference for JiMeng Web Seedance and forwards shot anchors to the video', async () => {
+    const tableNode = seedTable()
+    const image = ensureStoryboardRowImageOutput({ tableNode, shot }).node
+    const character = useGenerationCanvasStore.getState().addNode({ kind: 'character', title: '老板角色卡' })
+    const scene = useGenerationCanvasStore.getState().addNode({ kind: 'scene', title: '烘焙工作室' })
+    useGenerationCanvasStore.getState().connectNodes(character.id, image.id, 'character_ref')
+    useGenerationCanvasStore.getState().connectNodes(scene.id, image.id, 'style_ref')
+
+    const result = await ensureStoryboardRowVideoOutput({
+      tableNode,
+      shot: { ...shot, modelKey: undefined, modeId: undefined },
+      imageNode: image,
+      resolveVideoDefault: async () => ({
+        modelKey: 'jimeng-web-seedance-2.0',
+        modeId: 'multimodal',
+      }),
+    })
+    const video = useGenerationCanvasStore.getState().nodes.find((node) => node.id === result.nodeId)!
+    expect(video.meta).toMatchObject({
+      modelKey: 'jimeng-web-seedance-2.0',
+      archetype: { id: 'jimeng-web-seedance-2', modeId: 'multimodal' },
+      storyboardVideoReferenceStrategy: 'full_reference',
+    })
+    expect(useGenerationCanvasStore.getState().edges.filter((edge) => edge.target === result.nodeId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: character.id, mode: 'character_ref' }),
+        expect.objectContaining({ source: scene.id, mode: 'style_ref' }),
+        expect.objectContaining({ source: image.id, mode: 'composition_ref' }),
+      ]),
+    )
   })
 
   it('drops an async default result when the storyboard project has already switched', async () => {

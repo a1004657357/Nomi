@@ -42,10 +42,17 @@ function nodeChipValues(node: PlannedNode, entryByKey: ReadonlyMap<string, Agent
   // 多数档案用 aspect_ratio；imagen4/qwen 用 size 存比例（如 "16:9"）。但有些档案 size 存的是
   // 【像素串】（如 "448x1024"，竖屏短边由翻译层算出 ≈448）——那不是比例，绝不能塞进「比例」chip
   // （曾把像素短边显示成「比例 440 什么的」误导用户）。解析不出比例就不显示比例 chip。
-  const aspect = normalizeAspectRatioToWH(params.aspect_ratio) ?? normalizeAspectRatioToWH(params.size) ?? undefined
-  const resolution = typeof params.resolution === 'string' ? params.resolution : undefined
+  const aspect =
+    normalizeAspectRatioToWH(params.aspect_ratio) ??
+    normalizeAspectRatioToWH(params.ratio) ??
+    normalizeAspectRatioToWH(params.size) ??
+    undefined
+  const resolution = [params.resolution, params.resolution_type, params.video_resolution]
+    .find((value): value is string => typeof value === 'string')
+  const entry = entryByKey.get(node.modelKey)
+  const variantLabel = entry?.variants?.find((variant) => variant.variantId === node.variantId)?.label
   return {
-    modelLabel: entryByKey.get(node.modelKey)?.label ?? node.modelKey,
+    modelLabel: variantLabel ? `${entry?.label} · ${variantLabel}` : entry?.label ?? node.modelKey,
     aspect,
     resolution,
   }
@@ -223,6 +230,7 @@ function AgentPlanCard({ plan, approveCalls, rejectCall, flat = false }: AgentPl
       ...(node.position ? { position: node.position } : {}),
       // bug①：把 agent 建议的模型/参数透传给执行层（确认后写入 node.meta）。
       ...(node.modelKey ? { modelKey: node.modelKey } : {}),
+      ...(node.variantId ? { variantId: node.variantId } : {}),
       ...(node.modeId ? { modeId: node.modeId } : {}),
       ...(node.params ? { params: node.params } : {}),
     }))

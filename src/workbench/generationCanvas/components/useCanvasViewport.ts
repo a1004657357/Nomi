@@ -12,6 +12,10 @@ import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 const VIRTUALIZATION_THRESHOLD = 50
 const VIRTUALIZATION_BUFFER_PX = 400
 
+export function canvasViewportTransformStyle(zoom: number, offset: { x: number; y: number }): string {
+  return `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`
+}
+
 export function getVisibleCanvasNodesForRender(params: {
   nodes: GenerationCanvasNode[]
   zoom: number
@@ -61,6 +65,7 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategoryId])
   const stageRef = React.useRef<HTMLDivElement>(null)
+  const canvasRef = React.useRef<HTMLDivElement>(null)
   const [stageSize, setStageSize] = React.useState<{ width: number; height: number }>({ width: 0, height: 0 })
   React.useEffect(() => {
     const el = stageRef.current
@@ -83,11 +88,17 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
 
   // Refs so drag-connection effect can read latest values without re-subscribing
   const offsetRef = React.useRef(offset)
-  offsetRef.current = offset
   const zoomRef = React.useRef(zoom)
-  zoomRef.current = zoom
   const stageSizeRef = React.useRef(stageSize)
   stageSizeRef.current = stageSize
+  const applyCanvasTransform = React.useCallback((nextZoom: number, nextOffset: { x: number; y: number }) => {
+    if (canvasRef.current) canvasRef.current.style.transform = canvasViewportTransformStyle(nextZoom, nextOffset)
+  }, [])
+  React.useLayoutEffect(() => {
+    offsetRef.current = offset
+    zoomRef.current = zoom
+    applyCanvasTransform(zoom, offset)
+  }, [applyCanvasTransform, offset, zoom])
 
   return {
     categoryViewports,
@@ -95,11 +106,13 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
     zoom,
     offset,
     stageRef,
+    canvasRef,
     stageSize,
     visibleNodesForRender,
     visibleEdgeNodeIds,
     offsetRef,
     zoomRef,
     stageSizeRef,
+    applyCanvasTransform,
   }
 }

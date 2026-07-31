@@ -1,13 +1,23 @@
 import React from 'react'
 import { EditorContent, type Editor, type JSONContent } from '@tiptap/react'
+import { IconFileImport, IconSparkles } from '@tabler/icons-react'
 import SelectionGeneratePopover from './SelectionGeneratePopover'
-import { WorkbenchIconButton } from '../../design/workbenchActions'
+import { confirmDialog, WorkbenchButton, WorkbenchIconButton } from '../../design'
+import { getDesktopBridge } from '../../desktop/bridge'
+import { toast } from '../../ui/toast'
 import { cn } from '../../utils/cn'
 import { useWorkbenchStore } from '../workbenchStore'
 import { normalizeWorkbenchContentJson, type CreationDocumentTools } from '../workbenchTypes'
 import { useTransientScrollingClass } from './useTransientScrollingClass'
 import { useNomiRichTextEditor } from '../common/useNomiRichTextEditor'
 import { buildRichTextActions, type RichTextAction } from '../common/richTextActions'
+import { extractWorkbenchDocumentText } from './creationAiModes'
+import { requestFixationPlanning } from '../generationCanvas/agent/fixationLauncher'
+import {
+  buildImportedWorkbenchDocument,
+  SCRIPT_IMPORT_ACCEPT,
+  SCRIPT_IMPORT_MAX_BYTES,
+} from './scriptImportModel'
 
 const CREATION_PLACEHOLDER =
   '从这里开始写你的故事、脚本或文案……  选中文字，点右侧即可生成图片 / 视频节点。'
@@ -46,20 +56,18 @@ function ToolbarDivider(): JSX.Element {
   return <div className="w-px h-[18px] bg-workbench-border mx-1" aria-hidden="true" />
 }
 
-function WorkbenchEditorToolbar({ editor }: { editor: Editor | null }): JSX.Element {
+function WorkbenchEditorToolbar({
+  editor,
+  canExtract,
+  onImportScript,
+  onExtractAssets,
+}: {
+  editor: Editor | null
+  canExtract: boolean
+  onImportScript: () => void
+  onExtractAssets: () => void
+}): JSX.Element {
   const actions = buildRichTextActions(editor)
-  if (actions.length === 0) {
-    return (
-      <div
-        className={cn(
-          'workbench-editor-toolbar',
-          'h-[44px] flex items-center gap-1 px-3',
-          'border-b border-workbench-border-soft bg-workbench-surface',
-        )}
-        aria-label="文本工具栏"
-      />
-    )
-  }
   const byId = new Map(actions.map((action) => [action.id, action]))
   const pick = (ids: readonly string[]) => ids.map((id) => byId.get(id)).filter((a): a is RichTextAction => Boolean(a))
   const leftGroups = TOOLBAR_LEFT_GROUPS.map(pick).filter((group) => group.length > 0)
@@ -73,6 +81,22 @@ function WorkbenchEditorToolbar({ editor }: { editor: Editor | null }): JSX.Elem
       )}
       aria-label="文本工具栏"
     >
+      <WorkbenchIconButton
+        className="workbench-editor-toolbar__button size-[30px]"
+        label="导入剧本"
+        onClick={onImportScript}
+        icon={<IconFileImport size={16} />}
+      />
+      <WorkbenchButton
+        className="h-[30px] px-2 text-body-sm whitespace-nowrap"
+        disabled={!canExtract}
+        title={canExtract ? '提取角色、场景和道具参考卡' : '请先写入或导入剧本'}
+        onClick={onExtractAssets}
+      >
+        <IconSparkles size={15} />
+        提取设定
+      </WorkbenchButton>
+      {leftGroups.length > 0 ? <ToolbarDivider /> : null}
       {leftGroups.map((group, index) => (
         <React.Fragment key={group[0]?.id ?? index}>
           {index > 0 ? <ToolbarDivider /> : null}
@@ -94,9 +118,11 @@ export default function WorkbenchEditor(): JSX.Element {
   const setWorkbenchDocument = useWorkbenchStore((state) => state.setWorkbenchDocument)
   const setCreationDocumentTools = useWorkbenchStore((state) => state.setCreationDocumentTools)
   const setCreationSelectionText = useWorkbenchStore((state) => state.setCreationSelectionText)
+  const setWorkspaceMode = useWorkbenchStore((state) => state.setWorkspaceMode)
   const [selectionState, setSelectionState] = React.useState({ text: '', version: 0 })
   const scrollRef = useTransientScrollingClass<HTMLDivElement>('workbench-scrollbar-visible')
   const workbenchDocumentRef = React.useRef(workbenchDocument)
+  const scriptInputRef = React.useRef<HTMLInputElement | null>(null)
 
   React.useEffect(() => {
     workbenchDocumentRef.current = workbenchDocument
@@ -137,6 +163,61 @@ export default function WorkbenchEditor(): JSX.Element {
     onSelectionChange: handleSelectionChange,
   })
 
+  const documentText = React.useMemo(
+    () => extractWorkbenchDocumentText(workbenchDocument),
+    [workbenchDocument],
+  )
+
+  const handleScriptFile = React.useCallback(async (file: File) => {
+    if (file.size > SCRIPT_IMPORT_MAX_BYTES) {
+      toast('剧本文件不能超过 20 MB', 'error')
+      return
+    }
+    if (documentText) {
+      const confirmed = await confirmDialog({
+        title: '替换当前文稿？',
+        message: '导入剧本会替换创作区当前文稿，画布中的已有节点不会改变。',
+        confirmLabel: '继续导入',
+      })
+      if (!confirmed) return
+    }
+    try {
+      const bridge = getDesktopBridge()
+      let text = ''
+      if (bridge?.files?.extractText) {
+        const result = await bridge.files.extractText({
+          fileName: file.name,
+          contentType: file.type,
+          bytes: await file.arrayBuffer(),
+        })
+        text = result.text
+      } else if (/\.(?:txt|md|markdown|csv)$/i.test(file.name)) {
+        text = await file.text()
+      } else {
+        throw new Error('当前运行环境不支持解析这个剧本文件')
+      }
+      if (!text.trim()) throw new Error('剧本文件没有可读取的文字')
+      setWorkbenchDocument(buildImportedWorkbenchDocument(text, file.name))
+      clearSelectionText()
+      toast(`已导入《${file.name}》`, 'success')
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '剧本导入失败', 'error')
+    }
+  }, [clearSelectionText, documentText, setWorkbenchDocument])
+
+  const handleExtractAssets = React.useCallback(() => {
+    const storyText = extractWorkbenchDocumentText(workbenchDocumentRef.current)
+    if (!storyText) {
+      toast('请先写入或导入剧本', 'warning')
+      return
+    }
+    setWorkspaceMode('generation')
+    window.setTimeout(() => {
+      requestFixationPlanning({ storyText, source: 'script-import-toolbar' })
+    }, 60)
+    toast('正在整理角色、场景和道具，请在 Agent 计划卡确认', 'info')
+  }, [setWorkspaceMode])
+
   // Publish creation document tools = the shared rich-text read/write surface (read full/selection,
   // insert/replace/append). The AI panel reads these to apply approved write-tool calls.
   const creationDocumentToolsRef = React.useRef<CreationDocumentTools | null>(null)
@@ -173,7 +254,24 @@ export default function WorkbenchEditor(): JSX.Element {
       onKeyDown={(event) => event.stopPropagation()}
       onKeyUp={(event) => event.stopPropagation()}
     >
-      <WorkbenchEditorToolbar editor={editor} />
+      <input
+        ref={scriptInputRef}
+        className="hidden"
+        type="file"
+        accept={SCRIPT_IMPORT_ACCEPT}
+        aria-label="选择剧本文件"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0]
+          event.currentTarget.value = ''
+          if (file) void handleScriptFile(file)
+        }}
+      />
+      <WorkbenchEditorToolbar
+        editor={editor}
+        canExtract={Boolean(documentText)}
+        onImportScript={() => scriptInputRef.current?.click()}
+        onExtractAssets={handleExtractAssets}
+      />
       <SelectionGeneratePopover
         editor={editor}
         selectedText={selectionState.text}

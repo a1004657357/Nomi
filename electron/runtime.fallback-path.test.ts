@@ -21,6 +21,11 @@ const codexImagegenRunnerMock = vi.hoisted(() => ({
   runCodexImageGeneration: vi.fn(),
 }));
 
+const jimengWebRunnerMock = vi.hoisted(() => ({
+  start: vi.fn(),
+  submit: vi.fn(),
+}));
+
 let mockedUserDataRoot = "";
 const tempRoots: string[] = [];
 
@@ -40,6 +45,14 @@ vi.mock("./ai/codexImagegenRunner", () => ({
   runCodexImageGeneration: codexImagegenRunnerMock.runCodexImageGeneration,
 }));
 
+vi.mock("./jimengWeb/runner", () => ({
+  jimengWebStartRunner: jimengWebRunnerMock.start,
+}));
+
+vi.mock("./jimengWeb/seedanceBridge", () => ({
+  submitJimengWebTask: jimengWebRunnerMock.submit,
+}));
+
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempRoots.push(dir);
@@ -55,6 +68,15 @@ const stubFetch = (impl: () => Promise<Response> | Response) => {
 beforeEach(() => {
   mockedUserDataRoot = makeTempDir("nomi-runtime-fallback-");
   codexImagegenRunnerMock.runCodexImageGeneration.mockReset();
+  jimengWebRunnerMock.start.mockReset();
+  jimengWebRunnerMock.start.mockResolvedValue({ clientOnline: true });
+  jimengWebRunnerMock.submit.mockReset();
+  jimengWebRunnerMock.submit.mockResolvedValue({
+    taskCode: "SD-TEST-1",
+    serverUrl: "http://127.0.0.1:3457",
+    payload: { mediaType: "image", expectedResultCount: 4 },
+    raw: { taskCodes: ["SD-TEST-1"] },
+  });
   vi.resetModules();
 });
 
@@ -81,6 +103,36 @@ async function seedFallbackImageVendor(): Promise<void> {
   store.upsertModelCatalogModel({ vendorKey: "relay", modelKey: "some-image-model", kind: "image", enabled: true });
 }
 
+async function seedAgnesImageVendorWithMapping(): Promise<void> {
+  const store = await import("./catalog/catalogStore");
+  store.upsertModelCatalogVendor({
+    key: "agnes",
+    name: "Agnes AI",
+    enabled: true,
+    authType: "bearer",
+    baseUrlHint: "https://apihub.agnes-ai.com",
+  });
+  store.upsertModelCatalogVendorApiKey("agnes", { apiKey: "sk-agnes" });
+  store.upsertModelCatalogModel({
+    vendorKey: "agnes",
+    modelKey: "agnes-test-image",
+    kind: "image",
+    enabled: true,
+  });
+  store.upsertModelCatalogMapping({
+    vendorKey: "agnes",
+    modelKey: "agnes-test-image",
+    taskKind: "text_to_image",
+    name: "Agnes image test",
+    create: {
+      method: "POST",
+      path: "/v1/images/generations",
+      body: { model: "{{model.modelKey}}", prompt: "{{request.prompt}}" },
+      response_mapping: { image_url: "data.0.url" },
+    },
+  });
+}
+
 async function seedCodexImg2Model(): Promise<void> {
   const store = await import("./catalog/catalogStore");
   store.upsertModelCatalogVendor({
@@ -97,6 +149,25 @@ async function seedCodexImg2Model(): Promise<void> {
     kind: "image",
     enabled: true,
     meta: { archetypeId: "gpt-image-2" },
+  });
+}
+
+async function seedJimengWebModel(): Promise<void> {
+  const store = await import("./catalog/catalogStore");
+  store.upsertModelCatalogVendor({
+    key: "jimeng-web",
+    name: "即梦 Web",
+    enabled: true,
+    authType: "none",
+    baseUrlHint: "http://127.0.0.1:3457",
+  });
+  store.upsertModelCatalogModel({
+    vendorKey: "jimeng-web",
+    modelKey: "jimeng-web-image",
+    labelZh: "即梦 Web 图片",
+    kind: "image",
+    enabled: true,
+    meta: { archetypeId: "jimeng-web-image" },
   });
 }
 
@@ -151,6 +222,30 @@ describe("runTask fallback 路径 — 结构化错误 + extraHeaders", () => {
 
     expect(error).toBeInstanceOf(VendorRequestError);
     expect(error.structured).toMatchObject({ httpStatus: 402, category: "balance", retryable: false });
+  });
+
+  it("真实 vendor 出口会写入主进程频率台账，MCP/CLI 不能绕过 Agnes 限制", async () => {
+    await seedAgnesImageVendorWithMapping();
+    stubFetch(() =>
+      new Response(JSON.stringify({ data: [{ url: "https://cdn.example.com/agnes.png" }] }), { status: 200 }),
+    );
+    const { runTask } = await import("./runtime");
+    const { mintSpendGrant } = await import("./spendGrant");
+    const startedAt = Date.now();
+
+    await runTask({
+      vendor: "agnes",
+      request: {
+        kind: "text_to_image",
+        prompt: "a cat",
+        extras: { modelKey: "agnes-test-image", grantId: mintSpendGrant({ nodeIds: [] }) },
+      },
+    });
+
+    const ledger = JSON.parse(
+      fs.readFileSync(path.join(mockedUserDataRoot, "provider-submission-rate-limits.json"), "utf8"),
+    ) as { nextStartByRateKey?: Record<string, number> };
+    expect(ledger.nextStartByRateKey?.["agnes:image"]).toBeGreaterThanOrEqual(startedAt + 5_900);
   });
 });
 
@@ -227,7 +322,37 @@ describe("runTask · Codex Img2 本地入口", () => {
     });
     expect(result.provenance).toMatchObject({ provider: "codex", modelKey: "codex-img2", vendorRequestId: "codex-thread-1" });
     expect(codexImagegenRunnerMock.runCodexImageGeneration).toHaveBeenCalledWith({ request: expect.objectContaining({ prompt: "a cat" }) });
+    expect(jimengWebRunnerMock.start).not.toHaveBeenCalled();
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("runTask · 即梦 Web 运行器入口", () => {
+  it("提交任务前自动启动网页桥，并在客户端上线后只提交一次", async () => {
+    await seedJimengWebModel();
+    const { createProject, runTask } = await import("./runtime");
+    const { mintSpendGrant } = await import("./spendGrant");
+    const projectRoot = makeTempDir("nomi-jimeng-web-project-");
+    const project = createProject({ rootPath: projectRoot, name: "JiMeng Web Project", payload: {} });
+
+    const result = await runTask({
+      vendor: "jimeng-web",
+      request: {
+        kind: "text_to_image",
+        prompt: "cinematic coffee shop",
+        extras: {
+          modelKey: "jimeng-web-image",
+          projectId: project.id,
+          nodeId: "node-jimeng-1",
+          grantId: mintSpendGrant({ nodeIds: ["node-jimeng-1"] }),
+        },
+      },
+    });
+
+    expect(jimengWebRunnerMock.start).toHaveBeenCalledOnce();
+    expect(jimengWebRunnerMock.start).toHaveBeenCalledWith("http://127.0.0.1:3457");
+    expect(jimengWebRunnerMock.submit).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ id: "SD-TEST-1", status: "queued", assets: [] });
   });
 });
 

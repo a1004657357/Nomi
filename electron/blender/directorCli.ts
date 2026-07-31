@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { inspectGlb } from "../assets/glbValidation";
 import { projectDirById } from "../projects/repository";
 import { writeAsset } from "../runtime";
 
@@ -39,7 +40,7 @@ type BridgeOutput = {
 
 type ActiveDirectorJob = {
   child: ChildProcess;
-  cancelled: boolean;
+  terminationReason?: "cancelled" | "timeout";
   forceKillTimer?: NodeJS.Timeout;
 };
 
@@ -161,7 +162,15 @@ function persistDirectorOutputs(request: DirectorBlenderRenderRequest, projectDi
   };
   const preview = asAssetRef(writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.preview, "preview.png"), "blender-director-preview.png", "image/png", meta));
   const blend = asAssetRef(writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.blend, "scene.blend"), "blender-director-scene.blend", "application/x-blender", meta));
-  const model = asAssetRef(writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.model, "scene.glb"), "blender-director-scene.glb", "model/gltf-binary", meta));
+  const modelBytes = readProjectDirectorOutput(projectDir, output.artifacts.model, "scene.glb");
+  const model3dValidation = inspectGlb(modelBytes);
+  const model = asAssetRef(writeAsset(
+    request.projectId,
+    modelBytes,
+    "blender-director-scene.glb",
+    "model/gltf-binary",
+    { ...meta, model3dValidation },
+  ));
   return { jobId: output.jobId, ...(output.blenderVersion ? { blenderVersion: output.blenderVersion } : {}), preview, blend, model };
 }
 
@@ -206,7 +215,7 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
-      const job: ActiveDirectorJob = { child, cancelled: false };
+      const job: ActiveDirectorJob = { child };
       activeDirectorJobs.set(jobId, job);
       const finish = (error?: Error, result?: DirectorBlenderRenderResult) => {
         if (settled) return;
@@ -218,16 +227,31 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
         else resolve(result as DirectorBlenderRenderResult);
       };
       const timeout = setTimeout(() => {
-        job.cancelled = true;
+        job.terminationReason = "timeout";
         child.kill("SIGTERM");
-        finish(new Error(`Blender 导演预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
+        job.forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 3_000);
+        job.forceKillTimer.unref?.();
       }, timeoutMs + 15_000);
       timeout.unref?.();
       child.stdout?.on("data", (chunk) => { stdout = appendCapped(stdout, chunk); });
       child.stderr?.on("data", (chunk) => { stderr = appendCapped(stderr, chunk); });
-      child.once("error", (error) => finish(new Error(`Blender 导演桥接启动失败：${error.message}`)));
+      child.once("error", (error) => {
+        if (job.terminationReason === "timeout") {
+          finish(new Error(`Blender 导演预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
+          return;
+        }
+        if (job.terminationReason === "cancelled") {
+          finish(new Error("Blender 导演预演已取消"));
+          return;
+        }
+        finish(new Error(`Blender 导演桥接启动失败：${error.message}`));
+      });
       child.once("close", (code, signal) => {
-        if (job.cancelled) {
+        if (job.terminationReason === "timeout") {
+          finish(new Error(`Blender 导演预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
+          return;
+        }
+        if (job.terminationReason === "cancelled") {
           finish(new Error("Blender 导演预演已取消"));
           return;
         }
@@ -251,7 +275,7 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
 export function cancelDirectorBlenderRender(jobId: string): boolean {
   const job = activeDirectorJobs.get(String(jobId || ""));
   if (!job) return false;
-  job.cancelled = true;
+  job.terminationReason = "cancelled";
   job.child.kill("SIGTERM");
   job.forceKillTimer = setTimeout(() => {
     if (activeDirectorJobs.has(jobId)) job.child.kill("SIGKILL");
@@ -264,4 +288,8 @@ export function cancelAllDirectorBlenderRenders(): number {
   const jobs = [...activeDirectorJobs.keys()];
   for (const jobId of jobs) cancelDirectorBlenderRender(jobId);
   return jobs.length;
+}
+
+export function activeDirectorBlenderRenderCount(): number {
+  return activeDirectorJobs.size;
 }

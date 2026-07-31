@@ -7,16 +7,27 @@ import { MANNEQUIN_ANIMATION_URL, LOCOMOTION_CROSSFADE_SECONDS } from './scene3d
 import { applyMannequinArmDownPose, groundMannequinModel } from './scene3dMath'
 import { isArmLocomotionTrackName } from './scene3dCharacterDrive'
 
-// possess 态被操控假人的「实时迈腿」：用 three 内建 AnimationMixer 播 mannequin-animations.glb 里的
+// possess 态被操控假人的「实时迈腿」：用 three 内建 AnimationMixer 播第一方动画 GLB 里的
 // idle/walk/run clip 驱动骨骼（in-place 原地踏步，前进位移仍由 CharacterDriveController 直驱 group.position）。
 // 仅当 activeClip 有值时启用；为空时此 hook 不建 mixer、不每帧更新（静态 pose 路径完全不受影响 → 离屏/群众/不 possess 零回归）。
 // 切 clip 用 crossFadeTo 平滑过渡。每帧 mixer.update 后 groundMannequinModel 保证脚踩地不飘。
-function findSkinnedMesh(root: THREE.Object3D): THREE.SkinnedMesh | null {
+export function findSkinnedMesh(root: THREE.Object3D): THREE.SkinnedMesh | null {
   let found: THREE.SkinnedMesh | null = null
   root.traverse((object) => {
     if (!found && object instanceof THREE.SkinnedMesh) found = object
   })
   return found
+}
+
+export function retargetMannequinAnimationClip(
+  target: THREE.SkinnedMesh,
+  source: THREE.SkinnedMesh,
+  clip: THREE.AnimationClip,
+): THREE.AnimationClip {
+  return retargetClip(target, source, clip, {
+    hip: 'mixamorigHips',
+    getBoneName: (bone) => bone.name,
+  })
 }
 
 // 离屏确定性驱动句柄：stepper 在自己的 useFrame 里（render/capture 之前）imperatively 调用，
@@ -49,7 +60,7 @@ export function useMannequinLocomotion(
     if (!targetSkinned || !sourceSkinned) return map
     for (const clip of animationGltf.animations as THREE.AnimationClip[]) {
       try {
-        const retargeted = retargetClip(targetSkinned, sourceSkinned, clip, { hip: 'mixamorigHips' })
+        const retargeted = retargetMannequinAnimationClip(targetSkinned, sourceSkinned, clip)
         // #2 A-hybrid：滤掉手臂链 track（retarget 对绕肩校正差 → 手臂退回 T-pose）。
         // 只留腿/髋/脊/颈/头被驱动；手臂由 applyMannequinArmDownPose 每帧兜成「自然下垂」。
         const filtered = new THREE.AnimationClip(

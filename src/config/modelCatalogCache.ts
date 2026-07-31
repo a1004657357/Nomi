@@ -3,6 +3,7 @@ import {
   listWorkbenchModelCatalogModels,
   listWorkbenchModelCatalogVendors,
   type ModelCatalogHealthDto,
+  type ModelCatalogModelDto,
 } from '../workbench/api/modelCatalogApi'
 import type { ModelOption, NodeKind } from './models'
 import {
@@ -94,6 +95,17 @@ async function getEnabledVendorKeys(): Promise<Set<string>> {
   return enabledVendorKeysPromise
 }
 
+export function filterCatalogModelsByEnabledVendors(
+  rows: readonly ModelCatalogModelDto[],
+  enabledVendorKeys: ReadonlySet<string>,
+): ModelCatalogModelDto[] {
+  if (enabledVendorKeys.size === 0) return []
+  return rows.filter((row) => {
+    const vendorKey = String(row?.vendorKey || '').trim().toLowerCase()
+    return Boolean(vendorKey) && enabledVendorKeys.has(vendorKey)
+  })
+}
+
 async function getCatalogModelOptions(kind?: NodeKind): Promise<ModelOption[]> {
   const catalogKind = resolveCatalogKind(kind)
   const cacheKey = catalogKind
@@ -105,12 +117,10 @@ async function getCatalogModelOptions(kind?: NodeKind): Promise<ModelOption[]> {
     try {
       const rows = await listWorkbenchModelCatalogModels({ kind: catalogKind, enabled: true })
       const enabledVendorKeys = await getEnabledVendorKeys()
-      const filteredRows = (Array.isArray(rows) ? rows : []).filter((row) => {
-        const vendorKey = String(row?.vendorKey || '').trim().toLowerCase()
-        if (!vendorKey) return false
-        if (!enabledVendorKeys.size) return true
-        return enabledVendorKeys.has(vendorKey)
-      })
+      const filteredRows = filterCatalogModelsByEnabledVendors(
+        Array.isArray(rows) ? rows : [],
+        enabledVendorKeys,
+      )
       const normalized = toCatalogModelOptions(filteredRows)
       catalogOptionsCache.set(cacheKey, normalized)
       return normalized

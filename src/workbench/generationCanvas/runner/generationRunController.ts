@@ -262,7 +262,16 @@ export async function runGenerationNode(
                 await persistActiveWorkbenchProjectNow().catch(() => {})
               },
             }),
-          { signal: controller.signal },
+          {
+            signal: controller.signal,
+            onRateLimitWait: ({ waitMs }) => {
+              useGenerationCanvasStore.getState().setNodeProgress(id, {
+                runId: run.id,
+                phase: 'rate-limited',
+                message: narrateProgress('rate-limited', { waitMs }),
+              })
+            },
+          },
         )
         break
       } catch (error: unknown) {

@@ -5,6 +5,10 @@
 // 后续可把底层替换成 Electron 内置 Web Worker，而画布模型身份不变。
 
 export const JIMENG_WEB_BRIDGE_INSTANCE_ID = "nomi-jimeng-runner-v1";
+export const JIMENG_WEB_LEGACY_BASE_URLS = [
+  "http://127.0.0.1:3456",
+  "http://localhost:3456",
+] as const;
 
 export const JIMENG_WEB_VENDOR_SEED = {
   key: "jimeng-web",
@@ -18,5 +22,12 @@ export const JIMENG_WEB_SEEDANCE_MODEL_SEED = {
   modelKey: "jimeng-web-seedance-2.0",
   labelZh: "即梦 Web Seedance 2.0（实验）",
   kind: "video" as const,
-  archetypeId: "dreamina-seedance-2",
+  archetypeId: "jimeng-web-seedance-2",
+} as const;
+
+export const JIMENG_WEB_IMAGE_MODEL_SEED = {
+  modelKey: "jimeng-web-image",
+  labelZh: "即梦 Web 图片（实验）",
+  kind: "image" as const,
+  archetypeId: "jimeng-web-image",
 } as const;

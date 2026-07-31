@@ -17,6 +17,7 @@ export type AgentUserContent = string | Array<TextPart | ImagePart | FilePart>
 // 已知支持图片输入（vision）的模型族。meta.supportsImageInput 显式声明优先。
 const VISION_MODEL_RE =
   /gpt-4o|gpt-4\.1|gpt-4-vision|chatgpt-4o|o1|o3|o4-mini|claude-3|claude-opus-4|claude-sonnet-4|claude-haiku-4|gemini|llava|qwen.*-?vl|pixtral|internvl|minicpm-v|grok.*vision|vision/i
+const DOUBAO_SEED_2_MODEL_RE = /doubao[\s._-]*seed[\s._-]*2[\s._-]*0/i
 
 // 已知支持原生 PDF file part 的模型族（Anthropic claude-3.5+ / OpenAI gpt-4o,4.1,o-系 / Google gemini）。
 const PDF_INPUT_MODEL_RE =
@@ -33,7 +34,8 @@ function metaFlag(meta: unknown, key: string): boolean | undefined {
 export function modelSupportsImageInput(modelKey: string, modelAlias: string | null | undefined, meta: unknown): boolean {
   const declared = metaFlag(meta, 'supportsImageInput')
   if (typeof declared === 'boolean') return declared
-  return VISION_MODEL_RE.test(`${modelKey || ''} ${modelAlias || ''}`.toLowerCase())
+  const identity = `${modelKey || ''} ${modelAlias || ''}`.toLowerCase()
+  return VISION_MODEL_RE.test(identity) || DOUBAO_SEED_2_MODEL_RE.test(identity)
 }
 
 export function modelSupportsPdfInput(modelKey: string, modelAlias: string | null | undefined, meta: unknown): boolean {

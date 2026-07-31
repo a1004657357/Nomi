@@ -6,8 +6,10 @@ import { EDGE_MODE_LABEL } from '../model/graphOps'
 import { BUILTIN_CATEGORIES } from '../../project/projectCategories'
 import { CAMERA_MOVE_LABEL, CAMERA_SPEED_DURATION, type CameraMove, type CameraSpeed } from '../nodes/scene3d/cameraMoveVocab'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { BUILTIN_CAPABILITY_RECIPES } from '../../../config/capabilityRecipes'
 
 const CATEGORY_NAME = new Map(BUILTIN_CATEGORIES.map((category) => [category.id, category.name]))
+const CAPABILITY_RECIPE_NAME = new Map(BUILTIN_CAPABILITY_RECIPES.map((recipe) => [recipe.id, recipe.label]))
 
 /** id → 节点标题(把 n3/真实 id 这类机器串翻成「镜1」给用户看;查不到返回 null,调用方省略不灌 id)。 */
 function nodeTitleById(id: string): string | null {
@@ -96,6 +98,28 @@ export function summarizeToolCall(toolName: string, args: unknown): string {
     const duration = CAMERA_SPEED_DURATION[speed] ?? CAMERA_SPEED_DURATION.medium
     const shot = typeof record.shot === 'string' ? record.shot : 'medium'
     return `建运镜参考（${label} · ${shot} · ≈${duration}s）`
+  }
+  if (toolName === 'list_capability_recipes') {
+    return '查看创作能力配方'
+  }
+  if (toolName === 'apply_capability_recipe') {
+    const title = record.sourceNodeId ? nodeTitleById(String(record.sourceNodeId)) : null
+    const recipeId = typeof record.recipeId === 'string' ? record.recipeId : ''
+    const recipeLabel = CAPABILITY_RECIPE_NAME.get(recipeId) ?? '创作配方'
+    return title
+      ? `为「${title}」生成「${recipeLabel}」新结果（将产生生成费用）`
+      : `生成「${recipeLabel}」新结果（将产生生成费用）`
+  }
+  if (toolName === 'save_creative_resource') {
+    const title = record.sourceNodeId ? nodeTitleById(String(record.sourceNodeId)) : null
+    const kind = record.kind === 'identity' ? '身份' : record.kind === 'effect' ? '效果' : record.kind === 'palette' ? '色板' : '风格'
+    const label = typeof record.label === 'string' && record.label ? `「${record.label}」` : ''
+    return title ? `把「${title}」保存为${kind}资源${label}` : `保存${kind}资源${label}`
+  }
+  if (toolName === 'handoff_model3d') {
+    const title = record.sourceNodeId ? nodeTitleById(String(record.sourceNodeId)) : null
+    const target = record.target === 'vibingDirector' ? 'Blender Director' : '3D 导演台'
+    return title ? `把「${title}」送入 ${target}` : `把 3D 模型送入 ${target}`
   }
   return toolName
 }
@@ -202,6 +226,22 @@ export function describeToolCallDetail(toolName: string, args: unknown): string 
     if (!source) return ''
     const compact = source.length > 96 ? `${source.slice(0, 96)}…` : source
     return compact
+  }
+  if (toolName === 'apply_capability_recipe') {
+    const parts: string[] = []
+    if (typeof record.modelKey === 'string' && record.modelKey) parts.push(record.modelKey)
+    if (typeof record.variantId === 'string' && record.variantId) parts.push(record.variantId)
+    if (typeof record.modeId === 'string' && record.modeId) parts.push(record.modeId)
+    const outputs = Array.isArray(record.outputs) ? record.outputs.length : 0
+    const count = typeof record.requestedOutputs === 'number' ? record.requestedOutputs : outputs
+    if (count > 0) parts.push(`${count} 个结果`)
+    return parts.join(' · ')
+  }
+  if (toolName === 'handoff_model3d') {
+    const parts: string[] = []
+    if (typeof record.targetNodeId === 'string' && record.targetNodeId) parts.push(`追加到 ${record.targetNodeId}`)
+    if (typeof record.license === 'string' && record.license) parts.push(`许可 ${record.license}`)
+    return parts.join(' · ')
   }
   return ''
 }

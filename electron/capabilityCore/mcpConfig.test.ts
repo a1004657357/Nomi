@@ -71,13 +71,53 @@ describe('capabilityCore/mcpConfig', () => {
   })
 
   it('readMcpInfo 反映 installed 状态 + 给出可复制片段', () => {
-    expect(readMcpInfo(0).clients.claude.installed).toBe(false)
+    expect(readMcpInfo(0).clients.claude).toMatchObject({
+      installed: false,
+      stale: false,
+    })
     installMcp()
     const info = readMcpInfo(17371)
-    expect(info.clients.claude.installed).toBe(true)
+    expect(info.clients.claude).toMatchObject({
+      installed: true,
+      stale: false,
+    })
     expect(info.rpcRunning).toBe(true)
     expect(info.clients.claude.snippet).toContain('"nomi"')
     expect(info.clients.claude.snippet).toContain('NOMI_MCP_STDIO')
+  })
+
+  it('JSON 客户端把旧 Nomi 路径标为待更新，并可原位更新且保留其它 server', () => {
+    fs.writeFileSync(
+      claudeJson(),
+      JSON.stringify({
+        mcpServers: {
+          nomi: {
+            command: '/old/Nomi/Electron',
+            args: ['/old/Nomi'],
+            env: { NOMI_MCP_STDIO: '1' },
+          },
+          other: { command: 'other-server' },
+        },
+      }, null, 2),
+    )
+
+    expect(readMcpInfo(0).clients.claude).toMatchObject({
+      installed: false,
+      stale: true,
+    })
+
+    installMcp('claude')
+    const after = JSON.parse(fs.readFileSync(claudeJson(), 'utf8'))
+    expect(after.mcpServers.nomi).toMatchObject({
+      command: process.execPath,
+      args: ['/fake/repo'],
+      env: { NOMI_MCP_STDIO: '1' },
+    })
+    expect(after.mcpServers.other).toEqual({ command: 'other-server' })
+    expect(readMcpInfo(0).clients.claude).toMatchObject({
+      installed: true,
+      stale: false,
+    })
   })
 
   it('codex：install 写 TOML [mcp_servers.nomi]，保留已有表；uninstall 只删本块', () => {
@@ -95,6 +135,40 @@ describe('capabilityCore/mcpConfig', () => {
     expect(text).not.toContain('[mcp_servers.nomi]')
     expect(text).toContain('[mcp_servers.other]')
     expect(readMcpInfo(0).clients.codex.installed).toBe(false)
+  })
+
+  it('Codex 把旧 Nomi 路径标为待更新，并可原位更新且保留其它表', () => {
+    const codexPath = path.join(homeDir, '.codex', 'config.toml')
+    fs.mkdirSync(path.dirname(codexPath), { recursive: true })
+    fs.writeFileSync(
+      codexPath,
+      [
+        '[mcp_servers.other]',
+        'command = "other-server"',
+        '',
+        '[mcp_servers.nomi]',
+        'command = "/old/Nomi/Electron"',
+        'args = ["/old/Nomi"]',
+        'env = { NOMI_MCP_STDIO = "1" }',
+        '',
+      ].join('\n'),
+    )
+
+    expect(readMcpInfo(0).clients.codex).toMatchObject({
+      installed: false,
+      stale: true,
+    })
+
+    installMcp('codex')
+    const text = fs.readFileSync(codexPath, 'utf8')
+    expect(text).toContain('[mcp_servers.other]')
+    expect(text).toContain(`command = "${process.execPath}"`)
+    expect(text).toContain('args = ["/fake/repo"]')
+    expect(text).not.toContain('/old/Nomi')
+    expect(readMcpInfo(0).clients.codex).toMatchObject({
+      installed: true,
+      stale: false,
+    })
   })
 
   it('cursor：install 写 ~/.cursor/mcp.json 的 mcpServers.nomi（目录/文件自动建），互不影响 claude', () => {

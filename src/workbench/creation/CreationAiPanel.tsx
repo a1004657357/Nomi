@@ -225,17 +225,17 @@ export default function CreationAiPanel({ onCollapse }: { onCollapse?: () => voi
     })()
   }, [cancelStreamFrame, documentText, pushStreamFrame, selectedText, setDraft, setError, setMessages, turn])
 
-  // Tier2 定妆：把剧本交给 AI，按剧本为主要角色/场景建卡 + 注入身份板提示词（与拆镜头同构）。
-  const launchFixationPlanning = React.useCallback((displayPrompt = '🎭 立角色卡') => {
+  // Tier2 设定提取：按剧本为主要角色/场景/道具建卡 + 注入参考图提示词（与拆镜头同构）。
+  const launchFixationPlanning = React.useCallback((displayPrompt = '🎭 提取角色/场景/道具') => {
     const storyText = (selectedText || documentText).trim()
     if (!storyText) {
-      setError('先在左侧写一段剧本，再让 AI 按剧本定妆。')
+      setError('先在左侧写一段剧本，再让 AI 提取角色、场景和道具。')
       return
     }
     setMessages((prev) => [
       ...prev,
       { id: turn.getState().nextMessageId('user'), role: 'user', content: displayPrompt },
-      { id: turn.getState().nextMessageId('assistant'), role: 'assistant', content: '已切到生成区，正在让 AI 按剧本为角色/场景定妆。', status: 'done' as const },
+      { id: turn.getState().nextMessageId('assistant'), role: 'assistant', content: '已切到生成区，正在让 AI 按剧本整理角色、场景和道具参考卡。', status: 'done' as const },
     ])
     setDraft('')
     setError('')

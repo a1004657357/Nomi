@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { videoFrameCacheRelativePath } from './extractVideoFrame'
+import { normalizeVideoFrameTimes, videoFrameCacheRelativePath } from './extractVideoFrame'
 
 describe('videoFrameCacheRelativePath', () => {
   it('为同一视频和帧位生成稳定路径', () => {
@@ -20,5 +20,10 @@ describe('videoFrameCacheRelativePath', () => {
     const relativePath = videoFrameCacheRelativePath('https://cdn.example/private.mp4?token=secret', 1.25)
     expect(relativePath).toMatch(/^assets\/generated\/video-frames\/frame-at-[a-f0-9]{24}\.png$/)
     expect(relativePath).not.toContain('secret')
+  })
+
+  it('批量时间点去重、排序并过滤非法值', () => {
+    expect(normalizeVideoFrameTimes([2, Number.NaN, -1, 1.23456, 2, Number.POSITIVE_INFINITY]))
+      .toEqual([0, 1.235, 2])
   })
 })

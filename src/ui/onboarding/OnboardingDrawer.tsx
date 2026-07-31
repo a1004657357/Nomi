@@ -22,6 +22,7 @@ import { AvailableGroup } from './AvailableGroup'
 import { type ChipModel } from './ModelChipGroups'
 import { ModelEnableEditor } from './ModelEnableEditor'
 import { CustomVendorManage } from './CustomVendorManage'
+import { CODEX_IMAGEGEN_VENDOR_KEY, CodexImagegenManage } from './CodexImagegenManage'
 import { ConnectAssistantCard, type McpInfo } from './ConnectAssistantCard'
 import { DreaminaMemberCard, type DreaminaStatus } from './DreaminaMemberCard'
 import { ComfyuiLocalCard, COMFYUI_VENDOR_KEY } from './ComfyuiLocalCard'
@@ -30,10 +31,12 @@ import { KNOWN_VENDORS, isKnownVendor } from '../../config/knownVendors'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { notifyModelOptionsRefresh } from '../../config/useModelOptions'
 import { alertDialog, confirmDialog } from '../../design'
+import { onboardingVendorIsUsable } from './onboardingVendorAvailability'
 
 type VendorMeta = {
   name: string
   hasApiKey: boolean
+  authType: string
   baseUrl: string
   enabled: boolean
 }
@@ -73,6 +76,7 @@ export function OnboardingDrawer(): JSX.Element {
         metaMap.set(String(v.key), {
           name: String(v.name || v.key),
           hasApiKey: Boolean(v.hasApiKey),
+          authType: String(v.authType || ''),
           baseUrl: String(v.baseUrlHint || ''),
           enabled: v.enabled !== false,
         })
@@ -201,7 +205,7 @@ export function OnboardingDrawer(): JSX.Element {
 
   const hasConnected =
     connectedKnown.length > 0 ||
-    otherModels.length > 0 ||
+    otherModels.some((model) => onboardingVendorIsUsable(vendorMeta.get(model.vendorKey))) ||
     comfyuiEnabled ||
     dreaminaConnected ||
     jimengWebConnected ||
@@ -211,7 +215,7 @@ export function OnboardingDrawer(): JSX.Element {
   const coveredKinds = React.useMemo(() => {
     const set = new Set<string>()
     for (const m of models) {
-      if (vendorMeta.get(m.vendorKey)?.hasApiKey) set.add(String(m.kind))
+      if (m.enabled && onboardingVendorIsUsable(vendorMeta.get(m.vendorKey))) set.add(String(m.kind))
     }
     if (dreaminaConnected || jimengWebConnected) set.add('video')
     return set
@@ -295,19 +299,23 @@ export function OnboardingDrawer(): JSX.Element {
                   name={group.name}
                   subtitle={`${enabledN} / ${group.models.length} 个模型已启用`}
                   status="ok"
-                  statusLabel="已配置"
+                  statusLabel={group.vendorKey === CODEX_IMAGEGEN_VENDOR_KEY ? '本机通道' : '已配置'}
                   defaultExpanded={false}
                 >
                   <ModelEnableEditor models={group.models} onToggle={handleSetEnabled} onDelete={handleDelete} />
-                  <CustomVendorManage
-                    vendorKey={group.vendorKey}
-                    vendorName={group.name}
-                    baseUrl={meta?.baseUrl ?? ''}
-                    hasApiKey={meta?.hasApiKey ?? true}
-                    modelCount={group.models.length}
-                    textModelCount={group.models.filter((m) => m.kind === 'text').length}
-                    onChanged={refresh}
-                  />
+                  {group.vendorKey === CODEX_IMAGEGEN_VENDOR_KEY ? (
+                    <CodexImagegenManage />
+                  ) : (
+                    <CustomVendorManage
+                      vendorKey={group.vendorKey}
+                      vendorName={group.name}
+                      baseUrl={meta?.baseUrl ?? ''}
+                      hasApiKey={meta?.hasApiKey ?? true}
+                      modelCount={group.models.length}
+                      textModelCount={group.models.filter((m) => m.kind === 'text').length}
+                      onChanged={refresh}
+                    />
+                  )}
                 </FoldableModelCard>
               )
             })}

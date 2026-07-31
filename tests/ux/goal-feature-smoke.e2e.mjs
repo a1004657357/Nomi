@@ -1,0 +1,182 @@
+// Goal feature smoke: isolated Electron, local files only, no provider requests.
+import { _electron as electron } from 'playwright'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+import { isolatedElectronLaunchOptions } from './helpers/electronFixture.mjs'
+
+const require = createRequire(import.meta.url)
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-goal-feature-smoke-'))
+const evidencePath = path.join(os.tmpdir(), 'nomi-goal-feature-smoke-evidence.png')
+const scriptPath = path.join(tempRoot, '咖啡短片.md')
+const demoVideoPath = path.join(repoRoot, 'marketing/assets/demo.mp4')
+fs.writeFileSync(scriptPath, '# 第一场\n\n咖啡师把咖啡杯放到窗边桌面。\n\n- 角色：咖啡师\n- 场景：咖啡馆\n- 道具：咖啡杯\n')
+
+let passed = 0
+function assert(condition, label) {
+  if (!condition) throw new Error(`GOAL FEATURE SMOKE FAIL: ${label}`)
+  passed += 1
+  console.log(`  ✓ ${label}`)
+}
+
+const launch = isolatedElectronLaunchOptions(repoRoot, tempRoot)
+const app = await electron.launch({
+  executablePath: require('electron'),
+  args: launch.args,
+  cwd: launch.cwd,
+  env: {
+    ...launch.env,
+    NOMI_E2E_SMOKE: '1',
+  },
+})
+const electronProcess = app.process()
+
+try {
+  const win = await app.firstWindow()
+  await win.waitForLoadState('domcontentloaded')
+  await win.waitForTimeout(1000)
+
+  const projectName = `Goal 功能验收 ${Date.now()}`
+  await win.evaluate(async ({ projectName, demoVideoPath }) => {
+    window.localStorage.setItem('nomi:splash:v1', 'seen')
+    window.localStorage.setItem('nomi:journey-tour:v1', 'seen')
+    window.localStorage.setItem('nomi:canvas-gesture-hint:v1', 'seen')
+    const now = Date.now()
+    const id = `goal-feature-${now}`
+    const record = window.nomiDesktop.projects.create({
+      id,
+      name: projectName,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      savedAt: now,
+      revision: 0,
+      payload: {
+        workbenchDocument: {
+          version: 1,
+          title: '',
+          contentJson: { type: 'doc', content: [] },
+          updatedAt: now,
+        },
+        generationCanvas: {
+          nodes: [],
+          edges: [],
+          selectedNodeIds: [],
+          groups: [],
+        },
+      },
+    })
+    const imported = await window.nomiDesktop.assets.importLocalPath({
+      projectId: record.id,
+      path: demoVideoPath,
+      kind: 'generated',
+      fileName: 'goal-feature-demo.mp4',
+      contentType: 'video/mp4',
+    })
+    const videoUrl = String(imported?.data?.url || '')
+    if (!videoUrl) throw new Error('本地测试视频导入失败')
+    const inspection = await window.nomiDesktop.assets.inspectVideo({ url: videoUrl })
+    const durationSeconds = Number(inspection?.metadata?.durationSeconds)
+    const saved = window.nomiDesktop.projects.read(record.id)
+    saved.payload.generationCanvas.nodes.push({
+      id: 'goal-local-video',
+      kind: 'video',
+      title: '本地演示视频',
+      position: { x: 80, y: 80 },
+      size: { width: 420, height: 300 },
+      prompt: '本地关键帧检查，不调用生成模型。',
+      categoryId: 'shots',
+      status: 'success',
+      result: {
+        id: 'goal-local-video-result',
+        type: 'video',
+        url: videoUrl,
+        createdAt: now,
+        durationSeconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 4,
+      },
+    })
+    window.nomiDesktop.projects.save(record.id, saved)
+  }, { projectName, demoVideoPath })
+
+  await win.reload()
+  await win.getByText('项目库', { exact: false }).first().waitFor({ timeout: 10_000 })
+  await win.locator('[data-project-card]', { hasText: projectName }).first().click()
+  const creationTab = win.getByRole('button', { name: '创作', exact: false }).first()
+  await creationTab.waitFor({ timeout: 10_000 })
+  await creationTab.click()
+
+  const importButton = win.locator('button[aria-label="导入剧本"]')
+  await importButton.waitFor({ timeout: 10_000 })
+  assert(await importButton.isVisible(), '创作区存在可见的剧本导入入口')
+  const importInput = win.locator('input[type="file"][aria-label="选择剧本文件"]')
+  assert(await importInput.count() === 1, '创作区挂载剧本文件选择器')
+  await importInput.setInputFiles(scriptPath)
+  await win.getByText('咖啡师把咖啡杯放到窗边桌面。', { exact: true }).waitFor({ timeout: 10_000 })
+  assert(
+    !(await win.getByRole('button', { name: '提取设定', exact: true }).isDisabled()),
+    '导入后角色/场景/道具提取入口可用',
+  )
+
+  await win.getByRole('button', { name: '生成', exact: false }).first().click()
+  await win.locator('[aria-label="AI 影像创作画布"]').waitFor({ timeout: 10_000 })
+
+  const performanceButton = win.locator('button[aria-label*="流畅模式"]')
+  await performanceButton.click()
+  assert(await performanceButton.getAttribute('aria-pressed') === 'true', '画布流畅模式可切换')
+
+  await win.getByRole('button', { name: '添加图像对比节点' }).click()
+  await win.locator('[data-kind="compare"]').waitFor({ timeout: 10_000 })
+  assert(await win.getByText('连接两张图片进行对比', { exact: true }).isVisible(), '图像对比节点真实渲染')
+
+  await win.getByRole('button', { name: '添加输出节点' }).click()
+  await win.locator('[data-kind="output"]').waitFor({ timeout: 10_000 })
+  const collectorEmptyState = win.getByText('把已有结果的图片或视频节点连接到这里。', { exact: true })
+  await collectorEmptyState.waitFor({ timeout: 10_000 })
+  assert(await collectorEmptyState.isVisible(), '输出收集节点真实渲染')
+
+  await win.locator('[data-node-id="goal-local-video"]').click()
+  const inspectButton = win.getByRole('button', { name: '检查关键帧' })
+  await inspectButton.waitFor({ timeout: 10_000 })
+  await inspectButton.click()
+  const inspector = win.getByRole('dialog', { name: '视频关键帧检查器' })
+  await inspector.waitFor({ timeout: 10_000 })
+  const createFrames = inspector.getByRole('button', { name: /创建 8 个关键帧节点/ })
+  await createFrames.waitFor({ timeout: 60_000 })
+  await createFrames.click()
+  await win.locator('[data-kind="keyframe"]').first().waitFor({ timeout: 10_000 })
+  assert(await win.locator('[data-kind="keyframe"]').count() === 8, '关键帧检查器从本地视频创建 8 个节点')
+
+  await win.evaluate(() => window.dispatchEvent(new Event('nomi-open-skill-library')))
+  const skillLibrary = win.getByRole('dialog', { name: '技能库' })
+  await skillLibrary.waitFor({ timeout: 10_000 })
+  await skillLibrary.getByText('Nomi 内置', { exact: true }).click()
+  await skillLibrary.getByText('视频拆解与提示词反推', { exact: true }).waitFor({ timeout: 10_000 })
+  assert(true, '视频拆解与提示词反推 Skill 在技能库可见')
+  await skillLibrary.getByRole('button', { name: '关闭技能库' }).click()
+
+  await win.screenshot({ path: evidencePath, fullPage: false })
+  console.log(`\nGOAL FEATURE SMOKE PASS: ${passed} assertions`)
+  console.log(`Evidence: ${evidencePath}`)
+} catch (error) {
+  try {
+    const win = app.windows()[0]
+    if (win) await win.screenshot({ path: evidencePath, fullPage: false })
+  } catch {
+    // Keep the original assertion error.
+  }
+  console.error(`\n${error?.message || error}`)
+  console.error(`Evidence: ${evidencePath}`)
+  process.exitCode = 1
+} finally {
+  const closed = await Promise.race([
+    app.close().then(() => true, () => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), 5_000)),
+  ])
+  if (!closed && electronProcess.exitCode == null) electronProcess.kill('SIGKILL')
+  fs.rmSync(tempRoot, { recursive: true, force: true })
+}
+
+process.exit(process.exitCode ?? 0)

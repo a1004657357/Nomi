@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
-import { getVisibleCanvasNodesForRender } from './useCanvasViewport'
+import { canvasViewportTransformStyle, getVisibleCanvasNodesForRender } from './useCanvasViewport'
 
 function node(id: string, x: number, y: number): GenerationCanvasNode {
   return {
@@ -37,5 +37,13 @@ describe('getVisibleCanvasNodesForRender', () => {
         stageSize: { width: 0, height: 0 },
       }),
     ).toHaveLength(nodes.length)
+  })
+})
+
+describe('canvasViewportTransformStyle', () => {
+  it('keeps the imperative transform identical to the React viewport contract', () => {
+    expect(canvasViewportTransformStyle(0.75, { x: -120, y: 44 })).toBe(
+      'translate(-120px, 44px) scale(0.75)',
+    )
   })
 })

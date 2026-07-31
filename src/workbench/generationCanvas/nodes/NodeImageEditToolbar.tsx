@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconBrush, IconCrop, IconDownload, IconFlipHorizontal, IconFlipVertical, IconGrid3x3, IconGridDots, IconLayersSubtract, IconLayoutGrid, IconRotate2, IconRotateClockwise2, IconScissors, IconSparkles, IconTransform, IconTypography, IconWand } from '@tabler/icons-react'
+import { IconBrush, IconCrop, IconCube, IconDownload, IconFlipHorizontal, IconFlipVertical, IconGrid3x3, IconGridDots, IconLayersSubtract, IconLayoutGrid, IconRotate2, IconRotateClockwise2, IconScissors, IconSparkles, IconTransform, IconTypography, IconWand } from '@tabler/icons-react'
 import { IMAGE_TRANSFORM_LABEL, type ImageGridSize, type ImageTransformOp } from './useNodeImageEditing'
 import type { CropGridSize } from './render/ImageCropGridOverlay'
 import { useResultDownload } from './useResultDownload'
@@ -27,9 +27,11 @@ type Props = {
   removeBackgroundBusy?: boolean
   /** Tier1「定妆」：基于当前图建一个预填身份板提示词的新节点（不自动生成）。缺省不渲染该按钮。 */
   onMakeup?: () => void
+  /** 用现有图片转 3D 配方创建可调相机的 GLB 代理。 */
+  onCreate3dCameraProxy?: () => void
 }
 
-export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGridSplit, onCrop, onTransform, onRemoveBackground, removeBackgroundBusy = false, onMakeup }: Props): JSX.Element {
+export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGridSplit, onCrop, onTransform, onRemoveBackground, removeBackgroundBusy = false, onMakeup, onCreate3dCameraProxy }: Props): JSX.Element {
   const { downloading, download } = useResultDownload(node)
   const [whiteboardOpen, setWhiteboardOpen] = React.useState(false)
   const imageUrl = node.result?.type === 'image' ? node.result.url || '' : ''
@@ -60,6 +62,15 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
             { icon: <IconTypography size={I.size} stroke={I.stroke} />, label: '改字（保留字体改文字）', onClick: () => applyTextEdit(node) },
           ]}
         />
+        {onCreate3dCameraProxy ? (
+          <ToolbarButton
+            icon={<IconCube size={I.size} stroke={I.stroke} />}
+            label="3D 机位"
+            title="把当前图片转换为可环绕、可精确回拍的 3D 机位代理"
+            disabled={busy || !imageUrl}
+            onClick={onCreate3dCameraProxy}
+          />
+        ) : null}
         <ToolbarDivider />
         <ToolbarButton
           icon={<IconCrop size={I.size} stroke={I.stroke} />}

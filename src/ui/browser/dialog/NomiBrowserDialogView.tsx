@@ -10,6 +10,8 @@ import {
   IconPencil,
   IconPlus,
   IconRefresh,
+  IconLayoutSidebarRightCollapse,
+  IconLayoutSidebarRightExpand,
   IconStar,
   IconSearch,
   IconStarFilled,
@@ -51,6 +53,7 @@ export function NomiBrowserDialogView({
   browserCaptureRequest,
   browserPromptCaptureRequest,
   browserResourceCaptureEnabled,
+  browserSideWidth,
   browserViewHostRef,
   captureFlyouts,
   closeAllTabs,
@@ -66,6 +69,9 @@ export function NomiBrowserDialogView({
   handleAddressFocus,
   handleBrowserAssetPopoverOpenChange,
   handleBrowserAssetPopoverRectChange,
+  handleBrowserSideResizeEnd,
+  handleBrowserSideResizeMove,
+  handleBrowserSideResizeStart,
   handleDockResizeEnd,
   handleDockResizeMove,
   handleDockResizeStart,
@@ -95,10 +101,12 @@ export function NomiBrowserDialogView({
   tabContextMenu,
   tabContextMenuRef,
   tabs,
+  toggleWorkspaceMode,
   toggleBrowserResourceCapture,
   useNativeBrowserAssetOverlay,
   webContainerRef,
   webContentBounds,
+  workspaceMode,
 }: NomiBrowserDialogViewProps): JSX.Element {
   const browserAssetPopoverBounds = React.useMemo(() => {
     if (!localBrowserAssetPopoverSplit || !webContentBounds) return webContentBounds
@@ -116,16 +124,35 @@ export function NomiBrowserDialogView({
   return (
     <BodyPortal>
       <div
-        className="nomi-browser-dialog-root fixed bottom-0 left-0 right-0 z-[520] bg-nomi-paper font-nomi-sans text-nomi-ink"
+        className={cn(
+          'nomi-browser-dialog-root fixed bottom-0 left-0 right-0 z-[520] font-nomi-sans text-nomi-ink',
+          workspaceMode === 'side' ? 'pointer-events-none bg-transparent' : 'bg-nomi-paper',
+        )}
         style={{ top: dialogTopOffset }}
       >
         <section
-          className="nomi-browser-dialog__panel absolute inset-0 flex h-full min-h-0 w-full flex-col overflow-hidden border-0 bg-nomi-paper shadow-none"
+          className={cn(
+            'nomi-browser-dialog__panel pointer-events-auto absolute bottom-0 right-0 top-0 flex min-h-0 flex-col overflow-hidden bg-nomi-paper',
+            workspaceMode === 'side'
+              ? 'border-l border-nomi-line shadow-nomi-xl'
+              : 'left-0 w-full border-0 shadow-none',
+          )}
+          style={workspaceMode === 'side' ? { width: Math.min(browserSideWidth, window.innerWidth) } : undefined}
           role="dialog"
-          aria-modal="true"
+          aria-modal={workspaceMode === 'full'}
           aria-label="浏览器"
           onMouseDown={(event) => event.stopPropagation()}
         >
+          {workspaceMode === 'side' ? (
+            <div
+              className="absolute bottom-0 left-[-5px] top-0 z-[14] w-[10px] cursor-ew-resize touch-none"
+              onPointerDown={handleBrowserSideResizeStart}
+              onPointerMove={handleBrowserSideResizeMove}
+              onPointerUp={handleBrowserSideResizeEnd}
+              onPointerCancel={handleBrowserSideResizeEnd}
+              aria-hidden="true"
+            />
+          ) : null}
           <div className="flex min-h-11 shrink-0 items-end gap-1 border-b border-nomi-line-soft bg-nomi-bg px-3 pt-2">
             <div className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {tabs.map((tab: BrowserTab) => {
@@ -193,6 +220,19 @@ export function NomiBrowserDialogView({
               </button>
             </div>
             <span className="mx-1 h-5 w-px bg-nomi-line-soft" aria-hidden="true" />
+            <button
+              type="button"
+              className={TOOL_BUTTON_CLASS}
+              aria-label={workspaceMode === 'side' ? '全屏浏览器' : '切换到侧边工作区'}
+              title={workspaceMode === 'side' ? '全屏浏览器' : '侧边工作区'}
+              onClick={toggleWorkspaceMode}
+            >
+              {workspaceMode === 'side' ? (
+                <IconLayoutSidebarRightCollapse size={18} stroke={1.8} aria-hidden="true" />
+              ) : (
+                <IconLayoutSidebarRightExpand size={18} stroke={1.8} aria-hidden="true" />
+              )}
+            </button>
             <button type="button" className={TOOL_BUTTON_CLASS} aria-label="关闭浏览器" onClick={onClose}>
               <IconX size={18} stroke={1.8} aria-hidden="true" />
             </button>
@@ -266,6 +306,18 @@ export function NomiBrowserDialogView({
               </button>
             </div>
             <div className="flex items-center gap-1">
+              {BROWSER_START_SHORTCUTS.slice(0, 2).map((site) => (
+                <button
+                  key={site.url}
+                  type="button"
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-nomi-sm border-0 bg-transparent px-2 text-caption font-semibold text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink"
+                  title={site.hint}
+                  onClick={() => void createTab(site.url)}
+                >
+                  <IconExternalLink size={14} stroke={1.7} aria-hidden="true" />
+                  <span className="whitespace-nowrap">{site.label}</span>
+                </button>
+              ))}
               <div ref={materialSitesRef} className="relative">
                 <button
                   type="button"
@@ -275,19 +327,19 @@ export function NomiBrowserDialogView({
                     'hover:bg-nomi-ink-05 hover:text-nomi-ink',
                     materialSitesOpen && 'bg-nomi-ink-05 text-nomi-ink',
                   )}
-                  aria-label="素材网站"
+                  aria-label="网页工具"
                   aria-haspopup="dialog"
                   aria-expanded={materialSitesOpen}
                   onClick={() => setMaterialSitesOpen((value: boolean) => !value)}
                 >
                   <IconWorld size={16} stroke={1.8} aria-hidden="true" />
-                  <span className="whitespace-nowrap">素材网站</span>
+                  <span className="whitespace-nowrap">网站</span>
                 </button>
                 {materialSitesOpen ? (
                   <div
                     className="absolute right-0 top-[calc(100%+6px)] z-[12] w-[210px] rounded-nomi border border-nomi-line bg-nomi-paper p-1 shadow-nomi-lg"
                     role="dialog"
-                    aria-label="素材网站列表"
+                    aria-label="网页工具列表"
                     onPointerDown={(event) => event.stopPropagation()}
                   >
                     {MATERIAL_SITE_SHORTCUTS.map((site) => (
@@ -483,6 +535,7 @@ export function NomiBrowserDialogView({
                   onDockModeChange={setBrowserAssetPopoverDockMode}
                   dockPresentation={localBrowserAssetPopoverSplit ? 'split' : 'overlay'}
                   onImportRemoteAsset={importBrowserAssetToAssetPopover}
+                  canvasImportEnabled
                   browserCaptureEnabled={browserResourceCaptureEnabled}
                   browserCaptureDisabled={!activeTab?.viewId || !browserBridge?.setResourceCapture}
                   browserCaptureRequest={browserCaptureRequest}

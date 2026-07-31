@@ -29,6 +29,57 @@ describe("skillManifestSchema", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts provider-independent 3D model capability requirements", () => {
+    const result = parseSkillManifest({
+      name: "creative.multiview-3d",
+      version: "1.0.0",
+      description: "Multi-view and image-to-3D workflow",
+      tools: ["apply_capability_recipe", "handoff_model3d"],
+      requiredProviders: ["image", "model3d"],
+      permissions: ["create"],
+      stages: [{
+        id: "reconstruct",
+        goal: "Create an orbitable model",
+        tools: ["apply_capability_recipe", "handoff_model3d"],
+        modelPrefs: [{ kind: "model3d" }],
+      }],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts provider-independent canvas recipe bindings", () => {
+    const result = parseSkillManifest({
+      name: "creative.multiview",
+      version: "1.0.0",
+      description: "Multi-view workflow",
+      tools: ["apply_capability_recipe"],
+      requiredProviders: ["image", "model3d"],
+      permissions: ["create"],
+      canvas: {
+        recipeIds: ["image.multiview.grid9", "image.multiview.reconstruct3d"],
+        defaultRecipeId: "image.multiview.grid9",
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifest.canvas?.recipeIds).toHaveLength(2);
+  });
+
+  it("rejects a canvas default recipe that is not listed", () => {
+    const result = parseSkillManifest({
+      name: "bad.canvas",
+      version: "1.0.0",
+      description: "Bad canvas binding",
+      tools: [],
+      requiredProviders: [],
+      permissions: [],
+      canvas: {
+        recipeIds: ["portrait.refine"],
+        defaultRecipeId: "portrait.mood",
+      },
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects unknown permission values", () => {
     const result = parseSkillManifest({
       name: "x",

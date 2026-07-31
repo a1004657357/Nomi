@@ -2,12 +2,14 @@ import React from 'react'
 import {
   Icon360,
   Icon3dCubeSphere,
+  IconArrowsDiff,
   IconBoxMultiple,
   IconBrush,
   IconCube,
   IconFlag,
   IconLayoutGrid,
   IconPhoto,
+  IconSparkles,
   IconUser,
   IconVideo,
   IconWaveSine,
@@ -44,6 +46,8 @@ const NODE_ICONS: Record<GenerationNodeIconKey, GenerationNodeIcon> = {
   scene3d: IconCube,
   vibingDirector: IconCube,
   model3d: Icon3dCubeSphere,
+  compare: IconArrowsDiff,
+  skill: IconSparkles,
   whiteboard: IconBrush,
   audio: IconWaveSine,
 }

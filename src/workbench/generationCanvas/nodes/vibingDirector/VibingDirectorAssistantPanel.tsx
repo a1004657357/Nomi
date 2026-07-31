@@ -12,9 +12,9 @@ import {
   sendVibingDirectorAgentMessage,
 } from './vibingDirectorAgentClient'
 import {
-  parseVibingDirectorPlanRequest,
-  parseVibingDirectorStructuredPlanResponse,
-} from './vibingDirectorStructuredProtocol'
+  evaluateVibingDirectorToolCall,
+  resolveVibingDirectorStructuredPlanWithRepair,
+} from './vibingDirectorAgentProtocol'
 import {
   formatVibingDirectorContext,
   type VibingDirectorPlan,
@@ -57,6 +57,8 @@ function planActionLabel(action: VibingDirectorPlan['actions'][number]): string 
     case 'add_marker': return `添加走位标记：${action.name}`
     case 'move_object': return `调整对象：${action.objectRef}`
     case 'remove_object': return `移除对象：${action.objectRef}`
+    case 'set_relation': return `设置关系：${action.id}`
+    case 'remove_relation': return `移除关系：${action.relationRef}`
     case 'set_camera': return `调整机位：${action.name || action.cameraRef || '导演相机'}`
     case 'set_camera_path': return `设置运镜：${action.cameraRef || '导演相机'}`
     case 'set_beat': return `更新节拍：${action.title}`
@@ -115,6 +117,48 @@ export default function VibingDirectorAssistantPanel({
 
     void (async () => {
       let streamed = ''
+      let inspected = false
+      const resolveStructuredResponse = async (
+        responseText: string,
+        failurePrefix = '',
+      ): Promise<{ summary: string; plan: VibingDirectorPlan } | null> => {
+        const outcome = await resolveVibingDirectorStructuredPlanWithRepair({
+          initialText: responseText,
+          directorNodeId,
+          state: stateRef.current,
+          originalMessage: text,
+          onRepairStart: (firstFailure) => {
+            updateMessage(assistantId, {
+              content: `${failurePrefix}兼容协议响应不可执行：${firstFailure}\n正在自动修复一次…`,
+              pending: true,
+              error: false,
+            })
+          },
+          repair: async (repairMessage) => {
+            const repair = await sendVibingDirectorAgentMessage({
+              directorNodeId,
+              state: stateRef.current,
+              message: repairMessage,
+              protocol: 'structured-text',
+              onCancelReady: (cancel) => {
+                cancelRef.current = cancel
+              },
+            })
+            return repair.response.text
+          },
+        })
+        const { resolution } = outcome
+        if (!resolution.ok) {
+          updateMessage(assistantId, {
+            content: `Director Agent 执行失败：${failurePrefix}${resolution.message}`,
+            pending: false,
+            error: true,
+          })
+          return null
+        }
+        return resolution.request
+      }
+
       try {
         const result = await sendVibingDirectorAgentMessage({
           directorNodeId,
@@ -129,7 +173,15 @@ export default function VibingDirectorAssistantPanel({
             cancelRef.current = cancel
           },
           onToolCall: (event) => {
-            if (event.toolName === 'read_vibing_director') {
+            const evaluation = evaluateVibingDirectorToolCall({
+              toolName: event.toolName,
+              args: event.args,
+              directorNodeId,
+              state: stateRef.current,
+              inspected,
+            })
+            inspected = evaluation.inspected
+            if (evaluation.kind === 'read') {
               void event.confirm({
                 ok: true,
                 result: formatVibingDirectorContext(directorNodeId, stateRef.current),
@@ -137,28 +189,16 @@ export default function VibingDirectorAssistantPanel({
               })
               return
             }
-            if (event.toolName !== 'apply_vibing_director_plan') {
-              void event.confirm({ ok: false, message: `VIBING Director 不支持操作「${event.toolName}」`, denied: true })
+            if (evaluation.kind === 'reject') {
+              void event.confirm({ ok: false, message: evaluation.message, denied: true })
               return
             }
-            const request = parseVibingDirectorPlanRequest(event.args)
-            if (!request || request.directorNodeId !== directorNodeId) {
-              void event.confirm({ ok: false, message: 'Blender 导演计划缺少当前节点标识或目标不匹配', denied: true })
-              return
-            }
-            queuePlan(request, event.confirm)
+            queuePlan(evaluation.request, event.confirm)
           },
         })
         if (initialProtocol === 'structured-text') {
-          const request = parseVibingDirectorPlanRequest(parseVibingDirectorStructuredPlanResponse(result.response.text))
-          if (!request || request.directorNodeId !== directorNodeId) {
-            updateMessage(assistantId, {
-              content: 'Director Agent 执行失败：兼容协议没有返回有效的当前 Blender 导演计划',
-              pending: false,
-              error: true,
-            })
-            return
-          }
+          const request = await resolveStructuredResponse(result.response.text)
+          if (!request) return
           queuePlan(request)
           updateMessage(assistantId, {
             content: `${request.summary}\n\n已生成 Blender 导演计划，等待确认。`,
@@ -195,15 +235,8 @@ export default function VibingDirectorAssistantPanel({
               cancelRef.current = cancel
             },
           })
-          const request = parseVibingDirectorPlanRequest(parseVibingDirectorStructuredPlanResponse(fallback.response.text))
-          if (!request || request.directorNodeId !== directorNodeId) {
-            updateMessage(assistantId, {
-              content: 'Director Agent 执行失败：原生工具请求被拒绝；兼容协议没有返回有效的当前 Blender 导演计划',
-              pending: false,
-              error: true,
-            })
-            return
-          }
+          const request = await resolveStructuredResponse(fallback.response.text, '原生工具请求被拒绝；')
+          if (!request) return
           queuePlan(request)
           updateMessage(assistantId, {
             content: `${request.summary}\n\n已生成 Blender 导演计划，等待确认。`,

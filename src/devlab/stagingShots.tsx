@@ -1,5 +1,5 @@
 // 站位多视角离屏截图 harness（仅 dev，不进 prod 构建——vite build 只吃 index.html）。
-// ?case=NN → buildStagingScene（与生产同一路径）→ 复用同一套 Mannequin/MannequinCrowd（同 x-bot.glb + 同骨骼数学）
+// ?case=NN → buildStagingScene（与生产同一路径）→ 复用同一套第一方 Mannequin/MannequinCrowd。
 // → hero(生产机位，==AI 实际收到的图) + 5 个环绕诊断视角(front/q3/side/back/top) 各出一张 → window.__shots。
 // 环绕视角加一层淡地面网格，便于子 agent 判「悬空/陷地」；hero 保持生产无地面以求与 AI 收到的一致。
 import React, { Suspense } from 'react'

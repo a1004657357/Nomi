@@ -342,7 +342,7 @@ const _groundVertex = new THREE.Vector3()
 // 关节点法的坑：脚踝/脚尖关节到鞋底网格的偏移随脚的勾绷（dorsi/plantar-flex）变化，
 // 坐/蹲/跪这类脚姿大变的预设会按关节落地 → 鞋底网格悬空或陷地 0.7~0.9 单位（实测）。
 // 改用 applyBoneTransform 取每个顶点蒙皮后的世界坐标求最低 Y，任何姿势鞋底/膝盖都精确贴地。
-// 仅在姿势变化时跑一次（非每帧），单网格 x-bot 全顶点遍历开销可忽略。
+// 仅在姿势变化时跑一次（非每帧），第一方低模单网格全顶点遍历开销可忽略。
 function lowestMannequinLocalY(root: THREE.Object3D): number | null {
   let minY: number | null = null
   root.updateMatrixWorld(true)

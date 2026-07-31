@@ -12,6 +12,8 @@ const vector3Schema = z.tuple([finiteNumber, finiteNumber, finiteNumber])
 const stagePresetSchema = z.enum(['empty', 'studio', 'coffee_shop', 'city_street', 'interior_room'])
 const blockingTemplateSchema = z.enum(['coffee_two_person_conversation'])
 const aspectRatioSchema = z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '2.39:1'])
+const cameraFramingSchema = z.enum(['all', 'target', 'fixed'])
+const relationKindSchema = z.enum(['facing', 'distance', 'support', 'offset', 'line_of_sight'])
 const identifierSchema = z.string().min(1).max(160).regex(/^(?!https?:\/\/)(?!file:)[a-zA-Z0-9_\-.:\u4e00-\u9fff ]+$/i)
 
 const actionSchema = z.discriminatedUnion('op', [
@@ -51,6 +53,16 @@ const actionSchema = z.discriminatedUnion('op', [
   }),
   z.object({ op: z.literal('remove_object'), objectRef: identifierSchema }),
   z.object({
+    op: z.literal('set_relation'),
+    id: identifierSchema,
+    kind: relationKindSchema,
+    subjectRef: identifierSchema,
+    targetRef: identifierSchema,
+    distance: finiteNumber.min(0.05).max(1000).optional(),
+    mutual: z.boolean().optional(),
+  }),
+  z.object({ op: z.literal('remove_relation'), relationRef: identifierSchema }),
+  z.object({
     op: z.literal('set_camera'),
     cameraRef: identifierSchema.optional(),
     name: z.string().min(1).max(160).optional(),
@@ -58,6 +70,8 @@ const actionSchema = z.discriminatedUnion('op', [
     lookAt: vector3Schema.optional(),
     fov: finiteNumber.min(1).max(160).optional(),
     aspectRatio: aspectRatioSchema.optional(),
+    framing: cameraFramingSchema.optional(),
+    targetRef: identifierSchema.optional(),
   }),
   z.object({
     op: z.literal('set_camera_path'),
@@ -86,8 +100,17 @@ const planSchema = z.object({
     if (action.op === 'move_object' && action.position === undefined && action.rotation === undefined && action.scale === undefined && action.name === undefined) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'move_object 至少需要一个要修改的字段', path: ['actions', index] })
     }
-    if (action.op === 'set_camera' && action.cameraRef === undefined && action.name === undefined && action.position === undefined && action.lookAt === undefined && action.fov === undefined && action.aspectRatio === undefined) {
+    if (action.op === 'set_camera' && action.cameraRef === undefined && action.name === undefined && action.position === undefined && action.lookAt === undefined && action.fov === undefined && action.aspectRatio === undefined && action.framing === undefined && action.targetRef === undefined) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'set_camera 至少需要一个要修改的字段', path: ['actions', index] })
+    }
+    if (action.op === 'set_camera' && action.framing === 'target' && action.targetRef === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'target 取景必须指定 targetRef', path: ['actions', index, 'targetRef'] })
+    }
+    if (action.op === 'set_relation' && action.kind === 'distance' && action.distance === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'distance 空间关系必须指定 distance', path: ['actions', index, 'distance'] })
+    }
+    if (action.op === 'set_relation' && action.subjectRef === action.targetRef) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: '空间关系不能引用同一个对象', path: ['actions', index, 'targetRef'] })
     }
   })
 })
@@ -109,8 +132,20 @@ function idFrom(value: unknown, fallback: string): string {
 }
 
 function vectorFrom(value: unknown): [number, number, number] | undefined {
-  if (!Array.isArray(value) || value.length !== 3 || value.some((item) => typeof item !== 'number' || !Number.isFinite(item))) return undefined
-  return [value[0], value[1], value[2]]
+  if (Array.isArray(value) && value.length === 3 && value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
+    return [value[0], value[1], value[2]]
+  }
+  const raw = asRecord(value)
+  if (!raw || !['x', 'y', 'z'].every((key) => typeof raw[key] === 'number' && Number.isFinite(raw[key]))) return undefined
+  return [raw.x as number, raw.y as number, raw.z as number]
+}
+
+function scaleFrom(value: unknown): [number, number, number] | undefined {
+  const vector = vectorFrom(value)
+  if (vector) return vector
+  return typeof value === 'number' && Number.isFinite(value)
+    ? [value, value, value]
+    : undefined
 }
 
 function rotationFromLegacy(raw: Record<string, unknown>): [number, number, number] | undefined {
@@ -133,6 +168,25 @@ function knownLegacyCameraRef(value: unknown): 'director-camera' | undefined {
   return idFrom(value, '') === 'director-camera' ? 'director-camera' : undefined
 }
 
+function legacyMarkerRole(value: unknown, name: string, pose?: unknown): string | undefined {
+  const declared = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  const poseText = typeof pose === 'string' ? pose.trim().toLowerCase() : ''
+  const source = `${declared} ${name.toLowerCase()} ${poseText}`
+  if (declared === 'actor_seated' || declared === 'actor_standing') return declared
+  if (/mannequin|character|character_marker|人物|角色|演员|咖啡师|顾客|客人/.test(source)) {
+    return /seated|sitting|sit\b|入座|落座|坐|对坐/.test(source)
+      ? 'actor_seated'
+      : 'actor_standing'
+  }
+  if (/cup|mug|coffee[-_ ]?cup|咖啡杯|杯/.test(source)) return 'cup'
+  if (/laptop|notebook|computer|电脑|笔记本/.test(source)) return 'laptop'
+  if (/plate|tray|cake|盘|餐盘|蛋糕/.test(source)) return 'plate'
+  if (/chair|seat|椅/.test(source)) return 'chair'
+  if (/table|desk|桌/.test(source)) return 'table'
+  if (declared === 'prop' || declared === 'prop_marker') return 'prop'
+  return declared || undefined
+}
+
 function normalizeLegacyPatch(value: unknown, index: number): unknown[] {
   const canonical = actionSchema.safeParse(value)
   if (canonical.success) return [canonical.data]
@@ -149,7 +203,7 @@ function normalizeLegacyPatch(value: unknown, index: number): unknown[] {
       : `对象 ${index + 1}`
   const position = vectorFrom(raw.position)
   const rotation = rotationFromLegacy(raw)
-  const scale = vectorFrom(raw.scale)
+  const scale = scaleFrom(raw.scale)
   const lookAt = vectorFrom(raw.lookAt)
   const fov = typeof raw.fov === 'number' ? raw.fov : typeof raw.focalLength === 'number' ? raw.focalLength : undefined
 
@@ -160,7 +214,7 @@ function normalizeLegacyPatch(value: unknown, index: number): unknown[] {
     return preset ? [{ op: 'set_stage', preset }] : []
   }
   if (type === 'addobject') {
-    const role = typeof raw.kind === 'string' && raw.kind.trim() ? raw.kind.trim() : undefined
+    const role = legacyMarkerRole(raw.kind, name, raw.pose)
     return [{
       op: 'add_marker',
       id,
@@ -219,10 +273,11 @@ function normalizeLegacyPatch(value: unknown, index: number): unknown[] {
     return preset ? [{ op: 'set_stage', preset }] : []
   }
   if (op === 'add_object' && type === 'mannequin') {
-    return [{ op: 'add_marker', id, name, ...(position ? { position } : {}), ...(rotation ? { rotation } : {}), ...(scale ? { scale } : {}), ...(typeof raw.pose === 'string' ? { role: raw.pose } : {}) }]
+    return [{ op: 'add_marker', id, name, role: legacyMarkerRole(type, name, raw.pose) ?? 'actor_standing', ...(position ? { position } : {}), ...(rotation ? { rotation } : {}), ...(scale ? { scale } : {}) }]
   }
   if (op === 'add_object') {
-    return [{ op: 'add_marker', id, name, ...(position ? { position } : {}), ...(rotation ? { rotation } : {}), ...(scale ? { scale } : {}), ...(type ? { role: type } : {}) }]
+    const role = legacyMarkerRole(raw.subtype ?? type, name, raw.pose)
+    return [{ op: 'add_marker', id, name, ...(position ? { position } : {}), ...(rotation ? { rotation } : {}), ...(scale ? { scale } : {}), ...(role ? { role } : {}) }]
   }
   if (op === 'move_object') {
     return [{ op: 'move_object', objectRef: id, ...(position ? { position } : {}), ...(rotation ? { rotation } : {}), ...(scale ? { scale } : {}) }]
@@ -252,6 +307,7 @@ function normalizeLegacyPatch(value: unknown, index: number): unknown[] {
   if (action === 'create') {
     const preset = stageFromLegacy(type)
     if (preset) return [{ op: 'set_stage', preset }]
+    const role = legacyMarkerRole(raw.subtype ?? type, name, raw.pose)
     return [{
       op: 'add_marker',
       id,
@@ -259,7 +315,7 @@ function normalizeLegacyPatch(value: unknown, index: number): unknown[] {
       ...(position ? { position } : {}),
       ...(rotation ? { rotation } : {}),
       ...(scale ? { scale } : {}),
-      ...(type ? { role: typeof raw.subtype === 'string' ? `${type}:${raw.subtype}` : type } : {}),
+      ...(role ? { role } : {}),
     }]
   }
   if (action === 'update') {
@@ -321,12 +377,39 @@ export function parseVibingDirectorPlanRequest(value: unknown): VibingDirectorPl
 }
 
 export function parseVibingDirectorStructuredPlanResponse(text: string): unknown | null {
-  const trimmed = text.trim()
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]
-  const candidates = [fenced, trimmed, trimmed.slice(trimmed.indexOf('{'), trimmed.lastIndexOf('}') + 1)]
-  for (const candidate of candidates) {
-    if (!candidate) continue
-    try { return JSON.parse(candidate) as unknown } catch { /* try the next JSON extraction */ }
+  const parseJson = (value: string): unknown | null => {
+    const trimmed = value.trim()
+    const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]
+    const firstBrace = trimmed.indexOf('{')
+    const lastBrace = trimmed.lastIndexOf('}')
+    const candidates = [
+      fenced,
+      trimmed,
+      firstBrace >= 0 && lastBrace > firstBrace ? trimmed.slice(firstBrace, lastBrace + 1) : '',
+    ]
+    for (const candidate of candidates) {
+      if (!candidate) continue
+      try { return JSON.parse(candidate) as unknown } catch { /* try the next JSON extraction */ }
+    }
+    return null
   }
-  return null
+
+  const unwrap = (value: unknown, depth = 0): unknown => {
+    if (depth >= 4) return value
+    const raw = asRecord(value)
+    if (!raw || raw.directorNodeId !== undefined || raw.plan !== undefined || raw.patches !== undefined) return value
+    for (const key of ['answer', 'content', 'result', 'data']) {
+      const nested = raw[key]
+      if (typeof nested === 'string') {
+        const parsed = parseJson(nested)
+        if (parsed !== null) return unwrap(parsed, depth + 1)
+      } else if (nested && typeof nested === 'object') {
+        return unwrap(nested, depth + 1)
+      }
+    }
+    return value
+  }
+
+  const parsed = parseJson(text)
+  return parsed === null ? null : unwrap(parsed)
 }

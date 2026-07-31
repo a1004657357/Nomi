@@ -18,6 +18,15 @@ describe('classifyGenerationError — 已知分类', () => {
     expect(r.reason).toBe('网络超时')
   })
 
+  it('即梦网页桥 fetch 失败不误报为服务商额度问题', () => {
+    const r = classifyGenerationError(
+      '即梦 Web 网页桥任务失败：图片结果同步失败：Failed to fetch (taskId=IMG-FAILED, kind=image_edit)',
+    )
+    expect(r.reason).toBe('即梦网页桥接失败')
+    expect(r.hint).toMatch(/即梦页面|扩展/)
+    expect(r.hint).not.toMatch(/额度|充值/)
+  })
+
   it('Agnes 下载参考图超时不会误报为参数错误', () => {
     const upstreamMsg = 'Download image URL failed: HTTPSConnectionPool(host=\'litter.catbox.moe\', port=443): Read timed out. (read timeout=30)'
     const marker = 'NOMI_VENDOR_ERR_B64::' + Buffer.from(JSON.stringify({

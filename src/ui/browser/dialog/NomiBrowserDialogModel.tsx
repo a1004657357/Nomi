@@ -50,6 +50,8 @@ export type BrowserPromptModePickerState = {
   tab: BrowserTab
 }
 
+export type BrowserWorkspaceMode = 'side' | 'full'
+
 export type ViewportRect = {
   left: number
   top: number
@@ -76,6 +78,11 @@ export type BrowserCaptureFlyout = {
 
 export const TAB_LIMIT = 30
 export const BOOKMARKS_STORAGE_KEY = 'nomi.browser.bookmarks.v1'
+export const BROWSER_WORKSPACE_MODE_STORAGE_KEY = 'nomi.browser.workspace-mode.v1'
+export const BROWSER_SIDE_WIDTH_STORAGE_KEY = 'nomi.browser.side-width.v1'
+export const BROWSER_SIDE_DEFAULT_WIDTH = 860
+export const BROWSER_SIDE_MIN_WIDTH = 560
+export const BROWSER_SIDE_MAX_WIDTH_RATIO = 0.78
 export const CAPTURE_FLYOUT_MAX_WIDTH = 220
 export const CAPTURE_FLYOUT_MAX_HEIGHT = 160
 export const CAPTURE_FLYOUT_TARGET_WIDTH = 96
@@ -99,14 +106,18 @@ export const DEFAULT_BOOKMARKS: BrowserBookmark[] = [
 ]
 
 export const MATERIAL_SITE_SHORTCUTS = [
+  { name: 'ChatGPT 图像', url: 'https://chatgpt.com/images/' },
+  { name: '即梦 Web', url: 'https://jimeng.jianying.com/ai-tool/image/generate' },
   { name: 'pinterest', url: 'https://www.pinterest.com/' },
   { name: 'film-grab', url: 'https://film-grab.com/' },
   { name: 'genery', url: 'https://genery.io/' },
   { name: 'behance', url: 'https://www.behance.net/' },
 ] as const
 
-// 创作参考类快捷站点——空态页网格。8 张卡是最舒服的 4×2 密度：太少显得空，太多变站点堆。
+// 创作与参考类快捷站点。生成网页放在前面，打开浏览器后无需再手输地址。
 export const BROWSER_START_SHORTCUTS = [
+  { label: 'ChatGPT 图像', url: 'https://chatgpt.com/images/', hint: '对话生成与编辑' },
+  { label: '即梦 Web', url: 'https://jimeng.jianying.com/ai-tool/image/generate', hint: '图片与视频创作' },
   { label: 'Pinterest', url: 'https://www.pinterest.com/', hint: '视觉灵感' },
   { label: 'Behance', url: 'https://www.behance.net/', hint: '设计作品集' },
   { label: 'Dribbble', url: 'https://dribbble.com/', hint: 'UI 灵感' },
@@ -114,7 +125,6 @@ export const BROWSER_START_SHORTCUTS = [
   { label: '小红书', url: 'https://www.xiaohongshu.com/', hint: '中文种草' },
   { label: 'YouTube', url: 'https://www.youtube.com/', hint: '视频参考' },
   { label: 'Film Grab', url: 'https://film-grab.com/', hint: '电影分镜' },
-  { label: 'X', url: 'https://x.com/', hint: '创作者动态' },
 ] as const
 
 export const TOOL_BUTTON_CLASS = cn(
@@ -147,6 +157,27 @@ export function createBlankTab(): BrowserTab {
     canGoForward: false,
     loading: false,
   }
+}
+
+export function readBrowserWorkspaceMode(): BrowserWorkspaceMode {
+  if (typeof window === 'undefined') return 'side'
+  return window.localStorage.getItem(BROWSER_WORKSPACE_MODE_STORAGE_KEY) === 'full' ? 'full' : 'side'
+}
+
+export function writeBrowserWorkspaceMode(mode: BrowserWorkspaceMode): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(BROWSER_WORKSPACE_MODE_STORAGE_KEY, mode)
+}
+
+export function readBrowserSideWidth(): number {
+  if (typeof window === 'undefined') return BROWSER_SIDE_DEFAULT_WIDTH
+  const value = Number(window.localStorage.getItem(BROWSER_SIDE_WIDTH_STORAGE_KEY))
+  return Number.isFinite(value) && value >= BROWSER_SIDE_MIN_WIDTH ? Math.round(value) : BROWSER_SIDE_DEFAULT_WIDTH
+}
+
+export function writeBrowserSideWidth(width: number): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(BROWSER_SIDE_WIDTH_STORAGE_KEY, String(Math.round(width)))
 }
 
 export function readBookmarks(): BrowserBookmark[] {

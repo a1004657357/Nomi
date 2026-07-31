@@ -13,7 +13,7 @@ import { generationCanvasTools } from '../agent/generationCanvasTools'
 import { applyCanvasToolCall } from '../agent/applyCanvasToolCall'
 import { applyProposalBatch } from '../agent/proposalTxn'
 import { listAvailableModelsForAgent } from '../agent/availableModels'
-import { resolvePlannedNodeArgs } from '../agent/plannedNodeMeta'
+import { buildPlannedNodeMeta, resolvePlannedNodeArgs } from '../agent/plannedNodeMeta'
 import { partitionConnectableEdges, type PlannedEdgeLike } from '../agent/referenceEdgeCapability'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { evaluateGate } from '../agent/gate'
@@ -40,6 +40,23 @@ import { AttachmentRail } from '../../ai/composer/AttachmentRail'
 import { AutoGrowTextarea } from '../../ai/composer/AutoGrowTextarea'
 import { COMPOSER_ATTACHMENT_ACCEPT, useComposerAttachments } from '../../ai/composer/useComposerAttachments'
 import type { ComposerAttachment } from '../../ai/composer/composerAttachmentTypes'
+import { getDesktopBridge } from '../../../desktop/bridge'
+import { toast } from '../../../ui/toast'
+import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
+import {
+  buildEvenlySpacedFrameTimes,
+  resolveVideoDurationSeconds,
+} from '../nodes/videoKeyframeInspectorModel'
+import {
+  canvasSkillAgentMessage,
+  RUN_CANVAS_SKILL_AGENT_EVENT,
+  type RunCanvasSkillAgentEventDetail,
+} from '../skills/canvasSkillEvents'
+import {
+  buildVideoDeconstructionAttachments,
+  isVideoDeconstructionSkill,
+  videoDeconstructionAgentMessage,
+} from '../skills/videoDeconstructionSkill'
 
 type PendingToolCall = {
   toolCallId: string
@@ -211,10 +228,11 @@ export default function CanvasAssistantPanel({
   type SubmitMessageOptions = {
     skill?: { key: string; name: string }
     displayMessage?: string
+    attachments?: ComposerAttachment[]
   }
 
   const submitAgentMessage = React.useCallback((text: string, options: SubmitMessageOptions = {}) => {
-    const readyAttachments = attachments.filter((item) => item.status === 'ready' && item.url)
+    const readyAttachments = (options.attachments ?? attachments).filter((item) => item.status === 'ready' && item.url)
     if ((!text && !readyAttachments.length) || busy) return
     setDraft('')
     clearAttachments()
@@ -295,10 +313,13 @@ export default function CanvasAssistantPanel({
           if (step.toolName !== 'create_canvas_nodes' || !Array.isArray(args.nodes)) continue
           for (const node of args.nodes as Record<string, unknown>[]) {
             if (node && typeof node === 'object' && typeof node.clientId === 'string') {
+              const meta = typeof node.modelKey === 'string'
+                ? buildPlannedNodeMeta(node, entryByKey) ?? { modelKey: node.modelKey }
+                : {}
               plannedById.set(node.clientId, {
                 id: node.clientId,
                 kind: node.kind,
-                meta: typeof node.modelKey === 'string' ? { modelKey: node.modelKey } : {},
+                meta,
               } as GenerationCanvasNode)
             }
           }
@@ -518,6 +539,64 @@ export default function CanvasAssistantPanel({
     window.addEventListener(FIXATION_PLANNING_EVENT, handler as EventListener)
     return () => window.removeEventListener(FIXATION_PLANNING_EVENT, handler as EventListener)
   }, [setCollapsed, submitAgentMessage])
+
+  React.useEffect(() => {
+    const handler = (event: Event): void => {
+      const detail = (event as CustomEvent<RunCanvasSkillAgentEventDetail>).detail
+      if (!detail?.skill?.skillKey || !detail.skill.label || !detail.skillNodeId) return
+      setCollapsed(false)
+      if (!isVideoDeconstructionSkill(detail.skill.skillKey)) {
+        submitAgentMessage(canvasSkillAgentMessage(detail), {
+          skill: { key: detail.skill.skillKey, name: detail.skill.label },
+          displayMessage: `使用技能：${detail.skill.label}`,
+        })
+        return
+      }
+      void (async () => {
+        const source = detail.sourceNodeIds
+          .map((id) => nodes.find((node) => node.id === id))
+          .find((node) => node?.result?.type === 'video' && node.result.url)
+        if (!source || source.result?.type !== 'video' || !source.result.url) {
+          toast('视频拆解需要先连接一个已有结果的视频节点', 'warning')
+          return
+        }
+        const projectId = getActiveWorkbenchProjectId()
+        const desktop = getDesktopBridge()
+        if (!projectId || !desktop?.video?.extractFrames) {
+          toast('视频拆解需要已保存的桌面端项目', 'error')
+          return
+        }
+        let duration = resolveVideoDurationSeconds(source)
+        if (!duration && desktop.assets.inspectVideo) {
+          const inspection = await desktop.assets.inspectVideo({ url: source.result.url })
+          duration = inspection.metadata?.durationSeconds ?? null
+        }
+        if (!duration) {
+          toast('无法读取视频时长，请先播放一次视频后重试', 'error')
+          return
+        }
+        toast('正在为 Agent 抽取 8 张时序关键帧', 'info')
+        try {
+          const extracted = await desktop.video.extractFrames({
+            videoUrl: source.result.url,
+            projectId,
+            times: buildEvenlySpacedFrameTimes(duration, 8),
+          })
+          const frames = extracted.frames.filter((frame) => frame.url)
+          if (!frames.length) throw new Error('没有取得有效关键帧')
+          submitAgentMessage(videoDeconstructionAgentMessage(detail, frames), {
+            skill: { key: detail.skill.skillKey, name: detail.skill.label },
+            displayMessage: `使用技能：${detail.skill.label}\n已连接：${source.title}`,
+            attachments: buildVideoDeconstructionAttachments(frames),
+          })
+        } catch (error) {
+          toast(`视频拆解准备失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+        }
+      })()
+    }
+    window.addEventListener(RUN_CANVAS_SKILL_AGENT_EVENT, handler)
+    return () => window.removeEventListener(RUN_CANVAS_SKILL_AGENT_EVENT, handler)
+  }, [nodes, setCollapsed, submitAgentMessage])
 
   const handleNewConversation = React.useCallback(() => {
     pendingByIdRef.current.clear()

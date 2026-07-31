@@ -7,7 +7,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MODEL_ARCHETYPES } from "../src/config/modelArchetypes/index.ts";
+import {
+  MODEL_ARCHETYPES,
+  specializeArchetypeForVariant,
+} from "../src/config/modelArchetypes/index.ts";
 
 type WireDefaults = Record<string, Record<string, Record<string, Record<string, unknown>>>>;
 
@@ -20,7 +23,10 @@ export function buildArchetypeWireDefaults(): WireDefaults {
   for (const arch of MODEL_ARCHETYPES) {
     const defaultVariant =
       arch.variants && arch.defaultVariantId ? arch.variants.find((v) => v.id === arch.defaultVariantId) : undefined;
-    for (const mode of arch.modes) {
+    const effectiveArch = defaultVariant
+      ? specializeArchetypeForVariant(arch, defaultVariant.id)
+      : arch;
+    for (const mode of effectiveArch.modes) {
       const taskKind = mode.transportTaskKind ?? arch.transportTaskKind;
       if (!taskKind) continue;
       // body 的 model 字段：mode.modelEnum 优先，否则档案默认变体的 modelKey（headless 不选变体=默认变体）。

@@ -55,6 +55,28 @@ describe('run_generation_batch — S6b 受理语义', () => {
     expect(receipt.acceptedNodeIds[0]).toBe(ref.id)
   })
 
+  it('已有结果的批量节点受理为新版本，不覆盖原节点', async () => {
+    const source = useGenerationCanvasStore.getState().addNode({ kind: 'image', title: 'V1', prompt: 'v1' })
+    useGenerationCanvasStore.getState().addNodeResult(source.id, {
+      id: 'result-v1',
+      type: 'image',
+      url: 'https://example.com/v1.png',
+      createdAt: 1,
+    })
+
+    const receipt = (await applyCanvasToolCall('run_generation_batch', {
+      nodeIds: [source.id],
+    })) as { acceptedNodeIds: string[]; versionedFrom: Record<string, string> }
+    const variantId = receipt.versionedFrom[source.id]
+
+    expect(variantId).toBeTruthy()
+    expect(receipt.acceptedNodeIds).toEqual([variantId])
+    const state = useGenerationCanvasStore.getState()
+    expect(state.nodes.find((node) => node.id === source.id)?.result?.id).toBe('result-v1')
+    expect(state.nodes.find((node) => node.id === variantId)?.regeneratedFrom).toBe(source.id)
+    expect(state.nodes.find((node) => node.id === variantId)?.result).toBeUndefined()
+  })
+
   it('全部不存在 → 抛 node_not_found(gate 之外的执行层兜底)', async () => {
     await expect(applyCanvasToolCall('run_generation_batch', { nodeIds: ['ghost-1'] })).rejects.toThrow('node_not_found')
   })

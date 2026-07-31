@@ -1,7 +1,7 @@
 // 渲染层要的 skill 列表 DTO（主进程组装）。按「路 A」：这里只把 manifest 原样给渲染层，
 // 能力比对（缺哪个 provider）放渲染层用 getCatalogHealth 做，catalog 一变实时刷新、不耦合。
 import { deriveSkillNeeds } from "./skillCapability";
-import type { SkillProviderKind } from "./skillManifestSchema";
+import type { SkillInput, SkillProviderKind } from "./skillManifestSchema";
 import { readSkillRecords } from "./skillStore";
 
 export type SkillListItem = {
@@ -11,6 +11,17 @@ export type SkillListItem = {
   label: string;
   description: string | null;
   author: string | null;
+  /** Agent tool whitelist retained in the renderer snapshot for canvas execution. */
+  tools: string[];
+  /** Declared inputs shown on the canvas skill node. */
+  inputs: SkillInput[];
+  /** Full stage snapshots; stageLabels remains for compact legacy cards. */
+  stages: Array<{
+    id: string;
+    goal: string;
+    tools: string[];
+    pause: boolean;
+  }>;
   /** 多段 playbook 的阶段标签（卡片/阶段条展示用；单段 skill 为空）。 */
   stageLabels: string[];
   /** 这个 skill 是不是多段 playbook（有 stages）。 */
@@ -22,6 +33,11 @@ export type SkillListItem = {
   neededProviders: SkillProviderKind[];
   /** manifest 解析失败的人话原因（加载期诊断）；正常为 null。 */
   manifestError: string | null;
+  /** Present only when this skill opts into first-class canvas-node usage. */
+  canvas: {
+    recipeIds: string[];
+    defaultRecipeId: string | null;
+  } | null;
   /** 来源：'user'=可写用户目录（可删/可导出）；'builtin'=安装随附（只读、禁删）。 */
   origin: "builtin" | "user";
 };
@@ -41,10 +57,24 @@ export function listSkillsForRenderer(): SkillListItem[] {
       label: r.manifest?.label || r.name,
       description: r.manifest?.description ?? null,
       author: r.manifest?.author ?? null,
+      tools: [...(r.manifest?.tools ?? [])],
+      inputs: [...(r.manifest?.inputs ?? [])],
+      stages: (r.manifest?.stages ?? []).map((stage) => ({
+        id: stage.id,
+        goal: stage.goal,
+        tools: [...stage.tools],
+        pause: stage.pause !== false,
+      })),
       stageLabels: (r.manifest?.stages ?? []).map((s) => s.goal),
       isPlaybook: (r.manifest?.stages ?? []).length > 0,
       neededProviders: needs?.providers ?? [],
       manifestError: r.manifestError ?? null,
+      canvas: r.manifest?.canvas
+        ? {
+            recipeIds: [...r.manifest.canvas.recipeIds],
+            defaultRecipeId: r.manifest.canvas.defaultRecipeId ?? null,
+          }
+        : null,
       origin: r.origin,
     };
   });

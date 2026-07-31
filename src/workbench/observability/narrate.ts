@@ -12,12 +12,14 @@ export type GenerationProgressPhase =
   | 'generating' //  模型生成中(轮询进行时)
   | 'still-generating' // 超过常规时长仍在生成(软超时后,后台继续等结果)
   | 'retrying' //    网络波动重试中
+  | 'rate-limited' // 等待服务商的下一次可提交窗口
   | 'finalizing' //  正在保存结果(本地化/归一)
 
 export type ProgressNarrationContext = {
   elapsedMs?: number
   attempt?: number
   maxAttempts?: number
+  waitMs?: number
 }
 
 const NARRATE_PROGRESS: Record<GenerationProgressPhase, (ctx: ProgressNarrationContext) => string> = {
@@ -36,6 +38,10 @@ const NARRATE_PROGRESS: Record<GenerationProgressPhase, (ctx: ProgressNarrationC
       : '仍在生成 · 已超常规时长',
   retrying: (ctx) =>
     ctx.attempt && ctx.maxAttempts ? `网络波动,正在重试(${ctx.attempt}/${ctx.maxAttempts})` : '网络波动,正在重试',
+  'rate-limited': (ctx) =>
+    typeof ctx.waitMs === 'number'
+      ? `等待服务商频率窗口,约 ${Math.max(1, Math.ceil(ctx.waitMs / 1000))} 秒`
+      : '等待服务商频率窗口',
   finalizing: () => '正在保存结果',
 }
 
@@ -60,6 +66,7 @@ export type GenerationErrorKind =
   | 'account-gate'
   | 'content-policy'
   | 'asset-fetch'
+  | 'web-bridge'
   | 'server'
   | 'input'
   | 'unknown'
@@ -88,6 +95,10 @@ const NARRATE_ERROR: Record<GenerationErrorKind, { reason: string; hint: string 
   'asset-fetch': {
     reason: '参考图下载失败',
     hint: '服务商无法下载临时参考图。请点“重试”，Nomi 会重新上传图片；若仍失败，请换一张公网图片或配置 KIE 图片中转。',
+  },
+  'web-bridge': {
+    reason: '即梦网页桥接失败',
+    hint: '请保持 Nomi 的即梦页面和扩展运行器在线后重试。若官网已经出图，可在即梦页打开对应结果后重新拉取。',
   },
   server: { reason: '服务商故障', hint: '服务商服务异常，请稍后重试，或换一个模型。' },
   input: { reason: '参数不被接受', hint: '服务商拒绝了请求参数，请检查比例/尺寸等设置，或换一个模型。' },

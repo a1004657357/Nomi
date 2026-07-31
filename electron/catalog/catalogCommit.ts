@@ -498,7 +498,15 @@ export async function testModelCatalogMapping(id: string, payload: unknown): Pro
       request: preview,
     };
   }
-  const executed = await executeProfileOperation({ vendor, model, apiKey, request, operation, providerMeta });
+  const executed = await executeProfileOperation({
+    vendor,
+    model,
+    apiKey,
+    request,
+    operation,
+    providerMeta,
+    enforceSubmissionRateLimit: stage === "create",
+  });
   const normalized = await buildProfileTaskResult({
     response: executed.response,
     mapping,
@@ -506,6 +514,7 @@ export async function testModelCatalogMapping(id: string, payload: unknown): Pro
     request,
     taskIdFallback: firstString(raw?.taskId, `test-${Date.now()}`),
     wantedKind,
+    operationTimings: executed.timings,
   });
   return {
     mappingId: id,

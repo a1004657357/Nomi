@@ -8,6 +8,7 @@ import type { ModelParameterControl } from "../../../config/modelCatalogMeta";
 
 export type PlannedNodeModelInput = {
   modelKey?: unknown;
+  variantId?: unknown;
   modeId?: unknown;
   params?: unknown;
 };
@@ -40,16 +41,27 @@ export function buildPlannedNodeMeta(
   // 模型不在可用清单 → 不写模型 meta，回退原自动选（避开 effect3 供应商断开自愈覆盖）。
   if (!entry) return undefined;
 
+  const wantVariantId = typeof planned.variantId === "string" ? planned.variantId.trim() : "";
+  const variants = entry.variants ?? [];
+  const variant =
+    variants.find((candidate) => candidate.variantId === wantVariantId) ??
+    variants.find((candidate) => candidate.variantId === entry.defaultVariantId) ??
+    variants[0];
+  const modes = variant?.modes.length ? variant.modes : entry.modes;
   const wantModeId = typeof planned.modeId === "string" ? planned.modeId.trim() : "";
   const mode =
-    entry.modes.find((m) => m.modeId === wantModeId) ??
-    entry.modes.find((m) => m.modeId === entry.defaultModeId) ??
-    entry.modes[0];
+    modes.find((candidate) => candidate.modeId === wantModeId) ??
+    modes.find((candidate) => candidate.modeId === entry.defaultModeId) ??
+    modes[0];
 
   const meta: Record<string, unknown> = {
     modelKey,
     modelLabel: entry.label,
-    archetype: { id: entry.archetypeId, modeId: mode?.modeId ?? entry.defaultModeId },
+    archetype: {
+      id: entry.archetypeId,
+      modeId: mode?.modeId ?? entry.defaultModeId,
+      ...(variant ? { variantId: variant.variantId } : {}),
+    },
   };
   if (entry.vendor) meta.modelVendor = entry.vendor;
   if (!mode) return meta;
@@ -95,17 +107,18 @@ export function resolvePlannedNodeArgs(
   if (typeof node.modelKey !== "string" || !node.modelKey.trim()) return node;
   const meta = buildPlannedNodeMeta(node as PlannedNodeModelInput, entryByKey);
   if (!meta) {
-    const { modelKey: _mk, modeId: _md, params: _p, ...rest } = node;
+    const { modelKey: _mk, variantId: _variant, modeId: _md, params: _p, ...rest } = node;
     return rest;
   }
   const params: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(meta)) {
     if (!RESERVED_META_KEYS.has(key)) params[key] = value;
   }
-  const archetype = meta.archetype as { modeId?: string } | undefined;
+  const archetype = meta.archetype as { modeId?: string; variantId?: string } | undefined;
   return {
     ...node,
     modelKey: meta.modelKey,
+    ...(archetype?.variantId ? { variantId: archetype.variantId } : {}),
     ...(archetype?.modeId ? { modeId: archetype.modeId } : {}),
     params,
   };

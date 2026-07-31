@@ -366,7 +366,7 @@ describe("applyBuiltinSeeds", () => {
     expect(state.mappings.some((mp) => mp.vendorKey === "codex")).toBe(false);
   });
 
-  it("即梦 Web：fresh seed 播一个免 key 的本地 Seedance 视频入口，复用即梦档案但不造 HTTP mapping", () => {
+  it("即梦 Web：fresh seed 同时播图片与 Seedance 视频入口，均走本地桥且不造 HTTP mapping", () => {
     const { state } = applyBuiltinSeeds(emptyCatalog(), NOW);
     const vendor = state.vendors.find((v) => v.key === "jimeng-web");
     expect(vendor).toMatchObject({
@@ -378,9 +378,43 @@ describe("applyBuiltinSeeds", () => {
 
     const model = state.models.find((m) => m.vendorKey === "jimeng-web" && m.modelKey === "jimeng-web-seedance-2.0");
     expect(model).toMatchObject({ kind: "video", enabled: true, labelZh: "即梦 Web Seedance 2.0（实验）" });
-    expect(model?.meta).toMatchObject({ archetypeId: "dreamina-seedance-2" });
+    expect(model?.meta).toMatchObject({ archetypeId: "jimeng-web-seedance-2" });
+
+    const imageModel = state.models.find(
+      (m) => m.vendorKey === "jimeng-web" && m.modelKey === "jimeng-web-image",
+    );
+    expect(imageModel).toMatchObject({ kind: "image", enabled: true, labelZh: "即梦 Web 图片（实验）" });
+    expect(imageModel?.meta).toMatchObject({ archetypeId: "jimeng-web-image" });
 
     expect(state.mappings.some((mp) => mp.vendorKey === "jimeng-web")).toBe(false);
+  });
+
+  it("即梦 Web：旧装机的共享 3456 地址迁移到 Nomi 专用 3457，但保留用户自定义地址", () => {
+    const stale = applyBuiltinSeeds(emptyCatalog(), NOW).state;
+    const vendorIndex = stale.vendors.findIndex((v) => v.key === "jimeng-web");
+    stale.vendors[vendorIndex] = {
+      ...stale.vendors[vendorIndex],
+      baseUrlHint: "http://127.0.0.1:3456",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const migrated = applyBuiltinSeeds(stale, "2026-07-18T00:00:00.000Z");
+    expect(migrated.changed).toBe(true);
+    expect(migrated.state.vendors.find((v) => v.key === "jimeng-web")?.baseUrlHint).toBe(
+      "http://127.0.0.1:3457",
+    );
+
+    const custom = {
+      ...migrated.state,
+      vendors: migrated.state.vendors.map((vendor) =>
+        vendor.key === "jimeng-web" ? { ...vendor, baseUrlHint: "http://127.0.0.1:4567" } : vendor,
+      ),
+    };
+    const preserved = applyBuiltinSeeds(custom, "2026-07-18T00:01:00.000Z");
+    expect(preserved.changed).toBe(false);
+    expect(preserved.state.vendors.find((v) => v.key === "jimeng-web")?.baseUrlHint).toBe(
+      "http://127.0.0.1:4567",
+    );
   });
 
   it("火山方舟：fresh seed 同时播 Seedream 图片与 Seedance 视频，Seedance 带异步 query", () => {

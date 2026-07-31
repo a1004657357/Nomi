@@ -87,4 +87,50 @@ describe('VIBING Director Agent tools', () => {
       template: 'coffee_two_person_conversation',
     }))
   })
+
+  it('requires an existing-target reference shape for target camera framing', () => {
+    const missingTarget = parseVibingDirectorPlanRequest({
+      directorNodeId: 'director-1',
+      summary: '让相机跟随角色。',
+      plan: { mode: 'amend', actions: [{ op: 'set_camera', framing: 'target' }] },
+    })
+    const target = parseVibingDirectorPlanRequest({
+      directorNodeId: 'director-1',
+      summary: '让相机跟随角色。',
+      plan: { mode: 'amend', actions: [{ op: 'set_camera', framing: 'target', targetRef: 'actor-A' }] },
+    })
+
+    expect(missingTarget).toBeNull()
+    expect(target?.plan.actions[0]).toEqual(expect.objectContaining({
+      op: 'set_camera',
+      framing: 'target',
+      targetRef: 'actor-A',
+    }))
+  })
+
+  it('accepts declared spatial relations and rejects incomplete distance constraints', () => {
+    const valid = parseVibingDirectorPlanRequest({
+      directorNodeId: 'director-1',
+      summary: '让两位角色保持对视并隔桌而坐。',
+      plan: {
+        mode: 'amend',
+        actions: [
+          { op: 'set_relation', id: 'actors-facing', kind: 'facing', subjectRef: 'actor-A', targetRef: 'actor-B', mutual: true },
+          { op: 'set_relation', id: 'actors-distance', kind: 'distance', subjectRef: 'actor-A', targetRef: 'actor-B', distance: 2.5 },
+          { op: 'set_relation', id: 'chair-follows-actor', kind: 'offset', subjectRef: 'chair-A', targetRef: 'actor-A' },
+        ],
+      },
+    })
+    const invalid = parseVibingDirectorPlanRequest({
+      directorNodeId: 'director-1',
+      summary: '设置距离。',
+      plan: {
+        mode: 'amend',
+        actions: [{ op: 'set_relation', id: 'actors-distance', kind: 'distance', subjectRef: 'actor-A', targetRef: 'actor-B' }],
+      },
+    })
+
+    expect(valid?.plan.actions).toHaveLength(3)
+    expect(invalid).toBeNull()
+  })
 })

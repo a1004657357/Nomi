@@ -15,4 +15,16 @@ describe('buildCustomTextModelUpsert', () => {
     expect(buildCustomTextModelUpsert('relay', '  ')).toBeNull()
     expect(buildCustomTextModelUpsert(' ', 'glm-5.2')).toBeNull()
   })
+
+  it('can explicitly declare image input support for visual review', () => {
+    expect(buildCustomTextModelUpsert('relay', 'qwen-vl-plus', {
+      supportsImageInput: true,
+    })).toEqual({
+      vendorKey: 'relay',
+      modelKey: 'qwen-vl-plus',
+      kind: 'text',
+      enabled: true,
+      meta: { supportsImageInput: true },
+    })
+  })
 })

@@ -13,7 +13,7 @@
 // 自己组装请求体（findExecutableModel / requestPipeline / 资产本地化）。本核只构造高层 TaskRequest。
 import crypto from 'node:crypto'
 import { listProjects, createProject, readProject } from '../projects/repository'
-import { readCatalog } from '../catalog/catalogStore'
+import { isModelCatalogVendorExecutable, readCatalog } from '../catalog/catalogStore'
 import {
   addNodes,
   connectNodes,
@@ -194,15 +194,19 @@ export function createNamedProject(name?: string): { id: string; name: string } 
   return { id: record.id, name: record.name }
 }
 
-/** 列出 catalog 里可执行的模型（enabled），供外部 agent 选型。 */
+/** 列出 catalog 里供应商已连接且模型已启用的可执行模型，供外部 agent 选型。 */
 export function listAvailableModels(): Array<{ vendor: string; vendorName: string; modelKey: string; kind: string; label: string }> {
   const state = readCatalog()
-  const vendorName = new Map(state.vendors.map((vendor) => [vendor.key, vendor.name] as const))
+  const executableVendors = new Map(
+    state.vendors
+      .filter(isModelCatalogVendorExecutable)
+      .map((vendor) => [vendor.key, vendor.name] as const),
+  )
   return state.models
-    .filter((model) => model.enabled)
+    .filter((model) => model.enabled && executableVendors.has(model.vendorKey))
     .map((model) => ({
       vendor: model.vendorKey,
-      vendorName: vendorName.get(model.vendorKey) || model.vendorKey,
+      vendorName: executableVendors.get(model.vendorKey) || model.vendorKey,
       modelKey: model.modelKey,
       kind: model.kind,
       label: model.labelZh || model.modelKey,

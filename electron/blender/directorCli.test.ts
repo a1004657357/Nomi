@@ -15,6 +15,7 @@ vi.mock("../projects/repository", () => ({ projectDirById: mocks.projectDirById 
 vi.mock("../runtime", () => ({ writeAsset: mocks.writeAsset }));
 
 import {
+  activeDirectorBlenderRenderCount,
   buildDirectorBridgeArgs,
   parseDirectorBridgeOutput,
   runDirectorBlenderRender,
@@ -40,8 +41,49 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  expect(activeDirectorBlenderRenderCount()).toBe(0);
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
+
+function minimalGlb(): Buffer {
+  const binary = Buffer.alloc(36);
+  [
+    [0, 0, 0],
+    [1, 0, 0],
+    [0, 1, 0],
+  ].flat().forEach((value, index) => binary.writeFloatLE(value, index * 4));
+  const source = Buffer.from(JSON.stringify({
+    asset: { version: "2.0" },
+    buffers: [{ byteLength: binary.length }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: binary.length }],
+    accessors: [{
+      bufferView: 0,
+      componentType: 5126,
+      count: 3,
+      type: "VEC3",
+      min: [0, 0, 0],
+      max: [1, 1, 0],
+    }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    nodes: [{ mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+    scene: 0,
+  }), "utf8");
+  const json = Buffer.concat([source, Buffer.alloc((4 - (source.length % 4)) % 4, 0x20)]);
+  const body = Buffer.alloc(8 + json.length + 8 + binary.length);
+  body.writeUInt32LE(json.length, 0);
+  body.writeUInt32LE(0x4e4f534a, 4);
+  json.copy(body, 8);
+  const binaryHeader = 8 + json.length;
+  body.writeUInt32LE(binary.length, binaryHeader);
+  body.writeUInt32LE(0x004e4942, binaryHeader + 4);
+  binary.copy(body, binaryHeader + 8);
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(header.length + body.length, 8);
+  return Buffer.concat([header, body]);
+}
 
 describe("director Blender CLI bridge", () => {
   it("builds fixed module arguments rather than a shell or arbitrary bpy input", () => {
@@ -98,7 +140,7 @@ describe("director Blender CLI bridge", () => {
     };
     fs.writeFileSync(artifacts.preview, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     fs.writeFileSync(artifacts.blend, "BLENDER");
-    fs.writeFileSync(artifacts.model, Buffer.from("glTF"));
+    fs.writeFileSync(artifacts.model, minimalGlb());
     mocks.spawn.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter;
@@ -131,6 +173,9 @@ describe("director Blender CLI bridge", () => {
     expect(args).toEqual(expect.arrayContaining(["-m", "cli_anything.blender.bridge", "--project-dir", projectDir]));
     expect(options).toMatchObject({ shell: false, windowsHide: true });
     expect(mocks.writeAsset).toHaveBeenCalledTimes(3);
+    expect(mocks.writeAsset.mock.calls.find((call) => call[2] === "blender-director-scene.glb")?.[4]).toMatchObject({
+      model3dValidation: { meshCount: 1, primitiveCount: 1 },
+    });
     expect(result).toMatchObject({
       jobId: "director-job",
       blenderVersion: "4.0.1",
