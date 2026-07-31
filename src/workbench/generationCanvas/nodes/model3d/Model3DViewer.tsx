@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useThree } from '@react-three/fiber'
 import { FencedCanvas } from '../fencedCanvas'
 import { Bounds, OrbitControls, useGLTF } from '@react-three/drei'
@@ -239,6 +240,7 @@ const Model3DViewer = React.forwardRef<Model3DViewerHandle, Model3DViewerProps>(
   cameraState,
   onCameraStateChange,
 }, forwardedRef): JSX.Element {
+  const { t } = useTranslation()
   const [modelRadius, setModelRadius] = React.useState<number>()
   const captureCallbackRef = React.useRef<Model3DCaptureCallback | null>(null)
   React.useImperativeHandle(forwardedRef, () => ({

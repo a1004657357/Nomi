@@ -44,6 +44,7 @@ import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfi
 import { registerLocalProtocol } from "./protocol/localProtocol";
 import { installWindowCloseConfirmation } from "./windowCloseConfirmation";
 import { registerDesktopIntegrationIpc } from "./desktopIntegrationIpc";
+import { registerI18nIpc, setDesktopLocale } from "./i18n";
 
 // 尽早安装：捕获引导阶段起的 uncaughtException / unhandledRejection，落盘到 app logs（P0-8）。
 installCrashHandlers();
@@ -434,6 +435,7 @@ async function runTaskIpcGuard<T>(payload: unknown, thunk: () => Promise<T>): Pr
 }
 
 function registerIpc(): void {
+  registerI18nIpc();
   registerDesktopIntegrationIpc({
     setCancelBlenderRendersOnQuit: (cancel) => { cancelBlenderRendersOnQuit = cancel; },
   });
@@ -529,10 +531,6 @@ function registerIpc(): void {
     const { importRemoteAsset } = await loadRuntimeModule();
     return importRemoteAsset(payload);
   });
-  ipcMain.handle("nomi:assets:import-file", async (_event, payload) => {
-    const { importLocalFile } = await import("./assets/localFileImport");
-    return importLocalFile(payload);
-  });
   ipcMain.handle("nomi:assets:import-local-path", async (_event, payload) => {
     const { importLocalPath } = await import("./assets/localFileImport");
     return importLocalPath(payload);
@@ -549,10 +547,7 @@ function registerIpc(): void {
     const { inspectProjectVideoAsset } = await import("./assets/projectAssetStore");
     return inspectProjectVideoAsset(payload);
   });
-  ipcMain.handle("nomi:assets:download", async (_event, payload) => {
-    const { downloadAssetToDisk } = await import("./assets/downloadAsset");
-    return downloadAssetToDisk(payload);
-  });
+  registerAssetsIpc();
   ipcMain.handle("nomi:assets:archive-output-collection", async (_event, payload) => {
     const { archiveOutputCollection } = await import("./assets/archiveOutputCollection");
     return archiveOutputCollection(payload);

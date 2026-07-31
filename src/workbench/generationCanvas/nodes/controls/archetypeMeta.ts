@@ -411,10 +411,13 @@ export function ensureArchetypeNodeMeta(
   const stored = readArchetypeNodeMeta(meta)
   // 已是该档案：若有变体但 variantId 缺/失效 → 补默认变体（旧 meta 升级）；否则幂等 null。
   if (stored?.id === archetype.id) {
-    const needsVariant = (archetype.variants?.length ?? 0) > 0
-      && !archetype.variants!.some((v) => v.id === stored.variantId)
-    if (!needsVariant) return null
-    return applyArchetypeVariantSwitch(meta, archetype, defaultVariantIdOf(archetype, stored.modeId))
+    const canonicalVariantId = canonicalVariantIdOf(archetype, stored.variantId)
+    if (canonicalVariantId && canonicalVariantId === stored.variantId) return null
+    return applyArchetypeVariantSwitch(
+      meta,
+      archetype,
+      canonicalVariantId || defaultVariantIdOf(archetype, stored.modeId),
+    )
   }
   return applyArchetypeModeSwitch(meta, archetype, archetype.defaultModeId)
 }

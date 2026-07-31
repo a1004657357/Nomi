@@ -4,6 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeAsset } from "../runtime";
 import { contentTypeFromPath, extensionFromMime } from "./assetPaths";
+import { parseLocalAssetUrl } from "../protocol/localProtocol";
+import {
+  ensurePlayableVideoBytes,
+  playableMp4FileName,
+  transcodeFileToPlayableMp4IfNeeded,
+} from "./videoImportNormalize";
 import type { JsonRecord } from "../jsonUtils";
 
 function bytesFromPayload(value: unknown): Buffer {

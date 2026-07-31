@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconBrandBlender, IconCube, IconMaximize, IconMovie, IconPlayerStopFilled } from '@tabler/icons-react'
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
 import { cn } from '../../../utils/cn'
@@ -54,6 +55,12 @@ function imageNodeSize(width: number, height: number): { width: number; height: 
 
 function readScene3DState(node: GenerationCanvasNode): Scene3DState {
   return normalizeScene3DState(node.meta?.scene3dState)
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized || null
 }
 
 type BlenderOutputSource = 'blender' | 'blender-director'
@@ -261,10 +268,10 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
         },
       },
     })
-    // 闭环可见性（#1）：标记本次录过 take；真正的画布 fit 推迟到关闭编辑器后（handleCloseFullscreen），
-    // 因为此刻全屏编辑器盖着画布、fit 是白跑。关掉后画布可见再 fit，把新「录制走位参考」节点带进视口。
-    recordedTakeRef.current = true
-  }, [addNode, height, node.categoryId, node.id, node.position.x, node.position.y, updateNode])
+    // 全屏编辑器关闭后再 fit 并选中新节点，确保用户能立即看到录制结果。
+    pendingFitNodeIdRef.current = takeNode.id
+    return takeNode.id
+  }, [addNode, height, node.categoryId, node.id, node.position.x, node.position.y, t, updateNode])
 
   const handleScreenshot = React.useCallback(async (capture: Scene3DCaptureResult) => {
     try {

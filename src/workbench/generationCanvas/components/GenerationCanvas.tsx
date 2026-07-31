@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconCopy, IconFileText, IconFolderShare, IconMovie, IconPlayerPlay, IconTimeline } from '@tabler/icons-react'
 import { WorkbenchIconButton } from '../../../design'
 import { toast } from '../../../ui/toast'
@@ -42,6 +43,7 @@ import { useNodeAppearTracking } from './useNodeAppearTracking'
 import { useTidyCanvas } from './useTidyCanvas'
 import {
   centerNodeOffset,
+  clampNumber,
   getCanvasGroupBoxes,
   getNodeSize,
   getSelectedBounds,
@@ -93,6 +95,7 @@ type GenerationCanvasProps = {
 }
 
 export default function GenerationCanvas({ readOnly = false, projectName }: GenerationCanvasProps): JSX.Element {
+  const { t } = useTranslation()
   const [performancePreference, setPerformancePreference] = React.useState<CanvasPerformancePreference>(
     readCanvasPerformancePreference,
   )
@@ -244,6 +247,18 @@ export default function GenerationCanvas({ readOnly = false, projectName }: Gene
     selectNodesInRect,
   })
   const { setViewportTransform, animateViewportTo, zoomAtStagePoint } = pointer
+  const handleZoomTo = React.useCallback((nextZoom: number) => {
+    const rect = stageRef.current?.getBoundingClientRect()
+    if (!rect) {
+      setViewportTransform(nextZoom, offsetRef.current)
+      return
+    }
+    zoomAtStagePoint(nextZoom, { x: rect.width / 2, y: rect.height / 2 })
+  }, [offsetRef, setViewportTransform, stageRef, zoomAtStagePoint])
+  const handleZoomByStep = React.useCallback((direction: -1 | 1) => {
+    const factor = direction > 0 ? 1.1 : 1 / 1.1
+    handleZoomTo(clampNumber((zoomRef.current || 1) * factor, 0.2, 3))
+  }, [handleZoomTo, zoomRef])
   const { handleGroupFramePointerDown, handleSelectionBoundsPointerDown } = useCanvasSelectionDrag({
     readOnly,
     selectedNodeCount: selectedNodeIds.length,

@@ -182,6 +182,14 @@ export const zhGenerationCommon = {
         hint: '这家中转给你的令牌分组没开 OpenAI 生图端点（/v1/images/*）。Nomi 已自动改走聊天路由出图；若仍失败，说明分组连聊天出图也没开——去中转控制台给令牌换分组或开通生图，或换一个模型。',
       },
       contentPolicy: { reason: '提示词被拦截', hint: '提示词触发了安全策略，请修改后重试。' },
+      assetFetch: {
+        reason: '参考图下载失败',
+        hint: '服务商无法下载临时参考图。请重试以重新上传；若仍失败，请换一张可访问的图片。',
+      },
+      webBridge: {
+        reason: '即梦网页桥接失败',
+        hint: '请保持 Nomi 的即梦页面和扩展运行器在线。若官网已出图，请打开对应结果后重新拉取。',
+      },
       server: { reason: '服务商故障', hint: '服务商服务异常，请稍后重试，或换一个模型。' },
       input: {
         reason: '参数不被接受',
@@ -826,6 +834,7 @@ export const zhGenerationCommon = {
     noText: '模型任务完成但没有返回文本内容',
     noVideoUrl: '模型任务完成但没有返回视频地址',
     noAudio: '配音生成完成但没有返回音频',
+    noModel3dUrl: '3D 模型任务完成但没有返回 GLB 模型地址',
     noImageUrl: '模型任务完成但没有返回图片地址',
     failedAria: '生成失败：{{reason}}',
     providerMessage: '服务商原话：',
@@ -852,6 +861,7 @@ export const zhGenerationCommon = {
     editPrompt: '改写它的提示词',
     deleteNode: '删除它',
     regenerateNode: '重新生成它',
+    replaceImageResult: '覆盖它的图片结果',
     addIncomingEdge: '给它接入新的参考',
     approvalRequired: '该操作需用户在确认面板批准后才能执行（自动放行路径已禁用）',
     shotTitle: '镜头 {{index}}',
@@ -1052,6 +1062,14 @@ export const enGenerationCommon = {
         hint: 'Your relay token group has no access to the OpenAI image endpoints (/v1/images/*). Nomi already retried via the chat route; if it still fails, the group lacks chat image output too — switch the token group or enable image generation in the relay console, or pick another model.',
       },
       contentPolicy: { reason: 'Prompt blocked', hint: 'The prompt triggered a safety policy. Edit it and try again.' },
+      assetFetch: {
+        reason: 'Reference image download failed',
+        hint: 'The provider could not download the reference image. Retry to upload it again, or use another accessible image.',
+      },
+      webBridge: {
+        reason: 'Jimeng web bridge failed',
+        hint: 'Keep the Jimeng page and extension runner online. If the result exists on the site, open it and import again.',
+      },
       server: {
         reason: 'Provider error',
         hint: 'The provider is unavailable. Try again later or choose another model.',
@@ -1708,6 +1726,7 @@ export const enGenerationCommon = {
     noText: 'The model task finished but returned no text content',
     noVideoUrl: 'The model task finished but returned no video URL',
     noAudio: 'Voiceover generation finished but returned no audio',
+    noModel3dUrl: 'The 3D model task finished but returned no GLB model URL',
     noImageUrl: 'The model task finished but returned no image URL',
     failedAria: 'Generation failed: {{reason}}',
     providerMessage: 'Provider message: ',
@@ -1735,6 +1754,7 @@ export const enGenerationCommon = {
     editPrompt: 'edit its prompt',
     deleteNode: 'delete it',
     regenerateNode: 'generate it again',
+    replaceImageResult: 'replace its image result',
     addIncomingEdge: 'attach a new incoming reference',
     approvalRequired: 'This operation requires approval in the confirmation panel; automatic approval is disabled.',
     shotTitle: 'Shot {{index}}',

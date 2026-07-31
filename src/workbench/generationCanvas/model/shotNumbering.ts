@@ -31,7 +31,11 @@ export function isShotNumberedNode(
   // (R13 走查抓出:道具卡吃掉「镜头 1/2」,真镜头从 3 起编,编号与方案镜号错位)。
   if (node.meta) {
     const meta = node.meta as Record<string, unknown>
-    if (meta.referenceSheet === true || meta.excludeFromShotNumbering === true) return false
+    if (
+      meta.referenceSheet === true
+      || meta.storyboardKeyframe === true
+      || meta.excludeFromShotNumbering === true
+    ) return false
   }
   return (node.categoryId ?? 'shots') === 'shots' && SHOT_NUMBERED_KINDS.has(node.kind)
 }

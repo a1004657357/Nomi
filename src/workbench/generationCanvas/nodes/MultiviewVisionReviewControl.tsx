@@ -112,7 +112,7 @@ export function MultiviewVisionReviewControl({
   if (!models.length) {
     return (
       <div className="space-y-1.5">
-        <p className="text-[10px] leading-[1.4] text-nomi-ink-60">
+        <p className="text-micro leading-[1.4] text-nomi-ink-60">
           当前没有已连接并声明支持图片输入的文本模型。
         </p>
         <button
@@ -122,7 +122,7 @@ export function MultiviewVisionReviewControl({
         >
           去模型接入
         </button>
-        {error ? <p className="text-[10px] leading-[1.4] text-workbench-danger">{error}</p> : null}
+        {error ? <p className="text-micro leading-[1.4] text-workbench-danger">{error}</p> : null}
       </div>
     )
   }
@@ -139,7 +139,7 @@ export function MultiviewVisionReviewControl({
         disabled={busy}
         onChange={(event) => setSelectedId(event.currentTarget.value)}
         className={cn(
-          'h-8 w-full rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2 text-[10px] text-nomi-ink',
+          'h-8 w-full rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2 text-micro text-nomi-ink',
           'outline-none focus:border-nomi-accent disabled:opacity-50',
         )}
       >
@@ -161,7 +161,7 @@ export function MultiviewVisionReviewControl({
           : <IconEye size={13} stroke={1.8} aria-hidden />}
         {busy ? '复核中' : '视觉模型复核'}
       </button>
-      {error ? <p className="text-[10px] leading-[1.4] text-workbench-danger">{error}</p> : null}
+      {error ? <p className="text-micro leading-[1.4] text-workbench-danger">{error}</p> : null}
     </div>
   )
 }

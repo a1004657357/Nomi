@@ -509,7 +509,7 @@ describe('图片+视频分镜（video shot + keyframe.enabled）', () => {
       defaultVideoModelKey: 'vid-model',
       defaultVideoModeId: 'vid-i2v',
     })
-    expect(anchorCount).toBe(2)
+    expect(anchorCount).toBe(3)
     const created = nodes.slice(anchorCount)
     expect(created.map((node) => [node.clientId, node.kind, node.title])).toEqual([
       ['shot-1-keyframe', 'image', '镜头 1 首帧'],

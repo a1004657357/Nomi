@@ -12,6 +12,17 @@ function invokeSync<T>(channel: string, ...args: unknown[]): T {
 
 contextBridge.exposeInMainWorld("nomiDesktop", {
   platform: process.platform,
+  i18n: {
+    setLocale: (locale: "zh-CN" | "en") => ipcRenderer.send("nomi:i18n:set-locale", locale),
+    getSystemLocale: (): string => {
+      if (process.env.NOMI_E2E === "1" && process.env.NOMI_TEST_SYSTEM_LOCALE !== "1") return "";
+      try {
+        return invokeSync<string>("nomi:i18n:get-system-locale");
+      } catch {
+        return "";
+      }
+    },
+  },
   runtime: {
     sourceRun: process.env.NOMI_SOURCE_RUN === "1",
   },
@@ -87,8 +98,10 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     importRemoteUrl: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-remote-url", payload),
     importFile: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-file", payload),
     importLocalPath: (payload: unknown) => ipcRenderer.invoke("nomi:assets:import-local-path", payload),
+    ensurePlayable: (payload: unknown) => ipcRenderer.invoke("nomi:assets:ensure-playable", payload),
     inspectModel3d: (payload: unknown) => ipcRenderer.invoke("nomi:assets:inspect-model3d", payload),
     inspectVideo: (payload: unknown) => ipcRenderer.invoke("nomi:assets:inspect-video", payload),
+    seedOnboardingDemo: (payload: unknown) => ipcRenderer.invoke("nomi:assets:seed-onboarding-demo", payload),
     download: (payload: unknown) =>
       ipcRenderer.invoke("nomi:assets:download", payload) as Promise<{
         ok: boolean;

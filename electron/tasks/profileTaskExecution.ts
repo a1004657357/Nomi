@@ -1,5 +1,10 @@
-import { localizeAssetsForVendor, resolveAssetIngestionWithFallback } from '../catalog/assetLocalization'
+import {
+  localizeAssetsForVendor,
+  resolveAssetIngestionWithFallback,
+  trustedLocalOutputOrigin,
+} from '../catalog/assetLocalization'
 import { readNomiLocalAsset, postJsonForAssetUpload, postMultipartForAssetUpload } from '../assets/localAssetFile'
+import { localizedTaskAssetFileName, probeLocalizedDurationSeconds } from '../assets/localizedAsset'
 import type { GlbValidationReport } from '../assets/glbValidation'
 import { importRemoteAsset, writeAsset } from '../assets/projectAssetStore'
 import { requestJson } from '../vendor/vendorHttp'
@@ -40,6 +45,7 @@ export async function localizeTaskAsset(
   assetUrl: string,
   type: 'image' | 'video' | 'audio' | 'model3d',
   nodeId?: string,
+  vendor?: Pick<Vendor, 'key' | 'baseUrlHint'>,
 ): Promise<TaskResult['assets'][number]> {
   const imported = (await importRemoteAsset({
     projectId,
@@ -47,7 +53,9 @@ export async function localizeTaskAsset(
     kind: 'generated',
     mediaType: type,
     ownerNodeId: nodeId || null,
-    fileName: `${type}-${Date.now()}.${type === 'image' ? 'png' : type === 'video' ? 'mp4' : type === 'model3d' ? 'glb' : 'mp3'}`,
+    fileName: localizedTaskAssetFileName(type, assetUrl),
+  }, {
+    trustedPrivateOrigin: trustedLocalOutputOrigin(vendor) || undefined,
   })) as {
     id?: string
     name?: string
@@ -62,6 +70,7 @@ export async function localizeTaskAsset(
       type,
     })
   }
+  const durationSeconds = await probeLocalizedDurationSeconds(type, imported.data?.absolutePath)
   return {
     type,
     url: String(imported.data?.url || assetUrl),
@@ -69,6 +78,7 @@ export async function localizeTaskAsset(
     assetId: imported.id || null,
     assetName: imported.name || null,
     providerUrl: /^https?:\/\//i.test(assetUrl) ? assetUrl : null,
+    ...(durationSeconds != null ? { durationSeconds } : {}),
     ...(type === 'model3d' && imported.data?.model3dValidation
       ? { model3dValidation: imported.data.model3dValidation }
       : {}),
@@ -298,7 +308,13 @@ export async function buildProfileTaskResult(input: {
     : input.wantedKind === 'model3d' ? 'model3d' : 'image'
   const assetPersistenceStartedAt = Date.now()
   const assets = input.projectId
-    ? await Promise.all(assetUrls.map((url) => localizeTaskAsset(input.projectId || '', url, type, input.nodeId)))
+    ? await Promise.all(assetUrls.map((url) => localizeTaskAsset(
+        input.projectId || '',
+        url,
+        type,
+        input.nodeId,
+        input.vendor,
+      )))
     : assetUrls.map((url) => ({ type, url, thumbnailUrl: type === 'image' ? url : null }))
   const assetPersistenceMs = Date.now() - assetPersistenceStartedAt
   const resultTimings = input.operationTimings

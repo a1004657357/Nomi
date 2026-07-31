@@ -100,7 +100,10 @@ function evaluateLock(toolName: string, args: unknown, ctx: GateContext): GateDe
   const resolve = ctx.resolveNodeId ?? ((id: string) => id)
   const record = asRecord(args)
 
-  const denyFor = (nodeId: string, actionKey: 'editPrompt' | 'deleteNode' | 'regenerateNode' | 'addIncomingEdge'): GateDecision => ({
+  const denyFor = (
+    nodeId: string,
+    actionKey: 'editPrompt' | 'deleteNode' | 'regenerateNode' | 'replaceImageResult' | 'addIncomingEdge',
+  ): GateDecision => ({
     outcome: 'deny',
     reason: i18n.t('generationCommon.agentRuntime.lockedNode', {
       node: locked.get(nodeId) || nodeId,
@@ -132,7 +135,7 @@ function evaluateLock(toolName: string, args: unknown, ctx: GateContext): GateDe
   }
   if (toolName === 'attach_external_image_to_node') {
     const nodeId = resolve(String(record.nodeId || '').trim())
-    if (locked.has(nodeId)) return denyFor(nodeId, '覆盖它的图片结果')
+    if (locked.has(nodeId)) return denyFor(nodeId, 'replaceImageResult')
     return null
   }
   if (toolName === 'connect_canvas_edges') {

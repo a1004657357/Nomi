@@ -52,6 +52,7 @@ export function SkillLibraryContent({
   className,
   componentFirst = false,
 }: SkillLibraryContentProps): JSX.Element {
+  const { t } = useTranslation()
   const [source, setSource] = React.useState<SkillLibrarySource>(
     () => defaultSkillLibrarySource({ componentFirst }),
   )
@@ -216,7 +217,7 @@ export function SkillLibraryContent({
             )}
             onClick={() => setSource(option.value)}
           >
-            {t(option.labelKey)}
+            {option.label}
           </button>
         )
       })}

@@ -267,6 +267,10 @@ export type DesktopUpdateEvent =
 
 export type DesktopBridge = {
   platform: string
+  i18n?: {
+    setLocale: (locale: 'zh-CN' | 'en') => void
+    getSystemLocale?: () => string
+  }
   runtime?: {
     /** True only when Electron was launched from a source checkout or isolated source E2E. */
     sourceRun: boolean
@@ -352,8 +356,10 @@ export type DesktopBridge = {
       contentType?: string
       ownerNodeId?: string | null
     }) => Promise<DesktopAssetDto>
+    ensurePlayable?: (payload: { url: string }) => Promise<DesktopAssetDto | null>
     inspectModel3d?: (payload: { url: string }) => Promise<DesktopModel3dValidation>
     inspectVideo?: (payload: { url: string }) => Promise<DesktopVideoQualityInspection>
+    seedOnboardingDemo?: (payload: { projectId: string }) => Promise<Record<string, string>>
     download: (payload: {
       url: string
       suggestedName?: string

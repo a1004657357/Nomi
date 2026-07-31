@@ -7,6 +7,7 @@ import {
   capabilityRecipeRunParamsSchema,
   model3dHandoffParamsSchema,
   saveCreativeResourceParamsSchema,
+  storyboardPlanParamsSchema,
   plannedEdgeSchema,
   plannedNodeSchema,
   updateStoryboardShotParamsSchema,

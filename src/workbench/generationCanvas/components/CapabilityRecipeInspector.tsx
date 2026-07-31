@@ -581,14 +581,14 @@ export function CapabilityRecipeInspector({
                         {Array.from({ length: 5 }, (_, affinity) => (
                           <span
                             key={`affinity-${affinity}`}
-                            className="grid h-5 place-items-center text-[10px] tabular-nums text-nomi-ink-40"
+                            className="grid h-5 place-items-center text-micro tabular-nums text-nomi-ink-40"
                           >
                             {affinity}
                           </span>
                         ))}
                         {Array.from({ length: 5 }, (_, energy) => (
                           <React.Fragment key={`energy-${energy}`}>
-                            <span className="grid h-7 place-items-center text-[10px] tabular-nums text-nomi-ink-40">
+                            <span className="grid h-7 place-items-center text-micro tabular-nums text-nomi-ink-40">
                               {energy}
                             </span>
                             {Array.from({ length: 5 }, (_, affinity) => {
@@ -604,7 +604,7 @@ export function CapabilityRecipeInspector({
                                   aria-pressed={selected}
                                   disabled={moodGenerationMode !== 'single'}
                                   className={cn(
-                                    'grid h-7 min-w-0 place-items-center rounded-nomi-sm border text-[10px] tabular-nums',
+                                    'grid h-7 min-w-0 place-items-center rounded-nomi-sm border text-micro tabular-nums',
                                     selected
                                       ? 'border-nomi-accent bg-nomi-accent-soft font-medium text-nomi-accent'
                                       : 'border-nomi-line bg-nomi-paper text-nomi-ink-40',

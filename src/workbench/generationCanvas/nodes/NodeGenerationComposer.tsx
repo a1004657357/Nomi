@@ -459,6 +459,18 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
   const canvasOffset = useGenerationCanvasStore((state) => state.canvasOffset)
   const anchorRef = React.useRef<HTMLDivElement>(null)
   const [flipUp, setFlipUp] = React.useState(false)
+  const [paramPanelOpen, setParamPanelOpen] = React.useState(false)
+  const [freezeShift, setFreezeShift] = React.useState({ x: 0, y: 0 })
+  const freezeBaseRef = React.useRef<{
+    edgeY: number
+    centerX: number
+    zoom: number
+    offsetX: number
+    offsetY: number
+    posX: number
+    posY: number
+    flipUp: boolean
+  } | null>(null)
   const flipUpRef = React.useRef(false)
   const naturalHeightRef = React.useRef(0)
   const placementNodeIdRef = React.useRef(node.id)
@@ -483,6 +495,39 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
     const recompute = () => {
       const stageRect = stage.getBoundingClientRect()
       const nodeRect = nodeEl.getBoundingClientRect()
+      if (paramPanelOpen) {
+        const base = freezeBaseRef.current
+        const centerX = nodeRect.left + nodeRect.width / 2
+        const sameView =
+          base &&
+          base.zoom === canvasZoom &&
+          base.offsetX === canvasOffset.x &&
+          base.offsetY === canvasOffset.y &&
+          base.posX === (node.position?.x ?? 0) &&
+          base.posY === (node.position?.y ?? 0)
+        const edgeY = (base?.flipUp ?? flipUpRef.current) ? nodeRect.top : nodeRect.bottom
+        if (!sameView) {
+          freezeBaseRef.current = {
+            edgeY,
+            centerX,
+            zoom: canvasZoom,
+            offsetX: canvasOffset.x,
+            offsetY: canvasOffset.y,
+            posX: node.position?.x ?? 0,
+            posY: node.position?.y ?? 0,
+            flipUp: flipUpRef.current,
+          }
+          setFreezeShift((previous) => previous.x || previous.y ? { x: 0, y: 0 } : previous)
+          return
+        }
+        setFreezeShift({
+          x: Math.round(base.centerX - centerX),
+          y: Math.round(base.edgeY - edgeY),
+        })
+        return
+      }
+      freezeBaseRef.current = null
+      setFreezeShift((previous) => previous.x || previous.y ? { x: 0, y: 0 } : previous)
       const spaceBelow = stageRect.bottom - nodeRect.bottom
       const spaceAbove = nodeRect.top - stageRect.top
       // 工具条也恒定屏幕尺寸（counter-scaled）→ 实测其屏幕高换回节点坐标（/zoom）+ 它距节点的 18px。
@@ -527,7 +572,7 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
     const ro = new ResizeObserver(recompute)
     ro.observe(anchor)
     return () => ro.disconnect()
-  }, [canvasZoom, canvasOffset, node.id, node.position?.x, node.position?.y, visualSize.width, visualSize.height, composerLayout.gap, composerLayout.maxHeight, node.result?.url])
+  }, [canvasZoom, canvasOffset, node.id, node.position?.x, node.position?.y, visualSize.width, visualSize.height, composerLayout.gap, composerLayout.maxHeight, node.result?.url, paramPanelOpen])
 
   // 卡宽 = **内容驱动**（用户拍板 2026-06-16，推翻 06-13 的「按最宽模型恒定宽」）：
   // 卡片 **w-max**（max-content）跟着当前模型的「底栏一行」(锁+参数+生成钮)自然撑开。参数已主次分层

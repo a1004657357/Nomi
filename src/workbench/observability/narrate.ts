@@ -80,38 +80,25 @@ export type GenerationErrorKind =
   | 'output-truncated'
   | 'unknown'
 
-const NARRATE_ERROR: Record<GenerationErrorKind, { reason: string; hint: string }> = {
-  auth: { reason: 'API Key 无效', hint: '请在「模型接入」页检查这个模型的 API Key。' },
-  balance: { reason: '余额不足', hint: '服务商账户余额不足，请到服务商充值后重试，或在「模型接入」换一个模型。' },
-  quota: { reason: '配额或限流', hint: '服务商配额已用尽或触发限流，请稍后重试，或在「模型接入」换一个模型。' },
-  'poll-timeout': { reason: '生成超时', hint: '视频生成较慢，等待超过上限。任务可能仍在进行，请稍后重新生成，或换更快的模型（如 Seedance Fast）。' },
-  network: { reason: '网络超时', hint: '网络问题，请检查网络后重试。' },
-  'model-config': { reason: '模型未配置', hint: '这个模型没配好，请去「模型接入」页设置。' },
-  // 模型已接好但服务商账户没开通该模型(火山方舟最常见,Seedream/Seedance 各自要单独开通)。
-  // 这不是 Key/额度问题——上游 404/403 各家不一,但都是「去控制台开通」一个动作能解。
-  'model-not-open': {
-    reason: '模型未开通',
-    hint: '这个模型你的服务商账户还没开通。请到服务商控制台开通它（火山方舟：在 Ark 控制台「开通管理」激活对应模型），或在「模型接入」换一个已开通的模型。',
-  },
-  // 账号档位闸：模型已接好、参数也对，但服务商按账号档位拒了——即梦需高级会员、RunningHub 标准模型需
-  // 企业级共享 Key、即梦部分模型首次需网页端授权。区别于 model-not-open（去控制台开通一个动作）：这类
-  // 动作各异（开会员 / 换企业 Key / 网页授权），具体以「服务商原话」为准，故 hint 指向原话 + 给换模型出口。
-  'account-gate': {
-    reason: '账号权限不足',
-    hint: '这个模型需要更高的账号档位才能用——按下方「服务商原话」开通对应会员 / 换企业级 API Key / 先在服务商网页端完成授权；也可在「模型接入」换一个能用的模型。',
-  },
-  'content-policy': { reason: '提示词被拦截', hint: '提示词触发了安全策略，请修改后重试。' },
-  'asset-fetch': {
-    reason: '参考图下载失败',
-    hint: '服务商无法下载临时参考图。请点“重试”，Nomi 会重新上传图片；若仍失败，请换一张公网图片或配置 KIE 图片中转。',
-  },
-  'web-bridge': {
-    reason: '即梦网页桥接失败',
-    hint: '请保持 Nomi 的即梦页面和扩展运行器在线后重试。若官网已经出图，可在即梦页打开对应结果后重新拉取。',
-  },
-  server: { reason: '服务商故障', hint: '服务商服务异常，请稍后重试，或换一个模型。' },
-  input: { reason: '参数不被接受', hint: '服务商拒绝了请求参数，请检查比例/尺寸等设置，或换一个模型。' },
-  unknown: { reason: '生成失败', hint: '可能是服务商临时故障或额度问题，建议稍等重试，或换一个模型。' },
+const ERROR_KEY_BY_KIND: Record<GenerationErrorKind, string> = {
+  auth: 'auth',
+  balance: 'balance',
+  quota: 'quota',
+  'poll-timeout': 'pollTimeout',
+  network: 'network',
+  'model-config': 'modelConfig',
+  'model-not-open': 'modelNotOpen',
+  'model-unavailable-upstream': 'modelUnavailableUpstream',
+  'model-retired': 'modelRetired',
+  'image-route-disabled': 'imageRouteDisabled',
+  'account-gate': 'accountGate',
+  'content-policy': 'contentPolicy',
+  'asset-fetch': 'assetFetch',
+  'web-bridge': 'webBridge',
+  server: 'server',
+  input: 'input',
+  'output-truncated': 'outputTruncated',
+  unknown: 'unknown',
 }
 
 export function narrateGenerationError(kind: GenerationErrorKind): { reason: string; hint: string } {
@@ -153,6 +140,8 @@ const ACTION_BY_KIND: Record<GenerationErrorKind, GenerationErrorAction> = {
   server: 'retry',
   // 改提示词/参数后重试（按钮只给 retry，改的地方就在下方 composer）。
   'content-policy': 'retry',
+  'asset-fetch': 'retry',
+  'web-bridge': 'retry',
   input: 'retry',
   'output-truncated': 'retry',
   unknown: 'retry',

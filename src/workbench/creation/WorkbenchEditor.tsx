@@ -65,6 +65,7 @@ function WorkbenchEditorToolbar({
   onImportScript: () => void
   onExtractAssets: () => void
 }): JSX.Element {
+  const { t } = useTranslation()
   const actions = buildRichTextActions(editor)
   const byId = new Map(actions.map((action) => [action.id, action]))
   const pick = (ids: readonly string[]) => ids.map((id) => byId.get(id)).filter((a): a is RichTextAction => Boolean(a))

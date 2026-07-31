@@ -15,11 +15,13 @@ import { recordModelFailure, recordModelSuccess } from './modelHealthMemory'
 export { classifyGenerationError, type GenerationErrorReport } from '../../observability/classifyError'
 import type { DependencyWavePlan } from './dependencyWaves'
 import { resolveGenerationReferences } from './generationReferenceResolver'
+import { archetypeForNode, resolveModeForConnectedReferences } from '../agent/referenceEdgeCapability'
 import {
+  applyArchetypeModeSwitch,
   currentArchetypeMode,
   hasArchetypeArrayReferences,
-  resolveArchetypeForModel,
 } from '../nodes/controls/archetypeMeta'
+import { resolveTaskArchetype } from './catalogTaskResolve'
 import type { GenerationNodeKind } from '../model/generationCanvasTypes'
 import { generationBatchConcurrency } from './generationConcurrency'
 import {
@@ -27,6 +29,7 @@ import {
   generationProviderLimit,
   runWithGenerationProviderSlot,
 } from './generationProviderScheduler'
+import i18n from '../../../i18n'
 
 /** 节点 kind → 付费预估用的产物口径（视频/配音/画面），喂给 describeGenerationCost 报对名词与时长。 */
 function spendCostKind(kind: GenerationNodeKind): 'image' | 'video' | 'audio' {

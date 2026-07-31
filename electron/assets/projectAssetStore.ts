@@ -203,6 +203,7 @@ export async function importRemoteAsset(payload: unknown, options: RemoteAssetIm
     timeoutMs: 60_000,
     maxBytes: 200 * 1024 * 1024,
     allowContentTypes: ["image/", "video/", "audio/", "model/", "application/gltf", "application/octet-stream"],
+    allowedPrivateOrigins: options.trustedPrivateOrigin ? [options.trustedPrivateOrigin] : [],
   });
   const contentType = fetched.contentType || "application/octet-stream";
   const bytes = fetched.bytes;

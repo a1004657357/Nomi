@@ -13,6 +13,8 @@ export type NomiBrowserDialogProps = {
   onClose: () => void
 }
 
+export type BrowserWorkspaceMode = 'side' | 'full'
+
 export type BrowserTab = {
   id: string
   viewId: number | null
@@ -49,8 +51,6 @@ export type BrowserPromptModePickerState = {
   y: number
   tab: BrowserTab
 }
-
-export type BrowserWorkspaceMode = 'side' | 'full'
 
 export type ViewportRect = {
   left: number
@@ -114,18 +114,26 @@ export const MATERIAL_SITE_SHORTCUTS = [
   { name: 'behance', url: 'https://www.behance.net/' },
 ] as const
 
-// 创作与参考类快捷站点。生成网页放在前面，打开浏览器后无需再手输地址。
-export const BROWSER_START_SHORTCUTS = [
-  { label: 'ChatGPT 图像', url: 'https://chatgpt.com/images/', hint: '对话生成与编辑' },
-  { label: '即梦 Web', url: 'https://jimeng.jianying.com/ai-tool/image/generate', hint: '图片与视频创作' },
-  { label: 'Pinterest', url: 'https://www.pinterest.com/', hint: '视觉灵感' },
-  { label: 'Behance', url: 'https://www.behance.net/', hint: '设计作品集' },
-  { label: 'Dribbble', url: 'https://dribbble.com/', hint: 'UI 灵感' },
-  { label: 'ArtStation', url: 'https://www.artstation.com/', hint: '概念美术' },
-  { label: '小红书', url: 'https://www.xiaohongshu.com/', hint: '中文种草' },
-  { label: 'YouTube', url: 'https://www.youtube.com/', hint: '视频参考' },
-  { label: 'Film Grab', url: 'https://film-grab.com/', hint: '电影分镜' },
-] as const
+// 创作参考类快捷站点——空态页网格。8 张卡是最舒服的 4×2 密度：太少显得空，太多变站点堆。
+// label/labelKey：拉丁站名直接显示；小红书等需本地化的走 labelKey。hintKey 恒为 i18n 键，渲染处 t()。
+export type BrowserStartShortcut = {
+  label: string
+  labelKey?: string
+  url: string
+  hintKey: string
+}
+export const BROWSER_START_SHORTCUTS: readonly BrowserStartShortcut[] = [
+  { label: 'ChatGPT Images', url: 'https://chatgpt.com/images/', hintKey: 'browserAssets.sites.chatgptHint' },
+  { label: '即梦 Web', url: 'https://jimeng.jianying.com/ai-tool/image/generate', hintKey: 'browserAssets.sites.jimengHint' },
+  { label: 'Pinterest', url: 'https://www.pinterest.com/', hintKey: 'browserAssets.sites.pinterestHint' },
+  { label: 'Behance', url: 'https://www.behance.net/', hintKey: 'browserAssets.sites.behanceHint' },
+  { label: 'Dribbble', url: 'https://dribbble.com/', hintKey: 'browserAssets.sites.dribbbleHint' },
+  { label: 'ArtStation', url: 'https://www.artstation.com/', hintKey: 'browserAssets.sites.artstationHint' },
+  { label: 'Xiaohongshu', labelKey: 'browserAssets.sites.xiaohongshu', url: 'https://www.xiaohongshu.com/', hintKey: 'browserAssets.sites.xiaohongshuHint' },
+  { label: 'YouTube', url: 'https://www.youtube.com/', hintKey: 'browserAssets.sites.youtubeHint' },
+  { label: 'Film Grab', url: 'https://film-grab.com/', hintKey: 'browserAssets.sites.filmGrabHint' },
+  { label: 'X', url: 'https://x.com/', hintKey: 'browserAssets.sites.xHint' },
+]
 
 export const TOOL_BUTTON_CLASS = cn(
   'inline-grid size-8 shrink-0 place-items-center rounded-nomi-sm border-0 bg-transparent',
@@ -172,7 +180,9 @@ export function writeBrowserWorkspaceMode(mode: BrowserWorkspaceMode): void {
 export function readBrowserSideWidth(): number {
   if (typeof window === 'undefined') return BROWSER_SIDE_DEFAULT_WIDTH
   const value = Number(window.localStorage.getItem(BROWSER_SIDE_WIDTH_STORAGE_KEY))
-  return Number.isFinite(value) && value >= BROWSER_SIDE_MIN_WIDTH ? Math.round(value) : BROWSER_SIDE_DEFAULT_WIDTH
+  return Number.isFinite(value) && value >= BROWSER_SIDE_MIN_WIDTH
+    ? Math.round(value)
+    : BROWSER_SIDE_DEFAULT_WIDTH
 }
 
 export function writeBrowserSideWidth(width: number): void {
@@ -491,4 +501,3 @@ export function PromptModeOption({
     </button>
   )
 }
-

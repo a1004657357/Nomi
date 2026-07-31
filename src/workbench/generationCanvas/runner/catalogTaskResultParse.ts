@@ -1,4 +1,5 @@
 import { type TaskKind, type TaskResultDto } from '../../api/taskApi'
+import i18n from '../../../i18n'
 import type {
   GenerationCanvasNode,
   GenerationNodeResult,
@@ -115,12 +116,12 @@ export function normalizeCatalogTaskResult(result: TaskResultDto, node: Generati
   if (!asset)
     throw new Error(
       inferredType === 'video'
-        ? '模型任务完成但没有返回视频地址'
+        ? i18n.t('generationCommon.error.noVideoUrl')
         : inferredType === 'audio'
-          ? '配音生成完成但没有返回音频'
+          ? i18n.t('generationCommon.error.noAudio')
           : inferredType === 'model3d'
-            ? '3D 模型任务完成但没有返回 GLB 模型地址'
-            : '模型任务完成但没有返回图片地址',
+            ? i18n.t('generationCommon.error.noModel3dUrl')
+            : i18n.t('generationCommon.error.noImageUrl'),
     )
   // E11: propagate provenance from electron TaskResult into the node result.
   const provenance = extractProvenanceFromTaskResult(result)
@@ -142,7 +143,7 @@ export function normalizeCatalogTaskResult(result: TaskResultDto, node: Generati
       thumbnailUrl: candidate.thumbnailUrl || undefined,
       ...(candidate.providerUrl ? { providerUrl: candidate.providerUrl } : {}),
       model: selectedModelKey(node) || undefined,
-      durationSeconds: candidateType === 'video' ? readDurationSeconds(node) : undefined,
+      durationSeconds: candidateType === 'video' ? readDurationSeconds(candidate) : undefined,
       taskId: result.id,
       taskKind: candidateType,
       assetId: candidate.assetId || undefined,

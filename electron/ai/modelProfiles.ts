@@ -73,11 +73,10 @@ const PROFILES: ProfileEntry[] = [
   {
     description: "Zhipu GLM 5.x / 4.7 / 4.6 — long-output agent",
     match: (id) => /(^|\/)glm-(5(?:[.-]|$)|4\.(?:6|7))/i.test(id),
-    defaultMaxTokens: 32768,
     stripToolSchemaDialect: true,
     agentSuitability: "good",
     agentNote:
-      "GLM long-context models can handle large structured agent outputs; Nomi raises max_tokens so storyboard tool-call JSON is not cut at the fallback 4k limit.",
+      "GLM long-context models can handle large structured agent outputs; configure maxOutputTokens in the model catalog when the provider exposes an explicit limit.",
   },
 
   // ─── Moonshot Kimi K2 ──────────────────────────────────────

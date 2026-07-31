@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { contentTypeFromPath, extensionFromMime } from "./assets/assetPaths";
+import { localizedTaskAssetFileName } from "./assets/localizedAsset";
 import { writeAsset } from "./assets/projectAssetStore";
 import { endpoint } from "./vendorEndpoint";
 import { requestJson, requestMultipart } from "./vendor/vendorHttp";
@@ -369,7 +370,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     const normalized = await buildProfileTaskResult({
       response: executed.response,
       mapping,
-      operation: createOperation,
+      operation: mapping.create,
       request,
       taskIdFallback: taskId,
       wantedKind,

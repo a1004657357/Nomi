@@ -14,7 +14,11 @@ import {
   type ProgressNarrationContext,
 } from '../../observability/narrate'
 import { resolveArchetypeForModel } from '../../../config/modelArchetypes'
-import { buildArchetypeInputParams, orderedSentImageReferenceUrls } from '../nodes/controls/archetypeMeta'
+import {
+  buildArchetypeInputParams,
+  currentArchetypeMode,
+  orderedSentImageReferenceUrls,
+} from '../nodes/controls/archetypeMeta'
 import { projectPromptForSend } from '../../assets/promptMentions'
 import {
   type CatalogTaskActionOptions,
@@ -129,7 +133,9 @@ function buildReferenceExtras(
       ...(modeHasImageArray ? readStringArray(meta.referenceImageUrls) : []),
     ])
     return {
-      ...(referenceImages.length ? { referenceImages } : {}),
+      ...(standardReferenceImages.length ? { referenceImages: standardReferenceImages } : {}),
+      ...(firstFrameUrl ? { firstFrameUrl } : {}),
+      ...(lastFrameUrl ? { lastFrameUrl } : {}),
       ...(referenceImageRoles.length ? { referenceImageRoles } : {}),
       archetypeInput,
       ...(styleReferenceImages.length ? { styleReferenceImages } : {}),

@@ -91,13 +91,11 @@ export async function installBrowserImageDragBridge(record: BrowserViewRecord): 
   }
 }
 
-export async function installBrowserPromptHoverBridge(record: BrowserViewRecord): Promise<void> {
-  const contents = record.view.webContents;
-  if (contents.isDestroyed() || contents.isLoading()) return;
+export function promptHoverBridgeScript(promptCategories: BrowserViewRecord["promptCategories"]): string {
   const script = `
 (() => {
   const consolePrefix = ${JSON.stringify(BROWSER_IMAGE_PROMPT_CONSOLE_PREFIX)};
-  const promptCategories = ${JSON.stringify(record.promptCategories)};
+  const promptCategories = ${JSON.stringify(promptCategories)};
   const normalizePromptCategories = (input) => {
     const output = [];
     const seen = new Set();
@@ -132,10 +130,18 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
     visible: false,
     menuOpen: false,
   };
+  const appendNomiButtonLabel = (target, label) => {
+    const mark = document.createElement('span');
+    mark.className = 'nomi-prompt-mark';
+    mark.textContent = 'N';
+    const text = document.createElement('span');
+    text.textContent = label;
+    target.append(mark, text);
+  };
   const button = document.createElement('button');
   button.type = 'button';
   button.setAttribute('aria-label', 'Nomi 获取提示词');
-  button.innerHTML = '<span class="nomi-prompt-mark">N</span><span>获取提示词</span>';
+  appendNomiButtonLabel(button, '获取提示词');
   button.style.cssText = [
     'position:fixed',
     'z-index:2147483647',
@@ -182,7 +188,18 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
     option.className = 'nomi-prompt-mode-option';
     option.setAttribute('role', 'menuitem');
     option.setAttribute('data-nomi-prompt-mode', mode);
-    option.innerHTML = '<span class="nomi-prompt-mode-icon">' + (mode === 'style' ? 'S' : 'R') + '</span><span><span class="nomi-prompt-mode-title">' + title + '</span><span class="nomi-prompt-mode-desc">' + description + '</span></span>';
+    const icon = document.createElement('span');
+    icon.className = 'nomi-prompt-mode-icon';
+    icon.textContent = mode === 'style' ? 'S' : 'R';
+    const copy = document.createElement('span');
+    const titleElement = document.createElement('span');
+    titleElement.className = 'nomi-prompt-mode-title';
+    titleElement.textContent = title;
+    const descriptionElement = document.createElement('span');
+    descriptionElement.className = 'nomi-prompt-mode-desc';
+    descriptionElement.textContent = description;
+    copy.append(titleElement, descriptionElement);
+    option.append(icon, copy);
     return option;
   };
   menu.appendChild(createModeOption('replicate', '画面复刻', '还原主体、构图、光影与细节'));
@@ -339,7 +356,7 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
   const textButton = document.createElement('button');
   textButton.type = 'button';
   textButton.setAttribute('aria-label', 'Nomi 保存提示词');
-  textButton.innerHTML = '<span class="nomi-prompt-mark">N</span><span>保存提示词</span>';
+  appendNomiButtonLabel(textButton, '保存提示词');
   textButton.style.cssText = [
     'position:fixed',
     'z-index:2147483647',
@@ -378,17 +395,59 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
     'font:500 13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
     'backdrop-filter:blur(10px)'
   ].join(';');
-  textCard.innerHTML =
-    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">' +
-      '<strong style="font-size:14px">保存提示词</strong>' +
-      '<button type="button" data-nomi-text-close style="border:0;background:transparent;color:rgba(23,32,51,.55);font-size:18px;line-height:1;cursor:pointer">×</button>' +
-    '</div>' +
-    '<div style="display:grid;gap:10px">' +
-      '<div style="display:grid;place-items:center;min-height:72px;border-radius:12px;background:rgba(23,32,51,.06);color:rgba(23,32,51,.48);font-size:12px">无参考图</div>' +
-      '<label style="display:grid;gap:5px"><span style="color:rgba(23,32,51,.62);font-size:12px">提示词类型</span><select data-nomi-text-type style="height:34px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:0 8px;color:#172033"><option value="image">图片提示词</option><option value="video">视频提示词</option></select></label>' +
-      '<label style="display:grid;gap:5px"><span style="color:rgba(23,32,51,.62);font-size:12px">选中文字</span><textarea data-nomi-text-value style="min-height:110px;resize:vertical;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:8px;color:#172033;font:500 13px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif"></textarea></label>' +
-      '<div style="display:flex;justify-content:flex-end;gap:8px"><button type="button" data-nomi-text-cancel style="height:32px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;color:rgba(23,32,51,.72);padding:0 12px;cursor:pointer">取消</button><button type="button" data-nomi-text-save style="height:32px;border:0;border-radius:10px;background:#172033;color:white;padding:0 12px;font-weight:700;cursor:pointer">保存</button></div>' +
-    '</div>';
+  const cardHeader = document.createElement('div');
+  cardHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px';
+  const cardTitle = document.createElement('strong');
+  cardTitle.style.fontSize = '14px';
+  cardTitle.textContent = '保存提示词';
+  const cardClose = document.createElement('button');
+  cardClose.type = 'button';
+  cardClose.setAttribute('data-nomi-text-close', '');
+  cardClose.style.cssText = 'border:0;background:transparent;color:rgba(23,32,51,.55);font-size:18px;line-height:1;cursor:pointer';
+  cardClose.textContent = '×';
+  cardHeader.append(cardTitle, cardClose);
+
+  const cardBody = document.createElement('div');
+  cardBody.style.cssText = 'display:grid;gap:10px';
+  const referencePlaceholder = document.createElement('div');
+  referencePlaceholder.style.cssText = 'display:grid;place-items:center;min-height:72px;border-radius:12px;background:rgba(23,32,51,.06);color:rgba(23,32,51,.48);font-size:12px';
+  referencePlaceholder.textContent = '无参考图';
+
+  const typeLabel = document.createElement('label');
+  typeLabel.style.cssText = 'display:grid;gap:5px';
+  const typeCaption = document.createElement('span');
+  typeCaption.style.cssText = 'color:rgba(23,32,51,.62);font-size:12px';
+  typeCaption.textContent = '提示词类型';
+  const typeSelect = document.createElement('select');
+  typeSelect.setAttribute('data-nomi-text-type', '');
+  typeSelect.style.cssText = 'height:34px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:0 8px;color:#172033';
+  typeLabel.append(typeCaption, typeSelect);
+
+  const valueLabel = document.createElement('label');
+  valueLabel.style.cssText = 'display:grid;gap:5px';
+  const valueCaption = document.createElement('span');
+  valueCaption.style.cssText = 'color:rgba(23,32,51,.62);font-size:12px';
+  valueCaption.textContent = '选中文字';
+  const valueInput = document.createElement('textarea');
+  valueInput.setAttribute('data-nomi-text-value', '');
+  valueInput.style.cssText = 'min-height:110px;resize:vertical;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;padding:8px;color:#172033;font:500 13px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif';
+  valueLabel.append(valueCaption, valueInput);
+
+  const cardActions = document.createElement('div');
+  cardActions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px';
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.setAttribute('data-nomi-text-cancel', '');
+  cancelButton.style.cssText = 'height:32px;border:1px solid rgba(23,32,51,.14);border-radius:10px;background:white;color:rgba(23,32,51,.72);padding:0 12px;cursor:pointer';
+  cancelButton.textContent = '取消';
+  const saveButton = document.createElement('button');
+  saveButton.type = 'button';
+  saveButton.setAttribute('data-nomi-text-save', '');
+  saveButton.style.cssText = 'height:32px;border:0;border-radius:10px;background:#172033;color:white;padding:0 12px;font-weight:700;cursor:pointer';
+  saveButton.textContent = '保存';
+  cardActions.append(cancelButton, saveButton);
+  cardBody.append(referencePlaceholder, typeLabel, valueLabel, cardActions);
+  textCard.append(cardHeader, cardBody);
   document.documentElement.appendChild(textCard);
 
   const getPromptCategories = () => {
@@ -500,16 +559,20 @@ export async function installBrowserPromptHoverBridge(record: BrowserViewRecord)
   return true;
 })()
 `;
+  return script;
+}
+
+export async function installBrowserPromptHoverBridge(record: BrowserViewRecord): Promise<void> {
+  const contents = record.view.webContents;
+  if (contents.isDestroyed() || contents.isLoading()) return;
   try {
-    await contents.executeJavaScript(script, true);
+    await contents.executeJavaScript(promptHoverBridgeScript(record.promptCategories), true);
   } catch {
     // The next DOM-ready/load event retries.
   }
 }
 
-export async function installBrowserResourceCaptureBridge(record: BrowserViewRecord, enabled: boolean): Promise<void> {
-  const contents = record.view.webContents;
-  if (contents.isDestroyed() || contents.isLoading()) return;
+export function resourceCaptureBridgeScript(enabled: boolean): string {
   const script = `
 (() => {
   const enabled = ${enabled ? "true" : "false"};
@@ -694,14 +757,19 @@ export async function installBrowserResourceCaptureBridge(record: BrowserViewRec
   if (!enabled) setTarget(null);
   window.__nomiBrowserResourceCaptureBridge = state;
   window.__nomiReadBrowserResourceCapture = () => {
-    if (state.enabled && state.lastPoint) setTarget(pickAt(state.lastPoint.clientX, state.lastPoint.clientY));
     return state.current ? { ...state.current } : null;
   };
   return true;
 })()
 `;
+  return script;
+}
+
+export async function installBrowserResourceCaptureBridge(record: BrowserViewRecord, enabled: boolean): Promise<void> {
+  const contents = record.view.webContents;
+  if (contents.isDestroyed() || contents.isLoading()) return;
   try {
-    await contents.executeJavaScript(script, true);
+    await contents.executeJavaScript(resourceCaptureBridgeScript(enabled), true);
   } catch {
     // Pages can be between navigations; dom-ready and load events reinstall while the mode remains active.
   }

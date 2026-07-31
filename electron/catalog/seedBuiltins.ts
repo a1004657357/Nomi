@@ -297,24 +297,24 @@ function pruneRetiredMappings(mappings: Mapping[], retiredIds: readonly string[]
   return changed;
 }
 
+/** 供应商种子（裸 baseUrl + bearer）。存在即跳过（用户配置不覆盖）。返回是否变更。
+ *  多数种子默认 enabled:true；无鉴权本地后端（ComfyUI）带 `enabled:false` → 默认关、用户显式启用（污染防护）。 */
 type VendorSeed = {
   key: string;
   name: string;
-  baseUrl: string;
+  baseUrl: string | null;
   authType: Vendor["authType"];
   authHeader?: string | null;
   enabled?: boolean;
   assetIngestion?: Vendor["assetIngestion"];
 };
 
-/** 供应商种子（裸 baseUrl + bearer）。存在即跳过（用户配置不覆盖）。返回是否变更。
- *  多数种子默认 enabled:true；无鉴权本地后端（ComfyUI）带 `enabled:false` → 默认关、用户显式启用（污染防护）。 */
-function seedVendor(vendors: Vendor[], seed: typeof KIE_VENDOR_SEED | typeof APIMART_VENDOR_SEED | typeof AGNES_VENDOR_SEED | typeof MODELSCOPE_VENDOR_SEED | typeof VOLCENGINE_VENDOR_SEED | typeof VOLCENGINE_SPEECH_VENDOR_SEED | typeof DREAMINA_VENDOR_SEED | typeof RUNNINGHUB_VENDOR_SEED | typeof REPLICATE_VENDOR_SEED | typeof COMFYUI_VENDOR_SEED | typeof CODEX_VENDOR_SEED | typeof JIMENG_WEB_VENDOR_SEED, now: string): boolean {
+function seedVendor(vendors: Vendor[], seed: VendorSeed, now: string): boolean {
   if (vendors.some((v) => v.key === seed.key)) return false;
   const enabled = seed.enabled === false ? false : true;
   vendors.push({
     key: seed.key, name: seed.name, enabled,
-    baseUrlHint: seed.baseUrl, authType: seed.authType, authHeader: "authHeader" in seed ? seed.authHeader : null,
+    baseUrlHint: seed.baseUrl, authType: seed.authType, authHeader: seed.authHeader ?? null,
     // 本地素材吞入声明（仅 Replicate 等声明了 assetIngestion 的 vendor 带；resolveAssetIngestionWithFallback 据此把本地图传文件 API）。
     ...(seed.assetIngestion ? { assetIngestion: seed.assetIngestion } : {}),
     createdAt: now, updatedAt: now,
@@ -486,6 +486,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (seedVendor(vendors, RUNNINGHUB_VENDOR_SEED, now)) changed = true; // RunningHub aggregator（先接 3D 混元文生3D）
   if (seedVendor(vendors, REPLICATE_VENDOR_SEED, now)) changed = true; // Replicate（元素拆解 qwen-image-layered，按量付费）
   if (seedVendor(vendors, COMFYUI_VENDOR_SEED, now)) changed = true; // 本地 ComfyUI（无鉴权本地后端，默认关、用户显式启用）
+  if (seedVendor(vendors, CODEX_LOCAL_VENDOR_SEED, now)) changed = true; // 官方 Codex 本地生图接入
   if (seedVendor(vendors, CODEX_VENDOR_SEED, now)) changed = true; // Codex Img2（本机 Codex CLI 生成，无需 Nomi API key）
   if (seedVendor(vendors, JIMENG_WEB_VENDOR_SEED, now)) changed = true; // 即梦 Web 扩展桥（本机网页登录/任务服务器）
   if (reconcileJimengWebVendorUrl(vendors, now)) changed = true;
@@ -512,6 +513,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_VIDEO_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_IMAGE_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, COMFYUI_VENDOR_SEED.key, COMFYUI_CURATED_MODELS, now)) changed = true;
+  if (reconcileModels(models, CODEX_LOCAL_VENDOR_SEED.key, CODEX_IMAGE_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, CODEX_VENDOR_SEED.key, CODEX_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, JIMENG_WEB_VENDOR_SEED.key, JIMENG_WEB_CURATED_MODELS, now)) changed = true;
 

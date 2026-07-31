@@ -32,6 +32,7 @@ import {
 } from '../skills/canvasSkillModel'
 import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 import { getDesktopBridge, type DesktopAssetDto } from '../../../desktop/bridge'
+import i18n from '../../../i18n'
 
 export const BROWSER_ASSET_DRAG_MIME = 'application/x-nomi-assets'
 export const LEGACY_BROWSER_ASSET_DRAG_MIME = 'application/x-nomi-browser-assets'

@@ -42,6 +42,11 @@ export const zhRuntime = {
     output: { menu: '输出', title: '输出', placeholder: '整理最终输出说明或交付备注...' },
     panorama: { menu: '全景图', title: '全景图', placeholder: '上传或截取全景参考图...' },
     scene3d: { menu: '3D 场景', title: '3D 场景', placeholder: '在 3D 场景中摆放模型并截图...' },
+    vibingDirector: {
+      menu: 'VIBING Director',
+      title: 'VIBING Director',
+      placeholder: '通过对话描述场景、人物调度和镜头运动...',
+    },
     whiteboard: { menu: '画板', title: '画板', placeholder: '在画板里绘制参考，再描述要生成的画面...' },
     model3d: { menu: '3D 模型', title: '3D 模型', placeholder: '描述要生成的 3D 模型（外形、材质、风格）...' },
     asset: { menu: '素材', title: '素材', placeholder: '描述素材内容...' },
@@ -229,6 +234,11 @@ export const enRuntime = {
       menu: '3D Scene',
       title: '3D Scene',
       placeholder: 'Arrange models in the 3D scene and capture a frame...',
+    },
+    vibingDirector: {
+      menu: 'VIBING Director',
+      title: 'VIBING Director',
+      placeholder: 'Describe the scene, blocking, and camera movement through conversation...',
     },
     whiteboard: {
       menu: 'Whiteboard',

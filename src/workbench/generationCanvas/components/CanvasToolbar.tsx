@@ -1,4 +1,6 @@
 import React from 'react'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import { IconBolt, IconPlayerStopFilled } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import type { GenerationNodeKind } from '../model/generationCanvasTypes'
@@ -153,6 +155,7 @@ export default function CanvasToolbar({
   performanceActive,
   onTogglePerformancePreference,
 }: CanvasToolbarProps): JSX.Element {
+  const { t } = useTranslation()
   const addNode = useGenerationCanvasStore((state) => state.addNode)
   const hasActiveGeneration = useGenerationCanvasStore((state) =>
     state.nodes.some((node) => node.status === 'queued' || node.status === 'running'),

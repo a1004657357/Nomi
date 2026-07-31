@@ -8,11 +8,13 @@
  * 地址恒可改、且可**整家删除**（内置家是 seed 的、只断 key 不删）。共用同一套 bridge 调用（P1）。
  */
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconKey, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { confirmDialog } from '../../design'
 import { buildCustomTextModelUpsert } from './customVendorTextModel'
+import { confirmAndDeleteVendor } from './vendorDeleteAction'
 
 type CustomVendorManageProps = {
   vendorKey: string

@@ -23,7 +23,9 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "gpt-image-2",
     "gpt-image-2-text-to-image",
     "gpt-image-2-image-to-image",
-    "gpt-4o-image"
+    "gpt-4o-image",
+    "codex-img2",
+    "codex-imagegen-img2"
   ],
   "seedream": [
     "seedream",
@@ -168,6 +170,26 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "seedance2.0_vip",
     "seedance2.0fast_vip",
     "seedance2.0mini"
+  ],
+  "jimeng-web-seedance-2": [
+    "jimeng-web-seedance-2.0",
+    "jimeng-seedance-2.0-mini",
+    "jimeng-seedance-2.0-fast-vip",
+    "jimeng-seedance-2.0-vip",
+    "jimeng-seedance-2.0-fast",
+    "jimeng-seedance-2.0"
+  ],
+  "jimeng-web-image": [
+    "jimeng-web-image",
+    "jimeng-image-5.0-pro",
+    "jimeng-image-5.0-lite",
+    "jimeng-image-4.7",
+    "jimeng-image-4.6",
+    "jimeng-image-4.5",
+    "jimeng-image-4.1",
+    "jimeng-image-4.0",
+    "jimeng-image-3.1",
+    "jimeng-image-3.0"
   ],
   "dreamina-image": [
     "dreamina-image",

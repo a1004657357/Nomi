@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconArrowRight, IconCircleCheck, IconFileText, IconMovie } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import { WorkbenchButton, confirmDialog } from '../../../design'

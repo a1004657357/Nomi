@@ -234,11 +234,38 @@ function detectAssetFetchFailure(upstream: string | undefined, raw: string): boo
   )
 }
 
+function detectModelUnavailableUpstream(upstream: string | undefined, raw: string): boolean {
+  const text = `${upstream || ''} ${raw}`.toLowerCase()
+  return text.includes('requested entity was not found') || text.includes('模型不存在')
+}
+
+function detectModelRetired(raw: string): boolean {
+  return raw.includes('Model is retired:')
+}
+
+function reportFor(
+  kind: GenerationErrorKind,
+  raw: string,
+  upstream: string | undefined,
+): GenerationErrorReport {
+  const { reason, hint } = narrateGenerationError(kind)
+  const providerMessage = pickProviderMessage(upstream ?? extractReadableErrorLine(raw), reason)
+  return {
+    kind,
+    reason,
+    hint,
+    raw,
+    ...narrateGenerationErrorActions(kind),
+    ...(providerMessage ? { providerMessage } : {}),
+  }
+}
+
 export function classifyGenerationError(message: string): GenerationErrorReport {
   // S4-2:structured 优先(VendorRequestError 经 IPC 标记穿透,源头保留的事实,不是猜);
   // 老数据/非 vendor 错误退回 legacy 正则识别。两条路只产 kind,文案统一出自 narrate 词表。
   const structured = parseVendorErrorFromMessage(message)
   const cleanRaw = stripVendorErrorMarker(String(message || '')).split('\n→')[0].trim() || '生成失败'
+  if (detectModelRetired(cleanRaw)) return reportFor('model-retired', cleanRaw, undefined)
   const bridgeText = `${structured?.upstreamMsg || ''} ${cleanRaw}`.toLowerCase()
   if (
     (bridgeText.includes('即梦 web') || bridgeText.includes('即梦网页') || bridgeText.includes('web-bridge')) &&
@@ -249,9 +276,7 @@ export function classifyGenerationError(message: string): GenerationErrorReport 
       bridgeText.includes('扩展客户端')
     )
   ) {
-    const { reason, hint } = narrateGenerationError('web-bridge')
-    const providerMessage = pickProviderMessage(extractReadableErrorLine(cleanRaw), reason)
-    return { reason, hint, raw: cleanRaw, ...(providerMessage ? { providerMessage } : {}) }
+    return reportFor('web-bridge', cleanRaw, structured?.upstreamMsg)
   }
   // 账号档位闸（会员/企业 Key/网页授权）**最先**判——它的关键词（会员/授权/开通即梦会员）比
   // model-not-open 更具体；反过来放后面会被宽词抢走（即梦 CLI 兜底文案曾被判成「模型未开通」
@@ -278,9 +303,7 @@ export function classifyGenerationError(message: string): GenerationErrorReport 
     return reportFor('balance', cleanRaw, structured?.upstreamMsg)
   }
   if (detectAssetFetchFailure(structured?.upstreamMsg, cleanRaw)) {
-    const { reason, hint } = narrateGenerationError('asset-fetch')
-    const providerMessage = pickProviderMessage(structured?.upstreamMsg ?? extractReadableErrorLine(cleanRaw), reason)
-    return { reason, hint, raw: cleanRaw, ...(providerMessage ? { providerMessage } : {}) }
+    return reportFor('asset-fetch', cleanRaw, structured?.upstreamMsg)
   }
   if (structured?.category && (STRUCTURED_KINDS as readonly string[]).includes(structured.category)) {
     return reportFor(structured.category as GenerationErrorKind, stripVendorErrorMarker(message), structured.upstreamMsg)

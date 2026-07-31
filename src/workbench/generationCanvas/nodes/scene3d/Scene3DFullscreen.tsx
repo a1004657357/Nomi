@@ -20,7 +20,8 @@ import {
   type Scene3DTransformMode,
 } from './scene3dTypes'
 import { FULLSCREEN_Z_INDEX } from './scene3dConstants'
-import { CanvasPanelRestoreButton } from './scene3dToolbar'
+import { CanvasPanelRestoreButton, Scene3DViewportToolPill } from './scene3dToolbar'
+import { SCENE_FIT_FOCUS_ID } from './scene3dFitView'
 import { Scene3DFullscreenToolbar } from './Scene3DFullscreenToolbar'
 import {
   levelEditorCameraRotation,
@@ -144,7 +145,7 @@ export default function Scene3DFullscreen({
   const trajectoryMode = trajectory.trajectoryEditMode
   const enterTrajectoryPanel = React.useCallback(() => {
     setRightPanelOpen(true)
-    setRightPanelTab('trajectory')
+    setMoveHubTab('trajectory')
     setLeftPanelTab('scene')
   }, [])
   const enterTrajectoryMode = React.useCallback((showTimeline = true) => {
@@ -159,6 +160,10 @@ export default function Scene3DFullscreen({
     trajectory.setTrajectoryEditMode(false)
     trajectory.setIsPlaying(false)
   }, [trajectory])
+  const toggleTrajectoryMode = React.useCallback(() => {
+    if (trajectoryMode) exitTrajectoryMode()
+    else enterTrajectoryMode()
+  }, [enterTrajectoryMode, exitTrajectoryMode, trajectoryMode])
 
   React.useEffect(() => {
     stateRef.current = state

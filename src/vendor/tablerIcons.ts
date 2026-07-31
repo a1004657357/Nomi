@@ -114,6 +114,7 @@ export { default as IconLayoutSidebarRightCollapse } from '@tabler/icons-react/d
 export { default as IconLayoutSidebarRightExpand } from '@tabler/icons-react/dist/esm/icons/IconLayoutSidebarRightExpand.mjs'
 export { default as IconZoomScan } from '@tabler/icons-react/dist/esm/icons/IconZoomScan.mjs'
 export { default as IconLayoutRows } from '@tabler/icons-react/dist/esm/icons/IconLayoutRows.mjs'
+export { default as IconLanguage } from '@tabler/icons-react/dist/esm/icons/IconLanguage.mjs'
 export { default as IconLetterCase } from '@tabler/icons-react/dist/esm/icons/IconLetterCase.mjs'
 export { default as IconLink } from '@tabler/icons-react/dist/esm/icons/IconLink.mjs'
 export { default as IconList } from '@tabler/icons-react/dist/esm/icons/IconList.mjs'

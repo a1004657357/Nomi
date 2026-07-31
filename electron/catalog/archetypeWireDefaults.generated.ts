@@ -452,6 +452,7 @@ export const ARCHETYPE_WIRE_DEFAULTS: Record<string, Record<string, Record<strin
       "*": {
         "ratio": "智能",
         "resolution_type": "2K",
+        "generation_count": 1,
         "model": "jimeng-image-5.0-pro"
       }
     },
@@ -459,6 +460,7 @@ export const ARCHETYPE_WIRE_DEFAULTS: Record<string, Record<string, Record<strin
       "*": {
         "ratio": "智能",
         "resolution_type": "2K",
+        "generation_count": 1,
         "model": "jimeng-image-5.0-pro"
       }
     }

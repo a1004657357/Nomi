@@ -7,6 +7,7 @@ export type BrowserViewRecord = {
   view: WebContentsView;
   lastBounds: Rectangle;
   resourceCaptureEnabled: boolean;
+  promptCategories: BrowserPromptCategory[];
   // 捕捞触发那一刻记下的候选快照（url+元素矩形）：capturePage 视觉降级按 url 匹配复用（120s 新鲜窗）。
   lastResourceCapture?: {
     url: string;
@@ -86,6 +87,11 @@ export type BrowserResourceCapturePayload = {
   pageTitle?: unknown;
   extractionMode?: unknown;
   sourceRect?: BrowserResourceCaptureRectPayload;
+};
+
+export type BrowserPromptCategory = {
+  id: string;
+  label: string;
 };
 
 export type BrowserPromptScreenshotSelectionResult =

@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { localAssetThumbnailUrl } from '../../../design/localAssetThumbnail'
 import { IconCheck, IconCopy, IconDownload, IconInfoCircle, IconMaximize, IconUpload } from '@tabler/icons-react'
 import ProvenancePanel from './ProvenancePanel'
@@ -65,6 +66,9 @@ import { capabilityRecipeRetryInfo } from '../runner/capabilityRecipeController'
 import { confirmAndRetryCapabilityRecipeNode } from '../runner/capabilityRecipeRetryAction'
 import { openCapabilityRecipeInspector } from '../components/capabilityRecipeEvents'
 import { NodeBrowserUploadDragHandle } from './NodeBrowserUploadDragHandle'
+import { NodeResultHeaderActions } from './NodeImagePreviewActions'
+import { useNodeDisplayPrompt } from './useNodeDisplayPrompt'
+import { useNodeMediaPreview } from './useNodeMediaPreview'
 
 const CANVAS_NODE_PREVIEW_SIZE = { width: 256, height: 256 } as const
 
@@ -211,6 +215,9 @@ function BaseGenerationNodeImpl({
   const isTextKind = node.kind === 'text'
   const isStoryboardGroup = isTextKind && node.meta?.storyboardGroup === true
   const hasResult = Boolean(node.result?.url)
+  const imagePreviewUrl = node.kind !== 'panorama' && node.result?.type === 'image'
+    ? (node.result.url || '').trim()
+    : ''
   const resultCollection = latestMultiResultCollection(node)
   const qualityCollection = latestQualityResultCollection(node)
   const recipeRetryInfo = capabilityRecipeRetryInfo(node)
@@ -462,6 +469,7 @@ function BaseGenerationNodeImpl({
           onTransform={(op) => void imageEditing.handleImageTransform(op)}
           onRemoveBackground={() => void imageEditing.handleRemoveBackground()}
           removeBackgroundBusy={isRemoveBackgroundPending}
+          onPreview={openMediaPreview}
           onCreate3dCameraProxy={() => openCapabilityRecipeInspector(node.id, {
             recipeId: 'image.multiview.reconstruct3d',
           })}

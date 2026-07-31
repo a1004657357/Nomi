@@ -236,16 +236,12 @@ export function upsertBrowserAsset(current: readonly NomiBrowserAsset[], asset: 
   return [asset, ...current.filter((item) => item.id !== asset.id && (!urlKey || browserAssetUrlKey(item) !== urlKey))]
 }
 
-function firstUsableMediaUrlFromText(text: string): string {
+function firstUsableImageUrlFromText(text: string): string {
   const candidates = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'))
   for (const candidate of candidates) {
-    if (/^(https?:\/\/|data:(?:image|video)\/)/i.test(candidate)) return candidate
+    if (/^(https?:\/\/|data:image\/)/i.test(candidate)) return candidate
   }
   return ''
-}
-
-function mediaTypeFromUrl(url: string): 'image' | 'video' {
-  return /(?:\.(?:mp4|webm|mov|m4v)(?:[?#]|$)|^data:video\/)/i.test(url) ? 'video' : 'image'
 }
 
 function mediaUrlFromHtml(html: string): { url: string; title?: string; mediaType: 'image' | 'video' } | null {
@@ -260,21 +256,12 @@ function mediaUrlFromHtml(html: string): { url: string; title?: string; mediaTyp
     const doc = new DOMParser().parseFromString(html, 'text/html')
     const image = doc.querySelector('img')
     const imageUrl = image?.getAttribute('src') || image?.getAttribute('data-src') || ''
-    if (imageUrl) {
-      return {
-        url: imageUrl,
-        title: image?.getAttribute('alt') || image?.getAttribute('title') || undefined,
-        mediaType: 'image',
-      }
-    }
+    if (imageUrl) return { url: imageUrl, title: image?.getAttribute('alt') || image?.getAttribute('title') || undefined, mediaType: 'image' }
     const video = doc.querySelector('video')
-    const videoUrl = video?.getAttribute('src') || video?.querySelector('source[src]')?.getAttribute('src') || ''
-    if (!videoUrl) return null
-    return {
-      url: videoUrl,
-      title: video?.getAttribute('title') || video?.getAttribute('aria-label') || undefined,
-      mediaType: 'video',
-    }
+    const videoUrl = video?.getAttribute('src') || video?.querySelector('source')?.getAttribute('src') || ''
+    if (videoUrl) return { url: videoUrl, title: video?.getAttribute('title') || undefined, mediaType: 'video' }
+    const posterUrl = video?.getAttribute('poster') || ''
+    return posterUrl ? { url: posterUrl, title: video?.getAttribute('title') || undefined, mediaType: 'image' } : null
   } catch {
     return null
   }
@@ -298,38 +285,24 @@ export function readBrowserImageDragPayload(dataTransfer: DataTransfer): Browser
   const customPayload = dataTransfer.getData(BROWSER_IMAGE_DRAG_MIME)
   if (customPayload) {
     try {
-      const parsed = JSON.parse(customPayload) as {
-        url?: unknown
-        title?: unknown
-        fileName?: unknown
-        mediaType?: unknown
-      }
+      const parsed = JSON.parse(customPayload) as { url?: unknown; title?: unknown; mediaType?: unknown }
       const url = typeof parsed.url === 'string' ? parsed.url.trim() : ''
       if (url) {
-        return {
-          url,
-          title: typeof parsed.title === 'string' ? parsed.title.trim() || undefined : undefined,
-          fileName:
-            typeof parsed.fileName === 'string' && parsed.fileName.trim()
-              ? parsed.fileName.trim()
-              : fileNameFromRemoteAssetUrl(url),
-          mediaType: parsed.mediaType === 'video' ? 'video' : 'image',
-        }
+        const mediaType = parsed.mediaType === 'video' || parsed.mediaType === 'image'
+          ? parsed.mediaType
+          : mediaTypeFromRemoteUrl(url)
+        return { url, title: typeof parsed.title === 'string' ? parsed.title.trim() || undefined : undefined, fileName: fileNameFromRemoteAssetUrl(url), mediaType }
       }
     } catch {
       // Ignore malformed drag payloads and fall back to standard browser data.
     }
   }
-  const uriListUrl = firstUsableMediaUrlFromText(dataTransfer.getData('text/uri-list'))
-  if (uriListUrl) {
-    return { url: uriListUrl, fileName: fileNameFromRemoteAssetUrl(uriListUrl), mediaType: mediaTypeFromUrl(uriListUrl) }
-  }
+  const uriListUrl = firstUsableImageUrlFromText(dataTransfer.getData('text/uri-list'))
+  if (uriListUrl) return { url: uriListUrl, fileName: fileNameFromRemoteAssetUrl(uriListUrl), mediaType: mediaTypeFromRemoteUrl(uriListUrl) }
   const htmlMedia = mediaUrlFromHtml(dataTransfer.getData('text/html'))
   if (htmlMedia) return { ...htmlMedia, fileName: fileNameFromRemoteAssetUrl(htmlMedia.url) }
-  const plainUrl = firstUsableMediaUrlFromText(dataTransfer.getData('text/plain'))
-  return plainUrl
-    ? { url: plainUrl, fileName: fileNameFromRemoteAssetUrl(plainUrl), mediaType: mediaTypeFromUrl(plainUrl) }
-    : null
+  const plainUrl = firstUsableImageUrlFromText(dataTransfer.getData('text/plain'))
+  return plainUrl ? { url: plainUrl, fileName: fileNameFromRemoteAssetUrl(plainUrl), mediaType: mediaTypeFromRemoteUrl(plainUrl) } : null
 }
 
 export function promptReferenceImagesFromRequest(request: BrowserAssetPromptCaptureRequest): BrowserAssetPromptReference[] {

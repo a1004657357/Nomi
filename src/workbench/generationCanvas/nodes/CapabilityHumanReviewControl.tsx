@@ -72,7 +72,7 @@ export function CapabilityHumanReviewControl({
         )}
       </div>
       {readOnly ? (
-        review?.note ? <p className="text-[10px] leading-[1.4] text-nomi-ink-60">{review.note}</p> : null
+        review?.note ? <p className="text-micro leading-[1.4] text-nomi-ink-60">{review.note}</p> : null
       ) : (
         <>
           <textarea
@@ -81,7 +81,7 @@ export function CapabilityHumanReviewControl({
             rows={2}
             value={note}
             placeholder="记录身份、构图、风格或时序问题"
-            className="w-full resize-y rounded-nomi-sm border border-nomi-line bg-nomi-paper-strong px-2 py-1.5 text-[10px] leading-[1.4] text-nomi-ink outline-none focus:border-nomi-accent"
+            className="w-full resize-y rounded-nomi-sm border border-nomi-line bg-nomi-paper-strong px-2 py-1.5 text-micro leading-[1.4] text-nomi-ink outline-none focus:border-nomi-accent"
             onChange={(event) => setNote(event.target.value)}
           />
           <div className="grid grid-cols-2 gap-1.5">
@@ -126,7 +126,7 @@ export function CapabilityHumanReviewControl({
           ) : null}
         </>
       )}
-      <p className="text-[9px] leading-[1.35] text-nomi-ink-40">
+      <p className="text-micro leading-[1.35] text-nomi-ink-40">
         人工结论独立保存，不覆盖自动质量报告。
       </p>
     </div>

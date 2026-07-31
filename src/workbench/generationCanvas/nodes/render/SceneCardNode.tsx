@@ -6,6 +6,7 @@
  * 场景名 inline 可编辑。
  */
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { localAssetThumbnailUrl } from '../../../../design/localAssetThumbnail'
 import { cn } from '../../../../utils/cn'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'

@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconBrandBlender, IconCube, IconDownload } from '@tabler/icons-react'
 import { useResultDownload } from './useResultDownload'
 import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton, ToolbarDivider } from './NodeFloatingToolbar'

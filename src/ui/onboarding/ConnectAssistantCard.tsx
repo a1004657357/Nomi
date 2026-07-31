@@ -20,6 +20,14 @@ type ClientKey = 'claude' | 'codex' | 'cursor'
 const CLIENT_LABEL: Record<ClientKey, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' }
 const CLIENT_ORDER: ClientKey[] = ['claude', 'codex', 'cursor']
 
+function syncCodexLocalVendor(enabled: boolean): void {
+  try {
+    getDesktopBridge()?.modelCatalog?.upsertVendor({ key: CODEX_LOCAL_VENDOR_KEY, enabled })
+  } catch {
+    // OnboardingDrawer derives this state again on refresh.
+  }
+}
+
 type McpClientInfo = { installed: boolean; stale: boolean; configPath: string; snippet: string }
 export type McpInfo = {
   tokenReady: boolean

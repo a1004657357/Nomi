@@ -1,5 +1,6 @@
 import { IconFolderMinus, IconFolderPlus, IconPlayerPlay, IconX } from '@tabler/icons-react'
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { WorkbenchIconButton } from '../../../design'
 import { cn } from '../../../utils/cn'
 

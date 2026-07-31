@@ -19,9 +19,9 @@ import {
   captureBrowserPromptScreenshot,
   captureBrowserResource,
   importBrowserMedia,
-  normalizeCaptureSourceRect,
-  selectBrowserPromptScreenshotRect,
 } from "../media/browserViewMedia";
+import { normalizeCaptureSourceRect } from "../media/browserCaptureSource";
+import { selectBrowserPromptScreenshotRect } from "../media/browserPromptScreenshotSelection";
 import { startBrowserAssetNativeDrag } from "../media/browserAssetNativeDrag";
 import {
   applyBrowserAssetOverlayMouseEvents,
@@ -284,6 +284,7 @@ export function registerBrowserViewIpc(rendererUrlResolver?: () => string): void
       view,
       lastBounds: { x: 0, y: 0, width: 0, height: 0 },
       resourceCaptureEnabled: false,
+      promptCategories: [],
     };
     browserViews.set(record.viewId, record);
     trackBrowserView(win, record);

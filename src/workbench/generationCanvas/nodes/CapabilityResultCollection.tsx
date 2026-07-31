@@ -65,7 +65,7 @@ export function CapabilityResultCollection({
         data-mood-matrix={isMoodMatrix ? '5x5' : undefined}
       >
         {isMoodCollection ? (
-          <div className="flex h-7 shrink-0 items-center justify-between border-b border-nomi-line bg-nomi-paper px-2 text-[10px] text-nomi-ink-50">
+          <div className="flex h-7 shrink-0 items-center justify-between border-b border-nomi-line bg-nomi-paper px-2 text-micro text-nomi-ink-50">
             <span>能量 0 → 4</span>
             <span>亲和 0 → 4</span>
           </div>
@@ -151,12 +151,12 @@ export function CapabilityResultCollection({
                       )}
                     </span>
                   )}
-                  <span className="absolute inset-x-0 bottom-0 flex min-h-6 items-center gap-1 bg-black/58 px-1.5 py-1 text-[10px] font-medium text-white">
+                  <span className="absolute inset-x-0 bottom-0 flex min-h-6 items-center gap-1 bg-black/58 px-1.5 py-1 text-micro font-medium text-white">
                     {isCurrent ? <IconCheck size={11} stroke={2.2} aria-hidden="true" /> : null}
                     <span className="min-w-0 truncate">{item.label}</span>
                   </span>
                   {item.status === 'error' && item.error ? (
-                    <span className="absolute inset-x-1 top-1 line-clamp-2 rounded-nomi-sm bg-workbench-danger-soft px-1.5 py-1 text-[10px] leading-tight text-workbench-danger">
+                    <span className="absolute inset-x-1 top-1 line-clamp-2 rounded-nomi-sm bg-workbench-danger-soft px-1.5 py-1 text-micro leading-tight text-workbench-danger">
                       {item.error}
                     </span>
                   ) : null}
@@ -177,7 +177,7 @@ export function CapabilityResultCollection({
                     title={`选择 ${candidates.length} 个候选`}
                     className={cn(
                       'absolute right-1 top-1 z-[4] flex h-6 items-center gap-1 rounded-nomi-sm px-1.5',
-                      'border border-white/70 bg-nomi-paper text-[10px] font-semibold text-nomi-ink-70 shadow-nomi-float',
+                      'border border-white/70 bg-nomi-paper text-micro font-semibold text-nomi-ink-70 shadow-nomi-float',
                       'hover:bg-nomi-paper-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
                     )}
                     onPointerDown={(event) => event.stopPropagation()}

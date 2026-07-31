@@ -149,7 +149,7 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
     [t],
   )
 
-  const panelTitle = sidebarPanelTitle(tab, t)
+  const panelTitle = sidebarPanelTitle(tab)
   const expandedWidth = isLibraryTab(tab) ? PROJECT_LIBRARY_SIDEBAR_EXPANDED_WIDTH : PROJECT_SIDEBAR_EXPANDED_WIDTH
 
   return (

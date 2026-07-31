@@ -184,7 +184,12 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot): Record<
 
   const modelKey = String(shot.modelKey || '').trim()
   const previousModelKey = String(next.modelKey || '').trim()
-  const previousArchetype = previousModelKey ? resolveArchetypeForModel({ modelKey: previousModelKey }) : null
+  const previousArchetype = previousModelKey
+    ? resolveArchetypeForModel({
+        modelKey: previousModelKey,
+        vendorKey: String(next.modelVendor || next.vendor || '') || null,
+      })
+    : null
   const modelChanged = Boolean(modelKey && previousModelKey && previousModelKey !== modelKey)
   if (modelKey) {
     if (modelChanged) {
@@ -208,6 +213,7 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot): Record<
   const resolved = resolveArchetypeForModel({
     modelKey: effectiveModelKey,
     modelAlias: String(next.modelAlias || ''),
+    vendorKey: String(next.modelVendor || next.vendor || '') || null,
     meta: next,
   })
   if (resolved) {
@@ -251,6 +257,7 @@ function selectedVideoMode(target: GenerationCanvasNode) {
   const resolved = resolveArchetypeForModel({
     modelKey: String(meta.modelKey || ''),
     modelAlias: String(meta.modelAlias || ''),
+    vendorKey: String(meta.modelVendor || meta.vendor || '') || null,
     meta,
   })
   if (!resolved) return null
@@ -355,11 +362,18 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
   // 旧计划没 shotKind 时仍按视频计划处理，保持既有兼容语义。
   const usesStoryboardVideoSettings = (input.shot.shotKind ?? 'video') !== 'image'
   const requestedModelKey = usesStoryboardVideoSettings ? String(input.shot.modelKey || '').trim() : ''
-  const requestedArchetype = requestedModelKey ? resolveArchetypeForModel({ modelKey: requestedModelKey }) : null
+  const requestedArchetype = requestedModelKey
+    ? resolveArchetypeForModel({ modelKey: requestedModelKey, vendorKey: null })
+    : null
   const usableRequestedModelKey = requestedArchetype?.kind && requestedArchetype.kind !== 'video'
     ? ''
     : requestedModelKey
-  const existingArchetype = existingModelKey ? resolveArchetypeForModel({ modelKey: existingModelKey }) : null
+  const existingArchetype = existingModelKey
+    ? resolveArchetypeForModel({
+        modelKey: existingModelKey,
+        vendorKey: String(existing?.meta?.modelVendor || existing?.meta?.vendor || '') || null,
+      })
+    : null
   const usableExistingModelKey = existingArchetype?.kind && existingArchetype.kind !== 'video'
     ? ''
     : existingModelKey

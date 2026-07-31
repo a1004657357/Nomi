@@ -213,6 +213,8 @@ export type PlanCreatedNode = {
   referenceSheet?: true
   /** 分镜组总控卡：落画布写进 node.meta.storyboardGroup，用于把一组镜头标成同一脚本入口。 */
   storyboardGroup?: true
+  /** 图片+视频镜头派生的首帧节点，不参与独立镜头编号。 */
+  storyboardKeyframe?: true
   /** 分镜表节点快照：让画布节点本身保留可恢复脚本数据。 */
   storyboardPlanSnapshot?: StoryboardPlan
 }
@@ -277,6 +279,10 @@ function anchorKindToNodeKind(kind: PlanAnchorKind): string {
 
 function shotClientId(shot: PlanShot): string {
   return `shot-${shot.index}`
+}
+
+function shotKeyframeClientId(shot: PlanShot): string {
+  return `${shotClientId(shot)}-keyframe`
 }
 
 function firstNonEmptyText(...values: unknown[]): string {

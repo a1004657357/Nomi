@@ -1,6 +1,7 @@
 // 技能库单卡（画廊式，对齐提示词库的卡片语言）。token-only：颜色/圆角/字号全走设计系统。
 // 用户技能可删；内置技能只读（删除位显「内置 · 只读」）。画布组件可点击或拖入，普通技能仍在创作区运行。
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   IconAlertTriangle,
   IconBox,

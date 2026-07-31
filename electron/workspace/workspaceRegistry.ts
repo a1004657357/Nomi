@@ -28,6 +28,7 @@ function writeRecentWorkspaces(settingsRoot: string, entries: RecentWorkspaceEnt
  */
 function withRegistryLock<T>(settingsRoot: string, fn: () => T): T {
   const lockDir = `${recentWorkspacesPath(settingsRoot)}.lock`;
+  fs.mkdirSync(path.dirname(lockDir), { recursive: true });
   const spin = new Int32Array(new SharedArrayBuffer(4));
   const deadline = Date.now() + 15_000;
   const staleAfterMs = 10_000;

@@ -2,6 +2,7 @@ import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { isShotNumberedNode } from '../model/shotNumbering'
+import i18n from '../../../i18n'
 
 /**
  * 图片镜头 → 视频镜头：

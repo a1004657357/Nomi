@@ -28,6 +28,8 @@ import { ConnectAssistantCard, type McpInfo } from './ConnectAssistantCard'
 import { DreaminaMemberCard, type DreaminaStatus } from './DreaminaMemberCard'
 import { ComfyuiLocalCard, COMFYUI_VENDOR_KEY } from './ComfyuiLocalCard'
 import { JimengWebCard, type JimengWebStatus } from './JimengWebCard'
+import { CODEX_LOCAL_VENDOR_KEY } from './codexLocalProvider'
+import { confirmAndDeleteVendor } from './vendorDeleteAction'
 import { KNOWN_VENDORS, isKnownVendor } from '../../config/knownVendors'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { notifyModelOptionsRefresh } from '../../config/useModelOptions'
@@ -37,7 +39,6 @@ import { onboardingVendorIsUsable } from './onboardingVendorAvailability'
 type VendorMeta = {
   name: string
   hasApiKey: boolean
-  authType: string
   baseUrl: string
   enabled: boolean
   authType: string
@@ -115,7 +116,6 @@ export function OnboardingDrawer(): JSX.Element {
         metaMap.set(String(v.key), {
           name: String(v.name || v.key),
           hasApiKey: Boolean(v.hasApiKey),
-          authType: String(v.authType || ''),
           baseUrl: String(v.baseUrlHint || ''),
           enabled: v.enabled !== false,
           authType: String(v.authType || ''),
@@ -273,11 +273,12 @@ export function OnboardingDrawer(): JSX.Element {
   const coveredKindCounts = React.useMemo(() => {
     const counts = new Map<string, number>()
     for (const m of models) {
-      if (m.enabled && onboardingVendorIsUsable(vendorMeta.get(m.vendorKey))) set.add(String(m.kind))
+      if (!m.enabled || !onboardingVendorIsUsable(vendorMeta.get(m.vendorKey))) continue
+      const kind = String(m.kind)
+      counts.set(kind, (counts.get(kind) ?? 0) + 1)
     }
-    if (dreaminaConnected || jimengWebConnected) set.add('video')
-    return set
-  }, [models, vendorMeta, dreaminaConnected, jimengWebConnected])
+    return counts
+  }, [models, vendorMeta])
 
   // 其他（自定义中转）按 vendor 拆成每家一张卡，卡名用用户在接入时填的「来源名称」（vendorMeta.name）。
   // 根因修复：此前全塞进单张「其他模型」卡、只按 kind 分组，多家糊一起分不清哪个 key 对哪家。

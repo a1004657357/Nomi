@@ -34,6 +34,15 @@ function pushUnique(output: string[], value: unknown) {
   if (url && !output.includes(url)) output.push(url)
 }
 
+function targetRelaysVideoToFirstFrame(target: GenerationCanvasNode): boolean {
+  const archetype = archetypeForNode(target)
+  if (!archetype) return false
+  const mode = currentArchetypeMode(archetype, (target.meta || {}) as Record<string, unknown>)
+  const kinds = new Set(mode.slots.map((slot) => slot.kind))
+  if (kinds.has('video_ref') || kinds.has('source_video')) return false
+  return kinds.has('first_frame')
+}
+
 function referenceImageRole(
   targetNodeId: string,
   url: string,

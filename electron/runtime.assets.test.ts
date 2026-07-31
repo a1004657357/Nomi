@@ -2,8 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createProject, importRemoteAsset, listProjectAssets } from "./runtime";
+import { createProject, importRemoteAsset, listProjectAssets, localizedTaskAssetFileName } from "./runtime";
 import { importLocalFile, importLocalPath } from "./assets/localFileImport";
+import { localizeTaskAsset } from "./tasks/profileTaskExecution";
 
 vi.mock("./export/mediaProbe", () => ({
   probeMediaMetadata: vi.fn(async () => ({ kind: "video", hasAudio: false, durationSeconds: 3.0625 })),
