@@ -2,6 +2,7 @@ import { enModelSetup, zhModelSetup } from './locales/modelSetup'
 import { enBrowserAssets, zhBrowserAssets } from './locales/browserAssets'
 import { enTimelinePreview, zhTimelinePreview } from './locales/timelinePreview'
 import { enAssetLibrary, zhAssetLibrary } from './locales/assetLibrary'
+import { enSettings, zhSettings } from './locales/settings'
 import { enOnboardingProviders, zhOnboardingProviders } from './locales/onboardingProviders'
 import { enLibraries, zhLibraries } from './locales/libraries'
 import { enScene3d, zhScene3d } from './locales/scene3d'
@@ -149,6 +150,8 @@ export const zhCN = {
     continueCreating: '继续创作',
     revealFolder: '在文件夹中显示',
     deleteProject: '删除项目',
+    renameHint: '双击改名',
+    renameProject: '重命名「{{name}}」',
     modelMissing: '还没有可用的文本模型',
     modelMissingDescription: '先接入一个文本模型，再开始创作。',
     connectModel: '接入模型',
@@ -274,6 +277,7 @@ export const zhCN = {
   browserAssets: zhBrowserAssets,
   timelinePreview: zhTimelinePreview,
   assetLibrary: zhAssetLibrary,
+  settings: zhSettings,
   onboardingProviders: zhOnboardingProviders,
   libraries: zhLibraries,
   scene3d: {
@@ -433,6 +437,8 @@ export const en = {
     continueCreating: 'Continue creating',
     revealFolder: 'Show in folder',
     deleteProject: 'Delete project',
+    renameHint: 'Double-click to rename',
+    renameProject: 'Rename "{{name}}"',
     modelMissing: 'No text model is available',
     modelMissingDescription: 'Connect a text model before you start creating.',
     connectModel: 'Connect model',
@@ -564,6 +570,7 @@ export const en = {
   browserAssets: enBrowserAssets,
   timelinePreview: enTimelinePreview,
   assetLibrary: enAssetLibrary,
+  settings: enSettings,
   onboardingProviders: enOnboardingProviders,
   libraries: enLibraries,
   scene3d: {

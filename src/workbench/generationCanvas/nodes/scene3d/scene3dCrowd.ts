@@ -1,12 +1,7 @@
 import * as THREE from 'three'
 import type { Scene3DObject, Scene3DVector3 } from './scene3dTypes'
 import type { CrowdAddOptions } from './scene3dSharedTypes'
-import {
-  CROWD_MAX_AXIS,
-  MANNEQUIN_LABEL_BASE_HEIGHT,
-  ROLE_COLOR_SEQUENCE,
-} from './scene3dConstants'
-import { vectorFromArray, vectorToArray } from './scene3dMath'
+import { CROWD_MAX_AXIS, MANNEQUIN_LABEL_BASE_HEIGHT, ROLE_COLOR_SEQUENCE } from './scene3dConstants'
 
 export function roleColorForIndex(index: number): string {
   return ROLE_COLOR_SEQUENCE[index % ROLE_COLOR_SEQUENCE.length]
@@ -107,11 +102,7 @@ export function objectVisualHalfHeight(object: Scene3DObject, scale: Scene3DVect
 }
 
 export function objectTransformAnchorPosition(object: Scene3DObject): Scene3DVector3 {
-  return [
-    object.position[0],
-    object.position[1] - objectVisualHalfHeight(object),
-    object.position[2],
-  ]
+  return [object.position[0], object.position[1] - objectVisualHalfHeight(object), object.position[2]]
 }
 
 export function nextAvailableObjectPosition(object: Scene3DObject, objects: Scene3DObject[]): Scene3DVector3 {
@@ -126,11 +117,12 @@ export function nextAvailableObjectPosition(object: Scene3DObject, objects: Scen
       radius: Math.max(footprint.width, footprint.depth) / 2,
     }
   })
-  const fits = (x: number, z: number) => occupied.every((existing) => {
-    const dx = x - existing.x
-    const dz = z - existing.z
-    return Math.sqrt(dx * dx + dz * dz) >= targetRadius + existing.radius + gap
-  })
+  const fits = (x: number, z: number) =>
+    occupied.every((existing) => {
+      const dx = x - existing.x
+      const dz = z - existing.z
+      return Math.sqrt(dx * dx + dz * dz) >= targetRadius + existing.radius + gap
+    })
   const makePosition = (x: number, z: number): Scene3DVector3 => [
     Number(x.toFixed(4)),
     object.position[1],

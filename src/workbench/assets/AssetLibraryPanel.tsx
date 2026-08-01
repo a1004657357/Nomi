@@ -32,6 +32,7 @@ import {
   FolderGridCell,
   NewFolderInput,
 } from './AssetLibraryPanelParts'
+import { AssetPreviewDialog } from './AssetPreviewDialog'
 import { ASSET_KIND_FILTER_VALUES, FILTER_OPTIONS, type FilterValue } from './assetLibraryPanelFilters'
 import { buildAssetLibraryDeletePlan, filterImageVideoAssets } from './assetLibrarySources'
 
@@ -138,6 +139,7 @@ export function AssetLibraryContent({
   const uploadInputRef = React.useRef<HTMLInputElement>(null)
   const filterButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const filterMenuRef = React.useRef<HTMLDivElement | null>(null)
+  const [previewAsset, setPreviewAsset] = React.useState<AssetRef | null>(null)
   const [sourceFilter, setSourceFilter] = React.useState<SourceFilterValue>('all')
   const [visibleKinds, setVisibleKinds] = React.useState<Set<AssetKind>>(() => new Set(ASSET_KIND_FILTER_VALUES))
   const [filterOpen, setFilterOpen] = React.useState(false)
@@ -726,6 +728,7 @@ export function AssetLibraryContent({
                   selected={selectedIds.has(asset.id)}
                   dragHint={projectSelectionEnabled ? t('assetLibrary.dragHintFolder') : undefined}
                   onSelect={selectAsset}
+                  onPreview={setPreviewAsset}
                   onDragStartAsset={projectSelectionEnabled ? handleFolderAssignDragStart : handleAssetDragStart}
                 />
               ))}
@@ -759,6 +762,7 @@ export function AssetLibraryContent({
                         selected={selectedIds.has(asset.id)}
                         dragHint={projectSelectionEnabled ? t('assetLibrary.dragHintFolder') : undefined}
                         onSelect={selectAsset}
+                        onPreview={setPreviewAsset}
                         onDragStartAsset={projectSelectionEnabled ? handleFolderAssignDragStart : handleAssetDragStart}
                       />
                     ))}
@@ -770,6 +774,9 @@ export function AssetLibraryContent({
         </div>
         )}
       </div>
+      {previewAsset ? (
+        <AssetPreviewDialog asset={previewAsset} onClose={() => setPreviewAsset(null)} />
+      ) : null}
     </TooltipProvider>
   )
 }

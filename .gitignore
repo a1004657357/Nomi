@@ -59,6 +59,9 @@ tests/system/runs/
 .scene3d-ux-lab/
 .scene3d-panorama-lab/
 .onboarding-demo-lab/
+.video-playback-heal-lab/
+.project-asset-healthcheck-lab/
+.toolbar-order-lab/
 
 # 3D 预设动作校准台的本地输出（pose-lab）
 .pose-lab/
@@ -89,3 +92,19 @@ integrations/blender/agent-harness/.pytest_cache/
 integrations/blender/agent-harness/*.egg-info/
 integrations/blender/agent-harness/**/__pycache__/
 integrations/blender/agent-harness/**/*.pyc
+
+# R13 走查截图产物（scripts/*-walkthrough.mjs 输出，纯本地证据，不进 git）
+.failure-walk/
+.failure-walk-ok/
+.batch-walk/
+.relay-fetch-walk/
+.relay-i2v-walk/
+.retired-walk/
+.error-card-walk/
+.proxy-setting-walk/
+.model-panel-shot/
+.poll-cadence-walk/
+
+# Python 运行副产物（decrypt_wechat.py 等被 import/执行时生成，绝不入库）
+__pycache__/
+*.pyc

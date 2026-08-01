@@ -84,19 +84,52 @@ export function pickHealthiestProvider(model: DedupedModel, isAiling: AilingProb
   return resolveBestProvider(model, { usableVendorKeys: healthyVendors }) || resolveBestProvider(model)
 }
 
+// ── 供应商锁定下拉的寻址 ──
+// 下拉项的 value 不能用裸 option.value：两个中转站可以提供同名模型（modelKey 相同），
+// 裸值会让两项撞值——选哪家都分不清、当前锁定哪家也显示不出。用 vendor+value 复合串寻址。
+const PROVIDER_ADDRESS_SEP = '\0'
+
+export function providerAddress(p: ModelProviderRef): string {
+  return `${p.vendor || ''}${PROVIDER_ADDRESS_SEP}${p.option.value}`
+}
+
+/** 供应商下拉选项：按 vendor 折叠（用户锁的是「走哪家」），value=复合寻址串。仅多家时非空。 */
+export function buildProviderSelectOptions(model: DedupedModel | null): Array<NomiSelectOption & { vendor?: string }> {
+  if (!model || model.providers.length <= 1) return []
+  const byVendor = new Map<string, NomiSelectOption & { vendor?: string }>()
+  for (const p of model.providers) {
+    const key = p.vendor || p.option.value
+    if (!byVendor.has(key)) byVendor.set(key, { value: providerAddress(p), label: providerLabel(p), vendor: p.vendor })
+  }
+  return byVendor.size > 1 ? [...byVendor.values()] : []
+}
+
+/** 当前生效供应商的复合寻址串：优先 (value, vendor) 双键命中；vendor 缺失/没命中回退首个同 value 家。 */
+export function resolveProviderSelectValue(
+  model: DedupedModel | null,
+  value: string,
+  vendor?: string | null,
+): string {
+  if (!model) return value
+  const sameValue = model.providers.filter((p) => p.option.value === value)
+  if (sameValue.length === 0) return value
+  const locked = vendor ? sameValue.find((p) => p.vendor === vendor) : undefined
+  return providerAddress(locked || sameValue[0])
+}
+
 export interface DedupedModelSelectView {
   /** 去重后的模型下拉选项（value=canonicalId，trailing 标「N 家」）。 */
   modelOptions: NomiSelectOption[]
   /** 当前选中模型的 canonicalId（无则空串）。 */
   modelValue: string
-  /** 选模型：解析最优供应商后回写其 option.value 给原 onChange。 */
+  /** 选模型：解析最优供应商后回写其 (option.value, vendor) 给原 onChange。 */
   onModelPick: (canonicalId: string) => void
-  /** 供应商下拉选项（仅多家时非空）。value=该供应商 option.value。 */
+  /** 供应商下拉选项（仅多家时非空）。value=vendor+option.value 复合寻址串（同名 modelKey 跨厂商不撞值）。 */
   providerOptions: NomiSelectOption[]
-  /** 当前锁定/生效的供应商 option.value。 */
+  /** 当前锁定/生效供应商的复合寻址串。 */
   providerValue: string
-  /** 锁定某家供应商：直接回写该家 option.value。 */
-  onProviderPick: (optionValue: string) => void
+  /** 锁定某家供应商：解析寻址串后回写该家 (option.value, vendor)。 */
+  onProviderPick: (addressValue: string) => void
   /** 当前选中的去重模型（供上层取档案/变体等）。 */
   selectedModel: DedupedModel | null
 }
@@ -104,12 +137,14 @@ export interface DedupedModelSelectView {
 /**
  * @param modelOptions 该 kind 下全部已接入模型（平铺）
  * @param value        当前节点存的 option.value（某具体供应商的 modelKey）
- * @param onChange     原选模型回调（接收 option.value，写 node.meta 的 vendor+modelKey）
+ * @param onChange     原选模型回调（接收 option.value + 该家 vendor，写 node.meta 的 vendor+modelKey）
+ * @param vendor       当前节点存的供应商 key（同名 modelKey 跨厂商时区分锁定哪家；缺省=首家）
  */
 export function useDedupedModelSelect(
   modelOptions: readonly ModelOption[],
   value: string,
-  onChange: (value: string) => void,
+  onChange: (value: string, vendor?: string) => void,
+  vendor?: string | null,
 ): DedupedModelSelectView {
   const deduped = React.useMemo(() => dedupeModelOptions([...modelOptions]), [modelOptions])
 
@@ -129,30 +164,32 @@ export function useDedupedModelSelect(
       const model = deduped.find((m) => m.canonicalId === canonicalId)
       if (!model) return
       const best = pickHealthiestProvider(model, isModelRecentlyAiling)
-      if (best) onChange(best.option.value)
+      if (best) onChange(best.option.value, best.vendor)
     },
     [deduped, onChange],
   )
 
-  const providerOptionsView = React.useMemo<NomiSelectOption[]>(() => {
-    if (!selectedModel || selectedModel.providers.length <= 1) return []
-    // 同一供应商对同一模型若有多条（多 modelKey），锁定列表按 vendor 折叠成一行（取首条）——
-    // 用户锁的是「走哪家」，不该看到同名供应商重复。
-    const byVendor = new Map<string, NomiSelectOption>()
-    for (const p of selectedModel.providers) {
-      const key = p.vendor || p.option.value
-      if (!byVendor.has(key)) byVendor.set(key, { value: p.option.value, label: providerLabel(p) })
-    }
-    return byVendor.size > 1 ? [...byVendor.values()] : []
-  }, [selectedModel])
+  const providerOptionsView = React.useMemo<NomiSelectOption[]>(
+    () => buildProviderSelectOptions(selectedModel),
+    [selectedModel],
+  )
+
+  const onProviderPick = React.useCallback(
+    (addressValue: string) => {
+      const picked = selectedModel?.providers.find((p) => providerAddress(p) === addressValue)
+      if (picked) onChange(picked.option.value, picked.vendor)
+      else if (addressValue) onChange(addressValue)
+    },
+    [selectedModel, onChange],
+  )
 
   return {
     modelOptions: modelOptionsView,
     modelValue: selectedModel?.canonicalId || '',
     onModelPick,
     providerOptions: providerOptionsView,
-    providerValue: value,
-    onProviderPick: onChange,
+    providerValue: resolveProviderSelectValue(selectedModel, value, vendor),
+    onProviderPick,
     selectedModel,
   }
 }

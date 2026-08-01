@@ -1,6 +1,7 @@
 // 素材域 IPC 注册器（2026-07-22 素材面收敛时从 main.ts 抽出,R9 巨壳门岗）：
-// 文件夹读写 + 本地文件导入 + 素材下载。列表(nomi:assets:list)因依赖 runtime 懒加载留在 main。
-import { ipcMain } from "electron";
+// 文件夹读写 + 本地文件导入 + 素材下载 + 自动另存/设置（集中设置页「文件与保存」）。
+import { dialog, ipcMain } from "electron";
+import { getAutoSavePrefs, setAutoSavePrefs, type AutoSavePrefs } from "./downloadPrefs";
 
 export function registerAssetsIpc(): void {
   ipcMain.handle("nomi:assets:folders-get", async (_event, payload) => {
@@ -27,5 +28,22 @@ export function registerAssetsIpc(): void {
   ipcMain.handle("nomi:assets:download", async (_event, payload) => {
     const { downloadAssetToDisk } = await import("./downloadAsset");
     return downloadAssetToDisk(payload);
+  });
+  // 自动另存：生成完成时渲染层调这里，把生成物静默复制一份到用户目录（best-effort，关/失败不打断生成）。
+  ipcMain.handle("nomi:assets:auto-save", async (_event, payload) => {
+    const { autoSaveAssetToDisk } = await import("./autoSaveAsset");
+    const p = (payload || {}) as { url?: unknown; suggestedName?: unknown };
+    return autoSaveAssetToDisk(String(p.url || ""), String(p.suggestedName || ""));
+  });
+  // 集中设置页「文件与保存」：读/写自动另存开关+目录、选目录。
+  ipcMain.handle("nomi:settings:auto-save-get", () => getAutoSavePrefs());
+  ipcMain.handle("nomi:settings:auto-save-set", (_event, payload) => {
+    const p = (payload || {}) as Partial<AutoSavePrefs>;
+    setAutoSavePrefs({ enabled: Boolean(p.enabled), dir: String(p.dir || "") });
+    return getAutoSavePrefs();
+  });
+  ipcMain.handle("nomi:settings:pick-dir", async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
+    return { dir: result.canceled || !result.filePaths[0] ? "" : result.filePaths[0] };
   });
 }

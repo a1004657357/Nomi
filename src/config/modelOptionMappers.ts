@@ -32,17 +32,22 @@ function toCatalogModelPricing(pricing: ModelCatalogModelDto['pricing']): ModelO
 
 export function toCatalogModelOptions(items: ModelCatalogModelDto[]): ModelOption[] {
   if (!Array.isArray(items)) return []
+  // 去重键必须带 vendor：modelKey 只在单个供应商内唯一，两个中转站可以各自提供同名模型
+  // （如都叫 gpt-image-2）。裸 modelKey 去重会把后进数组那家整条吞掉——store 是 newest-first，
+  // 表现为「先接的厂商被最新添加的厂商覆盖」。跨厂商的同模型合并是 dedupeModelOptions 的职责
+  // （canonical 身份 → providers[] 多家可用），不在这层做。
   const seen = new Set<string>()
   const out: ModelOption[] = []
   for (const item of items) {
     const alias = typeof item?.modelAlias === 'string' ? item.modelAlias.trim() : ''
     const modelKey = typeof item?.modelKey === 'string' ? item.modelKey.trim() : ''
     const value = modelKey || alias
-    if (!value || seen.has(value)) continue
-    seen.add(value)
+    const vendor = typeof item?.vendorKey === 'string' ? item.vendorKey : undefined
+    const dedupeKey = `${vendor || ''}::${value}`
+    if (!value || seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
     const labelZh = typeof item?.labelZh === 'string' ? item.labelZh.trim() : ''
     const label = labelZh || alias || value
-    const vendor = typeof item?.vendorKey === 'string' ? item.vendorKey : undefined
     // 认得的模型（按模型身份，供应商无关）→ 用内置档案的控件覆盖 meta.parameterControls，
     // 这样现有渲染路径不变就能渲染档案控件；认不出则保持原 meta（走通用 flat 解析）。
     const archControls = archetypeParameterControls({ modelKey: modelKey || value, modelAlias: alias, vendorKey: vendor, meta: item?.meta })

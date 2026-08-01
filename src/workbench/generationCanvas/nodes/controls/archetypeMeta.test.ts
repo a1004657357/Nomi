@@ -730,7 +730,9 @@ describe('火山方舟 Seedance — 档案投影', () => {
       volcengine_first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
       model: 'doubao-seedance-2-0-260128',
     })
-    expect(VOLC.modes[0].params.map((p) => p.key)).toEqual(['ratio', 'resolution', 'duration', 'generate_audio'])
+    // seed 在官方字段表里、同族 apimart 档案也有——参数由模型身份决定与渠道无关，
+    // 换个渠道少一个控件就是 bug（2026-07-31 拿到交付文档对账时补齐）。
+    expect(VOLC.modes[0].params.map((p) => p.key)).toEqual(['ratio', 'resolution', 'duration', 'seed', 'generate_audio'])
   })
 
   it('fast 变体：out.model 发 fast Model ID', () => {
@@ -752,7 +754,9 @@ describe('火山方舟 Seedance — 档案投影', () => {
     })
   })
 
-  it('全能参考：数组参考转成火山 content item 数组，供模板扁平展开', () => {
+  // role 的五个取值全部来自官方 `content[].role` 字段表。以前只有图片带 role，参考视频/音频
+  // 裸奔（半接），2026-07-31 逐项对账抓出。这条锁住五个都在。
+  it('全能参考：数组参考转成火山 content item 数组，图/视频/音频都带官方 role', () => {
     const meta = {
       archetype: { id: 'volcengine-seedance-2', modeId: 'omni' },
       referenceImageUrls: ['c1.png'],
@@ -761,8 +765,8 @@ describe('火山方舟 Seedance — 档案投影', () => {
     }
     expect(buildArchetypeInputParams(meta, VOLC)).toEqual({
       volcengine_image_contents: [{ type: 'image_url', image_url: { url: 'c1.png' }, role: 'reference_image' }],
-      volcengine_video_contents: [{ type: 'video_url', video_url: { url: 'v1.mp4' } }],
-      volcengine_audio_contents: [{ type: 'audio_url', audio_url: { url: 'a1.mp3' } }],
+      volcengine_video_contents: [{ type: 'video_url', video_url: { url: 'v1.mp4' }, role: 'reference_video' }],
+      volcengine_audio_contents: [{ type: 'audio_url', audio_url: { url: 'a1.mp3' }, role: 'reference_audio' }],
       model: 'doubao-seedance-2-0-260128',
     })
   })

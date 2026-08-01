@@ -11,6 +11,7 @@ import type { WorkbenchProjectPayload, WorkbenchProjectRecordV1 } from './projec
 import { migrateProjectRecord, type CategoryMigrationDiagnostic } from './projectCategoryMigration'
 import { migrateProjectV51ToV60 } from './projectV51ToV60Migration'
 import { backfillShotIndexes } from '../generationCanvas/model/shotNumbering'
+import { runProjectAssetHealthCheck } from '../generationCanvas/runner/projectAssetHealthCheck'
 
 let lastCategoryMigrationDiagnostic: CategoryMigrationDiagnostic | null = null
 
@@ -176,6 +177,9 @@ export function createWorkbenchProjectPersistenceService(deps: Dependencies): Wo
     restoreWorkbenchProjectPayload(upgraded.payload)
     // S5-b-1:重放快照没盖到的事件尾巴(崩溃恢复),完成后以含尾后态发 genesis。
     await replayCanvasEventTailAndSealGenesis(upgraded.id, upgraded.payload)
+    // 开项目体检:后台抢救此前漏落进节点的厂商临时 URL(会过期)→ 本地资产。fire-and-forget,
+    // 不阻塞打开;绝大多数项目节点本就 nomi-local,体检立即空跑返回。
+    void runProjectAssetHealthCheck(upgraded.id).catch(() => {})
     writeLastActiveProjectId(upgraded.id)
     deps.setActiveProject(upgraded)
     deps.setView('studio')

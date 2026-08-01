@@ -17,8 +17,9 @@ import { getGenerationNodeCatalogKind, isVideoLikeGenerationNodeKind } from '../
 export function findModelOptionByIdentifier(
   options: readonly ModelOption[],
   value: string | null | undefined,
+  vendor?: string | null | undefined,
 ): ModelOption | null {
-  return findCatalogModelOptionByIdentifier(options, value)
+  return findCatalogModelOptionByIdentifier(options, value, vendor)
 }
 
 export type GenerationModelSelection = {

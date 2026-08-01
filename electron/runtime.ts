@@ -4,10 +4,7 @@ import { contentTypeFromPath, extensionFromMime } from "./assets/assetPaths";
 import { localizedTaskAssetFileName } from "./assets/localizedAsset";
 import { writeAsset } from "./assets/projectAssetStore";
 import { endpoint } from "./vendorEndpoint";
-import { requestJson, requestMultipart } from "./vendor/vendorHttp";
-import { runMultipartProfileOperation } from "./catalog/multipartOperation";
-import { templateContext, buildProfileHttpRequest } from "./catalog/profileHttpRequest";
-import { chatImageFallbackOperation } from "./catalog/imageRouteFallback";
+import { requestJson } from "./vendor/vendorHttp";
 import { buildNormalizedRecipe, buildTaskProvenance } from "./vendor/provenance";
 import { traceVendorCompleted, traceVendorRequested } from "./events/vendorCallTrace";
 import {
@@ -26,7 +23,6 @@ import type { GlbValidationReport } from "./assets/glbValidation";
 import { TtlLruCache } from "./tasks/taskCache";
 import { markTaskAdmitted } from "./tasks/taskAdmission";
 import { readCachedTaskResult, recipeFingerprint, rememberTaskResult } from "./vendor/fingerprintCache";
-import { decryptApiKeyRecord } from "./catalog/secrets";
 import {
   createProject,
   deleteProject,
@@ -41,12 +37,12 @@ export { importRemoteAsset, listProjectAssets, moveAssetFile, writeAsset } from 
 // localizedTaskAssetFileName 已抽到 ./assets/localizedAsset（规则 9/12 减负 giant shell）；re-export 保持既有 import（含 runtime.assets.test）不变。
 export { localizedTaskAssetFileName };
 
-// 任务执行复用 catalog 状态（readCatalog + extractVendorExtraHeaders 纯函数）；
+// 任务执行复用 catalog 状态（extractVendorExtraHeaders 纯函数）；
 // catalogStore 反向复用本文件任务引擎 → 运行期循环引用（CommonJS 安全）。
-import { extractVendorExtraHeaders, readCatalog } from "./catalog/catalogStore";
+import { extractVendorExtraHeaders } from "./catalog/catalogStore";
 
 import type { BillingModelKind, Mapping, Model, ProfileKind, Vendor } from "./catalog/types";
-import { billingKindForTaskKind, selectExecutableModel } from "./catalog/types";
+import { billingKindForTaskKind } from "./catalog/types";
 import { applyHeadlessParamDefaults, imageEditGuardError } from "./catalog/taskParams";
 import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
 import { JIMENG_WEB_VENDOR_SEED } from "./catalog/jimengWeb";
@@ -339,7 +335,13 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     mapping?.create?.defaultParams,
   ); // headless 缺参兜底(档案默认+mapping)
   // L3 诚实护栏：图生图/图生视频缺参考或缺 mapping → 付费守卫之前拒发人话，绝不静默退化纯文生（判定在 taskParams.imageEditGuardError）。
-  const guardError = imageEditGuardError(kind, request, Boolean(mapping), model.labelZh || model.modelKey, mapping?.create?.body);
+  const guardError = imageEditGuardError(
+    kind,
+    request,
+    Boolean(mapping),
+    model.labelZh || model.modelKey,
+    mapping?.create?.body,
+  );
   if (guardError) throw new Error(guardError);
   // 第四路 audio：TTS/Whisper 同步收口（二进制/multipart）。付费守卫：必发 vendor，进来即校验消费令牌。
   if (wantedKind === "audio") {

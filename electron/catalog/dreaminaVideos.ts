@@ -5,14 +5,18 @@
 // 后三个同 image_to_video 桶，靠**一条 mapping** + dreamina_cmd（mode.fixedParams 注入）选子命令 + per-mode params
 // 控制 flag（空值自动丢，避开子命令 flag 差异）。multiframe2video（多帧/transition）留下一切片。
 //
-// 模型 = 一条 catalog 行 + 档案 5 变体（model_version：seedance2.0fast/2.0/_vip/fast_vip/mini，见 dreaminaSeedance 档案），
-// 用户经 VariantBar 切换；args 的 --model_version 取 {{request.params.model}}（= 当前变体 modelKey）。
+// Seedance 2.0 = 一条 catalog 行 + 档案 5 变体；Seedance 2.5 = 独立 catalog 行和独立能力档案。
+// args 的 --model_version 取 {{request.params.model}}（2.0 为当前变体 modelKey，2.5 为 mode.modelEnum）。
 // 输入图/视频/音频经 fileParams 物化成本地路径（dreamina 收 --image=<本地路径>，见 dreaminaInputFiles.ts）。
 
 import type { HttpOperation } from "./types";
 
-export const DREAMINA_VIDEO_MODEL_KEY = "dreamina-seedance-2.0";
+export const DREAMINA_SEEDANCE_20_MODEL_KEY = "dreamina-seedance-2.0";
+export const DREAMINA_SEEDANCE_25_MODEL_KEY = "dreamina-seedance-2.5";
+/** 兼容既有引用。 */
+export const DREAMINA_VIDEO_MODEL_KEY = DREAMINA_SEEDANCE_20_MODEL_KEY;
 export const DREAMINA_ARCHETYPE_ID = "dreamina-seedance-2";
+export const DREAMINA_SEEDANCE_25_ARCHETYPE_ID = "dreamina-seedance-2.5";
 
 // 进程型 op 的 method/path 是惰性占位（process 分支在用到它们前就短路了）——只为满足 HttpOperation 类型。
 const PROCESS_METHOD = "PROCESS";
@@ -115,15 +119,31 @@ const DREAMINA_VIDEO_STATUS: Record<string, string[]> = {
 export const DREAMINA_MULTIFRAME_MODEL_KEY = "dreamina-multiframe";
 
 export const DREAMINA_CURATED_MODELS = [
-  { modelKey: DREAMINA_VIDEO_MODEL_KEY, labelZh: "即梦 Seedance 2.0（会员）", kind: "video" as const, archetypeId: DREAMINA_ARCHETYPE_ID },
-  { modelKey: DREAMINA_MULTIFRAME_MODEL_KEY, labelZh: "即梦多帧视频（会员）", kind: "video" as const, archetypeId: "dreamina-multiframe" },
+  {
+    modelKey: DREAMINA_SEEDANCE_20_MODEL_KEY,
+    labelZh: "即梦 Seedance 2.0（会员）",
+    kind: "video" as const,
+    archetypeId: DREAMINA_ARCHETYPE_ID,
+  },
+  {
+    modelKey: DREAMINA_SEEDANCE_25_MODEL_KEY,
+    labelZh: "即梦 Seedance 2.5（高级会员）",
+    kind: "video" as const,
+    archetypeId: DREAMINA_SEEDANCE_25_ARCHETYPE_ID,
+  },
+  {
+    modelKey: DREAMINA_MULTIFRAME_MODEL_KEY,
+    labelZh: "即梦多帧视频（会员）",
+    kind: "video" as const,
+    archetypeId: "dreamina-multiframe",
+  },
 ];
 
 export const DREAMINA_CURATED_MAPPINGS = [
   {
     id: "seed-dreamina-seedance-2-text_to_video",
     taskKind: "text_to_video" as const,
-    modelKey: DREAMINA_VIDEO_MODEL_KEY,
+    modelKey: DREAMINA_SEEDANCE_20_MODEL_KEY,
     name: "即梦 Seedance 2.0 · 文生视频",
     create: TEXT2VIDEO_CREATE,
     query: QUERY_RESULT,
@@ -132,8 +152,26 @@ export const DREAMINA_CURATED_MAPPINGS = [
   {
     id: "seed-dreamina-seedance-2-image_to_video",
     taskKind: "image_to_video" as const,
-    modelKey: DREAMINA_VIDEO_MODEL_KEY,
+    modelKey: DREAMINA_SEEDANCE_20_MODEL_KEY,
     name: "即梦 Seedance 2.0 · 图生/首尾帧/全能参考",
+    create: IMAGE_TO_VIDEO_CREATE,
+    query: QUERY_RESULT,
+    statusMapping: DREAMINA_VIDEO_STATUS,
+  },
+  {
+    id: "seed-dreamina-seedance-2.5-text_to_video",
+    taskKind: "text_to_video" as const,
+    modelKey: DREAMINA_SEEDANCE_25_MODEL_KEY,
+    name: "即梦 Seedance 2.5 · 文生视频",
+    create: TEXT2VIDEO_CREATE,
+    query: QUERY_RESULT,
+    statusMapping: DREAMINA_VIDEO_STATUS,
+  },
+  {
+    id: "seed-dreamina-seedance-2.5-image_to_video",
+    taskKind: "image_to_video" as const,
+    modelKey: DREAMINA_SEEDANCE_25_MODEL_KEY,
+    name: "即梦 Seedance 2.5 · 图生/首尾帧/全能参考",
     create: IMAGE_TO_VIDEO_CREATE,
     query: QUERY_RESULT,
     statusMapping: DREAMINA_VIDEO_STATUS,

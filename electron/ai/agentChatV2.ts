@@ -3,12 +3,7 @@ import path from "node:path";
 import { tool, type CoreMessage, type CoreUserMessage } from "ai";
 import { z } from "zod";
 import { capAgentHistory, createLinkedAbortController } from "./agentChatHarness";
-import {
-  clearAgentSession,
-  hasPersistedAgentSession,
-  loadAgentSession,
-  saveAgentSession,
-} from "./agentSessionStore";
+import { clearAgentSession, hasPersistedAgentSession, loadAgentSession, saveAgentSession } from "./agentSessionStore";
 import { runAgentLoop } from "./agentLoop";
 import { traceContextCapped } from "../events/agentChatTrace";
 import { projectIdFromSessionKey } from "../events/eventLogRepository";
@@ -33,10 +28,7 @@ import {
   model3dHandoffParamsSchema,
   type CanvasToolName,
 } from "./canvasTools";
-import {
-  documentTools,
-  type DocumentToolName,
-} from "./documentTools";
+import { documentTools, type DocumentToolName } from "./documentTools";
 import {
   applyVibingDirectorPlanParamsSchema,
   parseVibingDirectorPlanRequest,
@@ -50,7 +42,12 @@ import { normalizeProviderKind, readCatalog } from "../catalog/catalogStore";
 import type { Model, Vendor } from "../catalog/types";
 import { readNomiLocalAsset } from "../assets/localAssetFile";
 import { extractTextFromLocalAsset } from "../files/extractText";
-import { buildAgentUserContent, modelSupportsImageInput, modelSupportsPdfInput, type AgentUserAttachment } from "./agentUserContent";
+import {
+  buildAgentUserContent,
+  modelSupportsImageInput,
+  modelSupportsPdfInput,
+  type AgentUserAttachment,
+} from "./agentUserContent";
 
 function readRequestedSkill(payload: JsonRecord): { key: string; name: string } {
   const chatContext = payload.chatContext;
@@ -142,7 +139,10 @@ export function orderTextModelsForAgent(
   return [...texts].sort((a, b) => autoTextModelPenalty(a) - autoTextModelPenalty(b));
 }
 
-function chooseTextModel(preference: TextModelPreference = {}, preferImageInput = false): { vendor: Vendor; model: Model; apiKey: string } {
+function chooseTextModel(
+  preference: TextModelPreference = {},
+  preferImageInput = false,
+): { vendor: Vendor; model: Model; apiKey: string } {
   const state = readCatalog();
   const texts = state.models.filter((item) => item.kind === "text" && item.enabled);
   // 有偏好：用户选的 vendor+model 精确排第一（同名模型在多供应商里不能串台），其余作回退。
@@ -196,9 +196,7 @@ export type AgentChatV2Event =
   | { type: "finish"; finishReason: string; usage?: unknown }
   | { type: "error"; message: string };
 
-export type AgentToolConfirmation =
-  | { ok: true; result: unknown }
-  | { ok: false; message: string };
+export type AgentToolConfirmation = { ok: true; result: unknown } | { ok: false; message: string };
 
 export type AgentChatV2Hooks = {
   emit: (event: AgentChatV2Event) => void;
@@ -268,11 +266,8 @@ export function makeAgentTool<TParams extends z.ZodTypeAny>(
 }
 
 function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
-  const makeTool = <TParams extends z.ZodTypeAny>(
-    toolName: CanvasToolName,
-    description: string,
-    parameters: TParams,
-  ) => makeAgentTool(hooks, toolName, description, parameters);
+  const makeTool = <TParams extends z.ZodTypeAny>(toolName: CanvasToolName, description: string, parameters: TParams) =>
+    makeAgentTool(hooks, toolName, description, parameters);
 
   return {
     read_canvas_state: makeTool(
@@ -396,12 +391,7 @@ function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
 // write tools (insert/replace/append) surface a confirmation card.
 function buildDocumentToolsForV2(hooks: AgentChatV2Hooks) {
   const make = (name: DocumentToolName) =>
-    makeAgentTool(
-      hooks,
-      name,
-      documentTools[name].description ?? name,
-      documentTools[name].parameters as z.ZodTypeAny,
-    );
+    makeAgentTool(hooks, name, documentTools[name].description ?? name, documentTools[name].parameters as z.ZodTypeAny);
 
   return {
     read_full_text: make("read_full_text"),
@@ -582,12 +572,18 @@ export async function runAgentChatV2(
   const attachments = readAgentAttachments(payload);
   // 带图片或 PDF 时，优先选支持多模态输入的 text 模型（vision 模型也基本支持 PDF file part）。
   const wantsRichInput = attachments.some(
-    (item) => item.kind === "image" || item.contentType.toLowerCase().includes("pdf") || item.fileName.toLowerCase().endsWith(".pdf"),
+    (item) =>
+      item.kind === "image" ||
+      item.contentType.toLowerCase().includes("pdf") ||
+      item.fileName.toLowerCase().endsWith(".pdf"),
   );
-  const { vendor, model, apiKey } = chooseTextModel({
-    modelKey: trim(payload.agentModelKey),
-    vendorKey: trim(payload.agentVendorKey),
-  }, wantsRichInput);
+  const { vendor, model, apiKey } = chooseTextModel(
+    {
+      modelKey: trim(payload.agentModelKey),
+      vendorKey: trim(payload.agentVendorKey),
+    },
+    wantsRichInput,
+  );
   const systemPrompt = trim(payload.systemPrompt as unknown as JsonRecord["systemPrompt"]);
   const skillSystemPrompt = buildSkillSystemPrompt(payload as unknown as JsonRecord);
   // 收口 sanitize（P0-6）：送进 LLM 的 user/system 文本 ASCII 可移植化（防 Moonshot 等 tokenizer 异常）。
@@ -607,7 +603,9 @@ export async function runAgentChatV2(
   const toolFreeProtocol = payload.disableTools
     ? "最高优先级：本轮没有可调用的原生工具。忽略任何要求调用工具、展示补丁或解释的说明，严格按当前系统提示指定的结构化 JSON 文本协议回复。"
     : "";
-  const systemParts = [NOMI_AGENT_IDENTITY, systemPrompt, skillSystemPrompt, toolFreeProtocol, memoryBlock].filter((part) => part && part.length > 0);
+  const systemParts = [NOMI_AGENT_IDENTITY, systemPrompt, skillSystemPrompt, toolFreeProtocol, memoryBlock].filter(
+    (part) => part && part.length > 0,
+  );
   const system = systemParts.length > 0 ? sanitizeForBroadCompat(systemParts.join("\n\n")) : undefined;
 
   const languageModel = buildLanguageModelForVendor(vendor, model, apiKey);
@@ -615,8 +613,7 @@ export async function runAgentChatV2(
   // Pick the tool group by skill: creation-area skills get document tools,
   // everything else gets canvas tools. The canonical skill key lives in
   // chatContext.skill.key; fall back to the top-level payload.skillKey.
-  const resolvedSkillKey =
-    readRequestedSkill(payload as unknown as JsonRecord).key || trim(payload.skillKey);
+  const resolvedSkillKey = readRequestedSkill(payload as unknown as JsonRecord).key || trim(payload.skillKey);
   const tools = payload.disableTools ? {} : buildToolsForSkill(resolvedSkillKey, hooks);
 
   // Replay stored history for this session so the agent remembers prior turns
@@ -632,7 +629,7 @@ export async function runAgentChatV2(
     const persisted = loadAgentSession(sessionKey);
     if (persisted && persisted.length) agentChatV2History.set(sessionKey, persisted);
   }
-  const priorMessages = sessionKey ? agentChatV2History.get(sessionKey) ?? [] : [];
+  const priorMessages = sessionKey ? (agentChatV2History.get(sessionKey) ?? []) : [];
   // 图片附件 → 原生多模态 image part（按模型能力门控，不支持则降级为文字 + 清晰提示）。
   const userContent = await buildAgentUserContent({
     prompt: userPrompt,
@@ -649,9 +646,6 @@ export async function runAgentChatV2(
   const messages: CoreMessage[] = [...priorMessages, userMessage];
 
   const abortController = createLinkedAbortController(hooks.abortSignal);
-  // 单轮输出上限：只认目录 meta.maxOutputTokens（用户/档案数据）——有则透传，没有就不发 max_tokens、
-  // 用服务商该模型自身的默认。代码不编造上限（旧 fallback 注 4096 曾把拆镜头整份方案 JSON 拦腰截断）。
-  const metaMaxOutputTokens = Number((model.meta as Record<string, unknown> | undefined)?.maxOutputTokens);
   // 统一循环内核（S0）：maxSteps(skill)/retry/repair/prompt 缓存全在 agentLoop 一处。
   const result = runAgentLoop(
     {
@@ -660,9 +654,7 @@ export async function runAgentChatV2(
       messages,
       tools,
       isAnthropic: normalizeProviderKind(vendor.providerKind) === "anthropic",
-      temperature: payload.disableTools
-        ? 0.2
-        : typeof payload.temperature === "number" ? payload.temperature : 0.7,
+      temperature: payload.disableTools ? 0.2 : typeof payload.temperature === "number" ? payload.temperature : 0.7,
       skillKey: resolvedSkillKey,
       structuredJson: payload.disableTools === true,
       abortSignal: abortController.signal,
@@ -671,7 +663,16 @@ export async function runAgentChatV2(
     { mode: "stream" },
   );
 
-  const { finalText, finalFinish, finalUsage, ok } = await consumeAgentStreamWithTimeout(result, abortController, hooks, { firstChunkTimeoutMs: 90_000, idleTimeoutMs: 120_000, label: `${vendor?.key}/${model?.modelKey}/${resolvedSkillKey}` });
+  const { finalText, finalFinish, finalUsage, ok } = await consumeAgentStreamWithTimeout(
+    result,
+    abortController,
+    hooks,
+    {
+      firstChunkTimeoutMs: 90_000,
+      idleTimeoutMs: 120_000,
+      label: `${vendor?.key}/${model?.modelKey}/${resolvedSkillKey}`,
+    },
+  );
 
   // 空响应说人话（根因2）：finishReason=length + 空文本 = 典型「弱模型把内容塞进写工具 JSON
   // 被 max_tokens 截断」的失败签名（如 moonshot-v1 vision）。抛出带原因 + 换模型引导的错误，
@@ -689,7 +690,11 @@ export async function runAgentChatV2(
   // 历史只存简短 displayPrompt（不存含整张快照的完整 prompt，否则每轮各存一份旧快照、token 膨胀）。
   if (ok && sessionKey) {
     const generated = (await result.response).messages as CoreMessage[];
-    const full: CoreMessage[] = [...priorMessages, { role: "user", content: sanitizeForBroadCompat(trim(payload.displayPrompt)) || userPrompt }, ...generated];
+    const full: CoreMessage[] = [
+      ...priorMessages,
+      { role: "user", content: sanitizeForBroadCompat(trim(payload.displayPrompt)) || userPrompt },
+      ...generated,
+    ];
     const capped = capAgentHistory(full);
     // 截断真的发生 → 记 context.capped(C1 触发器观测;对话内"已不再记得最早 N 轮"提示的数据源)。
     if (capped.length < full.length) traceContextCapped(sessionKey, full.length - capped.length, capped.length);

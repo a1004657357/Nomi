@@ -5,11 +5,7 @@ import {
   listWorkbenchModelCatalogModels,
   listWorkbenchModelCatalogVendors,
 } from '../../api/modelCatalogApi'
-import {
-  type TaskKind,
-  type TaskRequestDto,
-  type TaskResultDto,
-} from '../../api/taskApi'
+import { type TaskKind, type TaskRequestDto, type TaskResultDto } from '../../api/taskApi'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import type { GenerationProgressPhase } from '../../observability/narrate'
 import {
@@ -44,6 +40,8 @@ export type CatalogTaskActionOptions = {
   requestHeartbeatMs?: number
   /** 本地取消信号。远程供应商若无取消 API，只停止本地等待，不承诺撤销远端计费任务。 */
   signal?: AbortSignal
+  /** 轮询抖动的随机源（默认 Math.random）。只为让抖动可直测，产品代码不传。 */
+  pollRandom?: () => number
   /** S2 进度报告:catalog 任务各阶段回报(phase 经 narrate 翻成人话,治 bug② 卡 30 秒像死了)。 */
   onProgress?: (progress: { phase: GenerationProgressPhase; message: string; taskId?: string }) => void
   /** 文本任务逐 token 回调(流式)。仅文本 kind 生效;提供时走流式通道,否则一次性返回。 */
@@ -115,9 +113,7 @@ function catalogKindForNode(node: GenerationCanvasNode): BillingModelKind {
 }
 
 function recordOf(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 }
 
 function archetypeKindLabel(kind: string): string {
@@ -130,17 +126,14 @@ function archetypeKindLabel(kind: string): string {
 
 function hasImageReference(references: Partial<ResolvedGenerationReferences> | undefined): boolean {
   return Boolean(
-    asTrimmedString(references?.firstFrameUrl)
-    || asTrimmedString(references?.lastFrameUrl)
-    || (references?.referenceImages?.length || 0) > 0,
+    asTrimmedString(references?.firstFrameUrl) ||
+    asTrimmedString(references?.lastFrameUrl) ||
+    (references?.referenceImages?.length || 0) > 0,
   )
 }
 
 function historicalResults(node: GenerationCanvasNode) {
-  return [
-    ...(node.result ? [node.result] : []),
-    ...[...(node.history || [])].reverse(),
-  ]
+  return [...(node.result ? [node.result] : []), ...[...(node.history || [])].reverse()]
 }
 
 function recoverHistoricalModelSelection(input: {
@@ -194,16 +187,16 @@ function recoverHistoricalModelSelection(input: {
     const historicalParams = recordOf(result.provenance?.params)
     const historicalExtras = recordOf(historicalParams?.extras)
     const historicalArchetype = recordOf(historicalExtras?.archetype)
-    const historicalModeId = historicalArchetype?.id === targetArchetype.id
-      ? asTrimmedString(historicalArchetype.modeId)
-      : ''
+    const historicalModeId =
+      historicalArchetype?.id === targetArchetype.id ? asTrimmedString(historicalArchetype.modeId) : ''
     const referenceMode = hasImageReference(input.references)
       ? targetArchetype.modes.find((mode) => mode.transportTaskKind === 'image_to_video')
       : undefined
-    const targetMode = referenceMode
-      || targetArchetype.modes.find((mode) => mode.id === historicalModeId)
-      || targetArchetype.modes.find((mode) => mode.id === targetArchetype.defaultModeId)
-      || targetArchetype.modes[0]
+    const targetMode =
+      referenceMode ||
+      targetArchetype.modes.find((mode) => mode.id === historicalModeId) ||
+      targetArchetype.modes.find((mode) => mode.id === targetArchetype.defaultModeId) ||
+      targetArchetype.modes[0]
     if (!targetMode) continue
 
     for (const control of targetMode.params) {
@@ -302,25 +295,36 @@ export async function resolveExecutableNodeFromCatalog(
       return recovered
     }
     throw new Error(
-      `${archetypeKindLabel(expectedKind)}节点错误绑定了${archetypeKindLabel(sourceArchetype?.kind || '')}模型`
-      + `「${sourceArchetype?.label || asTrimmedString(meta.modelLabel) || modelKey}」。`
-      + `请在该节点的${archetypeKindLabel(expectedKind)}设置中重新选择模型。`,
+      `${archetypeKindLabel(expectedKind)}节点错误绑定了${archetypeKindLabel(sourceArchetype?.kind || '')}模型` +
+        `「${sourceArchetype?.label || asTrimmedString(meta.modelLabel) || modelKey}」。` +
+        `请在该节点的${archetypeKindLabel(expectedKind)}设置中重新选择模型。`,
     )
   }
   const match = resolveUsableModelForNode({ modelKey, modelAlias, vendor, meta, models, usable })
   if (!match) {
     const sourceArchetype = resolveArchetypeForModel({ modelKey, modelAlias, vendorKey: vendor, meta })
     const brand = sourceArchetype?.label || asTrimmedString(meta.modelLabel) || modelKey
-    throw new Error(`当前没有已连接的供应商提供「${brand}」模型。请重新连接原供应商，或在该节点上改选一个已连接供应商的模型。`)
+    throw new Error(
+      `当前没有已连接的供应商提供「${brand}」模型。请重新连接原供应商，或在该节点上改选一个已连接供应商的模型。`,
+    )
   }
 
   const resolvedVendor = asTrimmedString(match.vendorKey)
   if (!resolvedVendor) throw new Error(`模型目录缺少 vendorKey：${modelKey}`)
   // 跨档案迁移（family 兜底，如 Seedance kie↔apimart）时把 node.meta.archetype 重映射到目标档案；
   // 同档案（同 id）保持原样（参数槽会按新 vendorKey 自动特化，无需动用户填的值）。
-  const targetArchetype = resolveArchetypeForModel({ modelKey: match.modelKey, modelAlias: match.modelAlias, vendorKey: resolvedVendor, meta: match.meta })
+  const targetArchetype = resolveArchetypeForModel({
+    modelKey: match.modelKey,
+    modelAlias: match.modelAlias,
+    vendorKey: resolvedVendor,
+    meta: match.meta,
+  })
   const remappedArchetype = targetArchetype
-    ? remapArchetypeMode(sourceArchetype, asTrimmedString((meta.archetype as { modeId?: unknown } | undefined)?.modeId) || undefined, targetArchetype)
+    ? remapArchetypeMode(
+        sourceArchetype,
+        asTrimmedString((meta.archetype as { modeId?: unknown } | undefined)?.modeId) || undefined,
+        targetArchetype,
+      )
     : null
 
   const resolvedNode: GenerationCanvasNode = {
@@ -342,7 +346,10 @@ export async function resolveExecutableNodeFromCatalog(
   return resolvedNode
 }
 
-export function resolveTaskKind(node: GenerationCanvasNode, references: Partial<ResolvedGenerationReferences>): TaskKind {
+export function resolveTaskKind(
+  node: GenerationCanvasNode,
+  references: Partial<ResolvedGenerationReferences>,
+): TaskKind {
   const executionKind = getGenerationNodeExecutionKind(node.kind)
   const meta = node.meta || {}
   // 认得档案的模型（视频**或图像**）：mapping 桶**显式**由档案声明（当前模式 transportTaskKind 覆盖 > 档案级），

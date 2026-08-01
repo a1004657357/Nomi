@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   comfyuiHistoryTransform,
+  fillEmptyCheckpoint,
   COMFYUI_VENDOR_SEED,
   COMFYUI_CURATED_MODELS,
   COMFYUI_CURATED_MAPPINGS,
@@ -281,8 +282,8 @@ describe("comfyui workflow 图注入（真管线，证 comfy_* 键存活 + 数�
     // 正/负提示词注入
     expect(body.prompt["6"].inputs.text).toBe("a cat astronaut");
     expect(body.prompt["7"].inputs.text).toBe("");
-    // checkpoint 文件名注入
-    expect(body.prompt["4"].inputs.ckpt_name).toBe("v1-5-pruned-emaonly.safetensors");
+    // checkpoint 默认留空（提交前由 "comfyui-prompt" 请求变换按本机 /object_info derive，见 fillEmptyCheckpoint 测试）
+    expect(body.prompt["4"].inputs.ckpt_name).toBe("");
     // ★ 关键：数字保持 number（comfy_* 键没被 taskTemplateParams 的标准键派生清成 undefined）
     expect(body.prompt["3"].inputs.seed).toBe(156680208700286);
     expect(typeof body.prompt["3"].inputs.seed).toBe("number");
@@ -362,5 +363,46 @@ describe("ComfyUI 内置种子", () => {
     const tokens = [...bodyStr.matchAll(/\{\{request\.params\.(\w+)\}\}/g)].map((m) => m[1]);
     expect(tokens.length).toBeGreaterThan(0);
     for (const t of tokens) expect(paramKeys.has(t)).toBe(true);
+  });
+
+  it("内置文生图声明 request_transform=comfyui-prompt（ckpt 留空 derive 的挂点）", () => {
+    expect(COMFYUI_CURATED_MAPPINGS[0].create.request_transform).toBe("comfyui-prompt");
+  });
+});
+
+describe("fillEmptyCheckpoint（ckpt_name 留空 → 本机第一个 checkpoint）", () => {
+  const graph = (ckpt: string) => ({
+    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } },
+    "6": { class_type: "CLIPTextEncode", inputs: { text: "hi", clip: ["4", 1] } },
+  });
+
+  it("空值 → 填第一个 checkpoint；不改原对象", () => {
+    const input = graph("");
+    const out = fillEmptyCheckpoint(input, ["a.safetensors", "b.safetensors"]) as typeof input;
+    expect(out["4"].inputs.ckpt_name).toBe("a.safetensors");
+    expect(input["4"].inputs.ckpt_name).toBe(""); // 纯函数不 mutate
+    expect(out["6"]).toBe(input["6"]); // 无关节点原引用
+  });
+
+  it("用户手填的名字原样保留（哪怕本机没有——错了由 /prompt 400 的 node_errors 人话报出）", () => {
+    const input = graph("my-choice.safetensors");
+    const out = fillEmptyCheckpoint(input, ["a.safetensors"]) as typeof input;
+    expect(out["4"].inputs.ckpt_name).toBe("my-choice.safetensors");
+  });
+
+  it("非 CheckpointLoaderSimple 节点即使有空 ckpt_name 键也不动（只认精确类）", () => {
+    const input = { "1": { class_type: "MyCustomLoader", inputs: { ckpt_name: "" } } };
+    const out = fillEmptyCheckpoint(input, ["a.safetensors"]) as typeof input;
+    expect(out["1"].inputs.ckpt_name).toBe("");
+  });
+});
+
+describe("comfyui-history 打断态", () => {
+  it("execution_interrupted → 「已取消」人话（不吓人的红失败文案）", () => {
+    const out = comfyuiHistoryTransform(
+      { "p1": { status: { status_str: "error", completed: false, messages: [["execution_interrupted", { prompt_id: "p1" }]] }, outputs: {} } },
+      { baseUrl: "http://127.0.0.1:8188" },
+    ) as { error?: string };
+    expect(out.error).toContain("已取消");
   });
 });

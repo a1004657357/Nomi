@@ -26,17 +26,57 @@ export function isJsonRecord(value: unknown): value is JsonRecord {
 }
 
 /**
+ * ComfyUI /prompt 校验失败的按节点错误摊平成一句人话（形状实查 ComfyUI server.py:1124-1136）：
+ * { node_errors: { <id>: { class_type, errors:[{ message, details }] } } }。
+ * 有用的信息全在 details（如 "ckpt_name: 'x.safetensors' not in (list of length 3)"）——顶层
+ * error.message 只有笼统的 "Prompt outputs failed validation"。取前 2 条、标总数，防列表爆炸。
+ */
+function comfyNodeErrorsMessage(record: JsonRecord): string {
+  const nodeErrors = record.node_errors;
+  if (!isJsonRecord(nodeErrors)) return "";
+  const lines: string[] = [];
+  let total = 0;
+  for (const entry of Object.values(nodeErrors)) {
+    if (!isJsonRecord(entry) || !Array.isArray(entry.errors)) continue;
+    const classType = trim(entry.class_type);
+    for (const err of entry.errors) {
+      if (!isJsonRecord(err)) continue;
+      total += 1;
+      if (lines.length >= 2) continue;
+      const detail = firstString(err.details, err.message);
+      if (!detail) continue;
+      lines.push(`${classType ? `${classType}: ` : ""}${detail.slice(0, 160)}`);
+    }
+  }
+  if (lines.length === 0) return "";
+  return total > lines.length ? `${lines.join("；")}（共 ${total} 处校验错误）` : lines.join("；");
+}
+
+/** error 是 { message, details } 记录时拼成 "message — details"（如 ComfyUI invalid_prompt 带缺节点名）。 */
+function errorMessageWithDetails(record: JsonRecord): string {
+  const error = record.error;
+  if (!isJsonRecord(error)) return "";
+  const message = trim(error.message);
+  const details = trim(error.details);
+  if (!message || !details) return "";
+  return `${message} — ${details.slice(0, 200)}`;
+}
+
+/**
  * 从上游失败响应体里挑出「那句人话」。各家把原因塞在不同键上，这里是**唯一**的键优先级表：
  * 谁要说清一次上游失败（vendorHttp 的生成请求、onboarding 的拉模型/测连接）都读这一份，
  * 免得各处平行猜形状漂移（P1）。挑不出来返回 ""，调用方自己兜底（HTTP 状态等）。
  */
 export function pickUpstreamMessage(record: JsonRecord): string {
   return firstString(
+    // ComfyUI /prompt 校验错误：按节点 details 最具体，优先（键只在 ComfyUI 形状出现，别家零影响）。
+    comfyNodeErrorsMessage(record),
     record.msg,
     record.message,
     record.error,
     // RunningHub：业务错误在 errorMessage（如「标准模型API仅限企业级-共享API Key调用」）。
     record.errorMessage,
+    errorMessageWithDetails(record),
     readNestedRecord(record, ["error", "message"]),
     readNestedRecord(record, ["data", "msg"]),
     // ModelScope（及同类）失败体是复数 `errors`：{ "errors": { "message": "..." } }。

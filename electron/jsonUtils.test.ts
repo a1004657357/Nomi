@@ -19,6 +19,46 @@ describe("pickUpstreamMessage", () => {
     expect(pickUpstreamMessage({})).toBe("");
     expect(pickUpstreamMessage({ nope: 1 })).toBe("");
   });
+
+  it("ComfyUI /prompt 校验错误：node_errors 按节点 details 摊平，赢过笼统的顶层 error.message", () => {
+    const body = {
+      error: { type: "prompt_outputs_failed_validation", message: "Prompt outputs failed validation", details: "", extra_info: {} },
+      node_errors: {
+        "4": {
+          class_type: "CheckpointLoaderSimple",
+          errors: [{ type: "value_not_in_list", message: "Value not in list", details: "ckpt_name: 'wan-author.safetensors' not in (list of length 3)", extra_info: {} }],
+          dependent_outputs: ["9"],
+        },
+      },
+    };
+    const msg = pickUpstreamMessage(body);
+    expect(msg).toContain("CheckpointLoaderSimple");
+    expect(msg).toContain("wan-author.safetensors");
+    expect(msg).not.toBe("Prompt outputs failed validation");
+  });
+
+  it("ComfyUI node_errors 多条：取前 2 条 + 标总数", () => {
+    const err = (d: string) => ({ type: "x", message: "m", details: d, extra_info: {} });
+    const msg = pickUpstreamMessage({
+      node_errors: {
+        "1": { class_type: "A", errors: [err("d1"), err("d2")] },
+        "2": { class_type: "B", errors: [err("d3")] },
+      },
+    });
+    expect(msg).toContain("A: d1");
+    expect(msg).toContain("A: d2");
+    expect(msg).toContain("共 3 处");
+    expect(msg).not.toContain("d3");
+  });
+
+  it("ComfyUI invalid_prompt（无 node_errors）：error.message 拼上 details（缺节点名在 details 里）", () => {
+    const msg = pickUpstreamMessage({
+      error: { type: "invalid_prompt", message: "Cannot execute because a node is missing", details: "Node ID '#12' class 'UNETLoaderGGUF'", extra_info: {} },
+      node_errors: {},
+    });
+    expect(msg).toContain("Cannot execute because a node is missing");
+    expect(msg).toContain("UNETLoaderGGUF");
+  });
 });
 
 describe("trim", () => {

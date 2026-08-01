@@ -1,9 +1,73 @@
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { IconPlayerPlayFilled, IconPlus } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { NomiImage } from '../../design/media'
 import type { AssetRef } from './assetTypes'
+
+// hover 放大浮层（#52 群反馈「鼠标放置参考图自动弹出放大图片」）：参考块太小（56px）看不清细节，
+// 悬停延迟后在块旁弹一张放大图。延迟 450ms 防「划过」误触；浮层 pointer-events-none 不拦鼠标；
+// 贴边时翻到另一侧。图/视频（视频用首帧 thumbUrl）才弹，音频无缩略图跳过。
+const HOVER_ZOOM_MAX = 320
+const HOVER_ZOOM_DELAY_MS = 450
+
+/** 放大浮层定位：默认贴块右侧；右边放不下就翻到左侧；上边贴顶/下边溢出都夹回视口内。纯函数便于单测。 */
+export function computeHoverZoomPosition(
+  rect: { left: number; right: number; top: number },
+  viewport: { width: number; height: number },
+  size = HOVER_ZOOM_MAX,
+): { left: number; top: number } {
+  const left =
+    viewport.width - rect.right > size + 24 ? rect.right + 8 : Math.max(8, rect.left - size - 8)
+  const top = Math.max(8, Math.min(rect.top, viewport.height - size - 16))
+  return { left, top }
+}
+
+function useHoverZoom(zoomSrc: string | undefined): {
+  onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => void
+  onMouseLeave: () => void
+  overlay: JSX.Element | null
+} {
+  const [rect, setRect] = React.useState<DOMRect | null>(null)
+  const timerRef = React.useRef<number | undefined>(undefined)
+  const clear = React.useCallback(() => {
+    if (timerRef.current !== undefined) {
+      window.clearTimeout(timerRef.current)
+      timerRef.current = undefined
+    }
+  }, [])
+  React.useEffect(() => clear, [clear])
+  const onMouseEnter = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!zoomSrc) return
+    const box = event.currentTarget.getBoundingClientRect()
+    clear()
+    timerRef.current = window.setTimeout(() => setRect(box), HOVER_ZOOM_DELAY_MS)
+  }, [zoomSrc, clear])
+  const onMouseLeave = React.useCallback(() => {
+    clear()
+    setRect(null)
+  }, [clear])
+  const overlay =
+    rect && zoomSrc
+      ? createPortal(
+          <div
+            className={cn('pointer-events-none rounded-nomi border border-nomi-line bg-nomi-paper overflow-hidden shadow-nomi-lg')}
+            style={{
+              position: 'fixed',
+              zIndex: 10000,
+              ...computeHoverZoomPosition(rect, { width: window.innerWidth, height: window.innerHeight }),
+              maxWidth: HOVER_ZOOM_MAX,
+              maxHeight: HOVER_ZOOM_MAX,
+            }}
+          >
+            <img src={zoomSrc} alt="" className={cn('block object-contain')} style={{ maxWidth: HOVER_ZOOM_MAX, maxHeight: HOVER_ZOOM_MAX }} />
+          </div>,
+          document.body,
+        )
+      : null
+  return { onMouseEnter, onMouseLeave, overlay }
+}
 
 // 通用素材块(P0.2,样张 v4)。形态自明 > 文字解释:
 //   图  → 缩略图铺满
@@ -86,25 +150,33 @@ export function AssetThumb({ asset, playSize = 22 }: { asset: AssetRef; playSize
 
 export default function AssetTile({ asset, index, onRemove, onClick, dragProps, className }: AssetTileProps): JSX.Element {
   const clickable = Boolean(onClick)
+  // 图用原图、视频用首帧缩略图放大；音频无缩略图不弹。
+  const zoomSrc = asset.kind === 'audio' ? undefined : asset.kind === 'video' ? asset.thumbUrl : asset.renderUrl
+  const zoom = useHoverZoom(zoomSrc)
   return (
-    <div
-      className={cn(
-        'relative w-14 h-14 rounded-nomi-sm border border-nomi-line bg-nomi-ink-05 overflow-hidden flex items-center justify-center',
-        clickable && 'cursor-pointer hover:outline hover:outline-2 hover:outline-offset-1 hover:outline-nomi-accent',
-        dragProps?.draggable && 'data-[dragover=true]:outline data-[dragover=true]:outline-2 data-[dragover=true]:outline-nomi-accent',
-        className,
-      )}
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      aria-label={clickable ? asset.name : undefined}
-      onClick={onClick}
-      onKeyDown={clickable ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick?.() } } : undefined}
-      {...dragProps}
-    >
-      <AssetThumb asset={asset} />
-      {typeof index === 'number' ? <NumberBadge index={index} /> : null}
-      {onRemove ? <RemoveButton label={asset.name} onRemove={onRemove} /> : null}
-    </div>
+    <>
+      <div
+        className={cn(
+          'relative w-14 h-14 rounded-nomi-sm border border-nomi-line bg-nomi-ink-05 overflow-hidden flex items-center justify-center',
+          clickable && 'cursor-pointer hover:outline hover:outline-2 hover:outline-offset-1 hover:outline-nomi-accent',
+          dragProps?.draggable && 'data-[dragover=true]:outline data-[dragover=true]:outline-2 data-[dragover=true]:outline-nomi-accent',
+          className,
+        )}
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        aria-label={clickable ? asset.name : undefined}
+        onClick={onClick}
+        onKeyDown={clickable ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick?.() } } : undefined}
+        {...dragProps}
+        onMouseEnter={zoom.onMouseEnter}
+        onMouseLeave={zoom.onMouseLeave}
+      >
+        <AssetThumb asset={asset} />
+        {typeof index === 'number' ? <NumberBadge index={index} /> : null}
+        {onRemove ? <RemoveButton label={asset.name} onRemove={onRemove} /> : null}
+      </div>
+      {zoom.overlay}
+    </>
   )
 }
 

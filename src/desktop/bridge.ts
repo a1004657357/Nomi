@@ -1,17 +1,11 @@
 import type { ExportJobEvent, ExportJobSnapshot } from '../../electron/export/exportJobManager'
 import type { WorkspaceFileListResult } from '../../electron/workspace/workspaceFileIndex'
-import type {
-  DesktopModel3dValidation,
-  DesktopVideoQualityInspection,
-} from './assetInspectionBridgeTypes'
+import type { DesktopModel3dValidation, DesktopVideoQualityInspection } from './assetInspectionBridgeTypes'
 import type { ProviderKind } from './providerKind'
 import type { DesktopVibingDirectorBridge } from './vibingDirectorBridgeTypes'
 
 export type { ProviderKind }
-export type {
-  DesktopModel3dValidation,
-  DesktopVideoQualityInspection,
-} from './assetInspectionBridgeTypes'
+export type { DesktopModel3dValidation, DesktopVideoQualityInspection } from './assetInspectionBridgeTypes'
 
 /** 落盘的对话消息(conversation 域;draft/附件是 session 域不落盘)。 */
 export type PersistedAiMessage = { id: string; role: string; content: string }
@@ -32,6 +26,30 @@ export type PersistedConversationsV2 = {
   creation: PersistedConversationArea
   generation: PersistedConversationArea
   committedProposal?: unknown
+}
+
+/** 代理三态：跟随系统探测 / 只对 Nomi 生效的自定义地址 / 强制直连。 */
+export type DesktopProxyMode = 'system' | 'custom' | 'off'
+
+/** 用户选了什么 × 实际生效什么。两者不一致时正是用户最需要看见的（如探到 SOCKS 但用不了）。 */
+export type DesktopProxyStatus = {
+  mode: DesktopProxyMode
+  customUrl: string
+  /** 实际生效的代理地址；直连时空串。 */
+  activeUrl: string
+  /** 探到但本版用不了（SOCKS 等）的人话详情；否则空串。 */
+  unsupported: string
+  source: 'env' | 'system' | 'custom' | ''
+}
+
+export type DesktopProxyProbeAttempt = { target: string; ok: boolean; ms: number; error: string }
+/** ok = 上传链里**任一** host 可达（那就送得出图）；tried 逐项留痕，用来看「是不是已经断了一半」。 */
+export type DesktopProxyProbe = {
+  ok: boolean
+  ms: number
+  target: string
+  error: string
+  tried: DesktopProxyProbeAttempt[]
 }
 
 export type DesktopAssetDto = {
@@ -306,11 +324,7 @@ export type DesktopBridge = {
     revealProjectFolder: (payload: { projectId: string }) => Promise<{ ok: boolean }>
   }
   files: {
-    extractText: (payload: {
-      fileName: string
-      contentType: string
-      bytes: ArrayBuffer
-    }) => Promise<{ text: string }>
+    extractText: (payload: { fileName: string; contentType: string; bytes: ArrayBuffer }) => Promise<{ text: string }>
   }
   projects: {
     list: () => unknown[]
@@ -330,8 +344,13 @@ export type DesktopBridge = {
       kind?: string
     }) => Promise<{ items: DesktopAssetDto[]; cursor: string | null }>
     /** 素材文件夹（素材面收敛 2026-07-22 转正）：per-project 落盘 .nomi/folders.json,归属键=renderUrl。 */
-    foldersGet?: (payload: { projectId: string }) => Promise<{ ok: boolean; state: DesktopAssetFoldersState; error?: string }>
-    foldersSave?: (payload: { projectId: string; state: DesktopAssetFoldersState }) => Promise<{ ok: boolean; state: DesktopAssetFoldersState; error?: string }>
+    foldersGet?: (payload: {
+      projectId: string
+    }) => Promise<{ ok: boolean; state: DesktopAssetFoldersState; error?: string }>
+    foldersSave?: (payload: {
+      projectId: string
+      state: DesktopAssetFoldersState
+    }) => Promise<{ ok: boolean; state: DesktopAssetFoldersState; error?: string }>
     /** 写入层落盘广播（nomi:assets:updated）——素材库面板/素材盒徽章的统一回流信号。 */
     onUpdated?: (cb: (payload: { projectId: string }) => void) => () => void
     importRemoteUrl: (payload: {
@@ -390,6 +409,11 @@ export type DesktopBridge = {
         sha256: string
       }>
     }>
+    /** 自动另存（集中设置页开启时，生成完成即调；best-effort）+ 设置读写/选目录。 */
+    autoSave?: (payload: { url: string; suggestedName?: string }) => Promise<{ ok: boolean; path?: string }>
+    getAutoSavePrefs?: () => Promise<{ enabled: boolean; dir: string }>
+    setAutoSavePrefs?: (payload: { enabled: boolean; dir: string }) => Promise<{ enabled: boolean; dir: string }>
+    pickSaveDir?: () => Promise<{ dir: string }>
   }
   browser?: {
     startAssetDrag?: (payload: { url: string }) => void
@@ -558,11 +582,27 @@ export type DesktopBridge = {
   tasks: {
     run: (payload: unknown) => Promise<unknown>
     result: (payload: unknown) => Promise<unknown>
-    cancel: (payload: { runId: string; taskId?: string; nodeId?: string; vendor?: string }) => Promise<{ cancelled: boolean; remoteCancelled: boolean }>
+    cancel: (payload: {
+      runId: string
+      taskId?: string
+      nodeId?: string
+      vendor?: string
+    }) => Promise<{ cancelled: boolean; remoteCancelled: boolean }>
     grantSpend: (payload: { nodeIds: string[]; maxAttemptsPerNode?: number }) => Promise<{ grantId: string }>
     runTextStream: (payload: unknown) => Promise<{ streamId: string }>
     cancelTextStream: (streamId: string) => Promise<unknown>
     onTextEvent: (streamId: string, callback: (event: unknown) => void) => () => void
+    /** ComfyUI ws 进度桥（P 轨）。旧 preload 可能没有 → 全部可选。 */
+    comfyuiWatch?: (payload: {
+      promptId: string
+      nodeId: string
+      projectId?: string
+      taskKind?: string
+      modelKey?: string | null
+    }) => Promise<{ ok: boolean }>
+    comfyuiUnwatch?: (promptId: string) => Promise<void>
+    comfyuiInterrupt?: (promptId: string) => Promise<{ ok: boolean }>
+    onComfyuiProgress?: (callback: (event: unknown) => void) => () => void
   }
   agents: {
     chatV2Start: (payload: unknown) => Promise<{ sessionId: string }>
@@ -698,6 +738,18 @@ export type DesktopBridge = {
     openRelease: () => Promise<{ ok: boolean }>
     onEvent: (callback: (event: DesktopUpdateEvent) => void) => () => void
   }
+  /**
+   * 应用内代理设置（见 docs/plan/2026-08-01-in-app-proxy-setting.md）。
+   * set 会**即时重装 dispatcher**并返回新状态，调用方直接用返回值刷 UI，不必重新 get。
+   */
+  proxy?: {
+    get: () => Promise<{ ok: boolean; status: DesktopProxyStatus }>
+    set: (payload: {
+      mode: DesktopProxyMode
+      customUrl: string
+    }) => Promise<{ ok: boolean; status: DesktopProxyStatus }>
+    test: () => Promise<{ ok: boolean; result: DesktopProxyProbe; status: DesktopProxyStatus }>
+  }
   modelCatalog: {
     listVendors: () => unknown[]
     listModels: (params?: unknown) => unknown[]
@@ -716,17 +768,51 @@ export type DesktopBridge = {
     importPackage: (payload: unknown) => unknown
     testMapping: (id: string, payload: unknown) => Promise<unknown>
     fetchDocs: (payload: unknown) => Promise<unknown>
-    probeComfyui: (baseUrl?: string) => Promise<
-      { ok: true; summary: string; version?: string } | { ok: false; error: string }
-    >
+    probeComfyui: (
+      baseUrl?: string,
+    ) => Promise<{ ok: true; summary: string; version?: string } | { ok: false; error: string }>
     /** 校验 + 识别 workflow_api.json 可绑定节点（同步）。analysis 结构见 comfyuiWorkflowImport.WorkflowAnalysis。 */
     analyzeComfyWorkflow: (text: string) => { ok: true; analysis: unknown } | { ok: false; error: string }
+    /** 缺件对账（异步问本机 /object_info）：缺节点类 + 引用了本机没有的模型文件。旧 preload 可能没有 → 可选。 */
+    reconcileComfyWorkflow?: (
+      text: string,
+    ) => Promise<
+      | {
+          ok: true
+          serverReachable: boolean
+          unknownNodeTypes: string[]
+          missingEnumValues: Array<{
+            nodeId: string
+            classType: string
+            title?: string
+            inputKey: string
+            value: string
+          }>
+        }
+      | { ok: false; error: string }
+    >
+    /** ComfyUI 预置模板清单（S5）：静态数据，启用前走 reconcile 缺件闸。旧 preload 可能没有 → 可选。 */
+    listComfyuiPresets?: () => Array<{
+      key: string
+      labelZh: string
+      descZh: string
+      workflowText: string
+      binding: unknown
+      models: Array<{ file: string; dir: string; url: string }>
+    }>
     /** 按绑定落库为用户自有 model+mapping（同步）。 */
-    importComfyWorkflow: (payload: { text: string; binding: unknown; labelZh: string }) =>
-      { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
+    importComfyWorkflow: (payload: {
+      text: string
+      binding: unknown
+      labelZh: string
+    }) => { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
     /** 用同一 modelKey 更新已导入 workflow（同步）。 */
-    updateComfyWorkflow?: (payload: { modelKey: string; text: string; binding: unknown; labelZh: string }) =>
-      { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
+    updateComfyWorkflow?: (payload: {
+      modelKey: string
+      text: string
+      binding: unknown
+      labelZh: string
+    }) => { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
   }
   skill: {
     list: () => unknown[]
@@ -752,7 +838,14 @@ export type DesktopBridge = {
   /** 即梦 Web（实验）：本机 Seedance 扩展桥 + Electron 持久网页登录窗口。 */
   jimengWeb?: {
     status: () => Promise<{
-      server: { ok: boolean; serverUrl: string; error?: string; version?: string; sseClients?: number; taskTotal?: number }
+      server: {
+        ok: boolean
+        serverUrl: string
+        error?: string
+        version?: string
+        sseClients?: number
+        taskTotal?: number
+      }
       runner: {
         available: boolean
         running: boolean
@@ -823,12 +916,15 @@ export type DesktopBridge = {
       tokenReady: boolean
       rpcRunning: boolean
       server: { command: string; args: string[]; env?: Record<string, string> }
-      clients: Record<'claude' | 'codex' | 'cursor', {
-        installed: boolean
-        stale: boolean
-        configPath: string
-        snippet: string
-      }>
+      clients: Record<
+        'claude' | 'codex' | 'cursor',
+        {
+          installed: boolean
+          stale: boolean
+          configPath: string
+          snippet: string
+        }
+      >
     }
     /** 一键写入指定客户端配置的 nomi 条目（合并 + 备份）。默认 Claude Code。 */
     installMcp: (client?: string) => { ok: boolean; client: string; configPath: string; backupPath: string | null }

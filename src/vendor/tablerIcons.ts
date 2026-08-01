@@ -152,6 +152,7 @@ export { default as IconPlayerPlay } from '@tabler/icons-react/dist/esm/icons/Ic
 export { default as IconPlayerPlayFilled } from '@tabler/icons-react/dist/esm/icons/IconPlayerPlayFilled.mjs'
 export { default as IconPlayerSkipBack } from '@tabler/icons-react/dist/esm/icons/IconPlayerSkipBack.mjs'
 export { default as IconPlayerSkipForward } from '@tabler/icons-react/dist/esm/icons/IconPlayerSkipForward.mjs'
+export { default as IconPlayerStop } from '@tabler/icons-react/dist/esm/icons/IconPlayerStop.mjs'
 export { default as IconPlayerStopFilled } from '@tabler/icons-react/dist/esm/icons/IconPlayerStopFilled.mjs'
 export { default as IconPlayerTrackNext } from '@tabler/icons-react/dist/esm/icons/IconPlayerTrackNext.mjs'
 export { default as IconPlayerTrackPrev } from '@tabler/icons-react/dist/esm/icons/IconPlayerTrackPrev.mjs'

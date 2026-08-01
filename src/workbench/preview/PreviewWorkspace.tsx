@@ -6,14 +6,6 @@ import TimelinePanel from '../timeline/TimelinePanel'
 import { computeTimelineDuration, resolveActiveClipsAtFrame } from '../timeline/timelineMath'
 import TimelinePreview from './TimelinePreview'
 
-function formatTimecode(frame: number, fps: number): string {
-  const totalSeconds = Math.floor(frame / fps)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  const frames = frame % fps
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(frames).padStart(2, '0')}`
-}
-
 export default function PreviewWorkspace(): JSX.Element {
   const { t } = useTranslation()
   const timeline = useWorkbenchStore((state) => state.timeline)

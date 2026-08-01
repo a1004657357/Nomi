@@ -2,7 +2,12 @@
 // 底下可能挂 2-4 家供应商；只要还有一家健康就该走那家、整条不算病。
 // 判据以 AilingProbe 注入 → 纯函数直测，不引 React 测试库、不碰 localStorage。
 import { describe, expect, it } from 'vitest'
-import { buildModelSelectOptions, pickHealthiestProvider } from './useDedupedModelSelect'
+import {
+  buildModelSelectOptions,
+  buildProviderSelectOptions,
+  pickHealthiestProvider,
+  resolveProviderSelectValue,
+} from './useDedupedModelSelect'
 import { dedupeModelOptions } from '../../config/modelIdentity'
 import type { ModelOption } from '../../config/models'
 
@@ -63,5 +68,30 @@ describe('pickHealthiestProvider — 换家优先于换模型', () => {
   it('全病也绝不空选：用户明知故选时仍回退到某一家', () => {
     const [model] = dedupeModelOptions([option('only', 'apimart', '独苗')])
     expect(pickHealthiestProvider(model, ailing('only'))?.option.value).toBe('apimart:only')
+  })
+})
+
+describe('供应商锁定寻址 — 同名 modelKey 跨厂商不撞值（2026-07-31 群反馈）', () => {
+  // 两个中转站提供**同名** modelKey（option.value 相同）——裸 value 当下拉值会撞。
+  const sameKey = (vendor: string): ModelOption =>
+    ({ value: 'gpt-image-2', label: 'GPT Image 2', modelKey: 'gpt-image-2', vendor, kind: 'image' }) as ModelOption
+
+  it('buildProviderSelectOptions：两家各一项且 value 互不相同', () => {
+    const [model] = dedupeModelOptions([sameKey('relay-b'), sameKey('relay-a')])
+    const opts = buildProviderSelectOptions(model)
+    expect(opts).toHaveLength(2)
+    expect(new Set(opts.map((o) => o.value)).size).toBe(2)
+  })
+
+  it('resolveProviderSelectValue：按节点存的 vendor 显示锁定那家，不再永远显示首家', () => {
+    const [model] = dedupeModelOptions([sameKey('relay-b'), sameKey('relay-a')])
+    const opts = buildProviderSelectOptions(model)
+    const valueA = resolveProviderSelectValue(model, 'gpt-image-2', 'relay-a')
+    const valueB = resolveProviderSelectValue(model, 'gpt-image-2', 'relay-b')
+    expect(valueA).not.toBe(valueB)
+    expect(opts.some((o) => o.value === valueA)).toBe(true)
+    expect(opts.some((o) => o.value === valueB)).toBe(true)
+    // vendor 缺省（旧数据）→ 回退首家，不落空。
+    expect(resolveProviderSelectValue(model, 'gpt-image-2')).toBe(valueB)
   })
 })

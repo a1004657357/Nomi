@@ -87,6 +87,16 @@ describe("火山 Seedance 接入（官方 Video Generation API 形状锁·异步
     ]);
   });
 
+  // 2026-07-31 拿到中转交付文档逐项对账：seed 是官方可选字段，我们两条 mapping 都漏发了。
+  // 无默认 → 用户没填时模板丢弃（requestPipeline 的 deep-render 丢 undefined），不会发空值。
+  it("create body 带官方可选 seed，watermark 恒 false", () => {
+    for (const mapping of VOLCENGINE_VIDEO_MODELS[0].mappings) {
+      const body = mapping.create.body as Record<string, unknown>;
+      expect(body.seed).toBe("{{request.params.seed}}");
+      expect(body.watermark).toBe(false);
+    }
+  });
+
   it("创建响应用 id 作为 task_id；查询响应 content.video_url → succeeded video asset", () => {
     const createMap = VOLCENGINE_VIDEO_MODELS[0].mappings[0].create.response_mapping as Record<string, unknown>;
     expect(firstMappedString(CREATE_OK, createMap, "task_id")).toBe("cgt-2025-abc");

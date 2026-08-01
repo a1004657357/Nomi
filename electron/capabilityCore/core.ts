@@ -525,10 +525,15 @@ export async function generateOnProject(
       // 否则 240s/300s 到点 break → 结果未取回（headless 返 queued）。缺省维持原值。
       const envPoll = Number(process.env.NOMI_POLL_TIMEOUT_MS)
       const timeoutMs = Number.isFinite(envPoll) && envPoll > 0 ? envPoll : (kind === 'text_to_video' || kind === 'image_to_video' ? 300000 : 240000)
+      // 轮询间隔与渲染层同策：视频 3s、其余 1.5s（厂商文档要求查询间隔 ≥3-5s，见
+      // docs/plan/2026-07-31-seedance-api-contract-reconciliation.md §三）。跨进程边界拿不到
+      // 渲染层的 resolvePollIntervalMs，故此处是**配对常量，改一处必改另一处**（同 vendorErrorIpc
+      // 的 MARKER 约定）。本循环一次只跑一个任务，不存在批量同相位问题，故不叠抖动/退避。
+      const pollIntervalMs = kind === 'text_to_video' || kind === 'image_to_video' ? 3000 : 1500
       const startedAt = Date.now()
       while (result.status && !TERMINAL_STATUSES.has(result.status)) {
         if (Date.now() - startedAt > timeoutMs) break
-        await delay(2000)
+        await delay(pollIntervalMs)
         const polled = await fetchTaskResultFn({
           taskId: result.id || '',
           vendor: input.vendor,

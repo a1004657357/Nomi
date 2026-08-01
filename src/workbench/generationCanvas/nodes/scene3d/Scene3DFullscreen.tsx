@@ -3,11 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { IconListTree, IconSettings } from '@tabler/icons-react'
-import { toast } from '../../../../ui/toast'
 import { FencedCanvas } from '../fencedCanvas'
 import { Scene3DWindowBar } from './Scene3DWindowBar'
 import { Scene3DCoachMarks } from './Scene3DCoachMarks'
-import { hasSeenScene3DCoach, resetScene3DCoachSeen } from '../../../onboarding/onboardingState'
+import { hasSeenScene3DCoach } from '../../../onboarding/onboardingState'
 import { cloneScene3DState } from './scene3dSerializer'
 import { syncSceneTimelineDuration } from './scene3dTimeline'
 import {
@@ -43,7 +42,6 @@ import { useScene3DTrajectoryEditing } from './useScene3DTrajectoryEditing'
 import { useScene3DTaskFlow } from './useScene3DTaskFlow'
 import { Scene3DTaskOverlays } from './Scene3DTaskOverlays'
 import { Scene3DExportingCard } from './scene3dExportPanel'
-import { Scene3DFullscreenHeader } from './Scene3DFullscreenHeader'
 import {
   Scene3DTrajectoryLayer,
   Scene3DTrajectoryEditBanner,

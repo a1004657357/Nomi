@@ -1,12 +1,25 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconDownload, IconPhotoScan, IconPlayerTrackNext, IconPlayerTrackPrev } from '@tabler/icons-react'
-import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton, ToolbarDivider } from './NodeFloatingToolbar'
+import {
+  IconDownload,
+  IconMaximize,
+  IconPhotoScan,
+  IconPlayerTrackNext,
+  IconPlayerTrackPrev,
+} from '@tabler/icons-react'
+import {
+  FloatingToolbarShell,
+  TOOLBAR_ICON as I,
+  ToolbarButton,
+  ToolbarDivider,
+  ToolbarIconButton,
+} from './NodeFloatingToolbar'
 import { extractVideoFrameToNode } from './extractVideoFrameToNode'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import VideoKeyframeInspectorDialog from './VideoKeyframeInspectorDialog'
 
-// 视频节点浮条（用户拍板「抽帧能力」的用户入口）：抽首帧 / 抽尾帧 ｜ 下载。
+// 视频节点浮条（按「创作优先级」排左→右，与图片工具栏一致）：左·创作：抽首帧 / 抽尾帧 ｜ 右·工具：全屏 · 下载。
+// 全屏是「看」的工具，与下载同归右侧工具区，不占最左（此前全屏在最左，抢了创作动作的位）。
 // 抽帧 = 从这段视频取首/尾一帧 → 落独立图片节点（extractVideoFrameToNode），能拿去当 Seedance 首尾帧 /
 // 任何参考 / 接力源。抽首/尾用两个不同图标（⏮/⏭）一眼可分。容器/按钮走共享 NodeFloatingToolbar（token 合规）。
 
@@ -28,18 +41,26 @@ export default function NodeVideoFrameToolbar({ node, downloading, onDownload, o
   }
   return (
     <>
-      <FloatingToolbarShell ariaLabel="视频操作">
+      <FloatingToolbarShell ariaLabel={t('generationCommon.videoToolbar.aria')}>
         <ToolbarButton
           icon={<IconPlayerTrackPrev size={I.size} stroke={I.stroke} />}
-          label={busy === 'first' ? '抽帧中…' : '抽首帧'}
-          title="抽取这段视频的第一帧 → 落成独立图片节点（可当首帧/参考）"
+          label={
+            busy === 'first'
+              ? t('generationCommon.videoToolbar.extracting')
+              : t('generationCommon.videoToolbar.firstFrame')
+          }
+          title={t('generationCommon.videoToolbar.firstFrameHint')}
           disabled={busy !== null}
           onClick={() => extract('first')}
         />
         <ToolbarButton
           icon={<IconPlayerTrackNext size={I.size} stroke={I.stroke} />}
-          label={busy === 'last' ? '抽帧中…' : '抽尾帧'}
-          title="抽取这段视频的最后一帧 → 落成独立图片节点（可当尾帧/接力源/参考）"
+          label={
+            busy === 'last'
+              ? t('generationCommon.videoToolbar.extracting')
+              : t('generationCommon.videoToolbar.lastFrame')
+          }
+          title={t('generationCommon.videoToolbar.lastFrameHint')}
           disabled={busy !== null}
           onClick={() => extract('last')}
         />
@@ -51,10 +72,16 @@ export default function NodeVideoFrameToolbar({ node, downloading, onDownload, o
           onClick={() => setInspecting(true)}
         />
         <ToolbarDivider />
+        <ToolbarIconButton
+          icon={<IconMaximize size={I.size} stroke={I.stroke} />}
+          title={t('generationCommon.videoToolbar.fullscreen')}
+          ariaLabel={t('generationCommon.videoToolbar.fullscreenAria')}
+          onClick={onPreview}
+        />
         <ToolbarButton
           icon={<IconDownload size={I.size} stroke={I.stroke} />}
-          label="下载"
-          title="下载 / 另存到本地"
+          label={t('generationCommon.imageToolbar.download')}
+          title={t('generationCommon.imageToolbar.downloadHint')}
           disabled={downloading}
           onClick={onDownload}
         />

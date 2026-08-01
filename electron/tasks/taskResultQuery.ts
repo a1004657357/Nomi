@@ -3,9 +3,11 @@
 // ESM/CJS 都按 live binding 在调用时取值，加载期不触碰，安全。
 import { trim, type JsonRecord } from "../jsonUtils";
 import type { Model, ProfileKind } from "../catalog/types";
+import { readCatalog } from "../catalog/catalogStore";
 import { JIMENG_WEB_VENDOR_SEED } from "../catalog/jimengWeb";
 import { queryJimengWebTask } from "../jimengWeb/seedanceBridge";
 import { classifyTaskCacheMiss, wasTaskAdmitted } from "./taskAdmission";
+import { activeTaskProjectFallback, unlocalizedTaskAsset } from "./activeProjectFallback";
 import { traceVendorCompleted } from "../events/vendorCallTrace";
 import { rememberTaskResult } from "../vendor/fingerprintCache";
 import {
@@ -56,7 +58,7 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
   }
   const mapping = findTaskMapping(vendorKey, taskKind, modelKey);
   if (!mapping?.query) return null; // 同步模型无 query op，没法续查
-  const projectId = trim(raw.projectId);
+  const projectId = trim(raw.projectId) || activeTaskProjectFallback();
   return {
     vendor: vendorKey,
     request: { kind: taskKind, prompt: trim(raw.prompt), extras: { modelKey } },
@@ -152,9 +154,11 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
   if (assetUrl) {
     const type: "image" | "video" | "model3d" =
       cached.wantedKind === "video" ? "video" : cached.wantedKind === "model3d" ? "model3d" : "image";
+    // vendor 提示必须带上：本地 ComfyUI 的产物 URL 是私网 /view，缺它 hardenedFetch 会按 SSRF 拒下载。
+    const vendorHint = readCatalog().vendors.find((item) => item.key === cached.vendor);
     const asset = cached.projectId
-      ? await localizeTaskAsset(cached.projectId, assetUrl, type, cached.nodeId)
-      : { type, url: assetUrl, thumbnailUrl: type === "image" ? assetUrl : null };
+      ? await localizeTaskAsset(cached.projectId, assetUrl, type, cached.nodeId, vendorHint)
+      : unlocalizedTaskAsset(type, assetUrl);
     taskCache.delete(taskId);
     const lateResult: TaskResult = {
       id: taskId,
@@ -173,11 +177,19 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
   };
 }
 
+/** 提交时 projectId 空窗会毒化整个任务生命周期（cached.projectId 恒空 → 每次轮询都跳过本地化、
+ *  终态只存易失 CDN url）。轮询 payload 带的 projectId / 主进程活动项目给它第二次机会。 */
+function withProjectIdSecondChance(cached: CachedTask, pollProjectId: string): CachedTask {
+  if (cached.projectId) return cached;
+  const projectId = pollProjectId || activeTaskProjectFallback();
+  return projectId ? { ...cached, projectId } : cached;
+}
+
 export async function fetchTaskResult(payload: unknown): Promise<{ vendor: string; result: TaskResult }> {
   const raw = payload as JsonRecord;
   const taskId = trim(raw.taskId);
   const cached = taskCache.get(taskId);
-  if (cached) return executeTaskQuery(taskId, cached);
+  if (cached) return executeTaskQuery(taskId, withProjectIdSecondChance(cached, trim(raw.projectId)));
 
   // 缓存 miss：先试无状态重建（重启/驱逐后仍能续查的治本点）。重建得了就走同一段 query。
   const rebuilt = rebuildCachedTaskFromPayload(taskId, raw);

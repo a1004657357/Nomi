@@ -5,6 +5,8 @@ import { IconX, IconExternalLink } from '@tabler/icons-react'
 import type { WorkspaceFileNode } from '../../../electron/workspace/workspaceFileIndex'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { NomiMarkdown } from '../common/NomiMarkdown'
+import { useVideoPlaybackHeal } from '../../media/useVideoPlaybackHeal'
+import { VideoPlaybackStatusOverlay } from '../../media/VideoPlaybackStatusOverlay'
 import { useFilePreviewStore } from './useFilePreviewStore'
 import { buildWorkspaceFileUrl } from './workspaceFileDrag'
 
@@ -73,7 +75,7 @@ function PreviewBody({ node, url }: { node: WorkspaceFileNode; url: string }): J
     case 'image':
       return <img src={url} alt={node.name} className="mx-auto max-w-full object-contain" />
     case 'video':
-      return <video src={url} controls className="w-full" />
+      return <VideoPreview url={url} />
     case 'audio':
       return <audio src={url} controls className="w-full" />
     case 'document': // pdf → Chromium's built-in viewer
@@ -88,6 +90,24 @@ function PreviewBody({ node, url }: { node: WorkspaceFileNode; url: string }): J
         </div>
       )
   }
+}
+
+// 文件浏览器的视频预览也走播放守卫（与画布节点/全屏预览/时间轴同一内核）：坏视频（HEVC 存量等）
+// 此前在这里裸播 = 纯灰壳零提示。url 是 nomi-local://asset/ 格式 → 能自愈转码，也能诚实报错。
+function VideoPreview({ url }: { url: string }): JSX.Element {
+  const heal = useVideoPlaybackHeal({ rawUrl: url })
+  return (
+    <div className="relative w-full">
+      <video
+        src={heal.playbackUrl}
+        controls
+        className="w-full"
+        onError={heal.onError}
+        onLoadedMetadata={heal.onLoadedMetadata}
+      />
+      <VideoPlaybackStatusOverlay healingText={heal.healingText} failureText={heal.failureText} />
+    </div>
+  )
 }
 
 function TextPreview({ url, markdown }: { url: string; markdown: boolean }): JSX.Element {

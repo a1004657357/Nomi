@@ -18,21 +18,13 @@ import {
 } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../design'
-import {
-  providerLabel,
-  skillCapabilityFor,
-  type SkillListItemDto,
-  type SkillProviderKind,
-} from '../api/skillApi'
+import { skillCapabilityFor, type SkillListItemDto, type SkillProviderKind } from '../api/skillApi'
 import {
   CANVAS_SKILL_DRAG_MIME,
   encodeCanvasSkillDrag,
   isCanvasSkill,
 } from '../generationCanvas/skills/canvasSkillModel'
-import {
-  canvasSkillComponentPresentation,
-  type CanvasSkillComponentKind,
-} from './skillComponentPresentation'
+import { canvasSkillComponentPresentation, type CanvasSkillComponentKind } from './skillComponentPresentation'
 
 const COMPONENT_ICONS = {
   image: IconPhoto,
@@ -71,9 +63,7 @@ export function SkillCard({
     <div
       className={cn('flex flex-col gap-2 rounded-nomi border border-nomi-line bg-nomi-paper p-3')}
       data-skill-key={skill.name}
-      data-capability-recipe-id={
-        skill.canvas?.recipeIds.length === 1 ? skill.canvas.recipeIds[0] : undefined
-      }
+      data-capability-recipe-id={skill.canvas?.recipeIds.length === 1 ? skill.canvas.recipeIds[0] : undefined}
       data-canvas-skill-enabled={canvasEnabled ? 'true' : 'false'}
       data-canvas-component-kind={canvasEnabled ? component.kind : undefined}
       draggable={canvasEnabled}
@@ -151,7 +141,9 @@ export function SkillCard({
                   type="button"
                   onClick={() => onExport(skill)}
                   aria-label={`导出 ${skill.label}`}
-                  className={cn('shrink-0 w-7 h-7 grid place-items-center rounded-nomi-sm text-nomi-ink-60 hover:text-nomi-ink hover:bg-nomi-ink-05 transition-colors')}
+                  className={cn(
+                    'shrink-0 w-7 h-7 grid place-items-center rounded-nomi-sm text-nomi-ink-60 hover:text-nomi-ink hover:bg-nomi-ink-05 transition-colors',
+                  )}
                 >
                   <IconDownload size={14} stroke={1.7} />
                 </button>
@@ -165,7 +157,9 @@ export function SkillCard({
                     type="button"
                     onClick={() => onDelete(skill)}
                     aria-label={`删除 ${skill.label}`}
-                    className={cn('shrink-0 w-7 h-7 grid place-items-center rounded-nomi-sm text-nomi-ink-60 hover:text-workbench-danger hover:bg-nomi-ink-05 transition-colors')}
+                    className={cn(
+                      'shrink-0 w-7 h-7 grid place-items-center rounded-nomi-sm text-nomi-ink-60 hover:text-workbench-danger hover:bg-nomi-ink-05 transition-colors',
+                    )}
                   >
                     <IconTrash size={14} stroke={1.7} />
                   </button>

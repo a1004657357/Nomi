@@ -6,13 +6,13 @@ export const enModelDisplayText: Readonly<Record<string, string>> = {
   '不想出现的内容（可留空）': 'Content to exclude (optional)',
   '你 ComfyUI/models/checkpoints 目录里的文件名': 'Filename in your ComfyUI/models/checkpoints directory',
   '模型权重（checkpoint 文件名）': 'Model weights (checkpoint filename)',
-  '宽度': 'Width',
-  '高度': 'Height',
-  '采样步数': 'Sampling steps',
-  '采样器': 'Sampler',
-  '随机种子': 'Random seed',
-  '负向提示词': 'Negative prompt',
-  '张数': 'Image count',
+  宽度: 'Width',
+  高度: 'Height',
+  采样步数: 'Sampling steps',
+  采样器: 'Sampler',
+  随机种子: 'Random seed',
+  负向提示词: 'Negative prompt',
+  张数: 'Image count',
   '音色 ID': 'Voice ID',
   '比例 / 尺寸': 'Aspect ratio / size',
   '首帧图(图生视频，可选)': 'First-frame image (optional for image-to-video)',
@@ -28,13 +28,15 @@ export const enModelDisplayText: Readonly<Record<string, string>> = {
   标准: 'Standard',
   参考视频: 'Reference video',
   参考图: 'Reference image',
+  图片参考: 'Image references',
   '参考图驱动（1 张=首帧，2 张=首尾帧）':
     'Reference-image driven (1 image = first frame; 2 images = first and last frames)',
   '参考图驱动（最多 3 张）': 'Reference-image driven (up to 3 images)',
   参考生视频: 'Reference-to-video',
   '1–7 张参考图，主体一致性直出；外观由图决定，提示词写动作/运镜':
     '1–7 reference images with subject consistency; appearance comes from the images, so describe motion and camera work in the prompt',
-  '1–9 张参考图（人物/场景），模型自动融合': '1–9 reference images (characters/scenes), blended automatically by the model',
+  '1–9 张参考图（人物/场景），模型自动融合':
+    '1–9 reference images (characters/scenes), blended automatically by the model',
   '单张首帧图驱动（提示词可留空）': 'Use one first-frame image (prompt optional)',
   '最多 5 个参考（图+视频合计），角色/风格一致性直出；提示词可用「图1」「视频1」指代':
     'Up to 5 references in total (images + videos) for character/style consistency; refer to them as "image 1" / "video 1" in the prompt',
@@ -54,6 +56,7 @@ export const enModelDisplayText: Readonly<Record<string, string>> = {
   单张首帧图驱动: 'Use one first-frame image',
   单张首帧图驱动生成: 'Generate from one first-frame image',
   '单张首帧图驱动生成（比例随图）': 'Generate from one first-frame image (aspect ratio follows the image)',
+  '单张首帧图驱动生成，比例随输入图': 'Generate from one first-frame image; aspect ratio follows the input image',
   雕塑: 'Sculpture',
   豆包配音: 'Doubao voice generation',
   '豆包语音 2.0': 'Doubao Speech 2.0',
@@ -62,6 +65,8 @@ export const enModelDisplayText: Readonly<Record<string, string>> = {
   '多模态参考；最多 9 角色 / 3 视频 / 3 音频': 'Multimodal references: up to 9 characters, 3 videos, and 3 audio clips',
   '多模态参考；最多 9 图 / 3 视频 / 3 音频': 'Multimodal references: up to 9 images, 3 videos, and 3 audio clips',
   '多模态参考：最多 9 图 / 3 视频 / 3 音频': 'Multimodal references: up to 9 images, 3 videos, and 3 audio clips',
+  '最多 30 图 / 10 视频 / 10 音频；支持纯音频输入，单项及总参考音视频需为 2–30 秒':
+    'Up to 30 images, 10 videos, and 10 audio clips; audio-only input is supported, and individual and total reference media duration must be 2–30 seconds',
   多帧叙事: 'Multi-frame story',
   风格: 'Style',
   负向提示: 'Negative prompt',
@@ -82,6 +87,7 @@ export const enModelDisplayText: Readonly<Record<string, string>> = {
   '混元3D v3.1': 'Hunyuan3D v3.1',
   '火山 Seedream 高清文生图': 'Volcengine Seedream high-resolution text-to-image',
   '即梦 Seedance 2.0': 'Dreamina Seedance 2.0',
+  '即梦 Seedance 2.5': 'Dreamina Seedance 2.5',
   即梦多帧视频: 'Dreamina multi-frame video',
   即梦图片: 'Dreamina Image',
   即梦图片超清: 'Dreamina Image Upscale',
@@ -126,6 +132,8 @@ export const enModelDisplayText: Readonly<Record<string, string>> = {
   '首帧 + 尾帧，过渡更可控': 'Use first and last frames for a more controlled transition',
   '首帧 + 尾帧，过渡更可控（比例随首帧）':
     'Use first and last frames for a controlled transition (aspect ratio follows the first frame)',
+  '首帧 + 尾帧生成中间过程，比例随首帧':
+    'Generate the transition between first and last frames; aspect ratio follows the first frame',
   '首帧 + 尾帧，自动补间过渡': 'Use first and last frames with automatic interpolation',
   '首帧（+可选尾帧）补间生成': 'Interpolate from a first frame with an optional last frame',
   '首帧（可选尾帧）生成视频': 'Generate video from a first frame with an optional last frame',
@@ -161,6 +169,8 @@ export const enModelDisplayText: Readonly<Record<string, string>> = {
     'Describe the delivery naturally, such as “sweet and playful” or “calm, like a bedtime story”',
   '用即梦会员积分，纯文字生成 Seedance 2.0 视频':
     'Generate Seedance 2.0 video from text using Dreamina membership credits',
+  '用即梦高级会员积分，纯文字生成 Seedance 2.5 视频':
+    'Generate Seedance 2.5 video from text using Dreamina Premium credits',
   '用即梦会员积分，纯文字生成图像': 'Generate images from text using Dreamina membership credits',
   语速: 'Speed',
   语言: 'Language',
@@ -189,5 +199,7 @@ export const enModelDisplayText: Readonly<Record<string, string>> = {
   'shimmer · 女声·轻柔': 'shimmer · Female · Gentle',
   'VIP·可1080p': 'VIP · Up to 1080p',
   'VIP快速·可1080p': 'VIP Fast · Up to 1080p',
+  'VIP·可4K': 'VIP · Up to 4K',
+  VIP快速: 'VIP Fast',
   'Vivi · 女声·自然（默认）': 'Vivi · Female · Natural (default)',
 }

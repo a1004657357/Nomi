@@ -4,6 +4,8 @@ import {
   showClipboardMediaPasteNotes,
 } from '../adapters/clipboardImagePaste'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { showUndoToast } from '../../../utils/showUndoToast'
+import i18n from '../../../i18n'
 
 type CanvasZoomShortcutInput = {
   key: string
@@ -98,7 +100,17 @@ export function useCanvasShortcuts(opts: {
       if (event.key === 'Backspace' || event.key === 'Delete') {
         if (!selectedNodeCount) return
         event.preventDefault()
+        const removedCount = selectedNodeCount
         deleteSelectedNodes()
+        // 误删安全网（fb-20260724：画板衍生截图与原图在画布上无区分，框选一键 del 把原图也删了）。
+        // 删除照常发生，但删**多个**时给可点撤销的 toast（复用画布 undo）——单个删除很明确、不打扰；
+        // 多选才是批量误删的入口。这是通用护栏，覆盖所有多选误删，不止画板场景（P2 整类不复发）。
+        if (removedCount > 1) {
+          showUndoToast({
+            message: i18n.t('generationCommon.canvas.deletedNodesUndo', { count: removedCount }),
+            onUndo: undo,
+          })
+        }
         return
       }
       if (!mod) return

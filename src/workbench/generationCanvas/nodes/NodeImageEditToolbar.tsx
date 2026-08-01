@@ -12,9 +12,11 @@ import { applyTextEdit } from '../textEdit/buildTextEditNode'
 import { useDecomposeLayers } from './decompose/useDecomposeLayers'
 import { NomiLoadingMark } from '../../../design'
 
-// 图片节点编辑浮条（方案 B 分组，用户拍板）：定妆 ｜ 裁剪 · 切图▾ · 变换▾ ｜ 下载。
-// 把低频的截图(2)/变换(4)收进两个下拉，常用动作留在外面 1 次点击直达。容器/按钮/图标全走
-// NodeFloatingToolbar 共享组件（token 合规，§2/§6）。图片类与素材类节点共用此条。
+// 图片节点编辑浮条（按「创作优先级」排左→右，用户拍板）：
+//   左·创作：定妆 · AI编辑▾ ｜ 中·改这张：裁剪 · 抠图 · 切图▾ · 变换▾ ｜ 交接：画板 ｜ 右·工具：全屏 · 下载。
+// 全屏是「看」的工具，不占最左创作主位——与下载同归右侧工具区（此前全屏在最左，抢了 accent 主动作定妆的位）。
+// 低频的截图(2)/变换(4)收进两个下拉，常用动作外露 1 次点击直达。容器/按钮/图标全走 NodeFloatingToolbar
+// 共享组件（token 合规，§2/§6）。图片类与素材类节点共用此条。
 
 type Props = {
   node: GenerationCanvasNode
@@ -48,14 +50,6 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
   return (
     <>
       <FloatingToolbarShell ariaLabel={t('generationCommon.imageToolbar.aria')}>
-        <ToolbarIconButton
-          icon={<IconMaximize size={I.size} stroke={I.stroke} />}
-          title={t('generationCommon.imageToolbar.fullscreen')}
-          ariaLabel={t('generationCommon.imageToolbar.fullscreenAria')}
-          disabled={!imageUrl}
-          onClick={onPreview}
-        />
-        <ToolbarDivider />
         {onMakeup ? (
           <ToolbarButton
             icon={<IconSparkles size={I.size} stroke={I.stroke} />}
@@ -134,6 +128,13 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
           onClick={() => setWhiteboardOpen(true)}
         />
         <ToolbarDivider />
+        <ToolbarIconButton
+          icon={<IconMaximize size={I.size} stroke={I.stroke} />}
+          title={t('generationCommon.imageToolbar.fullscreen')}
+          ariaLabel={t('generationCommon.imageToolbar.fullscreenAria')}
+          disabled={!imageUrl}
+          onClick={onPreview}
+        />
         <ToolbarButton
           icon={<IconDownload size={I.size} stroke={I.stroke} />}
           label={t('generationCommon.imageToolbar.download')}

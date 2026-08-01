@@ -28,7 +28,7 @@ type InlineParameterBarProps = {
   selectedModelOption: ModelOption | null
   archetype: ReturnType<typeof resolveArchetypeForOption> // kept for prop compat, no longer used in render
   meta: Record<string, unknown>
-  onModelChange: (value: string) => void
+  onModelChange: (value: string, vendor?: string) => void
   onCatalogControlChange: (control: DynamicCatalogControl, value: string) => void
   onParameterControlChange: (control: ModelParameterControl, value: string) => void
   /** 变体（型号）小下拉：和模型芯片并排在底栏（用户拍板）。无变体的模型传空数组 → 不显示。 */
@@ -119,7 +119,12 @@ export default function InlineParameterBar({
 }: InlineParameterBarProps): JSX.Element {
   const { t } = useTranslation()
   // 去重选择 view-model（hook 必须在任何早返回前调用）。
-  const modelSelect = useDedupedModelSelect(modelOptions, selectedModelOption?.value || '', onModelChange)
+  const modelSelect = useDedupedModelSelect(
+    modelOptions,
+    selectedModelOption?.value || '',
+    onModelChange,
+    selectedModelOption?.vendor,
+  )
 
   // 摘要 pill 文本：各参数当前值串接（16:9 · 1080p · 5 · 音频）。
   const summaryText = renderedControls

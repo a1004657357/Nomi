@@ -2,18 +2,14 @@
 // 从组件抽出为 hook：默认选模型 / vendor 同步 / 供应商断开自愈 / archetype meta 初始化。
 // 行为与原组件逐字节一致——仅把 effect 体平移进来，依赖数组原样保留。
 import React from 'react'
-import { useTranslation } from 'react-i18next'
 import type { ModelOption } from '../../../config/models'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { buildModelControls, defaultPatchForControls, readMeta } from './controls/parameterControlModel'
 import {
-  applyArchetypeModeSwitch,
   ensureArchetypeNodeMeta,
   normalizeArchetypeVariantMeta,
   resolveArchetypeForModel,
 } from './controls/archetypeMeta'
-import { resolveModeForConnectedReferences } from '../agent/referenceEdgeCapability'
-import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { remapArchetypeMode } from '../runner/usableVendorModel'
 import { showInfoToast } from '../../../utils/showInfoToast'
 import { chooseDefaultModelOption, resolveArchetypeForOption } from './nodeModelArchetype'
@@ -69,7 +65,17 @@ export function useNodeModelAutoSelect({
           : { imageModel: firstOption.value, imageModelVendor: firstOption.vendor || null }),
       },
     })
-  }, [autoSelectionAllowed, isGenerationNode, isVideoLike, modelOptions, node.id, node.meta, selectedModelValue, updateNode])
+  }, [
+    autoSelectionAllowed,
+    isGenerationNode,
+    isImageLike,
+    isVideoLike,
+    modelOptions,
+    node.id,
+    node.meta,
+    selectedModelValue,
+    updateNode,
+  ])
 
   React.useEffect(() => {
     if (!autoSelectionAllowed || !isGenerationNode || !selectedModelOption) return
@@ -161,7 +167,18 @@ export function useNodeModelAutoSelect({
       },
     })
     showInfoToast(`原供应商已断开，已自动切换到「${target.label}」`)
-  }, [autoSelectionAllowed, isGenerationNode, isVideoLike, meta, modelOptions, node.id, node.meta, selectedModelOption, selectedModelValue, updateNode])
+  }, [
+    autoSelectionAllowed,
+    isGenerationNode,
+    isVideoLike,
+    meta,
+    modelOptions,
+    node.id,
+    node.meta,
+    selectedModelOption,
+    selectedModelValue,
+    updateNode,
+  ])
 
   // 选到一个有内置档案的模型、还没有命名空间 meta 时，初始化 node.meta.archetype（落到默认模式）。
   // 幂等：已是该档案则 no-op，不会循环。

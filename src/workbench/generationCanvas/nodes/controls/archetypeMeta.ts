@@ -448,10 +448,18 @@ const DEFAULT_AS_ARRAY: Record<ArchetypeReferenceSlotKind, boolean> = {
 }
 /** 角色数组合并（combineSlotsInto）时 slot.kind → 缺省 role；slot.roleName 可覆盖。
  *  单一真相源：role 默认派生自 kind，避免 role 与 kind 两条平行真相源（P1）。 */
+/**
+ * 方舟 content 项的 role 取值单一真相源。五个值全部来自官方字段表
+ * （`content[].role`：first_frame / last_frame / reference_image / reference_video / reference_audio）。
+ * video_ref / audio_ref 两条以前漏了 —— 图片参考带 role、参考视频/音频裸奔，属于半接
+ * （2026-07-31 拿到中转交付文档逐项对账时抓出）。
+ */
 const DEFAULT_ROLE_FOR_KIND: Partial<Record<ArchetypeReferenceSlotKind, string>> = {
   first_frame: 'first_frame',
   last_frame: 'last_frame',
   image_ref: 'reference_image',
+  video_ref: 'reference_video',
+  audio_ref: 'reference_audio',
 }
 
 /** 构造层产出的通用 input 值：标量 / 数组 / 角色对象数组（combineSlotsInto）。模板引擎原样透传。 */
@@ -574,9 +582,11 @@ export function buildArchetypeInputParams(
           const role = DEFAULT_ROLE_FOR_KIND.image_ref ?? 'reference_image'
           out[inputKey] = capped.map((url) => volcengineImageContentItem(url, role))
         } else if (inputKey === 'volcengine_video_contents') {
-          out[inputKey] = capped.map((url) => ({ type: 'video_url', video_url: { url } }))
+          const role = DEFAULT_ROLE_FOR_KIND.video_ref ?? 'reference_video'
+          out[inputKey] = capped.map((url) => ({ type: 'video_url', video_url: { url }, role }))
         } else if (inputKey === 'volcengine_audio_contents') {
-          out[inputKey] = capped.map((url) => ({ type: 'audio_url', audio_url: { url } }))
+          const role = DEFAULT_ROLE_FOR_KIND.audio_ref ?? 'reference_audio'
+          out[inputKey] = capped.map((url) => ({ type: 'audio_url', audio_url: { url }, role }))
         } else if (!slotAsArray(slot) && slot.max === 1) {
           // 声明 asArray:false 的单容量数组路由槽（Agnes i2v 的 image）→ 发**单图字符串**，声明说话算话。
           // 旧实现无视 asArray 恒发数组 → Agnes Go 后端 Alias.image(string) 解析失败，Windows 用户

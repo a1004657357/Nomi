@@ -99,18 +99,26 @@ export function NodeErrorReport({ message, onRetry }: { message: string; onRetry
         <IconAlertTriangle size={16} stroke={1.6} className="mt-[1px] shrink-0 text-workbench-danger" />
         <span className="select-text cursor-text text-body font-bold leading-snug text-nomi-ink">{report.reason}</span>
       </div>
-      {report.hint ? (
-        <p className="mt-2 select-text cursor-text text-caption leading-relaxed text-nomi-ink-60">{report.hint}</p>
-      ) : null}
-      {/* 服务商真实原话——提到可见区，别再让用户去折叠的「技术详情」里挖（一脸懵逼的根源）。 */}
-      {report.providerMessage ? (
-        <p className="mt-2 select-text cursor-text rounded-nomi-sm bg-nomi-ink-05 p-2 text-caption leading-relaxed text-nomi-ink-60">
-          <span className="text-nomi-ink-40">{t('generationCommon.error.providerMessage')}</span>
-          {report.providerMessage}
-        </p>
-      ) : null}
-
-      <div className="min-h-0 flex-1" />
+      {/* 正文区独立滚动 —— 这一层是结构保证，不是样式偏好：错误卡铺满节点正文，而节点可以很小，
+          hint + 上游原话却可以很长。不给正文独立滚动，长文案会把整排动作按钮顶出卡外，用户连
+          「换个模型」都点不到（2026-07-31 走查几何断言抓到：436×245 的节点上按钮底边越界）。
+          内容短时它照旧撑满剩余高度，按钮仍贴底，视觉与旧版一致。
+          onWheel 停冒泡：画布用 bubble 阶段的 wheel 缩放，不停的话在卡里滚 = 缩放画布。 */}
+      <div className="mt-2 min-h-0 flex-1 overflow-y-auto" onWheel={(event) => event.stopPropagation()}>
+        {report.hint ? (
+          <p className="select-text cursor-text text-caption leading-relaxed text-nomi-ink-60">{report.hint}</p>
+        ) : null}
+        {/* 服务商真实原话——提到可见区，别再让用户去折叠的「技术详情」里挖（一脸懵逼的根源）。
+            break-words 不能省：上游原话常是一整串没有空格的 JSON/URL（如方舟的
+            `{"code":"InputImageSensitiveContentDetected.PrivacyInformation",…}`），窄节点上会横向
+            溢出被切掉右半截（同一次走查截图抓到）。 */}
+        {report.providerMessage ? (
+          <p className="mt-2 select-text cursor-text break-words rounded-nomi-sm bg-nomi-ink-05 p-2 text-caption leading-relaxed text-nomi-ink-60">
+            <span className="text-nomi-ink-40">{t('generationCommon.error.providerMessage')}</span>
+            {report.providerMessage}
+          </p>
+        ) : null}
+      </div>
 
       {showRaw ? (
         <pre

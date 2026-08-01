@@ -21,8 +21,7 @@ import { exportTimelineToMp4, type ExportTimelineToMp4Options } from '../export/
 import { markChecklistStep } from '../onboarding/onboardingState'
 import { buildMp4ExportButtonTitle } from '../export/exportCopy'
 import { toast } from '../../ui/toast'
-import { buildVideoPlaybackUrl } from '../../media/videoPlaybackUrl'
-import { describeVideoPlaybackFailure, diagnoseVideoPlaybackFailure, logVideoPlaybackFailure } from '../../media/videoPlaybackDiagnostics'
+import { useVideoPlaybackHeal } from '../../media/useVideoPlaybackHeal'
 import { computeTimelineDuration } from '../timeline/timelineMath'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { getDesktopActiveProjectId } from '../../desktop/activeProject'
@@ -87,7 +86,10 @@ export default function TimelinePreview({ activeClips, aspectRatio, fps, playhea
   const imageClip = findClip(activeClips, 'image')
   const audioClip = findClip(activeClips, 'audio')
   const videoUrl = resolveTimelineClipPlaybackUrl(videoClip, generationNodes)
-  const videoPlaybackUrl = videoUrl ? buildVideoPlaybackUrl(videoUrl) : ''
+  // 预览播放器此前只诚实报错、不自愈：同一个 HEVC 存量片段在画布节点点一下就能自己修好，
+  // 在成片预览里却永远播不了。守卫内核共用后，这里也能当场修（转码产物复用，不重复转）。
+  const heal = useVideoPlaybackHeal({ rawUrl: videoUrl })
+  const videoPlaybackUrl = heal.playbackUrl
   const activeRatio = PREVIEW_RATIOS.find((ratio) => ratio.value === aspectRatio) || PREVIEW_RATIOS[0]
   const activeMediaKey = videoUrl || imageClip?.url || ''
   const hasMedia = Boolean(activeMediaKey)
@@ -164,6 +166,12 @@ export default function TimelinePreview({ activeClips, aspectRatio, fps, playhea
   React.useEffect(() => {
     setPlaybackError('')
   }, [videoPlaybackUrl])
+
+  // 守卫的结论 → 预览既有的报错条：自愈中说「修复中」，自愈不了才落诚实原因（修好则两者都空，自动清掉）。
+  React.useEffect(() => {
+    if (heal.healingText) setPlaybackError(heal.healingText)
+    else if (heal.failureText) setPlaybackError(t('timelinePreview.videoLoadFailed', { message: heal.failureText }))
+  }, [heal.healingText, heal.failureText, t])
 
   React.useLayoutEffect(() => {
     const target = playerRef.current
@@ -445,13 +453,11 @@ export default function TimelinePreview({ activeClips, aspectRatio, fps, playhea
             crossOrigin="use-credentials"
             playsInline
             style={videoStyle}
-            onError={() => {
-              void diagnoseVideoPlaybackFailure(videoUrl, videoRef.current?.error || null).then((diagnostics) => {
-                logVideoPlaybackFailure(diagnostics)
-                setPlaybackError(t('timelinePreview.videoLoadFailed', { message: describeVideoPlaybackFailure(diagnostics) }))
-              })
+            onError={(event) => {
+              heal.onError(event)
               setTimelinePlaying(false)
             }}
+            onLoadedMetadata={heal.onLoadedMetadata}
           />
         ) : null}
         {/* 配乐 <audio>：无画面，仅播放当前音频轨 clip 的声音（试听）。currentTime/play 由上方 effect 跟 playhead。 */}

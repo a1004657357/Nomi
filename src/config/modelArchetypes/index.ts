@@ -1,48 +1,56 @@
-import type { ModelParameterControl } from "../modelCatalogMeta";
-import { SEEDANCE_2_ARCHETYPE } from "./seedance";
-import { HUNYUAN3D_ARCHETYPE } from "./hunyuan3d";
-import { HITEM3D_ARCHETYPE } from "./hitem3d";
-import { MESHY6_ARCHETYPE } from "./meshy6";
-import { RUNNINGHUB_SEEDANCE_ARCHETYPE } from "./runninghubSeedance";
-import { RUNNINGHUB_VIDEO_ARCHETYPES } from "./runninghubVideoArchetypes";
-import { RUNNINGHUB_IMAGE_ARCHETYPES } from "./runninghubImageArchetypes";
-import { HAPPYHORSE_ARCHETYPE } from "./happyhorse";
-import { GPT_IMAGE_2_ARCHETYPE } from "./gptImage2";
-import { SEEDREAM_ARCHETYPE } from "./seedream";
-import { NANO_BANANA_ARCHETYPE } from "./nanoBanana";
-import { KLING_3_ARCHETYPE } from "./kling";
-import { QWEN_IMAGE_ARCHETYPE } from "./qwenImage";
-import { IMAGEN_4_ARCHETYPE } from "./imagen4";
-import { Z_IMAGE_ARCHETYPE } from "./zImage";
-import { SORA_2_ARCHETYPE } from "./sora2";
-import { VEO_3_1_ARCHETYPE } from "./veo31";
-import { WAN_2_7_ARCHETYPE } from "./wan27";
-import { HAILUO_2_3_ARCHETYPE } from "./hailuo23";
-import { GROK_IMAGINE_1_5_VIDEO_ARCHETYPE } from "./grokImagine15Video";
-import { SEEDANCE_2_APIMART_ARCHETYPE } from "./seedanceApimart";
-import { VIDU_Q3_ARCHETYPE } from "./viduQ3";
-import { KLING_3_TURBO_ARCHETYPE } from "./kling30Turbo";
-import { HAPPYHORSE_1_1_ARCHETYPE } from "./happyhorse11";
-import { SEEDREAM_5_PRO_ARCHETYPE } from "./seedream5Pro";
-import { OMNI_FLASH_EXT_ARCHETYPE } from "./omniFlashExt";
-import { AUDIO_ARCHETYPE } from "./audioArchetype";
-import { DOUBAO_TTS_ARCHETYPE } from "./doubaoTtsArchetype";
-import { SEED_TTS_ARCHETYPE } from "./seedTtsArchetype";
-import { MODELSCOPE_IMAGE_ARCHETYPE, MODELSCOPE_IMAGE_EDIT_ARCHETYPE } from "./modelscopeImage";
-import { SEEDREAM_VOLCENGINE_ARCHETYPE } from "./seedreamVolcengine";
-import { SEEDANCE_VOLCENGINE_ARCHETYPE } from "./seedanceVolcengine";
-import { DREAMINA_SEEDANCE_ARCHETYPE } from "./dreaminaSeedance";
-import { JIMENG_WEB_SEEDANCE_ARCHETYPE } from "./jimengWebSeedance";
-import { JIMENG_WEB_IMAGE_ARCHETYPE } from "./jimengWebImage";
-import { DREAMINA_IMAGE_ARCHETYPE } from "./dreaminaImage";
-import { DREAMINA_UPSCALE_ARCHETYPE } from "./dreaminaUpscale";
-import { DREAMINA_MULTIFRAME_ARCHETYPE } from "./dreaminaMultiframe";
-import { AGNES_IMAGE_ARCHETYPE } from "./agnesImage";
-import { AGNES_VIDEO_ARCHETYPE } from "./agnesVideo";
-import { CODEX_IMAGEGEN_ARCHETYPE } from "./codexImagegen";
-import type { ModelArchetype } from "./types";
+import type { ModelParameterControl } from '../modelCatalogMeta'
+import { SEEDANCE_2_ARCHETYPE } from './seedance'
+import { HUNYUAN3D_ARCHETYPE } from './hunyuan3d'
+import { HITEM3D_ARCHETYPE } from './hitem3d'
+import { MESHY6_ARCHETYPE } from './meshy6'
+import { RUNNINGHUB_SEEDANCE_ARCHETYPE } from './runninghubSeedance'
+import { RUNNINGHUB_VIDEO_ARCHETYPES } from './runninghubVideoArchetypes'
+import { RUNNINGHUB_IMAGE_ARCHETYPES } from './runninghubImageArchetypes'
+import { HAPPYHORSE_ARCHETYPE } from './happyhorse'
+import { GPT_IMAGE_2_ARCHETYPE } from './gptImage2'
+import { SEEDREAM_ARCHETYPE } from './seedream'
+import { NANO_BANANA_ARCHETYPE } from './nanoBanana'
+import { KLING_3_ARCHETYPE } from './kling'
+import { QWEN_IMAGE_ARCHETYPE } from './qwenImage'
+import { IMAGEN_4_ARCHETYPE } from './imagen4'
+import { Z_IMAGE_ARCHETYPE } from './zImage'
+import { SORA_2_ARCHETYPE } from './sora2'
+import { VEO_3_1_ARCHETYPE } from './veo31'
+import { WAN_2_7_ARCHETYPE } from './wan27'
+import { HAILUO_2_3_ARCHETYPE } from './hailuo23'
+import { GROK_IMAGINE_1_5_VIDEO_ARCHETYPE } from './grokImagine15Video'
+import { SEEDANCE_2_APIMART_ARCHETYPE } from './seedanceApimart'
+import { VIDU_Q3_ARCHETYPE } from './viduQ3'
+import { KLING_3_TURBO_ARCHETYPE } from './kling30Turbo'
+import { HAPPYHORSE_1_1_ARCHETYPE } from './happyhorse11'
+import { SEEDREAM_5_PRO_ARCHETYPE } from './seedream5Pro'
+import { OMNI_FLASH_EXT_ARCHETYPE } from './omniFlashExt'
+import { AUDIO_ARCHETYPE } from './audioArchetype'
+import { DOUBAO_TTS_ARCHETYPE } from './doubaoTtsArchetype'
+import { SEED_TTS_ARCHETYPE } from './seedTtsArchetype'
+import { MODELSCOPE_IMAGE_ARCHETYPE, MODELSCOPE_IMAGE_EDIT_ARCHETYPE } from './modelscopeImage'
+import { SEEDREAM_VOLCENGINE_ARCHETYPE } from './seedreamVolcengine'
+import { SEEDANCE_VOLCENGINE_ARCHETYPE } from './seedanceVolcengine'
+import { DREAMINA_SEEDANCE_ARCHETYPE } from './dreaminaSeedance'
+import { DREAMINA_SEEDANCE_25_ARCHETYPE } from './dreaminaSeedance25'
+import { JIMENG_WEB_SEEDANCE_ARCHETYPE } from './jimengWebSeedance'
+import { JIMENG_WEB_IMAGE_ARCHETYPE } from './jimengWebImage'
+import { DREAMINA_IMAGE_ARCHETYPE } from './dreaminaImage'
+import { DREAMINA_UPSCALE_ARCHETYPE } from './dreaminaUpscale'
+import { DREAMINA_MULTIFRAME_ARCHETYPE } from './dreaminaMultiframe'
+import { AGNES_IMAGE_ARCHETYPE } from './agnesImage'
+import { AGNES_VIDEO_ARCHETYPE } from './agnesVideo'
+import { CODEX_IMAGEGEN_ARCHETYPE } from './codexImagegen'
+import type { ModelArchetype } from './types'
 
-export type { ModelArchetype, ArchetypeMode, ArchetypeReferenceSlot, ArchetypeReferenceSlotKind, ArchetypeIntent, ModelArchetypeVariant } from "./types";
+export type {
+  ModelArchetype,
+  ArchetypeMode,
+  ArchetypeReferenceSlot,
+  ArchetypeReferenceSlotKind,
+  ArchetypeIntent,
+  ModelArchetypeVariant,
+} from './types'
 
 /** 内置档案注册表。新模型族在这里登记一条。 */
 export const MODEL_ARCHETYPES: readonly ModelArchetype[] = [
@@ -74,6 +82,7 @@ export const MODEL_ARCHETYPES: readonly ModelArchetype[] = [
   SEEDREAM_VOLCENGINE_ARCHETYPE,
   SEEDANCE_VOLCENGINE_ARCHETYPE,
   DREAMINA_SEEDANCE_ARCHETYPE,
+  DREAMINA_SEEDANCE_25_ARCHETYPE,
   JIMENG_WEB_SEEDANCE_ARCHETYPE,
   JIMENG_WEB_IMAGE_ARCHETYPE,
   DREAMINA_IMAGE_ARCHETYPE,
@@ -88,38 +97,38 @@ export const MODEL_ARCHETYPES: readonly ModelArchetype[] = [
   ...RUNNINGHUB_IMAGE_ARCHETYPES,
   AGNES_IMAGE_ARCHETYPE,
   AGNES_VIDEO_ARCHETYPE,
-];
+]
 
 /** 按 id 取档案。 */
 export function getArchetypeById(id: string | null | undefined): ModelArchetype | null {
-  if (!id) return null;
-  return MODEL_ARCHETYPES.find((a) => a.id === id) || null;
+  if (!id) return null
+  return MODEL_ARCHETYPES.find((a) => a.id === id) || null
 }
 
 /** 归一模型标识：去掉 "models/" 前缀、trim、小写。 */
 function normalizeIdentifier(value: unknown): string {
-  const raw = typeof value === "string" ? value.trim() : "";
-  const noPrefix = raw.startsWith("models/") ? raw.slice("models/".length) : raw;
-  return noPrefix.toLowerCase();
+  const raw = typeof value === 'string' ? value.trim() : ''
+  const noPrefix = raw.startsWith('models/') ? raw.slice('models/'.length) : raw
+  return noPrefix.toLowerCase()
 }
 
 /** 取标识的末段（去掉 vendor 前缀，如 "bytedance/seedance-2" → "seedance-2"）。 */
 function lastSegment(identifier: string): string {
-  const idx = identifier.lastIndexOf("/");
-  return idx >= 0 ? identifier.slice(idx + 1) : identifier;
+  const idx = identifier.lastIndexOf('/')
+  return idx >= 0 ? identifier.slice(idx + 1) : identifier
 }
 
 function identifierMatchesPattern(identifier: string, pattern: string): boolean {
-  const id = normalizeIdentifier(identifier);
-  const pat = normalizeIdentifier(pattern);
-  if (!id || !pat) return false;
+  const id = normalizeIdentifier(identifier)
+  const pat = normalizeIdentifier(pattern)
+  if (!id || !pat) return false
   // 整串相等，或「去掉 vendor 前缀后的末段」相等 —— 故 seedance-2 不会误命中 seedance-2-fast。
-  return id === pat || lastSegment(id) === lastSegment(pat);
+  return id === pat || lastSegment(id) === lastSegment(pat)
 }
 
 export type ArchetypeModelLike = {
-  modelKey?: string | null;
-  modelAlias?: string | null;
+  modelKey?: string | null
+  modelAlias?: string | null
   /**
    * 模型所属供应商 —— **必传**（值可为 null=未知）。B 档案分层按它特化 params
    * （见 specializeArchetypeForVendor）。必传是结构保证：曾有 5 个调用点漏传 →
@@ -128,23 +137,23 @@ export type ArchetypeModelLike = {
    * 等档案就是给任意中转用的）；中转与内置家的传输差异由「标准参考面永远在场」不变量吸收
    * （见 catalogTaskActions.buildReferenceExtras / electron referenceInputParams，2026-07-24）。
    */
-  vendorKey: string | null | undefined;
-  meta?: unknown;
-};
+  vendorKey: string | null | undefined
+  meta?: unknown
+}
 
 function readArchetypeIdFromMeta(meta: unknown): string | null {
-  if (!meta || typeof meta !== "object") return null;
-  const record = meta as { archetypeId?: unknown; archetype?: unknown };
+  if (!meta || typeof meta !== 'object') return null
+  const record = meta as { archetypeId?: unknown; archetype?: unknown }
   // catalog 模型行使用 meta.archetypeId；画布节点持久化使用 meta.archetype.id。
   // 两者必须由同一个解析入口识别，否则会出现「连线侧已切改图，发送侧却认不出档案」的分裂。
-  const direct = record.archetypeId;
-  if (typeof direct === "string" && direct.trim()) return direct.trim();
-  const nested = record.archetype;
-  if (nested && typeof nested === "object") {
-    const id = (nested as { id?: unknown }).id;
-    if (typeof id === "string" && id.trim()) return id.trim();
+  const direct = record.archetypeId
+  if (typeof direct === 'string' && direct.trim()) return direct.trim()
+  const nested = record.archetype
+  if (nested && typeof nested === 'object') {
+    const id = (nested as { id?: unknown }).id
+    if (typeof id === 'string' && id.trim()) return id.trim()
   }
-  return null;
+  return null
 }
 
 /**
@@ -160,24 +169,26 @@ function readArchetypeIdFromMeta(meta: unknown): string | null {
  * referenceInputParams，两处测试锁死；本函数保持纯识别、不做 vendor 门。
  */
 export function resolveArchetypeForModel(model: ArchetypeModelLike | null | undefined): ModelArchetype | null {
-  if (!model) return null;
-  const base = resolveBaseArchetype(model);
-  return base ? specializeArchetypeForVendor(base, model.vendorKey) : null;
+  if (!model) return null
+  const base = resolveBaseArchetype(model)
+  return base ? specializeArchetypeForVendor(base, model.vendorKey) : null
 }
 
 /** 解析「基础」档案（供应商无关，未特化）：显式 archetypeId 优先，否则按身份匹配 pattern。 */
 function resolveBaseArchetype(model: ArchetypeModelLike): ModelArchetype | null {
-  const explicit = getArchetypeById(readArchetypeIdFromMeta(model.meta));
-  if (explicit) return explicit;
-  const identifiers = [model.modelKey, model.modelAlias].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+  const explicit = getArchetypeById(readArchetypeIdFromMeta(model.meta))
+  if (explicit) return explicit
+  const identifiers = [model.modelKey, model.modelAlias].filter(
+    (v): v is string => typeof v === 'string' && v.trim().length > 0,
+  )
   for (const archetype of MODEL_ARCHETYPES) {
     for (const identifier of identifiers) {
       if (archetype.identifierPatterns.some((pattern) => identifierMatchesPattern(identifier, pattern))) {
-        return archetype;
+        return archetype
       }
     }
   }
-  return null;
+  return null
 }
 
 /**
@@ -185,17 +196,20 @@ function resolveBaseArchetype(model: ArchetypeModelLike): ModelArchetype | null 
  * 身份/能力形状（id/family/label/modes 结构/slots）不变——只 params 这层分供应商（P4）。
  * 无 vendorKey、或没有任何模式为该供应商声明 vendorParams → 原样返回（绝大多数情况，零开销）。
  */
-export function specializeArchetypeForVendor(archetype: ModelArchetype, vendorKey: string | null | undefined): ModelArchetype {
-  const key = typeof vendorKey === "string" ? vendorKey.trim() : "";
-  if (!key) return archetype;
-  if (!archetype.modes.some((m) => m.vendorParams && m.vendorParams[key])) return archetype;
+export function specializeArchetypeForVendor(
+  archetype: ModelArchetype,
+  vendorKey: string | null | undefined,
+): ModelArchetype {
+  const key = typeof vendorKey === 'string' ? vendorKey.trim() : ''
+  if (!key) return archetype
+  if (!archetype.modes.some((m) => m.vendorParams && m.vendorParams[key])) return archetype
   return {
     ...archetype,
     modes: archetype.modes.map((m) => {
-      const vp = m.vendorParams?.[key];
-      return vp ? { ...m, params: vp } : m;
+      const vp = m.vendorParams?.[key]
+      return vp ? { ...m, params: vp } : m
     }),
-  };
+  }
 }
 
 /**
@@ -204,20 +218,23 @@ export function specializeArchetypeForVendor(archetype: ModelArchetype, vendorKe
  * （id/family/label/modes 结构/slots）不变，只 params 这层按变体叠加。无 variants、变体无 paramOverrides、
  * 或变体不存在 → 原样返回（零开销）。**纯函数**，渲染读取点与构造层共用，保证 UI 选项收窄与发送一致。
  */
-export function specializeArchetypeForVariant(archetype: ModelArchetype, variantId: string | null | undefined): ModelArchetype {
-  if (!archetype.variants || archetype.variants.length === 0) return archetype;
-  const requestedId = typeof variantId === "string" && variantId.trim() ? variantId.trim() : archetype.defaultVariantId;
-  const targetId = (requestedId && archetype.variantIdAliases?.[requestedId]) || requestedId;
-  const variant = archetype.variants.find((v) => v.id === targetId);
-  const overrides = variant?.paramOverrides;
-  if (!overrides) return archetype;
+export function specializeArchetypeForVariant(
+  archetype: ModelArchetype,
+  variantId: string | null | undefined,
+): ModelArchetype {
+  if (!archetype.variants || archetype.variants.length === 0) return archetype
+  const requestedId = typeof variantId === 'string' && variantId.trim() ? variantId.trim() : archetype.defaultVariantId
+  const targetId = (requestedId && archetype.variantIdAliases?.[requestedId]) || requestedId
+  const variant = archetype.variants.find((v) => v.id === targetId)
+  const overrides = variant?.paramOverrides
+  if (!overrides) return archetype
   return {
     ...archetype,
     modes: archetype.modes.map((m) => {
-      const fn = overrides[m.id];
-      return fn ? { ...m, params: fn(m.params) } : m;
+      const fn = overrides[m.id]
+      return fn ? { ...m, params: fn(m.params) } : m
     }),
-  };
+  }
 }
 
 /**
@@ -225,11 +242,13 @@ export function specializeArchetypeForVariant(archetype: ModelArchetype, variant
  * 认不出 → null（调用方走现有 flat 解析）。供 model-options 适配层把它注入到 option.meta，
  * 让现有渲染路径不变就能渲染档案控件。**供应商无关**（resolveArchetypeForModel 只看模型身份）。
  */
-export function archetypeParameterControls(model: ArchetypeModelLike | null | undefined): ModelParameterControl[] | null {
-  const archetype = resolveArchetypeForModel(model);
-  if (!archetype) return null;
+export function archetypeParameterControls(
+  model: ArchetypeModelLike | null | undefined,
+): ModelParameterControl[] | null {
+  const archetype = resolveArchetypeForModel(model)
+  if (!archetype) return null
   // 默认变体特化（variants 档案的默认变体可能收窄某 mode 的参数，如 Seedance 标准变体不收窄、fast 收窄）。
-  const specialized = specializeArchetypeForVariant(archetype, archetype.defaultVariantId);
-  const mode = specialized.modes.find((m) => m.id === specialized.defaultModeId) ?? specialized.modes[0];
-  return mode ? mode.params : null;
+  const specialized = specializeArchetypeForVariant(archetype, archetype.defaultVariantId)
+  const mode = specialized.modes.find((m) => m.id === specialized.defaultModeId) ?? specialized.modes[0]
+  return mode ? mode.params : null
 }

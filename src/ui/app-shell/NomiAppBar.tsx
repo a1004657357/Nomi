@@ -1,6 +1,6 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconBrowser, IconDownload, IconPlugConnected } from '@tabler/icons-react'
+import { IconBrowser, IconDownload, IconPlugConnected, IconSettings } from '@tabler/icons-react'
 import type { WorkspaceMode } from '../../workbench/workbenchStore'
 import { NomiBrand, NomiStepper, WorkbenchButton } from '../../design'
 import { OnboardingChecklist } from '../../workbench/onboarding/OnboardingChecklist'
@@ -23,6 +23,7 @@ type NomiAppBarProps = {
   projectName?: string
   onBackToLibrary?: () => void
   onOpenModelCatalog?: () => void
+  onOpenSettings?: () => void
   onRenameProject?: (name: string) => void
 }
 
@@ -32,6 +33,7 @@ export default function NomiAppBar({
   projectName,
   onBackToLibrary,
   onOpenModelCatalog,
+  onOpenSettings,
   onRenameProject,
 }: NomiAppBarProps): JSX.Element {
   const { t } = useTranslation()
@@ -228,6 +230,24 @@ export default function NomiAppBar({
               <span className={cn('nomi-appbar__action-text', 'max-[1400px]:hidden')}>{t('appBar.browser')}</span>
             </WorkbenchButton>
           </>
+        ) : null}
+        {onOpenSettings ? (
+          <WorkbenchButton
+            className={cn(
+              'nomi-appbar__ghost',
+              'app-no-drag',
+              'inline-flex items-center justify-center h-[30px] w-[30px] p-0',
+              'border border-transparent rounded-[var(--nomi-radius-sm)]',
+              'bg-transparent text-[var(--nomi-ink-80)]',
+              'transition-[background,color] duration-[var(--nomi-transition-fast)]',
+              'hover:bg-[var(--nomi-ink-05)] hover:text-[var(--nomi-ink)]',
+            )}
+            aria-label={t('settings.title')}
+            title={t('settings.title')}
+            onClick={onOpenSettings}
+          >
+            <IconSettings size={15} stroke={1.8} />
+          </WorkbenchButton>
         ) : null}
         <WorkbenchButton
           className={cn(

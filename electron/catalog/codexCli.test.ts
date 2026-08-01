@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync 
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildCodexImagePrompt, buildCodexSpawnEnv, buildCodexSpawnInvocation, candidateCodexBins, latestGeneratedImageForThread, parseCodexThreadId, queryCodexImageOperation } from "./codexCli";
+import { buildCodexImagePrompt, buildCodexSpawnEnv, buildCodexSpawnInvocation, candidateCodexBins, describeCodexFailure, extractImagegenUpstreamError, latestGeneratedImageForThread, parseCodexThreadId, queryCodexImageOperation } from "./codexCli";
 
 const envSnapshot = { ...process.env };
 const tempRoots: string[] = [];
@@ -76,6 +76,63 @@ describe("Codex CLI image bridge", () => {
     expect(prompt).toContain("FAIL_IMAGEGEN_UNAVAILABLE");
     expect(prompt).toContain("禁止使用 PowerShell、Python、SVG、HTML、canvas");
     expect(prompt).toContain("黑底白字 N");
+  });
+
+  it("提示词把「工具不存在」与「调用失败」拆成两个哨兵（失败要原样带上游错误）", () => {
+    const prompt = buildCodexImagePrompt("一张图");
+    expect(prompt).toContain("FAIL_IMAGEGEN_UNAVAILABLE");
+    expect(prompt).toContain("FAIL_IMAGEGEN_ERROR:");
+    expect(prompt).toContain("原样附上");
+  });
+
+  it("从 JSONL 事件里抠出生图上游错误原话：哨兵优先，tool 回显兜底", () => {
+    const sentinelLine = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"FAIL_IMAGEGEN_ERROR: image generation failed: 429 Too Many Requests\"}}";
+    expect(extractImagegenUpstreamError(sentinelLine)).toBe("image generation failed: 429 Too Many Requests");
+    const echoLine = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"抱歉，image generation failed: content policy violation\"}}";
+    expect(extractImagegenUpstreamError(echoLine)).toBe("content policy violation");
+    expect(extractImagegenUpstreamError("{\"type\":\"turn.completed\"}")).toBe("");
+  });
+
+  it("限流/额度类调用失败：透传原话并给「稍等重试」话术，不再误标成能力未启用", () => {
+    const ran = {
+      code: 0,
+      stdout: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"FAIL_IMAGEGEN_ERROR: image generation failed: 429 rate limit exceeded\"}}",
+      stderr: "",
+    };
+    const message = describeCodexFailure(ran, "thread-1");
+    expect(message).toContain("限流");
+    expect(message).toContain("429 rate limit exceeded");
+    expect(message).not.toContain("--enable");
+    expect(message).not.toContain("未启用生图能力");
+  });
+
+  it("非限流类调用失败：原话透传（渲染层 classifyError 按信号词自行归类）", () => {
+    const ran = {
+      code: 0,
+      stdout: "{\"item\":{\"type\":\"agent_message\",\"text\":\"FAIL_IMAGEGEN_ERROR: image generation failed: content policy violation\"}}",
+      stderr: "",
+    };
+    const message = describeCodexFailure(ran, "thread-1");
+    expect(message).toContain("Codex 生图调用失败");
+    expect(message).toContain("content policy violation");
+  });
+
+  it("工具真不存在（UNAVAILABLE 哨兵）：指引升级/换模型，不再让用户去加 Nomi 本就传了的 --enable flag", () => {
+    const ran = {
+      code: 0,
+      stdout: "{\"item\":{\"type\":\"agent_message\",\"text\":\"FAIL_IMAGEGEN_UNAVAILABLE\"}}",
+      stderr: "",
+    };
+    const message = describeCodexFailure(ran, "thread-2");
+    expect(message).toContain("升级");
+    expect(message).not.toContain("--enable");
+  });
+
+  it("登录态判定收窄：良性输出里的 author/OAuth 字样不再被误判成未登录", () => {
+    const benign = { code: 1, stdout: "{\"item\":{\"type\":\"error\",\"message\":\"Skill authored by OAuth plugin was shortened\"}}", stderr: "" };
+    expect(describeCodexFailure(benign, "thread-3")).toBe("Codex CLI 未产生可导入的生图文件。");
+    const loggedOut = { code: 1, stdout: "", stderr: "Not logged in. Please run codex login first." };
+    expect(describeCodexFailure(loggedOut, "")).toContain("codex login");
   });
 
   it("带参考图时提示词要求基于附件图片生成", () => {

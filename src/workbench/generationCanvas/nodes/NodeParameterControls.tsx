@@ -120,7 +120,14 @@ export default function NodeParameterControls({
     readMeta(meta, 'modelAlias') ||
     readMeta(meta, 'imageModel') ||
     readMeta(meta, 'videoModel')
-  const selectedModelOption = findModelOptionByIdentifier(modelOptions, selectedModelValue) || null
+  // 必须带上节点存的 vendor 寻址：两个中转站可提供同名 modelKey，裸身份匹配永远命中数组首条
+  // （最新接入那家），下方 vendor 同步 effect 会跟着把 meta.vendor 改写过去——用户锁定被静默翻家。
+  const selectedModelVendor =
+    readMeta(meta, 'modelVendor') ||
+    readMeta(meta, 'vendor') ||
+    readMeta(meta, 'imageModelVendor') ||
+    readMeta(meta, 'videoModelVendor')
+  const selectedModelOption = findModelOptionByIdentifier(modelOptions, selectedModelValue, selectedModelVendor) || null
   // 认得的模型 → 内置档案（供应商无关）；驱动模式分段切换 + 当前模式的槽/参数。认不出 → null（走 flat）。
   const archetype = resolveArchetypeForOption(selectedModelOption)
   // 变体特化：选中变体可能收窄某 mode 的参数（如 Seedance fast 的 resolution 仅 480/720）——
@@ -145,8 +152,8 @@ export default function NodeParameterControls({
     })
   }
 
-  const handleModelChange = (value: string) => {
-    const nextOption = findModelOptionByIdentifier(modelOptions, value)
+  const handleModelChange = (value: string, vendor?: string) => {
+    const nextOption = findModelOptionByIdentifier(modelOptions, value, vendor)
     const controls = buildModelControls(nextOption?.meta, isImageLike, isVideoLike)
     const defaultPatch = defaultPatchForControls(controls)
     const nextArchetype = resolveArchetypeForOption(nextOption)

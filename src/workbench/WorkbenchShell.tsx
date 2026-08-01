@@ -37,6 +37,7 @@ type WorkbenchShellProps = {
     projectName?: string;
     onBackToLibrary?: () => void;
     onOpenModelCatalog?: () => void;
+    onOpenSettings?: () => void;
     onRenameProject?: (name: string) => void;
 };
 
@@ -131,6 +132,7 @@ export default function WorkbenchShell({
     projectName,
     onBackToLibrary,
     onOpenModelCatalog,
+    onOpenSettings,
     onRenameProject,
 }: WorkbenchShellProps): JSX.Element {
     const { t } = useTranslation();
@@ -259,6 +261,7 @@ export default function WorkbenchShell({
                 projectName={projectName}
                 onBackToLibrary={onBackToLibrary}
                 onOpenModelCatalog={onOpenModelCatalog}
+                onOpenSettings={onOpenSettings}
                 onRenameProject={onRenameProject}
             />
 

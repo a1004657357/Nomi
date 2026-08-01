@@ -200,11 +200,16 @@ export function latestGeneratedImageForThread(threadId: string, notBeforeMs = 0)
   return files[0]?.fullPath || "";
 }
 
+// 两个哨兵必须分开（2026-07-31 群反馈根因）：codex 的 imagegen 工具**调用失败**时是把
+// "image generation failed: <上游错误>" 当文本喂回模型，和「工具根本不存在」在模型侧长得一样。
+// 单哨兵会让限流/额度失败被折叠成「未启用生图能力」——用户刚成功过一张、下一张就被指去改
+// 一个 Nomi 自己已经传了的 CLI flag。拆开后：不存在 → UNAVAILABLE；调用失败 → ERROR + 原话透传。
 export function buildCodexImagePrompt(prompt: string, hasReferenceImages = false): string {
   return [
     hasReferenceImages ? "必须使用 $imagegen 基于附件图片生成一张真实图片。" : "必须使用 $imagegen 生成一张真实图片。",
     "禁止使用 PowerShell、Python、SVG、HTML、canvas、System.Drawing、ImageMagick、占位图或任何脚本/代码自己画图。",
-    "如果 $imagegen 无法调用，请明确回复 FAIL_IMAGEGEN_UNAVAILABLE，不要用其他方式代替。",
+    "如果本会话根本没有 $imagegen 工具可用，只回复 FAIL_IMAGEGEN_UNAVAILABLE。",
+    "如果 $imagegen 调用了但报错失败，只回复 FAIL_IMAGEGEN_ERROR: 并原样附上收到的完整错误信息，不要改写、不要翻译。",
     "图片需求：",
     prompt.trim(),
   ].join("\n");
@@ -228,15 +233,43 @@ export function buildCodexSpawnInvocation(bin: string, args: string[], platform 
   };
 }
 
-function describeCodexFailure(ran: CodexFinishedOutput, threadId: string): string {
+/** 生图调用失败的上游原话：FAIL_IMAGEGEN_ERROR 哨兵优先；模型没守哨兵时退回 codex
+ *  imagegen 工具喂给模型的固定前缀 `image generation failed:`（源码 ext/image-generation/tool.rs）。
+ *  stdout 是 JSONL，原话嵌在 agent_message 的 JSON 字符串里——遇引号/换行即止。 */
+export function extractImagegenUpstreamError(text: string): string {
+  const sentinel = text.match(/FAIL_IMAGEGEN_ERROR[:：]\s*([^"\n]{2,300})/i);
+  const toolEcho = text.match(/image generation failed[:：]\s*([^"\n]{2,300})/i);
+  return (sentinel?.[1] || toolEcho?.[1] || "").replace(/\\+$/, "").trim();
+}
+
+/** 上游原话是否指向限流/额度（ChatGPT 登录额度耗尽是 codex 生图最常见的确定性失败）。 */
+function isQuotaLikeError(text: string): boolean {
+  return /429|rate.?limit|too many request|quota|insufficient|limit (?:reached|exceeded)|usage cap|请求过于频繁|限流|额度/i.test(text);
+}
+
+export function describeCodexFailure(ran: CodexFinishedOutput, threadId: string): string {
   const text = `${ran.stdout}\n${ran.stderr}`;
+  // ① 工具调用失败：透传上游原话（英文原话进文案 → 渲染层 classifyError 按 429/quota 等
+  //    信号自动归类到「配额或限流·稍等重试」，不再误标成能力问题）。
+  const upstream = extractImagegenUpstreamError(text);
+  if (upstream) {
+    return isQuotaLikeError(upstream)
+      ? `Codex 生图被上游限流或登录额度暂时用尽：${upstream}。稍等几分钟重试，或换其他生图模型。`
+      : `Codex 生图调用失败：${upstream}`;
+  }
+  // ② 工具真不存在（实测 --disable image_generation 时模型只回这个哨兵）。别再指引用户加
+  //    --enable flag——Nomi 启动 codex 时本来就传了它，且新版 codex 该功能已默认开启；
+  //    还会走到这里 = 本机 codex 太旧或账号不支持，可行动的只有升级/换模型。
   if (/FAIL_IMAGEGEN_UNAVAILABLE|unknown feature.*image_generation|image_generation.*false/i.test(text)) {
-    return "Codex CLI 未启用生图能力：需要用 --enable image_generation 启动，且当前账号/版本要支持该功能。";
+    return "本机 Codex CLI 生图工具不可用：多半是 Codex 版本过旧或登录账号不支持图片生成。请在终端升级后重试（npm i -g @openai/codex@latest），或换其他生图模型。";
   }
   if (/unknown variant `default`.*service_tier/i.test(text)) {
     return "Codex 配置里的 service_tier=default 与当前 CLI 不兼容；Nomi 已尝试用 fast 覆盖，但本机配置仍需清理。";
   }
-  if (/not logged in|login required|auth/i.test(text)) return "Codex CLI 未登录或登录态失效，请先在终端运行 codex login。";
+  // 「auth」裸词会误吞 author/OAuth 这类良性输出，只认登录态的明确签名。
+  if (/not logged in|login required|codex login|unauthorized|401/i.test(text)) {
+    return "Codex CLI 未登录或登录态失效，请先在终端运行 codex login。";
+  }
   if (!threadId) return "Codex CLI 没有返回 thread.started 事件，无法定位 generated_images 输出目录。";
   return "Codex CLI 未产生可导入的生图文件。";
 }

@@ -70,6 +70,7 @@ export const zhGenerationCommon = {
     noImportableAssets: '没有可导入画布的素材',
     importedOne: '已导入画布',
     importedMany: '已导入 {{count}} 个素材到画布',
+    deletedNodesUndo: '已删除 {{count}} 个节点',
     edge: {
       aria: '节点连接线',
       select: '选择连接线：{{source}} 到 {{target}}',
@@ -143,7 +144,13 @@ export const zhGenerationCommon = {
       stillGeneratingElapsed: '仍在生成 · 已超常规时长（已等 {{minutes}} 分钟）',
       retrying: '网络波动，正在重试',
       retryingAttempt: '网络波动，正在重试（{{attempt}}/{{maxAttempts}}）',
+      rateLimited: '等待服务商频率窗口',
+      rateLimitedWait: '等待服务商频率窗口，约 {{seconds}} 秒',
       finalizing: '正在保存结果',
+      comfyNode: 'ComfyUI 正在执行工作流',
+      comfyNodeAt: '{{cls}} · 第 {{current}}/{{total}} 个节点',
+      comfyQueued: 'ComfyUI 队列排队中',
+      comfyQueuedAhead: '排队中 · 前面还有 {{count}} 个任务',
     },
     error: {
       auth: { reason: 'API Key 无效', hint: '请在「模型接入」页检查这个模型的 API Key。' },
@@ -189,6 +196,14 @@ export const zhGenerationCommon = {
       webBridge: {
         reason: '即梦网页桥接失败',
         hint: '请保持 Nomi 的即梦页面和扩展运行器在线。若官网已出图，请打开对应结果后重新拉取。',
+      },
+      inputImageBlocked: {
+        reason: '参考图被内容安全挡了',
+        hint: '服务商判定这张参考图「可能含真人」，在开始生成前就拒收了——写实人像通常都会被拦，与它是不是 AI 生成的无关。同一张图重试只会再被拦：换一张参考图，或换一个模型（各家对人像输入的限制不一样）。',
+      },
+      assetUploadFailed: {
+        reason: '参考图没能送到服务商',
+        hint: '服务商要的是一个公网能取到的图片地址，而这张图只在你本机，Nomi 只好走免费图床中转（服务商还没被请求到，不扣额度）。这两个图床都在境外，网络或代理没覆盖到它们时就会连不上——最常见的原因是这个，其次才是图床本身临时故障。请先确认代理正常；想彻底跳过这一跳，接一个自带上传通道的服务商（KIE / apimart / 本地 ComfyUI），Nomi 会优先走它。',
       },
       server: { reason: '服务商故障', hint: '服务商服务异常，请稍后重试，或换一个模型。' },
       input: {
@@ -611,6 +626,9 @@ export const zhGenerationCommon = {
     removeBackgroundNode: '抠图节点',
     generatingTransparentPng: '{{title}}正在生成透明 PNG',
     generating: '生成中',
+    comfyCancel: '取消',
+    comfyCancelAria: '取消这次 ComfyUI 生成',
+    comfyPreviewAlt: 'ComfyUI 采样活预览',
     upload: '+ 上传{{label}}',
     node: '节点',
     scene3dLoading: '3D 编辑器加载中',
@@ -951,6 +969,7 @@ export const enGenerationCommon = {
     noImportableAssets: 'No assets can be imported to the canvas',
     importedOne: 'Imported to canvas',
     importedMany: 'Imported {{count}} assets to the canvas',
+    deletedNodesUndo: 'Deleted {{count}} nodes',
     edge: {
       aria: 'Node connections',
       select: 'Select connection: {{source}} to {{target}}',
@@ -1023,7 +1042,13 @@ export const enGenerationCommon = {
       stillGeneratingElapsed: 'Still generating · Taking longer than usual ({{minutes}} min elapsed)',
       retrying: 'Network issue · Retrying',
       retryingAttempt: 'Network issue · Retrying ({{attempt}}/{{maxAttempts}})',
+      rateLimited: 'Waiting for the provider rate-limit window',
+      rateLimitedWait: 'Waiting for the provider rate-limit window · about {{seconds}}s',
       finalizing: 'Saving the result',
+      comfyNode: 'ComfyUI is running the workflow',
+      comfyNodeAt: '{{cls}} · node {{current}}/{{total}}',
+      comfyQueued: 'Waiting in the ComfyUI queue',
+      comfyQueuedAhead: 'Queued · {{count}} task(s) ahead',
     },
     error: {
       auth: { reason: 'Invalid API key', hint: 'Check this model’s API key in Model access.' },
@@ -1069,6 +1094,14 @@ export const enGenerationCommon = {
       webBridge: {
         reason: 'Jimeng web bridge failed',
         hint: 'Keep the Jimeng page and extension runner online. If the result exists on the site, open it and import again.',
+      },
+      inputImageBlocked: {
+        reason: 'Reference image blocked by content safety',
+        hint: 'The provider rejected this reference image as possibly containing a real person, before generation even started. Photorealistic portraits are usually blocked whether or not they are AI-generated. Retrying the same image will be blocked again — use a different reference image, or choose another model (providers differ on portrait inputs).',
+      },
+      assetUploadFailed: {
+        reason: 'Reference image never reached the provider',
+        hint: 'The provider needs a publicly reachable image URL, but this image only exists on your machine, so Nomi relayed it through a free image host (the provider was never called, so nothing was charged). Both hosts are overseas and unreachable when your network or proxy does not cover them — that is the most common cause here, ahead of the hosts actually being down. Check your proxy first; to skip this hop for good, connect a provider with its own upload channel (KIE, apimart, or local ComfyUI) and Nomi will prefer it.',
       },
       server: {
         reason: 'Provider error',
@@ -1500,6 +1533,9 @@ export const enGenerationCommon = {
     removeBackgroundNode: 'Background-removal node',
     generatingTransparentPng: '{{title}} is generating a transparent PNG',
     generating: 'Generating',
+    comfyCancel: 'Cancel',
+    comfyCancelAria: 'Cancel this ComfyUI generation',
+    comfyPreviewAlt: 'ComfyUI sampling live preview',
     upload: '+ Upload {{label}}',
     node: 'Node',
     scene3dLoading: 'Loading 3D editor',

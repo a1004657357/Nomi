@@ -13,7 +13,6 @@ import {
   type GenerationProgressPhase,
   type ProgressNarrationContext,
 } from '../../observability/narrate'
-import { resolveArchetypeForModel } from '../../../config/modelArchetypes'
 import {
   buildArchetypeInputParams,
   currentArchetypeMode,
@@ -34,7 +33,16 @@ import {
 } from './catalogTaskResolve'
 import { normalizeCatalogTaskResult } from './catalogTaskResultParse'
 import { resolveCatalogTaskPollingPolicy } from './catalogTaskPollingPolicy'
+import { localizeRemoteResultUrl } from './resultAssetLocalization'
+import {
+  ComfyuiTaskCancelledError,
+  isComfyuiCancelRequested,
+  unwatchComfyuiProgress,
+  watchComfyuiProgress,
+} from './comfyuiTaskControl'
+import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
 import { RecoverableTimeoutError } from './recoverableTimeout'
+import { parseVendorErrorFromMessage } from './vendorErrorIpc'
 
 // 重导出：实现已拆到 catalogTaskResolve（节点→vendor/model/kind 选择）与
 // catalogTaskResultParse（raw/asset/failure/provenance 解析），但 catalogTaskActions
@@ -65,9 +73,57 @@ export function isSlowLaneBackend(kind: TaskKind, vendor: string): boolean {
 
 /** 轮询预算(ms):慢道(视频/本地进程后端)5min 软 / 20min 硬;快道云 API 2min 软=硬。 */
 export function resolvePollBudget(kind: TaskKind, vendor: string): { softMs: number; hardMs: number } {
-  return isSlowLaneBackend(kind, vendor)
-    ? { softMs: 300000, hardMs: 1200000 }
-    : { softMs: 120000, hardMs: 120000 }
+  if (SLOW_LOCAL_BACKENDS.has(vendor)) return { softMs: 300000, hardMs: 1200000 }
+  const policy = resolveCatalogTaskPollingPolicy(kind, vendor)
+  return { softMs: policy.softTimeoutMs, hardMs: policy.hardTimeoutMs }
+}
+
+/**
+ * 轮询**间隔**(ms)：慢道 3s、快道 1.5s。分档判据复用 isSlowLaneBackend，不另立第二套。
+ *
+ * 3s 不是拍脑袋：厂商文档明写「将任务查询间隔分散到 3 至 5 秒以上，避免所有任务在同一时刻轮询」
+ * （2026-07-31 Seedance 2.0 交付文档 §5.1，见 docs/plan/2026-07-31-seedance-api-contract-reconciliation.md）。
+ * 只放慢慢道：视频/本地后端本身就是分钟级，1.5s→3s 用户零感知；云图像是秒级返回的，
+ * 拉长立刻被察觉成「慢了」。对所有 vendor 生效——礼貌轮询不是给某一家开的小灶。
+ *
+ * 无头/MCP 那条循环在主进程（electron/capabilityCore/core.ts），跨进程边界 import 不到这里，
+ * 那边是**配对常量、改一处必改另一处**（同 vendorErrorIpc 的 MARKER 约定）。
+ */
+export function resolvePollIntervalMs(kind: TaskKind, vendor: string): number {
+  return isSlowLaneBackend(kind, vendor) ? 3000 : 1500
+}
+
+/**
+ * 抖动幅度 ±30%。批量生成时最多 8 个节点在同一 tick 起跑（runGenerationNodesBatch 的 worker 池），
+ * 不抖动它们就**永远同相位**，对上游状态端点是「每个间隔一次 8 连发」的脉冲——正是上面那份文档
+ * 点名要避免的模式。抖动把同一批请求摊进整个间隔窗口。
+ */
+const POLL_JITTER_RATIO = 0.3
+
+/** 连续 429 的退避封顶(ms)。没有封顶的话久限流会把间隔滚到分钟级，白白拖长「出片了但界面没反应」。 */
+const POLL_BACKOFF_CAP_MS = 30000
+
+/**
+ * 下一次查询前该等多久 = 基准间隔 × 429 连击退避（2^n），再叠 ±30% 抖动，最后封顶。
+ *
+ * 以前 429 被空 catch 吞掉、下一轮照原节奏再敲——上游说「太频繁」我们还加倍撞，只会撞得更狠。
+ * `random` 注入以便直测（默认 Math.random）。
+ */
+export function nextPollDelayMs(baseMs: number, rateLimitStreak: number, random: () => number = Math.random): number {
+  const backoffMs = rateLimitStreak > 0 ? baseMs * 2 ** rateLimitStreak : baseMs
+  const jitter = 1 + (random() * 2 - 1) * POLL_JITTER_RATIO
+  return Math.max(1, Math.min(Math.round(backoffMs * jitter), POLL_BACKOFF_CAP_MS))
+}
+
+/**
+ * 这次查询失败是不是「被限流」。优先信 structured（VendorRequestError 经 IPC 标记穿透的事实，
+ * 429 → category quota），拿不到再退回文案。**只有它才触发退避**：普通网络抖动退避会平白拖慢出片。
+ */
+export function isRateLimitedPollError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  const structured = parseVendorErrorFromMessage(message)
+  if (structured) return structured.httpStatus === 429 || structured.category === 'quota'
+  return /(^|\D)429(\D|$)/.test(message) || /rate limit|too many requests/i.test(message)
 }
 
 function buildReferenceExtras(
@@ -237,12 +293,14 @@ function attachGenerationPhaseTimings(
   result: GenerationNodeResult,
   timings: GenerationPhaseTimings,
 ): GenerationNodeResult {
-  const raw = result.raw && typeof result.raw === 'object' && !Array.isArray(result.raw)
-    ? result.raw as Record<string, unknown>
-    : { providerRaw: result.raw }
-  const nomi = raw.__nomi && typeof raw.__nomi === 'object' && !Array.isArray(raw.__nomi)
-    ? raw.__nomi as Record<string, unknown>
-    : {}
+  const raw =
+    result.raw && typeof result.raw === 'object' && !Array.isArray(result.raw)
+      ? (result.raw as Record<string, unknown>)
+      : { providerRaw: result.raw }
+  const nomi =
+    raw.__nomi && typeof raw.__nomi === 'object' && !Array.isArray(raw.__nomi)
+      ? (raw.__nomi as Record<string, unknown>)
+      : {}
   return {
     ...result,
     raw: {
@@ -323,12 +381,17 @@ async function waitForCatalogTaskResult(
   options: CatalogTaskActionOptions,
 ): Promise<TaskResultDto> {
   if (TERMINAL_STATUSES.has(initialResult.status)) return initialResult
-  const pollIntervalMs = options.pollIntervalMs ?? 1500
-  const pollingPolicy = resolveCatalogTaskPollingPolicy(request.kind, vendor)
-  // 软超时：到点不报错，只把文案切成「仍在生成·已超常规时长」，后台继续等到供应商硬上限。
-  // 硬超时：真停，抛可找回错误；options.pollTimeoutMs 覆盖时 soft=hard（测试可控）。
-  const softTimeoutMs = options.pollTimeoutMs ?? pollingPolicy.softTimeoutMs
-  const hardTimeoutMs = options.pollTimeoutMs ?? pollingPolicy.hardTimeoutMs
+  // 基准间隔按后端分档（慢道 3s / 快道 1.5s，见 resolvePollIntervalMs）；每轮实际等待还要叠
+  // 429 退避与 ±30% 抖动（nextPollDelayMs）。options.pollIntervalMs 覆盖时仍走抖动/退避，
+  // 但测试给 1ms 时抖动后仍是 1ms 量级，不影响既有用例。
+  const pollIntervalMs = options.pollIntervalMs ?? resolvePollIntervalMs(request.kind, vendor)
+  // 软超时：到点不报错，只把文案切成「仍在生成·已超常规时长」，后台继续等（慢道 5min→续拉到 hard）。
+  // 硬超时：真停，抛可找回错误（慢道=视频/本地进程后端 20min；快道云 API 2min）。
+  // 分档见 resolvePollBudget：按后端时延分,不再把本地生图(codex/comfyui)当快道云 API 腰斩。
+  // options.pollTimeoutMs 覆盖时 soft=hard（测试可控）。
+  const budget = resolvePollBudget(request.kind, vendor)
+  const softTimeoutMs = options.pollTimeoutMs ?? budget.softMs
+  const hardTimeoutMs = options.pollTimeoutMs ?? budget.hardMs
   const startedAt = Date.now()
   const fetchResult = options.fetchTaskResult || fetchWorkbenchTaskResultByVendor
 
@@ -345,8 +408,13 @@ async function waitForCatalogTaskResult(
     })
   let current = initialResult
   let pollFailureStreakStartedAt: number | null = null
+  // 连续被限流的次数 → 指数退避的指数。查成功或换成别的失败原因即复位。
+  let rateLimitStreak = 0
+  const cancelNodeId = asTrimmedString(request.extras?.nodeId)
   while (!TERMINAL_STATUSES.has(current.status)) {
     throwIfAborted(options.signal)
+    // P 轨遮罩取消：/interrupt 已发（免费幂等），这里把免费轮询也即刻停掉，不等 20min 硬超时。
+    if (cancelNodeId && isComfyuiCancelRequested(cancelNodeId)) throw new ComfyuiTaskCancelledError()
     const elapsedMs = Date.now() - startedAt
     if (elapsedMs > hardTimeoutMs) {
       // 超时≠失败：上游可能仍在跑/已出片 → 抛可找回错误，节点落 recoverable，给「重新拉取」入口。
@@ -359,7 +427,7 @@ async function waitForCatalogTaskResult(
       message: narrateProgress(overSoft ? 'still-generating' : 'generating', { elapsedMs }),
       taskId: initialResult.id,
     })
-    await abortableDelay(pollIntervalMs, options.signal)
+    await abortableDelay(nextPollDelayMs(pollIntervalMs, rateLimitStreak, options.pollRandom), options.signal)
     try {
       const response = await abortableTask(
         fetchResult({
@@ -373,9 +441,12 @@ async function waitForCatalogTaskResult(
       )
       current = response.result
       pollFailureStreakStartedAt = null // 查成功 → 重置失败连击计数
-    } catch {
+      rateLimitStreak = 0
+    } catch (error) {
       throwIfAborted(options.signal)
       // 查结果失败：免费重试(下一轮再查)，绝不冒泡触发重发。持续失败超 grace 或已到硬超时 → 落可找回。
+      // 被限流才累计退避；别的失败（网络抖动等）复位，否则一次抖动就把间隔滚上去、白拖出片。
+      rateLimitStreak = isRateLimitedPollError(error) ? rateLimitStreak + 1 : 0
       const now = Date.now()
       if (pollFailureStreakStartedAt == null) pollFailureStreakStartedAt = now
       if (now - pollFailureStreakStartedAt > POLL_FAILURE_GRACE_MS || now - startedAt > hardTimeoutMs) {
@@ -436,13 +507,35 @@ export async function runCatalogGenerationTask(
   const initialResult = await runTaskWithHeartbeat(() => runTask(vendor, request), options)
   const submitMs = Date.now() - submitStartedAt
   report('waiting', initialResult.id)
+  // P 轨：本地 ComfyUI 提交成功即登记 ws 进度（prompt_id→节点）。桥不在/失败 = 没进度，轮询照常。
+  const comfyWatching = vendor === 'comfyui-local' && Boolean(initialResult.id)
+  if (comfyWatching) {
+    watchComfyuiProgress({
+      promptId: initialResult.id,
+      nodeId: asTrimmedString(request.extras?.nodeId),
+      projectId: asTrimmedString(request.extras?.projectId),
+      taskKind: request.kind,
+      modelKey: asTrimmedString(request.extras?.modelKey) || null,
+    })
+  }
   const pollStartedAt = Date.now()
-  const finalResult = await waitForCatalogTaskResult(vendor, request, initialResult, options)
+  let finalResult: TaskResultDto
+  try {
+    finalResult = await waitForCatalogTaskResult(vendor, request, initialResult, options)
+  } finally {
+    if (comfyWatching) unwatchComfyuiProgress(initialResult.id)
+  }
   const pollMs = Date.now() - pollStartedAt
   report('finalizing', initialResult.id)
   const finalizeStartedAt = Date.now()
-  const normalized = normalizeCatalogTaskResult(finalResult, executableNode)
+  const normalized = await localizeRemoteResultUrl(
+    normalizeCatalogTaskResult(finalResult, executableNode),
+    getActiveWorkbenchProjectId() ?? '',
+    executableNode.id,
+  )
   const finalizeMs = Date.now() - finalizeStartedAt
+  // 结构闸：主进程漏本地化（projectId 时序为空）时，用「当前打开的项目」这一更可靠的 id 兜底，
+  // 绝不让厂商临时 URL 落进节点 → 隔天过期播不了。主进程已落地时这里判为非 http，零开销 no-op。
   return attachGenerationPhaseTimings(normalized, {
     resolveMs,
     submitMs,

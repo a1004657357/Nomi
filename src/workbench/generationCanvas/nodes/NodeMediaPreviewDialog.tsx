@@ -4,7 +4,8 @@ import { createPortal } from 'react-dom'
 import { IconX } from '@tabler/icons-react'
 import { NomiImage } from '../../../design/media'
 import { cn } from '../../../utils/cn'
-import { buildVideoPlaybackUrl } from '../../../media/videoPlaybackUrl'
+import { useVideoPlaybackHeal } from '../../../media/useVideoPlaybackHeal'
+import { VideoPlaybackStatusOverlay } from '../../../media/VideoPlaybackStatusOverlay'
 
 type Props = {
   mediaType: 'image' | 'video'
@@ -17,6 +18,8 @@ type Props = {
 // 同时能压住该区域内独立挂载的助手、时间轴把手和导航工具栏。
 export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose }: Props): JSX.Element {
   const { t } = useTranslation()
+  // 此前这里的 <video> 连 onError 都没有：点开大图播不了 = 纯黑 + 零提示，用户无从判断也无从修。
+  const heal = useVideoPlaybackHeal({ rawUrl: url })
   const closeButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const canvasViewport =
     typeof document === 'undefined' ? null : document.querySelector<HTMLElement>('.workbench-generation__canvas')
@@ -86,17 +89,25 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
       </button>
 
       {mediaType === 'video' ? (
-        <video
-          src={buildVideoPlaybackUrl(url)}
-          className="max-h-full max-w-full rounded-nomi bg-nomi-ink shadow-nomi-lg"
-          aria-label={dialogTitle}
-          crossOrigin="use-credentials"
-          controls
-          autoPlay
-          playsInline
-          preload="metadata"
-          onPointerDown={(event) => event.stopPropagation()}
-        />
+        <div className="relative flex max-h-full max-w-full" onPointerDown={(event) => event.stopPropagation()}>
+          <video
+            src={heal.playbackUrl}
+            className="max-h-full max-w-full rounded-nomi bg-nomi-ink shadow-nomi-lg"
+            aria-label={dialogTitle}
+            crossOrigin="use-credentials"
+            controls
+            autoPlay
+            playsInline
+            preload="metadata"
+            onError={heal.onError}
+            onLoadedMetadata={heal.onLoadedMetadata}
+          />
+          <VideoPlaybackStatusOverlay
+            healingText={heal.healingText}
+            failureText={heal.failureText}
+            className="rounded-nomi"
+          />
+        </div>
       ) : (
         <NomiImage
           src={url}

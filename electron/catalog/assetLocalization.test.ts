@@ -225,6 +225,16 @@ describe("resolveLocalAsset (per strategy)", () => {
     expect(postMultipart.mock.calls[1][0]).toBe("https://tmpfiles.org/api/v1/upload");
   });
 
+  // 2026-07-31：litterbox 官方允许 1h/12h/24h/72h（litterbox.catbox.moe/tools.php 核）。
+  // 曾经传最短的 1h → 长队列里 URL 会在生成中途过期（厂商要求「有效期覆盖完整生成周期」），
+  // 表现为提交成功但厂商拉不到图。不取 72h 是因为匿名上传没有删除 API，只能等过期。
+  it("litterbox 有效期取 24h：够覆盖排队+生成，又不让参考图在公网多躺", () => {
+    expect(LITTERBOX_INGESTION.strategy).toBe("upload-multipart")
+    if (LITTERBOX_INGESTION.strategy !== "upload-multipart") return
+    expect(LITTERBOX_INGESTION.extraFields?.time).toBe("24h")
+    expect(LITTERBOX_INGESTION.extraFields?.reqtype).toBe("fileupload")
+  })
+
   it("anon-chain uses the first host when it succeeds (tmpfiles not tried)", async () => {
     const readMp4 = (): LocalAsset => ({ bytes: Buffer.from("mp4-bytes"), contentType: "video/mp4", fileName: "clip.mp4" });
     const postMultipart = vi.fn().mockResolvedValue("https://litter.catbox.moe/abc.mp4");

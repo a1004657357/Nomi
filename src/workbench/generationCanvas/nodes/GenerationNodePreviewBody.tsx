@@ -1,14 +1,10 @@
 import React from 'react'
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
 import { cn } from '../../../utils/cn'
-import { buildVideoPlaybackUrl } from '../../../media/videoPlaybackUrl'
-import { diagnoseVideoPlaybackFailure, logVideoPlaybackFailure } from '../../../media/videoPlaybackDiagnostics'
-import type {
-  GenerationCanvasNode,
-  GenerationResultCollection,
-} from '../model/generationCanvasTypes'
+import type { GenerationCanvasNode, GenerationResultCollection } from '../model/generationCanvasTypes'
 import { CapabilityResultCollection } from './CapabilityResultCollection'
-import { DeferredNodeImage, DeferredNodeVideo } from './DeferredNodeMedia'
+import { DeferredNodeImage } from './DeferredNodeMedia'
+import { NodeVideoPlaybackGuard } from './NodeVideoPlaybackGuard'
 import PanoramaUploadFallback from './PanoramaUploadFallback'
 import type { PanoramaScreenshot } from './PanoramaViewer'
 import {
@@ -120,7 +116,9 @@ export function GenerationNodePreviewBody({
           onScreenshot={onPanoramaScreenshot}
         />
       </React.Suspense>
-    ) : <PanoramaUploadFallback onChange={onPanoramaFileChange} />
+    ) : (
+      <PanoramaUploadFallback onChange={onPanoramaFileChange} />
+    )
   }
   if (node.result?.url) {
     if (node.result.type === 'model3d') {
@@ -132,10 +130,11 @@ export function GenerationNodePreviewBody({
     }
     if (node.result.type === 'video') {
       return (
-        <DeferredNodeVideo
+        <NodeVideoPlaybackGuard
+          nodeId={node.id}
+          rawUrl={node.result.url}
           data-node-preview-video="true"
           className={cn('w-full h-full min-h-0 object-contain pointer-events-auto', 'bg-nomi-ink-05 select-none')}
-          src={buildVideoPlaybackUrl(node.result.url)}
           priority={mediaPreviewPriority}
           crossOrigin="use-credentials"
           controls
@@ -144,10 +143,11 @@ export function GenerationNodePreviewBody({
           preload="metadata"
           draggable={false}
           onLoadedMetadata={(event) => {
-            updateMediaDimensions(event.currentTarget.videoWidth, event.currentTarget.videoHeight, event.currentTarget.duration)
-          }}
-          onError={(event) => {
-            void diagnoseVideoPlaybackFailure(node.result?.url || '', event.currentTarget.error).then(logVideoPlaybackFailure)
+            updateMediaDimensions(
+              event.currentTarget.videoWidth,
+              event.currentTarget.videoHeight,
+              event.currentTarget.duration,
+            )
           }}
         />
       )

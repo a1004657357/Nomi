@@ -1,31 +1,57 @@
-// 下载偏好持久化 —— 记住用户上次「另存」到的目录，下次下载默认弹到那里。
-// 痛点（fb-20260724）：每次下载都默认弹系统下载夹，用户要一遍遍手动导航到自己的工作目录。
-// 只记「上次用过的目录」这一件事，存 userData/download-prefs.json（非用户数据、丢了也只是回退默认，无损）。
-// 「为 Nomi 设固定下载目录」是另一件事（要设置页 UI），不在此处 —— 归 fb-20260729-settings-hub。
+// 下载/输出偏好持久化 —— 存 userData/download-prefs.json（非用户数据、丢了只是回退默认、无损）。
+// 两件事同住这一份：① 记住上次「另存」到的目录（fb-20260724）；② 集中设置页「自动另存」的开关+目录
+//（2026-08-01，生成完自动复制一份到用户目录）。所有写都走 writePrefs 做 merge——写一个字段绝不抹掉另一个。
 import fs from "node:fs";
 import path from "node:path";
 import { ensureDir, getSettingsRoot, readJson } from "../runtimePaths";
 
 const PREFS_FILE = "download-prefs.json";
 
+type DownloadPrefs = { lastDir?: string; autoSaveEnabled?: boolean; autoSaveDir?: string };
+
 function prefsPath(): string {
   return path.join(getSettingsRoot(), PREFS_FILE);
 }
 
+function readPrefs(): DownloadPrefs {
+  const prefs = readJson<DownloadPrefs>(prefsPath(), {});
+  return prefs && typeof prefs === "object" ? prefs : {};
+}
+
+/** merge 写：同一份 JSON 同时存 lastDir 与自动另存字段，改一处绝不覆盖另一处。best-effort。 */
+function writePrefs(patch: DownloadPrefs): void {
+  try {
+    ensureDir(getSettingsRoot());
+    fs.writeFileSync(prefsPath(), JSON.stringify({ ...readPrefs(), ...patch }, null, 2), "utf8");
+  } catch {
+    /* 写失败只是下次回退默认，不影响本次操作 */
+  }
+}
+
 export function getLastDownloadDir(): string {
-  const prefs = readJson<{ lastDir?: string }>(prefsPath(), {});
-  return typeof prefs.lastDir === "string" ? prefs.lastDir : "";
+  const dir = readPrefs().lastDir;
+  return typeof dir === "string" ? dir : "";
 }
 
 export function rememberDownloadDir(dir: string): void {
   const trimmed = String(dir || "").trim();
   if (!trimmed) return;
-  try {
-    ensureDir(getSettingsRoot());
-    fs.writeFileSync(prefsPath(), JSON.stringify({ lastDir: trimmed }, null, 2), "utf8");
-  } catch {
-    /* 偏好持久化是 best-effort：写失败只是下次回退系统下载夹，不影响本次下载 */
-  }
+  writePrefs({ lastDir: trimmed });
+}
+
+export type AutoSavePrefs = { enabled: boolean; dir: string };
+
+/** 自动另存偏好：默认关、目录空。enabled 严格布尔（缺省/脏值 → false，绝不误开自动写盘）。 */
+export function getAutoSavePrefs(): AutoSavePrefs {
+  const prefs = readPrefs();
+  return {
+    enabled: prefs.autoSaveEnabled === true,
+    dir: typeof prefs.autoSaveDir === "string" ? prefs.autoSaveDir : "",
+  };
+}
+
+export function setAutoSavePrefs(next: AutoSavePrefs): void {
+  writePrefs({ autoSaveEnabled: Boolean(next.enabled), autoSaveDir: String(next.dir || "").trim() });
 }
 
 /**

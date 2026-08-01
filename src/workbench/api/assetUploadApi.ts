@@ -24,6 +24,8 @@ export type UploadWorkbenchAssetMeta = {
   taskKind?: TaskKind | string | null
   projectId?: string | null
   ownerNodeId?: string | null
+  /** 资产分桶：用户上传='upload'（默认）；生成结果补救本地化='generated'（与主进程 localizeTaskAsset 同桶）。 */
+  kind?: 'upload' | 'generated'
 }
 
 function requireDesktopRuntime(feature: string): DesktopBridge {
@@ -88,7 +90,7 @@ export async function importWorkbenchRemoteAssetUrl(
   return desktop.assets.importRemoteUrl({
     projectId: resolveProjectId(meta),
     url,
-    kind: 'upload',
+    kind: meta?.kind || 'upload',
     fileName: name,
     ownerNodeId: meta?.ownerNodeId || null,
   }) as Promise<WorkbenchAssetDto>

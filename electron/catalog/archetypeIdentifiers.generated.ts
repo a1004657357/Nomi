@@ -171,6 +171,10 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "seedance2.0fast_vip",
     "seedance2.0mini"
   ],
+  "dreamina-seedance-2.5": [
+    "dreamina-seedance-2.5",
+    "seedance2.5"
+  ],
   "jimeng-web-seedance-2": [
     "jimeng-web-seedance-2.0",
     "jimeng-seedance-2.0-mini",

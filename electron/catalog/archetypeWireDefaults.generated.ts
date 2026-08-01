@@ -425,6 +425,26 @@ export const ARCHETYPE_WIRE_DEFAULTS: Record<string, Record<string, Record<strin
       }
     }
   },
+  "dreamina-seedance-2.5": {
+    "text_to_video": {
+      "*": {
+        "dreamina_cmd": "text2video",
+        "ratio": "16:9",
+        "video_resolution": "720p",
+        "duration": 5,
+        "model": "seedance2.5"
+      }
+    },
+    "image_to_video": {
+      "*": {
+        "dreamina_cmd": "multimodal2video",
+        "ratio": "16:9",
+        "video_resolution": "720p",
+        "duration": 5,
+        "model": "seedance2.5"
+      }
+    }
+  },
   "jimeng-web-seedance-2": {
     "text_to_video": {
       "*": {

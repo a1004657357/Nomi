@@ -10,12 +10,14 @@ hook 取钥（dump_wechat_key.py 的 hook_wechat_key）把所有库 key 写进 ~
 输出：命中群消息 → 打 JSONL（喂 feedback-radar wechat adapter）；读不到 → 打真实 schema 诊断（供调）。
 
 用法：
-  python3 decrypt_wechat.py --group "画布"           读群名含「画布」的群消息
-  python3 decrypt_wechat.py --group "画布" --explore  额外打印表结构/样例（首次探 schema）
+  python3 decrypt_wechat.py --group "画布"              读群名含「画布」的群消息（默认最近 300 条）
+  python3 decrypt_wechat.py --group "画布" --limit 900  读最近 900 条（完整梳理用，别只抓 200 漏掉早的信号）
+  python3 decrypt_wechat.py --group "画布" --explore     额外打印表结构/样例（首次探 schema）
 """
 import glob
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -69,6 +71,47 @@ def decode_content(val):
                 pass
         return b.decode("utf-8", "replace")
     return str(val)
+
+
+def _attr(s, name):
+    """取 XML 属性值（图片 md5/aeskey 等）。"""
+    m = re.search(rf'\b{name}="([^"]*)"', s)
+    return m.group(1) if m else ""
+
+
+def _tag(s, name):
+    """取 XML 标签内文本（卡片 title / 引用 content 等），压平空白并截断。"""
+    m = re.search(rf"<{name}>(.*?)</{name}>", s, re.S)
+    return re.sub(r"\s+", " ", m.group(1)).strip()[:80] if m else ""
+
+
+def classify_message(text):
+    """把解码后的消息体分类，非文本消息转可读标注 + 提取解密/溯源锚点。
+
+    微信 4.x 图片/视频/卡片/引用消息的 message_content 是一坨 XML——过去整条 XML 直接进
+    分诊：噪声大，且「这是一张图」这个事实被埋没（分诊时根本看不出有图，图片反馈全漏）。这里
+    统一转成一行带 emoji 的可读标注：图片→📷 + md5/aeskey（.dat 解密锚点，aeskey 明文就写在
+    <img> 标签上），视频→🎬，语音→🎤，引用回复→↩ 带被引原文，卡片/链接→🔗 带标题。
+    text 形如 'wxid_xxx:\\n正文/XML'；返回 (kind, display, meta)。
+    """
+    prefix, sep, body = text.partition(":\n")
+    head = f"{prefix}:\n" if sep else ""
+    b = (body if sep else text).lstrip()
+    if not b.startswith("<"):
+        return "text", text, {}
+    if "<img " in b:
+        md5, aeskey = _attr(b, "md5"), _attr(b, "aeskey")
+        return "image", head + "📷[图片]" + (f" md5={md5[:12]}" if md5 else ""), {"md5": md5, "aeskey": aeskey}
+    if "<videomsg" in b:
+        return "video", head + "🎬[视频]", {}
+    if "<voicemsg" in b or "voicelength=" in b:
+        return "voice", head + "🎤[语音]", {}
+    if "<refermsg>" in b:
+        quoted = _tag(b, "content")
+        return "quote", head + "↩[引用回复] " + _tag(b, "title") + (f" « {quoted}" if quoted else ""), {}
+    if "<appmsg" in b or "<appinfo" in b:
+        return "link", head + "🔗[卡片/链接] " + _tag(b, "title"), {}
+    return "other", head + "[非文本消息]", {}
 
 
 def decrypt_db(src, key_hex, dst):
@@ -126,6 +169,10 @@ def main():
     args = sys.argv[1:]
     explore = "--explore" in args
     group_frag = args[args.index("--group") + 1] if "--group" in args else "画布"
+    try:
+        limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 300
+    except (ValueError, IndexError):
+        limit = 300
 
     if not os.path.exists(KEYS_PATH):
         _log(f"没有 {KEYS_PATH}——先跑 hook_wechat_key 取钥")
@@ -204,13 +251,22 @@ def main():
             sc = _first(cols, "sender_username", "sender", "talker", "m_nsFromUsr", "strTalker")
             if explore:
                 _log(f"命中表 {hit}，列: {cols}")
-            for r in mc.execute(f'SELECT * FROM "{hit}" ORDER BY "{tc}" DESC LIMIT 200' if tc else f'SELECT * FROM "{hit}" LIMIT 200'):
+            q = (f'SELECT * FROM "{hit}" ORDER BY "{tc}" DESC LIMIT {limit}' if tc
+                 else f'SELECT * FROM "{hit}" LIMIT {limit}')
+            for r in mc.execute(q):
                 d = dict(r)
-                txt = decode_content(d.get(cc)) if cc else ""
-                if not txt.strip():
+                raw = decode_content(d.get(cc)) if cc else ""
+                if not raw.strip():
                     continue
-                msgs.append({"local_id": d.get("local_id", ""), "sender": d.get(sc, "") if sc else "",
-                             "text": txt, "create_time": d.get(tc, "") if tc else ""})
+                kind, disp, meta = classify_message(raw)
+                m = {"local_id": d.get("local_id", ""), "kind": kind,
+                     "sender": d.get(sc, "") if sc else "", "text": disp,
+                     "create_time": d.get(tc, "") if tc else ""}
+                if meta.get("md5"):
+                    m["image_md5"] = meta["md5"]
+                if meta.get("aeskey"):
+                    m["image_aeskey"] = meta["aeskey"]
+                msgs.append(m)
             mc.close()
             break
 

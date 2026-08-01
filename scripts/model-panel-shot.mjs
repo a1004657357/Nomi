@@ -1,0 +1,63 @@
+// 一次性：拍「模型接入」面板真实样子（出样张前必须先看真实 UI，零额度零 vendor 调用）。
+import { _electron as electron } from 'playwright'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { mkdirSync, copyFileSync, existsSync } from 'node:fs'
+import os from 'node:os'
+
+const require = createRequire(import.meta.url)
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const outDir = path.join(repoRoot, '.model-panel-shot')
+mkdirSync(outDir, { recursive: true })
+
+const settings = path.join(os.tmpdir(), 'nomi-panelshot-settings')
+const projects = path.join(os.tmpdir(), 'nomi-panelshot-projects')
+mkdirSync(settings, { recursive: true })
+mkdirSync(projects, { recursive: true })
+// 用真实 dev catalog：要看「已接入」分组真实长什么样，空 catalog 只能看到「可接入」。
+const devCatalog = path.join(os.homedir(), 'Library', 'Application Support', 'nomi', 'model-catalog.json')
+if (existsSync(devCatalog)) copyFileSync(devCatalog, path.join(settings, 'model-catalog.json'))
+
+const app = await electron.launch({
+  executablePath: require('electron'),
+  args: ['.'],
+  cwd: repoRoot,
+  env: { ...process.env, NOMI_E2E: '1', NOMI_E2E_ALLOW_MULTI_INSTANCE: '1', NOMI_SETTINGS_DIR: settings, NOMI_PROJECTS_DIR: projects },
+})
+try {
+  const win = await app.firstWindow()
+  const bw = await app.browserWindow(win)
+  await bw.evaluate((w) => w.setBounds({ x: 0, y: 0, width: 1680, height: 1020 })).catch(() => {})
+  await win.waitForLoadState('domcontentloaded')
+  await win.waitForTimeout(2000)
+  await win.getByText('新建空白项目', { exact: false }).first().click()
+  await win.waitForTimeout(2500)
+
+  await win.evaluate(() => window.dispatchEvent(new CustomEvent('nomi-open-model-catalog')))
+  await win.waitForTimeout(1500)
+  await win.screenshot({ path: path.join(outDir, '01-full.png') })
+
+  const panel = win.locator('[role="dialog"]').first()
+  await panel.screenshot({ path: path.join(outDir, '02-panel.png') })
+  const box = await panel.boundingBox()
+  console.log('  面板几何：', JSON.stringify(box))
+
+  // 展开「接入生成模型」那组，看组内真实内容
+  const groups = await win.evaluate(() =>
+    Array.from(document.querySelectorAll('[role="dialog"] button[aria-expanded]')).map((b) => ({
+      text: (b.textContent || '').trim().slice(0, 40),
+      expanded: b.getAttribute('aria-expanded'),
+    })),
+  )
+  console.log('  可折叠项：', JSON.stringify(groups, null, 0))
+  const structure = await win.evaluate(() => {
+    const root = document.querySelector('[role="dialog"]')
+    return root ? (root.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 700) : null
+  })
+  console.log('\n  面板文本：', structure)
+} catch (e) {
+  console.log('  ✗ ' + String(e).slice(0, 300))
+} finally {
+  await app.close().catch(() => {})
+}

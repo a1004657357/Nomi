@@ -127,6 +127,35 @@ describe("懒自愈（ensurePlayableAsset）", () => {
     expect(await ensurePlayableAsset({ url: healed!.data.url })).toBeNull();
   }, 60_000)
 
+  it("同一份坏资产被多个播放面各触发一次 → 复用同一份转码产物，不重复转码也不堆副本", async () => {
+    // 守卫已从画布节点提到各播放面共用（时间轴/大图/预览…），同一份坏资产会被反复触发自愈。
+    const planted = (await importLocalFile({
+      projectId: workspaceId,
+      bytes: aviBytes,
+      contentType: "application/octet-stream",
+      fileName: "shared-across-surfaces.avi",
+    })) as AssetRecord;
+
+    const first = (await ensurePlayableAsset({ url: planted.data.url })) as AssetRecord;
+    const second = (await ensurePlayableAsset({ url: planted.data.url })) as AssetRecord;
+    const third = (await ensurePlayableAsset({ url: planted.data.url })) as AssetRecord;
+    expect(second.data.url).toBe(first.data.url);
+    expect(third.data.url).toBe(first.data.url);
+
+    // 磁盘上只落了一份产物：同名前缀的 mp4 不该因为多次自愈而变成 N 份。
+    const producedDir = path.dirname(first.data.absolutePath);
+    const copies = fs
+      .readdirSync(producedDir)
+      .filter((name) => name.startsWith("shared-across-surfaces") && name.endsWith(".mp4"));
+    expect(copies).toHaveLength(1);
+
+    // 产物被删（用户清理/同步冲突）→ 标记失效，下次自愈重新转出来，不能死在缓存上。
+    fs.rmSync(first.data.absolutePath, { force: true });
+    const reheal = (await ensurePlayableAsset({ url: planted.data.url })) as AssetRecord | null;
+    expect(reheal).not.toBeNull();
+    expect(fs.existsSync(reheal!.data.absolutePath)).toBe(true);
+  }, 60_000)
+
   it("非 nomi-local / 不存在的 URL → null", async () => {
     expect(await ensurePlayableAsset({ url: "https://cdn.example.com/x.mp4" })).toBeNull();
     expect(await ensurePlayableAsset({ url: "nomi-local://asset/no-such-project/assets/x.mp4" })).toBeNull();

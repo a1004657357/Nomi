@@ -9,6 +9,7 @@
  */
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import { IconPlayerStop } from '@tabler/icons-react'
 import { cn } from '../../../../utils/cn'
 import { NomiLoadingMark } from '../../../../design'
 import i18n from '../../../../i18n'
@@ -301,18 +302,70 @@ export function RemoveBackgroundPendingOverlay({
  * 挂在节点根容器、对分镜/卡片/文本所有节点类型一致生效；z-[1] 盖住正文但低于
  * header 的状态文字徽标（z-[2]，仍显「生成中」），pointer-events-none 不挡交互。
  */
-export function GeneratingOverlay(): JSX.Element {
+export function GeneratingOverlay({
+  percent,
+  message,
+  previewUrl,
+  onCancel,
+}: {
+  /** 0-100 真实进度（P 轨 ws 逐节点）。缺省 = 品牌转圈（No fake progress）。 */
+  percent?: number
+  /** 人话进度（narrate 产出，如「KSampler · 第 3/17 个节点」）。 */
+  message?: string
+  /** 活预览帧 data URL（ComfyUI 采样中间图，会话瞬态、不落盘）。 */
+  previewUrl?: string
+  /** 提供即显示遮罩内取消按钮（2026-08-01 拍板 A 位；仅本地 ComfyUI 任务可取消）。 */
+  onCancel?: () => void
+} = {}): JSX.Element {
   const { t } = useTranslation()
+  const determinate = typeof percent === 'number' && Number.isFinite(percent)
   return (
     <div
       className={cn(
         'generation-canvas-v2-node__generating-overlay',
-        'absolute inset-0 z-[1] grid place-items-center rounded-nomi',
+        'absolute inset-0 z-[1] grid place-items-center rounded-nomi overflow-hidden',
         'bg-nomi-paper/[0.55] backdrop-blur-[2px] pointer-events-none',
       )}
-      aria-hidden="true"
+      aria-hidden={onCancel ? undefined : true}
     >
-      <NomiLoadingMark size={32} label={t('generationCommon.card.generating')} />
+      {previewUrl ? (
+        <img
+          src={previewUrl}
+          alt={t('generationCommon.card.comfyPreviewAlt')}
+          className="absolute inset-0 h-full w-full object-cover opacity-90"
+          draggable={false}
+        />
+      ) : null}
+      <div className="relative z-[1] grid place-items-center gap-2">
+        {determinate ? (
+          <RemoveBackgroundProgressMark progress={percent} />
+        ) : (
+          <NomiLoadingMark size={32} label={t('generationCommon.card.generating')} />
+        )}
+        {message ? (
+          <span className="rounded-full bg-nomi-paper/[0.88] px-2.5 py-1 text-micro font-medium text-nomi-ink-80 shadow-nomi-sm backdrop-blur-[8px]">
+            {message}
+          </span>
+        ) : null}
+        {onCancel ? (
+          <button
+            type="button"
+            aria-label={t('generationCommon.card.comfyCancelAria')}
+            onClick={(event) => {
+              event.stopPropagation()
+              onCancel()
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            className={cn(
+              'pointer-events-auto inline-flex items-center gap-1 rounded-full px-3.5 py-1 text-micro font-medium',
+              'text-workbench-danger bg-[var(--workbench-danger-soft)] hover:opacity-85',
+            )}
+          >
+            <IconPlayerStop size={13} stroke={1.8} />
+            {t('generationCommon.card.comfyCancel')}
+          </button>
+        ) : null}
+      </div>
     </div>
   )
 }

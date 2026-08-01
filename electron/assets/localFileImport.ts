@@ -45,8 +45,35 @@ export async function importLocalFile(payload: unknown): Promise<unknown> {
 }
 
 /**
- * 懒自愈（渲染侧 NodeVideoPlaybackGuard 在 decode 失败时调，一节点一次）：已落盘的 nomi-local 视频
- * 资产播不了 → 就地探测 + 转码成新 MP4 资产，返回新资产 DTO；本就可播/无法处理 → null。
+ * 自愈产物的复用标记（存在源文件旁，内容是上次 writeAsset 返回的 DTO）。
+ *
+ * 为什么要它：播放守卫已从画布节点提到各播放面共用（时间轴/大图/预览…），同一份坏资产会被多个面
+ * 各触发一次自愈。没有复用的话每次都重转一遍 4K 视频、再落一份新拷贝——CPU 和磁盘都成倍浪费，
+ * 用户还会在素材库里看到一堆同名副本。转码是纯函数式的（同一份源 → 同一个可播产物），可安全复用。
+ */
+function healedMarkerPath(sourcePath: string): string {
+  return `${sourcePath}.playable`;
+}
+
+/** 读复用标记；产物已被删/标记损坏 → null（当没修过，重修一次）。 */
+function readHealedAsset(sourcePath: string): unknown | null {
+  try {
+    const marker = JSON.parse(fs.readFileSync(healedMarkerPath(sourcePath), "utf8")) as {
+      data?: { url?: unknown };
+    };
+    const url = typeof marker?.data?.url === "string" ? marker.data.url.trim() : "";
+    // 按 nomi-local URL 反查磁盘路径（而非存 absolutePath）：项目整体被搬走后仍然对得上。
+    const resolved = url ? parseLocalAssetUrl(url) : null;
+    if (!resolved || !fs.existsSync(resolved.filePath)) return null;
+    return marker;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 懒自愈（渲染侧播放守卫在 decode 失败时调）：已落盘的 nomi-local 视频资产播不了 →
+ * 就地探测 + 转码成新 MP4 资产，返回新资产 DTO；本就可播/无法处理 → null。
  * 覆盖两类存量：① 归一化上线前导入的 HEVC ② 供应商直接回 HEVC 的生成产物（生成落地不做前置转码，
  * 不为没坏的 4K 输出白付转码——坏了才修）。原文件保留（导出/上游引用不受影响）。
  */
@@ -56,16 +83,25 @@ export async function ensurePlayableAsset(payload: unknown): Promise<unknown> {
   if (!parsed) return null;
   const { projectId, filePath } = parsed;
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
+  const reused = readHealedAsset(filePath);
+  if (reused) return reused;
   const sourceName = path.basename(filePath);
   const transcoded = await transcodeFileToPlayableMp4IfNeeded(filePath, sourceName);
   if (!transcoded) return null;
   try {
     const outputBytes = fs.readFileSync(transcoded.outputPath);
-    return writeAsset(projectId, outputBytes, playableMp4FileName(sourceName), "video/mp4", {
+    const asset = writeAsset(projectId, outputBytes, playableMp4FileName(sourceName), "video/mp4", {
       kind: "upload",
       originalName: sourceName,
       playbackNormalizedFrom: transcoded.reason,
     });
+    // 标记写失败不影响本次自愈（大不了下次重转一遍），所以吞掉异常。
+    try {
+      fs.writeFileSync(healedMarkerPath(filePath), JSON.stringify(asset));
+    } catch {
+      /* 标记只是优化，不是正确性依赖 */
+    }
+    return asset;
   } finally {
     fs.rmSync(transcoded.outputPath, { force: true });
   }

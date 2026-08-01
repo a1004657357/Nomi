@@ -34,13 +34,43 @@ export type GenerationErrorReport = {
   raw: string
 }
 
-/** 上游原话提到可见区前的清洗：去掉占位、与 reason 重复、过长。 */
+/**
+ * 上游原话提到可见区前的清洗：剥 JSON 信封、去掉占位、与 reason 重复、过长。
+ *
+ * 剥信封不能省：厂商多半整坨 JSON 甩回来，直接贴出去用户看到的是
+ * `{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation","message":"The request
+ * failed because…` —— 真正那句人话被 code/param/type 埋在中间，还把窄节点上的卡片撑到要滚
+ * （2026-07-31 走查截图）。抠出 message 后仍是**服务商自己的原话**，只是不带信封；
+ * 完整报文照旧在「技术详情」里（report.raw 不动）。
+ */
 function pickProviderMessage(candidate: string | undefined, reason: string): string {
-  const msg = String(candidate || '')
-    .replace(/\s+/g, ' ')
-    .trim()
+  const source = String(candidate || '').trim()
+  const msg = (jsonErrorMessage(source) ?? source).replace(/\s+/g, ' ').trim()
   if (!msg || msg === '(no detail from provider)' || msg === reason) return ''
   return msg.length > 200 ? `${msg.slice(0, 199)}…` : msg
+}
+
+/** provider 常把报错塞进 JSON：{ error: { message } } / { message } / { error }。抠不出返回 null。 */
+function jsonErrorMessage(source: string): string | null {
+  try {
+    const parsed = JSON.parse(source) as unknown
+    if (!parsed || typeof parsed !== 'object') return null
+    const record = parsed as Record<string, unknown>
+    const errorField = record.error
+    const candidates = [
+      typeof errorField === 'object' && errorField ? (errorField as Record<string, unknown>).message : undefined,
+      typeof errorField === 'string' ? errorField : undefined,
+      record.message,
+      record.detail,
+      record.error_description,
+    ]
+    for (const value of candidates) {
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+    return null
+  } catch {
+    return null // 不是 JSON
+  }
 }
 
 /**
@@ -49,28 +79,14 @@ function pickProviderMessage(candidate: string | undefined, reason: string): str
  * message/error 字段，否则取第一行非空文本并截断。抠不出可读内容才返回 ''。
  */
 function extractReadableErrorLine(raw: string): string {
-  const source = String(raw || '').trim()
+  const source = String(raw || '')
+    .trim()
+    .replace(IPC_WRAPPER_PREFIX, '')
+    .trim()
   if (!source) return ''
-  // 1) provider 常把报错塞进 JSON：{ error: { message } } / { message } / { error }
-  try {
-    const parsed = JSON.parse(source) as unknown
-    if (parsed && typeof parsed === 'object') {
-      const record = parsed as Record<string, unknown>
-      const errorField = record.error
-      const candidates = [
-        typeof errorField === 'object' && errorField ? (errorField as Record<string, unknown>).message : undefined,
-        typeof errorField === 'string' ? errorField : undefined,
-        record.message,
-        record.detail,
-        record.error_description,
-      ]
-      for (const value of candidates) {
-        if (typeof value === 'string' && value.trim()) return truncateLine(value.trim())
-      }
-    }
-  } catch {
-    // 不是 JSON，走纯文本路径
-  }
+  // 1) provider 常把报错塞进 JSON（与 pickProviderMessage 共用同一个剥壳器，两处不许各写一份）
+  const fromJson = jsonErrorMessage(source)
+  if (fromJson) return truncateLine(fromJson)
   // 2) 纯文本：取第一行非空内容
   const firstLine = source
     .split('\n')
@@ -78,6 +94,14 @@ function extractReadableErrorLine(raw: string): string {
     .find(Boolean)
   return firstLine ? truncateLine(firstLine) : ''
 }
+
+/**
+ * Electron 的 `ipcRenderer.invoke` 会把主进程抛的错重新包一层
+ * `Error invoking remote method 'nomi:tasks:run': Error: …`。这层是**我们自己的管道细节**，
+ * 对用户零信息——却正好占住错误卡最显眼的那一行（未识别错误的 reason 就取 raw 首行）。
+ * 只从展示用的首行剥掉，`report.raw`（技术详情折叠区）保留原样，排查线索不丢。
+ */
+const IPC_WRAPPER_PREFIX = /^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/
 
 function truncateLine(value: string): string {
   const clean = value.replace(/\s+/g, ' ').trim()
@@ -175,7 +199,10 @@ function detectImageRouteDisabled(upstream: string | undefined, raw: string): bo
   if (text.includes('images api is not enabled') || text.includes('endpoint is disabled')) return true
   return (
     (text.includes('分组') || text.includes('group')) &&
-    (text.includes('未开通') || text.includes('无权限') || text.includes('not enabled') || text.includes('no permission'))
+    (text.includes('未开通') ||
+      text.includes('无权限') ||
+      text.includes('not enabled') ||
+      text.includes('no permission'))
   )
 }
 
@@ -234,6 +261,58 @@ function detectAssetFetchFailure(upstream: string | undefined, raw: string): boo
   )
 }
 
+/**
+ * 「内容安全把输入挡了」——**必须先于 category 判**：各家审核拒绝都用 HTTP 400 回，
+ * categorizeVendorFailure 一律派生成 `input`，于是「参考图被审核拦了」被说成「参数不被接受，
+ * 请检查比例/尺寸」+ 一个红色「重试」按钮 —— 三处全错（不是参数问题、改比例救不了、
+ * 同图同模型重试是确定性再撞）。legacy 的 content-policy 分支也救不了：① 它只在 structured
+ * 落空时才跑，② 判据是英文 content+policy/safety/filter，方舟的错误码一个都不匹配。
+ *
+ * 实测来源（2026-07-31 用户真机，中转代理火山方舟 Seedance 2.0）：
+ * HTTP 400 `{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation",
+ * "message":"The request failed because the input image 'content[1]' may contain real person"…}}`
+ *
+ * 返回值区分**挡的是哪一头**——动作完全不同：图被挡要换图/换模型（改提示词没用），
+ * 提示词被挡改下面的 composer 就行。短语取窄（要么是厂商固定错误码，要么「敏感/审核」
+ * 与「输入图片」同时出现），不吞普通 400。
+ */
+function detectContentModerationTarget(upstream: string | undefined, raw: string): 'image' | 'prompt' | null {
+  const text = `${upstream || ''} ${raw}`.toLowerCase()
+  const blocksImage =
+    text.includes('inputimagesensitivecontentdetected') ||
+    text.includes('may contain real person') ||
+    text.includes('may contain a real person') ||
+    ((text.includes('sensitive') || text.includes('敏感') || text.includes('审核')) &&
+      (text.includes('input image') || text.includes('输入图片') || text.includes('参考图')))
+  if (blocksImage) return 'image'
+  if (text.includes('inputtextsensitivecontentdetected')) return 'prompt'
+  return null
+}
+
+/**
+ * 「参考图压根没送到服务商」——失败发生在**我们这一侧**：本机素材要先换成公网可取的
+ * 地址，用户没接任何自带上传通道的服务商时会掉到最后一档免费匿名图床（litterbox/tmpfiles），
+ * 那两个挂了整条链就断（2026-07-31 用户真机：HTTP 500 + fetch failed）。
+ *
+ * 判据是 assetLocalization 自己抛的固定短语（我们的字符串，不是猜厂商文案）。没这条的话
+ * 它落进 unknown，用户看到的是「可能是服务商临时故障或额度问题」——甩锅给一个**根本没被
+ * 请求到**的服务商，再配一句没用的「换一个模型」。
+ */
+function detectAssetUploadFailed(raw: string): boolean {
+  return raw.includes('所有免配置上传 host 都失败')
+}
+
+/**
+ * 「模型在服务商上游根本不存在」——确定性失败，重试必再撞同一堵墙，所以不能落进 unknown
+ * 拿到「稍等重试」那句误导（同 output-truncated 的理由）。
+ *
+ * 实测来源（2026-07-30 用户真机 + 直连探针）：apimart 的 Imagen 4 提交成功、8 秒后终态失败，
+ * `data.error.message` 里裹着 Google 的原话 `{"error":{"code":404,"message":"Requested entity
+ * was not found.","status":"NOT_FOUND"}}`，且 `credits_cost: 0`（不计费）。
+ *
+ * 短语取得很窄（只认上游厂商的固定原话），不用「404 / not found」这类泛词——素材 404、
+ * 项目不存在等都会被误吞。
+ */
 function detectModelUnavailableUpstream(upstream: string | undefined, raw: string): boolean {
   const text = `${upstream || ''} ${raw}`.toLowerCase()
   return text.includes('requested entity was not found') || text.includes('模型不存在')
@@ -243,11 +322,7 @@ function detectModelRetired(raw: string): boolean {
   return raw.includes('Model is retired:')
 }
 
-function reportFor(
-  kind: GenerationErrorKind,
-  raw: string,
-  upstream: string | undefined,
-): GenerationErrorReport {
+function reportFor(kind: GenerationErrorKind, raw: string, upstream: string | undefined): GenerationErrorReport {
   const { reason, hint } = narrateGenerationError(kind)
   const providerMessage = pickProviderMessage(upstream ?? extractReadableErrorLine(raw), reason)
   return {
@@ -264,17 +339,18 @@ export function classifyGenerationError(message: string): GenerationErrorReport 
   // S4-2:structured 优先(VendorRequestError 经 IPC 标记穿透,源头保留的事实,不是猜);
   // 老数据/非 vendor 错误退回 legacy 正则识别。两条路只产 kind,文案统一出自 narrate 词表。
   const structured = parseVendorErrorFromMessage(message)
-  const cleanRaw = stripVendorErrorMarker(String(message || '')).split('\n→')[0].trim() || '生成失败'
+  const cleanRaw =
+    stripVendorErrorMarker(String(message || ''))
+      .split('\n→')[0]
+      .trim() || '生成失败'
   if (detectModelRetired(cleanRaw)) return reportFor('model-retired', cleanRaw, undefined)
   const bridgeText = `${structured?.upstreamMsg || ''} ${cleanRaw}`.toLowerCase()
   if (
     (bridgeText.includes('即梦 web') || bridgeText.includes('即梦网页') || bridgeText.includes('web-bridge')) &&
-    (
-      bridgeText.includes('failed to fetch') ||
+    (bridgeText.includes('failed to fetch') ||
       bridgeText.includes('网页桥任务失败') ||
       bridgeText.includes('结果同步失败') ||
-      bridgeText.includes('扩展客户端')
-    )
+      bridgeText.includes('扩展客户端'))
   ) {
     return reportFor('web-bridge', cleanRaw, structured?.upstreamMsg)
   }
@@ -302,11 +378,27 @@ export function classifyGenerationError(message: string): GenerationErrorReport 
   if (detectBalance(structured?.upstreamMsg, cleanRaw)) {
     return reportFor('balance', cleanRaw, structured?.upstreamMsg)
   }
+  // 素材上传失败先于 category 判——失败在我们这侧，服务商根本没被请求到，不能借上游的状态码说话。
+  if (detectAssetUploadFailed(cleanRaw)) return reportFor('asset-upload-failed', cleanRaw, undefined)
+  // 内容安全拦截先于 category 判——审核拒绝走 HTTP 400，会被派生成「参数不被接受·检查比例/尺寸」
+  // 并配一个必然再撞的「重试」（理由见 detectContentModerationTarget）。
+  const moderated = detectContentModerationTarget(structured?.upstreamMsg, cleanRaw)
+  if (moderated) {
+    return reportFor(
+      moderated === 'image' ? 'input-image-blocked' : 'content-policy',
+      cleanRaw,
+      structured?.upstreamMsg,
+    )
+  }
   if (detectAssetFetchFailure(structured?.upstreamMsg, cleanRaw)) {
     return reportFor('asset-fetch', cleanRaw, structured?.upstreamMsg)
   }
   if (structured?.category && (STRUCTURED_KINDS as readonly string[]).includes(structured.category)) {
-    return reportFor(structured.category as GenerationErrorKind, stripVendorErrorMarker(message), structured.upstreamMsg)
+    return reportFor(
+      structured.category as GenerationErrorKind,
+      stripVendorErrorMarker(message),
+      structured.upstreamMsg,
+    )
   }
   // Strip any legacy "\n→ hint" tail that older builds baked into node.error.
   const raw =

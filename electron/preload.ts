@@ -31,10 +31,8 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     minimize: () => ipcRenderer.invoke("nomi:window:minimize"),
     maximize: () => ipcRenderer.invoke("nomi:window:maximize"),
     close: () => ipcRenderer.invoke("nomi:window:close"),
-    confirmClose: (requestId: string) =>
-      ipcRenderer.send("nomi:window:close-response", { requestId, confirmed: true }),
-    cancelClose: (requestId: string) =>
-      ipcRenderer.send("nomi:window:close-response", { requestId, confirmed: false }),
+    confirmClose: (requestId: string) => ipcRenderer.send("nomi:window:close-response", { requestId, confirmed: true }),
+    cancelClose: (requestId: string) => ipcRenderer.send("nomi:window:close-response", { requestId, confirmed: false }),
     onCloseRequest: (cb: (payload: { requestId: string }) => void) => {
       const listener = (_: unknown, payload: { requestId: string }) => cb(payload);
       ipcRenderer.on("nomi:window:close-request", listener);
@@ -59,6 +57,11 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
   browserChromeMenu: {
     select: (id: unknown) => ipcRenderer.send("browser:chrome-menu:select", id),
     cancel: () => ipcRenderer.send("browser:chrome-menu:cancel"),
+  },
+  proxy: {
+    get: () => ipcRenderer.invoke("nomi:proxy:get"),
+    set: (payload: unknown) => ipcRenderer.invoke("nomi:proxy:set", payload),
+    test: () => ipcRenderer.invoke("nomi:proxy:test"),
   },
   workspace: {
     selectFolder: () => ipcRenderer.invoke("nomi:workspace:select-folder"),
@@ -108,8 +111,15 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
         canceled?: boolean;
         path?: string;
       }>,
-    archiveOutputCollection: (payload: unknown) =>
-      ipcRenderer.invoke("nomi:assets:archive-output-collection", payload),
+    archiveOutputCollection: (payload: unknown) => ipcRenderer.invoke("nomi:assets:archive-output-collection", payload),
+    // 自动另存（生成完成即调，best-effort）+ 集中设置页读写/选目录。
+    autoSave: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:assets:auto-save", payload) as Promise<{ ok: boolean; path?: string }>,
+    getAutoSavePrefs: () =>
+      ipcRenderer.invoke("nomi:settings:auto-save-get") as Promise<{ enabled: boolean; dir: string }>,
+    setAutoSavePrefs: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:settings:auto-save-set", payload) as Promise<{ enabled: boolean; dir: string }>,
+    pickSaveDir: () => ipcRenderer.invoke("nomi:settings:pick-dir") as Promise<{ dir: string }>,
   },
   browser: {
     startAssetDrag: (payload: unknown) => ipcRenderer.send("browser:asset-drag:start", payload),
@@ -132,8 +142,7 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     hide: (payload: unknown) => ipcRenderer.send("browser:view:hide", payload),
     importMedia: (payload: unknown) => ipcRenderer.invoke("browser:view:import-media", payload),
     capturePromptImage: (payload: unknown) => ipcRenderer.invoke("browser:view:capture-prompt-image", payload),
-    selectPromptScreenshot: (payload: unknown) =>
-      ipcRenderer.invoke("browser:view:select-prompt-screenshot", payload),
+    selectPromptScreenshot: (payload: unknown) => ipcRenderer.invoke("browser:view:select-prompt-screenshot", payload),
     capturePromptScreenshot: (payload: unknown) =>
       ipcRenderer.invoke("browser:view:capture-prompt-screenshot", payload),
     readPromptExtractionSettings: (payload: unknown) =>
@@ -209,7 +218,9 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     extractFrame: (payload: unknown) =>
       ipcRenderer.invoke("nomi:video:extract-frame", payload) as Promise<{ url: string }>,
     extractFrames: (payload: unknown) =>
-      ipcRenderer.invoke("nomi:video:extract-frames", payload) as Promise<{ frames: Array<{ timeSeconds: number; url: string }> }>,
+      ipcRenderer.invoke("nomi:video:extract-frames", payload) as Promise<{
+        frames: Array<{ timeSeconds: number; url: string }>;
+      }>,
   },
   image: {
     decomposeLayers: (payload: unknown) =>
@@ -233,17 +244,20 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     framesToVideo: (payload: unknown) =>
       ipcRenderer.invoke("nomi:scene3d:frames-to-video", payload) as Promise<{ url: string; assetId?: string }>,
     renderWithBlender: (payload: unknown) => ipcRenderer.invoke("nomi:scene3d:render-blender", payload),
-    renderDirectorWithBlender: (payload: unknown) => ipcRenderer.invoke("nomi:scene3d:render-director-blender", payload),
+    renderDirectorWithBlender: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:scene3d:render-director-blender", payload),
     cancelBlender: (jobId: string) =>
       ipcRenderer.invoke("nomi:scene3d:cancel-blender", jobId) as Promise<{ cancelled: boolean }>,
   },
   vibingDirector: {
     applyBlenderPlan: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:apply-blender-plan", payload),
     importAsset: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:import-asset", payload),
-    importExistingAsset: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:import-existing-asset", payload),
+    importExistingAsset: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:vibing-director:import-existing-asset", payload),
     listCatalogAssets: (payload?: unknown) => ipcRenderer.invoke("nomi:vibing-director:list-catalog-assets", payload),
     importCatalogAsset: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:import-catalog-asset", payload),
-    openBlender: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:open-blender", payload) as Promise<{ opened: boolean }>,
+    openBlender: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:vibing-director:open-blender", payload) as Promise<{ opened: boolean }>,
     cancelBlenderPlan: (jobId: string) =>
       ipcRenderer.invoke("nomi:vibing-director:cancel-blender-plan", jobId) as Promise<{ cancelled: boolean }>,
     openAssetSource: (source: "kenney" | "polyhaven" | "quaternius" | "blenderkit") =>
@@ -284,6 +298,17 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
         ipcRenderer.removeListener("nomi:tasks:text:event", listener as never);
       };
     },
+    // ComfyUI ws 进度桥（P 轨）：watch 登记 → 主进程推 progress/preview/queue/done；interrupt=取消。
+    comfyuiWatch: (payload: unknown) => ipcRenderer.invoke("nomi:tasks:comfyui:watch", payload),
+    comfyuiUnwatch: (promptId: string) => ipcRenderer.invoke("nomi:tasks:comfyui:unwatch", promptId),
+    comfyuiInterrupt: (promptId: string) => ipcRenderer.invoke("nomi:tasks:comfyui:interrupt", promptId),
+    onComfyuiProgress: (callback: (event: unknown) => void) => {
+      const listener = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on("nomi:tasks:comfyui:progress", listener as never);
+      return () => {
+        ipcRenderer.removeListener("nomi:tasks:comfyui:progress", listener as never);
+      };
+    },
   },
   events: {
     append: (projectId: string, events: unknown[]) =>
@@ -322,7 +347,13 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
         prompts: unknown[];
         error?: string;
       }>,
-    userAdd: (input: { title?: string; prompt: string; promptType: "image" | "video"; tags?: string[]; referenceImages?: { url: string; title?: string; sourceUrl?: string }[] }) =>
+    userAdd: (input: {
+      title?: string;
+      prompt: string;
+      promptType: "image" | "video";
+      tags?: string[];
+      referenceImages?: { url: string; title?: string; sourceUrl?: string }[];
+    }) =>
       ipcRenderer.invoke("nomi:prompt-library:user-add", input) as Promise<{
         ok: boolean;
         prompts: unknown[];
@@ -437,6 +468,8 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     fetchDocs: (payload: unknown) => ipcRenderer.invoke("nomi:model-catalog:docs:fetch", payload),
     probeComfyui: (baseUrl?: string) => ipcRenderer.invoke("nomi:model-catalog:comfyui:probe", baseUrl),
     analyzeComfyWorkflow: (text: string) => invokeSync("nomi:model-catalog:comfyui:analyze-workflow", text),
+    reconcileComfyWorkflow: (text: string) => ipcRenderer.invoke("nomi:model-catalog:comfyui:reconcile-workflow", text),
+    listComfyuiPresets: () => invokeSync("nomi:model-catalog:comfyui:presets"),
     importComfyWorkflow: (payload: { text: string; binding: unknown; labelZh: string }) =>
       invokeSync("nomi:model-catalog:comfyui:import-workflow", payload),
     updateComfyWorkflow: (payload: { modelKey: string; text: string; binding: unknown; labelZh: string }) =>

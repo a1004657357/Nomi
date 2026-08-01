@@ -6,6 +6,7 @@ import {
   listLocalProjects as listProjectRecords,
   readLocalProject,
   readLocalProjectAsync,
+  renameLocalProject as renameProjectRecord,
   saveLocalProject as saveProjectRecord,
 } from '../project/projectRepository'
 import type {
@@ -115,6 +116,13 @@ export function saveLocalProject(
 ): LocalProjectRecord {
   const record = saveProjectRecord(projectId, state, name)
   publishLocalProjectRecord(record)
+  return record
+}
+
+/** 列表页「双击改名」：只改名（不动内容），存回后刷新列表卡片。空名/未变=no-op。 */
+export function renameLocalProject(projectId: string, name: string): LocalProjectRecord | null {
+  const record = renameProjectRecord(projectId, name)
+  if (record) publishLocalProjectRecord(record)
   return record
 }
 

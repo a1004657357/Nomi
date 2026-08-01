@@ -30,7 +30,7 @@
   <a href="https://github.com/aqm857886159/Nomi/stargazers"><img src="https://img.shields.io/badge/GitHub-%E2%AD%90%20Star-2563eb?logo=github&logoColor=2563eb&labelColor=f1f5f9" alt="Star on GitHub" /></a>
   <a href="https://github.com/aqm857886159/Nomi/releases/latest"><img src="https://img.shields.io/github/v/release/aqm857886159/Nomi?color=2563eb&labelColor=f1f5f9&label=release" alt="Latest release" /></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-2563eb?labelColor=f1f5f9" alt="Platform" />
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2563eb?labelColor=f1f5f9" alt="License" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-2563eb?labelColor=f1f5f9" alt="License" /></a>
 </p>
 
 ---
@@ -165,6 +165,14 @@ Nomi 的创作能力也抽成了一个**无头能力核**（CLI / MCP），可�
 
 ---
 
+## 📄 协议与商业授权
+
+- Nomi 以 **[AGPL-3.0](LICENSE)** 开源（2026-08 起；此前发布的历史版本仍按 Apache-2.0 授权）。个人使用、公司内部使用、二次开发都自由；**把 Nomi 修改后闭源分发、或作为在线服务提供**，则必须同样以 AGPL 开源你的修改。
+- 想闭源集成 / 换牌分发 / 企业定制？联系作者获取**商业授权**：微信 **TZ857886159** 或 [发 issue](https://github.com/aqm857886159/Nomi/issues/new/choose)。
+- 外部贡献合并前需一次性签署 [CLA](CLA.md)（PR 里机器人自动引导，复制一句话即可）；历史贡献者无需任何操作。
+
+---
+
 ## 关于作者
 
 **青阳** — AI 产品经理 / 创作者。愿意当种子用户的话，加微信 **TZ857886159**（长期有效）拉你进群（群码在上方 [💬 加入用户群](#-加入用户群)）。
@@ -173,4 +181,4 @@ Nomi 的创作能力也抽成了一个**无头能力核**（CLI / MCP），可�
 
 ---
 
-Apache-2.0 License · Made with ❤️ in China
+AGPL-3.0 License · Made with ❤️ in China

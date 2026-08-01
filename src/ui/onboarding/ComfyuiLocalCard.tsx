@@ -20,6 +20,7 @@ import { toast } from '../toast'
 import { alertDialog, confirmDialog } from '../../design'
 import { FoldableModelCard } from './FoldableModelCard'
 import { ComfyuiWorkflowImportPanel } from './ComfyuiWorkflowImportPanel'
+import { ComfyuiPresetSection } from './ComfyuiPresetSection'
 
 /** 与后端 comfyuiLocal.ts 的 vendor key 对齐（稳定契约）。 */
 export const COMFYUI_VENDOR_KEY = 'comfyui-local'
@@ -302,6 +303,9 @@ export function ComfyuiLocalCard({ enabled, baseUrl, models, mappings, onChanged
             </React.Fragment>
             )
           })}
+
+          {/* 预置模板（S5）：官方 WAN2.2 等即用模板，缺件闸验齐才放行启用 */}
+          <ComfyuiPresetSection modelLabels={models.map((m) => m.labelZh)} onImported={onChanged} />
 
           {/* 自定义工作流导入（S4）：内置文生图之外，用户可导入自己的 WAN 文生/图生视频等工作流 */}
           <ComfyuiWorkflowImportPanel onImported={onChanged} />

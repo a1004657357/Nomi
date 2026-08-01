@@ -328,17 +328,23 @@ const CURATED_VIDEO_INGESTION: Record<string, AssetIngestion> = {
 /**
  * litterbox（catbox.moe 匿名临时文件托管）：零配置兜底通道——无 key、无账号、收任意文件。
  * POST https://litterbox.catbox.moe/resources/internals/api.php，multipart：
- *   reqtype=fileupload, time=1h, fileToUpload=<二进制>。无 Authorization（匿名）。
+ *   reqtype=fileupload, time=<有效期>, fileToUpload=<二进制>。无 Authorization（匿名）。
  * 响应体是**纯文本直链**（非 JSON），如 "https://litter.catbox.moe/abc123.mp4"。
- * 文件 1 小时有效，够一次生成。accepts 全媒体类型（它收任何文件）。
- * 用作视频上传的零配置兜底：目标 vendor 与 KIE 都没有视频通道时仍能"开箱即用"。
+ * accepts 全媒体类型（它收任何文件）。用作视频上传的零配置兜底：目标 vendor 与 KIE 都没有
+ * 视频通道时仍能"开箱即用"。
+ *
+ * `time` 官方允许 1h / 12h / 24h / 72h（litterbox.catbox.moe/tools.php 2026-07-31 核）。
+ * **取 24h 而非最短的 1h**：厂商要求「URL 有效期覆盖完整的素材预处理和视频生成周期」，而视频
+ * 排队 + 生成 + 我们这侧的轮询窗（慢道硬超时 20min）叠起来，1h 会在长队列里中途过期 —— 表现为
+ * 提交成功、生成到一半厂商拉不到图。取 24h 不取 72h 是因为匿名上传**没有删除 API**（只能等过期），
+ * 用户的参考图（常是角色定妆照）在公网多躺一天就多一分暴露，够用即止。
  */
 export const LITTERBOX_INGESTION: AssetIngestion = {
   strategy: "upload-multipart",
   endpoint: "https://litterbox.catbox.moe/resources/internals/api.php",
   responseIsPlainTextUrl: true,
   fileField: "fileToUpload",
-  extraFields: { reqtype: "fileupload", time: "1h" },
+  extraFields: { reqtype: "fileupload", time: "24h" },
   accepts: ["image", "video", "audio"],
 };
 

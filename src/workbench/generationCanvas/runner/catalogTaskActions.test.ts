@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { buildCatalogTaskRequest, isSlowLaneBackend, normalizeCatalogTaskResult, resolvePollBudget, runCatalogGenerationTask } from './catalogTaskActions'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  buildCatalogTaskRequest,
+  isRateLimitedPollError,
+  nextPollDelayMs,
+  normalizeCatalogTaskResult,
+  resolvePollIntervalMs,
+  runCatalogGenerationTask,
+} from './catalogTaskActions'
 import { resolveGenerationReferences } from './generationReferenceResolver'
 import { MODEL_ARCHETYPES } from '../../../config/modelArchetypes'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
@@ -385,9 +392,15 @@ describe('buildCatalogTaskRequest — 标准参考面与档案投影并存（中
 
   it('档案图槽上传（meta.referenceImageUrls）同样进标准面；t2i 模式的残留不复活', () => {
     const uploaded: GenerationCanvasNode = {
-      id: 'relay-upload', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: '改成蓝色调',
+      id: 'relay-upload',
+      kind: 'image',
+      title: '',
+      position: { x: 0, y: 0 },
+      prompt: '改成蓝色调',
       meta: {
-        modelKey: 'gpt-image-2', modelVendor: 'y7-mock', vendor: 'y7-mock',
+        modelKey: 'gpt-image-2',
+        modelVendor: 'y7-mock',
+        vendor: 'y7-mock',
         archetype: { id: 'gpt-image-2', modeId: 'i2i' },
         referenceImageUrls: ['nomi-local://asset/up.png'],
       },
@@ -412,7 +425,12 @@ describe('buildCatalogTaskRequest — 标准参考面与档案投影并存（中
       position: { x: 0, y: 0 },
       prompt: '镜头缓慢推近',
       // 首帧模式（真实链路：连 first_frame 边时 useNodeModelAutoSelect 自动切到该模式）。
-      meta: { modelKey: 'bytedance/seedance-2', modelVendor: 'my-relay', vendor: 'my-relay', archetype: { id: 'seedance-2', modeId: 'first' } },
+      meta: {
+        modelKey: 'bytedance/seedance-2',
+        modelVendor: 'my-relay',
+        vendor: 'my-relay',
+        archetype: { id: 'seedance-2', modeId: 'first' },
+      },
     }
     const built = buildCatalogTaskRequest(node, {
       references: { firstFrameUrl: 'nomi-local://asset/first.png' },
@@ -710,6 +728,83 @@ describe('runCatalogGenerationTask — 轮询查询失败绝不重新提交付�
     expect(isRecoverableTimeoutError(error)).toBe(true)
     expect(submitCount).toBe(1) // ★持续失败也绝不二次提交
   })
+
+  // 2026-07-31：厂商文档（Seedance 2.0 交付文档 §5.1）要求「查询间隔分散到 3-5 秒以上」+
+  // 「429 时指数退避并加入随机抖动」。以前是固定 1500ms、零抖动、429 被空 catch 吞掉照原节奏再敲。
+  it('轮询撞 429 → 等待指数退避；不是限流的失败不退避', async () => {
+    const waits: number[] = []
+    const realSetTimeout = globalThis.setTimeout
+    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      waits.push(Number(ms))
+      return realSetTimeout(fn, 0) // 记录时长但立即触发，测试不真等
+    }) as unknown as typeof globalThis.setTimeout)
+    try {
+      let fetchCount = 0
+      const result = await runCatalogGenerationTask(videoNode, {
+        runTask: async (_v, req) => ({ id: 'up-3', kind: req.kind, status: 'queued' as const, assets: [], raw: {} }),
+        fetchTaskResult: async () => {
+          fetchCount += 1
+          if (fetchCount <= 2) throw new Error('Provider request failed (HTTP 429) at asyncv: too many requests')
+          if (fetchCount === 3) throw new TypeError('Failed to fetch') // 普通抖动 → 退避必须复位
+          return {
+            vendor: 'asyncv',
+            result: {
+              id: 'up-3',
+              kind: 'text_to_video' as const,
+              status: 'succeeded' as const,
+              assets: [{ type: 'video' as const, url: 'https://x/o.mp4' }],
+              raw: {},
+            },
+          }
+        },
+        pollIntervalMs: 100,
+        pollRandom: () => 0.5, // 抖动系数恒为 1，只看退避倍数
+        pollTimeoutMs: 5000,
+      })
+      // 100 → 撞 429 → 200 → 再撞 429 → 400 → 普通抖动(复位) → 100
+      expect(waits.slice(0, 4)).toEqual([100, 200, 400, 100])
+      expect(result.url).toBe('https://x/o.mp4')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+// 轮询节奏三件套（2026-07-31 按厂商文档 §5.1 补）：间隔按后端分档、±30% 抖动、429 指数退避。
+describe('轮询节奏 — 间隔分档 / 抖动 / 限流退避', () => {
+  it('间隔分档复用慢道判据：视频与本地后端 3s，云图像 1.5s', () => {
+    expect(resolvePollIntervalMs('text_to_video', 'volcengine')).toBe(3000)
+    expect(resolvePollIntervalMs('image_to_video', 'kie')).toBe(3000)
+    expect(resolvePollIntervalMs('text_to_image', 'comfyui-local')).toBe(3000) // 本地后端也是慢道
+    expect(resolvePollIntervalMs('text_to_image', 'kie')).toBe(1500) // 秒级云图像不放慢
+  })
+
+  it('无限流时只叠 ±30% 抖动，落在 [0.7x, 1.3x] 且不恒等于基准（否则又是同相位齐发）', () => {
+    expect(nextPollDelayMs(3000, 0, () => 0)).toBe(2100) // 下界 0.7x
+    expect(nextPollDelayMs(3000, 0, () => 1)).toBe(3900) // 上界 1.3x
+    expect(nextPollDelayMs(3000, 0, () => 0.5)).toBe(3000) // 中点=基准
+  })
+
+  it('429 连击 → 指数退避 2^n，并封顶 30s（久限流不该把间隔滚到分钟级）', () => {
+    const noJitter = () => 0.5
+    expect(nextPollDelayMs(3000, 1, noJitter)).toBe(6000)
+    expect(nextPollDelayMs(3000, 2, noJitter)).toBe(12000)
+    expect(nextPollDelayMs(3000, 3, noJitter)).toBe(24000)
+    expect(nextPollDelayMs(3000, 4, noJitter)).toBe(30000) // 48000 被封顶
+    expect(nextPollDelayMs(3000, 9, () => 1)).toBe(30000) // 抖动也不许突破封顶
+  })
+
+  it('限流判定优先信 structured（IPC 穿透的事实），文案兜底，普通失败不误判', () => {
+    const structured = (payload: Record<string, unknown>) =>
+      'NOMI_VENDOR_ERR_B64::' + Buffer.from(JSON.stringify(payload), 'utf8').toString('base64') + ':: boom'
+    expect(isRateLimitedPollError(new Error(structured({ category: 'quota', httpStatus: 429 })))).toBe(true)
+    expect(isRateLimitedPollError(new Error(structured({ category: 'server', httpStatus: 502 })))).toBe(false)
+    expect(isRateLimitedPollError(new Error('Provider request failed (HTTP 429)'))).toBe(true)
+    expect(isRateLimitedPollError(new Error('rate limit exceeded'))).toBe(true)
+    expect(isRateLimitedPollError(new TypeError('Failed to fetch'))).toBe(false)
+    // 任务 id / 时间戳里恰好含 429 不该被当成限流
+    expect(isRateLimitedPollError(new Error('task cgt-20260429-abc failed'))).toBe(false)
+  })
 })
 
 // 幂等键穿透回归：options.idempotencyKey 必须落进 request.extras.idempotencyKey，
@@ -825,17 +920,22 @@ describe('normalizeCatalogTaskResult — model3d validation evidence', () => {
       warnings: [],
     }
 
-    const result = normalizeCatalogTaskResult({
-      id: 'task-3d',
-      kind: 'image_to_3d',
-      status: 'succeeded',
-      assets: [{
-        type: 'model3d',
-        url: 'nomi-local://asset/project/model.glb',
-        model3dValidation,
-      }],
-      raw: {},
-    }, node)
+    const result = normalizeCatalogTaskResult(
+      {
+        id: 'task-3d',
+        kind: 'image_to_3d',
+        status: 'succeeded',
+        assets: [
+          {
+            type: 'model3d',
+            url: 'nomi-local://asset/project/model.glb',
+            model3dValidation,
+          },
+        ],
+        raw: {},
+      },
+      node,
+    )
 
     expect(result).toMatchObject({
       type: 'model3d',
@@ -947,7 +1047,11 @@ describe('Seedream 档案（图像，改图输入图走 image_urls，与 GPT 同
 describe('供应商真实 modelKey + 节点 meta.archetype.id：连线参考必须进入图生图字段', () => {
   const SOURCE_URL = 'https://x/direct-source.png'
   const source: GenerationCanvasNode = {
-    id: 'source', kind: 'image', title: '源图', position: { x: 0, y: 0 }, prompt: '',
+    id: 'source',
+    kind: 'image',
+    title: '源图',
+    position: { x: 0, y: 0 },
+    prompt: '',
     result: { id: 'source-result', type: 'image', url: SOURCE_URL, createdAt: 0 },
   }
 
@@ -960,9 +1064,16 @@ describe('供应商真实 modelKey + 节点 meta.archetype.id：连线参考必�
     ['volcengine', 'doubao-seedream-4-0-250828', 'volcengine-seedream', 'edit', 'image_urls'],
   ])('%s / %s（%s.%s）：直接参考边进入 %s', (vendor, modelKey, archetypeId, modeId, inputKey) => {
     const target: GenerationCanvasNode = {
-      id: 'target', kind: 'image', title: '目标图', position: { x: 100, y: 0 }, prompt: '改成蓝色',
+      id: 'target',
+      kind: 'image',
+      title: '目标图',
+      position: { x: 100, y: 0 },
+      prompt: '改成蓝色',
       meta: {
-        modelKey, modelAlias: modelKey, modelVendor: vendor, vendor,
+        modelKey,
+        modelAlias: modelKey,
+        modelVendor: vendor,
+        vendor,
         archetype: { id: archetypeId, modeId },
       },
     }

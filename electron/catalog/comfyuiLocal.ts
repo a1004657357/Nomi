@@ -20,6 +20,8 @@
 // 丢键报错（实查 taskParams.ts:78-84）。用 comfy_* 走 `...extras` 直通、不被派生覆盖。
 import { COMFYUI_VENDOR_KEY, type HttpOperation } from "./types";
 import { registerResponseTransform, type ResponseTransformFn } from "../tasks/responseTransforms";
+import { registerRequestTransform } from "../tasks/requestTransforms";
+import { fetchComfyuiCheckpoints } from "../comfyuiObjectInfo";
 
 function isRec(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -29,6 +31,10 @@ function isRec(value: unknown): value is Record<string, unknown> {
 function comfyuiErrorMessage(status: Record<string, unknown>): string {
   const messages = Array.isArray(status.messages) ? status.messages : [];
   for (const m of messages) {
+    // 用户主动打断（遮罩取消按钮 /interrupt，或在 ComfyUI 网页端停止）→「已取消」，不当红色失败文案吓人。
+    if (Array.isArray(m) && m[0] === "execution_interrupted") {
+      return "已取消（在 ComfyUI 端被打断）";
+    }
     if (Array.isArray(m) && m[0] === "execution_error" && isRec(m[1])) {
       const detail = m[1] as Record<string, unknown>;
       if (typeof detail.exception_message === "string" && detail.exception_message.trim()) {
@@ -232,8 +238,13 @@ export const COMFYUI_VENDOR_SEED = {
 // ─────────────────────────────────────────────────────────────────────────────
 // meta.parameters 控件（parseModelParameterControls 消费）。default 走 UI 路；同表派生 create.defaultParams
 // 走 headless/MCP 路（单一真相源，不各写一份漂移）。prompt 走标准 {{request.prompt}} 槽、不在此表。
+/** 共享参数标签（comfyuiPresets 复用，i18n 字面量门单源）。 */
+export const COMFY_NEGATIVE_LABEL = "负向提示词";
+
 const TXT2IMG_PARAMETERS = [
-  { key: "ckpt_name", label: "模型权重（checkpoint 文件名）", type: "text", default: "v1-5-pruned-emaonly.safetensors", placeholder: "你 ComfyUI/models/checkpoints 目录里的文件名" },
+  // ckpt_name 默认留空 = 提交时从本机 /object_info derive 第一个 checkpoint（"comfyui-prompt" 请求变换）。
+  // 旧默认写死 v1-5-pruned-emaonly.safetensors——没这个文件的人首跑必炸（微信 #2921「没任何反应」族根因）。
+  { key: "ckpt_name", label: "模型权重（checkpoint 文件名）", type: "text", default: "", placeholder: "留空 = 自动用本机第一个 checkpoint" },
   { key: "comfy_width", label: "宽度", type: "number", default: 512, min: 64, max: 2048, step: 64 },
   { key: "comfy_height", label: "高度", type: "number", default: 512, min: 64, max: 2048, step: 64 },
   { key: "comfy_steps", label: "采样步数", type: "number", default: 20, min: 1, max: 100, step: 1 },
@@ -243,7 +254,7 @@ const TXT2IMG_PARAMETERS = [
     options: ["euler", "euler_ancestral", "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_sde", "ddim", "uni_pc"],
   },
   { key: "comfy_seed", label: "随机种子", type: "number", default: 156680208700286 },
-  { key: "comfy_negative", label: "负向提示词", type: "text", default: "", placeholder: "不想出现的内容（可留空）" },
+  { key: "comfy_negative", label: COMFY_NEGATIVE_LABEL, type: "text", default: "", placeholder: "不想出现的内容（可留空）" },
 ] as const;
 
 /** 从参数表派生 headless 兜底默认值（单一真相源：与 UI 控件 default 同表，避免两处漂移）。 */
@@ -283,8 +294,42 @@ const TXT2IMG_CREATE_OP: HttpOperation = {
   headers: { "Content-Type": "application/json" },
   body: { prompt: TXT2IMG_GRAPH, client_id: "nomi" },
   response_mapping: { task_id: "prompt_id" }, // /prompt 返 {prompt_id} → providerMeta.task_id
+  request_transform: "comfyui-prompt", // ckpt_name 留空 → 发送前从本机 derive（见下方注册）
   defaultParams: TXT2IMG_DEFAULT_PARAMS,
 };
+
+/**
+ * 纯函数（导出供单测）：把图里 ckpt_name 为空的 CheckpointLoaderSimple 填成本机第一个 checkpoint。
+ * 只碰空值——用户手填的名字原样保留（填错了由 /prompt 400 的 node_errors 人话报出，不做静默纠正）；
+ * 导入的自定义 workflow 自带作者的文件名（非空）→ 本函数天然不影响。
+ */
+export function fillEmptyCheckpoint(prompt: Record<string, unknown>, checkpoints: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...prompt };
+  for (const [nodeId, node] of Object.entries(out)) {
+    if (!isRec(node) || node.class_type !== "CheckpointLoaderSimple" || !isRec(node.inputs)) continue;
+    if (String(node.inputs.ckpt_name ?? "").trim() !== "") continue;
+    out[nodeId] = { ...node, inputs: { ...node.inputs, ckpt_name: checkpoints[0] } };
+  }
+  return out;
+}
+
+// "comfyui-prompt" 请求变换：ckpt_name 留空时按本机实况补全（derive 不 hardcode）。
+// 只抛「面向用户的确定性错误」（连不上 / 没有任何 checkpoint —— 两者提交出去也必失败，fail fast 更省一轮）。
+registerRequestTransform("comfyui-prompt", async (body, { baseUrl }) => {
+  if (!isRec(body) || !isRec(body.prompt)) return body;
+  const needsFill = Object.values(body.prompt).some(
+    (node) => isRec(node) && node.class_type === "CheckpointLoaderSimple" && isRec(node.inputs) && String(node.inputs.ckpt_name ?? "").trim() === "",
+  );
+  if (!needsFill) return body;
+  const checkpoints = await fetchComfyuiCheckpoints(baseUrl);
+  if (checkpoints === null) {
+    throw new Error(`没连上 ComfyUI（${baseUrl || "http://127.0.0.1:8188"}）——确认 ComfyUI 已启动，或在参数里手填 checkpoint 文件名`);
+  }
+  if (checkpoints.length === 0) {
+    throw new Error("ComfyUI 的 models/checkpoints 目录里没有任何模型文件——先放一个 checkpoint（.safetensors）再生成");
+  }
+  return { ...body, prompt: fillEmptyCheckpoint(body.prompt, checkpoints) };
+});
 
 const TXT2IMG_QUERY_OP: HttpOperation = {
   method: "GET",

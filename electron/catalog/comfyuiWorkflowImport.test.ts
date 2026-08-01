@@ -5,9 +5,11 @@ import {
   buildImportedWorkflow,
   buildComfyImportModelMapping,
   importComfyWorkflow,
+  reconcileComfyWorkflow,
   slugifyModelKey,
   type ComfyGraph,
 } from "./comfyuiWorkflowImport";
+import { parseObjectInfoIndex } from "../comfyuiObjectInfo";
 import { buildTemplateContext, renderTemplateValue } from "../ai/requestPipeline";
 import { taskTemplateParams, applyWireDefaults } from "./taskParams";
 
@@ -322,5 +324,54 @@ describe("importComfyWorkflow / slugifyModelKey", () => {
   it("编排：坏 JSON 冒泡报错，不 upsert", () => {
     const boom = () => { throw new Error("should not be called"); };
     expect(() => importComfyWorkflow({ text: "{bad", binding: { numeric: [] }, labelZh: "x", modelKey: "k" }, boom, boom)).toThrow(/JSON/);
+  });
+});
+
+describe("reconcileComfyWorkflow（导入时缺件对账：图 vs 本机 /object_info）", () => {
+  const index = parseObjectInfoIndex({
+    KSampler: { input: { required: { sampler_name: [["euler", "ddim"]], seed: ["INT", {}] } } },
+    CheckpointLoaderSimple: { input: { required: { ckpt_name: [["local.safetensors"]] } } },
+    CLIPTextEncode: { input: { required: {} } },
+    EmptyLatentImage: { input: { required: {} } },
+    SaveImage: { input: { required: {} } },
+  });
+
+  it("全齐 → 零告警", () => {
+    const graph: ComfyGraph = {
+      "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "local.safetensors" } },
+      "2": { class_type: "KSampler", inputs: { sampler_name: "euler", seed: 1, model: ["1", 0] } },
+    };
+    const r = reconcileComfyWorkflow(graph, index);
+    expect(r.unknownNodeTypes).toEqual([]);
+    expect(r.missingEnumValues).toEqual([]);
+  });
+
+  it("缺自定义节点类 → unknownNodeTypes（去重），且缺类节点不再核枚举", () => {
+    const graph: ComfyGraph = {
+      "1": { class_type: "WanVideoWrapperSampler", inputs: { ckpt: "x" } },
+      "2": { class_type: "WanVideoWrapperSampler", inputs: {} },
+      "3": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "local.safetensors" } },
+    };
+    const r = reconcileComfyWorkflow(graph, index);
+    expect(r.unknownNodeTypes).toEqual(["WanVideoWrapperSampler"]);
+    expect(r.missingEnumValues).toEqual([]);
+  });
+
+  it("引用了本机没有的文件/选项 → missingEnumValues 带节点定位；连线/空值/模板占位不核", () => {
+    const graph: ComfyGraph = {
+      "1": { class_type: "CheckpointLoaderSimple", _meta: { title: "主模型" }, inputs: { ckpt_name: "author-only.safetensors" } },
+      "2": { class_type: "KSampler", inputs: { sampler_name: "euler", model: ["1", 0] } },
+      "3": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "" } }, // 空值不核（内置 derive 语义）
+      "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "{{request.params.x}}" } }, // 模板占位不核
+    };
+    const r = reconcileComfyWorkflow(graph, index);
+    expect(r.missingEnumValues).toEqual([
+      { nodeId: "1", classType: "CheckpointLoaderSimple", title: "主模型", inputKey: "ckpt_name", value: "author-only.safetensors" },
+    ]);
+  });
+
+  it("类存在但该输入无枚举（自由文本/数值）→ 不核", () => {
+    const graph: ComfyGraph = { "1": { class_type: "CLIPTextEncode", inputs: { text: "whatever" } } };
+    expect(reconcileComfyWorkflow(graph, index).missingEnumValues).toEqual([]);
   });
 });

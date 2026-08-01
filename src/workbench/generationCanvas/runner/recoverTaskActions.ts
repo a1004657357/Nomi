@@ -1,6 +1,7 @@
 import { fetchWorkbenchTaskResultByVendor, type TaskResultDto } from '../../api/taskApi'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
-import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import { getActiveWorkbenchProjectId, persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import { localizeRemoteResultUrl } from './resultAssetLocalization'
 import { narrateProgress } from '../../observability/narrate'
 import { resolveGenerationReferences } from './generationReferenceResolver'
 import { asTrimmedString, resolveTaskKind, selectedModelKey, selectedVendor } from './catalogTaskResolve'
@@ -104,7 +105,9 @@ export async function recoverNodeResult(nodeId: string): Promise<void> {
   if (!liveNode || !current) return
   try {
     const normalized = normalizeCatalogTaskResult(current, liveNode)
-    useGenerationCanvasStore.getState().addNodeResult(id, normalized)
+    // 结构闸（找回路径）：找回本身就发生在 CDN 快过期的时刻，此处尤其要把临时 URL 落地。
+    const localized = await localizeRemoteResultUrl(normalized, getActiveWorkbenchProjectId() ?? '', id)
+    useGenerationCanvasStore.getState().addNodeResult(id, localized)
     await persistActiveWorkbenchProjectNow().catch(() => {})
   } catch (error) {
     // 终态是 failed（normalizeCatalogTaskResult 对 failed 抛错）→ 这才是真失败，落 error 桶。

@@ -25,6 +25,15 @@ export function pixelToFrame(pixel: number, scale: number): number {
   return clampInteger(pixel / clampTimelineScale(scale), 0)
 }
 
+/**
+ * clip 在时间轴上的可见帧数（渲染宽度/切点范围的唯一依据）。
+ * 视频/音频裁剪只改 offset 与 endFrame、frameCount 恒为源总长——
+ * 布局读 frameCount 会让裁剪在 UI 上"纹丝不动"、且视觉跨度≠真实跨度（曾致按视觉位置的分割静默 no-op）。
+ */
+export function clipVisibleFrames(clip: Pick<TimelineClip, 'startFrame' | 'endFrame'>): number {
+  return Math.max(0, clampInteger(clip.endFrame, 0) - clampInteger(clip.startFrame, 0))
+}
+
 export function clientXToFrame(clientX: number, trackLeft: number, scale: number): number {
   return pixelToFrame(clientX - trackLeft, scale)
 }

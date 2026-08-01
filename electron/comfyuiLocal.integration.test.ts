@@ -41,6 +41,7 @@ let server: http.Server;
 let baseUrl = "";
 let historyHits = 0;
 let viewHits = 0;
+let objectInfoHits = 0;
 let lastPromptBody: { prompt: Record<string, { inputs: Record<string, unknown> }>; client_id?: string } | null = null;
 
 beforeAll(async () => {
@@ -77,6 +78,15 @@ beforeAll(async () => {
       viewHits += 1;
       res.writeHead(200, { "Content-Type": "image/png" });
       res.end(PNG_1x1);
+      return;
+    }
+    // ckpt_name 留空时 "comfyui-prompt" 请求变换会来这里 derive 本机第一个 checkpoint。
+    if (req.method === "GET" && url.pathname === "/object_info/CheckpointLoaderSimple") {
+      objectInfoHits += 1;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        CheckpointLoaderSimple: { input: { required: { ckpt_name: [["local-sd15.safetensors", "another.safetensors"]] } } },
+      }));
       return;
     }
     res.writeHead(404);
@@ -121,7 +131,9 @@ describe("本地 ComfyUI 传输链（真 HTTP 端到端）", () => {
     expect(createNorm.result.id).toBe("e2e-abc");
     // ComfyUI 真收到的是 API 格式工作流图（不是 UI json），提示词注入 + 数字是真数字
     expect(lastPromptBody?.prompt?.["6"]?.inputs?.text).toBe("a red cube on green grass");
-    expect(lastPromptBody?.prompt?.["4"]?.inputs?.ckpt_name).toBe("v1-5-pruned-emaonly.safetensors");
+    // ckpt 默认留空 → "comfyui-prompt" 请求变换真跑了一趟 /object_info 并 derive 出本机第一个 checkpoint
+    expect(objectInfoHits).toBeGreaterThanOrEqual(1);
+    expect(lastPromptBody?.prompt?.["4"]?.inputs?.ckpt_name).toBe("local-sd15.safetensors");
     expect(lastPromptBody?.prompt?.["3"]?.inputs?.seed).toBe(156680208700286);
     expect(typeof lastPromptBody?.prompt?.["5"]?.inputs?.width).toBe("number");
     expect(lastPromptBody?.client_id).toBe("nomi");

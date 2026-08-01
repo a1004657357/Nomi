@@ -1,4 +1,5 @@
 import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
+import { getDesktopBridge } from '../../../desktop/bridge'
 import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
@@ -8,6 +9,13 @@ import { cancelWorkbenchTask, mintSpendGrant } from '../../api/taskApi'
 import { describeGenerationCost, useSpendConfirmStore } from '../spend/spendConfirm'
 import { generationNodeExecutor, type GenerationNodeExecutor } from './generationNodeExecutor'
 import { narrateProgress } from '../../observability/narrate'
+import {
+  ComfyuiTaskCancelledError,
+  clearComfyuiCancel,
+  isComfyuiCancelRequested,
+  isComfyuiTaskCancelledError,
+} from './comfyuiTaskControl'
+import { useComfyuiPreviewStore } from '../store/comfyuiPreviewStore'
 import { isRecoverableTimeoutError } from './recoverableTimeout'
 import { recordModelFailure, recordModelSuccess } from './modelHealthMemory'
 // 错误分类(classifyGenerationError)已抽到 observability/classifyError(人话叶子层,生成域+对话域共用);
@@ -320,6 +328,15 @@ export async function runGenerationNode(
     }
     if (!result) throw new Error('生成失败')
     useGenerationCanvasStore.getState().addNodeResult(id, result)
+    // 自动另存（集中设置页开启时）：新生成的图/视频静默复制一份到用户目录。fire-and-forget——不 await
+    // （不拖慢生成收尾）、失败不冒泡（best-effort 全在主进程侧，关着/没设目录/失败都静默）。只对新生成，
+    // 找回(recoverTaskActions)不触发、避免重复另存。
+    if ((result.type === 'image' || result.type === 'video') && (result.url || '').trim()) {
+      const title = (useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)?.title || '').trim()
+      void getDesktopBridge()
+        ?.assets?.autoSave?.({ url: result.url as string, suggestedName: title || undefined })
+        .catch(() => undefined)
+    }
     recordModelSuccess(currentNodeModelKey(id))
     await persistActiveWorkbenchProjectNow().catch(() => {})
     return result
@@ -327,6 +344,13 @@ export async function runGenerationNode(
     if (controller.signal.aborted || isAbortError(error)) {
       useGenerationCanvasStore.getState().setNodeStatus(id, 'idle')
       throw isAbortError(error) ? error : new DOMException('生成已取消', 'AbortError')
+    }
+    // P 轨遮罩取消：用户主动停的，不进红色错误桶也不算模型失败——回 idle 静静结束。
+    // 两条路都要兜：① 轮询 tick 主动抛 ComfyuiTaskCancelledError；② 竞态——点取消瞬间轮询恰好
+    // 把 /history 的 interrupted 终态拉回来当失败抛（走查实锤），靠 cancelRequested 登记识别。
+    if (isComfyuiTaskCancelledError(error) || isComfyuiCancelRequested(id)) {
+      useGenerationCanvasStore.getState().setNodeStatus(id, 'idle')
+      throw isComfyuiTaskCancelledError(error) ? error : new ComfyuiTaskCancelledError()
     }
     // 可找回超时：上游可能仍在跑/已出片 → 落 recoverable（不进红色错误桶），给「重新拉取」入口。
     // taskId 已在 run 记录里持久化，recover 动作从节点重建续查（重启后也能拉）。
@@ -345,6 +369,9 @@ export async function runGenerationNode(
   } finally {
     options.signal?.removeEventListener('abort', abortFromExternal)
     if (activeGenerationRuns.get(id) === activeRun) activeGenerationRuns.delete(id)
+    // 取消登记与活预览帧都是会话瞬态：任务收尾（成/败/取消）一律清，防泄漏到下一次生成。
+    clearComfyuiCancel(id)
+    useComfyuiPreviewStore.getState().clearPreview(id)
   }
 }
 

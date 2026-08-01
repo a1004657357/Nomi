@@ -94,7 +94,7 @@ export type AssetIngestion =
       responseIsPlainTextUrl?: boolean;
       /** file 字段名(默认 "file")。litterbox 用 "fileToUpload"。 */
       fileField?: string;
-      /** multipart 里除 file 外的固定文本字段(如 litterbox 的 reqtype=fileupload & time=1h)。 */
+      /** multipart 里除 file 外的固定文本字段(如 litterbox 的 reqtype=fileupload & time=24h)。 */
       extraFields?: Record<string, string>;
       /**
        * 可选:提取出 URL 后再做一次纯字符串替换。
@@ -232,6 +232,13 @@ export type HttpOperation = {
    * electron/tasks/responseTransforms.ts，runtime 只按名查表、不含 vendor 逻辑。
    */
   response_transform?: string;
+  /**
+   * **命名请求变换**（与 response_transform 对称）。模板渲染完、发 HTTP 前对 body 应用一次，
+   * 用于「按目标后端实况补全请求」（如 ComfyUI 内置文生图 ckpt_name 留空 → 从本机 /object_info
+   * derive 第一个 checkpoint）。变换住各自 vendor 模块、注册进 electron/tasks/requestTransforms.ts；
+   * 与响应变换的刻意差异：变换抛错会冒泡（fail fast 拦下必失败的提交并给人话），见该文件头。
+   */
+  request_transform?: string;
   /**
    * **wire 必填参数的兜底默认值**（headless/MCP 路专用）。UI 路由 NodeGenerationComposer 会按档案
    * (src/config/modelArchetypes) 把用户选的 size/voice/model 等填进 request.params；但 MCP/CLI 的

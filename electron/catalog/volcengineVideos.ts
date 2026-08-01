@@ -22,6 +22,8 @@ function seedanceCreateOp(content: unknown[]): HttpOperation {
       resolution: "{{request.params.resolution}}",
       ratio: "{{request.params.ratio}}",
       duration: "{{request.params.duration}}",
+      // 可选种子（无默认 → 未填则模板丢弃，同 apimart seedance 的 SEED）。官方范围 -1..2^32-1。
+      seed: "{{request.params.seed}}",
       generate_audio: "{{request.params.generate_audio}}",
       watermark: false,
     },

@@ -58,7 +58,11 @@ function frameLabel(which: VideoFrameWhich): string {
 }
 
 export function videoFrameCacheRelativePath(videoUrl: string, which: VideoFrameWhich): string {
-  const digest = crypto.createHash("sha256").update(`${videoUrl}\0${String(which)}`).digest("hex").slice(0, 24);
+  const digest = crypto
+    .createHash("sha256")
+    .update(`${videoUrl}\0${String(which)}`)
+    .digest("hex")
+    .slice(0, 24);
   return `${FRAME_CACHE_DIR}/frame-${frameLabel(which)}-${digest}.png`;
 }
 
@@ -112,7 +116,11 @@ function writePersistentFrame(payload: ExtractVideoFramePayload, sourcePath: str
     }
     return target.url;
   } finally {
-    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch { /* non-fatal */ }
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {
+      /* non-fatal */
+    }
   }
 }
 
@@ -139,7 +147,16 @@ async function resolveVideoLocalPath(
     }
     const tmp = path.join(os.tmpdir(), `nomi-relay-src-${crypto.randomUUID()}.mp4`);
     fs.writeFileSync(tmp, result.bytes);
-    return { filePath: tmp, cleanup: () => { try { fs.unlinkSync(tmp); } catch { /* non-fatal */ } } };
+    return {
+      filePath: tmp,
+      cleanup: () => {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+          /* non-fatal */
+        }
+      },
+    };
   }
   if (path.isAbsolute(videoUrl) && fs.existsSync(videoUrl)) {
     return { filePath: videoUrl, cleanup: noop };
@@ -165,11 +182,14 @@ function runFfmpeg(ffmpegPath: string, args: string[]): Promise<void> {
     ensureExecutable(ffmpegPath);
     const child = spawn(ffmpegPath, args, { windowsHide: true });
     let stderr = "";
-    child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new VideoFrameError(`ffmpeg 抽帧失败（code ${code}）：${stderr.trim().slice(-300) || "(无 stderr)"}`));
+      else
+        reject(new VideoFrameError(`ffmpeg 抽帧失败（code ${code}）：${stderr.trim().slice(-300) || "(无 stderr)"}`));
     });
   });
 }
@@ -188,12 +208,18 @@ async function extractResolvedVideoFrame(
     const outputSeek = ss - inputSeek;
     const args = [
       "-y",
-      "-ss", String(inputSeek),
-      "-i", filePath,
-      "-ss", String(outputSeek),
-      "-frames:v", "1",
-      "-q:v", "3",
-      "-update", "1",
+      "-ss",
+      String(inputSeek),
+      "-i",
+      filePath,
+      "-ss",
+      String(outputSeek),
+      "-frames:v",
+      "1",
+      "-q:v",
+      "3",
+      "-update",
+      "1",
       outPath,
     ];
     await runFfmpeg(ffmpegPath, args);
@@ -204,7 +230,11 @@ async function extractResolvedVideoFrame(
     frameCache.set(cacheKey(payload), url);
     return { url };
   } finally {
-    try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch { /* non-fatal */ }
+    try {
+      if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    } catch {
+      /* non-fatal */
+    }
   }
 }
 
@@ -213,7 +243,7 @@ async function extractResolvedVideoFrame(
  * （resolver 的「不冒充」不变量靠这里兜底：上游拿到 error 就标人话错误、不裸跑）。
  */
 export async function extractVideoFrameToAsset(payload: ExtractVideoFramePayload): Promise<ExtractVideoFrameResult> {
-  const { videoUrl, which, projectId } = payload;
+  const { videoUrl, projectId } = payload;
   if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
   if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");
 
@@ -244,7 +274,9 @@ export function normalizeVideoFrameTimes(times: readonly number[]): number[] {
  * 批量抽取指定时间帧。远程视频只下载一次，随后在同一本地源上顺序抽帧；
  * 顺序执行刻意限制 FFmpeg 并发，避免检查器打开时抢占画布渲染资源。
  */
-export async function extractVideoFramesToAssets(payload: ExtractVideoFramesPayload): Promise<ExtractVideoFramesResult> {
+export async function extractVideoFramesToAssets(
+  payload: ExtractVideoFramesPayload,
+): Promise<ExtractVideoFramesResult> {
   const { videoUrl, projectId } = payload;
   if (!videoUrl || typeof videoUrl !== "string") throw new VideoFrameError("缺少源视频地址");
   if (!projectId || typeof projectId !== "string") throw new VideoFrameError("缺少 projectId");

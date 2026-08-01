@@ -22,8 +22,8 @@ import {
   upsertModelCatalogVendor,
   upsertModelCatalogVendorApiKey,
 } from "./catalog/catalogStore";
-import { analyzeComfyWorkflowText, importComfyWorkflowToCatalog, updateComfyWorkflowInCatalog } from "./catalog/comfyuiWorkflowImportStore";
 import { runTaskWithIdempotency } from "./submissionLedger";
+import { runTaskIpcGuard } from "./tasks/taskIpcGuard";
 import { mintSpendGrant } from "./spendGrant";
 import { installCrashHandlers, logCrash } from "./crashLog";
 import { registerExportJobIpc } from "./export/exportJobIpc";
@@ -36,15 +36,17 @@ import { registerMemoryIpc } from "./memory/memoryIpc";
 import { registerPromptLibraryIpc } from "./promptLibrary/promptLibraryIpc";
 import { registerBrowserViewIpc } from "./browser/core/browserViews";
 import { registerBrowserPromptExtractionSettingsIpc } from "./browser/settings/browserPromptExtractionSettings";
+import { registerProxyIpc } from "./proxyIpc";
 import { catalogSecretsProvider } from "./events/secretsProvider";
 import { registerOnboardingIpc } from "./ai/onboarding/onboardingIpc";
 import { registerUpdaterIpc } from "./update/autoUpdater";
 import { setRendererTarget } from "./capabilityCore/rendererBridge";
 import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfig";
 import { registerLocalProtocol } from "./protocol/localProtocol";
-import { installWindowCloseConfirmation } from "./windowCloseConfirmation";
 import { createWindowActivator } from "./windowActivator";
 import { registerDesktopIntegrationIpc } from "./desktopIntegrationIpc";
+import { installMainWindowInteractions } from "./mainWindowInteractions";
+import { getMainWindow, setMainWindow } from "./mainWindowRegistry";
 import { registerI18nIpc, setDesktopLocale } from "./i18n";
 
 // 尽早安装：捕获引导阶段起的 uncaughtException / unhandledRejection，落盘到 app logs（P0-8）。
@@ -79,7 +81,8 @@ if (!isMcpStdio && !allowE2eMultiInstance) {
     app.quit();
   } else {
     app.on("second-instance", () => {
-      void app.whenReady()
+      void app
+        .whenReady()
         .then(() => activateMainWindow())
         .catch((error) => console.error("[nomi:desktop] failed to activate second instance:", error));
     });
@@ -111,7 +114,6 @@ const isDev = Boolean(process.env.VITE_DEV_SERVER_URL || process.env.NOMI_DESKTO
 const devRemoteDebuggingPort = process.env.NOMI_DESKTOP_REMOTE_DEBUGGING_PORT;
 const DEV_RENDERER_LOAD_ATTEMPTS = 20;
 const DEV_RENDERER_LOAD_RETRY_MS = 500;
-let mainWindowRef: BrowserWindow | null = null;
 let cancelBlenderRendersOnQuit: (() => number) | null = null;
 let isRecreatingMainWindow = false;
 const lowMemoryMode = process.env.NOMI_LOW_MEMORY_MODE === "1";
@@ -140,6 +142,7 @@ async function loadCapabilityCoreModule(): Promise<typeof import("./capabilityCo
 function setActiveCapabilityProject(projectId: string): void {
   activeCapabilityProjectId = String(projectId || "").trim();
   if (capabilityCoreModule) capabilityCoreModule.setOpenProjectId(activeCapabilityProjectId);
+  void import("./tasks/activeProjectFallback").then((m) => m.rememberActiveProjectForTasks(activeCapabilityProjectId));
 }
 
 function getActiveCapabilityPort(): number | null {
@@ -310,13 +313,10 @@ async function createWindow(
       sandbox: false,
     },
   });
-  mainWindowRef = mainWindow;
-  // Playwright closes the Electron application programmatically. Showing the
-  // user-facing confirmation there prevents app.close() from ever completing
-  // and forces every isolated run down the SIGKILL fallback.
-  if (process.env.NOMI_E2E !== "1") installWindowCloseConfirmation(mainWindow);
+  setMainWindow(mainWindow); // 主窗口单一真相（registry）；closed 条件清理防窗口重建竞态误清新窗
+  installMainWindowInteractions(mainWindow);
   mainWindow.on("closed", () => {
-    if (mainWindowRef === mainWindow) mainWindowRef = null;
+    if (getMainWindow() === mainWindow) setMainWindow(null);
   });
 
   // Windows 自绘标题栏需要知道最大化态来切「最大化/还原」图标。窗口级监听随窗口销毁回收（无泄漏）。
@@ -347,9 +347,8 @@ async function createWindow(
   // 转发进运行中的渲染层（所见即所得）。窗口销毁即清除，避免向死窗口发送。
   setRendererTarget(mainWindow.webContents);
   mainWindow.webContents.on("destroyed", () => {
-    if (!mainWindowRef || mainWindowRef === mainWindow || mainWindowRef.webContents === mainWindow.webContents) {
-      setRendererTarget(null);
-    }
+    const main = getMainWindow();
+    if (!main || main === mainWindow || main.webContents === mainWindow.webContents) setRendererTarget(null);
   });
 
   registerDevDiagnostics(mainWindow, rendererUrl);
@@ -415,33 +414,12 @@ function registerSyncIpc<TArgs extends unknown[], TResult>(
   });
 }
 
-// S4-2:VendorRequestError 的 structured 经 base64 标记穿 IPC(rejection 只剩 message 字符串);
-// 顺带补「创建即失败」的 vendor.call.completed(failed) 事件(成功/轮询终态在 runtime 内记)。
-async function runTaskIpcGuard<T>(payload: unknown, thunk: () => Promise<T>): Promise<T> {
-  try {
-    return await thunk();
-  } catch (error) {
-    const { VendorRequestError, encodeVendorErrorMessage } = await import("./vendor/vendorHttp");
-    if (error instanceof VendorRequestError) {
-      const { traceVendorCompleted } = await import("./events/vendorCallTrace");
-      const extras = (payload as { request?: { extras?: Record<string, unknown> } })?.request?.extras || {};
-      traceVendorCompleted(String(extras.projectId || ""), {
-        runId: `failed-${Math.random().toString(36).slice(2, 10)}`,
-        ...(extras.nodeId ? { nodeId: String(extras.nodeId) } : {}),
-        status: "failed",
-        assetCount: 0,
-        error: error.structured,
-      });
-      throw new Error(encodeVendorErrorMessage(error));
-    }
-    throw error;
-  }
-}
-
 function registerIpc(): void {
   registerI18nIpc();
   registerDesktopIntegrationIpc({
-    setCancelBlenderRendersOnQuit: (cancel) => { cancelBlenderRendersOnQuit = cancel; },
+    setCancelBlenderRendersOnQuit: (cancel) => {
+      cancelBlenderRendersOnQuit = cancel;
+    },
   });
   // 渲染层崩溃（RootErrorBoundary）也落到同一崩溃日志（P0-8）。
   ipcMain.on("nomi:log:renderer-crash", (_event, message: unknown) => logCrash("renderer", String(message)));
@@ -496,15 +474,9 @@ function registerIpc(): void {
   registerSyncIpc("nomi:model-catalog:mapping:delete", deleteModelCatalogMapping);
   registerSyncIpc("nomi:model-catalog:export", exportModelCatalogPackage);
   registerSyncIpc("nomi:model-catalog:import", importModelCatalogPackage);
-  // 本地 ComfyUI 健康探测（接入卡启用/重检调用；async，直连 localhost /system_stats）。
-  ipcMain.handle("nomi:model-catalog:comfyui:probe", (_event, baseUrl: unknown) => {
-    const { probeComfyuiSystemStats } = require("./comfyuiProbe") as typeof import("./comfyuiProbe");
-    return probeComfyuiSystemStats(String(baseUrl || ""));
-  });
-  // 本地 ComfyUI 自定义 workflow 导入（S3）：analyze 识别可绑定节点、import 落库为用户自有 model+mapping。
-  registerSyncIpc("nomi:model-catalog:comfyui:analyze-workflow", (text: unknown) => analyzeComfyWorkflowText(text));
-  registerSyncIpc("nomi:model-catalog:comfyui:import-workflow", (payload: unknown) => importComfyWorkflowToCatalog(payload));
-  registerSyncIpc("nomi:model-catalog:comfyui:update-workflow", (payload: unknown) => updateComfyWorkflowInCatalog(payload));
+  // ComfyUI 域 IPC（探测/导入/缺件对账）全住 electron/comfyuiIpc.ts（main.ts 800 行门腾空间）。
+  const { registerComfyuiIpc } = require("./comfyuiIpc") as typeof import("./comfyuiIpc");
+  registerComfyuiIpc(registerSyncIpc);
   // Skill / Playbook 域（业务函数在 electron/skills/*，这里只接同步 IPC 管道）。
   registerSyncIpc("nomi:skill:list", () => {
     const { listSkillsForRenderer } = require("./skills/skillIpc") as typeof import("./skills/skillIpc");
@@ -557,13 +529,14 @@ function registerIpc(): void {
     return archiveOutputCollection(payload);
   });
   ipcMain.handle("nomi:files:extract-text", async (_event, payload) => {
-    const raw = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    const raw = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
     const source = raw.bytes;
-    const bytes = source instanceof ArrayBuffer
-      ? Buffer.from(source)
-      : ArrayBuffer.isView(source)
-        ? Buffer.from(source.buffer, source.byteOffset, source.byteLength)
-        : null;
+    const bytes =
+      source instanceof ArrayBuffer
+        ? Buffer.from(source)
+        : ArrayBuffer.isView(source)
+          ? Buffer.from(source.buffer, source.byteOffset, source.byteLength)
+          : null;
     if (!bytes || bytes.byteLength === 0) throw new Error("文件内容为空");
     if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("剧本文件不能超过 20 MB");
     const { extractTextFromBytes } = await import("./files/extractText");
@@ -616,7 +589,9 @@ function registerIpc(): void {
   ipcMain.handle("nomi:tasks:cancel", async (_event, payload) => {
     const raw = (payload || {}) as { runId?: unknown; vendor?: unknown };
     const runId = String(raw.runId || "").trim();
-    const vendor = String(raw.vendor || "").trim().toLowerCase();
+    const vendor = String(raw.vendor || "")
+      .trim()
+      .toLowerCase();
     if (!runId) return { cancelled: false, remoteCancelled: false };
     if (vendor && vendor !== "codex") return { cancelled: false, remoteCancelled: false };
     const { cancelCodexImageGeneration } = await import("./ai/codexImagegenRunner");
@@ -638,6 +613,7 @@ function registerIpc(): void {
   registerMemoryIpc();
   registerPromptLibraryIpc();
   registerBrowserPromptExtractionSettingsIpc();
+  registerProxyIpc();
   registerBrowserViewIpc(getRendererUrl);
   registerOnboardingIpc();
   registerUpdaterIpc();
@@ -743,11 +719,9 @@ if (hasSingleInstanceLock)
       await activateMainWindow();
       setTimeout(
         () => {
-          void import("./systemProxy")
-            .then(({ applySystemProxy }) => applySystemProxy(session.defaultSession))
-            .catch((error) => {
-              console.error("[nomi:desktop] applySystemProxy failed:", error);
-            })
+          void import("./proxyIpc")
+            .then(({ applyProxyAtBoot }) => applyProxyAtBoot())
+            .catch((error) => console.error("[nomi:desktop] proxy boot failed:", error))
             // 代理定型后装 vendor 候选域自愈（apimart 被墙自动切官方备用域；回切探测走最终 dispatcher）。
             .then(() => import("./vendor/vendorBaseFallbackBoot"))
             .then((m) => m.configureVendorBaseFallbackAtBoot())
@@ -778,7 +752,8 @@ app.on("before-quit", () => {
   // 能力核退出清理：清实例广告 + 关 RPC，让外部探测立刻知道「app 已关」。同步、不抛。
   stopDesktopCapabilityCore();
   try {
-    const { terminateAllCodexImagegenProcesses } = require("./ai/codexImagegenRunner") as typeof import("./ai/codexImagegenRunner");
+    const { terminateAllCodexImagegenProcesses } =
+      require("./ai/codexImagegenRunner") as typeof import("./ai/codexImagegenRunner");
     const terminated = terminateAllCodexImagegenProcesses();
     if (terminated > 0) console.log(`[nomi:desktop] terminated ${terminated} Codex Img2 process group(s) on quit`);
   } catch (error) {

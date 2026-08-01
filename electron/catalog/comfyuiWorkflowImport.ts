@@ -10,6 +10,7 @@
 // 每节点 { inputs:{…}, class_type, _meta:{title} }；inputs 值要么是直接 widget 值（可参数化），
 // 要么是连线 [源节点ID, 输出槽] （不可参数化，保持不动）。
 import { COMFYUI_VENDOR_KEY, type HttpOperation } from "./types";
+import type { ComfyObjectInfoIndex } from "../comfyuiObjectInfo";
 
 export type ComfyNode = { class_type?: string; inputs?: Record<string, unknown>; _meta?: { title?: string } };
 export type ComfyGraph = Record<string, ComfyNode>;
@@ -64,7 +65,7 @@ const STRING_CONCAT_RE = /string.*concat|concat.*string/i;
 const TEXT_GENERATE_RE = /textgenerate/i;
 // 常见可暴露的数值 widget（按优先序去重，避免一张 WAN 图几十个数值全暴露成噪音）。
 const NUMERIC_PRIORITY = ["seed", "steps", "cfg", "denoise", "width", "height", "length", "frames", "num_frames", "fps", "frame_rate", "batch_size"];
-const NUMERIC_LABEL: Record<string, string> = {
+export const NUMERIC_LABEL: Record<string, string> = {
   seed: "随机种子", steps: "采样步数", cfg: "CFG 强度", denoise: "重绘幅度", width: "宽度", height: "高度",
   length: "帧数/时长", frames: "帧数", num_frames: "帧数", fps: "帧率", frame_rate: "帧率", batch_size: "批量",
 };
@@ -279,6 +280,42 @@ export function analyzeComfyWorkflow(graph: ComfyGraph): WorkflowAnalysis {
       params: suggestedParams,
     },
   };
+}
+
+/** 一条「引用了本机没有的文件/选项」记录（combo 枚举对不上：checkpoint/LoRA/VAE 文件名、采样器名…）。 */
+export type MissingEnumValue = { nodeId: string; classType: string; title?: string; inputKey: string; value: string };
+export type WorkflowReconcile = {
+  /** 本机 ComfyUI 没装的节点类（缺自定义节点包，运行必失败）。 */
+  unknownNodeTypes: string[];
+  /** 输入值不在本机 combo 可选项里（多半 = 作者机器上的模型文件名，本机没这个文件）。 */
+  missingEnumValues: MissingEnumValue[];
+};
+
+/**
+ * 导入时对账（纯函数）：workflow 每个节点/每个标量输入 vs 本机 /object_info 能力索引。
+ * 抄自 Krita AI Diffusion 的「清单 vs object_info」思路（generic 版：不需要预置清单，全图逐项核）——
+ * 缺节点/缺模型是 ComfyUI 接入第一死因，在导入面板就说清，不等 /prompt 400 或 execution_error 再猜。
+ */
+export function reconcileComfyWorkflow(graph: ComfyGraph, index: ComfyObjectInfoIndex): WorkflowReconcile {
+  const unknown = new Set<string>();
+  const missingEnumValues: MissingEnumValue[] = [];
+  for (const [nodeId, node] of Object.entries(graph)) {
+    const classType = node.class_type ?? "";
+    if (!index.classNames.has(classType)) {
+      unknown.add(classType);
+      continue; // 类都没有，枚举无从核对
+    }
+    const enums = index.enumsByClass.get(classType);
+    if (!enums) continue;
+    const inputs = node.inputs && typeof node.inputs === "object" ? node.inputs : {};
+    for (const [inputKey, value] of Object.entries(inputs)) {
+      if (typeof value !== "string" || !value.trim() || value.includes("{{")) continue; // 连线/空值/模板占位不核
+      const options = enums.get(inputKey);
+      if (!options || options.includes(value)) continue;
+      missingEnumValues.push({ nodeId, classType, title: node._meta?.title, inputKey, value });
+    }
+  }
+  return { unknownNodeTypes: [...unknown], missingEnumValues };
 }
 
 function setInput(graph: ComfyGraph, nodeId: string, inputKey: string, value: string): void {

@@ -7,6 +7,9 @@ const PARAMS: ModelParameterControl[] = [
   { key: "ratio", label: "比例", type: "select", options: opt(["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"]), defaultValue: "16:9" },
   { key: "resolution", label: "清晰度", type: "select", options: opt(["480p", "720p", "1080p", "4k"]), defaultValue: "720p" },
   { key: "duration", label: "时长(秒)", type: "number", options: [], min: 4, max: 15, defaultValue: 5 },
+  // 官方字段表有 seed，同族的 apimart 档案也有 —— 唯独火山这份漏了。参数由**模型身份**决定、
+  // 与渠道无关（model-param-consistency 铁律），同一个 Seedance 2.0 换个渠道就少一个控件是 bug。
+  { key: "seed", label: "种子", type: "number", options: [], placeholder: "随机" },
   { key: "generate_audio", label: "生成音频", type: "boolean", options: [], defaultValue: true },
 ];
 

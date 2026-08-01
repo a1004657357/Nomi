@@ -223,6 +223,7 @@ export const AssetGridCell = React.memo(function AssetGridCell({
   dragHint: dragHintProp,
   onSelect,
   onDragStartAsset,
+  onPreview,
 }: {
   asset: AssetRef
   compact?: boolean
@@ -232,6 +233,8 @@ export const AssetGridCell = React.memo(function AssetGridCell({
   dragHint?: string
   onSelect?: (asset: AssetRef, event: React.MouseEvent<HTMLDivElement>) => void
   onDragStartAsset?: (asset: AssetRef, event: React.DragEvent<HTMLDivElement>) => void
+  /** 双击放大预览（#52）；缺省则不响应双击。 */
+  onPreview?: (asset: AssetRef) => void
 }): JSX.Element {
   const { t } = useTranslation()
   const handleDragStart = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -244,6 +247,10 @@ export const AssetGridCell = React.memo(function AssetGridCell({
   const handleClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     onSelect?.(asset, event)
   }, [asset, onSelect])
+  const handleDoubleClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.stopPropagation()
+    onPreview?.(asset)
+  }, [asset, onPreview])
   const dragHint = dragHintProp ?? (draggable
     ? asset.kind === 'audio' ? t('assetLibrary.dragAudio') : t('assetLibrary.dragCanvas')
     : t('assetLibrary.selectableProjectAsset'))
@@ -268,6 +275,7 @@ export const AssetGridCell = React.memo(function AssetGridCell({
           <div
             draggable={draggable}
             onClick={selectable ? handleClick : undefined}
+            onDoubleClick={onPreview ? handleDoubleClick : undefined}
             onDragStart={handleDragStart}
             className={cn(
               'group relative mb-2.5 inline-block w-full overflow-hidden rounded-nomi border border-nomi-line bg-nomi-paper align-top',
@@ -307,6 +315,7 @@ export const AssetGridCell = React.memo(function AssetGridCell({
           <div
             draggable={draggable}
             onClick={selectable ? handleClick : undefined}
+            onDoubleClick={onPreview ? handleDoubleClick : undefined}
             onDragStart={handleDragStart}
             className={cn(
               'group relative flex aspect-square items-center justify-center overflow-hidden rounded-nomi-sm border border-nomi-line bg-nomi-ink-05',

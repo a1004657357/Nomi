@@ -18,9 +18,6 @@ export default function CreationWorkspace(): JSX.Element {
   // 一次性信号：打开示例/新项目时自动展开助手，让「拆镜头」CTA 一眼可见，消费后清掉。
   const autoOpen = useWorkbenchStore((s) => s.creationAssistantAutoOpen)
   const setAutoOpen = useWorkbenchStore((s) => s.setCreationAssistantAutoOpen)
-  // 原稿与分镜是同一创作阶段的两个工作面；方案存在后始终给出明确入口，避免“内容被替换”的错觉。
-  const storyboardPlan = useWorkbenchStore((s) => s.storyboardPlan)
-  const storyboardPlanCommitted = useWorkbenchStore((s) => s.storyboardPlanCommitted)
   const storyboardEditorOpen = useWorkbenchStore((s) => s.storyboardEditorOpen)
   const storyboardScriptOpen = useWorkbenchStore((s) => s.storyboardScriptOpen)
   React.useEffect(() => {
@@ -28,7 +25,7 @@ export default function CreationWorkspace(): JSX.Element {
       setCollapsed(false)
       setAutoOpen(false)
     }
-  }, [autoOpen, setAutoOpen])
+  }, [autoOpen, setAutoOpen, setCollapsed])
 
   return (
     <section
@@ -46,7 +43,13 @@ export default function CreationWorkspace(): JSX.Element {
       )}
       aria-label={t('creationAi.workspace.aria')}
     >
-      {storyboardEditorOpen ? <StoryboardPlanEditor /> : storyboardScriptOpen ? <StoryboardScriptPanel /> : <WorkbenchEditor />}
+      {storyboardEditorOpen ? (
+        <StoryboardPlanEditor />
+      ) : storyboardScriptOpen ? (
+        <StoryboardScriptPanel />
+      ) : (
+        <WorkbenchEditor />
+      )}
       {!storyboardEditorOpen && !storyboardScriptOpen ? (
         <StoryboardScriptShortcutButton className="absolute top-[22px] left-6 z-[20]" label="查看分镜脚本" />
       ) : null}

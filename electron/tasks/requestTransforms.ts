@@ -1,0 +1,32 @@
+// 命名请求变换注册表（HttpOperation.request_transform 的执行层），与 responseTransforms 对称：
+// 当请求体需要「发送前按目标后端实况补全」（如 ComfyUI 内置文生图 ckpt_name 留空 → 从本机 /object_info
+// derive 第一个 checkpoint），vendor 模块注册具名变换、op 上声明变换名；executeProfileOperation 在模板
+// 渲染完、发 HTTP 前应用一次。runtime 只按名查表、不含 vendor 逻辑（P4）。
+//
+// 与 responseTransforms 的一个刻意差异：**变换抛错要冒泡**（fail fast，零成本拦下必失败的提交并给人话），
+// 所以变换实现只允许抛「面向用户的确定性错误」；内部意外一律自行兜住、原样返回 body。
+
+export type RequestTransformContext = {
+  /** vendor.baseUrlHint（变换按后端实况补参时用）。缺省空串。 */
+  baseUrl: string;
+};
+
+export type RequestTransformFn = (body: unknown, context: RequestTransformContext) => Promise<unknown> | unknown;
+
+const registry = new Map<string, RequestTransformFn>();
+
+export function registerRequestTransform(name: string, fn: RequestTransformFn): void {
+  registry.set(name, fn);
+}
+
+/** 应用具名变换；未声明或未注册 → 原样返回（对现有全部 vendor 零影响）。变换抛错向上冒泡（见文件头）。 */
+export async function applyRequestTransform(
+  name: string | undefined,
+  body: unknown,
+  context: RequestTransformContext,
+): Promise<unknown> {
+  if (!name) return body;
+  const fn = registry.get(name);
+  if (!fn) return body;
+  return await fn(body, context);
+}

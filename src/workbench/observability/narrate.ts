@@ -15,12 +15,20 @@ export type GenerationProgressPhase =
   | 'retrying' //    网络波动重试中
   | 'rate-limited' // 等待服务商的下一次可提交窗口
   | 'finalizing' //  正在保存结果(本地化/归一)
+  | 'comfyui-node' // ComfyUI ws 逐节点进度(P 轨:真实百分比,不违背 No fake progress)
+  | 'comfyui-queued' // ComfyUI 服务器队列排队中(ws status + /queue 位次)
 
 export type ProgressNarrationContext = {
   elapsedMs?: number
   attempt?: number
   maxAttempts?: number
   waitMs?: number
+  /** comfyui-node：当前执行的节点 class + 第几/共几个。 */
+  currentClass?: string
+  startedNodes?: number
+  totalNodes?: number
+  /** comfyui-queued：前面还有几个任务。 */
+  queueAhead?: number
 }
 
 const NARRATE_PROGRESS: Record<GenerationProgressPhase, (ctx: ProgressNarrationContext) => string> = {
@@ -42,12 +50,31 @@ const NARRATE_PROGRESS: Record<GenerationProgressPhase, (ctx: ProgressNarrationC
         })
       : i18n.t('generationCommon.observability.progress.stillGenerating'),
   retrying: (ctx) =>
-    ctx.attempt && ctx.maxAttempts ? `网络波动,正在重试(${ctx.attempt}/${ctx.maxAttempts})` : '网络波动,正在重试',
+    ctx.attempt && ctx.maxAttempts
+      ? i18n.t('generationCommon.observability.progress.retryingAttempt', {
+          attempt: ctx.attempt,
+          maxAttempts: ctx.maxAttempts,
+        })
+      : i18n.t('generationCommon.observability.progress.retrying'),
   'rate-limited': (ctx) =>
     typeof ctx.waitMs === 'number'
-      ? `等待服务商频率窗口,约 ${Math.max(1, Math.ceil(ctx.waitMs / 1000))} 秒`
-      : '等待服务商频率窗口',
-  finalizing: () => '正在保存结果',
+      ? i18n.t('generationCommon.observability.progress.rateLimitedWait', {
+          seconds: Math.max(1, Math.ceil(ctx.waitMs / 1000)),
+        })
+      : i18n.t('generationCommon.observability.progress.rateLimited'),
+  finalizing: () => i18n.t('generationCommon.observability.progress.finalizing'),
+  'comfyui-node': (ctx) =>
+    ctx.currentClass && ctx.startedNodes && ctx.totalNodes
+      ? i18n.t('generationCommon.observability.progress.comfyNodeAt', {
+          cls: ctx.currentClass,
+          current: ctx.startedNodes,
+          total: ctx.totalNodes,
+        })
+      : i18n.t('generationCommon.observability.progress.comfyNode'),
+  'comfyui-queued': (ctx) =>
+    typeof ctx.queueAhead === 'number'
+      ? i18n.t('generationCommon.observability.progress.comfyQueuedAhead', { count: ctx.queueAhead })
+      : i18n.t('generationCommon.observability.progress.comfyQueued'),
 }
 
 export function narrateProgress(phase: GenerationProgressPhase, ctx: ProgressNarrationContext = {}): string {
@@ -75,6 +102,8 @@ export type GenerationErrorKind =
   | 'content-policy'
   | 'asset-fetch'
   | 'web-bridge'
+  | 'input-image-blocked'
+  | 'asset-upload-failed'
   | 'server'
   | 'input'
   | 'output-truncated'
@@ -95,6 +124,8 @@ const ERROR_KEY_BY_KIND: Record<GenerationErrorKind, string> = {
   'content-policy': 'contentPolicy',
   'asset-fetch': 'assetFetch',
   'web-bridge': 'webBridge',
+  'input-image-blocked': 'inputImageBlocked',
+  'asset-upload-failed': 'assetUploadFailed',
   server: 'server',
   input: 'input',
   'output-truncated': 'outputTruncated',
@@ -126,6 +157,10 @@ const ACTION_BY_KIND: Record<GenerationErrorKind, GenerationErrorAction> = {
   // 换模型才有救：上游/目录层面就没有这个模型，配置和重试都改不了它。
   'model-unavailable-upstream': 'switch-model',
   'model-retired': 'switch-model',
+  // 参考图被内容安全挡下：同一张图 + 同一个模型 = 同一个判定，重试是确定性再撞（2026-07-31
+  // 用户真机：方舟 Seedance 拒写实人脸参考图）。用户真正的两条路是「换图」和「换模型」，
+  // 换图就在画布上（连着的那个节点，不需要按钮），所以按钮给「换个模型」——各家审核松紧不同。
+  'input-image-blocked': 'switch-model',
   // 去模型接入：密钥/开通/分组/档位/配置——都在那一页能解。
   auth: 'open-model-access',
   balance: 'open-model-access',
@@ -134,6 +169,9 @@ const ACTION_BY_KIND: Record<GenerationErrorKind, GenerationErrorAction> = {
   'image-route-disabled': 'open-model-access',
   'account-gate': 'open-model-access',
   // 重试是对的动作：偶发/限流/超时，等一等再来确实可能成。
+  // 免费匿名图床挂掉通常是偶发（下一分钟可能就好了），所以主动作仍是重试；
+  // 「一劳永逸」那条（接一个自带上传通道的服务商）写在 hint 里，不占按钮。
+  'asset-upload-failed': 'retry',
   quota: 'retry',
   'poll-timeout': 'retry',
   network: 'retry',

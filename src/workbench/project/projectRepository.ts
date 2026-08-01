@@ -236,6 +236,41 @@ export function saveLocalProject(
   return record
 }
 
+/**
+ * 只改项目名（列表页「双击改名」的后端）——不动 id/目录/画布/时间轴/分类/分镜方案。
+ *
+ * 关键：读盘上**完整 record** 再存回，**绝不经 saveLocalProject 的三部分窄接口**——那会让
+ * normalizePayload（字段重建式）把 categories 重置为内置默认、丢掉 storyboardPlan（数据损坏，
+ * 违反 never-wipe-user-data 铁律）。列表页改的是**任意项目**（可能没打开），更不能拿当前内存
+ * 状态覆盖它。空名/未变 → no-op 返回原 record。
+ */
+export function renameLocalProject(projectId: string, name: string): WorkbenchProjectRecordV1 | null {
+  const id = String(projectId || '').trim()
+  if (!id) return null
+  const record = readLocalProject(id)
+  if (!record) return null
+  const nextName = String(name || '').trim()
+  if (!nextName || nextName === record.name) return record
+  const now = Date.now()
+  const next: WorkbenchProjectRecordV1 = {
+    ...record,
+    name: nextName,
+    updatedAt: now,
+    savedAt: now,
+    revision: (record.revision ?? 0) + 1,
+    // payload 原样保留（含 categories/storyboardPlan/画布/时间轴，零丢失）——只换 name 与时间戳。
+  }
+  assertWorkbenchProjectMediaUrlsPersistable(next)
+  const desktop = getDesktopBridge()
+  if (desktop) return desktop.projects.save(id, next) as WorkbenchProjectRecordV1
+  const existingRecord = readJson(projectRecordKey(id))
+  if (existingRecord) rememberProjectBackup(id, existingRecord)
+  writeJson(projectRecordKey(id), next)
+  const summary = normalizeSummary(next) || (next as WorkbenchProjectSummary)
+  writeIndex([summary, ...readMergedProjectSummaries().filter((item) => item.id !== id)])
+  return next
+}
+
 export function deleteLocalProject(projectId: string): void {
   const id = String(projectId || '').trim()
   if (!id) throw new Error('projectId is required')

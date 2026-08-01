@@ -139,6 +139,94 @@ describe('classifyGenerationError — 已知分类', () => {
     expect(r1620.reason).toBe('余额不足')
   })
 
+  // 2026-07-31 用户真机：中转代理火山方舟 Seedance 2.0，图生视频首帧被输入审核拒收。
+  // 审核拒绝走 HTTP 400 → categorizeVendorFailure 派生 input → 卡片说「参数不被接受·检查比例/
+  // 尺寸」+ 红色「重试」。三处全错：不是参数问题、改比例救不了、同图同模型重试是确定性再撞。
+  const ARK_IMAGE_BLOCKED_UPSTREAM =
+    '{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation","message":"The request failed because the input image \'content[1]\' may contain real person. Request id: 0217854745934891b8c9f69a83502ac57f9e97e4a3cfb74b86bb8","param":"content[1]","type":"BadRequest"}}'
+
+  it('参考图被内容安全挡下(方舟 400,真实 structured IPC 形态):不当成「参数不被接受」,也不给「重试」', () => {
+    const message =
+      "Error invoking remote method 'nomi:tasks:run': Error: NOMI_VENDOR_ERR_B64::" +
+      Buffer.from(
+        JSON.stringify({
+          category: 'input',
+          httpStatus: 400,
+          upstreamMsg: ARK_IMAGE_BLOCKED_UPSTREAM,
+          vendorKey: 'sd-dawnloadai-com',
+        }),
+        'utf8',
+      ).toString('base64') +
+      ':: Provider request failed (HTTP 400) at sd-dawnloadai-com POST https://sd.dawnloadai.com:8443/api/v3/contents/generations/tasks: ' +
+      ARK_IMAGE_BLOCKED_UPSTREAM
+    const r = classifyGenerationError(message)
+    expect(r.kind).toBe('input-image-blocked')
+    expect(r.reason).toBe('参考图被内容安全挡了')
+    expect(r.reason).not.toBe('参数不被接受')
+    expect(r.hint).not.toMatch(/比例|尺寸/)
+    expect(r.hint).toMatch(/换一张参考图/)
+    // 确定性失败：主按钮不能是「重试」（那是让用户对着同一个分类器死磕）。
+    expect(r.primary).toBe('switch-model')
+    // 「服务商原话」只给人话那一句，不把 JSON 信封（code/param/type）整坨甩用户脸上；
+    // 完整报文仍在技术详情（raw）里。
+    expect(r.providerMessage).toMatch(/^The request failed because the input image/)
+    expect(r.providerMessage).not.toMatch(/"code"|BadRequest/)
+    expect(r.raw).toMatch(/BadRequest/)
+  })
+
+  it('参考图被内容安全挡下(无 structured 的纯文本兜底)也能识别', () => {
+    const r = classifyGenerationError(
+      `Provider request failed (HTTP 400) at relay POST https://x: ${ARK_IMAGE_BLOCKED_UPSTREAM}`,
+    )
+    expect(r.kind).toBe('input-image-blocked')
+  })
+
+  it('提示词被审核拦(InputText…)仍归「提示词被拦截」,不和参考图混为一谈', () => {
+    const r = classifyGenerationError(
+      'Provider request failed (HTTP 400) at relay POST https://x: {"error":{"code":"InputTextSensitiveContentDetected","message":"blocked"}}',
+    )
+    expect(r.kind).toBe('content-policy')
+    expect(r.reason).toBe('提示词被拦截')
+  })
+
+  it('普通 400 参数错不被误判成内容安全拦截', () => {
+    const message =
+      'NOMI_VENDOR_ERR_B64::' +
+      Buffer.from(JSON.stringify({ category: 'input', httpStatus: 400, upstreamMsg: 'invalid ratio: 21:9 not supported' }), 'utf8').toString('base64') +
+      ':: Provider request failed (HTTP 400) at x POST https://x: invalid ratio'
+    const r = classifyGenerationError(message)
+    expect(r.kind).toBe('input')
+    expect(r.reason).toBe('参数不被接受')
+  })
+
+  // 2026-07-31 用户真机（同一轮）：本机图 → 免费匿名图床两个全挂 → 整条链断。
+  // 旧行为落 unknown：「可能是服务商临时故障或额度问题」——甩锅给一个根本没被请求到的服务商。
+  it('免配置图床全挂 → 说清「失败在我们这侧」,不甩锅服务商额度', () => {
+    const r = classifyGenerationError(
+      "Error invoking remote method 'nomi:tasks:run': Error: 所有免配置上传 host 都失败：litterbox.catbox.moe: 素材上传失败(HTTP 500): (无详情)；tmpfiles.org: fetch failed",
+    )
+    expect(r.kind).toBe('asset-upload-failed')
+    expect(r.reason).toBe('参考图没能送到服务商')
+    expect(r.hint).not.toMatch(/额度问题/)
+    // 2026-08-01 实测：tmpfiles.org 在国内直连是 000（连不上），走代理才 405。所以
+    // 「fetch failed」压倒性地是网络/代理没覆盖到这两个境外 host，而不是它们真挂了。
+    // 文案必须先指向代理，否则用户对着一个网络问题去「稍后重试」，永远重试不好。
+    expect(r.hint).toMatch(/代理/)
+    expect(r.hint).toMatch(/境外/)
+    // 哪个图床怎么挂的仍要看得见（排查线索不能丢）。
+    expect(r.providerMessage).toMatch(/litterbox/)
+  })
+
+  it('未识别错误的首行不再顶着 Electron IPC 包装前缀（对用户零信息）', () => {
+    const r = classifyGenerationError(
+      "Error invoking remote method 'nomi:tasks:run': Error: 上游返回了一个我们没见过的形状",
+    )
+    expect(r.reason).toBe('上游返回了一个我们没见过的形状')
+    expect(r.reason).not.toMatch(/invoking remote method/)
+    // raw 保留原样：技术详情折叠区还得能看到完整链路。
+    expect(r.raw).toMatch(/invoking remote method/)
+  })
+
   it('剪贴板网页媒体下载失败时优先提示下载到本地', () => {
     const r = classifyGenerationError('网页媒体下载失败：该站点可能禁止跨域请求或开启防盗链。请先下载到本地，再复制或拖入画布。')
     expect(r.reason).toBe('网页媒体下载失败')
