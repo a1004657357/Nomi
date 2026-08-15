@@ -31,8 +31,58 @@ describe('convertImageShotToVideo（image-first 桥）', () => {
     expect(video.shotIndex).toBe(3) // 继承源图镜号（同镜两阶段，排片落剧本位置）
     expect(video.meta?.sourceNodeId).toBe(image.id) // 整理布局紧跟源镜头
     expect(video.meta?.storyboardVideoReferenceStrategy).toBe('full_reference')
+    expect(video.meta?.storyboardVideoPromptSource).toBe('compiled_image_fallback')
+    expect(video.meta?.videoPromptNeedsReview).toBe(true)
+    expect(video.prompt).not.toBe(image.prompt)
+    expect(video.prompt).toContain('不是静态图片的运动化')
+    expect(video.prompt).toContain('明确动作链')
     expect(video.title).toBe('镜头 3 · 视频')
     expect(state.edges.some((e) => e.source === image.id && e.target === nodeId && e.mode === 'composition_ref')).toBe(true)
+  })
+
+  it('分镜表所属图片转视频时使用结构化 videoPrompt，不复用图片 prompt', () => {
+    const store = useGenerationCanvasStore.getState()
+    const table = store.addNode({
+      kind: 'text',
+      title: '分镜脚本',
+      meta: {
+        storyboardGroup: true,
+        storyboardPlanSnapshot: {
+          title: '广告',
+          anchors: [],
+          shots: [{
+            index: 3,
+            shotKind: 'video',
+            durationSec: 6,
+            anchorIds: [],
+            prompt: '静态中景构图',
+            imagePrompt: '老板站在货架前的静态中景',
+            scene: '月饼工作室',
+            cameraMove: '跟随横移',
+            characters: '老板',
+            performance: '老板走到空货架前停下并确认缺货',
+          }],
+        },
+      },
+    })
+    const image = seedImageShot()
+    useGenerationCanvasStore.getState().updateNode(image.id, {
+      meta: {
+        storyboardContainedByNodeId: table.id,
+        storyboardContainedRowIndex: 3,
+        storyboardContainedRole: 'image',
+      },
+    })
+
+    const result = convertImageShotToVideo(
+      useGenerationCanvasStore.getState().nodes.find((node) => node.id === image.id)!,
+    )
+    const video = useGenerationCanvasStore.getState().nodes.find((node) => node.id === result.nodeId)!
+    expect(video.meta?.storyboardVideoPromptSource).toBe('storyboard_plan')
+    expect(video.meta?.videoPromptNeedsReview).toBeUndefined()
+    expect(video.prompt).toContain('图生视频导演提示词：镜头 3')
+    expect(video.prompt).toContain('老板走到空货架前停下并确认缺货')
+    expect(video.prompt).not.toBe(image.prompt)
   })
 
   it('幂等：已转过 → 返回已有视频节点，不重复建', () => {

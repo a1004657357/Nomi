@@ -35,12 +35,12 @@ function assert(condition, label) {
 
 const TINY_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
-const jpegDataUrl = (relativePath) =>
-  `data:image/jpeg;base64,${fs.readFileSync(path.join(repoRoot, relativePath)).toString('base64')}`
-const PORTRAIT_SOURCE_PATH = path.join(repoRoot, 'src/workbench/onboarding/assets/robot/kid.jpg')
-const PORTRAIT_REFINED_PATH = path.join(repoRoot, 'src/workbench/onboarding/assets/robot/shot-2.jpg')
-const PORTRAIT_SOURCE = jpegDataUrl('src/workbench/onboarding/assets/robot/kid.jpg')
-const PORTRAIT_REFINED = jpegDataUrl('src/workbench/onboarding/assets/robot/shot-2.jpg')
+const pngDataUrl = (relativePath) =>
+  `data:image/png;base64,${fs.readFileSync(path.join(repoRoot, relativePath)).toString('base64')}`
+const PORTRAIT_SOURCE_PATH = path.join(repoRoot, 'tests/ux/_stagingshot/01-standing__front.png')
+const PORTRAIT_REFINED_PATH = path.join(repoRoot, 'tests/ux/_stagingshot/01-standing__q3.png')
+const PORTRAIT_SOURCE = pngDataUrl('tests/ux/_stagingshot/01-standing__front.png')
+const PORTRAIT_REFINED = pngDataUrl('tests/ux/_stagingshot/01-standing__q3.png')
 const DEMO_VIDEO_PATH = path.join(repoRoot, 'marketing/assets/demo.mp4')
 const now = Date.now()
 const makeResult = (id, url = TINY_PNG) => ({ id, type: 'image', url, thumbnailUrl: url, createdAt: now })
@@ -482,14 +482,14 @@ try {
         path: portraitSourcePath,
         kind: 'generated',
         fileName: 'vision-review-source.jpg',
-        contentType: 'image/jpeg',
+        contentType: 'image/png',
       })
       const visionResultAsset = await window.nomiDesktop.assets.importLocalPath({
         projectId: project.id,
         path: portraitRefinedPath,
         kind: 'generated',
         fileName: 'vision-review-result.jpg',
-        contentType: 'image/jpeg',
+        contentType: 'image/png',
       })
       const videoAsset = await window.nomiDesktop.assets.importLocalPath({
         projectId: project.id,
@@ -1063,6 +1063,23 @@ try {
     '九宫格默认逐机位生成并保留原场景',
   )
 
+  const autoVisionReview = inspector.getByLabel('生成后自动视觉复核')
+  await autoVisionReview.waitFor({ state: 'visible', timeout: 4000 })
+  assert(await autoVisionReview.isEnabled(), '已连接视觉模型时九宫格可启用生成后自动复核')
+  await autoVisionReview.check()
+  const autoVisionReviewModel = inspector.getByLabel('视觉复核模型')
+  await autoVisionReviewModel.waitFor({ state: 'visible', timeout: 4000 })
+  await autoVisionReviewModel.click()
+  assert(
+    await win.getByRole('option', { name: /Doubao Seed 2\.0 Lite/ }).isVisible(),
+    '自动复核仅列出已连接且支持图片输入的文本模型',
+  )
+  await win.keyboard.press('Escape')
+  assert(
+    await inspector.getByText('整批增加 1 次多图请求，复核失败不会重新生成。', { exact: true }).isVisible(),
+    '自动复核在提交前明示额外请求和无重试语义',
+  )
+
   await inspector.getByRole('button', { name: '生成新结果' }).click()
   const spendMessage = win.getByText('将生成 9 张画面', { exact: false })
   await spendMessage.waitFor({ state: 'visible', timeout: 4000 })
@@ -1072,7 +1089,13 @@ try {
     await spendDialog.getByText('9 次独立请求', { exact: false }).isVisible(),
     '九宫格确认框说明真实逐机位请求数量',
   )
+  assert(
+    await spendDialog.getByText('生成完成后额外执行 1 次批量视觉复核', { exact: false }).isVisible()
+      && await spendDialog.getByText('整批 1 次', { exact: false }).isVisible(),
+    '生成费用确认同时披露自动视觉复核的一次额外调用',
+  )
   await spendDialog.getByRole('button', { name: '取消', exact: true }).click()
+  await autoVisionReview.uncheck()
 
   const gridMode = inspector.getByLabel('生成方式')
   await gridMode.click()

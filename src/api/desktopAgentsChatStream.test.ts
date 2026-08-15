@@ -112,4 +112,38 @@ describe('openDesktopAgentsChatStream cancel', () => {
     expect(events.filter((e) => e.event === 'done')).toHaveLength(1)
     expect(mock.cancelChatV2).toHaveBeenCalledTimes(1)
   })
+
+  it('forwards the backend harness configuration to the renderer', async () => {
+    const mock = installMockBridge()
+    const events: AgentsChatStreamEvent[] = []
+    await openDesktopAgentsChatStream(
+      { vendor: 'agents', prompt: 'hi' },
+      { onEvent: (event) => events.push(event) },
+    )
+
+    mock.emit({
+      type: 'harness-config',
+      vendorKey: 'zai',
+      modelKey: 'glm-5.2',
+      skillKey: 'workbench.cinematic-director',
+      allowedTools: ['read_film_bible'],
+      playbook: {
+        skillKey: 'workbench.cinematic-director',
+        stageId: 'project-contract',
+        goal: '建立项目事实',
+        index: 0,
+        total: 4,
+        pause: true,
+        nextStageId: 'storyboard',
+      },
+    })
+
+    expect(events.find((event) => event.event === 'harness-config')).toMatchObject({
+      data: {
+        skillKey: 'workbench.cinematic-director',
+        allowedTools: ['read_film_bible'],
+        playbook: { stageId: 'project-contract', total: 4 },
+      },
+    })
+  })
 })

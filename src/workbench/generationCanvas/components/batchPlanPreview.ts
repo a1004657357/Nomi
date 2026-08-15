@@ -4,7 +4,7 @@ import { create } from 'zustand'
 import { toast, useToastStore } from '../../../ui/toast'
 import { runGenerationNodesByPlan, spendCostKindForNodes } from '../runner/generationRunController'
 import { mintSpendGrant } from '../../api/taskApi'
-import { describeGenerationCost, useSpendConfirmStore } from '../spend/spendConfirm'
+import { batchSpendGrantTtlMs, describeGenerationCost, useSpendConfirmStore } from '../spend/spendConfirm'
 import { buildDependencyWaves, type DependencyWavePlan } from '../runner/dependencyWaves'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { verifyShotsAndReport } from '../agent/shotVerifyStore'
@@ -117,7 +117,8 @@ export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, ge
     // 计划 overlay 的「按计划生成」点击本身 = 真人手势 → 铸付费令牌（绑本批节点）。
     let grantId: string
     try {
-      grantId = await mintSpendGrant(executablePlan.waves.flat())
+      const nodeIds = executablePlan.waves.flat()
+      grantId = await mintSpendGrant(nodeIds, 1, batchSpendGrantTtlMs(nodeIds.length))
     } catch (error) {
       set({ running: false })
       toast(
@@ -193,7 +194,8 @@ export async function confirmAndRunPlan(
 
   let grantId: string
   try {
-    grantId = await mintSpendGrant(forked.plan.waves.flat())
+    const nodeIds = forked.plan.waves.flat()
+    grantId = await mintSpendGrant(nodeIds, 1, batchSpendGrantTtlMs(nodeIds.length))
   } catch (error) {
     toast(error instanceof Error && error.message ? error.message : '付费授权失败', 'error')
     return

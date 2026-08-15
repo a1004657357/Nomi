@@ -23,7 +23,35 @@ export type ProviderPreset = {
   /** 分组（Issue #8 可发现性）：'relay' = 中转站（文本/图片/视频，用户填自己地址）；
    *  'official' = 官方厂商（文本，地址内置）。把中转拎成一等公民，不混在 LLM chip 里。 */
   group?: 'relay' | 'official'
+  /** Subscription endpoints do not always expose GET /models. Keep their official
+   *  model ids here so users can select them without guessing or a false fetch failure. */
+  models?: ReadonlyArray<{ id: string; kind: 'text' | 'image' | 'video' | 'audio' }>
 }
+
+const VOLCENGINE_AGENT_PLAN_MODELS = [
+  'ark-code-latest',
+  'doubao-seed-evolving',
+  'doubao-seed-2.0-mini',
+  'doubao-seed-2.0-lite',
+  'doubao-seed-2.0-code',
+  'doubao-seed-2.0-pro',
+  'glm-5.2',
+  'glm-latest',
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'minimax-m2.7',
+  'minimax-m3',
+  'kimi-k2.6',
+  'kimi-k2.7-code',
+  'kimi-k3',
+].map((id) => ({ id, kind: 'text' as const }))
+
+const KIMI_CODE_MODELS = [
+  'k3',
+  'k3-256k',
+  'kimi-for-coding',
+  'kimi-for-coding-highspeed',
+].map((id) => ({ id, kind: 'text' as const }))
 
 // 具名预设已内置正确协议（providerKind），用户选名字即用、不必判断接口格式。
 // baseUrl/格式取各家官方 OpenAI-compatible 文档（host 均经 DNS+端点实测，见
@@ -40,13 +68,18 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: 'gemini', label: 'Gemini', providerKind: 'openai-compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', keyUrl: 'https://aistudio.google.com/apikey', group: 'official' },
   { id: 'openrouter', label: 'OpenRouter', providerKind: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys', group: 'official' },
   { id: 'siliconflow', label: 'SiliconFlow', providerKind: 'openai-compatible', baseUrl: 'https://api.siliconflow.cn/v1', keyUrl: 'https://cloud.siliconflow.cn/account/ak', group: 'official' },
-  { id: 'kimi', label: 'Kimi', providerKind: 'openai-compatible', baseUrl: 'https://api.moonshot.cn/v1', keyUrl: 'https://platform.moonshot.cn/console/api-keys', group: 'official' },
+  { id: 'kimi-code', label: 'Kimi Code 会员', providerKind: 'openai-compatible', baseUrl: 'https://api.kimi.com/coding/v1', keyUrl: 'https://www.kimi.com/code/console', group: 'official', models: KIMI_CODE_MODELS },
+  { id: 'kimi', label: 'Kimi 开放平台', providerKind: 'openai-compatible', baseUrl: 'https://api.moonshot.cn/v1', keyUrl: 'https://platform.moonshot.cn/console/api-keys', group: 'official' },
   { id: 'zhipu', label: '智谱 GLM', providerKind: 'openai-compatible', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', keyUrl: 'https://open.bigmodel.cn/usercenter/apikeys', group: 'official' },
   { id: 'deepseek', label: 'DeepSeek', providerKind: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', keyUrl: 'https://platform.deepseek.com/api_keys', group: 'official' },
   // 阶跃星辰（中国区 OpenAI 兼容 base；官方迁移文档 platform.stepfun.com/docs/.../openai）。
   // 注：Step Plan 订阅制账户需改用 https://api.stepfun.com/step_plan/v1、国际区用 .ai——预设填最常见的按量地址。
   { id: 'stepfun', label: '阶跃星辰', providerKind: 'openai-compatible', baseUrl: 'https://api.stepfun.com/v1', keyUrl: 'https://platform.stepfun.com', group: 'official' },
-  { id: 'volcengine', label: '火山 / Doubao', providerKind: 'openai-compatible', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', keyUrl: 'https://console.volcengine.com/ark', group: 'official' },
+  // Agent Plan also exposes Responses, but Nomi's current AI SDK cannot reliably
+  // parse its tool-call stream. Chat API is officially supported and passes the
+  // real Nomi tool-call smoke, so the product preset deliberately uses it.
+  { id: 'volcengine-agent-plan', label: '火山 Agent/Coding Plan', providerKind: 'openai-compatible', baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3', keyUrl: 'https://console.volcengine.com/ark', group: 'official', models: VOLCENGINE_AGENT_PLAN_MODELS },
+  { id: 'volcengine', label: '火山方舟按量 API', providerKind: 'openai-compatible', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', keyUrl: 'https://console.volcengine.com/ark', group: 'official' },
   { id: 'dashscope', label: '阿里百炼', providerKind: 'openai-compatible', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', keyUrl: 'https://bailian.console.aliyun.com', group: 'official' },
   { id: 'groq', label: 'Groq', providerKind: 'openai-compatible', baseUrl: 'https://api.groq.com/openai/v1', keyUrl: 'https://console.groq.com/keys', group: 'official' },
 ]

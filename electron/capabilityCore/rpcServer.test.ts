@@ -30,9 +30,17 @@ vi.mock('electron', () => ({
 
 vi.mock('./rendererBridge', () => ({
   isRendererAvailable: () => rendererUp,
-  requestRenderer: async (op: string) => {
+  requestRenderer: async (op: string, payload: unknown) => {
     rendererOps.push(op)
     if (op === 'spend.confirm') return spendReply
+    if (op === 'project.activate') {
+      const projectId = (payload as { projectId?: string })?.projectId || ''
+      openProjectId = projectId
+      return { active: true, projectId }
+    }
+    if (op === 'generation.batch') {
+      return { accepted: true, payload }
+    }
     // hybrid 网关读写应走盘,绝不该把 canvas.* 转给渲染层——命中即测试失败。
     throw new Error(`hybrid 不应调用渲染层 op: ${op}`)
   },
@@ -186,6 +194,27 @@ describe('capabilityCore/rpcServer', () => {
     await rpc('generate', { projectId, intent: 'image', prompt: 'robot', vendor: 'v', modelKey: 'm' })
     expect(rendererOps).toContain('spend.confirm')
     expect(lastRunTaskReq?.extras?.grantId).toBeUndefined()
+  })
+
+  it('generation.batch 只把当前打开项目的一批节点交给渲染层一次受理', async () => {
+    rendererUp = true
+    const created = await rpc('project.create', { name: '批量项目' })
+    const projectId = (created.body.result as { id: string }).id
+    openProjectId = projectId
+
+    const accepted = await rpc('generation.batch', { projectId, nodeIds: ['n1', 'n2', 'n1'] })
+    expect(accepted.status).toBe(200)
+    expect(accepted.body.result).toMatchObject({
+      accepted: true,
+      payload: { projectId, nodeIds: ['n1', 'n2'] },
+    })
+    expect(rendererOps).toEqual(['generation.batch'])
+
+    openProjectId = 'another-project'
+    rendererOps = []
+    const switched = await rpc('generation.batch', { projectId, nodeIds: ['n1'] })
+    expect(switched.status).toBe(200)
+    expect(rendererOps).toEqual(['project.activate', 'generation.batch'])
   })
 
   it('未知方法 → 404', async () => {

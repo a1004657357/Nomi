@@ -18,6 +18,7 @@ import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { openCapabilityRecipeInspector } from '../../components/capabilityRecipeEvents'
 import {
+  beginCanvasSkillStage,
   focusCanvasSkillNode,
   readCanvasSkillNodeState,
 } from '../../skills/canvasSkillModel'
@@ -119,10 +120,13 @@ export default function CanvasSkillNodeBody({
   }
 
   const launchAgent = (): void => {
+    const stage = state.stages.length ? beginCanvasSkillStage(node.id) : null
+    if (state.stages.length && !stage) return
     requestCanvasSkillAgent({
       skill: { skillKey: state.skillKey, label: state.label },
       sourceNodeIds: connectedNodes.map((candidate) => candidate.id),
       skillNodeId: node.id,
+      ...(stage ? { stage } : {}),
     })
   }
 
@@ -207,9 +211,17 @@ export default function CanvasSkillNodeBody({
         ) : (
           <div className="space-y-1.5">
             {state.stages.slice(0, 4).map((stage, index) => (
-              <div key={stage.id} className="flex items-start gap-2 rounded-nomi-sm bg-nomi-ink-05 px-2.5 py-2 text-caption">
+              <div
+                key={stage.id}
+                className={cn(
+                  'flex items-start gap-2 rounded-nomi-sm px-2.5 py-2 text-caption',
+                  index === state.currentStageIndex && state.runStatus !== 'done'
+                    ? 'bg-nomi-accent-soft text-nomi-accent'
+                    : 'bg-nomi-ink-05',
+                )}
+              >
                 <span className="inline-grid size-5 shrink-0 place-items-center rounded-full bg-nomi-paper text-micro text-nomi-ink-60">
-                  {index + 1}
+                  {index < state.currentStageIndex || state.runStatus === 'done' ? <IconCheck size={12} stroke={2} /> : index + 1}
                 </span>
                 <span className="line-clamp-2 leading-relaxed text-nomi-ink-70">{stage.goal}</span>
               </div>
@@ -240,7 +252,7 @@ export default function CanvasSkillNodeBody({
 
       <button
         type="button"
-        disabled={readOnly}
+        disabled={readOnly || state.runStatus === 'running'}
         className="flex h-9 shrink-0 items-center justify-center gap-2 rounded-nomi-sm border-0 bg-nomi-ink px-3 text-caption font-medium text-nomi-paper hover:bg-nomi-accent disabled:opacity-40"
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
@@ -249,7 +261,17 @@ export default function CanvasSkillNodeBody({
         }}
       >
         <IconRobot size={15} stroke={1.8} aria-hidden />
-        用 Agent 推进
+        {state.runStatus === 'running'
+          ? 'Agent 执行中'
+          : state.runStatus === 'awaiting-confirm'
+            ? `确认并继续 · ${state.currentStageIndex + 1}/${state.stages.length}`
+            : state.runStatus === 'done'
+              ? '重新运行 Playbook'
+              : state.runStatus === 'error'
+                ? '重试当前阶段'
+                : state.stages.length
+                  ? `开始 · 1/${state.stages.length}`
+                  : '用 Agent 推进'}
         <IconArrowRight size={14} stroke={1.8} aria-hidden />
       </button>
     </div>

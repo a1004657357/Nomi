@@ -1,4 +1,4 @@
-import type { AgentAttachmentPayload, AgentsChatResponseDto } from '../../../api/desktopClient'
+import type { AgentAttachmentPayload, AgentHarnessConfig, AgentsChatResponseDto } from '../../../api/desktopClient'
 import { runWorkbenchAgent, workbenchSessionKey, type ToolCallEvent } from '../../ai/workbenchAgentRunner'
 import type { GenerationCanvasSnapshot, GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { getAgentCreatableGenerationNodeKinds } from '../model/generationNodeKinds'
@@ -22,6 +22,7 @@ type SendGenerationCanvasAgentMessageInput = {
    * Storyboard demo uses `workbench.storyboard.planner`.
    */
   skill?: { key: string; name: string }
+  playbookStageId?: string
   /**
    * Optional override for the prompt builder. When set, the agent uses the
    * caller-provided prompt verbatim instead of the default canvas-planner
@@ -34,6 +35,7 @@ type SendGenerationCanvasAgentMessageInput = {
     selectedNodes: GenerationCanvasNode[]
   }) => string
   onContent?: (delta: string, text: string) => void
+  onHarnessConfig?: (config: AgentHarnessConfig) => void
   /**
    * Called whenever the LLM issues a tool call. The caller is responsible
    * for showing UI and calling `event.confirm(...)`. If `auto` is set, the
@@ -84,7 +86,7 @@ export function buildStaticAgentSystemPrompt(mode: SendGenerationCanvasAgentMess
     '- create_staging_reference：用 3D 灰模摆出「谁站哪·朝向谁·做什么动作·从哪个机位拍」，离屏出一张站位参考图并自动连到目标镜头作 composition_ref——锁定视频模型最易崩的站位、动作和空间关系。词表外的站位/构图用 customBlocking 自由描述（不渲图、追加进目标镜头 prompt）。',
     '- create_camera_move：用 3D 相机轨迹摆出该镜的「运镜」（绕/推/拉/升降/横移/弧线/眩晕变焦），离屏渲成一段运镜小片并自动喂给镜头的视频节点作运镜参考——锁死文字描述不住的镜头运动。词表外的运镜（甩镜/手持跟拍/复合）用 customMove 自由描述（不渲小片、追加进视频 prompt）。',
     '- list_capability_recipes：读取统一创作能力配方、输入要求、可调参数、当前已连接的兼容模型，以及可复用的风格/效果/身份/色板资源；只读、免费。',
-    '- apply_capability_recipe：把一个配方应用到已有图片、视频或 3D 源节点；始终新建派生结果节点，不覆盖源节点和历史版本；可能花费额度，必须由用户确认。',
+    '- apply_capability_recipe：把一个配方应用到已有图片、视频或 3D 源节点；始终新建派生结果节点，不覆盖源节点和历史版本；可能花费额度，必须由用户确认。多机位配方仅在用户明确要求自动验收时，才从 list_capability_recipes 返回的 visionReviewModels 选择一个，并传 visionReview={vendorKey,modelKey}；整批只增加 1 次视觉请求，失败不得自动重生成。',
     '- save_creative_resource：把已有生成结果保存成可复用的风格、效果、身份或色板资源，并记录来源与许可；不调用生成模型，但会写入画布。',
     '- handoff_model3d：把已经生成成功的 GLB 交给 Scene3D 或 VIBING Director，形成可旋转预览或可继续编辑的 Blender 场景；不会重新生成 3D。',
     '',
@@ -179,8 +181,11 @@ export async function sendGenerationCanvasAgentMessage(
     sessionKey: workbenchSessionKey('generation'),
     skillKey: input.skill?.key || 'workbench.generation.canvas-planner',
     skillName: input.skill?.name || '生成区节点规划',
+    ...(input.playbookStageId ? { playbookStageId: input.playbookStageId } : {}),
+    mode: input.mode || 'agent',
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),
     onContent: input.onContent,
+    onHarnessConfig: input.onHarnessConfig,
     onCancelReady: input.onCancelReady,
     onToolCall: (event) => {
       if (input.onToolCall) {

@@ -10,7 +10,7 @@ import type { CoreMessage, LanguageModelV1StreamPart } from "ai";
 import { z } from "zod";
 import { runAgentLoop } from "./agentLoop";
 import { consumeAgentStreamWithTimeout } from "./agentStreamConsumer";
-import { makeAgentTool, type AgentChatV2Hooks } from "./agentChatV2";
+import { buildToolsForSkill, makeAgentTool, type AgentChatV2Hooks } from "./agentChatV2";
 
 function streamParts(parts: LanguageModelV1StreamPart[]): ReadableStream<LanguageModelV1StreamPart> {
   return new ReadableStream({
@@ -51,6 +51,49 @@ const userMessage = (content: string): CoreMessage[] => [{ role: "user", content
 const consumeOpts = { firstChunkTimeoutMs: 5_000, idleTimeoutMs: 5_000, label: "test" };
 
 describe("runAgentLoop — 多步 tool_use 流式循环集成", () => {
+  it("只把 Skill 白名单内的真实工具暴露给模型", () => {
+    const hooks: AgentChatV2Hooks = {
+      emit: () => {},
+      awaitToolConfirmation: async () => ({ ok: true as const, result: {} }),
+    };
+    const tools = buildToolsForSkill("workbench.generation.canvas-planner", hooks, [
+      "read_canvas_state",
+      "set_node_prompt",
+    ]);
+
+    expect(Object.keys(tools)).toEqual(["read_canvas_state", "set_node_prompt"]);
+  });
+
+  it("有 manifest 时由工具白名单决定能力，不依赖 Skill 名称前缀", () => {
+    const hooks: AgentChatV2Hooks = {
+      emit: () => {},
+      awaitToolConfirmation: async () => ({ ok: true as const, result: {} }),
+    };
+    const tools = buildToolsForSkill("custom.copy-editor", hooks, ["read_full_text", "replace_selection"]);
+
+    expect(Object.keys(tools)).toEqual(["read_full_text", "replace_selection"]);
+  });
+
+  it("电影导演语义工具进入真实 harness，并严格按阶段白名单裁剪", () => {
+    const hooks: AgentChatV2Hooks = {
+      emit: () => {},
+      awaitToolConfirmation: async () => ({ ok: true as const, result: {} }),
+    };
+    const tools = buildToolsForSkill("workbench.cinematic-director", hooks, [
+      "read_film_bible",
+      "propose_film_bible_patch",
+      "apply_film_bible_patch",
+      "cancel_provider_task",
+    ]);
+
+    expect(Object.keys(tools)).toEqual([
+      "read_film_bible",
+      "propose_film_bible_patch",
+      "apply_film_bible_patch",
+      "cancel_provider_task",
+    ]);
+  });
+
   it("tool-call → 确认通过 → 喂回结果 → 续下一步 stop（整链路）", async () => {
     const events: Array<{ type: string; [k: string]: unknown }> = [];
     const confirmSpy = vi.fn(async () => ({ ok: true as const, result: { rows: 3 } }));

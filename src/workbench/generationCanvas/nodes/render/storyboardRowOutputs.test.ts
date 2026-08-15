@@ -192,6 +192,33 @@ describe('storyboard row outputs', () => {
     expect(video.meta?.resolution).not.toBe('2K')
   })
 
+  it('treats AGNES max=1 image_ref as a first frame instead of full reference', async () => {
+    const tableNode = seedTable()
+    const image = ensureStoryboardRowImageOutput({ tableNode, shot }).node
+    const character = useGenerationCanvasStore.getState().addNode({ kind: 'character', title: '老板角色卡' })
+    const scene = useGenerationCanvasStore.getState().addNode({ kind: 'scene', title: '工作室场景卡' })
+    useGenerationCanvasStore.getState().connectNodes(character.id, image.id, 'character_ref')
+    useGenerationCanvasStore.getState().connectNodes(scene.id, image.id, 'style_ref')
+
+    const result = await ensureStoryboardRowVideoOutput({
+      tableNode,
+      shot: { ...shot, modelKey: 'agnes-video-v2.0', modeId: 'i2v' },
+      imageNode: image,
+    })
+    const state = useGenerationCanvasStore.getState()
+    const video = state.nodes.find((node) => node.id === result.nodeId)!
+
+    expect(video.meta).toMatchObject({
+      archetype: { id: 'agnes-video', modeId: 'i2v' },
+      storyboardVideoReferenceStrategy: 'first_frame',
+    })
+    expect(state.edges).toContainEqual(expect.objectContaining({
+      source: image.id,
+      target: video.id,
+      mode: 'first_frame',
+    }))
+  })
+
   it('repairs a video output previously polluted with image-model parameters', async () => {
     const tableNode = seedTable()
     const imageShot: PlanShot = {

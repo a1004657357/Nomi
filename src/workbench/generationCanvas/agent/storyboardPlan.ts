@@ -162,7 +162,9 @@ export const planShotSchema = z.object({
       params: z.record(z.unknown()).optional(),
     })
     .optional()
-    .describe('图片+视频模式的首帧图计划。仅 video shot 使用；enabled=true 时系统先生成首帧 image，再用 first_frame 喂视频。'),
+    .describe(
+      '图片+视频模式的首帧图计划。仅 video shot 使用；enabled=true 时系统先生成首帧 image，再用 first_frame 喂视频。',
+    ),
 })
 
 function parseJsonArrayString(value: unknown): unknown {
@@ -298,17 +300,37 @@ export function storyboardShotImagePrompt(shot: PlanShot): string {
 }
 
 export function storyboardShotVideoPrompt(shot: PlanShot): string {
-  const existing = firstNonEmptyText(shot.videoPrompt, shot.prompt, shot.imagePrompt)
+  const explicitVideoPrompt = firstNonEmptyText(shot.videoPrompt)
   // 旧版确定性扩写把所有参考图都写成“唯一首帧”。当节点切到全能参考时必须重编，
   // 否则模式虽正确，提示词仍会要求模型锁死构图，继续产出照片动效。
   if (
-    usesFullReferenceMode(shot)
-    && isDerivedVideoPrompt(existing)
-    && /首帧继承|唯一视觉起点|图生视频导演提示词/.test(existing)
+    usesFullReferenceMode(shot) &&
+    isDerivedVideoPrompt(explicitVideoPrompt) &&
+    /首帧继承|唯一视觉起点|图生视频导演提示词/.test(explicitVideoPrompt)
   ) {
     return buildDetailedStoryboardShotVideoPrompt(shot)
   }
-  return existing || buildStoryboardShotVideoPrompt(shot)
+  if (explicitVideoPrompt) return explicitVideoPrompt
+
+  // 不能再把 imagePrompt/静态 prompt 直接当视频 prompt。只要分镜表已有导演字段或
+  // 关键帧描述，就从结构化信息重编动作时间线、运镜与物理连续性；纯旧项目里本来就含
+  // 动作和运镜的一条 prompt 仍原样保留，避免无谓改写历史内容。
+  const hasStructuredVideoDirection = [
+    shot.scene,
+    shot.shotSize,
+    shot.cameraAngle,
+    shot.cameraMove,
+    shot.characters,
+    shot.performance,
+    shot.dialogue,
+    shot.props,
+    shot.sound,
+    shot.notes,
+  ].some((value) => Boolean(shotFieldText(value)))
+  if (hasStructuredVideoDirection || shotFieldText(shot.imagePrompt)) {
+    return buildDetailedStoryboardShotVideoPrompt(shot)
+  }
+  return firstNonEmptyText(shot.prompt, buildStoryboardShotVideoPrompt(shot))
 }
 
 export function storyboardShotPromptForKind(shot: PlanShot): string {
@@ -417,7 +439,9 @@ function buildStoryboardShotImagePrompt(shot: PlanShot): string {
     compactShotField('表演', shot.performance),
     compactShotField('道具', shot.props),
     compactShotField('画面备注', shot.notes),
-  ].filter(Boolean).join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function buildStoryboardShotVideoPrompt(shot: PlanShot): string {
@@ -432,7 +456,9 @@ function buildStoryboardShotVideoPrompt(shot: PlanShot): string {
     compactShotField('道具', shot.props),
     compactShotField('声音', shot.sound),
     compactShotField('节奏备注', shot.notes),
-  ].filter(Boolean).join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 /**
@@ -445,11 +471,14 @@ export function buildAnchorSheetPrompt(anchor: PlanAnchor): string {
   const desc = anchor.description.trim()
   const variantLine =
     anchor.variants && anchor.variants.length
-      ? `\n变体行：${anchor.variants.map((v) => v.trim()).filter(Boolean).join('、')}（每个变体各占一格并在格下标注）。`
+      ? `\n变体行：${anchor.variants
+          .map((v) => v.trim())
+          .filter(Boolean)
+          .join('、')}（每个变体各占一格并在格下标注）。`
       : ''
   if (anchor.kind === 'scene') {
     return [
-      '场景参考卡（environment reference sheet）。横向版面、分格清晰、每格下方小标签，统一色调与光源。',
+      '场景参考卡（environment reference sheet）。按当前节点画幅排版、分格清晰、每格下方小标签，统一色调与光源。',
       `同一地点「${name}」：${desc}`,
       '角度：①远景 establishing ②近景细节 ③俯视 overhead ④四分之三视。' + variantLine,
       '要求：跨格保持同一地点与风格一致；避免人物入镜、避免风格漂移、避免格子合并。',
@@ -465,7 +494,7 @@ export function buildAnchorSheetPrompt(anchor: PlanAnchor): string {
   }
   // character（默认）
   return [
-    '角色定妆参考卡（character reference sheet）。白色中性背景、平光、横向版面、分格清晰、每格下方小标签。',
+    '角色定妆参考卡（character reference sheet）。白色中性背景、平光、按当前节点画幅排版、分格清晰、每格下方小标签。',
     `同一角色「${name}」，跨所有格保持脸型、发型、服装、标志物完全一致：${desc}`,
     '视图：①正面全身 A-Pose ②侧面 ③背面 ④四分之三侧 ⑤表情行（中性 / 微笑 / 愤怒）。' + variantLine,
     '要求：跨格五官与服装一致；避免格子合并、避免跨格漂移、避免场景化背景。',
@@ -477,9 +506,7 @@ function buildShotPrompt(shot: PlanShot, anchorById: Map<string, PlanAnchor>): s
   const textAnchors = shot.anchorIds
     .map((id) => anchorById.get(id))
     .filter((anchor): anchor is PlanAnchor => Boolean(anchor) && anchor!.carrier === 'text')
-  const textBits = textAnchors
-    .map((anchor) => `${anchor.name}：${anchor.description}`.trim())
-    .filter(Boolean)
+  const textBits = textAnchors.map((anchor) => `${anchor.name}：${anchor.description}`.trim()).filter(Boolean)
   const base = storyboardShotPromptForKind(shot)
   const prompt = textBits.length ? [base, ...textBits].filter(Boolean).join('\n') : base
   const screenRuleProbe = [
@@ -488,7 +515,9 @@ function buildShotPrompt(shot: PlanShot, anchorById: Map<string, PlanAnchor>): s
       .filter((anchor) => anchor.kind !== 'style')
       .map((anchor) => `${anchor.name}：${anchor.description}`.trim()),
   ].join('\n')
-  return needsScreenVisibilityRule(screenRuleProbe) ? [prompt, SCREEN_VISIBILITY_PROMPT_RULE].filter(Boolean).join('\n') : prompt
+  return needsScreenVisibilityRule(screenRuleProbe)
+    ? [prompt, SCREEN_VISIBILITY_PROMPT_RULE].filter(Boolean).join('\n')
+    : prompt
 }
 
 function needsScreenVisibilityRule(prompt: string): boolean {
@@ -521,15 +550,18 @@ function buildStoryboardGroupPrompt(plan: StoryboardPlan): string {
         compactShotField('  备注', shot.notes),
         image ? `  图片提示词：${image}` : '',
         video ? `  视频提示词：${video}` : '',
-      ].filter(Boolean).join('\n')
+      ]
+        .filter(Boolean)
+        .join('\n')
     })
   return [`分镜组：${plan.title.trim() || '未命名分镜'}`, `共 ${plan.shots.length} 个镜头`, '', ...lines].join('\n')
 }
 
 function buildKeyframePrompt(shot: PlanShot, anchorById: Map<string, PlanAnchor>): string {
-  const keyframePrompt = typeof shot.keyframe?.prompt === 'string' && shot.keyframe.prompt.trim()
-    ? shot.keyframe.prompt.trim()
-    : shot.prompt.trim()
+  const keyframePrompt =
+    typeof shot.keyframe?.prompt === 'string' && shot.keyframe.prompt.trim()
+      ? shot.keyframe.prompt.trim()
+      : shot.prompt.trim()
   const textBits = shot.anchorIds
     .map((id) => anchorById.get(id))
     .filter((anchor): anchor is PlanAnchor => Boolean(anchor) && anchor!.carrier === 'text')
@@ -608,7 +640,13 @@ export function storyboardPlanToCreateNodesArgs(
     const modeId = shot.modeId || (shot.modelKey ? undefined : defaultModeId)
     if (hasKeyframe) {
       const keyframeModelKey = shot.keyframe?.modelKey || options.defaultImageModelKey
-      const keyframeModeId = shot.keyframe?.modeId || (shot.keyframe?.modelKey ? undefined : (visualAnchorIds.length > 0 ? options.defaultImageRefModeId || options.defaultImageModeId : options.defaultImageModeId))
+      const keyframeModeId =
+        shot.keyframe?.modeId ||
+        (shot.keyframe?.modelKey
+          ? undefined
+          : visualAnchorIds.length > 0
+            ? options.defaultImageRefModeId || options.defaultImageModeId
+            : options.defaultImageModeId)
       nodes.push({
         clientId: referenceTargetId,
         kind: 'image',

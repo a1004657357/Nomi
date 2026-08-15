@@ -1,6 +1,6 @@
 import type { RecipeOutputDescriptor, RecipeRunPlan } from '../../../config/capabilityRecipes'
 import { dataUrlToFile, persistNodeImageFile } from '../adapters/persistNodeImage'
-import type { GenerationNodeResult } from '../model/generationCanvasTypes'
+import type { GenerationNodeResult, GenerationResultCollection } from '../model/generationCanvasTypes'
 import type { CapabilityRecipeTask } from './capabilityRecipeRunner'
 
 export type CapabilityRecipeMediaProcessor = {
@@ -17,6 +17,12 @@ export type CapabilityRecipeMediaProcessor = {
     result: GenerationNodeResult,
     ownerNodeId: string,
     aspectRatio: number,
+  ) => Promise<GenerationNodeResult>
+  normalizeImageDimensions?: (
+    result: GenerationNodeResult,
+    ownerNodeId: string,
+    width: number,
+    height: number,
   ) => Promise<GenerationNodeResult>
   inspectImage?: (result: GenerationNodeResult) => Promise<CapabilityRecipeImageInspection>
 }
@@ -448,6 +454,42 @@ export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcess
     }
   },
 
+  async normalizeImageDimensions(result, ownerNodeId, width, height) {
+    const image = await loadImage(sourceImageUrl(result))
+    const sourceWidth = image.naturalWidth || image.width
+    const sourceHeight = image.naturalHeight || image.height
+    const targetWidth = Math.max(1, Math.floor(width))
+    const targetHeight = Math.max(1, Math.floor(height))
+    if (sourceWidth === targetWidth && sourceHeight === targetHeight) return result
+    if (sourceWidth < targetWidth || sourceHeight < targetHeight) return result
+
+    const crop = {
+      x: Math.floor((sourceWidth - targetWidth) / 2),
+      y: Math.floor((sourceHeight - targetHeight) / 2),
+      width: targetWidth,
+      height: targetHeight,
+    }
+    const dataUrl = renderCrop(image, crop)
+    const url = await persistProcessedImage(dataUrl, ownerNodeId, `recipe-multiview-${ownerNodeId}-${result.id}.png`)
+    const normalized = withProcessedOutput(result, `${result.id}:batch-size`, url, undefined, {
+      width: targetWidth,
+      height: targetHeight,
+    }, {
+      multiviewDimensionNormalization: {
+        sourceWidth,
+        sourceHeight,
+        targetWidth,
+        targetHeight,
+        crop,
+      },
+    })
+    const { alternatives = [], ...providerRaw } = result
+    return {
+      ...normalized,
+      alternatives: [providerRaw, ...alternatives],
+    }
+  },
+
   async inspectImage(result) {
     const image = await loadImage(sourceImageUrl(result))
     const sample = renderImageSample(image)
@@ -459,6 +501,80 @@ export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcess
       image.naturalHeight || image.height,
     )
   },
+}
+
+const MAX_MULTIVIEW_DIMENSION_DRIFT = 0.02
+const MAX_MULTIVIEW_ASPECT_DRIFT = 0.01
+
+export async function normalizeMultiviewCollectionDimensions(
+  plan: RecipeRunPlan,
+  collection: GenerationResultCollection,
+  ownerNodeId: string,
+  processor: CapabilityRecipeMediaProcessor = browserCapabilityRecipeMediaProcessor,
+): Promise<GenerationResultCollection> {
+  if (
+    !['image.multiview.grid9', 'image.multiview.custom'].includes(plan.recipeId)
+    || !processor.inspectImage
+    || !processor.normalizeImageDimensions
+  ) return collection
+
+  const successful = collection.items.filter((item) => item.status === 'success' && item.result)
+  if (successful.length < 2) return collection
+  let inspected: Array<{
+    item: (typeof successful)[number]
+    inspection: CapabilityRecipeImageInspection
+  }>
+  try {
+    inspected = await Promise.all(successful.map(async (item) => ({
+      item,
+      inspection: await processor.inspectImage!(item.result!),
+    })))
+  } catch {
+    return collection
+  }
+  const widths = inspected.map((entry) => Math.max(1, Math.floor(entry.inspection.width)))
+  const heights = inspected.map((entry) => Math.max(1, Math.floor(entry.inspection.height)))
+  const targetWidth = Math.min(...widths)
+  const targetHeight = Math.min(...heights)
+  if (widths.every((width) => width === targetWidth) && heights.every((height) => height === targetHeight)) {
+    return collection
+  }
+
+  const widthDrift = (Math.max(...widths) - targetWidth) / targetWidth
+  const heightDrift = (Math.max(...heights) - targetHeight) / targetHeight
+  const aspects = inspected.map((entry) => entry.inspection.width / Math.max(1, entry.inspection.height))
+  const aspectDrift = (Math.max(...aspects) - Math.min(...aspects)) / Math.min(...aspects)
+  if (
+    widthDrift > MAX_MULTIVIEW_DIMENSION_DRIFT
+    || heightDrift > MAX_MULTIVIEW_DIMENSION_DRIFT
+    || aspectDrift > MAX_MULTIVIEW_ASPECT_DRIFT
+  ) return collection
+
+  const normalizedById = new Map<string, GenerationNodeResult>()
+  await Promise.all(inspected.map(async ({ item }) => {
+    const normalized = await processor.normalizeImageDimensions!(
+      item.result!,
+      ownerNodeId,
+      targetWidth,
+      targetHeight,
+    )
+    normalizedById.set(item.id, normalized)
+  }))
+  return {
+    ...collection,
+    items: collection.items.map((item) => {
+      const normalized = normalizedById.get(item.id)
+      if (!normalized || !item.result) return item
+      return {
+        ...item,
+        result: normalized,
+        selectedResultId: normalized.id,
+        candidates: (item.candidates ?? [item.result]).map((candidate) => (
+          candidate.id === item.result!.id ? normalized : candidate
+        )),
+      }
+    }),
+  }
 }
 
 export async function postprocessCapabilityRecipeResults(

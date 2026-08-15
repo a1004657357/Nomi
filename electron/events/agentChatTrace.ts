@@ -13,6 +13,8 @@ type TurnTrace = {
   sessionId: string;
   /** toolCallId → tool.proposed 事件 id(因果链)。 */
   proposedIds: Map<string, string>;
+  startedAt: number;
+  stepCount: number;
 };
 
 const turns = new Map<string, TurnTrace>();
@@ -34,14 +36,21 @@ function append(trace: TurnTrace, event: Omit<NewNomiEvent, "id"> & { id?: strin
 export function beginTurnTrace(sessionId: string, payload: Record<string, unknown>): void {
   const projectId = projectIdFromSessionKey(typeof payload.sessionKey === "string" ? payload.sessionKey : undefined);
   if (!projectId) return;
-  const trace: TurnTrace = { projectId, sessionId, proposedIds: new Map() };
+  const chatContext = payload.chatContext && typeof payload.chatContext === "object"
+    ? payload.chatContext as Record<string, unknown>
+    : {};
+  const skill = chatContext.skill && typeof chatContext.skill === "object"
+    ? chatContext.skill as Record<string, unknown>
+    : {};
+  const trace: TurnTrace = { projectId, sessionId, proposedIds: new Map(), startedAt: Date.now(), stepCount: 0 };
   turns.set(sessionId, trace);
   append(trace, {
     source: "user",
     type: "agent.turn.started",
     payload: {
       sessionId,
-      skillKey: head(payload.skillKey, 128),
+      skillKey: head(payload.skillKey || skill.key, 128),
+      playbookStageId: head(payload.playbookStageId, 128),
       promptHead: head(payload.displayPrompt || payload.prompt, PROMPT_HEAD),
     },
   });
@@ -54,11 +63,37 @@ export function traceChatEvent(sessionId: string, event: unknown): void {
   const rec = event as Record<string, unknown>;
   const toolCallId = typeof rec.toolCallId === "string" ? rec.toolCallId : "";
   switch (rec.type) {
+    case "harness-config":
+      append(trace, {
+        source: "system",
+        type: "agent.turn.configured",
+        payload: {
+          sessionId,
+          vendorKey: head(rec.vendorKey, 128),
+          modelKey: head(rec.modelKey, 128),
+          skillKey: head(rec.skillKey, 128),
+          allowedTools: Array.isArray(rec.allowedTools) ? rec.allowedTools.slice(0, 32) : [],
+          playbook: rec.playbook && typeof rec.playbook === "object" ? rec.playbook as Record<string, unknown> : null,
+        },
+      });
+      return;
+    case "step-finish":
+      trace.stepCount += 1;
+      append(trace, {
+        source: "runtime",
+        type: "agent.step.finished",
+        payload: {
+          sessionId,
+          stepIndex: trace.stepCount,
+          finishReason: head(rec.finishReason, 64),
+        },
+      });
+      return;
     case "tool-call": {
       const id = append(trace, {
         source: "agent",
         type: "agent.tool.proposed",
-        payload: { toolCallId, toolName: rec.toolName, args: rec.args },
+        payload: { sessionId, toolCallId, toolName: rec.toolName, args: rec.args },
       });
       if (toolCallId) trace.proposedIds.set(toolCallId, id);
       return;
@@ -68,7 +103,7 @@ export function traceChatEvent(sessionId: string, event: unknown): void {
         source: "runtime",
         type: "agent.tool.completed",
         ...(trace.proposedIds.has(toolCallId) ? { causeId: trace.proposedIds.get(toolCallId) } : {}),
-        payload: { toolCallId, toolName: rec.toolName, ok: true, resultHead: head(rec.result, TEXT_HEAD) },
+        payload: { sessionId, toolCallId, toolName: rec.toolName, ok: true, resultHead: head(rec.result, TEXT_HEAD) },
       });
       return;
     case "tool-error":
@@ -76,7 +111,7 @@ export function traceChatEvent(sessionId: string, event: unknown): void {
         source: "runtime",
         type: "agent.tool.completed",
         ...(trace.proposedIds.has(toolCallId) ? { causeId: trace.proposedIds.get(toolCallId) } : {}),
-        payload: { toolCallId, toolName: rec.toolName, ok: false, message: head(rec.message, PROMPT_HEAD) },
+        payload: { sessionId, toolCallId, toolName: rec.toolName, ok: false, message: head(rec.message, PROMPT_HEAD) },
       });
       return;
     case "error":
@@ -99,6 +134,8 @@ export function traceChatEvent(sessionId: string, event: unknown): void {
           finalTextSha256: crypto.createHash("sha256").update(text).digest("hex"),
           usage: result.usage ?? null,
           finishReason: result.finishReason ?? null,
+          stepCount: trace.stepCount,
+          durationMs: Math.max(0, Date.now() - trace.startedAt),
         },
       });
       return;
@@ -129,11 +166,12 @@ export function traceToolDecision(
     ...(decision.proposalId ? { proposalId: decision.proposalId, txnId: `txn_${decision.proposalId}` } : {}),
     payload: decision.ok
       ? {
+          sessionId,
           toolCallId,
           ...(decision.effectiveArgs ? { effectiveArgs: decision.effectiveArgs } : {}),
           ...(decision.overridesDelta ? { overridesDelta: decision.overridesDelta } : {}),
         }
-      : { toolCallId, message: decision.message || "rejected by user" },
+      : { sessionId, toolCallId, message: decision.message || "rejected by user" },
   });
 }
 
@@ -146,7 +184,7 @@ export function traceGateDenied(sessionId: string, toolCallId: string, reason: s
     source: "system",
     type: "agent.gate.denied",
     ...(trace.proposedIds.has(toolCallId) ? { causeId: trace.proposedIds.get(toolCallId) } : {}),
-    payload: { toolCallId, reason },
+    payload: { sessionId, toolCallId, reason },
   });
 }
 

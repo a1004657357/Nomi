@@ -32,6 +32,36 @@ describe('normalizePayload — storyboardPlan 持久化往返(P0-6)', () => {
   })
 })
 
+describe('normalizePayload — Film Bible 持久化往返(Gate 1)', () => {
+  it('保存后完整恢复项目级跨镜头事实', () => {
+    const filmBible = {
+      version: 1 as const,
+      projectId: 'project-film-1',
+      theme: '选择与代价',
+      aspectRatio: '9:16',
+      characters: [{ assetId: 'character-lin', name: '林夏', relations: '店主' }],
+      forbiddenContent: ['角色身份漂移'],
+    }
+    const out = normalizePayload({ ...createDefaultWorkbenchProjectPayload(), filmBible })
+    expect(out.filmBible).toEqual(filmBible)
+  })
+
+  it('老项目无 Film Bible 时归一化为 null', () => {
+    const legacy = createDefaultWorkbenchProjectPayload()
+    delete legacy.filmBible
+    expect(normalizePayload(legacy).filmBible).toBeNull()
+  })
+
+  it('Film Bible 不接受凭据字段进入持久化对象', () => {
+    const out = normalizePayload({
+      ...createDefaultWorkbenchProjectPayload(),
+      filmBible: { version: 1, projectId: 'safe-project', theme: '安全', apiKey: 'must-not-persist' },
+    })
+    expect(out.filmBible).toEqual({ version: 1, projectId: 'safe-project', theme: '安全' })
+    expect(out.filmBible).not.toHaveProperty('apiKey')
+  })
+})
+
 describe('normalizePayload — 损坏记录优雅降级（缺可默认字段不该让项目打不开）', () => {
   // 真机案例（elicit走查）：payload 只有 { name, generationCanvas }，缺 workbenchDocument/timeline。
   // 旧行为：schema 硬必填这两个字段 → safeParse 失败 → throw「缺少必要字段」→ 整个项目打不开。

@@ -60,6 +60,12 @@ export type VibingDirectorBlenderRequest = {
   existingBlendRelativePath?: string;
   blenderPath?: string;
   timeoutMs?: number;
+  /**
+   * Gate 4 Slice 1（§14.2）：关联的镜头 id。迁移期 optional（既有调用不传 = directorNode 闭环）；
+   * 传入后，Blender 预演回传可关联回 ShotSpec（directorNode 闭环升级为 shot 闭环）。
+   * 见 electron/blender/shotBlenderBridge.ts projectShotSpecToBlenderInputs。
+   */
+  shotId?: string;
 };
 
 export type VibingDirectorBlenderResult = {

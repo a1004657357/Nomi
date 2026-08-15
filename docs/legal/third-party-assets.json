@@ -23,11 +23,11 @@
         ]
       },
       "license": {
-        "name": "Apache License 2.0",
+        "name": "AGPL-3.0-only",
         "url": "https://github.com/aqm857886159/Nomi/blob/main/LICENSE",
         "projectUse": "allowed",
         "redistribution": "allowed",
-        "note": "First-party generated artifacts are redistributed under the repository Apache-2.0 license."
+        "note": "First-party generated artifacts are redistributed under the repository license. Repository switched Apache-2.0 → AGPL-3.0-only on 2026-08-01 (docs/audit/2026-08-01-upstream-45-compatibility-license-audit.md); this record was updated 2026-08-02 to reconcile the prior stale Apache-2.0 label (Gate 7 P1 fix)."
       },
       "releasePolicy": "allowed"
     },

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { SkillListItemDto } from '../../api/skillApi'
 import {
+  beginCanvasSkillStage,
   buildCanvasSkillNodeState,
+  completeCanvasSkillStage,
   encodeCanvasSkillDrag,
   isCanvasSkill,
   parseCanvasSkillDrag,
   recordCanvasSkillOutput,
   readCanvasSkillNodeState,
+  syncCanvasSkillStageFromHarness,
 } from './canvasSkillModel'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 
@@ -45,8 +48,49 @@ describe('canvasSkillModel', () => {
       neededProviders: ['image', 'model3d'],
       defaultRecipeId: 'image.multiview.grid9',
       outputNodeIds: [],
+      currentStageIndex: 0,
+      runStatus: 'ready',
     })
     expect(state.stages[0]).toMatchObject({ id: 'views', pause: true })
+  })
+
+  it('runs a playbook one stage at a time and waits between paused stages', () => {
+    const stagedSkill: SkillListItemDto = {
+      ...skill,
+      stages: [
+        { id: 'plan', goal: '先规划', tools: ['read_canvas_state'], pause: true },
+        { id: 'build', goal: '再落画布', tools: ['create_canvas_nodes'], pause: true },
+      ],
+      stageLabels: ['先规划', '再落画布'],
+    }
+    const state = buildCanvasSkillNodeState(stagedSkill)
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [{
+        id: 'playbook-node',
+        kind: 'skill',
+        title: stagedSkill.label,
+        position: { x: 0, y: 0 },
+        prompt: stagedSkill.description ?? '',
+        categoryId: 'shots',
+        meta: { canvasSkill: state },
+      }],
+      edges: [],
+      groups: [],
+      selectedNodeIds: [],
+    })
+
+    expect(beginCanvasSkillStage('playbook-node')).toMatchObject({ id: 'plan', index: 0, total: 2 })
+    expect(readCanvasSkillNodeState(useGenerationCanvasStore.getState().nodes[0])?.runStatus).toBe('running')
+    expect(beginCanvasSkillStage('playbook-node')).toBeNull()
+    expect(completeCanvasSkillStage('playbook-node', 'plan')).toBe(true)
+    expect(readCanvasSkillNodeState(useGenerationCanvasStore.getState().nodes[0])).toMatchObject({
+      currentStageIndex: 1,
+      runStatus: 'awaiting-confirm',
+    })
+
+    expect(beginCanvasSkillStage('playbook-node')).toMatchObject({ id: 'build', index: 1, total: 2 })
+    expect(completeCanvasSkillStage('playbook-node', 'build')).toBe(true)
+    expect(readCanvasSkillNodeState(useGenerationCanvasStore.getState().nodes[0])?.runStatus).toBe('done')
   })
 
   it('round-trips the skill-library drag payload', () => {
@@ -57,6 +101,41 @@ describe('canvasSkillModel', () => {
       canvas: skill.canvas,
     })
     expect(parseCanvasSkillDrag('{broken')).toBeNull()
+  })
+
+  it('uses backend harness stage metadata as the playbook authority', () => {
+    const stagedSkill: SkillListItemDto = {
+      ...skill,
+      stages: [
+        { id: 'contract', goal: '项目契约', tools: ['read_canvas_state'], pause: true },
+        { id: 'shots', goal: '镜头', tools: ['create_canvas_nodes'], pause: false },
+      ],
+      stageLabels: ['项目契约', '镜头'],
+    }
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [{
+        id: 'harness-skill',
+        kind: 'skill',
+        title: stagedSkill.label,
+        position: { x: 0, y: 0 },
+        prompt: stagedSkill.description ?? '',
+        categoryId: 'shots',
+        meta: { canvasSkill: buildCanvasSkillNodeState(stagedSkill) },
+      }],
+      edges: [],
+      groups: [],
+    })
+
+    expect(beginCanvasSkillStage('harness-skill')).toMatchObject({ id: 'contract' })
+    const harness = { stageId: 'contract', index: 0, total: 2, pause: true, nextStageId: 'shots' }
+    expect(syncCanvasSkillStageFromHarness('harness-skill', harness)).toBe(true)
+    expect(completeCanvasSkillStage('harness-skill', 'contract', harness)).toBe(true)
+    expect(readCanvasSkillNodeState(useGenerationCanvasStore.getState().nodes[0])).toMatchObject({
+      currentStageIndex: 1,
+      runStatus: 'awaiting-confirm',
+    })
+
+    expect(syncCanvasSkillStageFromHarness('harness-skill', { ...harness, stageId: 'ghost' })).toBe(false)
   })
 
   it('normalizes persisted metadata and rejects non-skill nodes', () => {

@@ -1,4 +1,4 @@
-import type { AgentAttachmentPayload, AgentsChatResponseDto, AgentChatV2Session } from '../../api/desktopClient'
+import type { AgentAttachmentPayload, AgentHarnessConfig, AgentsChatResponseDto, AgentChatV2Session } from '../../api/desktopClient'
 import { sendWorkbenchAiMessage } from './workbenchAiClient'
 import { getAssistantModelPref } from './assistantModelPref'
 import { useAgentUsageStore } from './agentUsageStore'
@@ -54,13 +54,16 @@ export type RunWorkbenchAgentInput = {
   /** Selects the backend tool group + system prompt. */
   skillKey: string
   skillName: string
+  /** User-confirmed stage for a multi-stage Skill Playbook. */
+  playbookStageId?: string
   /** Provider compatibility path: ask for structured text and omit native tools. */
   disableTools?: boolean
   projectId?: string
-  mode?: 'auto'
+  mode?: 'agent' | 'chat' | 'refine' | 'auto'
   /** 待发附件（图片走原生多模态；文件 S4 抽文本）。 */
   attachments?: AgentAttachmentPayload[]
   onContent?: (delta: string, text: string) => void
+  onHarnessConfig?: (config: AgentHarnessConfig) => void
   /**
    * Called whenever the LLM issues a tool call. The caller shows UI (or
    * auto-executes for read tools) and must invoke `event.confirm(...)`.
@@ -84,6 +87,7 @@ export async function runWorkbenchAgent(input: RunWorkbenchAgentInput): Promise<
     projectName: '',
     skillKey: input.skillKey,
     skillName: input.skillName,
+    ...(input.playbookStageId ? { playbookStageId: input.playbookStageId } : {}),
     ...(input.disableTools ? { disableTools: true } : {}),
     mode: input.mode || ('auto' as const),
     ...(pref ? { agentModelKey: pref.modelKey, agentVendorKey: pref.vendorKey } : {}),
@@ -100,6 +104,10 @@ export async function runWorkbenchAgent(input: RunWorkbenchAgentInput): Promise<
       })
     },
     onEvent: (event: { event: string; data: Record<string, unknown> | Record<string, never> }) => {
+      if (event.event === 'harness-config') {
+        input.onHarnessConfig?.(event.data as AgentHarnessConfig)
+        return
+      }
       if (event.event !== 'tool-call') return
       const data = event.data as { toolCallId: string; toolName: string; args: unknown }
       input.onToolCall?.({

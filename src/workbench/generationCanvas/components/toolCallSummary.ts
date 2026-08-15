@@ -106,9 +106,10 @@ export function summarizeToolCall(toolName: string, args: unknown): string {
     const title = record.sourceNodeId ? nodeTitleById(String(record.sourceNodeId)) : null
     const recipeId = typeof record.recipeId === 'string' ? record.recipeId : ''
     const recipeLabel = CAPABILITY_RECIPE_NAME.get(recipeId) ?? '创作配方'
+    const suffix = record.visionReview ? '并执行一次视觉复核' : ''
     return title
-      ? `为「${title}」生成「${recipeLabel}」新结果（将产生生成费用）`
-      : `生成「${recipeLabel}」新结果（将产生生成费用）`
+      ? `为「${title}」生成「${recipeLabel}」新结果${suffix}（将产生费用）`
+      : `生成「${recipeLabel}」新结果${suffix}（将产生费用）`
   }
   if (toolName === 'save_creative_resource') {
     const title = record.sourceNodeId ? nodeTitleById(String(record.sourceNodeId)) : null
@@ -235,6 +236,7 @@ export function describeToolCallDetail(toolName: string, args: unknown): string 
     const outputs = Array.isArray(record.outputs) ? record.outputs.length : 0
     const count = typeof record.requestedOutputs === 'number' ? record.requestedOutputs : outputs
     if (count > 0) parts.push(`${count} 个结果`)
+    if (record.visionReview) parts.push('视觉复核 1 次')
     return parts.join(' · ')
   }
   if (toolName === 'handoff_model3d') {

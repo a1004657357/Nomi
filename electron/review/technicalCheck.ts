@@ -8,7 +8,7 @@ import { resolveFfmpegPath } from "../export/ffmpegRunner";
 import { probeMediaMetadata, type MediaProbeMetadata } from "../export/mediaProbe";
 
 export type TechnicalCheckItem = {
-  id: "black-frames" | "frozen-video" | "silent-audio" | "zero-duration" | "undecodable";
+  id: "black-frames" | "frozen-video" | "silent-audio" | "zero-duration" | "undecodable" | "aspect-ratio" | "duration";
   suspect: boolean;
   detail: string;
   metrics?: Record<string, number>;
@@ -23,6 +23,8 @@ export type TechnicalCheckVerdict = {
 export type TechnicalCheckOptions = {
   probeMedia?: (absolutePath: string) => Promise<MediaProbeMetadata>;
   runFfmpegStderr?: (args: string[]) => Promise<string>;
+  expectedAspectRatio?: string;
+  expectedDurationSeconds?: number;
 };
 
 const FFMPEG_CHECK_TIMEOUT_MS = 30_000;
@@ -98,6 +100,17 @@ const BLACK_RATIO_THRESHOLD = 0.6;
 const SILENCE_RATIO_THRESHOLD = 0.9;
 /** 冻结占比 >65% 才标记，保留静态构图和慢镜头空间。 */
 const FREEZE_RATIO_THRESHOLD = 0.65;
+/** 允许图片模型因内部缩放产生亚像素级取整；超过 1% 才判为画幅不符。 */
+const ASPECT_RATIO_RELATIVE_ERROR_THRESHOLD = 0.01;
+const MINIMUM_GENERATED_IMAGE_DIMENSION = 512;
+
+function parseExpectedAspectRatio(value: string | undefined): number | null {
+  const match = String(value || "").trim().match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  return width > 0 && height > 0 ? width / height : null;
+}
 
 export async function runTechnicalCheck(
   absolutePath: string,
@@ -108,12 +121,39 @@ export async function runTechnicalCheck(
   try {
     const meta = await (options.probeMedia ?? probeMediaMetadata)(absolutePath);
     const runFfmpeg = options.runFfmpegStderr ?? runFfmpegStderr;
+    const expectedRatio = parseExpectedAspectRatio(options.expectedAspectRatio);
+    if (expectedRatio && (meta.width ?? 0) > 0 && (meta.height ?? 0) > 0) {
+      const actualRatio = (meta.width ?? 0) / (meta.height ?? 1);
+      const relativeError = Math.abs(actualRatio / expectedRatio - 1);
+      const suspect = relativeError > ASPECT_RATIO_RELATIVE_ERROR_THRESHOLD;
+      checks.push({
+        id: "aspect-ratio",
+        suspect,
+        detail: suspect
+          ? `实际 ${meta.width}×${meta.height}，不符合请求画幅 ${options.expectedAspectRatio}`
+          : `实际 ${meta.width}×${meta.height}，符合请求画幅 ${options.expectedAspectRatio}`,
+        metrics: {
+          width: meta.width ?? 0,
+          height: meta.height ?? 0,
+          expectedRatio,
+          actualRatio,
+          relativeError,
+        },
+      });
+    }
     if (type === "image") {
       const decodable = (meta.width ?? 0) > 0 && (meta.height ?? 0) > 0;
+      const largeEnough =
+        (meta.width ?? 0) >= MINIMUM_GENERATED_IMAGE_DIMENSION
+        && (meta.height ?? 0) >= MINIMUM_GENERATED_IMAGE_DIMENSION;
       checks.push({
         id: "undecodable",
-        suspect: !decodable,
-        detail: decodable ? `${meta.width}×${meta.height}` : "图片无法解码或尺寸为 0",
+        suspect: !decodable || !largeEnough,
+        detail: !decodable
+          ? "图片无法解码或尺寸为 0"
+          : !largeEnough
+            ? `图片尺寸过小：${meta.width}×${meta.height}，最短边至少需要 ${MINIMUM_GENERATED_IMAGE_DIMENSION}px`
+            : `${meta.width}×${meta.height}`,
         metrics: {
           width: meta.width ?? 0,
           height: meta.height ?? 0,
@@ -121,6 +161,22 @@ export async function runTechnicalCheck(
       });
     } else {
       const duration = meta.durationSeconds ?? 0;
+      if (typeof options.expectedDurationSeconds === "number" && options.expectedDurationSeconds > 0) {
+        const durationDeltaSeconds = Math.abs(duration - options.expectedDurationSeconds);
+        const suspect = durationDeltaSeconds > 0.5;
+        checks.push({
+          id: "duration",
+          suspect,
+          detail: suspect
+            ? `实际 ${duration.toFixed(2)}s，不符合请求时长 ${options.expectedDurationSeconds}s`
+            : `实际 ${duration.toFixed(2)}s，符合请求时长 ${options.expectedDurationSeconds}s`,
+          metrics: {
+            durationSeconds: duration,
+            expectedDurationSeconds: options.expectedDurationSeconds,
+            durationDeltaSeconds,
+          },
+        });
+      }
       checks.push({
         id: "zero-duration",
         suspect: duration <= 0.1,

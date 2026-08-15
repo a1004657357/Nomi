@@ -123,6 +123,8 @@ export function normalizePayload(input: unknown): WorkbenchProjectPayload {
     storyboardPlan: payload.storyboardPlan ?? null,
     // 卡片回看:落画布状态随项目持久化(老项目无字段 → false 当草稿)。
     storyboardPlanCommitted: payload.storyboardPlanCommitted ?? false,
+    // Gate 1:Film Bible 是项目级唯一真相源；字段重建式 normalizer 必须显式透传。
+    filmBible: payload.filmBible ?? null,
   }
 }
 

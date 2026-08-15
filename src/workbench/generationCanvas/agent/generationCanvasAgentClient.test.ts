@@ -11,6 +11,9 @@ describe('buildStaticAgentSystemPrompt creative capability routing', () => {
     expect(prompt).toContain('只创建新的派生结果')
     expect(prompt).toContain('不得为了省一步而改写或覆盖现有 result')
     expect(prompt).toContain('已有结果的节点会自动新建版本节点')
+    expect(prompt).toContain('visionReviewModels')
+    expect(prompt).toContain('整批只增加 1 次视觉请求')
+    expect(prompt).toContain('失败不得自动重生成')
   })
 
   it('keeps image, video and model3d workflows distinct', () => {

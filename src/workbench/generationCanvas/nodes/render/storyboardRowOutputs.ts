@@ -276,7 +276,9 @@ function syncStoryboardReferenceEdges(imageNodeId: string, videoNodeId: string):
   const video = store.nodes.find((node) => node.id === videoNodeId)
   if (!video) return
   const mode = selectedVideoMode(video)
-  const fullReference = Boolean(mode?.slots.some((slot) => slot.kind === 'image_ref'))
+  // image_ref 并不等于全能参考。AGNES 的 i2v 也是 image_ref，但 max=1，API 只接收
+  // 一张首帧图；把它误判成全能参考会让角色卡先占掉唯一输入，真正的分镜图反而不发送。
+  const fullReference = Boolean(mode?.slots.some((slot) => slot.kind === 'image_ref' && slot.max > 1))
   const imageEdge = store.edges.find((edge) => (
     edge.source === imageNodeId
     && edge.target === videoNodeId

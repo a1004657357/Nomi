@@ -121,6 +121,10 @@ function detectLegacyErrorKind(raw: string): GenerationErrorKind | null {
   // 输出截断（agentError.describeEmptyAgentReply 的 length 签名）最先判——它是确定性失败，
   // 落进 unknown 会给出「稍等重试」的误导（重试必再撞）。短语来自我们自己的文案，单一来源。
   if (raw.includes('输出长度上限') || raw.includes('内容被截断')) return 'output-truncated'
+  // Codex Img2 runs locally through `codex exec`. These messages come from
+  // Nomi's watchdog, not from a provider quota or billing response.
+  if (raw.includes('Codex Img2 网络请求失败')) return 'codex-network'
+  if (raw.includes('Codex Img2 长时间无进展') || raw.includes('Codex Img2 生成超时')) return 'codex-timeout'
   if (lower.includes('api key') || lower.includes('apikey') || lower.includes('unauthorized') || lower.includes('401'))
     return 'auth'
   // 余额不足要和限流分开——用户动作不同(充值 vs 等待)。只匹配明确指向余额/欠费的词,
@@ -324,7 +328,10 @@ function detectModelRetired(raw: string): boolean {
 
 function reportFor(kind: GenerationErrorKind, raw: string, upstream: string | undefined): GenerationErrorReport {
   const { reason, hint } = narrateGenerationError(kind)
-  const providerMessage = pickProviderMessage(upstream ?? extractReadableErrorLine(raw), reason)
+  const providerMessage =
+    kind === 'codex-timeout' || kind === 'codex-network'
+      ? ''
+      : pickProviderMessage(upstream ?? extractReadableErrorLine(raw), reason)
   return {
     kind,
     reason,

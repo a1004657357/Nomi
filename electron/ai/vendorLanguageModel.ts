@@ -8,20 +8,30 @@ import { endpoint } from "../vendorEndpoint";
 import { extractVendorExtraHeaders, normalizeProviderKind } from "../catalog/catalogStore";
 import type { Model, Vendor } from "../catalog/types";
 
-function readOpenAiCompatibleBasePath(vendor: Vendor): string {
+function readOpenAiCompatibleBasePath(vendor: Vendor): string | null {
   const meta = vendor.meta;
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return "/v1";
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;
   const raw = (meta as Record<string, unknown>).openAiCompatibleBasePath;
-  if (typeof raw !== "string") return "/v1";
+  if (typeof raw !== "string") return null;
   return raw.trim();
+}
+
+function baseAlreadyIncludesApiVersion(baseUrl: string): boolean {
+  try {
+    return /\/v\d+(?:beta\d*)?$/i.test(new URL(baseUrl).pathname.replace(/\/+$/, ""));
+  } catch {
+    return false;
+  }
 }
 
 export function resolveLanguageModelBaseURL(vendor: Vendor): string {
   const providerKind = normalizeProviderKind(vendor.providerKind);
   if (providerKind === "anthropic") return (vendor.baseUrlHint || "").trim();
   const basePath = readOpenAiCompatibleBasePath(vendor);
-  if (!basePath) return (vendor.baseUrlHint || "").trim().replace(/\/+$/, "");
-  return endpoint(vendor, basePath.startsWith("/") ? basePath : `/${basePath}`);
+  const rawBaseUrl = (vendor.baseUrlHint || "").trim().replace(/\/+$/, "");
+  if (basePath === "" || (basePath === null && baseAlreadyIncludesApiVersion(rawBaseUrl))) return rawBaseUrl;
+  const effectiveBasePath = basePath ?? "/v1";
+  return endpoint(vendor, effectiveBasePath.startsWith("/") ? effectiveBasePath : `/${effectiveBasePath}`);
 }
 
 export function buildLanguageModelForVendor(vendor: Vendor, model: Model, apiKey: string): LanguageModelV1 {

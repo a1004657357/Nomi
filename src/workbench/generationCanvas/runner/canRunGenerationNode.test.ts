@@ -29,6 +29,17 @@ describe('canRunGenerationNode — 视频节点参考判定', () => {
     expect(canRunGenerationNode(videoNode('first', { firstFrameUrl: 'https://cdn/f.png' }), { nodes: [], edges: [] })).toBe(true)
     expect(canRunGenerationNode(videoNode('first'), { nodes: [], edges: [] })).toBe(false)
   })
+  it('首帧模式：上游视频通过 first_frame 边接力 → 可生成并在提交前抽取真实尾帧', () => {
+    const source = {
+      id: 'previous-video', kind: 'video', title: '上一组', position: { x: 0, y: 0 }, prompt: '',
+      result: { id: 'previous-result', type: 'video', url: 'nomi-local://asset/p/previous.mp4' },
+    } as GenerationCanvasNode
+    const target = videoNode('first')
+    expect(canRunGenerationNode(target, {
+      nodes: [source, target],
+      edges: [{ id: 'relay-edge', source: source.id, target: target.id, mode: 'first_frame' } as never],
+    })).toBe(true)
+  })
   it('image / text 节点（无档案上下文）始终可生成（prompt 缺失由下游兜底）', () => {
     expect(canRunGenerationNode({ kind: 'image' } as GenerationCanvasNode)).toBe(true)
     expect(canRunGenerationNode({ kind: 'text' } as GenerationCanvasNode)).toBe(true)

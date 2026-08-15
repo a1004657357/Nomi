@@ -37,9 +37,16 @@ import {
   type OpenCapabilityRecipeEventDetail,
 } from './capabilityRecipeEvents'
 import { recordCanvasSkillOutput } from '../skills/canvasSkillModel'
+import {
+  CapabilityAutoVisionReviewControl,
+  type CapabilityVisionReviewSelection,
+} from './CapabilityAutoVisionReviewControl'
+import {
+  CapabilityCameraOutputsEditor,
+  type CameraOutput,
+} from './CapabilityCameraOutputsEditor'
 
 type InspectorView = 'recipes' | 'resource'
-type CameraOutput = { id: string; label: string; azimuth: number; elevation: number; shotSize: string }
 
 const CAMERA_ANGLES = [0, 45, 90, 135, 180, -90]
 const RESOURCE_KIND_OPTIONS = [
@@ -112,6 +119,7 @@ export function CapabilityRecipeInspector({
   const [resourceTokens, setResourceTokens] = React.useState('')
   const [commercialUse, setCommercialUse] = React.useState('unknown')
   const [originSkillNodeId, setOriginSkillNodeId] = React.useState<string | null>(null)
+  const [visionReview, setVisionReview] = React.useState<CapabilityVisionReviewSelection>({ enabled: false })
   const catalogRequestId = React.useRef(0)
 
   const nodes = useGenerationCanvasStore((state) => state.nodes)
@@ -123,6 +131,10 @@ export function CapabilityRecipeInspector({
   const moodOutputCount = moodOutputCountForMode(moodGenerationMode)
   const moodCoordinates = moodCoordinatesForMode(moodGenerationMode, params.energy, params.affinity)
   const selectedTarget = selectedRecipe?.compatibleModels.find((target) => targetValue(target) === modelValue)
+  const isMultiviewRecipe = Boolean(
+    selectedRecipe && ['image.multiview.grid9', 'image.multiview.custom'].includes(selectedRecipe.id),
+  )
+  const selectedVisionReviewModel = visionReview.model
   const controls = React.useMemo(
     () => mergeControls(selectedTarget?.params ?? [], selectedRecipe?.controls ?? []),
     [selectedRecipe?.controls, selectedTarget?.params],
@@ -186,6 +198,10 @@ export function CapabilityRecipeInspector({
     if (!open || !enabled) return
     void refreshRecipes()
   }, [enabled, open, refreshRecipes])
+
+  React.useEffect(() => {
+    if (!isMultiviewRecipe) setVisionReview({ enabled: false })
+  }, [isMultiviewRecipe])
 
   React.useEffect(() => {
     if (!open || !enabled) return
@@ -271,6 +287,10 @@ export function CapabilityRecipeInspector({
       toast(inputReadiness.message, 'warning')
       return
     }
+    if (visionReview.enabled && !selectedVisionReviewModel) {
+      toast('自动视觉复核需要先连接一个支持图片输入的文本模型', 'warning')
+      return
+    }
     const count = selectedRecipe.id === 'image.multiview.grid9'
       ? 9
       : isMoodRecipe
@@ -279,9 +299,15 @@ export function CapabilityRecipeInspector({
           ? outputCount
           : 1
     const taskCount = recipeTaskCount(selectedRecipe, params, count)
+    const generationCost = describeGenerationCost(
+      taskCount,
+      selectedRecipe.output.kind === 'video' ? 'video' : 'image',
+    )
     const ok = await useSpendConfirmStore.getState().requestConfirm({
       title: `生成${selectedRecipe.label}`,
-      message: describeGenerationCost(taskCount, selectedRecipe.output.kind === 'video' ? 'video' : 'image'),
+      message: visionReview.enabled
+        ? `${generationCost}；生成完成后额外执行 1 次批量视觉复核。`
+        : generationCost,
       confirmLabel: '生成新结果',
       light: true,
       source: 'user',
@@ -295,6 +321,9 @@ export function CapabilityRecipeInspector({
           : isMoodRecipe
             ? [{ label: '生成任务', value: moodRequestSummary(moodGenerationMode) }]
             : []),
+        ...(visionReview.enabled && selectedVisionReviewModel
+          ? [{ label: '视觉复核', value: `${selectedVisionReviewModel.label} · 整批 1 次` }]
+          : []),
       ],
     })
     if (!ok) return
@@ -310,6 +339,12 @@ export function CapabilityRecipeInspector({
         requestedOutputs: count,
         resourceIds: applicableResourceIds,
         ...(isCustomCamera ? { outputs: cameraOutputs.slice(0, count) } : {}),
+        ...(visionReview.enabled && selectedVisionReviewModel ? {
+          visionReview: {
+            vendorKey: selectedVisionReviewModel.vendorKey,
+            modelKey: selectedVisionReviewModel.modelKey,
+          },
+        } : {}),
       })) as { targetNodeId?: string }
       if (outcome.targetNodeId && originSkillNodeId) {
         recordCanvasSkillOutput({
@@ -625,69 +660,19 @@ export function CapabilityRecipeInspector({
                     </div>
                   ) : null}
                   {isCustomCamera ? (
-                    <div className="mt-3 divide-y divide-nomi-line border-y border-nomi-line">
-                      {cameraOutputs.slice(0, outputCount).map((output, index) => (
-                        <div
-                          key={output.id}
-                          className="grid grid-cols-[minmax(80px,1fr)_72px_72px_88px] items-center gap-2 py-2"
-                        >
-                          <input
-                            className={inputClass()}
-                            aria-label={`机位 ${index + 1} 名称`}
-                            value={output.label}
-                            onChange={(event) =>
-                              setCameraOutputs((current) =>
-                                current.map((item, pos) =>
-                                  pos === index ? { ...item, label: event.target.value } : item,
-                                ),
-                              )
-                            }
-                          />
-                          <input
-                            className={inputClass()}
-                            aria-label={`机位 ${index + 1} 方位角`}
-                            type="number"
-                            min={-180}
-                            max={180}
-                            value={output.azimuth}
-                            onChange={(event) =>
-                              setCameraOutputs((current) =>
-                                current.map((item, pos) =>
-                                  pos === index ? { ...item, azimuth: Number(event.target.value) } : item,
-                                ),
-                              )
-                            }
-                          />
-                          <input
-                            className={inputClass()}
-                            aria-label={`机位 ${index + 1} 仰俯角`}
-                            type="number"
-                            min={-30}
-                            max={30}
-                            value={output.elevation}
-                            onChange={(event) =>
-                              setCameraOutputs((current) =>
-                                current.map((item, pos) =>
-                                  pos === index ? { ...item, elevation: Number(event.target.value) } : item,
-                                ),
-                              )
-                            }
-                          />
-                          <NomiSelect
-                            ariaLabel={`机位 ${index + 1} 景别`}
-                            value={output.shotSize}
-                            options={['特写', '近景', '中景', '全景'].map((value) => ({ value, label: value }))}
-                            onChange={(value) =>
-                              setCameraOutputs((current) =>
-                                current.map((item, pos) => (pos === index ? { ...item, shotSize: value } : item)),
-                              )
-                            }
-                          />
-                        </div>
+                    <CapabilityCameraOutputsEditor
+                      outputs={cameraOutputs}
+                      count={outputCount}
+                      onChange={(index, patch) => setCameraOutputs((current) => (
+                        current.map((item, position) => position === index ? { ...item, ...patch } : item)
                       ))}
-                    </div>
+                    />
                   ) : null}
                 </div>
+              ) : null}
+
+              {isMultiviewRecipe ? (
+                <CapabilityAutoVisionReviewControl onChange={setVisionReview} />
               ) : null}
 
               {resourceCandidates.length ? (

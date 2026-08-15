@@ -9,6 +9,11 @@
 // 这是【与供应商无关】的完整保证：vendor 是否认 Idempotency-Key 不影响正确性。
 //
 // 无键则完全不介入（向后兼容 headless/测试路径）——这由调用方判断，本模块只处理「有键」。
+//
+// Gate 1 Slice 6（§20）：跨重启持久化层在 `./tasks/idempotencyStore.ts`。
+// 本模块首次成功后镜像 outcome 到持久台账；重启后同 key 再来时绝不重新执行 run。
+
+import { getGlobalIdempotencyStore, SubmissionReplayError } from './tasks/idempotencyStore'
 
 type LedgerEntry<T> = {
   readonly promise: Promise<T>;
@@ -24,6 +29,11 @@ export type DedupeOptions = {
   ttlMs?: number;
   /** 注入「现在」便于测试 TTL；默认 Date.now。 */
   now?: () => number;
+};
+
+export type RunTaskIdempotencyOptions<T> = DedupeOptions & {
+  /** 重启后已有 providerTaskId 时只做免费查询，绝不再次调用 create。 */
+  recoverPersisted?: (record: import('./tasks/idempotencyStore').IdempotencyRecord) => Promise<T>;
 };
 
 /**
@@ -76,20 +86,223 @@ function readIdempotencyKey(payload: unknown): string {
 /**
  * 在提交入口包一层幂等：payload.request.extras.idempotencyKey 存在 → 同键的 `run` 最多执行一次
  * （重试重放第一次的 promise，绝不二次下单）；无键 → 原样执行（向后兼容 headless/旧路径）。
+ *
+ * Gate 1 Slice 6（§20）：跨重启持久化——若 `getGlobalIdempotencyStore()` 返回的持久台账里
+ * 已有该 key（上一会话受理过），**绝不重新执行 run**（防二次扣费）：
+ *   · 记录有 providerTaskId → 抛 SubmissionReplayError，上层映射为 query-only 恢复（§10.2 unknown 不重发）；
+ *   · 记录无 providerTaskId（create 结果未知）→ 同样抛 SubmissionReplayError，强制新建生成意图（新 key）。
+ * 本进程内首次成功后，会把 outcome 镜像到持久台账（best-effort）。
  */
 export function runTaskWithIdempotency<T>(
   payload: unknown,
   run: () => Promise<T>,
-  options?: DedupeOptions,
+  options: RunTaskIdempotencyOptions<T> = {},
 ): Promise<T> {
   const key = readIdempotencyKey(payload);
   if (!key) return run();
-  const now = options?.now ?? Date.now;
+  const now = options.now ?? Date.now;
+
   pruneExpiredSubmissions(defaultLedger, now);
   if (!defaultLedger.has(key) && defaultLedger.size >= DEFAULT_LEDGER_MAX_ENTRIES) {
     return Promise.reject(new Error("生成提交队列已达到安全上限，请稍后重试"));
   }
-  return dedupeSubmission(defaultLedger as Map<string, LedgerEntry<T>>, key, run, options);
+
+  // 持久检查和 submitting 落盘必须放在 dedupeSubmission 的首次 fn 内：这样同进程第二个
+  // 并发请求先命中内存 promise，不会被刚写入的持久记录误判为“上一会话重放”。
+  return dedupeSubmission(
+    defaultLedger as Map<string, LedgerEntry<T>>,
+    key,
+    async () => {
+      const persistStore = getGlobalIdempotencyStore();
+      const persisted = persistStore?.get(key);
+      if (persisted) {
+        if (persisted.providerTaskId && options.recoverPersisted) {
+          const recovered = await options.recoverPersisted(persisted);
+          recordPersistedTaskResult(recovered);
+          return recovered;
+        }
+        throw new SubmissionReplayError(
+          persisted,
+          persisted.providerTaskId
+            ? `此生成已在上一会话受理（任务 ${persisted.providerTaskId}），请用查询恢复而非重新提交`
+            : '此生成在上一会话已提交但结果未知，请新建生成（新意图）或人工核对，系统不会自动重发',
+        );
+      }
+
+      if (persistStore) recordSubmissionStarted(persistStore, key, payload, now());
+      try {
+        const value = await run();
+        if (persistStore) recordOutcomeToPersistStore(persistStore, key, payload, value, now());
+        return value;
+      } catch (error) {
+        // 无法可靠区分“请求未发出”与“已发出但回执丢失”，故保守落 unknown，禁止自动重发。
+        if (persistStore) recordSubmissionUnknown(persistStore, key, payload, now());
+        throw error;
+      }
+    },
+    options,
+  );
+}
+
+/** 从 runTask 结果里尽量抠出 providerTaskId（用于重启后查询恢复）。 */
+function extractProviderTaskId(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as { id?: unknown; providerMeta?: { task_id?: unknown; query_id?: unknown } }
+  if (typeof v.id === 'string' && v.id) return v.id
+  if (v.providerMeta) {
+    if (typeof v.providerMeta.task_id === 'string') return v.providerMeta.task_id
+    if (typeof v.providerMeta.query_id === 'string') return v.providerMeta.query_id
+  }
+  return undefined
+}
+
+function extractVendorKey(payload: unknown): string | undefined {
+  const v = (payload as { vendor?: unknown })?.vendor
+  return typeof v === 'string' ? v : undefined
+}
+
+function extractRequestContext(payload: unknown): {
+  modelKey?: string;
+  taskKind?: string;
+  projectId?: string;
+  nodeId?: string;
+} {
+  const request = (payload as { request?: { kind?: unknown; extras?: Record<string, unknown> } })?.request;
+  const extras = request?.extras || {};
+  const pick = (...values: unknown[]): string | undefined => {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return undefined;
+  };
+  const modelKey = pick(extras.modelKey, extras.modelAlias);
+  const taskKind = pick(request?.kind);
+  const projectId = pick(extras.projectId);
+  const nodeId = pick(extras.nodeId);
+  return {
+    ...(modelKey ? { modelKey } : {}),
+    ...(taskKind ? { taskKind } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(nodeId ? { nodeId } : {}),
+  };
+}
+
+const PERSISTABLE_TASK_STATUSES = new Set([
+  'submitted',
+  'queued',
+  'running',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'unknown',
+]);
+
+function extractTaskStatus(value: unknown): import('./tasks/idempotencyStore').IdempotencyRecord['status'] | undefined {
+  const status = (value as { status?: unknown })?.status;
+  return typeof status === 'string' && PERSISTABLE_TASK_STATUSES.has(status)
+    ? status as import('./tasks/idempotencyStore').IdempotencyRecord['status']
+    : undefined;
+}
+
+function recordSubmissionStarted(
+  store: NonNullable<ReturnType<typeof getGlobalIdempotencyStore>>,
+  key: string,
+  payload: unknown,
+  createdAt: number,
+): void {
+  const context = extractRequestContext(payload);
+  store.record({
+    idempotencyKey: key,
+    vendorKey: extractVendorKey(payload),
+    ...context,
+    status: 'submitting',
+    createdAt,
+  });
+}
+
+function recordSubmissionUnknown(
+  store: NonNullable<ReturnType<typeof getGlobalIdempotencyStore>>,
+  key: string,
+  payload: unknown,
+  timestamp: number,
+): void {
+  const current = store.get(key);
+  // A user cancellation can race with the rejected create promise. Once the IPC
+  // cancellation boundary has persisted cancelled, the later rejection must not
+  // downgrade it to unknown and make the UI offer an unsafe recovery path.
+  if (current?.status === 'cancelled') return;
+  store.record({
+    idempotencyKey: key,
+    vendorKey: current?.vendorKey ?? extractVendorKey(payload),
+    ...extractRequestContext(payload),
+    ...current,
+    status: 'unknown',
+    createdAt: current?.createdAt ?? timestamp,
+    settledAt: undefined,
+  });
+}
+
+function recordOutcomeToPersistStore(
+  store: NonNullable<ReturnType<typeof getGlobalIdempotencyStore>>,
+  key: string,
+  payload: unknown,
+  value: unknown,
+  timestamp: number,
+): void {
+  try {
+    const current = store.get(key);
+    const status = extractTaskStatus(value) ?? 'succeeded';
+    const terminal = status === 'succeeded' || status === 'failed' || status === 'cancelled';
+    store.record({
+      ...current,
+      idempotencyKey: key,
+      providerTaskId: extractProviderTaskId(value) ?? current?.providerTaskId,
+      vendorKey: current?.vendorKey ?? extractVendorKey(payload),
+      ...extractRequestContext(payload),
+      status,
+      createdAt: current?.createdAt ?? timestamp,
+      ...(terminal ? { settledAt: timestamp } : { settledAt: undefined }),
+    })
+  } catch {
+    // best-effort：镜像失败不影响主流程
+  }
+}
+
+/** 免费 query/cancel 返回后同步持久任务状态；没有对应 create 记录时保持 no-op。 */
+export function recordPersistedTaskResult(value: unknown): void {
+  const store = getGlobalIdempotencyStore();
+  const providerTaskId = extractProviderTaskId(value);
+  const status = extractTaskStatus(value);
+  if (!store || !providerTaskId || !status) return;
+  const terminal = status === 'succeeded' || status === 'failed' || status === 'cancelled';
+  try {
+    store.updateByProviderTaskId(providerTaskId, status, terminal ? Date.now() : undefined);
+  } catch {
+    // best-effort：状态镜像失败不能让免费查询本身失败
+  }
+}
+
+/** Persist a successful cancellation by intent key and/or Provider task id. */
+export function recordPersistedTaskCancellation(input: {
+  idempotencyKey?: string;
+  providerTaskId?: string;
+}): void {
+  const store = getGlobalIdempotencyStore();
+  if (!store) return;
+  const idempotencyKey = String(input.idempotencyKey || '').trim();
+  const providerTaskId = String(input.providerTaskId || '').trim();
+  try {
+    const record = (idempotencyKey ? store.get(idempotencyKey) : undefined)
+      ?? (providerTaskId ? store.findByProviderTaskId(providerTaskId) : undefined);
+    if (!record) return;
+    store.record({
+      ...record,
+      status: 'cancelled',
+      settledAt: Date.now(),
+    });
+  } catch {
+    // best-effort: cancellation itself must not fail because ledger mirroring did.
+  }
 }
 
 /** 清掉所有已过期条目（可选的主动 GC；不调也会在同键再次访问时惰性清理）。 */

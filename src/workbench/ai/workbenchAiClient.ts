@@ -15,9 +15,10 @@ export type WorkbenchAiRequest = {
   projectName?: string
   skillKey: string
   skillName: string
+  playbookStageId?: string
   /** Request a structured text response without provider-native function tools. */
   disableTools?: boolean
-  mode?: 'chat' | 'auto'
+  mode?: 'agent' | 'chat' | 'refine' | 'auto'
   /** 助手模型偏好（用户选的）：透传给后端 chooseTextModel 优先用。 */
   agentModelKey?: string
   agentVendorKey?: string
@@ -48,6 +49,7 @@ export function buildWorkbenchAiPayload(input: WorkbenchAiRequest) {
     },
     mode: input.mode || 'auto',
     temperature: 0.7,
+    ...(input.playbookStageId ? { playbookStageId: input.playbookStageId } : {}),
     ...(input.disableTools ? { disableTools: true } : {}),
     ...(input.agentModelKey ? { agentModelKey: input.agentModelKey, agentVendorKey: input.agentVendorKey } : {}),
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),

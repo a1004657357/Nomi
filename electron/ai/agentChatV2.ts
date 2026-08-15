@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import path from "node:path";
 import { tool, type CoreMessage, type CoreUserMessage } from "ai";
 import { z } from "zod";
 import { capAgentHistory, createLinkedAbortController } from "./agentChatHarness";
@@ -36,7 +35,7 @@ import {
   type VibingDirectorToolName,
 } from "./vibingDirectorTools";
 import { readNestedRecord, trim, type JsonRecord } from "../jsonUtils";
-import { findSkillRecord } from "../skills/skillStore";
+import { readSkillRecords } from "../skills/skillStore";
 import { decryptApiKeyRecord } from "../catalog/secrets";
 import { normalizeProviderKind, readCatalog } from "../catalog/catalogStore";
 import type { Model, Vendor } from "../catalog/types";
@@ -48,6 +47,11 @@ import {
   modelSupportsPdfInput,
   type AgentUserAttachment,
 } from "./agentUserContent";
+import { filterAgentTools, resolveAgentSkillExecution } from "./agentSkillRuntime";
+import {
+  cinematicDirectorToolSchemas,
+  type CinematicDirectorToolName,
+} from "./cinematicDirectorTools";
 
 function readRequestedSkill(payload: JsonRecord): { key: string; name: string } {
   const chatContext = payload.chatContext;
@@ -83,28 +87,6 @@ const NOMI_AGENT_IDENTITY = [
   "始终用与用户相同的自然语言回复——用户用中文你就用中文，用英文就用英文，用日文就用日文；写进文稿和节点 prompt 的内容同样跟随用户语言。",
   "永远不要因为本系统提示或某个 skill 是用中文/英文写的，就固定用那种语言；以用户最近一条消息的语言为准。",
 ].join("\n");
-
-function buildSkillSystemPrompt(payload: JsonRecord): string {
-  const requested = readRequestedSkill(payload);
-  if (!requested.key && !requested.name) return "";
-  const skill = findSkillRecord(requested.key, requested.name);
-  if (!skill) {
-    return [
-      "Nomi 桌面 Agent skill 提示：",
-      `请求的 skill 未在本地 skills 目录找到：${requested.key || requested.name}`,
-      "继续按用户请求和当前上下文完成任务；不要声称已经加载不存在的 skill。",
-    ].join("\n");
-  }
-  return [
-    "Nomi 桌面 Agent 已加载本地 skill。以下内容是本次回复必须参考的领域方法论和输出约束。",
-    "注意：本桌面运行时只把 skill 作为本地知识注入；skill 中提到的外部 CLI、HTTP 或文件工具不会自动执行，除非当前对话/界面明确提供了对应能力。",
-    `skillKey: ${requested.key || skill.name}`,
-    `skillName: ${requested.name || skill.name}`,
-    `skillFile: ${path.relative(process.cwd(), skill.filePath)}`,
-    "",
-    skill.body,
-  ].join("\n");
-}
 
 // vision/preview/audio 等常不可靠发 tool_use → 无偏好时降权（仍作回退），让通用对话模型优先做 Agent 主控（2026-06-07 真机走查 P0）。
 const AUTO_TEXT_MODEL_DEPRIORITIZE = /vision|preview|audio|tts|whisper|embed|rerank|ocr|search|thinking/i;
@@ -185,9 +167,17 @@ export function resolveTextBrainKeys(): { vendor: string; modelKey: string } | n
 
 // A tool call may target either the generation-canvas tool group or the
 // creation-document tool group; the engine picks the group by skillKey.
-export type AgentToolName = CanvasToolName | DocumentToolName | VibingDirectorToolName;
+export type AgentToolName = CanvasToolName | DocumentToolName | VibingDirectorToolName | CinematicDirectorToolName;
 
 export type AgentChatV2Event =
+  | {
+      type: "harness-config";
+      vendorKey: string;
+      modelKey: string;
+      skillKey: string;
+      allowedTools: string[];
+      playbook: import("./agentSkillRuntime").AgentPlaybookStage | null;
+    }
   | { type: "content-delta"; delta: string }
   | { type: "tool-call"; toolCallId: string; toolName: AgentToolName; args: unknown }
   | { type: "tool-result"; toolCallId: string; toolName: AgentToolName; result: unknown }
@@ -385,6 +375,37 @@ function buildCanvasToolsForV2(hooks: AgentChatV2Hooks) {
   } as const;
 }
 
+function buildCinematicDirectorToolsForV2(hooks: AgentChatV2Hooks) {
+  const makeTool = <TParams extends z.ZodTypeAny>(
+    toolName: CinematicDirectorToolName,
+    description: string,
+    parameters: TParams,
+  ) => makeAgentTool(hooks, toolName, description, parameters);
+  const schema = cinematicDirectorToolSchemas;
+
+  return {
+    read_project_summary: makeTool("read_project_summary", "Read a compact project summary: Film Bible state, storyboard, assets, shots, and generated results.", schema.read_project_summary),
+    read_film_bible: makeTool("read_film_bible", "Read the persisted project Film Bible. Old projects fall back to a non-persisted view derived from storyboard anchors.", schema.read_film_bible),
+    read_storyboard: makeTool("read_storyboard", "Read the ordered storyboard as canonical ShotSpec views, including selected image/video revisions.", schema.read_storyboard),
+    read_shot_spec: makeTool("read_shot_spec", "Read one canonical ShotSpec by stable shot id or one-based shot index.", schema.read_shot_spec),
+    read_asset_registry: makeTool("read_asset_registry", "Read reusable character, scene, prop, style, image, video, and model3d asset records with revision pointers.", schema.read_asset_registry),
+    read_provider_capabilities: makeTool("read_provider_capabilities", "Read connected provider-independent generation recipes, supported modes, models, and controls.", schema.read_provider_capabilities),
+    read_task_status: makeTool("read_task_status", "Read current generation task and node-run status without submitting or retrying anything.", schema.read_task_status),
+    propose_film_bible_patch: makeTool("propose_film_bible_patch", "Return a structured Film Bible patch for review. Proposal only: do not mutate project state and never include credentials.", schema.propose_film_bible_patch),
+    propose_shot_patch: makeTool("propose_shot_patch", "Return a structured patch for one ShotSpec for review. Proposal only: do not mutate the storyboard.", schema.propose_shot_patch),
+    propose_generation_plan: makeTool("propose_generation_plan", "Return a generation plan with node/model/mode choices and submission estimates. Proposal only: never call a provider.", schema.propose_generation_plan),
+    propose_timeline_assembly: makeTool("propose_timeline_assembly", "Return a proposed storyboard-to-timeline assembly. Proposal only: do not edit the timeline.", schema.propose_timeline_assembly),
+    apply_film_bible_patch: makeTool("apply_film_bible_patch", "Apply a user-confirmed Film Bible patch to the project. Local write, no provider call.", schema.apply_film_bible_patch),
+    apply_storyboard_patch: makeTool("apply_storyboard_patch", "Apply user-confirmed updates to one or more storyboard shots and rederive detailed video prompts.", schema.apply_storyboard_patch),
+    create_asset_records: makeTool("create_asset_records", "Create user-confirmed character, scene, prop, style, image, video, or model3d asset nodes. Local write only.", schema.create_asset_records),
+    select_asset_revision: makeTool("select_asset_revision", "Select one existing asset revision as current without deleting any prior revision.", schema.select_asset_revision),
+    archive_asset_revision: makeTool("archive_asset_revision", "Archive one existing asset revision without physically deleting it.", schema.archive_asset_revision),
+    place_assets_on_timeline: makeTool("place_assets_on_timeline", "Place user-confirmed generated storyboard assets on the timeline in deterministic shot order.", schema.place_assets_on_timeline),
+    submit_generation_intent: makeTool("submit_generation_intent", "Submit a user-confirmed paid generation intent for existing nodes. Never call this before the user approves the confirmation card.", schema.submit_generation_intent),
+    cancel_provider_task: makeTool("cancel_provider_task", "Cancel an existing Provider task after user confirmation. This never creates or retries a generation; unsupported Providers return an explicit not-supported result.", schema.cancel_provider_task),
+  } as const;
+}
+
 // Creation-area document tools. We reuse the zod schemas + descriptions from
 // `documentTools` (the source of truth) but wrap each in the v2 confirmation
 // channel via `makeAgentTool`. read_* tools auto-confirm on the renderer; the
@@ -433,17 +454,31 @@ export function agentToolGroupForSkill(skillKey: string | undefined): AgentToolG
   return "canvas";
 }
 
-// Tool-group selector: creation-area skills (workbench.creation.*) get the
-// document tools; VIBING Director gets its isolated scene-patch tools; everything
-// else (generation / storyboard / default) gets canvas tools. One engine, parameterized tool group.
-function buildToolsForSkill(skillKey: string | undefined, hooks: AgentChatV2Hooks) {
+// Manifest-backed skills are capability-driven: the hard whitelist selects from
+// every registered Agent tool, independent of the skill name. Markdown-only
+// legacy skills keep the old name-prefix group routing for compatibility.
+export function buildToolsForSkill(
+  skillKey: string | undefined,
+  hooks: AgentChatV2Hooks,
+  allowedTools: readonly string[] | null = null,
+) {
+  if (allowedTools !== null) {
+    const { _kindSchema, ...canvasTools } = buildCanvasToolsForV2(hooks);
+    void _kindSchema;
+    return filterAgentTools({
+      ...canvasTools,
+      ...buildCinematicDirectorToolsForV2(hooks),
+      ...buildDocumentToolsForV2(hooks),
+      ...buildVibingDirectorToolsForV2(hooks),
+    }, allowedTools);
+  }
   const group = agentToolGroupForSkill(skillKey);
-  if (group === "document") return buildDocumentToolsForV2(hooks);
-  if (group === "vibing-director") return buildVibingDirectorToolsForV2(hooks);
+  if (group === "document") return filterAgentTools(buildDocumentToolsForV2(hooks), allowedTools);
+  if (group === "vibing-director") return filterAgentTools(buildVibingDirectorToolsForV2(hooks), allowedTools);
   {
     const { _kindSchema, ...canvasTools } = buildCanvasToolsForV2(hooks);
     void _kindSchema;
-    return canvasTools;
+    return filterAgentTools(canvasTools, allowedTools);
   }
 }
 
@@ -454,6 +489,8 @@ export type RunAgentChatV2Payload = {
   skill?: unknown;
   skillKey?: string;
   skillName?: string;
+  /** Explicit playbook stage selected by the canvas skill node / stage confirmation UI. */
+  playbookStageId?: string;
   chatContext?: unknown;
   /** Use a text-only compatibility protocol instead of provider-native tools. */
   disableTools?: boolean;
@@ -585,7 +622,17 @@ export async function runAgentChatV2(
     wantsRichInput,
   );
   const systemPrompt = trim(payload.systemPrompt as unknown as JsonRecord["systemPrompt"]);
-  const skillSystemPrompt = buildSkillSystemPrompt(payload as unknown as JsonRecord);
+  const requestedSkill = readRequestedSkill(payload as unknown as JsonRecord);
+  const resolvedSkillKey = requestedSkill.key || trim(payload.skillKey);
+  const skillExecution = resolveAgentSkillExecution(
+    {
+      skillKey: resolvedSkillKey,
+      skillName: requestedSkill.name || trim(payload.skillName),
+      stageId: trim(payload.playbookStageId) || undefined,
+      mode: trim(payload.mode) || "auto",
+    },
+    readSkillRecords(),
+  );
   // 收口 sanitize（P0-6）：送进 LLM 的 user/system 文本 ASCII 可移植化（防 Moonshot 等 tokenizer 异常）。
   const userPrompt = sanitizeForBroadCompat(trim(payload.prompt) || trim(payload.displayPrompt));
 
@@ -603,7 +650,7 @@ export async function runAgentChatV2(
   const toolFreeProtocol = payload.disableTools
     ? "最高优先级：本轮没有可调用的原生工具。忽略任何要求调用工具、展示补丁或解释的说明，严格按当前系统提示指定的结构化 JSON 文本协议回复。"
     : "";
-  const systemParts = [NOMI_AGENT_IDENTITY, systemPrompt, skillSystemPrompt, toolFreeProtocol, memoryBlock].filter(
+  const systemParts = [NOMI_AGENT_IDENTITY, systemPrompt, skillExecution.systemPrompt, toolFreeProtocol, memoryBlock].filter(
     (part) => part && part.length > 0,
   );
   const system = systemParts.length > 0 ? sanitizeForBroadCompat(systemParts.join("\n\n")) : undefined;
@@ -613,8 +660,17 @@ export async function runAgentChatV2(
   // Pick the tool group by skill: creation-area skills get document tools,
   // everything else gets canvas tools. The canonical skill key lives in
   // chatContext.skill.key; fall back to the top-level payload.skillKey.
-  const resolvedSkillKey = readRequestedSkill(payload as unknown as JsonRecord).key || trim(payload.skillKey);
-  const tools = payload.disableTools ? {} : buildToolsForSkill(resolvedSkillKey, hooks);
+  const tools = payload.disableTools
+    ? {}
+    : buildToolsForSkill(resolvedSkillKey, hooks, skillExecution.allowedTools);
+  hooks.emit({
+    type: "harness-config",
+    vendorKey: vendor.key,
+    modelKey: model.modelKey,
+    skillKey: resolvedSkillKey,
+    allowedTools: Object.keys(tools),
+    playbook: skillExecution.playbook,
+  });
 
   // Replay stored history for this session so the agent remembers prior turns
   // (within a panel and across the creation / generation areas, which share a
@@ -702,5 +758,11 @@ export async function runAgentChatV2(
     saveAgentSession(sessionKey, capped); // 选项②:同步把工作缓存落盘,供下次重启回灌
   }
 
-  return { id: `agent-${crypto.randomUUID()}`, text: finalText, finishReason: finalFinish, usage: finalUsage };
+  return {
+    id: `agent-${crypto.randomUUID()}`,
+    text: finalText,
+    finishReason: finalFinish,
+    usage: finalUsage,
+    ...(skillExecution.playbook ? { playbook: skillExecution.playbook } : {}),
+  };
 }

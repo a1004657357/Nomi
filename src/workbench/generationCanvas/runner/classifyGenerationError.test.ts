@@ -18,6 +18,29 @@ describe('classifyGenerationError — 已知分类', () => {
     expect(r.reason).toBe('网络超时')
   })
 
+  it('Codex Img2 本地空闲超时不误报为服务商或额度问题', () => {
+    const r = classifyGenerationError(
+      "Error invoking remote method 'nomi:tasks:run': Error: Codex Img2 长时间无进展（300 秒没有输出）\n诊断目录：/tmp/nomi-codex-img2-test",
+    )
+    expect(r.kind).toBe('codex-timeout')
+    expect(r.reason).toBe('Codex Img2 本地等待超时')
+    expect(r.hint).toMatch(/本地超时/)
+    expect(r.hint).not.toMatch(/服务商临时故障|额度问题/)
+    expect(r.providerMessage).toBeUndefined()
+  })
+
+  it('Codex Img2 图片端点网络失败不误报为额度或通用服务商故障', () => {
+    const r = classifyGenerationError(
+      "Error invoking remote method 'nomi:tasks:run': Error: Codex Img2 网络请求失败：ChatGPT 图片服务没有返回图片。本次没有自动重试，避免重复提交或重复计费。",
+    )
+    expect(r.kind).toBe('codex-network')
+    expect(r.reason).toBe('Codex Img2 网络请求失败')
+    expect(r.hint).toMatch(/与额度无关/)
+    expect(r.hint).toMatch(/没有自动重试/)
+    expect(r.hint).not.toMatch(/服务商临时故障|额度问题/)
+    expect(r.providerMessage).toBeUndefined()
+  })
+
   it('即梦网页桥 fetch 失败不误报为服务商额度问题', () => {
     const r = classifyGenerationError(
       '即梦 Web 网页桥任务失败：图片结果同步失败：Failed to fetch (taskId=IMG-FAILED, kind=image_edit)',
@@ -28,13 +51,20 @@ describe('classifyGenerationError — 已知分类', () => {
   })
 
   it('Agnes 下载参考图超时不会误报为参数错误', () => {
-    const upstreamMsg = 'Download image URL failed: HTTPSConnectionPool(host=\'litter.catbox.moe\', port=443): Read timed out. (read timeout=30)'
-    const marker = 'NOMI_VENDOR_ERR_B64::' + Buffer.from(JSON.stringify({
-      category: 'input',
-      httpStatus: 400,
-      upstreamMsg,
-      vendorKey: 'agnes',
-    }), 'utf8').toString('base64') + ':: '
+    const upstreamMsg =
+      "Download image URL failed: HTTPSConnectionPool(host='litter.catbox.moe', port=443): Read timed out. (read timeout=30)"
+    const marker =
+      'NOMI_VENDOR_ERR_B64::' +
+      Buffer.from(
+        JSON.stringify({
+          category: 'input',
+          httpStatus: 400,
+          upstreamMsg,
+          vendorKey: 'agnes',
+        }),
+        'utf8',
+      ).toString('base64') +
+      ':: '
     const report = classifyGenerationError(`${marker}Provider request failed (HTTP 400) at agnes: ${upstreamMsg}`)
 
     expect(report.reason).toBe('参考图下载失败')
@@ -75,8 +105,12 @@ describe('classifyGenerationError — 已知分类', () => {
       'Your account 2126482930 has not activated the model doubao-seedream-4-5-251128. Please activate the model service in the Ark Console.'
     const message =
       "Error invoking remote method 'nomi:tasks:run': Error: NOMI_VENDOR_ERR_B64::" +
-      Buffer.from(JSON.stringify({ category: 'unknown', httpStatus: 404, upstreamMsg, vendorKey: 'volcengine' }), 'utf8').toString('base64') +
-      ":: Provider request failed (HTTP 404) at volcengine POST https://ark.cn-beijing.volces.com/api/v3/images/generations: " + upstreamMsg
+      Buffer.from(
+        JSON.stringify({ category: 'unknown', httpStatus: 404, upstreamMsg, vendorKey: 'volcengine' }),
+        'utf8',
+      ).toString('base64') +
+      ':: Provider request failed (HTTP 404) at volcengine POST https://ark.cn-beijing.volces.com/api/v3/images/generations: ' +
+      upstreamMsg
     const r = classifyGenerationError(message)
     expect(r.reason).toBe('模型未开通')
     expect(r.hint).toMatch(/开通/)
@@ -93,25 +127,38 @@ describe('classifyGenerationError — 已知分类', () => {
 
   it('模型未开通即便上游标 403(被状态码派生成 auth):文本判定压过,不误导查密钥', () => {
     const raw = classifyGenerationError(
-      "NOMI_VENDOR_ERR_B64::" +
-        Buffer.from(JSON.stringify({ category: 'auth', upstreamMsg: '该模型未开通,请到控制台开通管理激活该模型' }), 'utf8').toString('base64') +
-        ":: Provider request failed (HTTP 403) at volcengine POST https://x: 该模型未开通,请到控制台开通管理激活该模型",
+      'NOMI_VENDOR_ERR_B64::' +
+        Buffer.from(
+          JSON.stringify({ category: 'auth', upstreamMsg: '该模型未开通,请到控制台开通管理激活该模型' }),
+          'utf8',
+        ).toString('base64') +
+        ':: Provider request failed (HTTP 403) at volcengine POST https://x: 该模型未开通,请到控制台开通管理激活该模型',
     )
     expect(raw.reason).toBe('模型未开通')
     expect(raw.hint).not.toMatch(/API Key/)
   })
 
   it('账号档位闸·即梦非会员 → 账号权限不足(不吞进 unknown「生成失败」)', () => {
-    const r = classifyGenerationError('当前即梦账号不是高级会员，无法生成。即梦免费试用已于 2026-05-01 结束——请在即梦开通会员后重试。')
+    const r = classifyGenerationError(
+      '当前即梦账号不是高级会员，无法生成。即梦免费试用已于 2026-05-01 结束——请在即梦开通会员后重试。',
+    )
     expect(r.reason).toBe('账号权限不足')
     expect(r.hint).toMatch(/会员|企业|授权/)
   })
 
   it('账号档位闸·RunningHub 1014 企业共享 Key → 账号权限不足(不误导成「参数不被接受」)', () => {
     const message =
-      "NOMI_VENDOR_ERR_B64::" +
-      Buffer.from(JSON.stringify({ category: 'input', upstreamMsg: '标准模型API仅限企业级-共享API Key调用|Access Denied: Standard Model API is restricted to Enterprise-Shared API Keys only.', vendorKey: 'runninghub' }), 'utf8').toString('base64') +
-      ":: Provider request failed (code 1014) at runninghub POST https://x: 标准模型API仅限企业级-共享API Key调用"
+      'NOMI_VENDOR_ERR_B64::' +
+      Buffer.from(
+        JSON.stringify({
+          category: 'input',
+          upstreamMsg:
+            '标准模型API仅限企业级-共享API Key调用|Access Denied: Standard Model API is restricted to Enterprise-Shared API Keys only.',
+          vendorKey: 'runninghub',
+        }),
+        'utf8',
+      ).toString('base64') +
+      ':: Provider request failed (code 1014) at runninghub POST https://x: 标准模型API仅限企业级-共享API Key调用'
     const r = classifyGenerationError(message)
     expect(r.reason).toBe('账号权限不足')
     expect(r.reason).not.toBe('参数不被接受')
@@ -119,7 +166,9 @@ describe('classifyGenerationError — 已知分类', () => {
   })
 
   it('账号档位闸·即梦首次需网页端授权 → 账号权限不足', () => {
-    const r = classifyGenerationError('即梦该模型首次使用需先在网页端完成一次性内容安全授权。请打开 jimeng.jianying.com 完成授权后重试。')
+    const r = classifyGenerationError(
+      '即梦该模型首次使用需先在网页端完成一次性内容安全授权。请打开 jimeng.jianying.com 完成授权后重试。',
+    )
     expect(r.reason).toBe('账号权限不足')
   })
 
@@ -130,12 +179,16 @@ describe('classifyGenerationError — 已知分类', () => {
 
   it('RunningHub 605/1620 余额错误 → 余额不足(不误导成「服务商故障/参数错」)', () => {
     const mk = (code: number, msg: string, cat: string) =>
-      "NOMI_VENDOR_ERR_B64::" +
-      Buffer.from(JSON.stringify({ category: cat, upstreamMsg: msg, vendorKey: 'runninghub' }), 'utf8').toString('base64') +
+      'NOMI_VENDOR_ERR_B64::' +
+      Buffer.from(JSON.stringify({ category: cat, upstreamMsg: msg, vendorKey: 'runninghub' }), 'utf8').toString(
+        'base64',
+      ) +
       `:: Provider request failed (code ${code}) at runninghub POST https://x: ${msg}`
     const r605 = classifyGenerationError(mk(605, '您的账户余额不足，请充值。', 'server'))
     expect(r605.reason).toBe('余额不足')
-    const r1620 = classifyGenerationError(mk(1620, '当前钱包剩余金额仅为活动会员下发金额，该类型金额不支持 API 调用，请充值。', 'input'))
+    const r1620 = classifyGenerationError(
+      mk(1620, '当前钱包剩余金额仅为活动会员下发金额，该类型金额不支持 API 调用，请充值。', 'input'),
+    )
     expect(r1620.reason).toBe('余额不足')
   })
 
@@ -192,7 +245,10 @@ describe('classifyGenerationError — 已知分类', () => {
   it('普通 400 参数错不被误判成内容安全拦截', () => {
     const message =
       'NOMI_VENDOR_ERR_B64::' +
-      Buffer.from(JSON.stringify({ category: 'input', httpStatus: 400, upstreamMsg: 'invalid ratio: 21:9 not supported' }), 'utf8').toString('base64') +
+      Buffer.from(
+        JSON.stringify({ category: 'input', httpStatus: 400, upstreamMsg: 'invalid ratio: 21:9 not supported' }),
+        'utf8',
+      ).toString('base64') +
       ':: Provider request failed (HTTP 400) at x POST https://x: invalid ratio'
     const r = classifyGenerationError(message)
     expect(r.kind).toBe('input')
@@ -228,12 +284,13 @@ describe('classifyGenerationError — 已知分类', () => {
   })
 
   it('剪贴板网页媒体下载失败时优先提示下载到本地', () => {
-    const r = classifyGenerationError('网页媒体下载失败：该站点可能禁止跨域请求或开启防盗链。请先下载到本地，再复制或拖入画布。')
+    const r = classifyGenerationError(
+      '网页媒体下载失败：该站点可能禁止跨域请求或开启防盗链。请先下载到本地，再复制或拖入画布。',
+    )
     expect(r.reason).toBe('网页媒体下载失败')
     expect(r.hint).toMatch(/下载到本地/)
     expect(r.hint).toMatch(/防盗链/)
   })
-
 })
 
 describe('classifyGenerationError — 未识别兜底（方案 B 改进）', () => {
@@ -270,7 +327,10 @@ describe('classifyGenerationError — 未识别兜底（方案 B 改进）', () 
 })
 
 describe('structured 路径(S4-2:VendorRequestError 经 IPC 标记穿透)', () => {
-  const encode = (structured: Record<string, unknown>, tail = 'Provider request failed (code 402) at kie POST https://x: 余额不足') =>
+  const encode = (
+    structured: Record<string, unknown>,
+    tail = 'Provider request failed (code 402) at kie POST https://x: 余额不足',
+  ) =>
     `Error invoking remote method 'nomi:tasks:run': Error: NOMI_VENDOR_ERR_B64::${Buffer.from(JSON.stringify(structured), 'utf8').toString('base64')}:: ${tail}`
 
   it('balance 类别直读 structured,不靠正则;raw 剥掉标记段', () => {
@@ -282,7 +342,12 @@ describe('structured 路径(S4-2:VendorRequestError 经 IPC 标记穿透)', () =
 
   it('中文 upstreamMsg 的 base64 roundtrip 不乱码', () => {
     // tail 不能用默认（默认含「余额不足」会触发 balance 文案判定）——本例测 quota，给 quota 语义的 tail。
-    const r = classifyGenerationError(encode({ category: 'quota', upstreamMsg: '触发限流·稍后再试' }, 'Provider request failed (code 429) at kie POST https://x: rate limited'))
+    const r = classifyGenerationError(
+      encode(
+        { category: 'quota', upstreamMsg: '触发限流·稍后再试' },
+        'Provider request failed (code 429) at kie POST https://x: rate limited',
+      ),
+    )
     expect(r.reason).toBe('配额或限流')
   })
 
@@ -297,7 +362,9 @@ describe('providerMessage —— 服务商真实原话提到可见区（别埋�
     `Error: NOMI_VENDOR_ERR_B64::${Buffer.from(JSON.stringify(structured), 'utf8').toString('base64')}:: ${tail}`
 
   it('structured: 分类标题通用，但服务商原话单独可见', () => {
-    const r = classifyGenerationError(encode({ category: 'quota', upstreamMsg: '官方算力限制，请等待一段时间后再进行使用' }))
+    const r = classifyGenerationError(
+      encode({ category: 'quota', upstreamMsg: '官方算力限制，请等待一段时间后再进行使用' }),
+    )
     expect(r.reason).toBe('配额或限流') // 标题仍是"哪一类"
     expect(r.providerMessage).toBe('官方算力限制，请等待一段时间后再进行使用') // 真实原因可见
   })
@@ -328,7 +395,8 @@ describe('providerMessage —— 服务商真实原话提到可见区（别埋�
 
 describe('即梦 CLI 错误不被误吞成「模型未开通/火山 Ark 指引」（2026-07-06 真机走查抓出）', () => {
   it('即梦静默兜底文案（含「开通即梦会员」「该模型首次使用」）→ 账号权限不足，非模型未开通', () => {
-    const msg = '即梦生成被拒，但 CLI 未返回任何原因（exit=1）。常见原因：① 当前即梦账号不是高级会员（免费试用 2026-05-01 已结束，需开通即梦会员）；② model_version / resolution 等参数组合不被当前模型支持；③ 该模型首次使用需先在 jimeng.jianying.com 网页端授权一次；④ 即梦服务端临时异常。'
+    const msg =
+      '即梦生成被拒，但 CLI 未返回任何原因（exit=1）。常见原因：① 当前即梦账号不是高级会员（免费试用 2026-05-01 已结束，需开通即梦会员）；② model_version / resolution 等参数组合不被当前模型支持；③ 该模型首次使用需先在 jimeng.jianying.com 网页端授权一次；④ 即梦服务端临时异常。'
     const report = classifyGenerationError(msg)
     expect(report.reason).toBe('账号权限不足')
     expect(report.reason).not.toBe('模型未开通')
@@ -338,7 +406,9 @@ describe('即梦 CLI 错误不被误吞成「模型未开通/火山 Ark 指引�
     expect(report.reason).toBe('模型未开通')
   })
   it('即梦登录态失效文案 → 账号权限不足桶（原话可见）', () => {
-    const report = classifyGenerationError('即梦登录态失效或未登录：请到「模型接入 · 即梦会员」卡重新登录（或终端运行 dreamina login），完成后重试。')
+    const report = classifyGenerationError(
+      '即梦登录态失效或未登录：请到「模型接入 · 即梦会员」卡重新登录（或终端运行 dreamina login），完成后重试。',
+    )
     expect(report.reason).not.toBe('模型未开通')
   })
 })

@@ -4,7 +4,9 @@ import { app } from "electron";
 
 import { readJsonFile, writeJsonFileAtomic } from "./jsonFile";
 
-export const AGNES_VIDEO_MIN_START_INTERVAL_MS = 60_000;
+// Provider-side rolling windows can reject requests exactly at 60s. The extra
+// 15s also absorbs request-transform and network timing variance.
+export const AGNES_VIDEO_MIN_START_INTERVAL_MS = 75_000;
 export const AGNES_IMAGE_MIN_START_INTERVAL_MS = 6_000;
 export const AGNES_DEFAULT_MIN_START_INTERVAL_MS = 3_000;
 

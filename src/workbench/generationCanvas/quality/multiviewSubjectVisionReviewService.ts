@@ -17,7 +17,10 @@ import {
   mergeMultiviewSubjectVisionReview,
   type MultiviewVisionJudgeRequest,
 } from './multiviewSubjectVisionReview'
-import { evaluateMultiviewSubjectQuality } from './multiviewSubjectQuality'
+import {
+  evaluateMultiviewSubjectQuality,
+  type MultiviewSubjectComparator,
+} from './multiviewSubjectQuality'
 import type { VisionReviewModelOption } from './visionReviewModels'
 
 type SendVisionReviewMessage = (
@@ -128,14 +131,16 @@ function attachmentsForJudge(
   })
 }
 
-export async function reviewMultiviewCollectionWithVisionModel(input: {
-  collection: GenerationResultCollection
+function createWorkbenchVisionReviewRunner(input: {
   model: Pick<VisionReviewModelOption, 'vendorKey' | 'modelKey' | 'label'>
+  sessionId: string
   projectId?: string
   deps?: Partial<VisionReviewDeps>
-}): Promise<GenerationResultCollection> {
-  const assets = validateMultiviewVisionReviewAssets(input.collection)
-  if (!assets.ok) throw new Error(assets.error)
+}): {
+  comparator: MultiviewSubjectComparator
+  evaluator: string
+  response: () => AgentsChatResponseDto | undefined
+} {
   const deps: VisionReviewDeps = {
     clearSession: input.deps?.clearSession ?? clearWorkbenchAgentSession,
     send: input.deps?.send ?? sendWorkbenchAiMessage,
@@ -145,14 +150,14 @@ export async function reviewMultiviewCollectionWithVisionModel(input: {
   const sessionKey = [
     'nomi:multiview-vision-review',
     input.projectId || 'local',
-    input.collection.id,
+    input.sessionId,
   ].join(':')
-  let response: AgentsChatResponseDto | undefined
+  let lastResponse: AgentsChatResponseDto | undefined
   const comparator = createMultiviewSubjectVisionComparator({
     evaluator,
     judge: async (request) => {
       await deps.clearSession(sessionKey).catch(() => {})
-      response = await deps.send({
+      lastResponse = await deps.send({
         prompt: request.prompt,
         displayPrompt: `多视角主体复核（${request.images.length - 1} 个机位）`,
         sessionKey,
@@ -165,21 +170,48 @@ export async function reviewMultiviewCollectionWithVisionModel(input: {
         agentModelKey: input.model.modelKey,
         attachments: attachmentsForJudge(request),
       }, {})
-      if (response.finishReason === 'length') {
+      if (lastResponse.finishReason === 'length') {
         throw new Error('视觉模型输出达到长度上限，结构化复核结果不完整')
       }
-      return response.text
+      return lastResponse.text
     },
+  })
+  return { comparator, evaluator, response: () => lastResponse }
+}
+
+export function createWorkbenchMultiviewSubjectComparator(input: {
+  model: Pick<VisionReviewModelOption, 'vendorKey' | 'modelKey' | 'label'>
+  sessionId: string
+  projectId?: string
+  deps?: Partial<VisionReviewDeps>
+}): MultiviewSubjectComparator {
+  return createWorkbenchVisionReviewRunner(input).comparator
+}
+
+export async function reviewMultiviewCollectionWithVisionModel(input: {
+  collection: GenerationResultCollection
+  model: Pick<VisionReviewModelOption, 'vendorKey' | 'modelKey' | 'label'>
+  projectId?: string
+  deps?: Partial<VisionReviewDeps>
+}): Promise<GenerationResultCollection> {
+  const assets = validateMultiviewVisionReviewAssets(input.collection)
+  if (!assets.ok) throw new Error(assets.error)
+  const runner = createWorkbenchVisionReviewRunner({
+    model: input.model,
+    sessionId: input.collection.id,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    ...(input.deps ? { deps: input.deps } : {}),
   })
   const semantic = await evaluateMultiviewSubjectQuality({
     sourceResult: assets.sourceResult,
     collection: input.collection,
-    compareSubjects: comparator,
+    compareSubjects: runner.comparator,
     backgroundPolicy: backgroundPolicyForCollection(input.collection),
   })
+  const response = runner.response()
   return mergeMultiviewSubjectVisionReview(input.collection, semantic, {
-    evaluatedAt: deps.now(),
-    requestedEvaluator: evaluator,
+    evaluatedAt: input.deps?.now?.() ?? Date.now(),
+    requestedEvaluator: runner.evaluator,
     ...(response?.usage?.promptTokens !== undefined
       ? { promptTokens: response.usage.promptTokens }
       : {}),

@@ -206,7 +206,7 @@ describe("compileFfmpegFiltergraph", () => {
     expect(plan.filterComplex).not.toContain("amix");
   });
 
-  it("多个音频源 → amix（normalize=0 防 1/N 衰减）", () => {
+  it("多个音频源 → 兼容旧 FFmpeg 的 amix + volume（防 1/N 衰减）", () => {
     const plan = compileFfmpegFiltergraph({
       manifest: manifest({
         profile: { ...profile, audioCodec: "aac", audioMode: "mixdown" },
@@ -224,7 +224,7 @@ describe("compileFfmpegFiltergraph", () => {
       }),
     });
     expect(plan.audioOutputLabel).toBe("[aout]");
-    expect(plan.filterComplex).toContain("amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[aout]");
+    expect(plan.filterComplex).toContain("amix=inputs=2:duration=longest:dropout_transition=0,volume=2[aout]");
   });
 
   it("从自带音轨的 video clip 提取源音轨（hasAudio）", () => {

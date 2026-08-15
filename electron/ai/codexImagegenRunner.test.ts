@@ -4,9 +4,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnMock = vi.hoisted(() => vi.fn());
+const probeMediaMetadataMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({
   spawn: spawnMock,
+}));
+vi.mock("../export/mediaProbe", () => ({
+  probeMediaMetadata: probeMediaMetadataMock,
 }));
 
 import {
@@ -15,12 +19,25 @@ import {
   collectCodexReferenceUrls,
   cancelCodexImageGeneration,
   prepareIsolatedCodexHome,
+  resolveCodexImagegenIdleTimeoutMs,
   resolveCodexImagegenTimeoutMs,
-  runCodexImageGeneration,
+  runCodexImageGeneration as runCodexImageGenerationRaw,
 } from "./codexImagegenRunner";
+import { planCodexAspectRatioCrop, validateCodexGeneratedImage } from "./codexImagegenPolicy";
 import { rememberProxyStateForTests, resetProxyStateForTests } from "../systemProxy";
 
 const tempDirs: string[] = [];
+
+type TestRunInput = Parameters<typeof runCodexImageGenerationRaw>[0] & {
+  validateOutput?: (outputPath: string) => Promise<void>;
+};
+
+function runCodexImageGeneration(input: TestRunInput) {
+  return runCodexImageGenerationRaw({
+    ...input,
+    validateOutput: input.validateOutput || (async () => undefined),
+  } as Parameters<typeof runCodexImageGenerationRaw>[0]);
+}
 
 function rememberDiagnosticDir(error: unknown): Error {
   const normalized = error instanceof Error ? error : new Error(String(error));
@@ -31,6 +48,8 @@ function rememberDiagnosticDir(error: unknown): Error {
 
 beforeEach(() => {
   spawnMock.mockReset();
+  probeMediaMetadataMock.mockReset();
+  probeMediaMetadataMock.mockResolvedValue({ width: 1024, height: 1024 });
   resetProxyStateForTests();
 });
 
@@ -91,6 +110,11 @@ function mockCodexExecFailure(): void {
 }
 
 describe("codexImagegenRunner", () => {
+  it("does not kill a silent image generation before the hard timeout by default", () => {
+    expect(resolveCodexImagegenIdleTimeoutMs(undefined)).toBe(0);
+    expect(resolveCodexImagegenIdleTimeoutMs(12_345)).toBe(12_345);
+  });
+
   it("uses the smoke timeout environment value unless the caller overrides it", () => {
     expect(resolveCodexImagegenTimeoutMs(undefined, "12500")).toBe(12_500);
     expect(resolveCodexImagegenTimeoutMs(5_000, "12500")).toBe(5_000);
@@ -156,6 +180,98 @@ describe("codexImagegenRunner", () => {
     expect(prompt).toContain("Aspect ratio: auto. Resolution: 1K.");
   });
 
+  it("makes 9:16 the highest-priority canvas contract and removes a stored horizontal-layout conflict", () => {
+    const prompt = buildCodexImagegenPrompt(
+      {
+        kind: "text_to_image",
+        prompt: "角色定妆参考卡。横向版面、分格清晰。",
+        extras: { archetypeInput: { aspect_ratio: "9:16", resolution: "2K" }, referenceSheet: true },
+      },
+      "/tmp/out.png",
+      0,
+    );
+
+    expect(prompt).toContain("HIGHEST-PRIORITY OUTPUT CANVAS CONTRACT");
+    expect(prompt).toContain("exact 9:16 portrait canvas");
+    expect(prompt).toContain("Prompt: 角色定妆参考卡。竖向版面、分格清晰。");
+    expect(prompt).not.toContain("Prompt: 角色定妆参考卡。横向版面");
+  });
+
+  it("keeps a decodable Codex image when only the soft aspect-ratio review is suspect", async () => {
+    await expect(
+      validateCodexGeneratedImage(
+        "/tmp/result.png",
+        { kind: "text_to_image", prompt: "portrait", extras: { aspect_ratio: "9:16" } },
+        async () => ({
+          suspect: true,
+          checks: [{ id: "aspect-ratio", suspect: true, detail: "实际 1536×1024，不符合请求画幅 9:16" }],
+        }),
+      ),
+    ).resolves.toMatchObject({ suspect: true });
+  });
+
+  it("plans a bounded same-orientation crop but refuses a destructive landscape-to-portrait crop", () => {
+    expect(planCodexAspectRatioCrop(1024, 1536, "9:16")).toMatchObject({
+      width: 864,
+      height: 1536,
+      x: 80,
+      y: 0,
+    });
+    expect(planCodexAspectRatioCrop(1536, 1024, "16:9")).toMatchObject({
+      width: 1536,
+      height: 864,
+      x: 0,
+      y: 80,
+    });
+    expect(planCodexAspectRatioCrop(1536, 1024, "9:16")).toBeNull();
+  });
+
+  it("locally conforms a compatible portrait result and verifies it again without another generation", async () => {
+    const reviewImage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        suspect: true,
+        checks: [
+          {
+            id: "aspect-ratio",
+            suspect: true,
+            detail: "实际 1024×1536，不符合请求画幅 9:16",
+            metrics: { width: 1024, height: 1536 },
+          },
+        ],
+        metadata: { width: 1024, height: 1536 },
+      })
+      .mockResolvedValueOnce({
+        suspect: false,
+        checks: [{ id: "aspect-ratio", suspect: false, detail: "实际 864×1536，符合请求画幅 9:16" }],
+        metadata: { width: 864, height: 1536 },
+      });
+    const conformImage = vi.fn(async () => undefined);
+
+    const verdict = await validateCodexGeneratedImage(
+      "/tmp/result.png",
+      { kind: "text_to_image", prompt: "portrait", extras: { aspect_ratio: "9:16" } },
+      reviewImage,
+      conformImage,
+    );
+
+    expect(conformImage).toHaveBeenCalledWith(
+      "/tmp/result.png",
+      expect.objectContaining({ width: 864, height: 1536, retainedAreaRatio: 0.84375 }),
+    );
+    expect(reviewImage).toHaveBeenCalledTimes(2);
+    expect(verdict.suspect).toBe(false);
+  });
+
+  it("still rejects an undecodable or undersized Codex image", async () => {
+    await expect(
+      validateCodexGeneratedImage("/tmp/result.png", { kind: "text_to_image", prompt: "portrait" }, async () => ({
+        suspect: true,
+        checks: [{ id: "undecodable", suspect: true, detail: "图片尺寸过小：100×100" }],
+      })),
+    ).rejects.toThrow(/尺寸过小/);
+  });
+
   it("switches to reference/edit instructions when images are attached", () => {
     const prompt = buildCodexImagegenPrompt(
       {
@@ -170,6 +286,64 @@ describe("codexImagegenRunner", () => {
     expect(prompt).toContain("Use 2 attached image file(s) as references/edit targets.");
     expect(prompt).toContain("Pass every attached local path through referenced_image_paths");
     expect(prompt).toContain("do not use num_last_images_to_include");
+  });
+
+  it("binds every attached reference path to its role and purpose in attachment order", () => {
+    const prompt = buildCodexImagegenPrompt(
+      {
+        kind: "image_edit",
+        prompt: "create a vertical storyboard frame",
+      },
+      "/tmp/out.png",
+      [
+        { path: "/tmp/character.png", role: "角色身份参考", purpose: "只锁定脸、发型和服装" },
+        { path: "/tmp/scene.png", role: "场景参考", purpose: "锁定咖啡馆空间和光线" },
+      ],
+    );
+
+    expect(prompt).toContain("Reference 1: /tmp/character.png");
+    expect(prompt).toContain("Role: 角色身份参考");
+    expect(prompt).toContain("Purpose: 只锁定脸、发型和服装");
+    expect(prompt).toContain("Reference 2: /tmp/scene.png");
+    expect(prompt).toContain("Role: 场景参考");
+    expect(prompt).toContain("Purpose: 锁定咖啡馆空间和光线");
+  });
+
+  it("materializes multiple inline references to distinct paths even within one millisecond", async () => {
+    mockCodexExecSuccess();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(123456789);
+    try {
+      const result = await runCodexImageGeneration({
+        request: {
+          kind: "image_edit",
+          prompt: "keep identity and scene",
+          extras: {
+            archetypeInput: {
+              input_urls: ["data:image/png;base64,AA==", "data:image/png;base64,AQ=="],
+            },
+            referenceImages: ["data:image/png;base64,AA==", "data:image/png;base64,AQ=="],
+            referenceImageRoles: ["角色身份参考", "场景参考"],
+            referenceImagePurposes: ["锁定人物", "锁定空间"],
+          },
+        },
+      });
+      tempDirs.push(result.tempDir);
+
+      const args = spawnMock.mock.calls[0]?.[1] as string[];
+      const imagePaths = args.flatMap((value, index) => (value === "--image" ? [args[index + 1]] : []));
+      const prompt = String(
+        (spawnMock.mock.results[0]?.value as { stdin: { end: ReturnType<typeof vi.fn> } }).stdin.end.mock
+          .calls[0]?.[0] || "",
+      );
+      expect(imagePaths).toHaveLength(2);
+      expect(new Set(imagePaths).size).toBe(2);
+      expect(prompt).toContain(`Reference 1: ${imagePaths[0]}`);
+      expect(prompt).toContain("Role: 角色身份参考");
+      expect(prompt).toContain(`Reference 2: ${imagePaths[1]}`);
+      expect(prompt).toContain("Role: 场景参考");
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("runs Codex from an empty temp cwd with git repo check skipped and returns timings", async () => {
@@ -203,6 +377,58 @@ describe("codexImagegenRunner", () => {
     expect(options.env?.HTTPS_PROXY).toBe("http://127.0.0.1:7897");
     expect(options.env?.HTTP_PROXY).toBe("http://127.0.0.1:7897");
     expect(options.env?.NO_PROXY).toContain("127.0.0.1");
+  });
+
+  it("rejects a generated file before returning when the synchronous validator fails", async () => {
+    mockCodexExecSuccess();
+
+    await expect(
+      runCodexImageGeneration({
+        request: { kind: "text_to_image", prompt: "coffee cup" },
+        validateOutput: async () => {
+          throw new Error("图片尺寸过小：100×100");
+        },
+      }),
+    ).rejects.toThrow("图片尺寸过小：100×100");
+  });
+
+  it("rejects a Codex exec that exposes two imagegen invocations", async () => {
+    spawnMock.mockImplementation((_bin: string, args: string[]) => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      child.stdin.end.mockImplementation((promptInput: string) => {
+        setTimeout(() => {
+          const outputPath = String(promptInput).match(/"path":"([^"]+)"/)?.[1] || "";
+          const lastMessagePath = args[args.indexOf("--output-last-message") + 1];
+          fs.writeFileSync(outputPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+          fs.writeFileSync(lastMessagePath, `{"ok":true,"path":"${outputPath}"}`);
+          child.stdout.emit(
+            "data",
+            '{"type":"item.started","item":{"id":"call-1","type":"tool_call","name":"image_gen.imagegen"}}\n',
+          );
+          child.stdout.emit(
+            "data",
+            '{"type":"item.started","item":{"id":"call-2","type":"tool_call","name":"image_gen.imagegen"}}\n',
+          );
+          child.emit("close", 0);
+        }, 0);
+      });
+      return child;
+    });
+
+    await expect(
+      runCodexImageGeneration({
+        request: { kind: "text_to_image", prompt: "coffee cup" },
+      }),
+    ).rejects.toThrow(/调用了 2 次/);
   });
 
   it("recovers a generated image from the isolated Codex home before cleaning it", async () => {
@@ -241,6 +467,140 @@ describe("codexImagegenRunner", () => {
     expect(result.outputPath).toContain("result-recovered.png");
     expect(fs.readFileSync(result.outputPath)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     expect(fs.existsSync(isolatedHome)).toBe(false);
+  });
+
+  it("reports the real network failure instead of recovering a 100x100 cache thumbnail", async () => {
+    probeMediaMetadataMock.mockResolvedValue({ width: 100, height: 100 });
+    spawnMock.mockImplementation((_bin: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      child.stdin.end.mockImplementation(() => {
+        setTimeout(() => {
+          const isolatedHome = String(options.env?.CODEX_HOME || "");
+          const generatedDir = path.join(isolatedHome, "generated_images");
+          fs.mkdirSync(generatedDir, { recursive: true });
+          fs.writeFileSync(path.join(generatedDir, "thumbnail.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+          const lastMessagePath = args[args.indexOf("--output-last-message") + 1];
+          fs.writeFileSync(lastMessagePath, '{"ok":false,"error":"network error"}');
+          child.stdout.emit("data", '{"type":"item.completed","item":{"type":"agent_message","text":"network error"}}\n');
+          child.stderr.emit("data", "image generation failed: network error: error sending request\n");
+          child.emit("close", 0);
+        }, 0);
+      });
+      return child;
+    });
+
+    try {
+      await runCodexImageGeneration({
+        request: { kind: "text_to_image", prompt: "coffee cup" },
+        timeoutMs: 5_000,
+      });
+      throw new Error("expected network failure");
+    } catch (error) {
+      const normalized = rememberDiagnosticDir(error);
+      expect(normalized.message).toContain("网络请求失败");
+      expect(normalized.message).toContain("没有自动重试");
+      expect(normalized.message).not.toContain("100×100");
+    }
+    expect(probeMediaMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it("does not recover a cache thumbnail after image generation reports a timeout", async () => {
+    probeMediaMetadataMock.mockResolvedValue({ width: 100, height: 100 });
+    spawnMock.mockImplementation((_bin: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      child.stdin.end.mockImplementation(() => {
+        setTimeout(() => {
+          const isolatedHome = String(options.env?.CODEX_HOME || "");
+          const generatedDir = path.join(isolatedHome, "generated_images");
+          fs.mkdirSync(generatedDir, { recursive: true });
+          fs.writeFileSync(path.join(generatedDir, "thumbnail.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+          const lastMessagePath = args[args.indexOf("--output-last-message") + 1];
+          fs.writeFileSync(lastMessagePath, '{"ok":false,"error":"image generation timed out"}');
+          child.emit("close", 0);
+        }, 0);
+      });
+      return child;
+    });
+
+    try {
+      await runCodexImageGeneration({
+        request: { kind: "text_to_image", prompt: "coffee cup" },
+        timeoutMs: 5_000,
+      });
+      throw new Error("expected timeout failure");
+    } catch (error) {
+      const normalized = rememberDiagnosticDir(error);
+      expect(normalized.message).toContain("image generation timed out");
+      expect(normalized.message).not.toContain("100×100");
+    }
+    expect(probeMediaMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it("skips a newer cache thumbnail and recovers the newest decodable full-size image", async () => {
+    probeMediaMetadataMock.mockImplementation(async (candidatePath: string) =>
+      candidatePath.endsWith("thumbnail.png")
+        ? { width: 100, height: 100 }
+        : { width: 1024, height: 1024 },
+    );
+    const fullImage = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01]);
+    spawnMock.mockImplementation((_bin: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      child.stdin.end.mockImplementation(() => {
+        setTimeout(() => {
+          const isolatedHome = String(options.env?.CODEX_HOME || "");
+          const generatedDir = path.join(isolatedHome, "generated_images");
+          fs.mkdirSync(generatedDir, { recursive: true });
+          const fullPath = path.join(generatedDir, "full.png");
+          const thumbnailPath = path.join(generatedDir, "thumbnail.png");
+          fs.writeFileSync(fullPath, fullImage);
+          fs.writeFileSync(thumbnailPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+          const now = new Date();
+          fs.utimesSync(fullPath, new Date(now.getTime() - 1_000), new Date(now.getTime() - 1_000));
+          fs.utimesSync(thumbnailPath, now, now);
+          const lastMessagePath = args[args.indexOf("--output-last-message") + 1];
+          fs.writeFileSync(lastMessagePath, '{"ok":false,"error":"generated image was saved to a different path"}');
+          child.emit("close", 0);
+        }, 0);
+      });
+      return child;
+    });
+
+    const result = await runCodexImageGeneration({
+      request: { kind: "text_to_image", prompt: "coffee cup" },
+      timeoutMs: 5_000,
+    });
+    tempDirs.push(result.tempDir);
+
+    expect(result.outputPath).toContain("result-recovered.png");
+    expect(fs.readFileSync(result.outputPath)).toEqual(fullImage);
+    expect(probeMediaMetadataMock).toHaveBeenCalledTimes(2);
   });
 
   it("isolates Codex from user skills and removes the temporary home after exit", async () => {
@@ -305,10 +665,12 @@ describe("codexImagegenRunner", () => {
     process.env.CODEX_HOME = sourceHome;
 
     try {
-      await expect(runCodexImageGeneration({
-        request: { kind: "text_to_image", prompt: "coffee cup" },
-        timeoutMs: 5_000,
-      })).rejects.toThrow(/未检测到 ChatGPT\/Codex 登录状态/);
+      await expect(
+        runCodexImageGeneration({
+          request: { kind: "text_to_image", prompt: "coffee cup" },
+          timeoutMs: 5_000,
+        }),
+      ).rejects.toThrow(/未检测到 ChatGPT\/Codex 登录状态/);
     } finally {
       if (previousHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousHome;
@@ -492,12 +854,12 @@ describe("codexImagegenRunner", () => {
     });
 
     const error = await runCodexImageGeneration({
-        request: { kind: "text_to_image", prompt: "idle" },
-        timeoutMs: 5_000,
-        idleTimeoutMs: 10,
-        terminationGraceMs: 10,
-        maxNetworkAttempts: 1,
-      }).catch(rememberDiagnosticDir);
+      request: { kind: "text_to_image", prompt: "idle" },
+      timeoutMs: 5_000,
+      idleTimeoutMs: 10,
+      terminationGraceMs: 10,
+      maxNetworkAttempts: 1,
+    }).catch(rememberDiagnosticDir);
 
     expect(error.message).toMatch(/长时间无进展/);
     expect(childRef?.kill).toHaveBeenCalledWith("SIGTERM");
@@ -540,7 +902,7 @@ describe("codexImagegenRunner", () => {
     expect(childRef?.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
-  it("globally limits separate Codex Img2 runs to two active child processes", async () => {
+  it("globally serializes separate Codex Img2 child processes", async () => {
     const releases: Array<() => void> = [];
     spawnMock.mockImplementation((_bin: string, args: string[]) => {
       const child = new EventEmitter() as EventEmitter & {
@@ -572,10 +934,12 @@ describe("codexImagegenRunner", () => {
       }),
     );
 
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+    releases.shift()?.();
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(2));
     releases.shift()?.();
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(3));
-    releases.splice(0).forEach((release) => release());
+    releases.shift()?.();
     const results = await Promise.all(runs);
     results.forEach((result) => tempDirs.push(result.tempDir));
     expect(results[2]?.timings.queueMs).toBeGreaterThanOrEqual(0);
@@ -602,10 +966,10 @@ describe("codexImagegenRunner", () => {
     });
 
     const error = await runCodexImageGeneration({
-        request: { kind: "text_to_image", prompt: "timeout" },
-        timeoutMs: 10,
-        terminationGraceMs: 10,
-      }).catch(rememberDiagnosticDir);
+      request: { kind: "text_to_image", prompt: "timeout" },
+      timeoutMs: 10,
+      terminationGraceMs: 10,
+    }).catch(rememberDiagnosticDir);
 
     expect(error.message).toMatch(/生成超时/);
     expect(childRef?.kill).toHaveBeenNthCalledWith(1, "SIGTERM");

@@ -598,6 +598,40 @@ describe('generationCanvasStore result history', () => {
     expect(stateNode?.runs?.[49]?.id).toBe('run-10')
   })
 
+  it('preserves queued status until provider work actually starts', () => {
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [{ ...node('image-1', 'shots'), status: 'idle' }],
+      edges: [],
+      selectedNodeIds: [],
+      groups: [],
+    })
+    useGenerationCanvasStore.getState().appendNodeRun('image-1', {
+      id: 'run-queued',
+      status: 'queued',
+      startedAt: 1,
+      updatedAt: 1,
+    })
+
+    useGenerationCanvasStore.getState().setNodeProgress('image-1', {
+      runId: 'run-queued',
+      phase: 'queued',
+      message: '等待 codex 空闲名额',
+    })
+    let stateNode = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === 'image-1')
+    expect(stateNode?.status).toBe('queued')
+    expect(stateNode?.runs?.[0]?.status).toBe('queued')
+    expect(stateNode?.error).toBeUndefined()
+
+    useGenerationCanvasStore.getState().setNodeProgress('image-1', {
+      runId: 'run-queued',
+      phase: 'requesting',
+      message: '正在提交请求',
+    })
+    stateNode = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === 'image-1')
+    expect(stateNode?.status).toBe('running')
+    expect(stateNode?.runs?.[0]?.status).toBe('running')
+  })
+
   it('can switch the main image while keeping the previous one in history', () => {
     const first = imageResult('r-old', 'https://cdn/old.png')
     const next = imageResult('r-new', 'https://cdn/new.png')

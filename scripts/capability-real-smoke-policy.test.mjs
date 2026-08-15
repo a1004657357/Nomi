@@ -13,6 +13,7 @@ import {
   plannedProviderCallsForRecipe,
   providerCallsFromSpendDialog,
   sanitizeSmokeReport,
+  smokeQualityDisposition,
   smokeHelpRequested,
   smokePatternMatches,
   shouldRetryProviderFailure,
@@ -39,6 +40,7 @@ describe('capability real smoke policy', () => {
     expect(config.maxProviderCalls).toBe(1)
     expect(config.maxProviderCallsPerModel).toBe(10)
     expect(config.maxAttemptsPerRecipe).toBe(1)
+    expect(config.customViewCount).toBe(1)
   })
 
   it('budgets independent Grid9 and mood sample runs by their real task counts', () => {
@@ -75,6 +77,7 @@ describe('capability real smoke policy', () => {
       '--resume',
       '--provider=codex',
       '--model=img2',
+      '--custom-view-count=2',
     ], { NOMI_ALLOW_PAID_EVAL: '1' })
 
     expect(config.recipes).toEqual(['portrait.mood', 'scene.panorama.2to1'])
@@ -86,6 +89,7 @@ describe('capability real smoke policy', () => {
     expect(config.resume).toBe(true)
     expect(config.providerPattern?.source).toBe('codex')
     expect(config.modelPattern?.source).toBe('img2')
+    expect(config.customViewCount).toBe(2)
   })
 
   it('accepts conventional space-separated option values and an npm separator', () => {
@@ -115,6 +119,7 @@ describe('capability real smoke policy', () => {
     expect(() => parseSmokeConfig(['--max-provider-calls-per-model=11'], {
       NOMI_ALLOW_PAID_EVAL: '1',
     })).toThrow(/per-model/i)
+    expect(() => parseSmokeConfig(['--custom-view-count=7'], {})).toThrow(/custom view count/i)
   })
 
   it('stops on rate limits and only retries bounded transient failures', () => {
@@ -240,6 +245,14 @@ describe('capability real smoke policy', () => {
     })
   })
 
+  it('requires manual review when semantic quality is warning or unavailable', () => {
+    expect(smokeQualityDisposition(undefined)).toBe('accepted')
+    expect(smokeQualityDisposition({ status: 'pass' })).toBe('accepted')
+    expect(smokeQualityDisposition({ status: 'warning' })).toBe('manual_review')
+    expect(smokeQualityDisposition({ status: 'unavailable' })).toBe('manual_review')
+    expect(smokeQualityDisposition({ status: 'fail' })).toBe('failed')
+  })
+
   it('extracts only finite safe phase timings, including Codex child timings', () => {
     expect(extractSmokePhaseTimings({
       id: 'output-1',
@@ -254,6 +267,8 @@ describe('capability real smoke policy', () => {
               referenceMs: 3,
               codexExecMs: 1200,
               attemptCount: 1,
+              imagegenInvocationCount: 1,
+              imagegenInvocationAudit: 'verified',
               cwd: '/private/tmp/secret',
               invalid: Number.NaN,
             },
@@ -269,6 +284,8 @@ describe('capability real smoke policy', () => {
         referenceMs: 3,
         codexExecMs: 1200,
         attemptCount: 1,
+        imagegenInvocationCount: 1,
+        imagegenInvocationAudit: 'verified',
       },
     })
   })

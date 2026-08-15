@@ -5,6 +5,7 @@ import { cn } from '../../utils/cn'
 import { ConversationHistoryPopover } from './ConversationHistoryPopover'
 import { ConversationHistoryList } from './ConversationHistoryList'
 import type { ConvArea } from './conversationThreads'
+import { AgentTraceAction } from './AgentTracePopover'
 
 export type WorkbenchAiHeaderActionsProps = {
   className?: string
@@ -49,6 +50,7 @@ export function WorkbenchAiHeaderActions({
           <ConversationHistoryList area={area} onNewConversation={onNewConversation} onClose={() => setOpen(false)} />
         </ConversationHistoryPopover>
       ) : null}
+      <AgentTraceAction actionClassName={actionClassName} />
     </div>
   )
 }

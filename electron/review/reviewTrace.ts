@@ -6,17 +6,24 @@ import { webContents as electronWebContents } from "electron";
 import { appendEvents } from "../events/eventLogRepository";
 import { runTechnicalCheck } from "./technicalCheck";
 
+const pendingTechnicalReviews = new Set<Promise<void>>();
+
 export function scheduleTechnicalReview(input: {
   projectId: string;
   nodeId?: string;
   absolutePath: string;
   assetUrl: string;
   type: "image" | "video";
+  expectedAspectRatio?: string;
+  expectedDurationSeconds?: number;
 }): void {
   if (!input.projectId || !input.absolutePath) return;
-  void (async () => {
+  const review = (async () => {
     try {
-      const verdict = await runTechnicalCheck(input.absolutePath, input.type);
+      const verdict = await runTechnicalCheck(input.absolutePath, input.type, {
+        expectedAspectRatio: input.expectedAspectRatio,
+        expectedDurationSeconds: input.expectedDurationSeconds,
+      });
       appendEvents(input.projectId, [
         {
           id: `evt_${crypto.randomUUID().slice(0, 12)}`,
@@ -40,4 +47,13 @@ export function scheduleTechnicalReview(input: {
       console.error(`[review] 技术自检旁路失败(忽略): ${error instanceof Error ? error.message : String(error)}`);
     }
   })();
+  pendingTechnicalReviews.add(review);
+  void review.finally(() => pendingTechnicalReviews.delete(review));
+}
+
+/** 一次性 headless host 退出前等待免费技术验收落账；桌面运行时仍保持异步旁路。 */
+export async function flushPendingTechnicalReviews(): Promise<void> {
+  while (pendingTechnicalReviews.size > 0) {
+    await Promise.allSettled(Array.from(pendingTechnicalReviews));
+  }
 }

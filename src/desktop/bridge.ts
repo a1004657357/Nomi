@@ -588,7 +588,7 @@ export type DesktopBridge = {
       nodeId?: string
       vendor?: string
     }) => Promise<{ cancelled: boolean; remoteCancelled: boolean }>
-    grantSpend: (payload: { nodeIds: string[]; maxAttemptsPerNode?: number }) => Promise<{ grantId: string }>
+    grantSpend: (payload: { nodeIds: string[]; maxAttemptsPerNode?: number; ttlMs?: number }) => Promise<{ grantId: string }>
     runTextStream: (payload: unknown) => Promise<{ streamId: string }>
     cancelTextStream: (streamId: string) => Promise<unknown>
     onTextEvent: (streamId: string, callback: (event: unknown) => void) => () => void

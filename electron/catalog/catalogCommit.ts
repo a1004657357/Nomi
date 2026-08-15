@@ -271,12 +271,23 @@ export function commitOnboardedModelToCatalog(payload: {
 export function deriveVendorKeyFromBaseUrl(baseUrl: string): string {
   let host = "";
   let port = "";
+  let pathname = "";
   try {
     const u = new URL(baseUrl);
     host = u.hostname;
     port = u.port;
+    pathname = u.pathname.replace(/\/+$/, "").toLowerCase();
   } catch {
     return "";
+  }
+  // Subscription products can share a host with a different pay-as-you-go API
+  // but use a separate credential and protocol. They must never overwrite each
+  // other's vendor record merely because the hostname is the same.
+  if (host === "ark.cn-beijing.volces.com" && pathname.startsWith("/api/plan")) {
+    return "volcengine-agent-plan";
+  }
+  if (host === "api.kimi.com" && pathname.startsWith("/coding")) {
+    return "kimi-code";
   }
   let seed = host;
   if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {

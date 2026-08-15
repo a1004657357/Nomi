@@ -13,7 +13,7 @@ import type { AddressInfo } from 'node:net'
 import type { FetchTaskResultFn, RunDirectorFn, RunTaskFn } from './core'
 import { dispatch, RpcError } from './dispatcher'
 import { createDiskGateway, createHybridGateway, createRendererGateway, type ProjectGateway } from './gateway'
-import { isRendererAvailable } from './rendererBridge'
+import { isRendererAvailable, requestRenderer } from './rendererBridge'
 import { verifyToken } from './security'
 
 export type RpcServerOptions = {
@@ -92,6 +92,13 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
           runTask: options.runTask,
           fetchTaskResult: options.fetchTaskResult,
           runDirector: options.runDirector,
+          runGenerationBatch: async (projectId, nodeIds) => {
+            if (!isRendererAvailable()) throw new RpcError('批量生成需要已打开的 Nomi 窗口', 503)
+            if (!isProjectOpen(projectId)) {
+              await requestRenderer('project.activate', { projectId }, 25_000)
+            }
+            return requestRenderer('generation.batch', { projectId, nodeIds }, 130_000)
+          },
           makeGateway,
         })
         send(200, { ok: true, result })

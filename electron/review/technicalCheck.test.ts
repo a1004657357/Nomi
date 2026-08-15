@@ -98,4 +98,60 @@ describe('runTechnicalCheck video inspection', () => {
       metrics: { freezeRatio: 0.7, frozenSeconds: 7 },
     })
   })
+
+  it('marks a Provider output suspect when the actual aspect ratio misses the requested ratio', async () => {
+    const verdict = await technicalCheck.runTechnicalCheck('/virtual/agnes.mp4', 'video', {
+      probeMedia: vi.fn(async () => ({
+        kind: 'video' as const,
+        durationSeconds: 5.041667,
+        width: 704,
+        height: 1280,
+        fps: 24,
+        videoCodec: 'h264',
+        hasAudio: false,
+      })),
+      runFfmpegStderr: vi.fn(async () => ''),
+      expectedAspectRatio: '9:16',
+      expectedDurationSeconds: 5,
+    })
+
+    expect(verdict.suspect).toBe(true)
+    expect(verdict.checks.find((check) => check.id === 'aspect-ratio')).toMatchObject({
+      suspect: true,
+      metrics: { width: 704, height: 1280 },
+    })
+    expect(verdict.checks.find((check) => check.id === 'duration')).toMatchObject({ suspect: false })
+  })
+
+  it('accepts near-exact generated image dimensions for the requested ratio', async () => {
+    const verdict = await technicalCheck.runTechnicalCheck('/virtual/codex.png', 'image', {
+      probeMedia: vi.fn(async () => ({
+        kind: 'image' as const,
+        width: 941,
+        height: 1672,
+        hasAudio: false,
+      })),
+      expectedAspectRatio: '9:16',
+    })
+
+    expect(verdict.checks.find((check) => check.id === 'aspect-ratio')).toMatchObject({ suspect: false })
+    expect(verdict.suspect).toBe(false)
+  })
+
+  it('marks a decodable 100x100 generated placeholder as suspect', async () => {
+    const verdict = await technicalCheck.runTechnicalCheck('/virtual/codex-placeholder.png', 'image', {
+      probeMedia: vi.fn(async () => ({
+        kind: 'image' as const,
+        width: 100,
+        height: 100,
+        hasAudio: false,
+      })),
+    })
+
+    expect(verdict.suspect).toBe(true)
+    expect(verdict.checks.find((check) => check.id === 'undecodable')).toMatchObject({
+      suspect: true,
+      metrics: { width: 100, height: 100 },
+    })
+  })
 })

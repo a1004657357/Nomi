@@ -22,8 +22,11 @@ import {
   upsertModelCatalogVendor,
   upsertModelCatalogVendorApiKey,
 } from "./catalog/catalogStore";
-import { runTaskWithIdempotency } from "./submissionLedger";
+import { initGlobalIdempotencyStore } from "./tasks/idempotencyStore";
+import { createTaskSubmissionRuntime } from "./tasks/taskSubmissionRuntime";
+import { taskCancellationRuntime } from "./tasks/taskCancellationRuntime";
 import { runTaskIpcGuard } from "./tasks/taskIpcGuard";
+import { getSettingsRoot } from "./runtimePaths";
 import { mintSpendGrant } from "./spendGrant";
 import { installCrashHandlers, logCrash } from "./crashLog";
 import { registerExportJobIpc } from "./export/exportJobIpc";
@@ -129,6 +132,7 @@ function loadRuntimeModule(): Promise<typeof import("./runtime")> {
   runtimeModulePromise ??= import("./runtime");
   return runtimeModulePromise;
 }
+const taskSubmissionRuntime = createTaskSubmissionRuntime(loadRuntimeModule);
 
 async function loadCapabilityCoreModule(): Promise<typeof import("./capabilityCore/appIntegration")> {
   if (capabilityCoreModule) return capabilityCoreModule;
@@ -153,14 +157,8 @@ async function startDesktopCapabilityCore(): Promise<void> {
   const core = await loadCapabilityCoreModule();
   core.setOpenProjectId(activeCapabilityProjectId);
   await core.startCapabilityCore(
-    async (payload) => {
-      const { runTask } = await loadRuntimeModule();
-      return runTask(payload);
-    },
-    async (payload) => {
-      const { fetchTaskResult } = await loadRuntimeModule();
-      return fetchTaskResult(payload);
-    },
+    taskSubmissionRuntime.run,
+    taskSubmissionRuntime.result,
     async (payload) => {
       const director = await import("./blender/directorCli");
       cancelBlenderRendersOnQuit = director.cancelAllDirectorBlenderRenders;
@@ -567,36 +565,30 @@ function registerIpc(): void {
   registerExportJobIpc();
   // 付费守卫铸令牌：仅由渲染层「真人确认」事件链调用（务实纵深：铸造面小而审计过 + 主进程硬闸兜底）。
   ipcMain.handle("nomi:tasks:grant-spend", (_event, payload) => {
-    const raw = (payload || {}) as { nodeIds?: unknown; maxAttemptsPerNode?: unknown };
+    const raw = (payload || {}) as { nodeIds?: unknown; maxAttemptsPerNode?: unknown; ttlMs?: unknown };
     const nodeIds = Array.isArray(raw.nodeIds) ? raw.nodeIds.map((id) => String(id)) : [];
     const maxAttemptsPerNode = typeof raw.maxAttemptsPerNode === "number" ? raw.maxAttemptsPerNode : undefined;
-    return { grantId: mintSpendGrant({ nodeIds, ...(maxAttemptsPerNode ? { maxAttemptsPerNode } : {}) }) };
+    const requestedTtlMs = typeof raw.ttlMs === "number" && Number.isFinite(raw.ttlMs) ? raw.ttlMs : undefined;
+    const ttlMs = requestedTtlMs === undefined
+      ? undefined
+      : Math.max(60_000, Math.min(4 * 60 * 60_000, Math.floor(requestedTtlMs)));
+    return {
+      grantId: mintSpendGrant({
+        nodeIds,
+        ...(maxAttemptsPerNode ? { maxAttemptsPerNode } : {}),
+        ...(ttlMs ? { ttlMs } : {}),
+      }),
+    };
   });
   // 提交幂等包在 IPC 边界：渲染层每次提交（含控制器重试）都经此，同 idempotencyKey 的提交内核 at-most-once
   // （堵「提交瞬间丢回执 → 重试 → 二次下单」；query 类 nomi:tasks:result 不包，查结果本就免费）。
   ipcMain.handle("nomi:tasks:run", (_event, payload) =>
-    runTaskIpcGuard(payload, async () => {
-      const { runTask } = await loadRuntimeModule();
-      return runTaskWithIdempotency(payload, () => runTask(payload));
-    }),
+    runTaskIpcGuard(payload, () => taskSubmissionRuntime.run(payload)),
   );
   ipcMain.handle("nomi:tasks:result", (_event, payload) =>
-    runTaskIpcGuard(payload, async () => {
-      const { fetchTaskResult } = await loadRuntimeModule();
-      return fetchTaskResult(payload);
-    }),
+    runTaskIpcGuard(payload, () => taskSubmissionRuntime.result(payload)),
   );
-  ipcMain.handle("nomi:tasks:cancel", async (_event, payload) => {
-    const raw = (payload || {}) as { runId?: unknown; vendor?: unknown };
-    const runId = String(raw.runId || "").trim();
-    const vendor = String(raw.vendor || "")
-      .trim()
-      .toLowerCase();
-    if (!runId) return { cancelled: false, remoteCancelled: false };
-    if (vendor && vendor !== "codex") return { cancelled: false, remoteCancelled: false };
-    const { cancelCodexImageGeneration } = await import("./ai/codexImagegenRunner");
-    return { cancelled: cancelCodexImageGeneration(runId), remoteCancelled: false };
-  });
+  ipcMain.handle("nomi:tasks:cancel", (_event, payload) => taskCancellationRuntime(payload || {}));
   // 能力核 A/B 守卫：renderer 在打开/切换/关闭项目时上报当前打开的 projectId，
   // 让外部调用拒绝直写「正在窗口里编辑」的工程（防内存 store 回盘覆盖，见 capabilityCore/rpcServer）。
   ipcMain.on("nomi:capability:active-project", (_event, projectId: unknown) =>
@@ -696,6 +688,7 @@ if (hasSingleInstanceLock)
     .whenReady()
     .then(async () => {
       setDesktopLocale(app.getLocale());
+      initGlobalIdempotencyStore(getSettingsRoot());
       registerLocalProtocol();
       installContentSecurityPolicy(session.defaultSession);
       // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。

@@ -14,6 +14,7 @@ import {
   readProjectCanvas,
   referencesFromEdges,
   renderDirectorOnProject,
+  resolveCapabilityPollIntervalMs,
   setProjectNodePrompt,
 } from './core'
 import { createDiskGateway } from './gateway'
@@ -78,6 +79,12 @@ afterEach(() => {
 })
 
 describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
+  it('AGNES 视频 headless 轮询使用保守间隔，其他慢道保持既有间隔', () => {
+    expect(resolveCapabilityPollIntervalMs('image_to_video', 'agnes')).toBe(15_000)
+    expect(resolveCapabilityPollIntervalMs('text_to_video', 'kie')).toBe(3_000)
+    expect(resolveCapabilityPollIntervalMs('text_to_image', 'agnes')).toBe(1_500)
+  })
+
   it('models 只暴露已连接供应商的启用模型', () => {
     const now = '2026-07-17T00:00:00.000Z'
     const vendor = (key: string, patch: Record<string, unknown> = {}) => ({
@@ -220,6 +227,84 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
       },
     )
     expect(kind).toBe('image_to_video')
+  })
+
+  it('generate：异步结果查询被限流时只退避续查，不重复 create', async () => {
+    vi.useFakeTimers()
+    try {
+      const project = createNamedProject('AGNES 限流续查测试')
+      const runTask = vi.fn(async () => ({ id: 'agnes-task-1', status: 'queued', assets: [] }))
+      const fetchTaskResult = vi.fn()
+        .mockRejectedValueOnce(new Error('HTTP 429 rate limit exceeded'))
+        .mockResolvedValueOnce({ result: { id: 'agnes-task-1', status: 'succeeded', assets: [{ type: 'video', url: 'nomi-local://asset/p/video.mp4' }] } })
+      const pending = generateOnProject(
+        { projectId: project.id, intent: 'video', prompt: '人物转身', vendor: 'agnes', modelKey: 'agnes-video-v2.0', references: ['https://cdn/ref.png'] },
+        createDiskGateway(project.id),
+        runTask,
+        fetchTaskResult,
+      )
+
+      await vi.runAllTimersAsync()
+      await expect(pending).resolves.toMatchObject({ status: 'succeeded' })
+      expect(runTask).toHaveBeenCalledTimes(1)
+      expect(fetchTaskResult).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('generate：同画布参考资产会持久化到目标节点并自动建立 reference 血缘边', async () => {
+    const project = createNamedProject('参考血缘测试')
+    const gateway = createDiskGateway(project.id)
+    const sourceUrl = 'nomi-local://asset/project/assets/source.png'
+    const snapshot = await gateway.readDoc()
+    snapshot.nodes.push({
+      id: 'source-image',
+      kind: 'image',
+      title: '角色定妆',
+      position: { x: 0, y: 0 },
+      result: { id: 'source-result', type: 'image', url: sourceUrl, createdAt: 1 },
+    })
+    await gateway.apply(snapshot)
+
+    const output = await generateOnProject(
+      {
+        projectId: project.id,
+        intent: 'video',
+        prompt: '角色转身看向镜头',
+        vendor: 'agnes',
+        modelKey: 'agnes-video-v2.0',
+        references: [sourceUrl],
+      },
+      gateway,
+      async () => ({ id: 'task-lineage', status: 'succeeded', assets: [] }),
+    )
+
+    const persisted = await gateway.readDoc()
+    expect(persisted.nodes.find((node) => node.id === output.nodeId)?.references).toEqual([sourceUrl])
+    expect(persisted.edges).toEqual([
+      expect.objectContaining({ source: 'source-image', target: output.nodeId, mode: 'reference' }),
+    ])
+  })
+
+  it('generate：参考 URL 同时匹配多个来源节点时不猜来源、不自动连线', async () => {
+    const project = createNamedProject('歧义参考测试')
+    const gateway = createDiskGateway(project.id)
+    const sourceUrl = 'nomi-local://asset/project/assets/shared.png'
+    const snapshot = await gateway.readDoc()
+    snapshot.nodes.push(
+      { id: 'source-a', kind: 'image', title: 'A', position: { x: 0, y: 0 }, result: { url: sourceUrl } },
+      { id: 'source-b', kind: 'image', title: 'B', position: { x: 0, y: 320 }, result: { url: sourceUrl } },
+    )
+    await gateway.apply(snapshot)
+
+    await generateOnProject(
+      { projectId: project.id, intent: 'video', prompt: '镜头推进', vendor: 'agnes', modelKey: 'agnes-video-v2.0', references: [sourceUrl] },
+      gateway,
+      async () => ({ id: 'task-ambiguous', status: 'succeeded', assets: [] }),
+    )
+
+    expect((await gateway.readDoc()).edges).toHaveLength(0)
   })
 
   it('director render 只读取 scene3d 状态，并把预演图与 GLB 作为连接输出回写画布', async () => {

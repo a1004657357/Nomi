@@ -188,5 +188,6 @@ describe('B4 — 连线视频/音频参考分流（不漏进 referenceImages / �
       expect.stringContaining('分镜图「镜头 1 · 图片」'),
     ])
     expect(refs.referenceImageRoles[2]).toContain('不作为首帧')
+    expect(refs.referenceImagePurposes).toEqual(['character', 'scene', 'composition'])
   })
 })

@@ -4,10 +4,21 @@ import { archetypeForNode, referenceAssetKindForNode } from '../agent/referenceE
 import { currentArchetypeMode } from '../nodes/controls/archetypeMeta'
 import { asUrl, findNodeResultUrl, resolveReferenceUrl } from './referenceUrl'
 
+export type ReferenceImagePurpose =
+  | 'first_frame'
+  | 'last_frame'
+  | 'character'
+  | 'scene'
+  | 'prop'
+  | 'composition'
+  | 'generic'
+
 export type ResolvedGenerationReferences = {
   referenceImages: string[]
   /** 与 referenceImages 同序，供网页桥生成真正的 (@图片N) 引用和用途说明。 */
   referenceImageRoles: string[]
+  /** 与 referenceImages 同序的机器可读用途。单图视频模型据此优先选首帧/分镜图，而不是误选角色卡。 */
+  referenceImagePurposes?: ReferenceImagePurpose[]
   /** 连线进来的视频/音频参考（按源节点类型分流，不混进 referenceImages）。喂 omni 的 video_ref/audio_ref
    *  槽——B4 修：此前视频源 URL 漏进 referenceImages 当图片/首帧发，且 video_ref 槽只收 meta 上传。 */
   referenceVideos: string[]
@@ -81,6 +92,28 @@ function referenceImageRole(
     return `道具/视觉资产「${title}」的造型、材质和尺度参考`
   }
   return `参考图片「${title}」，只按提示词指定的用途参考`
+}
+
+function referenceImagePurpose(
+  targetNodeId: string,
+  url: string,
+  nodes: GenerationCanvasNode[],
+  edges: GenerationCanvasEdge[],
+  nodesById: Map<string, GenerationCanvasNode>,
+): ReferenceImagePurpose {
+  const source = nodes.find((candidate) => findNodeResultUrl(nodesById, candidate.id) === url)
+  if (!source) return 'generic'
+  const directEdge = sortEdgesByOrder(edges).find((edge) => (
+    edge.source === source.id && edge.target === targetNodeId
+  ))
+  if (directEdge?.mode === 'first_frame') return 'first_frame'
+  if (directEdge?.mode === 'last_frame') return 'last_frame'
+  if (directEdge?.mode === 'character_ref' || source.kind === 'character') return 'character'
+  if (directEdge?.mode === 'style_ref' || source.kind === 'scene') return 'scene'
+  if (directEdge?.mode === 'composition_ref') return 'composition'
+  const meta = source.meta && typeof source.meta === 'object' ? source.meta as Record<string, unknown> : {}
+  if (directEdge?.mode === 'reference' || meta.referenceSheet) return 'prop'
+  return 'generic'
 }
 
 export function resolveGenerationReferences(
@@ -216,6 +249,9 @@ export function resolveGenerationReferences(
     referenceImages: imageReferenceImages,
     referenceImageRoles: imageReferenceImages.map((url, index) => (
       referenceImageRole(node.id, url, index, nodes, edges, nodesById)
+    )),
+    referenceImagePurposes: imageReferenceImages.map((url) => (
+      referenceImagePurpose(node.id, url, nodes, edges, nodesById)
     )),
     referenceVideos,
     referenceAudios,

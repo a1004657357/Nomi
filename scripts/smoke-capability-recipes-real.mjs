@@ -23,6 +23,7 @@ import {
   plannedProviderCallsForRecipe,
   providerCallsFromSpendDialog,
   sanitizeSmokeReport,
+  smokeQualityDisposition,
   smokePatternMatches,
   smokeHelpRequested,
   shouldRetryProviderFailure,
@@ -132,9 +133,15 @@ function persistState(state) {
 function caseByRecipe(recipeId) {
   const definition = RECIPE_CASES[recipeId]
   if (!definition) throw new Error(`Missing real smoke fixture for ${recipeId}`)
+  const expectedOutputs = recipeId === 'image.multiview.custom'
+    ? config.customViewCount
+    : definition.expectedOutputs
   return {
     ...definition,
-    plannedProviderCalls: plannedProviderCallsForRecipe(recipeId),
+    expectedOutputs,
+    plannedProviderCalls: recipeId === 'image.multiview.custom'
+      ? expectedOutputs
+      : plannedProviderCallsForRecipe(recipeId),
   }
 }
 
@@ -163,10 +170,14 @@ function makeTinyVideo() {
 
 function projectPayload() {
   const now = Date.now()
-  const robotPath = path.join(repoRoot, 'src/workbench/onboarding/assets/robot/robot.jpg')
   const portraitPath = path.join(repoRoot, 'evals/fixtures/portrait-woman-public-domain.jpg')
-  const stylePath = path.join(repoRoot, 'src/workbench/onboarding/assets/robot/shot-2.jpg')
-  const effectPath = path.join(repoRoot, 'src/workbench/onboarding/assets/robot/shot-4.jpg')
+  const requestedRobotPath = path.join(repoRoot, 'src/workbench/onboarding/assets/robot/robot.jpg')
+  const requestedStylePath = path.join(repoRoot, 'src/workbench/onboarding/assets/robot/shot-2.jpg')
+  const requestedEffectPath = path.join(repoRoot, 'src/workbench/onboarding/assets/robot/shot-4.jpg')
+  const robotFixtureAvailable = fs.existsSync(requestedRobotPath)
+  const robotPath = robotFixtureAvailable ? requestedRobotPath : portraitPath
+  const stylePath = fs.existsSync(requestedStylePath) ? requestedStylePath : portraitPath
+  const effectPath = fs.existsSync(requestedEffectPath) ? requestedEffectPath : portraitPath
   const robotUrl = makeDataUrl(robotPath, 'image/jpeg')
   const portraitUrl = makeDataUrl(portraitPath, 'image/jpeg')
   const styleUrl = makeDataUrl(stylePath, 'image/jpeg')
@@ -190,8 +201,9 @@ function projectPayload() {
           title: 'Real smoke image source',
           position: { x: 80, y: 100 },
           size: { width: 320, height: 320 },
-          prompt:
-            'Keep this exact small white robot, its proportions, worn metal material, amber chest light, pose, and environment.',
+          prompt: robotFixtureAvailable
+            ? 'Keep this exact small white robot, its proportions, worn metal material, amber chest light, pose, and environment.'
+            : 'Keep this exact adult woman, facial identity, hair, clothing, pose, framing, lighting, and environment.',
           result: imageResult,
           history: [imageResult],
           status: 'success',
@@ -443,10 +455,21 @@ async function closeInspector(inspector) {
 
 async function configureRecipe(win, inspector, recipeId, definition) {
   if (recipeId === 'image.multiview.custom') {
-    await win.getByLabel('输出数量').fill('1')
-    await win.getByLabel('机位 1 名称').fill('Right profile')
-    await win.getByLabel('机位 1 方位角').fill('90')
-    await win.getByLabel('机位 1 仰俯角').fill('0')
+    const cameras = [
+      { label: 'Right profile', azimuth: 90, elevation: 0 },
+      { label: 'Left profile', azimuth: -90, elevation: 0 },
+      { label: 'Front', azimuth: 0, elevation: 0 },
+      { label: 'Back', azimuth: 180, elevation: 0 },
+      { label: 'High angle', azimuth: 45, elevation: 25 },
+      { label: 'Low angle', azimuth: -45, elevation: -20 },
+    ]
+    await win.getByLabel('输出数量').fill(String(definition.expectedOutputs))
+    for (let index = 0; index < definition.expectedOutputs; index += 1) {
+      const camera = cameras[index]
+      await win.getByLabel(`机位 ${index + 1} 名称`).fill(camera.label)
+      await win.getByLabel(`机位 ${index + 1} 方位角`).fill(String(camera.azimuth))
+      await win.getByLabel(`机位 ${index + 1} 仰俯角`).fill(String(camera.elevation))
+    }
   }
   if (recipeId === 'portrait.mood') {
     await inspector.getByLabel('生成范围').click()
@@ -662,6 +685,7 @@ function markdownReport(report) {
 function finalizeStatus(state) {
   if (state.stopReason?.startsWith('rate_limit')) return 'stopped_rate_limit'
   if (state.cases.some((entry) => entry.status === 'failed')) return 'failed'
+  if (state.cases.some((entry) => entry.status === 'inspection_required')) return 'partial'
   if (state.cases.some((entry) => [
     'pending',
     'blocked_no_model',
@@ -702,6 +726,7 @@ const freshState = createSmokeState({
 const state = config.resume ? mergeSmokeState(freshState, readJson(statePath)) : freshState
 state.policy = {
   maxAttemptsPerRecipe: config.maxAttemptsPerRecipe,
+  customViewCount: config.customViewCount,
   maxProviderCallsPerModel: config.maxProviderCallsPerModel,
   retryLimit: config.retryLimit,
   requestedCooldownMs: config.cooldownMs,
@@ -876,7 +901,17 @@ try {
         if (!successful || !fourCandidateContract) {
           throw new Error(attempt.targetError || `Output contract failed: ${JSON.stringify(attempt)}`)
         }
-        markSmokeCaseSucceeded(caseState)
+        const qualityDisposition = smokeQualityDisposition(attempt.quality)
+        if (qualityDisposition === 'failed') {
+          throw new Error(`Output quality failed: ${JSON.stringify(attempt.quality)}`)
+        }
+        if (qualityDisposition === 'manual_review') {
+          caseState.status = 'inspection_required'
+          caseState.error = `Automated quality status is ${attempt.quality?.status || 'unavailable'}; manual review required`
+          caseState.failureKind = 'quality_review'
+        } else {
+          markSmokeCaseSucceeded(caseState)
+        }
         completed = true
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

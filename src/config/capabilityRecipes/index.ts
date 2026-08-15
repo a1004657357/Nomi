@@ -232,6 +232,10 @@ export const BUILTIN_CAPABILITY_RECIPES: readonly CapabilityRecipe[] = [
       { key: 'azimuth', label: '方位角', type: 'number', options: [], defaultValue: 0, min: -180, max: 180, step: 5 },
       { key: 'elevation', label: '仰俯角', type: 'number', options: [], defaultValue: 0, min: -30, max: 30, step: 5 },
       select('shotSize', '景别', ['特写', '近景', '中景', '全景'], '中景'),
+      optionSelect('backgroundPolicy', '背景策略', [
+        { value: 'preserve_scene', label: '保留原场景' },
+        { value: 'neutral_turntable', label: '中性转台背景' },
+      ], 'preserve_scene'),
     ],
     requirements: imageEditRequirement, execution: { kind: 'single_task' },
   },

@@ -225,6 +225,41 @@ describe('buildCatalogTaskRequest — 档案驱动 input（extras.archetypeInput
       },
     })
     expect(built.request.extras?.referenceImageRoles).toEqual(['角色 A', '分镜构图'])
+    expect(built.request.prompt).toContain('【Nomi 视频编译约束】')
+    expect(built.request.prompt).toContain('参考图 1：角色 A')
+    expect(built.request.prompt).toContain('参考图 2：分镜构图')
+    expect(built.request.prompt).toContain('不是照片动效')
+  })
+
+  it('AGNES 单图 i2v 优先发送分镜构图，不让角色卡占掉唯一图片输入', () => {
+    const node: GenerationCanvasNode = {
+      id: 'agnes-i2v',
+      kind: 'video',
+      title: '镜头 3',
+      position: { x: 0, y: 0 },
+      prompt: '老板走到空货架前停下并确认缺货',
+      meta: {
+        modelKey: 'agnes-video-v2.0',
+        modelVendor: 'agnes',
+        vendor: 'agnes',
+        archetype: { id: 'agnes-video', modeId: 'i2v' },
+      },
+    }
+    const built = buildCatalogTaskRequest(node, {
+      references: {
+        referenceImages: ['character.png', 'scene.png', 'shot.png'],
+        referenceImageRoles: ['老板身份参考', '工作室场景参考', '镜头 3 分镜构图'],
+        referenceImagePurposes: ['character', 'scene', 'composition'],
+      },
+    })
+
+    expect(built.request.kind).toBe('image_to_video')
+    expect(built.request.extras?.archetypeInput).toMatchObject({ image: 'shot.png' })
+    expect(built.request.extras?.referenceImages).toEqual(['shot.png'])
+    expect(built.request.extras?.referenceImageRoles).toEqual(['镜头 3 分镜构图'])
+    expect(built.request.extras?.referenceImagePurposes).toEqual(['composition'])
+    expect(built.request.prompt).toContain('实际发送的单张图片是视频唯一首帧')
+    expect(built.request.prompt).toContain('人物和关键道具数量守恒')
   })
 })
 

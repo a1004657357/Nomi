@@ -12,6 +12,12 @@ const TERMINAL_STATUSES = new Set(['succeeded', 'failed'])
 const RECOVER_POLL_INTERVAL_MS = 3000
 // 找回轮询自己的上限（10 分钟）：超了仍没终态 → 退回 recoverable，按钮重现，让用户稍后再试。
 const RECOVER_POLL_TIMEOUT_MS = 600000
+const AUTO_RECOVER_CONCURRENCY = 2
+
+type RecoverNodeResultOptions = {
+  projectId?: string
+  shouldContinue?: () => boolean
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
@@ -42,9 +48,9 @@ function buildRecoverPayload(nodeId: string): { taskId: string; vendor: string; 
  * 主进程 fetchTaskResult 在内存缓存 miss 时用 {vendor,modelKey,taskKind,taskId} 无状态重建查询，
  * 故重启 App 后仍可拉回。拉取期间节点显示 running（品牌 logo 转圈），出片 addNodeResult 回节点。
  */
-export async function recoverNodeResult(nodeId: string): Promise<void> {
+export async function recoverNodeResult(nodeId: string, options: RecoverNodeResultOptions = {}): Promise<void> {
   const id = String(nodeId || '').trim()
-  if (!id) return
+  if (!id || options.shouldContinue?.() === false) return
   const payload = buildRecoverPayload(id)
   const store = useGenerationCanvasStore.getState()
   if (!payload) {
@@ -65,16 +71,19 @@ export async function recoverNodeResult(nodeId: string): Promise<void> {
   })
 
   const startedAt = Date.now()
-  let current: TaskResultDto | null = null
+  let current: TaskResultDto
   try {
     while (true) {
+      if (options.shouldContinue?.() === false) return
       const response = await fetchWorkbenchTaskResultByVendor({
         taskId: payload.taskId,
         vendor: payload.vendor,
         taskKind: payload.taskKind,
         prompt: payload.prompt || null,
         modelKey: payload.modelKey || null,
+        projectId: options.projectId || null,
       })
+      if (options.shouldContinue?.() === false) return
       current = response.result
       if (TERMINAL_STATUSES.has(current.status)) break
       if (Date.now() - startedAt > RECOVER_POLL_TIMEOUT_MS) {
@@ -102,7 +111,7 @@ export async function recoverNodeResult(nodeId: string): Promise<void> {
   }
 
   const liveNode = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === id)
-  if (!liveNode || !current) return
+  if (!liveNode || options.shouldContinue?.() === false) return
   try {
     const normalized = normalizeCatalogTaskResult(current, liveNode)
     // 结构闸（找回路径）：找回本身就发生在 CDN 快过期的时刻，此处尤其要把临时 URL 落地。
@@ -113,6 +122,32 @@ export async function recoverNodeResult(nodeId: string): Promise<void> {
     // 终态是 failed（normalizeCatalogTaskResult 对 failed 抛错）→ 这才是真失败，落 error 桶。
     const message = error instanceof Error && error.message ? error.message : '生成失败'
     useGenerationCanvasStore.getState().setNodeStatus(id, 'error', message)
+  }
+}
+
+/**
+ * 项目重开后自动续查已受理任务。只调用 tasks.result；并发限制为 2，取消后旧项目不会再写当前画布。
+ */
+export function resumeRecoverableNodes(projectId: string): () => void {
+  const expectedProjectId = String(projectId || '').trim()
+  if (!expectedProjectId) return () => {}
+  const nodeIds = useGenerationCanvasStore.getState().nodes
+    .filter((node) => node.status === 'recoverable' && buildRecoverPayload(node.id))
+    .map((node) => node.id)
+  let cancelled = false
+  let cursor = 0
+  const shouldContinue = () => !cancelled && getActiveWorkbenchProjectId() === expectedProjectId
+  const worker = async () => {
+    while (shouldContinue()) {
+      const index = cursor++
+      if (index >= nodeIds.length) return
+      await recoverNodeResult(nodeIds[index], { projectId: expectedProjectId, shouldContinue })
+    }
+  }
+  const count = Math.min(AUTO_RECOVER_CONCURRENCY, nodeIds.length)
+  for (let index = 0; index < count; index += 1) void worker()
+  return () => {
+    cancelled = true
   }
 }
 

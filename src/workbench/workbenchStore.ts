@@ -34,6 +34,7 @@ import type { TimelineClip, TimelineState, TimelineTextStyle, TimelineTrackType 
 import { createDefaultWorkbenchDocument, normalizeWorkbenchDocument, type CreationDocumentTools, type PreviewAspectRatio, type WorkbenchDocument } from './workbenchTypes'
 import type { WorkbenchAiMessage } from './ai/workbenchAiTypes'
 import type { StoryboardPlan } from './generationCanvas/agent/storyboardPlan'
+import type { FilmBibleV1 } from './domain/cinematicTypes'
 import type { ComposerAttachment } from './ai/composer/composerAttachmentTypes'
 import { createConversationBuckets } from './aiConversationBuckets'
 import { abandonCreationTurn } from './creation/creationTurnController'
@@ -114,6 +115,8 @@ type WorkbenchState = {
   storyboardPlan: StoryboardPlan | null
   /** 方案是否已落画布：false=草稿，true=已落画布（落后卡片留痕，不再即焚）。随项目持久化。 */
   storyboardPlanCommitted: boolean
+  /** 跨镜头项目事实的持久化唯一真相源。 */
+  filmBible: FilmBibleV1 | null
   /** 主列是否展开全宽编辑器（UI 瞬态，不持久化；重开项目默认收起成卡片）。 */
   storyboardEditorOpen: boolean
   /** 主列是否展开分镜脚本视图（UI 瞬态，不持久化；从 storyboardPlan + 画布节点派生）。 */
@@ -172,6 +175,8 @@ type WorkbenchState = {
   discardStoryboardPlan: () => void
   /** 项目载入专用：恢复 plan + committed，编辑器收起、不标脏（区别于用户动作 setStoryboardPlan）。 */
   hydrateStoryboardPlan: (plan: StoryboardPlan | null, committed: boolean) => void
+  setFilmBible: (filmBible: FilmBibleV1 | null) => void
+  hydrateFilmBible: (filmBible: FilmBibleV1 | null) => void
   /** 切项目时交换对话桶(S1 治串台):存旧项目的对话,载入新项目的(没有则空)。 */
   swapCreationAiProject: (prevId: string | null, nextId: string | null) => void
   /** 一次性信号：打开示例/新项目时请求创作助手默认展开（让「拆镜头」CTA 一眼可见），消费后清掉。 */
@@ -317,6 +322,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   creationAiError: '',
   storyboardPlan: null,
   storyboardPlanCommitted: false,
+  filmBible: null,
   storyboardEditorOpen: false,
   storyboardScriptOpen: false,
   canvasFitNonce: 0,
@@ -417,6 +423,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
       storyboardScriptOpen: false,
     })
   },
+  setFilmBible: (filmBible) => set((state) => ({ filmBible, persistRevision: state.persistRevision + 1 })),
+  hydrateFilmBible: (filmBible) => set({ filmBible }),
   setCreationAssistantAutoOpen: (creationAssistantAutoOpen) => {
     set({ creationAssistantAutoOpen })
   },

@@ -260,6 +260,10 @@ describe('buildRecipeRunPlan', () => {
 
   it('caps requested outputs to both recipe and model limits', () => {
     const recipe = BUILTIN_CAPABILITY_RECIPES.find((entry) => entry.id === 'image.multiview.custom')!
+    expect(recipe.controls.find((control) => control.key === 'backgroundPolicy')).toMatchObject({
+      type: 'select',
+      defaultValue: 'preserve_scene',
+    })
     const archetype = imageArchetype([
       { capabilityId: recipe.id, tier: 'native', maxOutputs: 4 },
     ])

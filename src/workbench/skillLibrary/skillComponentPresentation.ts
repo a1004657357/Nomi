@@ -117,6 +117,9 @@ export function buildBuiltinCanvasComponentItems(
           ...skill,
           label: recipe.label,
           description: recipe.description ?? skill.description,
+          stages: [],
+          stageLabels: [],
+          isPlaybook: false,
           neededProviders: providerKindsForRecipe(recipe),
           canvas: {
             recipeIds: [recipe.id],

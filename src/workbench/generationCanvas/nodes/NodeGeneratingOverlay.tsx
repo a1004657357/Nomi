@@ -12,9 +12,13 @@ export function NodeGeneratingOverlay({ node }: { node: GenerationCanvasNode }):
     node.progress?.phase === 'comfyui-node' || node.progress?.phase === 'comfyui-queued'
       ? node.progress
       : null
+  const queueMessage =
+    node.progress?.phase === 'queued' || node.progress?.phase === 'rate-limited'
+      ? node.progress.message
+      : undefined
   const previewUrl = useComfyuiPreviewStore((state) => state.byNode[node.id])
   const handleCancel = React.useCallback(() => requestComfyuiCancel(node), [node])
-  if (!comfyLive) return <GeneratingOverlay />
+  if (!comfyLive) return <GeneratingOverlay message={queueMessage} />
   return (
     <GeneratingOverlay
       percent={comfyLive.percent}

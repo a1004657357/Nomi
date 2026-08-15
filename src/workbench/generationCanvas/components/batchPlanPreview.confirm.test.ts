@@ -89,7 +89,7 @@ describe('confirmAndRunPlan version protection', () => {
     expect(source?.meta?.modelKey).toBe('old-model')
     expect(variant?.result).toBeUndefined()
     expect(variant?.meta?.modelKey).toBe('new-model')
-    expect(mintSpendGrant).toHaveBeenCalledWith([variant?.id])
+    expect(mintSpendGrant).toHaveBeenCalledWith([variant?.id], 1, expect.any(Number))
     expect(runGenerationNodesByPlan).toHaveBeenCalledWith(
       expect.objectContaining({ waves: [[variant?.id]] }),
       { grantId: 'grant-batch-version' },

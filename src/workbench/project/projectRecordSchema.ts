@@ -6,6 +6,8 @@ import { createDefaultWorkbenchDocument, type WorkbenchDocument } from '../workb
 import { createDefaultGenerationCanvasSnapshot } from '../generationCanvas/store/generationCanvasDefaults'
 import type { GenerationCanvasSnapshot } from '../generationCanvas/model/generationCanvasTypes'
 import { storyboardPlanSchema, type StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
+import { filmBibleSchema } from '../domain/cinematicSchema'
+import type { FilmBibleV1 } from '../domain/cinematicTypes'
 import { cloneBuiltinCategories, projectCategorySchema, type ProjectCategory } from './projectCategories'
 
 // Persisted records come in two shapes that carry an identical `payload`:
@@ -60,6 +62,8 @@ export const workbenchProjectPayloadSchema = z.object({
   storyboardPlan: storyboardPlanSchema.nullable().optional(),
   /** 方案落画布状态(草稿/已落画布)。老项目无字段 → 归一化为 false(当草稿)。 */
   storyboardPlanCommitted: z.boolean().optional(),
+  /** 项目级跨镜头事实。老项目无字段时由当前分镜按需派生，首次应用补丁后持久化。 */
+  filmBible: filmBibleSchema.nullable().optional(),
 })
 
 export const workbenchProjectRecordSchema = workbenchProjectSummarySchema.extend({
@@ -111,6 +115,8 @@ export type WorkbenchProjectPayload = {
   storyboardPlan?: StoryboardPlan | null
   /** 方案落画布状态(草稿/已落画布);无则 false。 */
   storyboardPlanCommitted?: boolean
+  /** 电影项目级事实；禁止放入 API Key、Cookie 或 Provider 私有配置。 */
+  filmBible?: FilmBibleV1 | null
 }
 
 export type WorkbenchProjectRecordV1 = WorkbenchProjectSummary & {
@@ -135,5 +141,6 @@ export function createDefaultWorkbenchProjectPayload(): WorkbenchProjectPayload 
     timeline: createDefaultTimeline(),
     generationCanvas: createDefaultGenerationCanvasSnapshot(),
     categories: cloneBuiltinCategories(),
+    filmBible: null,
   }
 }

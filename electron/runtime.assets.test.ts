@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProject, importRemoteAsset, listProjectAssets, localizedTaskAssetFileName } from "./runtime";
 import { importLocalFile, importLocalPath } from "./assets/localFileImport";
 import { localizeTaskAsset } from "./tasks/profileTaskExecution";
+import { scheduleTechnicalReview } from "./review/reviewTrace";
 
 vi.mock("./export/mediaProbe", () => ({
   probeMediaMetadata: vi.fn(async () => ({ kind: "video", hasAudio: false, durationSeconds: 3.0625 })),
@@ -44,6 +45,7 @@ vi.mock("electron", () => ({
 }));
 
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-05-31T12:00:00Z"));
   mockedDocumentsRoot = makeTempDir("nomi-runtime-assets-documents-");
@@ -92,10 +94,17 @@ describe("runtime workspace asset storage", () => {
       "data:video/mp4;base64,aGVsbG8=",
       "video",
       "node-1",
+      undefined,
+      { expectedAspectRatio: "9:16", expectedDurationSeconds: 5 },
     );
 
     expect(asset.url).toContain("nomi-local://asset/");
     expect(asset.durationSeconds).toBe(3.0625);
+    expect(vi.mocked(scheduleTechnicalReview)).toHaveBeenCalledWith(expect.objectContaining({
+      nodeId: "node-1",
+      expectedAspectRatio: "9:16",
+      expectedDurationSeconds: 5,
+    }));
   });
 
   it("writes generated remote assets under assets/generated/YYYY-MM-DD", async () => {

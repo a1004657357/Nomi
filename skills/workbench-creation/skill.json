@@ -3,8 +3,11 @@
   "version": "1.0.0",
   "description": "Creation-area AI assistant for writing, rewriting, screenwriting, prompt generation, and shot-list drafting. Returns documentAction proposals for user confirmation before any write.",
   "tools": [
-    "creation_read",
-    "creation_write"
+    "read_full_text",
+    "read_selection",
+    "insert_at_cursor",
+    "replace_selection",
+    "append_to_end"
   ],
   "requiredProviders": [
     "text"

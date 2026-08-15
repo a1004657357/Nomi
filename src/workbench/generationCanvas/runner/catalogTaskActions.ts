@@ -43,6 +43,10 @@ import {
 import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
 import { RecoverableTimeoutError } from './recoverableTimeout'
 import { parseVendorErrorFromMessage } from './vendorErrorIpc'
+import {
+  compileVideoPromptForReferences,
+  type VideoPromptReferenceStrategy,
+} from './videoPromptCompiler'
 
 // 重导出：实现已拆到 catalogTaskResolve（节点→vendor/model/kind 选择）与
 // catalogTaskResultParse（raw/asset/failure/provenance 解析），但 catalogTaskActions
@@ -126,9 +130,20 @@ export function isRateLimitedPollError(error: unknown): boolean {
   return /(^|\D)429(\D|$)/.test(message) || /rate limit|too many requests/i.test(message)
 }
 
+const SINGLE_VIDEO_REFERENCE_PRIORITY: Record<string, number> = {
+  first_frame: 0,
+  composition: 1,
+  generic: 2,
+  character: 3,
+  scene: 4,
+  prop: 5,
+  last_frame: 6,
+}
+
 function buildReferenceExtras(
   node: GenerationCanvasNode,
   references: Partial<ResolvedGenerationReferences>,
+  kind: TaskKind,
 ): Record<string, unknown> {
   const meta = node.meta || {}
   const referenceImages = uniqueStrings([
@@ -138,6 +153,19 @@ function buildReferenceExtras(
   const referenceImageRoles = (references.referenceImageRoles || [])
     .map((value) => asTrimmedString(value))
     .filter(Boolean)
+  const referenceImagePurposes = (references.referenceImagePurposes || [])
+    .map((value) => asTrimmedString(value))
+    .filter(Boolean)
+  const roleByUrl = new Map<string, string>()
+  const purposeByUrl = new Map<string, string>()
+  ;(references.referenceImages || []).forEach((url, index) => {
+    const normalizedUrl = asTrimmedString(url)
+    if (!normalizedUrl) return
+    const role = referenceImageRoles[index]
+    const purpose = referenceImagePurposes[index]
+    if (role) roleByUrl.set(normalizedUrl, role)
+    if (purpose) purposeByUrl.set(normalizedUrl, purpose)
+  })
   const styleReferenceImages = uniqueStrings([
     ...readStringArray(meta.styleReferenceImages),
     ...(references.styleReferenceImages || []),
@@ -155,12 +183,25 @@ function buildReferenceExtras(
   // 认不出 → 现有无条件带首/尾帧（非档案模型走老路）。
   const archetype = resolveTaskArchetype(meta)
   if (archetype) {
+    const mode = currentArchetypeMode(archetype, meta)
+    const imageSlot = (mode.slots || []).find((slot) => slot.kind === 'image_ref')
+    const singleVideoReference = kind === 'image_to_video' && imageSlot?.max === 1
+    const inputReferenceImages = singleVideoReference
+      ? referenceImages
+          .map((url, index) => ({
+            url,
+            index,
+            priority: SINGLE_VIDEO_REFERENCE_PRIORITY[purposeByUrl.get(url) || 'generic'] ?? 2,
+          }))
+          .sort((left, right) => left.priority - right.priority || left.index - right.index)
+          .map((item) => item.url)
+      : referenceImages
     const archetypeInput = buildArchetypeInputParams(meta, archetype, {
       firstFrameUrl: asTrimmedString(references.firstFrameUrl) || null,
       lastFrameUrl: asTrimmedString(references.lastFrameUrl) || null,
       // 切片1：把画布边产出的实时参考图喂进档案 image 槽（此前只读 meta，边的角色图被丢）。
       // referenceImages 已是 meta.referenceImages + 边超集的去重并集。
-      referenceImages,
+      referenceImages: inputReferenceImages,
       // B4：连线进来的视频/音频参考喂进 video_ref/audio_ref 槽（此前只收 meta 上传）。
       referenceVideos: references.referenceVideos || [],
       referenceAudios: references.referenceAudios || [],
@@ -171,7 +212,6 @@ function buildReferenceExtras(
     // 中转上撞档案名的模型改图不带图/i2v 首帧到不了 wire（2026-07-24 群反馈根因）。
     // M2 互斥同样约束标准面：首/尾帧只在**当前模式声明了对应槽**时才带（活边优先、meta 兜底），
     // 否则「首帧模式残留尾帧」的 §2 坑2 会从标准键复活（kie 同名 token 渲进 body）。
-    const mode = currentArchetypeMode(archetype, meta)
     const modeHasFirst = (mode.slots || []).some((slot) => slot.kind === 'first_frame')
     const modeHasLast = (mode.slots || []).some((slot) => slot.kind === 'last_frame')
     const firstFrameUrl = modeHasFirst
@@ -183,16 +223,22 @@ function buildReferenceExtras(
     // 档案图槽的上传住 meta.referenceImageUrls（ARRAY_SLOT_ROUTE.image_ref.metaKey）——它同样必须进
     // 标准面，否则中转 multipart 的 params.reference_images 恒空、0 张图被诚实抛（走查 B 段抓出的
     // 第二个吞点）。同样按当前模式门控（声明了 image_ref 槽才带，防 t2i 残留复活进 chat 回退 body）。
-    const modeHasImageArray = (mode.slots || []).some((slot) => slot.kind === 'image_ref')
-    const standardReferenceImages = uniqueStrings([
-      ...referenceImages,
-      ...(modeHasImageArray ? readStringArray(meta.referenceImageUrls) : []),
-    ])
+    const modeHasImageArray = Boolean(imageSlot)
+    const standardReferenceImages = modeHasImageArray
+      ? orderedSentImageReferenceUrls(meta, archetype, inputReferenceImages)
+      : referenceImages
+    const sentReferenceImageRoles = standardReferenceImages
+      .map((url) => roleByUrl.get(url) || '')
+      .filter(Boolean)
+    const sentReferenceImagePurposes = standardReferenceImages
+      .map((url) => purposeByUrl.get(url) || '')
+      .filter(Boolean)
     return {
       ...(standardReferenceImages.length ? { referenceImages: standardReferenceImages } : {}),
       ...(firstFrameUrl ? { firstFrameUrl } : {}),
       ...(lastFrameUrl ? { lastFrameUrl } : {}),
-      ...(referenceImageRoles.length ? { referenceImageRoles } : {}),
+      ...(sentReferenceImageRoles.length ? { referenceImageRoles: sentReferenceImageRoles } : {}),
+      ...(sentReferenceImagePurposes.length ? { referenceImagePurposes: sentReferenceImagePurposes } : {}),
       archetypeInput,
       ...(styleReferenceImages.length ? { styleReferenceImages } : {}),
       ...(characterReferenceImages.length ? { characterReferenceImages } : {}),
@@ -202,14 +248,39 @@ function buildReferenceExtras(
 
   const firstFrameUrl = asTrimmedString(references.firstFrameUrl) || asTrimmedString(meta.firstFrameUrl)
   const lastFrameUrl = asTrimmedString(references.lastFrameUrl) || asTrimmedString(meta.lastFrameUrl)
+  const sentReferenceImageRoles = referenceImages
+    .map((url) => roleByUrl.get(url) || '')
+    .filter(Boolean)
+  const sentReferenceImagePurposes = referenceImages
+    .map((url) => purposeByUrl.get(url) || '')
+    .filter(Boolean)
   return {
     ...(referenceImages.length ? { referenceImages } : {}),
     ...(firstFrameUrl ? { firstFrameUrl } : {}),
     ...(lastFrameUrl ? { lastFrameUrl } : {}),
+    ...(sentReferenceImageRoles.length ? { referenceImageRoles: sentReferenceImageRoles } : {}),
+    ...(sentReferenceImagePurposes.length ? { referenceImagePurposes: sentReferenceImagePurposes } : {}),
     ...(styleReferenceImages.length ? { styleReferenceImages } : {}),
     ...(characterReferenceImages.length ? { characterReferenceImages } : {}),
     ...(compositionReferenceImages.length ? { compositionReferenceImages } : {}),
   }
+}
+
+function videoReferenceStrategy(
+  kind: TaskKind,
+  node: GenerationCanvasNode,
+  referenceExtras: Record<string, unknown>,
+): VideoPromptReferenceStrategy {
+  if (kind !== 'text_to_video' && kind !== 'image_to_video') return 'text_only'
+  const archetype = resolveTaskArchetype(node.meta || {})
+  if (archetype) {
+    const mode = currentArchetypeMode(archetype, node.meta || {})
+    const imageSlot = mode.slots.find((slot) => slot.kind === 'image_ref')
+    if (mode.slots.some((slot) => slot.kind === 'first_frame') || imageSlot?.max === 1) return 'first_frame'
+    if (imageSlot && imageSlot.max > 1) return 'full_reference'
+  }
+  if (asTrimmedString(referenceExtras.firstFrameUrl)) return 'first_frame'
+  return readStringArray(referenceExtras.referenceImages).length ? 'reference' : 'text_only'
 }
 
 export function buildCatalogTaskRequest(
@@ -226,21 +297,31 @@ export function buildCatalogTaskRequest(
   const references = options.references || {}
   const kind = resolveTaskKind(node, references)
   const meta = node.meta || {}
+  const referenceExtras = buildReferenceExtras(node, references, kind)
   // @ 内联引用投影(R6 单源 · option 2):把 prompt 里的 @[asset:url] 标记转成 @imageN，
   // N = url 在「连线在前+上传」有序数组里的位置——**与实际发送的 reference_image 数组逐位一致**。此前只读
   // meta.referenceImageUrls，把连线进来的参考图当成「不在数组里」直接把 @ 标记删成空串（连线图 @ 不到/被
   // 删空的根因）。纯文字 prompt 无标记 → 原样(no-op)。无档案模型回退旧口径（仅上传）。
   const promptRefArchetype = resolveTaskArchetype(meta)
+  const sentReferenceImages = readStringArray(referenceExtras.referenceImages)
   const orderedReferenceUrls = promptRefArchetype
-    ? orderedSentImageReferenceUrls(meta, promptRefArchetype, references.referenceImages || [])
+    ? orderedSentImageReferenceUrls(meta, promptRefArchetype, sentReferenceImages)
     : readStringArray(meta.referenceImageUrls)
   const prompt = projectPromptForSend(rawPrompt, orderedReferenceUrls)
   // 站位构图参考：出关键帧时把 staging 灰模图当「构图蓝图」而非编辑底图——照站位/姿势/机位，
   // 但写实重渲染，别照搬灰模 3D 外观（评测发现 image_edit 直喂会出 CGI 感）。只对图像生成加。
-  const finalPrompt =
+  const stagedPrompt =
     references.stagingComposition && (kind === 'text_to_image' || kind === 'image_edit')
       ? `${prompt}\n\n（构图参考仅用于确定人物站位、各自姿势和镜头机位；请据此完全写实地重新渲染人物与场景——真实皮肤/衣物/光影，不要保留参考图里灰色人偶或 3D 渲染的外观。）`
       : prompt
+  const finalPrompt = kind === 'text_to_video' || kind === 'image_to_video'
+    ? compileVideoPromptForReferences({
+        prompt: stagedPrompt,
+        strategy: videoReferenceStrategy(kind, node, referenceExtras),
+        referenceImageRoles: readStringArray(referenceExtras.referenceImageRoles),
+        referenceImageCount: sentReferenceImages.length || (asTrimmedString(referenceExtras.firstFrameUrl) ? 1 : 0),
+      })
+    : stagedPrompt
   const width = asFiniteNumber(meta.width)
   const height = asFiniteNumber(meta.height)
   const steps = asFiniteNumber(meta.steps)
@@ -271,7 +352,7 @@ export function buildCatalogTaskRequest(
         // 再点生成=用户要重抽 → 强制重跑绕指纹缓存;首次生成/批量补跑同配方命中缓存
         // 秒回零花费(防双击/重复受理重复扣费)。路由旗标,不进指纹。
         ...(node.result || (node.history && node.history.length > 0) ? { forceRerun: true } : {}),
-        ...buildReferenceExtras(node, references),
+        ...referenceExtras,
       },
     },
   }

@@ -67,6 +67,8 @@ describe('applyRelayFirstFrame — 视频接力帧（唯一消费 relayFromVideo
     await applyRelayFirstFrame(r)
     expect(extractFrame).toHaveBeenCalledWith({ videoUrl: 'nomi-local://asset/p/v.mp4', which: 'last', projectId: 'p' })
     expect(r.firstFrameUrl).toBe('nomi-local://asset/p/frame-last.png')
+    expect(r.referenceImages).toEqual(['nomi-local://asset/p/frame-last.png'])
+    expect(r.referenceImagePurposes).toEqual(['first_frame'])
     expect(r.relayFromVideoUrl).toBeUndefined()
   })
 

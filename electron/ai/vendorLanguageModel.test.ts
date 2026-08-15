@@ -36,6 +36,22 @@ describe("resolveLanguageModelBaseURL", () => {
     ).toBe("https://open.bigmodel.cn/api/coding/paas/v4");
   });
 
+  it("keeps subscription endpoints on their existing version path", () => {
+    expect(
+      resolveLanguageModelBaseURL(vendor({
+        key: "volcengine-agent-plan",
+        providerKind: "openai-responses",
+        baseUrlHint: "https://ark.cn-beijing.volces.com/api/plan/v3",
+      })),
+    ).toBe("https://ark.cn-beijing.volces.com/api/plan/v3");
+    expect(
+      resolveLanguageModelBaseURL(vendor({
+        key: "kimi-code",
+        baseUrlHint: "https://api.kimi.com/coding/v1",
+      })),
+    ).toBe("https://api.kimi.com/coding/v1");
+  });
+
   it("allows custom OpenAI-compatible base paths", () => {
     expect(
       resolveLanguageModelBaseURL(vendor({

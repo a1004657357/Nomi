@@ -7,6 +7,7 @@ import { endpoint } from "./vendorEndpoint";
 import { requestJson } from "./vendor/vendorHttp";
 import { buildNormalizedRecipe, buildTaskProvenance } from "./vendor/provenance";
 import { traceVendorCompleted, traceVendorRequested } from "./events/vendorCallTrace";
+import { scheduleTechnicalReview } from "./review/reviewTrace";
 import {
   type AuthType,
   authHeaders as buildAuthHeaders,
@@ -135,7 +136,12 @@ export type TaskRequest = {
 export type TaskResult = {
   id: string;
   kind: ProfileKind;
-  status: "queued" | "running" | "succeeded" | "failed";
+  /**
+   * 任务状态。Gate 1 Slice 5 扩展（§10.2）：原先 queued/running/succeeded/failed 四态；
+   * 新增 cancelled（独立于 failed）与 unknown（非终态，持续查询、绝不重发 create）。
+   * 与 `electron/tasks/responseParsing.ts` 的 `TaskStatus` 同义——该处是权威定义。
+   */
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
   assets: Array<{
     type: "image" | "video" | "audio" | "model3d";
     url: string;
@@ -245,9 +251,17 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
           ownerNodeId: nodeId || null,
           codexThreadId: generated.threadId || null,
         },
-      ) as { id?: string; name?: string; data?: { url?: string } };
+      ) as { id?: string; name?: string; data?: { url?: string; absolutePath?: string } };
       const assetUrl = trim(saved.data?.url);
       if (!assetUrl) throw new Error("Codex Img2 生成成功但资产落盘失败");
+      scheduleTechnicalReview({
+        projectId,
+        nodeId,
+        absolutePath: trim(saved.data?.absolutePath),
+        assetUrl,
+        type: "image",
+        expectedAspectRatio: firstString(request.extras?.aspect_ratio, request.extras?.aspectRatio),
+      });
       const timings = {
         ...generated.timings,
         assetWriteMs: Date.now() - assetWriteStartedAt,

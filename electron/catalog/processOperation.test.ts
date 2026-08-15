@@ -36,6 +36,19 @@ describe("executeProcessOperation", () => {
     expect(r.submit_id).toBe("u-1");
     expect(r.gen_status).toBe("querying");
     expect(r.video_url).toEqual([]);
+    expect(runDreaminaCli).toHaveBeenCalledWith(
+      ["text2video", "--prompt=cat"],
+      expect.objectContaining({ retries: 0 }),
+    );
+  });
+
+  it("查询态允许一次传输重试，提交态不重试", async () => {
+    runDreaminaCli.mockResolvedValue({ code: 0, stdout: '{"submit_id":"u-2","gen_status":"querying"}', stderr: "" });
+    await call(["query_result", "--submit_id=u-2"]);
+    expect(runDreaminaCli).toHaveBeenCalledWith(
+      ["query_result", "--submit_id=u-2"],
+      expect.objectContaining({ retries: 1 }),
+    );
   });
 
   it("空值参数（--flag=）被丢弃，不发给 CLI", async () => {

@@ -44,6 +44,7 @@ Options:
   --max-provider-calls-per-model=<count>
                                     Bound calls for each provider/model pair (max 10)
   --max-attempts-per-recipe=<count> Bound attempts for each recipe
+  --custom-view-count=<count>       Custom multiview outputs for batch smoke (1-6)
   --retry-limit=<count>             Bound transient retries
   --cooldown-ms=<milliseconds>      Requested delay between calls
   --timeout-ms=<milliseconds>       Timeout for each recipe
@@ -183,6 +184,11 @@ export function parseSmokeConfig(argv = process.argv.slice(2), env = process.env
     10,
     { label: 'per-model provider calls', min: 1, max: 10 },
   )
+  const customViewCount = positiveInteger(
+    args.get('custom-view-count') ?? env.NOMI_REAL_SMOKE_CUSTOM_VIEW_COUNT,
+    1,
+    { label: 'custom view count', min: 1, max: 6 },
+  )
   const retryLimit = positiveInteger(
     args.get('retry-limit') ?? env.NOMI_REAL_SMOKE_RETRY_LIMIT,
     0,
@@ -205,6 +211,7 @@ export function parseSmokeConfig(argv = process.argv.slice(2), env = process.env
     maxProviderCalls,
     maxProviderCallsPerModel,
     maxAttemptsPerRecipe,
+    customViewCount,
     retryLimit,
     cooldownMs,
     timeoutMs,
@@ -269,6 +276,7 @@ const SMOKE_CODEX_TIMING_FIELDS = new Set([
   'totalMs',
   'referenceCount',
   'attemptCount',
+  'imagegenInvocationCount',
 ])
 
 function finiteTimingFields(value, allowedFields) {
@@ -289,7 +297,13 @@ export function extractSmokePhaseTimings(item) {
   const codexTimings = raw.codex && typeof raw.codex === 'object' ? raw.codex.timings : null
   const profileOperation = finiteTimingFields(nomi.profileOperation, SMOKE_PROFILE_TIMING_FIELDS)
   const generationPhases = finiteTimingFields(nomi.generationPhases, SMOKE_GENERATION_TIMING_FIELDS)
-  const codex = finiteTimingFields(codexTimings, SMOKE_CODEX_TIMING_FIELDS)
+  const codex = {
+    ...finiteTimingFields(codexTimings, SMOKE_CODEX_TIMING_FIELDS),
+    ...(codexTimings?.imagegenInvocationAudit === 'verified'
+      || codexTimings?.imagegenInvocationAudit === 'unobservable'
+      ? { imagegenInvocationAudit: codexTimings.imagegenInvocationAudit }
+      : {}),
+  }
   if (
     Object.keys(profileOperation).length === 0
     && Object.keys(generationPhases).length === 0
@@ -309,6 +323,13 @@ export function markSmokeCaseSucceeded(caseState) {
   caseState.status = 'success'
   caseState.error = null
   caseState.failureKind = null
+}
+
+export function smokeQualityDisposition(quality) {
+  const status = String(quality?.status || '').trim()
+  if (!status || status === 'pass') return 'accepted'
+  if (status === 'fail') return 'failed'
+  return 'manual_review'
 }
 
 export function effectiveProviderCooldownMs(requestedCooldownMs, model) {

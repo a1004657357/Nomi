@@ -92,7 +92,7 @@ export const zhLibraries = {
     deleteSkill: '删除技能',
     builtinReadonlyAria: '内置技能，只读',
     builtinReadonly: '内置技能 · 只读',
-    provider: { text: '文本', image: '图像', video: '视频' },
+    provider: { text: '文本', image: '图像', video: '视频', model3d: '3D' },
   },
   sidebar: {
     builtinCategory: {
@@ -238,7 +238,7 @@ export const enLibraries = {
     deleteSkill: 'Delete skill',
     builtinReadonlyAria: 'Built-in skill, read-only',
     builtinReadonly: 'Built-in skill · Read-only',
-    provider: { text: 'Text', image: 'Image', video: 'Video' },
+    provider: { text: 'Text', image: 'Image', video: 'Video', model3d: '3D' },
   },
   sidebar: {
     builtinCategory: {

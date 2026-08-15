@@ -5,6 +5,7 @@ import type { CapabilityRecipeTask } from './capabilityRecipeRunner'
 import {
   analyzeCapabilityImagePixels,
   centeredCropForAspectRatio,
+  normalizeMultiviewCollectionDimensions,
   postprocessCapabilityRecipeResults,
   type CapabilityRecipeMediaProcessor,
 } from './capabilityRecipePostprocess'
@@ -153,6 +154,91 @@ describe('centeredCropForAspectRatio', () => {
     [1024, 512, { x: 0, y: 0, width: 1024, height: 512 }],
   ])('computes an exact centered 2:1 crop for %sx%s', (width, height, expected) => {
     expect(centeredCropForAspectRatio(width, height, 2)).toEqual(expected)
+  })
+})
+
+describe('normalizeMultiviewCollectionDimensions', () => {
+  it('crops only tiny provider pixel jitter to one common batch size', async () => {
+    const recipePlan = { ...gridPlan(), recipeId: 'image.multiview.custom', outputCount: 2, taskCount: 2 }
+    recipePlan.outputs = recipePlan.outputs.slice(0, 2)
+    const first = imageResult('first')
+    const second = imageResult('second')
+    const normalizeImageDimensions = vi.fn(async (result: GenerationNodeResult, _owner: string, width: number, height: number) => ({
+      ...result,
+      id: `${result.id}:${width}x${height}`,
+    }))
+    const collection = {
+      id: 'collection', recipeId: recipePlan.recipeId, createdAt: 100,
+      items: [
+        { id: recipePlan.outputs[0]!.id, label: '右侧', status: 'success' as const, result: first, candidates: [first], selectedResultId: first.id },
+        { id: recipePlan.outputs[1]!.id, label: '左侧', status: 'success' as const, result: second, candidates: [second], selectedResultId: second.id },
+      ],
+    }
+    const mediaProcessor = processor({
+      normalizeImageDimensions,
+      inspectImage: async (result) => ({
+        width: result.id === 'first' ? 1535 : 1537,
+        height: result.id === 'first' ? 1024 : 1023,
+        opaqueRatio: 1,
+        meanLuma: 0.5,
+        lumaStdDev: 0.2,
+        edgeEnergy: 0.1,
+        averageRgb: [0.5, 0.5, 0.5],
+        perceptualHash: result.id,
+      }),
+    })
+
+    const normalized = await normalizeMultiviewCollectionDimensions(
+      recipePlan,
+      collection,
+      'target-1',
+      mediaProcessor,
+    )
+
+    expect(normalizeImageDimensions).toHaveBeenCalledTimes(2)
+    expect(normalizeImageDimensions).toHaveBeenNthCalledWith(1, first, 'target-1', 1535, 1023)
+    expect(normalizeImageDimensions).toHaveBeenNthCalledWith(2, second, 'target-1', 1535, 1023)
+    expect(normalized.items.map((item) => item.selectedResultId)).toEqual([
+      'first:1535x1023',
+      'second:1535x1023',
+    ])
+  })
+
+  it('does not hide materially different provider aspect ratios', async () => {
+    const recipePlan = { ...gridPlan(), recipeId: 'image.multiview.custom', outputCount: 2, taskCount: 2 }
+    recipePlan.outputs = recipePlan.outputs.slice(0, 2)
+    const normalizeImageDimensions = vi.fn()
+    const collection = {
+      id: 'collection', recipeId: recipePlan.recipeId, createdAt: 100,
+      items: recipePlan.outputs.map((output, index) => ({
+        id: output.id,
+        label: output.label,
+        status: 'success' as const,
+        result: imageResult(`result-${index}`),
+      })),
+    }
+
+    const normalized = await normalizeMultiviewCollectionDimensions(
+      recipePlan,
+      collection,
+      'target-1',
+      processor({
+        normalizeImageDimensions,
+        inspectImage: async (result) => ({
+          width: result.id === 'result-0' ? 1536 : 1024,
+          height: result.id === 'result-0' ? 1024 : 1536,
+          opaqueRatio: 1,
+          meanLuma: 0.5,
+          lumaStdDev: 0.2,
+          edgeEnergy: 0.1,
+          averageRgb: [0.5, 0.5, 0.5],
+          perceptualHash: result.id,
+        }),
+      }),
+    )
+
+    expect(normalizeImageDimensions).not.toHaveBeenCalled()
+    expect(normalized).toBe(collection)
   })
 })
 

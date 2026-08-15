@@ -135,6 +135,7 @@ export const zhGenerationCommon = {
     },
     progress: {
       queued: '准备生成',
+      providerQueued: '等待 {{provider}} 空闲名额 · 运行 {{active}}/{{limit}} · 前方 {{count}} 个',
       resolving: '正在确认模型与参数',
       requesting: '正在把任务发给模型',
       waiting: '模型已接单，排队中',
@@ -154,14 +155,10 @@ export const zhGenerationCommon = {
     },
     error: {
       auth: { reason: 'API Key 无效', hint: '请在「模型接入」页检查这个模型的 API Key。' },
-      balance: {
-        reason: '余额不足',
-        hint: '服务商账户余额不足，请到服务商充值后重试，或在「模型接入」换一个模型。',
-      },
-      quota: {
-        reason: '配额或限流',
-        hint: '服务商配额已用尽或触发限流，请稍后重试，或在「模型接入」换一个模型。',
-      },
+      balance: { reason: '余额不足', hint: '服务商账户余额不足，请到服务商充值后重试，或在「模型接入」换一个模型。' },
+      quota: { reason: '配额或限流', hint: '服务商配额已用尽或触发限流，请稍后重试，或在「模型接入」换一个模型。' },
+      codexTimeout: { reason: 'Codex Img2 本地等待超时', hint: '这是 Nomi 本地超时，不是额度不足。请重试；4K 较慢，仍超时可改为 2K。' },
+      codexNetwork: { reason: 'Codex Img2 网络请求失败', hint: 'ChatGPT 图片服务没有返回图片，与额度无关。本次没有自动重试；请确认网络或代理稳定后再重试。' },
       pollTimeout: {
         reason: '生成超时',
         hint: '视频生成较慢，等待超过上限。任务可能仍在进行，请稍后重新生成，或换更快的模型（如 Seedance Fast）。',
@@ -1033,6 +1030,7 @@ export const enGenerationCommon = {
     },
     progress: {
       queued: 'Preparing generation',
+      providerQueued: 'Waiting for {{provider}} · {{active}}/{{limit}} active · {{count}} ahead',
       resolving: 'Checking the model and parameters',
       requesting: 'Sending the task to the model',
       waiting: 'The model accepted the task and queued it',
@@ -1052,14 +1050,10 @@ export const enGenerationCommon = {
     },
     error: {
       auth: { reason: 'Invalid API key', hint: 'Check this model’s API key in Model access.' },
-      balance: {
-        reason: 'Insufficient balance',
-        hint: 'Top up your provider account and try again, or choose another model in Model access.',
-      },
-      quota: {
-        reason: 'Quota or rate limit',
-        hint: 'The provider quota is exhausted or rate-limited. Try again later or choose another model.',
-      },
+      balance: { reason: 'Insufficient balance', hint: 'Top up your provider account and try again, or choose another model in Model access.' },
+      quota: { reason: 'Quota or rate limit', hint: 'The provider quota is exhausted or rate-limited. Try again later or choose another model.' },
+      codexTimeout: { reason: 'Codex Img2 local wait timed out', hint: 'This is a local timeout, not a quota error. Retry, or use 2K if 4K remains slow.' },
+      codexNetwork: { reason: 'Codex Img2 network request failed', hint: 'ChatGPT image service returned no image. This is not a quota error and Nomi did not retry automatically. Check the network or proxy before retrying.' },
       pollTimeout: {
         reason: 'Generation timed out',
         hint: 'Video generation exceeded the wait limit and may still be running. Try again later or use a faster model such as Seedance Fast.',

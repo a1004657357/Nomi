@@ -596,22 +596,52 @@ export function deleteModelCatalogMapping(id: string): void {
   writeCatalog(state);
 }
 
+/**
+ * 导出 catalog 包。**renderer 永不获得明文 key**（§22.1：renderer 只能用 opaque connection id）。
+ *
+ * Gate 7 P1 修复（2026-08-02）：原先 `includeApiKeys` 选项经 renderer-reachable sync IPC
+ * （`nomi:model-catalog:export`，main.ts:475）可返回明文 key——虽当前无调用方传 true，
+ * 但能力存在即风险。现：
+ * - `exportModelCatalogPackage`（renderer 路径）**恒不带 key**，忽略 includeApiKeys。
+ * - `exportModelCatalogPackageWithKeys`（main-only，不接 IPC）供「导出到文件/迁移到另一台机」用，
+ *   且须由 main 进程显式调用（文件写入在 main，key 不过 renderer）。
+ *
+ * 幂等：两函数读同一 state；后者额外带 key 仅用于跨机迁移包。
+ */
 export function exportModelCatalogPackage(params?: unknown): unknown {
-  const state = readCatalog();
-  const includeApiKeys = Boolean((params as JsonRecord | undefined)?.includeApiKeys);
+  // renderer 路径：忽略 includeApiKeys，绝不返回明文 key（§22.1 安全边界）
+  void params
+  const state = readCatalog()
   return {
     version: "desktop-local-v1",
     exportedAt: nowIso(),
     vendors: state.vendors.map((vendor) => ({
       vendor,
-      // Export carries plaintext keys for portability; re-import will re-encrypt on the target machine.
-      ...(includeApiKeys && state.apiKeysByVendor[vendor.key]?.apiKey
+      models: state.models.filter((model) => model.vendorKey === vendor.key),
+      mappings: state.mappings.filter((mapping) => mapping.vendorKey === vendor.key),
+    })),
+  }
+}
+
+/**
+ * **main-only**：导出含明文 key 的 catalog 包（供跨机迁移文件，不接 renderer IPC）。
+ * 调用方负责把返回值写进文件（main 进程内），不让 key 进入 renderer。
+ */
+export function exportModelCatalogPackageWithKeys(): unknown {
+  const state = readCatalog()
+  return {
+    version: "desktop-local-v1",
+    exportedAt: nowIso(),
+    vendors: state.vendors.map((vendor) => ({
+      vendor,
+      // 跨机迁移用：明文 key（目标机重新加密）；此函数不经 renderer IPC。
+      ...(state.apiKeysByVendor[vendor.key]?.apiKey
         ? { apiKey: { apiKey: decryptApiKeyRecord(state.apiKeysByVendor[vendor.key]), enabled: state.apiKeysByVendor[vendor.key].enabled } }
         : {}),
       models: state.models.filter((model) => model.vendorKey === vendor.key),
       mappings: state.mappings.filter((mapping) => mapping.vendorKey === vendor.key),
     })),
-  };
+  }
 }
 
 /**

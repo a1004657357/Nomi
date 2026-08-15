@@ -34,12 +34,28 @@ import { applyParamMap, type ParamMap } from "../catalog/paramTranslate";
 import { waitForVendorSubmissionWindow } from "../vendorSubmissionRateLimiter";
 import type { TaskRequest, TaskResult } from "../runtime";
 
+export type TechnicalReviewExpectation = {
+  expectedAspectRatio?: string;
+  expectedDurationSeconds?: number;
+};
+
+function technicalReviewExpectation(request: TaskRequest): TechnicalReviewExpectation {
+  const params = taskTemplateParams(request);
+  const expectedAspectRatio = firstString(params.aspect_ratio, params.aspectRatio);
+  const duration = Number(params.duration);
+  return {
+    ...(expectedAspectRatio ? { expectedAspectRatio } : {}),
+    ...(Number.isFinite(duration) && duration > 0 ? { expectedDurationSeconds: duration } : {}),
+  };
+}
+
 export async function localizeTaskAsset(
   projectId: string,
   assetUrl: string,
   type: "image" | "video" | "audio" | "model3d",
   nodeId?: string,
   vendor?: Pick<Vendor, "key" | "baseUrlHint">,
+  expectation?: TechnicalReviewExpectation,
 ): Promise<TaskResult["assets"][number]> {
   const imported = (await importRemoteAsset(
     {
@@ -65,6 +81,7 @@ export async function localizeTaskAsset(
       absolutePath: String(imported.data?.absolutePath || ""),
       assetUrl: String(imported.data?.url || assetUrl),
       type,
+      ...expectation,
     });
   }
   const durationSeconds = await probeLocalizedDurationSeconds(type, imported.data?.absolutePath);
@@ -321,12 +338,19 @@ export async function buildProfileTaskResult(input: {
     new Set([...mappedAssetValues.flatMap(collectAssetUrls), ...collectAssetUrls(extractAssetUrl(response))]),
   );
   const status = taskStatusFromResponse(response, responseMapping, input.mapping.statusMapping, assetUrls);
+  // Gate 1 Slice 5（§10.2）：unknown 态细化——
+  // create/query 返回了 taskId（被 provider 受理）但无 asset/状态词时，应视为 queued（在 provider 队列里），
+  // 而非 unknown。unknown 只留给「既无 taskId 也无法分类」的真不明态（query miss 路径）。
+  // 钱安全不变量不变：unknown/queued 都不会触发新 create（submissionLedger 守门）。
+  const resolvedStatus =
+    status === "unknown" && taskId && taskId !== input.taskIdFallback ? "queued" : status;
   const type: "image" | "video" | "model3d" =
     input.wantedKind === "video" ? "video" : input.wantedKind === "model3d" ? "model3d" : "image";
   const assetPersistenceStartedAt = Date.now();
+  const expectation = technicalReviewExpectation(input.request);
   const assets = input.projectId
     ? await Promise.all(
-        assetUrls.map((url) => localizeTaskAsset(input.projectId || "", url, type, input.nodeId, input.vendor)),
+        assetUrls.map((url) => localizeTaskAsset(input.projectId || "", url, type, input.nodeId, input.vendor, expectation)),
       )
     : assetUrls.map((url) => ({ type, url, thumbnailUrl: type === "image" ? url : null }));
   const assetPersistenceMs = Date.now() - assetPersistenceStartedAt;
@@ -342,10 +366,10 @@ export async function buildProfileTaskResult(input: {
     result: {
       id: taskId,
       kind: input.request.kind,
-      status,
+      status: resolvedStatus,
       assets,
       raw: resultTimings ? attachProfileOperationTimingsToRaw(input.response, resultTimings) : input.response,
-      ...(status === "succeeded" && input.vendor && input.model
+      ...(resolvedStatus === "succeeded" && input.vendor && input.model
         ? {
             provenance: buildTaskProvenance({
               vendor: input.vendor,

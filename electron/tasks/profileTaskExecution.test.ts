@@ -131,6 +131,15 @@ describe("executeProfileOperation AGNES preflight", () => {
       headers: { Range: "bytes=0-0" },
     });
     expect(fetchMock.mock.calls[1]?.[0]).toBe("https://apihub.agnes-ai.com/v1/videos");
+    const submittedBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body || "{}")) as {
+      image?: unknown;
+      prompt?: unknown;
+    };
+    expect(submittedBody).toMatchObject({
+      image: "https://cdn.example.com/frame.png",
+      prompt: "subtle camera push-in",
+    });
+    expect(Array.isArray(submittedBody.image)).toBe(false);
   });
 
   it("records result asset persistence separately from provider execution", async () => {

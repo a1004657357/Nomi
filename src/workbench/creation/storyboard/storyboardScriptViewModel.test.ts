@@ -75,6 +75,34 @@ describe('storyboardScriptViewModel', () => {
     expect(rows.map((row) => row.primaryUrl)).toEqual(['nomi-local://shot-1.png', 'nomi-local://shot-2.png'])
   })
 
+  it('重生成变体归回原镜头行并默认显示最新成功结果', () => {
+    const rows = buildStoryboardScriptRows(
+      plan,
+      [
+        node({
+          id: 'shot-1-original',
+          title: '镜头 1',
+          shotIndex: 1,
+          prompt: '咖啡豆落入手磨机',
+          result: { id: 'old', type: 'image', url: 'nomi-local://old.png', createdAt: 10 },
+        }),
+        node({
+          id: 'shot-1-variant',
+          title: '镜头 1',
+          shotIndex: 49,
+          regeneratedFrom: 'shot-1-original',
+          prompt: '咖啡豆落入手磨机',
+          result: { id: 'new', type: 'image', url: 'nomi-local://new.png', createdAt: 20 },
+        }),
+      ],
+      [],
+    )
+
+    expect(rows[0].nodes.map((candidate) => candidate.id)).toEqual(['shot-1-original', 'shot-1-variant'])
+    expect(rows[0].imageNode?.id).toBe('shot-1-variant')
+    expect(rows[0].primaryUrl).toBe('nomi-local://new.png')
+  })
+
   it('同一镜有图片和视频时优先把图片作为分镜参考图', () => {
     const rows = buildStoryboardScriptRows(
       plan,

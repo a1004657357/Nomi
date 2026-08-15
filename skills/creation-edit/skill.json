@@ -3,8 +3,11 @@
   "version": "1.0.0",
   "description": "Direct creation-area document editing: read current content, append or replace text, and maintain the shot-list format.",
   "tools": [
-    "creation_read",
-    "creation_write"
+    "read_full_text",
+    "read_selection",
+    "insert_at_cursor",
+    "replace_selection",
+    "append_to_end"
   ],
   "requiredProviders": [
     "text"

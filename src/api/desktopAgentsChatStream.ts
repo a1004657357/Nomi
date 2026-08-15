@@ -28,6 +28,7 @@ export type AgentsChatRequestDto = {
   systemPrompt?: string
   /** Provider compatibility path: omit native tools and request structured text. */
   disableTools?: boolean
+  playbookStageId?: string
   attachments?: AgentAttachmentPayload[]
 }
 
@@ -70,8 +71,25 @@ export function coerceAgentUsage(raw: unknown): AgentUsage | undefined {
 
 export type AgentsChatToolStreamPayload = Record<string, unknown>
 
+export type AgentHarnessConfig = {
+  vendorKey: string
+  modelKey: string
+  skillKey: string
+  allowedTools: string[]
+  playbook: {
+    skillKey: string
+    stageId: string
+    goal: string
+    index: number
+    total: number
+    pause: boolean
+    nextStageId: string | null
+  } | null
+}
+
 export type AgentsChatStreamEvent =
   | { event: 'initial'; data: { requestId: string; messageId?: string } }
+  | { event: 'harness-config'; data: AgentHarnessConfig }
   | { event: 'content'; data: { delta: string; text: string } }
   | { event: 'tool'; data: AgentsChatToolStreamPayload }
   | { event: 'tool-call'; data: { sessionId: string; toolCallId: string; toolName: string; args: unknown } }
@@ -168,6 +186,23 @@ export async function openDesktopAgentsChatStream(
       if (aborted) return
       const evt = rawEvent as { type: string } & Record<string, unknown>
       switch (evt.type) {
+        case 'harness-config': {
+          handlers.onEvent({
+            event: 'harness-config',
+            data: {
+              vendorKey: String(evt.vendorKey || ''),
+              modelKey: String(evt.modelKey || ''),
+              skillKey: String(evt.skillKey || ''),
+              allowedTools: Array.isArray(evt.allowedTools)
+                ? evt.allowedTools.filter((name): name is string => typeof name === 'string')
+                : [],
+              playbook: evt.playbook && typeof evt.playbook === 'object'
+                ? evt.playbook as AgentHarnessConfig['playbook']
+                : null,
+            },
+          })
+          return
+        }
         case 'content-delta': {
           const delta = String(evt.delta || '')
           if (!delta) return

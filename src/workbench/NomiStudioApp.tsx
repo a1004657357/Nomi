@@ -544,6 +544,7 @@ export default function NomiStudioApp(): JSX.Element {
     if (!activeProject?.id) return
     let disposed = false
     let unbind: (() => void) | undefined
+    let cancelTaskRecovery: (() => void) | undefined
     void ensureProjectPersistenceService().then(({ service }) => {
       if (disposed || activeProjectIdRef.current !== activeProject.id) return
       const rawUnbind = service.bindProjectPersistence({
@@ -562,6 +563,11 @@ export default function NomiStudioApp(): JSX.Element {
           toast(t('studio.projectSaveFailed'), 'error')
         },
       })
+      void import('./generationCanvas/runner/recoverTaskActions').then(({ resumeRecoverableNodes }) => {
+        if (!disposed && activeProjectIdRef.current === activeProject.id) {
+          cancelTaskRecovery = resumeRecoverableNodes(activeProject.id)
+        }
+      })
       let unbound = false
       unbind = () => {
         if (unbound) return
@@ -572,6 +578,7 @@ export default function NomiStudioApp(): JSX.Element {
     })
     return () => {
       disposed = true
+      cancelTaskRecovery?.()
       if (unbind && projectPersistenceUnbindRef.current === unbind) {
         projectPersistenceUnbindRef.current = null
       }

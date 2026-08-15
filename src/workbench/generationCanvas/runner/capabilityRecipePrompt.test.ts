@@ -154,6 +154,49 @@ describe('compileCapabilityRecipePrompt', () => {
     expect(prompt).toContain('侧面结构成为画面主要可见面')
   })
 
+  it('makes paired left and right profiles unambiguous in final-image coordinates', () => {
+    const outputs = [
+      { id: 'right-profile', label: 'Right profile', azimuth: 90, elevation: 0, shotSize: '近景' },
+      { id: 'left-profile', label: 'Left profile', azimuth: -90, elevation: 0, shotSize: '近景' },
+    ]
+    const recipePlan = plan({ outputCount: 2, taskCount: 2, outputs })
+    const rightPrompt = compileCapabilityRecipePrompt('正面人像', recipePlan, {
+      id: 'run-1:task-1', itemIds: ['right-profile'], outputs: [outputs[0]], plan: recipePlan,
+    })
+    const leftPrompt = compileCapabilityRecipePrompt('正面人像', recipePlan, {
+      id: 'run-1:task-2', itemIds: ['left-profile'], outputs: [outputs[1]], plan: recipePlan,
+    })
+
+    expect(rightPrompt).toContain('解剖学右脸和右耳')
+    expect(rightPrompt).toContain('鼻尖必须指向成片画面的左边缘')
+    expect(rightPrompt).toContain('绝对不得输出鼻尖朝画面右边缘的左侧面')
+    expect(leftPrompt).toContain('解剖学左脸和左耳')
+    expect(leftPrompt).toContain('鼻尖必须指向成片画面的右边缘')
+    expect(leftPrompt).toContain('绝对不得输出鼻尖朝画面左边缘的右侧面')
+    expect(rightPrompt).toContain('与「Left profile」互为 180° 对向机位')
+    expect(leftPrompt).toContain('与「Right profile」互为 180° 对向机位')
+  })
+
+  it('locks identity, wardrobe, accessories, scene, and source aspect across custom views', () => {
+    const recipePlan = plan({
+      params: {
+        backgroundPolicy: 'preserve_scene',
+        sourceWidth: 480,
+        sourceHeight: 320,
+        sourceAspectRatio: 1.5,
+        aspectRatio: '3:2',
+      },
+    })
+    const prompt = compileCapabilityRecipePrompt('正面人像', recipePlan, task(recipePlan))
+
+    expect(prompt).toContain('唯一的视觉事实')
+    expect(prompt).toContain('眼镜、发箍、帽子、首饰或其他配饰绝对不得新增')
+    expect(prompt).toContain('服装的颜色、面料、领型、图案')
+    expect(prompt).toContain('来源图 480×320，比例 1.5')
+    expect(prompt).toContain('保留来源图的真实场景')
+    expect(prompt).toContain('不得替换成白色、纯色、透明、影棚或商品转台背景')
+  })
+
   it('compiles a custom camera output into a distinct camera-only instruction', () => {
     const recipePlan = plan({
       outputs: [{ id: 'rear-low', label: '低机位背面', azimuth: 170, elevation: -20, shotSize: '全景' }],

@@ -3,6 +3,12 @@
 // 三步:① policy(只读→allow)② invariant(校验/锁→deny)③ ask(其余→等用户点头)。
 // SDK 的 hook registry / permission mode / 规则 DSL 一律不抄(单用户桌面无配置面)。
 import i18n from '../../../i18n'
+import {
+  categorizeTool,
+  SEMANTIC_TOOL_MAP,
+  type SemanticToolCategory,
+  type SemanticToolName,
+} from '../../domain/semanticAgentTools'
 
 /** 三种 intent = 同一管道的三种入口(每工具 / 批量计划 / 预算)。 */
 export type GateIntent =
@@ -66,7 +72,13 @@ const TOOL_META: Record<string, ToolMeta> = {
  */
 export function evaluateGate(intent: GateIntent, ctx: GateContext = {}): GateDecision {
   if (intent.kind === 'tool-call') {
-    const meta = TOOL_META[intent.toolName]
+    const category = categorizeTool(intent.toolName)
+    const meta = TOOL_META[intent.toolName] ?? (category
+      ? {
+          writes: category === 'apply',
+          costy: category === 'paid',
+        }
+      : undefined)
     // ② invariant(校验):不认识的工具 = 注定失败的计划,不让用户批准(§6.5)。
     if (!meta) {
       return {
@@ -77,13 +89,56 @@ export function evaluateGate(intent: GateIntent, ctx: GateContext = {}): GateDec
     // ① policy:只读直通,零摩擦(M1)。花钱的(costy)即使不写画布也必问(S6b 受理语义)。
     if (!meta.writes && !meta.costy) return { outcome: 'allow' }
     // ② invariant(锁):写操作命中锁住的节点 → deny(N11:AI 硬禁,用户软门)。
-    const denied = evaluateLock(intent.toolName, intent.args, ctx)
+    const semanticMapping = SEMANTIC_TOOL_MAP[intent.toolName as SemanticToolName]
+    const lockToolName = semanticMapping?.backedBy ?? intent.toolName
+    const denied = evaluateLock(lockToolName, intent.args, ctx)
+      ?? evaluateLock(intent.toolName, intent.args, ctx)
     if (denied) return denied
     // ③ ask:写操作排队等用户点头。
     return { outcome: 'ask' }
   }
   // batch-run / spend:S6b / S7 落地受理与预算语义,本片先一律 ask。
   return { outcome: 'ask' }
+}
+
+// ── Gate 2 Slice 4：§11.2 语义工具分类 → §11.3 权限矩阵 ──────────────────────
+// 既有 evaluateGate 按 CanvasToolName 查 TOOL_META；本函数补一条按 §11.2 语义分类的路径，
+// 让 Agent 用规范词汇（read_shot_spec/propose_shot_patch/submit_generation_intent）时，
+// gate 也按 §11.3 权限矩阵正确判定（read/propose=allow，apply/paid=ask）。
+//
+// 与既有 evaluateGate 的关系：调用方先用 semanticToCanvasTool 把语义名解析回 canvas 工具名，
+// 再走 evaluateGate；若解析不出（deferred 工具），用本函数按分类兜底判定。
+/** §11.3 权限矩阵：分类 → gate 决策（read/propose 直通，apply/paid 需确认）。 */
+export function gateDecisionForCategory(category: SemanticToolCategory): GateDecision {
+  switch (category) {
+    case 'read':
+    case 'propose':
+      // §11.3：读取 + 提案（生成结构化草案、不改画布、不花费）→ 允许，trace 摘要。
+      return { outcome: 'allow' }
+    case 'apply':
+      // §11.3：本地修改（写但不花费）→ 需确认。
+      return { outcome: 'ask' }
+    case 'paid':
+      // §11.3：付费/外部（含费用审计）→ 必确认。
+      return { outcome: 'ask' }
+    default:
+      return { outcome: 'ask' }
+  }
+}
+
+/**
+ * §11.2 语义工具的统一 gate 入口。先查分类（语义名或既有 canvas 名），
+ * 再按 §11.3 矩阵判定。未知名 → deny（防 typo 静默放行）。
+ */
+export function evaluateSemanticToolGate(toolName: string): GateDecision {
+  const category = categorizeTool(toolName)
+  if (!category) {
+    return {
+      outcome: 'deny',
+      reason: `未知的 Agent 工具: ${toolName}`,
+    }
+  }
+  return gateDecisionForCategory(category)
 }
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -134,6 +189,11 @@ function evaluateLock(toolName: string, args: unknown, ctx: GateContext): GateDe
     return null
   }
   if (toolName === 'attach_external_image_to_node') {
+    const nodeId = resolve(String(record.nodeId || '').trim())
+    if (locked.has(nodeId)) return denyFor(nodeId, 'replaceImageResult')
+    return null
+  }
+  if (toolName === 'select_asset_revision' || toolName === 'archive_asset_revision') {
     const nodeId = resolve(String(record.nodeId || '').trim())
     if (locked.has(nodeId)) return denyFor(nodeId, 'replaceImageResult')
     return null

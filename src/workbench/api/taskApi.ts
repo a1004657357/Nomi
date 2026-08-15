@@ -121,11 +121,16 @@ function requireDesktopRuntime(feature: string): DesktopBridge {
 }
 
 /** 付费守卫：真人确认后铸一次性令牌（绑 nodeIds），返回 grantId。仅由确认事件链调用。 */
-export async function mintSpendGrant(nodeIds: string[], maxAttemptsPerNode?: number): Promise<string> {
+export async function mintSpendGrant(
+  nodeIds: string[],
+  maxAttemptsPerNode?: number,
+  ttlMs?: number,
+): Promise<string> {
   const desktop = requireDesktopRuntime('spend authorization')
   const { grantId } = await desktop.tasks.grantSpend({
     nodeIds,
     ...(maxAttemptsPerNode ? { maxAttemptsPerNode } : {}),
+    ...(ttlMs && ttlMs > 0 ? { ttlMs } : {}),
   })
   return grantId
 }

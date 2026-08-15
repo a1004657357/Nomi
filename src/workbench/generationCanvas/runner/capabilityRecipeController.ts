@@ -21,6 +21,7 @@ import { compileCapabilityRecipePrompt } from './capabilityRecipePrompt'
 import {
   browserCapabilityRecipeMediaProcessor,
   nearestCapabilityImageAspectRatio,
+  normalizeMultiviewCollectionDimensions,
   postprocessCapabilityRecipeResults,
   type CapabilityRecipeMediaProcessor,
 } from './capabilityRecipePostprocess'
@@ -272,13 +273,13 @@ function retryPlanForNode(
   return isRecipeRunPlan(persisted) ? persisted : legacyRecipePlan(node, collection)
 }
 
-async function prepareStyleTransferPlan(
+async function prepareSourceImagePlan(
   plan: RecipeRunPlan,
   sourceResult: GenerationNodeResult | undefined,
   processor: CapabilityRecipeMediaProcessor,
 ): Promise<RecipeRunPlan> {
   if (
-    plan.recipeId !== 'image.style.transfer'
+    !['image.style.transfer', 'image.multiview.grid9', 'image.multiview.custom'].includes(plan.recipeId)
     || sourceResult?.type !== 'image'
     || !processor.inspectImage
   ) return plan
@@ -407,7 +408,7 @@ export async function runCapabilityRecipeOnNode(
   const source = initialStore.nodes.find((node) => node.id === sourceNodeId)
   if (!source) throw new Error('source node not found')
   const mediaProcessor = options.mediaProcessor ?? browserCapabilityRecipeMediaProcessor
-  plan = await prepareStyleTransferPlan(plan, source.result, mediaProcessor)
+  plan = await prepareSourceImagePlan(plan, source.result, mediaProcessor)
   const target = initialStore.duplicateNodeForRegeneration(sourceNodeId)
   if (!target) throw new Error('无法创建配方结果节点')
   options.onTargetCreated?.(target.id)
@@ -517,9 +518,15 @@ export async function runCapabilityRecipeOnNode(
       )
     },
   })
+  const normalizedCollection = await normalizeMultiviewCollectionDimensions(
+    plan,
+    generatedCollection,
+    target.id,
+    mediaProcessor,
+  )
   const collectionWithSource: GenerationResultCollection = source.result
     ? {
-        ...generatedCollection,
+        ...normalizedCollection,
         source: {
           nodeId: source.id,
           resultId: source.result.id,
@@ -529,7 +536,7 @@ export async function runCapabilityRecipeOnNode(
           ...(source.result.providerUrl ? { providerUrl: source.result.providerUrl } : {}),
         },
       }
-    : generatedCollection
+    : normalizedCollection
   const collection = await evaluateCollectionSafely(
     plan,
     collectionWithSource,

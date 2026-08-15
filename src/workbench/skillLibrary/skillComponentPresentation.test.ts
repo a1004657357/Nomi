@@ -169,6 +169,9 @@ describe('skill component presentation', () => {
       name: 'creative.multiview',
       label: '多机位九宫格',
       neededProviders: ['image'],
+      stages: [],
+      stageLabels: [],
+      isPlaybook: false,
       canvas: {
         recipeIds: ['image.multiview.grid9'],
         defaultRecipeId: 'image.multiview.grid9',

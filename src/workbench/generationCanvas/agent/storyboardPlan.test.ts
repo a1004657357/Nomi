@@ -36,24 +36,39 @@ describe('storyboardPlanToCreateNodesArgs', () => {
 
   it('定妆卡提示词：角色含身份锁+多视图+变体行（变体来自 anchor.variants）', () => {
     const p = buildAnchorSheetPrompt({
-      id: 'a', kind: 'character', name: '林夏', description: '齐肩黑发，红校服', carrier: 'visual', variants: ['成年', '童年'],
+      id: 'a',
+      kind: 'character',
+      name: '林夏',
+      description: '齐肩黑发，红校服',
+      carrier: 'visual',
+      variants: ['成年', '童年'],
     })
     expect(p).toContain('角色定妆参考卡')
     expect(p).toContain('林夏')
     expect(p).toContain('齐肩黑发')
     expect(p).toContain('正面全身 A-Pose')
     expect(p).toContain('变体行：成年、童年')
+    expect(p).not.toContain('横向版面')
   })
 
   it('场景卡提示词：含多角度（远景/近景/俯视），无变体则不出变体行', () => {
-    const p = buildAnchorSheetPrompt({ id: 's', kind: 'scene', name: '天台', description: '夜晚霓虹', carrier: 'visual' })
+    const p = buildAnchorSheetPrompt({
+      id: 's',
+      kind: 'scene',
+      name: '天台',
+      description: '夜晚霓虹',
+      carrier: 'visual',
+    })
     expect(p).toContain('场景参考卡')
     expect(p).toContain('远景 establishing')
     expect(p).not.toContain('变体行')
   })
 
   it('视觉锚落画布用定妆卡提示词 + 锁 GPT Image 2（defaultImageModelKey 注入）', () => {
-    const { nodes } = storyboardPlanToCreateNodesArgs(PLAN, { defaultImageModelKey: 'gpt-image-2', defaultImageModeId: 'default' })
+    const { nodes } = storyboardPlanToCreateNodesArgs(PLAN, {
+      defaultImageModelKey: 'gpt-image-2',
+      defaultImageModeId: 'default',
+    })
     const linxia = nodes.find((n) => n.clientId === 'a-linxia')
     expect(linxia?.modelKey).toBe('gpt-image-2')
     expect(linxia?.prompt).toContain('角色定妆参考卡')
@@ -99,9 +114,20 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     const shotNodes = nodes.filter((n) => n.clientId.startsWith('shot-'))
     expect(shotNodes).toHaveLength(2)
     // 镜头是视频节点；时长写进 duration 参数（落画布按所选模型控件钳值）。
-    expect(shotNodes[0]).toMatchObject({ clientId: 'shot-1', kind: 'video', title: '镜头 1', modelKey: 'seedance-2', modeId: 'i2v' })
+    expect(shotNodes[0]).toMatchObject({
+      clientId: 'shot-1',
+      kind: 'video',
+      title: '镜头 1',
+      modelKey: 'seedance-2',
+      modeId: 'i2v',
+    })
     expect(shotNodes[0].params).toEqual({ duration: 5 })
-    expect(shotNodes[1]).toMatchObject({ clientId: 'shot-2', kind: 'video', modelKey: 'seedance-2', params: { duration: 8 } })
+    expect(shotNodes[1]).toMatchObject({
+      clientId: 'shot-2',
+      kind: 'video',
+      modelKey: 'seedance-2',
+      params: { duration: 8 },
+    })
   })
 
   it('用户为某镜选了模型 → 用所选模型，且不套默认模型的 modeId（防张冠李戴，由下游按所选模型取默认模式）', () => {
@@ -114,7 +140,10 @@ describe('storyboardPlanToCreateNodesArgs', () => {
         { index: 3, durationSec: 5, anchorIds: [], prompt: '镜三' }, // 没选 → 默认
       ],
     }
-    const { nodes } = storyboardPlanToCreateNodesArgs(plan, { defaultVideoModelKey: 'seedance-2', defaultVideoModeId: 'seedance-i2v' })
+    const { nodes } = storyboardPlanToCreateNodesArgs(plan, {
+      defaultVideoModelKey: 'seedance-2',
+      defaultVideoModeId: 'seedance-i2v',
+    })
     const shots = nodes.filter((n) => n.clientId.startsWith('shot-'))
     expect(shots[0]).toMatchObject({ modelKey: 'kling-3', modeId: 'kling-i2v' })
     expect(shots[1].modelKey).toBe('kling-3')
@@ -126,17 +155,19 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     const plan: StoryboardPlan = {
       title: '即梦型号',
       anchors: [],
-      shots: [{
-        index: 1,
-        shotKind: 'image',
-        durationSec: 0,
-        anchorIds: [],
-        prompt: '夏日街道',
-        modelKey: 'jimeng-web-image',
-        variantId: 'v5_0_lite',
-        modeId: 't2i',
-        params: { ratio: '9:16', resolution_type: '4K' },
-      }],
+      shots: [
+        {
+          index: 1,
+          shotKind: 'image',
+          durationSec: 0,
+          anchorIds: [],
+          prompt: '夏日街道',
+          modelKey: 'jimeng-web-image',
+          variantId: 'v5_0_lite',
+          modeId: 't2i',
+          params: { ratio: '9:16', resolution_type: '4K' },
+        },
+      ],
     }
     const { nodes } = storyboardPlanToCreateNodesArgs(plan)
     const shot = nodes.find((node) => node.clientId === 'shot-1')
@@ -164,7 +195,15 @@ describe('storyboardPlanToCreateNodesArgs', () => {
       anchors: [],
       shots: [
         { index: 1, shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '旧字段', imagePrompt: '静态关键帧' },
-        { index: 2, shotKind: 'video', durationSec: 5, anchorIds: [], prompt: '旧字段', imagePrompt: '首帧图', videoPrompt: '镜头缓慢推进' },
+        {
+          index: 2,
+          shotKind: 'video',
+          durationSec: 5,
+          anchorIds: [],
+          prompt: '旧字段',
+          imagePrompt: '首帧图',
+          videoPrompt: '镜头缓慢推进',
+        },
       ],
     }
     const { nodes } = storyboardPlanToCreateNodesArgs(plan)
@@ -196,13 +235,37 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     }
     expect(storyboardShotImagePrompt(shot)).toContain('景别：中近景')
     expect(storyboardShotImagePrompt(shot)).toContain('表演：端起咖啡闻香，微笑看向窗外')
-    expect(storyboardShotVideoPrompt(shot)).toContain('运镜：缓慢推进')
-    expect(storyboardShotVideoPrompt(shot)).toContain('对白：今天的第一杯，给自己。')
+    expect(storyboardShotVideoPrompt(shot)).toContain('运镜响应：缓慢推进')
+    expect(storyboardShotVideoPrompt(shot)).toContain('对白表演：角色说「今天的第一杯，给自己。」')
 
     const { nodes } = storyboardPlanToCreateNodesArgs({ title: '结构化列', anchors: [], shots: [shot] })
     const shotNode = nodes.find((n) => n.clientId === 'shot-1')!
-    expect(shotNode.prompt).toContain('运镜：缓慢推进')
-    expect(shotNode.prompt).toContain('声音：轻柔爵士乐')
+    expect(shotNode.prompt).toContain('运镜响应：缓慢推进')
+    expect(shotNode.prompt).toContain('声音节奏参考：轻柔爵士乐')
+  })
+
+  it('缺少 videoPrompt 时不把静态图片提示词直接当视频提示词', () => {
+    const imagePrompt = '9:16 竖屏，老板站在工作台前拿着一盒月饼，静态中景构图。'
+    const prompt = storyboardShotVideoPrompt({
+      index: 3,
+      shotKind: 'video',
+      durationSec: 6,
+      anchorIds: [],
+      prompt: imagePrompt,
+      imagePrompt,
+      scene: '月饼工作室',
+      cameraMove: '跟随老板向货架横移',
+      characters: '老板',
+      performance: '老板拿起月饼盒走到空货架前，停下并确认缺货',
+      props: '一盒月饼、空货架',
+      modeId: 'i2v',
+    })
+
+    expect(prompt).not.toBe(imagePrompt)
+    expect(prompt).toContain('图生视频导演提示词：镜头 3')
+    expect(prompt).toContain('动作时间线')
+    expect(prompt).toContain('不是照片动效')
+    expect(prompt).toContain('道具不瞬移、不变形、不凭空增减')
   })
 
   it('可把表格列作为关键词润色成十分具体的视频生成提示词', () => {
@@ -393,7 +456,18 @@ describe('storyboardPlanToCreateNodesArgs', () => {
 
   it('产出的节点种类都是画布支持的（结构保证：防 prop/style 等非节点种类漏进去崩 defaultSize）', () => {
     // 画布 registry 支持的种类（src/workbench/generationCanvas/nodes/registry.ts）。
-    const VALID_NODE_KINDS = new Set(['text', 'character', 'scene', 'image', 'keyframe', 'video', 'shot', 'output', 'panorama', 'scene3d'])
+    const VALID_NODE_KINDS = new Set([
+      'text',
+      'character',
+      'scene',
+      'image',
+      'keyframe',
+      'video',
+      'shot',
+      'output',
+      'panorama',
+      'scene3d',
+    ])
     const { nodes } = storyboardPlanToCreateNodesArgs(PLAN)
     for (const node of nodes) expect(VALID_NODE_KINDS.has(node.kind)).toBe(true)
   })
@@ -428,7 +502,13 @@ describe('图片分镜（shotKind=image，用户拍板 2026-07-02 image-first）
       { id: 'a-market', kind: 'scene', name: '地下黑市', description: '潮湿地下通道，霓虹冷光', carrier: 'visual' },
     ],
     shots: [
-      { index: 1, shotKind: 'image', durationSec: 0, anchorIds: ['a-ye', 'a-market'], prompt: '叶林站在黑市入口，远景三分构图' },
+      {
+        index: 1,
+        shotKind: 'image',
+        durationSec: 0,
+        anchorIds: ['a-ye', 'a-market'],
+        prompt: '叶林站在黑市入口，远景三分构图',
+      },
       { index: 2, shotKind: 'video', durationSec: 6, anchorIds: ['a-ye'], prompt: '手持跟拍叶林走进手术室' },
     ],
   }
@@ -562,7 +642,8 @@ describe('图片+视频分镜（video shot + keyframe.enabled）', () => {
     expect(() =>
       parseStoryboardPlan({
         ...IMAGE_VIDEO_PLAN,
-        shots: '[{"index":1,"shotKind":"video","durationSec":6,"anchorIds":[],"prompt":"p","keyframe":{"enabled":true,"prompt":"k"}}',
+        shots:
+          '[{"index":1,"shotKind":"video","durationSec":6,"anchorIds":[],"prompt":"p","keyframe":{"enabled":true,"prompt":"k"}}',
       }),
     ).toThrow()
   })

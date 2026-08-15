@@ -182,7 +182,8 @@ function buildInputs(resolvedClips: ResolvedClip[], fps: number): FfmpegFiltergr
 /**
  * 构建音频滤镜。音频源 = 独立音频轨 clip + 自带音轨的 video clip（asset.hasAudio）。
  * 每个源：按源内区间 atrim → asetpts 归零 → adelay 平移到时间轴位置。
- * 多源用 amix 合并；normalize=0 避免默认按输入数 1/N 衰减（顺序不重叠的 clip 应保持原音量）。
+ * 多源用 amix 合并；旧版 FFmpeg 不支持 normalize=0，因此在默认 1/N 归一化后用
+ * volume=N 乘回原音量（顺序不重叠的 clip 应保持原音量）。
  * 返回滤镜行数组（空 = 无音频，输出无 [aout]）。
  */
 function buildAudioGraph(
@@ -215,7 +216,7 @@ function buildAudioGraph(
 
   if (sourceLabels.length > 1) {
     filters.push(
-      `${sourceLabels.join("")}amix=inputs=${sourceLabels.length}:duration=longest:dropout_transition=0:normalize=0[aout]`,
+      `${sourceLabels.join("")}amix=inputs=${sourceLabels.length}:duration=longest:dropout_transition=0,volume=${sourceLabels.length}[aout]`,
     );
   }
 

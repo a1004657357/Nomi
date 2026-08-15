@@ -1,4 +1,4 @@
-import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode, GenerationNodeKind } from './generationCanvasTypes'
+import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode, GenerationNodeKind, GenerationNodeResult } from './generationCanvasTypes'
 import {
   getGenerationNodeDefaultSize,
   getGenerationNodeDefaultTitle,
@@ -150,5 +150,85 @@ export function rollbackNodeHistory(nodes: GenerationCanvasNode[], nodeId: strin
     const result = (node.history || []).find((entry) => entry.id === resultId)
     if (!result) return node
     return { ...node, result, status: 'success', error: undefined }
+  })
+}
+
+// ── Gate 1 Slice 3：AssetRevision 操作（§17 单一 selected 指针 + 不覆盖原则）────────
+// 复用既有 history[] + resultId（非平行数组）。§17.1 不覆盖：操作只改 revisionStatus
+// 与节点 result 指针，**绝不删 history 条目**。迁移期：revisionStatus 缺省按 'candidate'。
+
+/** 把 revisionStatus 缺省视为 candidate（既有条目无此字段）。 */
+function effectiveRevisionStatus(entry: GenerationNodeResult): NonNullable<GenerationNodeResult['revisionStatus']> {
+  return entry.revisionStatus ?? 'candidate'
+}
+
+/**
+ * 选中某个 revision 作为当前版本（§17.1 不覆盖：旧 selected 不删，仅降级为 candidate）。
+ * 等价于 rollbackNodeHistory，但显式管理 revisionStatus 指针。
+ */
+export function selectRevision(
+  nodes: GenerationCanvasNode[],
+  nodeId: string,
+  revisionId: string,
+): GenerationCanvasNode[] {
+  return nodes.map((node) => {
+    if (node.id !== nodeId) return node
+    const history = node.history ?? []
+    const target = history.find((entry) => entry.id === revisionId)
+    if (!target) return node
+    // 旧 selected 降级为 candidate；目标标 selected（§17.1 selected 只是指针）
+    const nextHistory = history.map((entry) => {
+      if (entry.id === revisionId) return { ...entry, revisionStatus: 'selected' as const }
+      if (effectiveRevisionStatus(entry) === 'selected') return { ...entry, revisionStatus: 'candidate' as const }
+      return entry
+    })
+    return { ...node, result: target, history: nextHistory, status: 'success', error: undefined }
+  })
+}
+
+/**
+ * 归档某个 revision（§17.3：默认归档不物理删）。
+ * 归档当前选中版本时，result 指针回落到最近一个 candidate（无则 undefined + status idle）。
+ */
+export function archiveRevision(
+  nodes: GenerationCanvasNode[],
+  nodeId: string,
+  revisionId: string,
+): GenerationCanvasNode[] {
+  return nodes.map((node) => {
+    if (node.id !== nodeId) return node
+    const history = node.history ?? []
+    if (!history.some((entry) => entry.id === revisionId)) return node
+    const nextHistory = history.map((entry) =>
+      entry.id === revisionId ? { ...entry, revisionStatus: 'archived' as const } : entry,
+    )
+    // 若归档的是当前选中 → 回落
+    const wasSelected = node.result?.id === revisionId
+    if (!wasSelected) return { ...node, history: nextHistory }
+    const fallback = nextHistory.find(
+      (entry) => effectiveRevisionStatus(entry) === 'candidate',
+    )
+    return fallback
+      ? { ...node, result: fallback, history: nextHistory, status: 'success', error: undefined }
+      : { ...node, result: undefined, history: nextHistory, status: 'idle', error: undefined }
+  })
+}
+
+/**
+ * 淘汰某个 revision（§17：rejected，不删）。
+ */
+export function rejectRevision(
+  nodes: GenerationCanvasNode[],
+  nodeId: string,
+  revisionId: string,
+): GenerationCanvasNode[] {
+  return nodes.map((node) => {
+    if (node.id !== nodeId) return node
+    const history = node.history ?? []
+    if (!history.some((entry) => entry.id === revisionId)) return node
+    const nextHistory = history.map((entry) =>
+      entry.id === revisionId ? { ...entry, revisionStatus: 'rejected' as const } : entry,
+    )
+    return { ...node, history: nextHistory }
   })
 }

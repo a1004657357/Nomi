@@ -19,7 +19,7 @@ afterEach(() => {
 })
 
 describe('generationProviderScheduler', () => {
-  it('keeps Codex at two active runs while another provider can start', async () => {
+  it('keeps Codex serial while another provider can start', async () => {
     const scheduler = createGenerationProviderScheduler({ globalLimit: 4 })
     const gates = [deferred(), deferred(), deferred(), deferred()]
     let activeCodex = 0
@@ -40,13 +40,46 @@ describe('generationProviderScheduler', () => {
     })
 
     await vi.waitFor(() => {
-      expect(maxActiveCodex).toBe(2)
+      expect(maxActiveCodex).toBe(1)
       expect(kieStarted).toBe(true)
-      expect(scheduler.snapshot()).toMatchObject({ active: 3, queued: 1 })
+      expect(scheduler.snapshot()).toMatchObject({ active: 2, queued: 2 })
     })
 
     gates.forEach((gate) => gate.resolve())
     await Promise.all([...codexRuns, kieRun])
+  })
+
+  it('reports the Codex provider queue position before a third run starts', async () => {
+    const scheduler = createGenerationProviderScheduler({ globalLimit: 4 })
+    const firstGate = deferred()
+    const secondGate = deferred()
+    const queueEvents: Array<{
+      providerKey: string
+      queueAhead: number
+      activeForProvider: number
+      providerLimit: number
+    }> = []
+
+    const first = scheduler.run('codex', () => firstGate.promise)
+    const second = scheduler.run('codex', () => secondGate.promise)
+    const thirdWork = vi.fn(async () => undefined)
+    const third = scheduler.run('codex', thirdWork, {
+      onQueueWait: (event) => queueEvents.push(event),
+    })
+
+    expect(thirdWork).not.toHaveBeenCalled()
+    expect(queueEvents).toEqual([{
+      providerKey: 'codex',
+      queueAhead: 1,
+      activeForProvider: 1,
+      providerLimit: 1,
+    }])
+
+    firstGate.resolve()
+    await first
+    secondGate.resolve()
+    await second
+    await third
   })
 
   it('never exceeds the global limit across different providers', async () => {
@@ -87,12 +120,12 @@ describe('generationProviderScheduler', () => {
   })
 
   it('uses conservative limits for Codex and Jimeng', () => {
-    expect(generationProviderLimit('codex')).toBe(2)
+    expect(generationProviderLimit('codex')).toBe(1)
     expect(generationProviderLimit('jimeng-web')).toBe(2)
     expect(generationProviderLimit('agnes')).toBe(4)
   })
 
-  it('spaces Agnes video starts by one minute without blocking another provider', async () => {
+  it('spaces Agnes video starts with rolling-window headroom without blocking another provider', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(0)
     const scheduler = createGenerationProviderScheduler({ globalLimit: 3, defaultProviderLimit: 3 })
@@ -103,13 +136,13 @@ describe('generationProviderScheduler', () => {
       starts.push('agnes-1')
     }, {
       rateKey: 'agnes:video',
-      minimumStartIntervalMs: 60_000,
+      minimumStartIntervalMs: 75_000,
     })
     const second = scheduler.run('agnes', async () => {
       starts.push('agnes-2')
     }, {
       rateKey: 'agnes:video',
-      minimumStartIntervalMs: 60_000,
+      minimumStartIntervalMs: 75_000,
       onRateLimitWait: ({ waitMs }) => waits.push(waitMs),
     })
     const other = scheduler.run('kie', async () => {
@@ -118,10 +151,10 @@ describe('generationProviderScheduler', () => {
 
     await Promise.all([first, other])
     expect(starts).toEqual(['agnes-1', 'kie'])
-    expect(waits).toEqual([60_000])
+    expect(waits).toEqual([75_000])
     expect(scheduler.snapshot()).toMatchObject({ active: 0, queued: 1, rateLimitedQueued: 1 })
 
-    await vi.advanceTimersByTimeAsync(59_999)
+    await vi.advanceTimersByTimeAsync(74_999)
     expect(starts).toEqual(['agnes-1', 'kie'])
     await vi.advanceTimersByTimeAsync(1)
     await second
@@ -139,7 +172,7 @@ describe('generationProviderScheduler', () => {
 
     expect(generationStartRatePolicy(makeNode('video', 'agnes-video-v2.0'))).toMatchObject({
       rateKey: 'agnes:video',
-      minimumStartIntervalMs: 60_000,
+      minimumStartIntervalMs: 75_000,
     })
     expect(generationStartRatePolicy(makeNode('image', 'agnes-image-2.1-flash'))).toMatchObject({
       rateKey: 'agnes:image',
@@ -158,7 +191,7 @@ describe('generationProviderScheduler', () => {
       meta: { modelKey: 'agnes-video-v2.0' },
     })).toMatchObject({
       rateKey: 'agnes:video',
-      minimumStartIntervalMs: 60_000,
+      minimumStartIntervalMs: 75_000,
     })
   })
 
@@ -168,20 +201,20 @@ describe('generationProviderScheduler', () => {
     const scheduler = createGenerationProviderScheduler({ globalLimit: 2 })
     const first = scheduler.run('agnes', async () => undefined, {
       rateKey: 'agnes:video',
-      minimumStartIntervalMs: 60_000,
+      minimumStartIntervalMs: 75_000,
     })
     const controller = new AbortController()
     const work = vi.fn(async () => undefined)
     const second = scheduler.run('agnes', work, {
       signal: controller.signal,
       rateKey: 'agnes:video',
-      minimumStartIntervalMs: 60_000,
+      minimumStartIntervalMs: 75_000,
     })
 
     await first
     controller.abort()
     await expect(second).rejects.toMatchObject({ name: 'AbortError' })
-    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.advanceTimersByTimeAsync(75_000)
     expect(work).not.toHaveBeenCalled()
     expect(scheduler.snapshot()).toMatchObject({ active: 0, queued: 0, rateLimitedQueued: 0 })
   })

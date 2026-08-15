@@ -20,12 +20,6 @@ import { partitionConnectableEdges, type PlannedEdgeLike } from '../agent/refere
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { evaluateGate } from '../agent/gate'
 import { buildLockGateContext } from '../agent/lockGateContext'
-import {
-  buildFixationPlanningMessage,
-  FIXATION_PLANNER_SKILL,
-  FIXATION_PLANNING_EVENT,
-  type FixationPlanningRequest,
-} from '../agent/fixationLauncher'
 import AssistantTimeline from './AssistantTimeline'
 import { buildStepDetailLabels, countCreatedNodesByCategory, summarizeToolCall } from './toolCallSummary'
 import { MemoryFold } from './MemoryFold'
@@ -42,23 +36,11 @@ import { AttachmentRail } from '../../ai/composer/AttachmentRail'
 import { AutoGrowTextarea } from '../../ai/composer/AutoGrowTextarea'
 import { COMPOSER_ATTACHMENT_ACCEPT, useComposerAttachments } from '../../ai/composer/useComposerAttachments'
 import type { ComposerAttachment } from '../../ai/composer/composerAttachmentTypes'
-import { getDesktopBridge } from '../../../desktop/bridge'
-import { toast } from '../../../ui/toast'
-import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
 import {
-  buildEvenlySpacedFrameTimes,
-  resolveVideoDurationSeconds,
-} from '../nodes/videoKeyframeInspectorModel'
-import {
-  canvasSkillAgentMessage,
-  RUN_CANVAS_SKILL_AGENT_EVENT,
-  type RunCanvasSkillAgentEventDetail,
-} from '../skills/canvasSkillEvents'
-import {
-  buildVideoDeconstructionAttachments,
-  isVideoDeconstructionSkill,
-  videoDeconstructionAgentMessage,
-} from '../skills/videoDeconstructionSkill'
+  useCanvasAssistantSkillEvents,
+  type CanvasAssistantSubmitOptions,
+} from './useCanvasAssistantSkillEvents'
+import { createCanvasPlaybookRunTracker } from './canvasPlaybookRunTracker'
 
 type PendingToolCall = {
   toolCallId: string
@@ -228,13 +210,7 @@ export default function CanvasAssistantPanel({
     setMessages((current) => current.filter((message) => message.id !== id))
   }, [setMessages])
 
-  type SubmitMessageOptions = {
-    skill?: { key: string; name: string }
-    displayMessage?: string
-    attachments?: ComposerAttachment[]
-  }
-
-  const submitAgentMessage = React.useCallback((text: string, options: SubmitMessageOptions = {}) => {
+  const submitAgentMessage = React.useCallback((text: string, options: CanvasAssistantSubmitOptions = {}) => {
     const readyAttachments = (options.attachments ?? attachments).filter((item) => item.status === 'ready' && item.url)
     if ((!text && !readyAttachments.length) || busy) return
     setDraft('')
@@ -264,6 +240,7 @@ export default function CanvasAssistantPanel({
       // 本轮模型是否发出过任何 tool 调用（含只读）。0 = 模型只回文字、没触发任何操作——
       // 自动选模型撞到不会工具调用的模型时的典型「只说不做」（2026-06-07 走查 P0）。
       let toolEmittedCount = 0
+      const playbookTracker = createCanvasPlaybookRunTracker(options.playbookRun, options.skill?.key)
       // S6-2 提议事务批:用户点「确认」后整批原子应用——全成 committed,中途失败补偿回滚
       // (零半截)。先落地后回话:LLM 收到的每步成败与画布事实一致。
       approveCallsRef.current = async (requests: ApproveCallRequest[]) => {
@@ -429,22 +406,25 @@ export default function CanvasAssistantPanel({
           selectedNodes,
           mode,
           skill: options.skill,
+          ...(options.playbookRun ? { playbookStageId: options.playbookRun.stage.id } : {}),
           onContent: (delta) => {
             if (activeId === null) openBubble()
             if (activeText === '') anchorId = activeId as string // 首字:后续卡锚到本气泡
             activeText += delta
             if (streamRaf === null) streamRaf = requestAnimationFrame(flush)
           },
+          onHarnessConfig: playbookTracker.onHarnessConfig,
           onCancelReady: (cancel) => {
             cancelRef.current = cancel
           },
           onToolCall: (event: ToolCallEvent) => {
+            const trackedEvent = playbookTracker.trackToolCall(event)
             toolEmittedCount += 1
             // 统一求值流(§6.1):一道门替代散落 if。allow=只读直通 / deny=校验/锁拒绝 / ask=等点头。
-            const decision = evaluateGate({ kind: 'tool-call', toolName: event.toolName, args: event.args }, buildLockGateContext())
+            const decision = evaluateGate({ kind: 'tool-call', toolName: trackedEvent.toolName, args: trackedEvent.args }, buildLockGateContext())
             if (decision.outcome === 'deny') {
               // gate 拒绝(非用户拒):带 denied 标记 → 主进程记 gate.denied,人话回喂 LLM。
-              void event.confirm({ ok: false, message: decision.reason, denied: true })
+              void trackedEvent.confirm({ ok: false, message: decision.reason, denied: true })
               return
             }
             if (decision.outcome === 'allow') {
@@ -452,10 +432,10 @@ export default function CanvasAssistantPanel({
               // silent=不记 proposal.approved(纯噪声);try/catch 防读失败把 loop 卡在永不到来的确认。
               void (async () => {
                 try {
-                  const result = await applyCanvasToolCall(event.toolName, event.args)
-                  await event.confirm({ ok: true, result, silent: true })
+                  const result = await applyCanvasToolCall(trackedEvent.toolName, trackedEvent.args)
+                  await trackedEvent.confirm({ ok: true, result, silent: true })
                 } catch (error: unknown) {
-                  await event.confirm({ ok: false, message: error instanceof Error ? error.message : String(error) })
+                  await trackedEvent.confirm({ ok: false, message: error instanceof Error ? error.message : String(error) })
                 }
               })()
               return
@@ -463,15 +443,17 @@ export default function CanvasAssistantPanel({
             // ask:写/破坏性操作排队,等用户经 pending 卡显式点头。卡锚定到当前「卡前气泡」,
             // 收口本段→卡后文字另起新气泡。confirm 纯传输,批准走 approveCalls 事务批(S6-2)。
             pendingToolCallsRef.current.enqueue({
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              args: event.args,
-              confirm: event.confirm,
+              toolCallId: trackedEvent.toolCallId,
+              toolName: trackedEvent.toolName,
+              args: trackedEvent.args,
+              confirm: trackedEvent.confirm,
               anchorMessageId: anchorId,
             })
             sealBubble()
           },
         })
+
+        playbookTracker.complete(result.response.raw)
 
         // 流结束:收口尾段气泡 + 特例定稿(只说不做⚠️ / 空回复)。
         if (streamRaf !== null) cancelAnimationFrame(streamRaf)
@@ -501,6 +483,7 @@ export default function CanvasAssistantPanel({
       } catch (error: unknown) {
         if (streamRaf !== null) cancelAnimationFrame(streamRaf)
         const message = `生成区 Agent 执行失败：${error instanceof Error && error.message ? error.message : '未知错误'}`
+        playbookTracker.fail(message)
         if (activeId !== null) {
           updateMessage(activeId, activeText ? `${activeText}\n\n${message}` : message)
           setMessageStatus(activeId, 'error')
@@ -517,89 +500,12 @@ export default function CanvasAssistantPanel({
     })()
   }, [attachments, busy, clearAttachments, mode, removeMessage, selectedNodes, setDraft, setMessages, setMessageStatus, snapshot, updateMessage])
 
+  useCanvasAssistantSkillEvents({ nodes, setCollapsed, submitAgentMessage })
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     submitAgentMessage(draft.trim())
   }
-
-  // 注：分镜规划的触发已收口到创作区 runStoryboardPlanner（流程 A：就地跑、不弹来生成区）。
-  // 原 STORYBOARD_PLANNING_EVENT 事件桥已随之删除（P1 不留死路径）。定妆仍走事件桥（见下）。
-
-  // Tier2 定妆/定景：创作区「💄 定妆」触发 → 跑 fixation planner skill，按剧本建角色/场景卡 +
-  // 注入身份板提示词（与 storyboard 同构）。
-  React.useEffect(() => {
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<FixationPlanningRequest>).detail
-      const storyText = detail?.storyText?.trim() || ''
-      if (!storyText) return
-      setCollapsed(false)
-      const message = buildFixationPlanningMessage(storyText)
-      submitAgentMessage(message, {
-        skill: FIXATION_PLANNER_SKILL,
-        displayMessage: `💄 定妆\n\n${storyText}`,
-      })
-    }
-    window.addEventListener(FIXATION_PLANNING_EVENT, handler as EventListener)
-    return () => window.removeEventListener(FIXATION_PLANNING_EVENT, handler as EventListener)
-  }, [setCollapsed, submitAgentMessage])
-
-  React.useEffect(() => {
-    const handler = (event: Event): void => {
-      const detail = (event as CustomEvent<RunCanvasSkillAgentEventDetail>).detail
-      if (!detail?.skill?.skillKey || !detail.skill.label || !detail.skillNodeId) return
-      setCollapsed(false)
-      if (!isVideoDeconstructionSkill(detail.skill.skillKey)) {
-        submitAgentMessage(canvasSkillAgentMessage(detail), {
-          skill: { key: detail.skill.skillKey, name: detail.skill.label },
-          displayMessage: `使用技能：${detail.skill.label}`,
-        })
-        return
-      }
-      void (async () => {
-        const source = detail.sourceNodeIds
-          .map((id) => nodes.find((node) => node.id === id))
-          .find((node) => node?.result?.type === 'video' && node.result.url)
-        if (!source || source.result?.type !== 'video' || !source.result.url) {
-          toast('视频拆解需要先连接一个已有结果的视频节点', 'warning')
-          return
-        }
-        const projectId = getActiveWorkbenchProjectId()
-        const desktop = getDesktopBridge()
-        if (!projectId || !desktop?.video?.extractFrames) {
-          toast('视频拆解需要已保存的桌面端项目', 'error')
-          return
-        }
-        let duration = resolveVideoDurationSeconds(source)
-        if (!duration && desktop.assets.inspectVideo) {
-          const inspection = await desktop.assets.inspectVideo({ url: source.result.url })
-          duration = inspection.metadata?.durationSeconds ?? null
-        }
-        if (!duration) {
-          toast('无法读取视频时长，请先播放一次视频后重试', 'error')
-          return
-        }
-        toast('正在为 Agent 抽取 8 张时序关键帧', 'info')
-        try {
-          const extracted = await desktop.video.extractFrames({
-            videoUrl: source.result.url,
-            projectId,
-            times: buildEvenlySpacedFrameTimes(duration, 8),
-          })
-          const frames = extracted.frames.filter((frame) => frame.url)
-          if (!frames.length) throw new Error('没有取得有效关键帧')
-          submitAgentMessage(videoDeconstructionAgentMessage(detail, frames), {
-            skill: { key: detail.skill.skillKey, name: detail.skill.label },
-            displayMessage: `使用技能：${detail.skill.label}\n已连接：${source.title}`,
-            attachments: buildVideoDeconstructionAttachments(frames),
-          })
-        } catch (error) {
-          toast(`视频拆解准备失败：${error instanceof Error ? error.message : String(error)}`, 'error')
-        }
-      })()
-    }
-    window.addEventListener(RUN_CANVAS_SKILL_AGENT_EVENT, handler)
-    return () => window.removeEventListener(RUN_CANVAS_SKILL_AGENT_EVENT, handler)
-  }, [nodes, setCollapsed, submitAgentMessage])
 
   const handleNewConversation = React.useCallback(() => {
     pendingByIdRef.current.clear()

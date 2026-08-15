@@ -7,6 +7,7 @@ import {
   cancelGenerationNode,
   rerunGenerationNodeAsNewNode,
   runGenerationNode,
+  runGenerationNodesBatch,
   runGenerationNodesByPlan,
 } from './generationRunController'
 
@@ -104,6 +105,67 @@ describe('generation cancellation', () => {
 })
 
 describe('dependency ready scheduling', () => {
+  it('does not automatically resubmit a Codex Img2 local timeout', async () => {
+    const codexNode = {
+      ...node('codex-timeout'),
+      meta: { vendor: 'codex', modelKey: 'codex-img2' },
+    }
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [codexNode],
+      edges: [],
+      groups: [],
+      selectedNodeIds: [],
+    })
+    const executor = vi.fn(async () => {
+      throw new Error('Codex Img2 长时间无进展（300 秒没有输出）')
+    })
+
+    await expect(runGenerationNode(codexNode.id, { executor })).rejects.toThrow(/长时间无进展/)
+
+    expect(executor).toHaveBeenCalledTimes(1)
+    expect(useGenerationCanvasStore.getState().nodes[0]?.runs).toHaveLength(1)
+  })
+
+  it('keeps excess Codex Img2 nodes queued without assigning an error', async () => {
+    const nodes = ['codex-1', 'codex-2', 'codex-3'].map((id) => ({
+      ...node(id),
+      meta: { vendor: 'codex', modelKey: 'codex-img2' },
+    }))
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes, edges: [], groups: [], selectedNodeIds: [] })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let started = 0
+    const executor = vi.fn(async (current: GenerationCanvasNode) => {
+      started += 1
+      if (started <= 1) await gate
+      return result(current.id)
+    })
+
+    const running = runGenerationNodesBatch(
+      nodes.map((entry) => entry.id),
+      {
+        executor,
+        concurrency: 3,
+        retry: { maxAttempts: 1 },
+      },
+    )
+    try {
+      await vi.waitFor(() => {
+        const queued = useGenerationCanvasStore.getState().nodes.find((entry) => entry.id === 'codex-3')
+        expect(executor).toHaveBeenCalledTimes(1)
+        expect(queued?.status).toBe('queued')
+        expect(queued?.progress?.phase).toBe('queued')
+        expect(queued?.progress?.message).toContain('等待 codex 空闲名额')
+        expect(queued?.error).toBeUndefined()
+      })
+    } finally {
+      release()
+      await running
+    }
+  })
+
   it('starts a dependent as soon as its own prerequisite succeeds', async () => {
     const nodes = [node('fast-anchor'), node('slow-independent'), node('dependent')]
     const edges = [edge('fast-anchor', 'dependent')]

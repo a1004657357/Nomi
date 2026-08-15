@@ -1,4 +1,5 @@
 import { buildRecipeRunPlan, type RecipeOutputDescriptor } from '../../../config/capabilityRecipes'
+import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 import { isCapabilityRecipesEnabled } from '../../../config/featureFlags'
 import { mintSpendGrant } from '../../api/taskApi'
 import type { CanvasGestureContext } from '../events/canvasGestureContext'
@@ -18,6 +19,11 @@ import {
 import { generationCanvasTools } from './generationCanvasTools'
 import { handoffModel3dNode } from './model3dHandoff'
 import { listAvailableModelsForAgent } from './availableModels'
+import { createWorkbenchMultiviewSubjectComparator } from '../quality/multiviewSubjectVisionReviewService'
+import {
+  listVisionReviewModelOptions,
+  type VisionReviewModelOption,
+} from '../quality/visionReviewModels'
 
 type CapabilityToolContext = {
   toolName: string
@@ -59,6 +65,24 @@ function recipeOutputs(value: unknown): RecipeOutputDescriptor[] {
       ...(trimmed(item.shotSize) ? { shotSize: trimmed(item.shotSize) } : {}),
     }]
   })
+}
+
+async function requestedVisionReview(
+  value: unknown,
+  recipeId: string,
+): Promise<VisionReviewModelOption | undefined> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  if (!['image.multiview.grid9', 'image.multiview.custom'].includes(recipeId)) {
+    throw new Error('自动视觉复核只支持九宫格或自定义机位配方')
+  }
+  const requested = value as Record<string, unknown>
+  const vendorKey = trimmed(requested.vendorKey)
+  const modelKey = trimmed(requested.modelKey)
+  if (!vendorKey || !modelKey) throw new Error('自动视觉复核缺少视觉模型')
+  const options = await listVisionReviewModelOptions()
+  const selected = options.find((model) => model.vendorKey === vendorKey && model.modelKey === modelKey)
+  if (!selected) throw new Error('自动视觉复核模型未连接或不支持图片输入')
+  return selected
 }
 
 function runId(): string {
@@ -138,12 +162,20 @@ async function applyRecipe(
     createdAt: Date.now(),
     ...(gesture?.proposalId || gesture?.txnId ? { agentRunId: gesture?.proposalId ?? gesture?.txnId } : {}),
   })
+  const visionReview = await requestedVisionReview(record.visionReview, plan.recipeId)
 
   let targetNodeId = ''
   const run = runCapabilityRecipeOnNode(sourceNodeId, plan, {
     grantFactory: (nodeId, maxAttemptsPerNode) => mintSpendGrant([nodeId], maxAttemptsPerNode),
     concurrency: Math.min(2, plan.taskCount),
     onTargetCreated: (nodeId) => { targetNodeId = nodeId },
+    ...(visionReview ? {
+      compareMultiviewSubjects: createWorkbenchMultiviewSubjectComparator({
+        model: visionReview,
+        sessionId: plan.id,
+        projectId: getDesktopActiveProjectId() || undefined,
+      }),
+    } : {}),
   })
   void run.catch((error) => {
     if (!targetNodeId) return
@@ -159,6 +191,13 @@ async function applyRecipe(
     outputCount: plan.outputCount,
     taskCount: plan.taskCount,
     model: plan.model,
+    ...(visionReview ? {
+      visionReview: {
+        vendorKey: visionReview.vendorKey,
+        modelKey: visionReview.modelKey,
+        calls: 1,
+      },
+    } : {}),
   }
 }
 
@@ -174,13 +213,17 @@ export async function tryApplyCapabilityToolCall({
   if (!isCapabilityRecipesEnabled()) throw new Error('创作能力配方实验功能尚未在本机启用')
 
   if (toolName === 'list_capability_recipes') {
-    const models = await listAvailableModelsForAgent()
+    const [models, visionReviewModels] = await Promise.all([
+      listAvailableModelsForAgent(),
+      listVisionReviewModelOptions(),
+    ])
     const nodes = generationCanvasTools.read_canvas().nodes
     return {
       handled: true,
       value: {
         recipes: listCapabilityRecipesForAgent(models),
         resources: listCreativeResourcesForAgent(nodes),
+        visionReviewModels,
       },
     }
   }

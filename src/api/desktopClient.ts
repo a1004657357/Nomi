@@ -19,6 +19,7 @@ export {
   type AgentsChatStreamEvent,
   type AgentChatV2ToolDecision,
   type AgentChatV2Session,
+  type AgentHarnessConfig,
   type AgentsChatStreamHandlers,
 } from './desktopAgentsChatStream'
 

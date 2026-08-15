@@ -19,6 +19,7 @@ export function readCurrentWorkbenchProjectPayload(): WorkbenchProjectPayload {
     storyboardPlan: workbench.storyboardPlan,
     // 卡片回看:落画布状态随项目落盘(草稿/已落画布),否则重开项目分不清卡片该显哪态。
     storyboardPlanCommitted: workbench.storyboardPlanCommitted,
+    filmBible: workbench.filmBible,
   }
 }
 
@@ -30,6 +31,7 @@ export function restoreWorkbenchProjectPayload(payload: WorkbenchProjectPayload)
   // 载入本项目方案(swap 不再清,见 workbenchStore),老项目无字段则置 null。
   // 用 hydrateStoryboardPlan(非 setStoryboardPlan):载入不自动展开编辑器、不标脏。
   useWorkbenchStore.getState().hydrateStoryboardPlan(payload.storyboardPlan ?? null, payload.storyboardPlanCommitted ?? false)
+  useWorkbenchStore.getState().hydrateFilmBible(payload.filmBible ?? null)
   useGenerationCanvasStore.getState().restoreSnapshot(payload.generationCanvas)
 }
 

@@ -2,7 +2,48 @@ import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { isShotNumberedNode } from '../model/shotNumbering'
+import {
+  storyboardContainedRowIndex,
+  storyboardContainerNodeId,
+} from '../model/storyboardContainedNodes'
+import { parseStoryboardPlan, storyboardShotVideoPrompt } from './storyboardPlan'
 import i18n from '../../../i18n'
+
+function metaRecord(node: Pick<GenerationCanvasNode, 'meta'>): Record<string, unknown> {
+  return node.meta && typeof node.meta === 'object' ? node.meta as Record<string, unknown> : {}
+}
+
+function storyboardPromptForImageNode(
+  node: GenerationCanvasNode,
+  nodes: readonly GenerationCanvasNode[],
+): string | null {
+  const meta = metaRecord(node)
+  const tableNodeId = storyboardContainerNodeId(node)
+    || (typeof meta.sourceStoryboardTableNodeId === 'string' ? meta.sourceStoryboardTableNodeId : '')
+  const rowIndex = storyboardContainedRowIndex(node)
+    ?? (typeof meta.storyboardRowIndex === 'number' ? meta.storyboardRowIndex : node.shotIndex)
+  if (!tableNodeId || typeof rowIndex !== 'number') return null
+  const table = nodes.find((candidate) => candidate.id === tableNodeId)
+  const snapshot = table ? metaRecord(table).storyboardPlanSnapshot : null
+  if (!snapshot) return null
+  try {
+    const shot = parseStoryboardPlan(snapshot).shots.find((candidate) => candidate.index === rowIndex)
+    return shot ? storyboardShotVideoPrompt(shot) : null
+  } catch {
+    return null
+  }
+}
+
+export function compileImageShotFallbackVideoPrompt(imagePrompt: string): string {
+  const visualBasis = imagePrompt.trim() || '沿用当前分镜图中的人物、场景、道具和空间关系'
+  return [
+    '视频导演提示词：参考画面只定义人物身份、场景、道具和初始空间关系，不是静态图片的运动化。',
+    `画面基础：${visualBasis}`,
+    '动作设计：主体在前 2 秒内开始一个符合画面因果的明确动作链，依次发生视线确认、重心变化、手部或身体动作，并产生可见结果；同一动作只执行一次。',
+    '运镜设计：摄影机在主体动作启动后再响应，保持空间轴线与主体尺度，完成后减速停稳，留下可剪辑的结束姿态。',
+    '运动下限：禁止只用眨眼、呼吸、头发飘动、粒子、画面缩放或轻微推镜冒充主要动作；人物和道具不得复制、瞬移、变形或凭空增减。',
+  ].join('\n')
+}
 
 /**
  * 图片镜头 → 视频镜头：
@@ -34,13 +75,16 @@ export function convertImageShotToVideo(node: GenerationCanvasNode): { nodeId: s
     state.selectNode(existing.id)
     return { nodeId: existing.id, existed: true }
   }
+  const storyboardPrompt = storyboardPromptForImageNode(node, state.nodes)
   const video = state.addNode({
     kind: 'video',
     title: node.title ? i18n.t('generationCommon.shotConversion.videoTitle', { name: node.title }) : '',
-    prompt: node.prompt || '',
+    prompt: storyboardPrompt || compileImageShotFallbackVideoPrompt(node.prompt || ''),
     meta: {
       sourceNodeId: node.id,
       storyboardVideoReferenceStrategy: 'full_reference',
+      storyboardVideoPromptSource: storyboardPrompt ? 'storyboard_plan' : 'compiled_image_fallback',
+      ...(!storyboardPrompt ? { videoPromptNeedsReview: true } : {}),
     },
     position: { x: node.position.x + (node.size?.width ?? 320) + 80, y: node.position.y },
     ...(node.categoryId ? { categoryId: node.categoryId } : {}),

@@ -41,6 +41,7 @@ import { AutoGrowTextarea } from '../ai/composer/AutoGrowTextarea'
 import { COMPOSER_ATTACHMENT_ACCEPT, useComposerAttachments } from '../ai/composer/useComposerAttachments'
 import { useRafCoalesce } from '../ai/useRafCoalesce'
 import StoryboardNudge from './storyboard/StoryboardNudge'
+import { launchCreationPlaybook } from './creationPlaybookLaunch'
 
 
 // The creation agent's write tools map 1:1 to the editor's document mutations.
@@ -245,7 +246,7 @@ export default function CreationAiPanel({ onCollapse }: { onCollapse?: () => voi
     window.setTimeout(() => {
       requestFixationPlanning({ storyText, source: 'creation-ai-panel' })
     }, 60)
-  }, [documentText, selectedText, setDraft, setError, setMessages, setWorkspaceMode, turn, t])
+  }, [documentText, selectedText, setDraft, setError, setMessages, setWorkspaceMode, turn])
 
   const send = React.useCallback(async (textOverride?: string) => {
     if (turn.getState().sending) return
@@ -287,6 +288,14 @@ export default function CreationAiPanel({ onCollapse }: { onCollapse?: () => voi
       setError('')
       return
     }
+    if (launchCreationPlaybook({
+      selectedSkillKey: skillSelRef.current.activeSkill?.key,
+      userMessage: userRequest,
+      attachments: readyAttachments,
+      clearComposer: () => { setDraft(''); clearAttachments(); setError('') },
+      switchToGeneration: () => setWorkspaceMode('generation'),
+      reportError: setError,
+    })) return
     const prompt = buildCreationAiPrompt({ mode: activeMode, userRequest })
     const displayPrompt = userRequest || (readyAttachments.length
       ? t('creationAi.attachmentPrompt')
@@ -432,7 +441,7 @@ export default function CreationAiPanel({ onCollapse }: { onCollapse?: () => voi
       cancelStreamFrame() // 终态已落定，丢弃任何挂起的流式合帧，别用过期文本盖掉终态
       turn.getState().finish(handle.id)
     }
-  }, [activeMode, activeSkill, attachments, cancelStreamFrame, clearAttachments, documentText, draft, launchStoryboardPlanning, launchFixationPlanning, pushStreamFrame, selectedText, setDraft, setError, setMessages, turn, t])
+  }, [activeMode, attachments, cancelStreamFrame, clearAttachments, documentText, draft, launchStoryboardPlanning, pushStreamFrame, selectedText, setDraft, setError, setMessages, setWorkspaceMode, turn, t])
 
   // 通用创作动作，贴 Nomi 视频创作调性、不绑小说题材（旧的「悬疑开场/童话语气」在产品/宣传项目里调性错配）。
   const suggestions = React.useMemo(() => [

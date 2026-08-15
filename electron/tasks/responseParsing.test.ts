@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   collectAssetUrls,
   firstMappedString,
+  isFailureStatus,
+  isTerminalStatus,
   mappingCandidates,
   maybeParseJsonString,
   pathValues,
@@ -99,8 +101,51 @@ describe("taskStatusFromResponse", () => {
     expect(taskStatusFromResponse({}, null, undefined, ["https://x/a"])).toBe("succeeded");
     expect(taskStatusFromResponse({ error: "boom" }, null, undefined, [])).toBe("failed");
   });
-  it("defaults to queued when nothing matches", () => {
-    expect(taskStatusFromResponse({}, null, undefined, [])).toBe("queued");
+  // Gate 1 Slice 5（§10.2）：既非成功资产、也无明确失败关键词、且无 statusMapping 命中 → unknown。
+  // 旧行为是默认 queued；新行为 unknown 更安全（不假设在队列 → 调用方持续查询、绝不重发 create）。
+  it("defaults to unknown when nothing matches (§10.2: unknown ≠ terminal, never resubmit)", () => {
+    expect(taskStatusFromResponse({}, null, undefined, [])).toBe("unknown");
+  });
+});
+
+// ── Gate 1 Slice 5：cancelled 独立 + unknown 态（§10.2）────────────────────────
+describe("taskStatusFromResponse — Gate 1 Slice 5: cancelled & unknown (§10.2)", () => {
+  it("canceled/cancelled → cancelled (no longer folded into failed)", () => {
+    expect(taskStatusFromResponse({ status: "canceled" }, null, undefined, [])).toBe("cancelled");
+    expect(taskStatusFromResponse({ status: "cancelled" }, null, undefined, [])).toBe("cancelled");
+  });
+
+  it("explicit statusMapping cancelled bucket is honored", () => {
+    expect(
+      taskStatusFromResponse(
+        { state: "USER_CANCELED" },
+        { status: ["state"] },
+        { cancelled: ["USER_CANCELED"] },
+        [],
+      ),
+    ).toBe("cancelled");
+  });
+
+  it("unknown: empty response, no assets, no error, no keyword → unknown", () => {
+    expect(taskStatusFromResponse({}, null, undefined, [])).toBe("unknown");
+    expect(taskStatusFromResponse({ unrelated: "field" }, null, undefined, [])).toBe("unknown");
+  });
+
+  it("unknown is NOT terminal (isTerminalStatus false → caller keeps querying)", () => {
+    // 钱安全不变量：unknown 不触发重发，只持续查询（见 submissionLedger / taskResultQuery）
+    expect(isTerminalStatus("unknown")).toBe(false)
+    expect(isTerminalStatus("queued")).toBe(false)
+    expect(isTerminalStatus("running")).toBe(false)
+    expect(isTerminalStatus("succeeded")).toBe(true)
+    expect(isTerminalStatus("failed")).toBe(true)
+    expect(isTerminalStatus("cancelled")).toBe(true)
+  });
+
+  it("isFailureStatus treats cancelled as failure-class (preserves legacy === 'failed' semantics)", () => {
+    expect(isFailureStatus("cancelled")).toBe(true)
+    expect(isFailureStatus("failed")).toBe(true)
+    expect(isFailureStatus("succeeded")).toBe(false)
+    expect(isFailureStatus("unknown")).toBe(false)
   });
 });
 

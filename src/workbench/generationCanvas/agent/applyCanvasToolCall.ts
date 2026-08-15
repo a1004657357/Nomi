@@ -16,6 +16,7 @@ import { buildDependencyWaves } from '../runner/dependencyWaves'
 import { expandNodeIdsWithUngeneratedReferenceAncestors } from '../runner/referenceAncestors'
 import { forkRegenerationNodesInPlan, runPlanWithToasts } from '../components/batchPlanPreview'
 import { mintSpendGrant } from '../../api/taskApi'
+import { batchSpendGrantTtlMs } from '../spend/spendConfirm'
 import { arrangeStoryboardToTimeline } from './sendStoryboardToTimeline'
 import {
   buildDetailedStoryboardShotVideoPrompt,
@@ -36,22 +37,12 @@ import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { registerCanvasToolClientId, resolveCanvasToolNodeId } from './clientIdRegistry'
 import { tryApplyCapabilityToolCall } from './capabilityRecipeToolHandlers'
 import { tryAttachExternalImage } from './externalImageToolHandler'
+import { routeCinematicDirectorToolCall } from './cinematicDirectorToolHandlers'
 export { resetClientIdRegistry, resolveCanvasToolNodeId } from './clientIdRegistry'
 
 // 批量创建节点的布局由渲染层 derive，而不是信任 LLM 发来的像素坐标。
 // 实现住在 trajectoryLayout（分层 + 避让 + 网格回退，步距由节点尺寸推导）。
 
-/**
- * Single source of truth for turning an agent canvas tool call into a real
- * mutation against the renderer `generationCanvasTools` store. Returns the
- * structured result for the LLM; **throws** on failure / unknown tool (callers
- * map the throw to `{ ok: false, message }`).
- *
- * Used by BOTH the auto-execute path (`generationCanvasAgentClient`) and the
- * user-confirmed path (`CanvasAssistantPanel`) — there is no parallel
- * implementation anymore (P1). Tool execution does not depend on any panel
- * being mounted: the store + tools are global.
- */
 /**
  * clientId(LLM 在 create_canvas_nodes 里自取的临时号,如 "n1")→ 真实节点 id 注册表。
  * 映射除了回给 LLM,渲染层必须自己留一份:后续 connect/set_prompt/delete 里 LLM
@@ -363,6 +354,11 @@ export async function applyCanvasToolCall(
   // 发出的画布事件统一携带 source:'agent'+txnId/proposalId。只包同步段,await 间隙不持有
   // (异步持有会让并行的用户手势串台,见 canvasGestureContext 纪律)。
   const inCtx = <T>(fn: () => T): T => (gesture ? withCanvasGestureContext(gesture, fn) : fn())
+
+  const cinematicResult = await routeCinematicDirectorToolCall(
+    toolName, args, (name, delegatedArgs) => applyCanvasToolCall(name, delegatedArgs, gesture),
+  )
+  if (cinematicResult.handled) return cinematicResult.value
 
   if (toolName === 'read_canvas_state') {
     // T1 token 优化:回包用紧凑行格式(与 system prompt 的画布段同源),
@@ -769,7 +765,7 @@ export async function applyCanvasToolCall(
     const accepted = forked.plan.waves.flat()
     // 付费守卫：本分支只在用户批准 pending 卡后到达（人手势在上游）→ 铸令牌绑受理节点，
     // 随 plan 下到主进程 runTask 核验。删了 defaultExecuteToolCall 的自动放行旁路后此处不会被 AI 静默触发。
-    void mintSpendGrant(accepted)
+    void mintSpendGrant(accepted, 1, batchSpendGrantTtlMs(accepted.length))
       .then((grantId) => runPlanWithToasts(forked.plan, grantId))
       .catch(() => {}) // 进度/结果全走 toast+run 域事件,此处不再有未处理拒绝
     return {

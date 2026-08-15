@@ -139,6 +139,7 @@ export function OnboardingWizard({ opened, onClose, onCommitted, initialPreset }
   const handlePickPreset = React.useCallback((id: string) => {
     const preset = PROVIDER_PRESETS.find(p => p.id === id)
     if (!preset) return
+    const presetModels = preset.models?.map(model => ({ ...model })) ?? []
     setPresetId(id)
     setProviderKind(preset.providerKind)
     setBaseUrl(preset.baseUrl)
@@ -150,8 +151,9 @@ export function OnboardingWizard({ opened, onClose, onCommitted, initialPreset }
     setShowKindOverride(false)
     setShowAdvanced(false)
     // Endpoint changed → previously fetched candidates / test result no longer apply.
-    setCandidateModels([])
-    setFetchAttempted(false)
+    setModels([])
+    setCandidateModels(presetModels)
+    setFetchAttempted(presetModels.length > 0)
     setScreen('form')
     setFetchModelsMsg('')
     setTestState('idle')
@@ -713,4 +715,3 @@ export function OnboardingWizard({ opened, onClose, onCommitted, initialPreset }
     </DesignModal>
   )
 }
-

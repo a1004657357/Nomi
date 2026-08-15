@@ -82,6 +82,11 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+export function resolveCapabilityPollIntervalMs(kind: string, vendor: string): number {
+  if ((kind === 'text_to_video' || kind === 'image_to_video') && vendor === 'agnes') return 15_000
+  return kind === 'text_to_video' || kind === 'image_to_video' ? 3_000 : 1_500
+}
+
 // 连「参考边」就该等于「喂参考图」——但 headless 生成此前只读 input.references / node.references，
 // **从不读画布上的参考边**（多 agent 用户测试钉死：连线→生成=三个不同的人 / 改图模型 400「需要参考图」；
 // 对齐记忆 connection-reference-bugs 的「槽读 meta、生成读边」分裂在 headless 路仍未收口）。GUI 路由渲染层
@@ -111,6 +116,51 @@ export function referencesFromEdges(snapshot: CanvasSnapshot, nodeId: string): s
     if (url && !urls.includes(url)) urls.push(url)
   }
   return urls
+}
+
+function resultAssetUrls(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const result = value as Record<string, unknown>
+  const urls = [result.url, result.thumbnailUrl, result.providerUrl]
+    .filter((candidate): candidate is string => typeof candidate === 'string' && Boolean(candidate.trim()))
+    .map((candidate) => candidate.trim())
+  if (Array.isArray(result.alternatives)) {
+    for (const alternative of result.alternatives) urls.push(...resultAssetUrls(alternative))
+  }
+  return urls
+}
+
+function nodeAssetUrls(node: CanvasSnapshot['nodes'][number]): string[] {
+  const urls = [
+    ...(typeof node.url === 'string' && node.url.trim() ? [node.url.trim()] : []),
+    ...resultAssetUrls(node.result),
+  ]
+  if (Array.isArray(node.history)) {
+    for (const historyItem of node.history) urls.push(...resultAssetUrls(historyItem))
+  }
+  return Array.from(new Set(urls))
+}
+
+/**
+ * 显式参考 URL 既是 Provider 输入，也是画布血缘。只有 URL 在同一画布中唯一命中来源节点时才自动连边；
+ * 多节点共享同一资产时保持 references 但不猜来源，避免把复制节点误认成原始资产。
+ */
+function bindReferencesToNode(snapshot: CanvasSnapshot, nodeId: string, references: string[]): CanvasSnapshot {
+  const normalizedReferences = Array.from(new Set(references.map((value) => value.trim()).filter(Boolean)))
+  if (!normalizedReferences.length) return snapshot
+  const nodes = snapshot.nodes.map((node) => (
+    node.id === nodeId ? { ...node, references: normalizedReferences } : node
+  ))
+  let next: CanvasSnapshot = { ...snapshot, nodes }
+  const connections: ConnectionSpec[] = []
+  for (const reference of normalizedReferences) {
+    const sourceIds = nodes
+      .filter((node) => node.id !== nodeId && nodeAssetUrls(node).includes(reference))
+      .map((node) => node.id)
+    if (sourceIds.length === 1) connections.push({ source: sourceIds[0], target: nodeId, mode: 'reference' })
+  }
+  if (connections.length) next = connectNodes(next, connections).snapshot
+  return next
 }
 
 function defaultKindForIntent(intent: GenerateIntent, hasReferences: boolean): string {
@@ -475,6 +525,7 @@ export async function generateOnProject(
     ? input.references
     : (Array.isArray(node.references) && node.references.length ? node.references : referencesFromEdges(snapshot, nodeId))
   const kind = input.kind || defaultKindForIntent(intent, references.length > 0)
+  snapshot = bindReferencesToNode(snapshot, nodeId, references)
 
   // 先把节点以「排队中」态写出去——A 模式：节点立即出现在画布（所见即所得）；B 模式：落盘占位。
   snapshot = setNodeStatusInSnapshot(snapshot, nodeId, 'queued')
@@ -529,19 +580,27 @@ export async function generateOnProject(
       // docs/plan/2026-07-31-seedance-api-contract-reconciliation.md §三）。跨进程边界拿不到
       // 渲染层的 resolvePollIntervalMs，故此处是**配对常量，改一处必改另一处**（同 vendorErrorIpc
       // 的 MARKER 约定）。本循环一次只跑一个任务，不存在批量同相位问题，故不叠抖动/退避。
-      const pollIntervalMs = kind === 'text_to_video' || kind === 'image_to_video' ? 3000 : 1500
+      const pollIntervalMs = resolveCapabilityPollIntervalMs(kind, input.vendor)
       const startedAt = Date.now()
+      let pollFailureCount = 0
       while (result.status && !TERMINAL_STATUSES.has(result.status)) {
         if (Date.now() - startedAt > timeoutMs) break
-        await delay(pollIntervalMs)
-        const polled = await fetchTaskResultFn({
-          taskId: result.id || '',
-          vendor: input.vendor,
-          taskKind: kind,
-          prompt,
-          modelKey: input.modelKey,
-        })
-        result = polled.result
+        const backoffMs = Math.min(pollIntervalMs * 2 ** pollFailureCount, 60_000)
+        await delay(backoffMs)
+        try {
+          const polled = await fetchTaskResultFn({
+            taskId: result.id || '',
+            vendor: input.vendor,
+            taskKind: kind,
+            prompt,
+            modelKey: input.modelKey,
+          })
+          result = polled.result
+          pollFailureCount = 0
+        } catch {
+          // 查询失败不等于生成失败。只退避续查同一 task，绝不能回到 create 路重复扣费。
+          pollFailureCount += 1
+        }
       }
     }
   } catch (error) {

@@ -25,6 +25,27 @@ function multiviewBackgroundInstructions(plan: RecipeRunPlan): string[] {
   ]
 }
 
+function multiviewContinuityInstructions(plan: RecipeRunPlan): string[] {
+  const sourceWidth = Number(plan.params.sourceWidth)
+  const sourceHeight = Number(plan.params.sourceHeight)
+  const sourceAspectRatio = Number(plan.params.sourceAspectRatio)
+  const aspectInstruction = Number.isFinite(sourceWidth)
+    && Number.isFinite(sourceHeight)
+    && Number.isFinite(sourceAspectRatio)
+    && sourceWidth > 0
+    && sourceHeight > 0
+    && sourceAspectRatio > 0
+    ? `画幅锚点：来源图 ${Math.round(sourceWidth)}×${Math.round(sourceHeight)}，比例 ${sourceAspectRatio}；所有独立机位必须使用同一画幅比例。`
+    : '画幅锚点：所有独立机位必须使用与来源图相同的画幅比例和一致的主体尺度。'
+  return [
+    '将来源图视为本批次唯一的视觉事实，只允许改变相机机位；所有独立任务必须复用同一组身份、造型、服装、道具和场景锚点。',
+    '人物连续性：锁定脸型、五官比例、年龄、肤色、发际线、发型和发色；来源图没有的眼镜、发箍、帽子、首饰或其他配饰绝对不得新增。',
+    '造型连续性：服装的颜色、面料、领型、图案和可见配饰必须与来源图一致；物体的颜色、材质、标记和磨损细节必须一致，不得重新设计。',
+    '遮挡区域只做保守补全：无法从来源图确认的细节保持朴素并与已见区域连续，不得借机更换服装、增加道具或设计新的背景元素。',
+    aspectInstruction,
+  ]
+}
+
 const ENERGY_LABELS = ['平静、低能量', '放松、轻微能量', '中性、稳定能量', '活跃、明显能量', '激动、高能量'] as const
 
 const AFFINITY_LABELS = ['亲近、开放', '友好、易接近', '中性、克制', '疏离、防备', '冷淡、封闭'] as const
@@ -119,7 +140,7 @@ function cameraViewVerificationInstructions(
       '视图类型：strict 45-degree front-right three-quarter view。相机必须移动到主体右前方，同时清楚看到主体正面与主体右侧面，右侧面形成明确透视；不得退化为正面或来源图原机位。'
   } else if (azimuth >= 67.5 && azimuth <= 112.5) {
     observableCue =
-      '视图类型：strict 90-degree right-side profile, exact side elevation, not three-quarter view。相机必须位于主体正右侧，以右侧轮廓为主，正面宽度应压缩到接近消失，主体左侧面不可见；人物或动物只允许一只眼和单侧脸部轮廓清晰可见；物体的正面徽标、灯、屏幕或控制面必须转到画面边缘或被遮挡，侧面结构成为画面主要可见面。'
+      '视图类型：strict 90-degree right-side profile, exact side elevation, not three-quarter view。相机必须位于主体正右侧，以右侧轮廓为主，正面宽度应压缩到接近消失，主体左侧面不可见；人物或动物必须显示解剖学右脸和右耳，鼻尖必须指向成片画面的左边缘，左脸和左耳位于远侧并被遮挡，只允许一只眼和单侧脸部轮廓清晰可见；绝对不得输出鼻尖朝画面右边缘的左侧面。物体的正面徽标、灯、屏幕或控制面必须转到画面边缘或被遮挡，侧面结构成为画面主要可见面。'
   } else if (azimuth > 112.5 && azimuth < 157.5) {
     observableCue =
       '视图类型：strict rear-right three-quarter view。相机必须移动到主体右后方，以背面为主，同时看到主体右侧面；面孔、眼睛和物体正面徽标、灯、屏幕或控制面不得完整出现；不得沿用来源图原机位。'
@@ -128,7 +149,7 @@ function cameraViewVerificationInstructions(
       '视图类型：strict 45-degree front-left three-quarter view。相机必须移动到主体左前方，同时清楚看到主体正面与主体左侧面，左侧面形成明确透视；不得退化为正面或来源图原机位。'
   } else if (azimuth <= -67.5 && azimuth >= -112.5) {
     observableCue =
-      '视图类型：strict 90-degree left-side profile, exact side elevation, not three-quarter view。相机必须位于主体正左侧，以左侧轮廓为主，正面宽度应压缩到接近消失，主体右侧面不可见；人物或动物只允许一只眼和单侧脸部轮廓清晰可见；物体的正面徽标、灯、屏幕或控制面必须转到画面边缘或被遮挡，侧面结构成为画面主要可见面。'
+      '视图类型：strict 90-degree left-side profile, exact side elevation, not three-quarter view。相机必须位于主体正左侧，以左侧轮廓为主，正面宽度应压缩到接近消失，主体右侧面不可见；人物或动物必须显示解剖学左脸和左耳，鼻尖必须指向成片画面的右边缘，右脸和右耳位于远侧并被遮挡，只允许一只眼和单侧脸部轮廓清晰可见；绝对不得输出鼻尖朝画面左边缘的右侧面。物体的正面徽标、灯、屏幕或控制面必须转到画面边缘或被遮挡，侧面结构成为画面主要可见面。'
   } else if (azimuth < -112.5 && azimuth > -157.5) {
     observableCue =
       '视图类型：strict rear-left three-quarter view。相机必须移动到主体左后方，以背面为主，同时看到主体左侧面；面孔、眼睛和物体正面徽标、灯、屏幕或控制面不得完整出现；不得沿用来源图原机位。'
@@ -148,6 +169,22 @@ function cameraViewVerificationInstructions(
   ]
 }
 
+function oppositeCameraInstruction(
+  plan: RecipeRunPlan,
+  output: CapabilityRecipeTask['outputs'][number] | undefined,
+): string[] {
+  if (!output || typeof output.azimuth !== 'number') return []
+  const azimuth = normalizedAzimuth(output.azimuth)
+  const opposite = plan.outputs.find((candidate) => {
+    if (candidate.id === output.id || typeof candidate.azimuth !== 'number') return false
+    return Math.abs(Math.abs(normalizedAzimuth(candidate.azimuth) - azimuth) - 180) <= 1
+  })
+  if (!opposite) return []
+  return [
+    `批次对向机位约束：本机位与「${opposite.label}」互为 180° 对向机位，两张成片必须呈现相反的可见侧面和鼻尖方向；不得复用同一朝向，不得只靠背景、裁切或构图变化区分。`,
+  ]
+}
+
 function compileRecipeInstructions(plan: RecipeRunPlan, task: CapabilityRecipeTask): string[] {
   const output = task.outputs[0]
 
@@ -161,6 +198,7 @@ function compileRecipeInstructions(plan: RecipeRunPlan, task: CapabilityRecipeTa
           '只输出一张完整的单幅画面，只表现上述唯一机位；不得生成分屏、拼图、接触表、转台图或多个机位。',
           '只改变相机位置和朝向；主体身份、姿态、物体形状、材质及所有物体之间的关系保持不变。',
           '补全新机位可见区域时遵守来源图几何、材质、光照和透视，不新增或删减叙事元素。',
+          ...multiviewContinuityInstructions(plan),
           ...multiviewBackgroundInstructions(plan),
         ]
       }
@@ -173,6 +211,7 @@ function compileRecipeInstructions(plan: RecipeRunPlan, task: CapabilityRecipeTa
         ),
         '九格中的主体身份、面部结构、身体比例、服装、道具和场景布局完全一致。',
         '每格只改变相机机位，不得改变主体姿态、物体形状、材质或物体之间的关系。',
+        ...multiviewContinuityInstructions(plan),
         ...multiviewBackgroundInstructions(plan),
       ]
     case 'image.multiview.custom':
@@ -180,9 +219,12 @@ function compileRecipeInstructions(plan: RecipeRunPlan, task: CapabilityRecipeTa
         `目标机位：${output?.label || '自定义机位'}，方位角 ${output?.azimuth ?? param(plan, 'azimuth', 0)}°，仰俯角 ${output?.elevation ?? param(plan, 'elevation', 0)}°。`,
         `景别：${output?.shotSize || param(plan, 'shotSize', '中景')}。`,
         ...cameraViewVerificationInstructions(output),
+        ...oppositeCameraInstruction(plan, output),
         '只输出一张完整的单幅画面，只表现上述唯一机位；不得生成分屏、拼图、接触表、转台图或同时出现多个机位。',
         '只改变相机位置、朝向与景别；不得改变主体身份、造型、动作、物体关系或空间布局。',
         '补全新机位可见区域时遵守原图几何、材质、光照方向和透视关系，不凭空新增叙事元素。',
+        ...multiviewContinuityInstructions(plan),
+        ...multiviewBackgroundInstructions(plan),
       ]
     case 'image.multiview.reconstruct3d':
       return [

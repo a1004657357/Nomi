@@ -109,7 +109,12 @@ export async function executeProcessOperation(input: ProcessOperationInput): Pro
   }
 
   try {
-    const ran = await runDreaminaCli(args, { timeoutMs: input.timeoutMs ?? 300_000, bin });
+    // A generation submit may have reached Dreamina even when the local CLI loses
+    // the response. Re-running it can create a second paid job. Polling by the
+    // already-known submit id is idempotent, so only query_result keeps one
+    // transport retry.
+    const retries = args[0] === "query_result" ? 1 : 0;
+    const ran = await runDreaminaCli(args, { timeoutMs: input.timeoutMs ?? 300_000, bin, retries });
     const normalized = normalizeDreaminaOutput(ran.stdout, ran.stderr);
 
     // 「三无」（submit_id / gen_status / 结果媒体全解析不到）= 这次调用没产生任何可用信息 = 真·调用失败，

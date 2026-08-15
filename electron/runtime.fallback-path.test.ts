@@ -26,6 +26,10 @@ const jimengWebRunnerMock = vi.hoisted(() => ({
   submit: vi.fn(),
 }));
 
+const reviewTraceMock = vi.hoisted(() => ({
+  scheduleTechnicalReview: vi.fn(),
+}));
+
 let mockedUserDataRoot = "";
 const tempRoots: string[] = [];
 
@@ -53,6 +57,10 @@ vi.mock("./jimengWeb/seedanceBridge", () => ({
   submitJimengWebTask: jimengWebRunnerMock.submit,
 }));
 
+vi.mock("./review/reviewTrace", () => ({
+  scheduleTechnicalReview: reviewTraceMock.scheduleTechnicalReview,
+}));
+
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempRoots.push(dir);
@@ -71,6 +79,7 @@ beforeEach(() => {
   jimengWebRunnerMock.start.mockReset();
   jimengWebRunnerMock.start.mockResolvedValue({ clientOnline: true });
   jimengWebRunnerMock.submit.mockReset();
+  reviewTraceMock.scheduleTechnicalReview.mockReset();
   jimengWebRunnerMock.submit.mockResolvedValue({
     taskCode: "SD-TEST-1",
     serverUrl: "http://127.0.0.1:3457",
@@ -299,7 +308,7 @@ describe("runTask · Codex Img2 本地入口", () => {
       request: {
         kind: "text_to_image",
         prompt: "a cat",
-        extras: { modelKey: "codex-img2", projectId: project.id, nodeId: "node-1", grantId: mintSpendGrant({ nodeIds: ["node-1"] }) },
+        extras: { modelKey: "codex-img2", projectId: project.id, nodeId: "node-1", grantId: mintSpendGrant({ nodeIds: ["node-1"] }), aspect_ratio: "9:16" },
       },
     });
 
@@ -322,6 +331,12 @@ describe("runTask · Codex Img2 本地入口", () => {
     });
     expect(result.provenance).toMatchObject({ provider: "codex", modelKey: "codex-img2", vendorRequestId: "codex-thread-1" });
     expect(codexImagegenRunnerMock.runCodexImageGeneration).toHaveBeenCalledWith({ request: expect.objectContaining({ prompt: "a cat" }) });
+    expect(reviewTraceMock.scheduleTechnicalReview).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: project.id,
+      nodeId: "node-1",
+      type: "image",
+      expectedAspectRatio: "9:16",
+    }));
     expect(jimengWebRunnerMock.start).not.toHaveBeenCalled();
     expect(fetchFn).not.toHaveBeenCalled();
   });

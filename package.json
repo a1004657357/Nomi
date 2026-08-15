@@ -66,6 +66,7 @@
     "postinstall": "node ./scripts/install-git-hooks.cjs",
     "test:e2e": "node tests/ux/smoke.e2e.mjs",
     "test:e2e:goal-features": "node tests/ux/goal-feature-smoke.e2e.mjs",
+    "test:e2e:idempotency-restart": "node tests/ux/task-idempotency-restart.e2e.mjs",
     "test:e2e:capability-recipes": "node tests/ux/capability-recipes.e2e.mjs",
     "test:e2e:creative-perf": "node tests/ux/creative-capability-perf.e2e.mjs",
     "test:e2e:vibing-director": "node tests/ux/vibing-director.e2e.mjs",

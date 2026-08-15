@@ -24,6 +24,20 @@ export type SpendConfirmRequest = {
   countdownMs?: number
 }
 
+const BATCH_GRANT_MIN_TTL_MS = 30 * 60_000
+const BATCH_GRANT_MAX_TTL_MS = 4 * 60 * 60_000
+const BATCH_GRANT_PER_NODE_MS = 11 * 60_000
+const BATCH_GRANT_BUFFER_MS = 15 * 60_000
+
+/** 批量授权覆盖串行 Codex 最坏 10 分钟/张，同时仍限制在 4 小时内。 */
+export function batchSpendGrantTtlMs(nodeCount: number): number {
+  const count = Math.max(1, Math.floor(Number.isFinite(nodeCount) ? nodeCount : 1))
+  return Math.min(
+    BATCH_GRANT_MAX_TTL_MS,
+    Math.max(BATCH_GRANT_MIN_TTL_MS, count * BATCH_GRANT_PER_NODE_MS + BATCH_GRANT_BUFFER_MS),
+  )
+}
+
 type Pending = SpendConfirmRequest & { resolve: (ok: boolean) => void }
 
 type SpendConfirmState = {
@@ -60,6 +74,7 @@ export async function confirmAndMintGrant(opts: {
   confirmLabel?: string
   light?: boolean
   maxAttemptsPerNode?: number
+  ttlMs?: number
 }): Promise<string | null> {
   const ok = await useSpendConfirmStore.getState().requestConfirm({
     title: opts.title,
@@ -68,7 +83,7 @@ export async function confirmAndMintGrant(opts: {
     ...(opts.light ? { light: true } : {}),
   })
   if (!ok) return null
-  return mintSpendGrant(opts.nodeIds, opts.maxAttemptsPerNode)
+  return mintSpendGrant(opts.nodeIds, opts.maxAttemptsPerNode, opts.ttlMs)
 }
 
 /** 人话出片预估（C1：只显件数 + 预计时长，不显金额——守卫不依赖金额）。 */

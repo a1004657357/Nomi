@@ -2,9 +2,11 @@ import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 
 export const GENERATION_GLOBAL_MAX_CONCURRENCY = 8
 export const GENERATION_DEFAULT_PROVIDER_CONCURRENCY = 4
-export const GENERATION_CODEX_PROVIDER_CONCURRENCY = 2
+export const GENERATION_CODEX_PROVIDER_CONCURRENCY = 1
 export const GENERATION_JIMENG_PROVIDER_CONCURRENCY = 2
-export const GENERATION_AGNES_VIDEO_MIN_START_INTERVAL_MS = 60_000
+// AGNES enforces the rolling minute at the provider POST boundary. Keep 15s
+// headroom because local image publication/probing can shift POST timestamps.
+export const GENERATION_AGNES_VIDEO_MIN_START_INTERVAL_MS = 75_000
 export const GENERATION_AGNES_IMAGE_MIN_START_INTERVAL_MS = 6_000
 export const GENERATION_AGNES_DEFAULT_MIN_START_INTERVAL_MS = 3_000
 
@@ -12,6 +14,13 @@ export type GenerationRateLimitWait = {
   rateKey: string
   waitMs: number
   minimumStartIntervalMs: number
+}
+
+export type GenerationQueueWait = {
+  providerKey: string
+  queueAhead: number
+  activeForProvider: number
+  providerLimit: number
 }
 
 export type GenerationStartRatePolicy = {
@@ -25,6 +34,7 @@ type GenerationSchedulerRunOptions = {
   rateKey?: string
   minimumStartIntervalMs?: number
   onRateLimitWait?: (wait: GenerationRateLimitWait) => void
+  onQueueWait?: (wait: GenerationQueueWait) => void
 }
 
 type QueuedRun<T> = {
@@ -233,6 +243,16 @@ export function createGenerationProviderScheduler(
         ...(rateKey ? { rateKey } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
       }
+      const activeForProvider = activeByProvider.get(entry.providerKey) || 0
+      const providerLimit = generationProviderLimit(entry.providerKey, defaultProviderLimit)
+      const queueAhead = queue.filter((candidate) => candidate.providerKey === entry.providerKey).length
+      const rateReadyAt = rateKey ? nextStartByRateKey.get(rateKey) || 0 : 0
+      if (
+        options.onQueueWait
+        && (active >= globalLimit || activeForProvider >= providerLimit || rateReadyAt > Date.now())
+      ) {
+        options.onQueueWait({ providerKey: entry.providerKey, queueAhead, activeForProvider, providerLimit })
+      }
       if (rateKey && options.onRateLimitWait) {
         const now = Date.now()
         const queuedAhead = queue.filter((candidate) => candidate.rateKey === rateKey).length
@@ -269,12 +289,14 @@ export function runWithGenerationProviderSlot<T>(
   options: {
     signal?: AbortSignal
     onRateLimitWait?: (wait: GenerationRateLimitWait) => void
+    onQueueWait?: (wait: GenerationQueueWait) => void
   } = {},
 ): Promise<T> {
   const ratePolicy = generationStartRatePolicy(node)
   return globalGenerationProviderScheduler.run(generationProviderKey(node), work, {
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.onRateLimitWait ? { onRateLimitWait: options.onRateLimitWait } : {}),
+    ...(options.onQueueWait ? { onQueueWait: options.onQueueWait } : {}),
     ...(ratePolicy
       ? {
           rateKey: ratePolicy.rateKey,

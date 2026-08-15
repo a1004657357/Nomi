@@ -347,6 +347,40 @@ describe('runCapabilityRecipeOnNode', () => {
     expect(normalizeStyleAspect).toHaveBeenCalledWith(imageResult('styled'), outcome.nodeId, 0.5625)
   })
 
+  it('derives one source aspect lock for every independent multiview task', async () => {
+    const inspectImage = vi.fn(async () => ({
+      width: 1200,
+      height: 800,
+      opaqueRatio: 1,
+      meanLuma: 0.5,
+      lumaStdDev: 0.2,
+      edgeEnergy: 0.15,
+      averageRgb: [0.5, 0.5, 0.5] as [number, number, number],
+      perceptualHash: visualHash(17),
+    }))
+    const mediaProcessor: CapabilityRecipeMediaProcessor = {
+      splitGrid3x3: async () => [],
+      normalizePanorama2to1: async (result) => result,
+      inspectImage,
+    }
+    const executor = vi.fn(async (node: GenerationCanvasNode) => {
+      expect(node.meta?.aspect_ratio).toBe('3:2')
+      expect(node.prompt).toContain('来源图 1200×800，比例 1.5')
+      const recipeMeta = node.meta?.capabilityRecipe as { output?: { id?: string } } | undefined
+      return imageResult(recipeMeta?.output?.id || 'unknown')
+    })
+
+    await runCapabilityRecipeOnNode('source-1', plan(), {
+      executor,
+      mediaProcessor,
+      grantId: 'grant-1',
+      persist: async () => {},
+    })
+
+    expect(executor).toHaveBeenCalledTimes(2)
+    expect(inspectImage).toHaveBeenCalledWith(imageResult('source'))
+  })
+
   it('switches the derived node kind to the recipe output kind before execution', async () => {
     const recipePlan: RecipeRunPlan = {
       ...plan(),

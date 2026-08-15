@@ -3,18 +3,34 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { hardenedFetch } from "../hardenedFetch";
-import { firstString, trim, type JsonRecord } from "../jsonUtils";
+import { trim, type JsonRecord } from "../jsonUtils";
 import { absolutePathFromLocalAssetUrlAnyProject } from "../assets/localAssetFile";
 import { parseDataUrl } from "../assets/assetBytes";
 import { contentTypeFromPath, extensionFromMime, extensionFromUrl } from "../assets/assetPaths";
 import { getActiveHttpProxyUrl } from "../systemProxy";
+import { recoverGeneratedImageFromCodexHome } from "./codexImagegenRecovery";
+import {
+  auditCodexImagegenInvocations,
+  buildCodexImagegenPrompt,
+  validateCodexGeneratedImage,
+  type CodexImagegenPromptReference,
+  type CodexImagegenRequest,
+} from "./codexImagegenPolicy";
 
-export const CODEX_IMG2_GLOBAL_MAX_CONCURRENCY = 2;
+export { buildCodexImagegenPrompt } from "./codexImagegenPolicy";
+export type { CodexImagegenPromptReference, CodexImagegenRequest } from "./codexImagegenPolicy";
+
+// ChatGPT image edits are not reliably parallel for the same local session:
+// real batches showed one of each two concurrent requests failing at the network layer.
+export const CODEX_IMG2_GLOBAL_MAX_CONCURRENCY = 1;
 const CODEX_IMG2_TEMP_PREFIX = "nomi-codex-img2-";
 const CODEX_IMG2_HOME_TEMP_PREFIX = "nomi-codex-home-";
 const CODEX_IMG2_DIAGNOSTIC_MAX_AGE_MS = 24 * 60 * 60_000;
 const CODEX_IMG2_TERMINATION_GRACE_MS = 3_000;
-const CODEX_IMG2_IDLE_TIMEOUT_MS = 5 * 60_000;
+// `codex exec --json` may legitimately stay silent for several minutes while
+// image generation is in flight. The hard timeout still bounds every run;
+// an idle timeout is opt-in for diagnostics/tests only.
+const CODEX_IMG2_IDLE_TIMEOUT_MS = 0;
 const CODEX_IMG2_DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const CODEX_IMG2_NETWORK_RETRY_DELAY_MS = 750;
 // A retry can create a second paid image request after the first request's
@@ -28,12 +44,6 @@ const codexRunWaiters: Array<() => void> = [];
 let activeCodexRuns = 0;
 let exitCleanupInstalled = false;
 let lastDiagnosticCleanupAt = 0;
-
-export type CodexImagegenRequest = {
-  prompt: string;
-  kind: string;
-  extras?: Record<string, unknown> | null;
-};
 
 export type CodexImagegenRunResult = {
   outputPath: string;
@@ -52,11 +62,17 @@ export type CodexImagegenTimings = {
   totalMs: number;
   referenceCount: number;
   attemptCount: number;
+  imagegenInvocationCount: number;
+  imagegenInvocationAudit: "verified" | "unobservable";
   cwd: string;
 };
 
-type MaterializedReference = {
-  path: string;
+type MaterializedReference = CodexImagegenPromptReference;
+
+type CollectedReference = {
+  url: string;
+  role?: string;
+  purpose?: string;
 };
 
 function mergedNoProxy(env: NodeJS.ProcessEnv): string {
@@ -248,11 +264,15 @@ export function prepareIsolatedCodexHome(
 }
 
 export function collectCodexReferenceUrls(request: CodexImagegenRequest): string[] {
+  return collectCodexReferences(request).map((reference) => reference.url);
+}
+
+function collectCodexReferences(request: CodexImagegenRequest): CollectedReference[] {
   const extras = request.extras || {};
   const archetypeInput = (
     extras.archetypeInput && typeof extras.archetypeInput === "object" ? extras.archetypeInput : {}
   ) as JsonRecord;
-  return Array.from(
+  const urls = Array.from(
     new Set([
       ...readStringArray(archetypeInput.input_urls),
       ...readStringArray(archetypeInput.reference_image_urls),
@@ -260,15 +280,31 @@ export function collectCodexReferenceUrls(request: CodexImagegenRequest): string
       ...readStringArray(extras.referenceImageUrls),
     ]),
   );
+  const standardUrls = readStringArray(extras.referenceImages);
+  const roles = Array.isArray(extras.referenceImageRoles) ? extras.referenceImageRoles.map((value) => trim(value)) : [];
+  const purposes = Array.isArray(extras.referenceImagePurposes)
+    ? extras.referenceImagePurposes.map((value) => trim(value))
+    : [];
+  const roleByUrl = new Map<string, string>();
+  const purposeByUrl = new Map<string, string>();
+  standardUrls.forEach((url, index) => {
+    if (roles[index]) roleByUrl.set(url, roles[index]);
+    if (purposes[index]) purposeByUrl.set(url, purposes[index]);
+  });
+  return urls.map((url, index) => ({
+    url,
+    ...(roleByUrl.get(url) || roles[index] ? { role: roleByUrl.get(url) || roles[index] } : {}),
+    ...(purposeByUrl.get(url) || purposes[index] ? { purpose: purposeByUrl.get(url) || purposes[index] } : {}),
+  }));
 }
 
-async function materializeReference(url: string, tempDir: string): Promise<MaterializedReference> {
+async function materializeReference(url: string, tempDir: string, index: number): Promise<MaterializedReference> {
   const local = absolutePathFromLocalAssetUrlAnyProject(url);
   if (local) return { path: local };
   if (url.startsWith("data:")) {
     const parsed = parseDataUrl(url);
     const ext = extensionFromMime(parsed.contentType, "png");
-    const out = path.join(tempDir, `reference-${Date.now()}.${ext}`);
+    const out = path.join(tempDir, `reference-${index + 1}.${ext}`);
     fs.writeFileSync(out, parsed.bytes);
     return { path: out };
   }
@@ -280,55 +316,26 @@ async function materializeReference(url: string, tempDir: string): Promise<Mater
     });
     const contentType = fetched.contentType || contentTypeFromPath(url);
     const ext = extensionFromMime(contentType, extensionFromUrl(url) || "png");
-    const out = path.join(tempDir, `reference-${Date.now()}.${ext}`);
+    const out = path.join(tempDir, `reference-${index + 1}.${ext}`);
     fs.writeFileSync(out, fetched.bytes);
     return { path: out };
   }
   throw new Error(`Codex Img2 不支持的参考图地址：${url.slice(0, 120)}`);
 }
 
-async function materializeReferences(urls: readonly string[], tempDir: string): Promise<MaterializedReference[]> {
+async function materializeReferences(
+  references: readonly CollectedReference[],
+  tempDir: string,
+): Promise<MaterializedReference[]> {
   const refs: MaterializedReference[] = [];
-  for (const url of urls) refs.push(await materializeReference(url, tempDir));
+  for (const [index, reference] of references.entries()) {
+    refs.push({
+      ...(await materializeReference(reference.url, tempDir, index)),
+      ...(reference.role ? { role: reference.role } : {}),
+      ...(reference.purpose ? { purpose: reference.purpose } : {}),
+    });
+  }
   return refs;
-}
-
-function describeAspectRatio(value: string): string {
-  if (!value || value === "auto") return "auto";
-  return value;
-}
-
-export function buildCodexImagegenPrompt(
-  request: CodexImagegenRequest,
-  outputPath: string,
-  referenceCount: number,
-): string {
-  const extras = request.extras || {};
-  const archetypeInput = (
-    extras.archetypeInput && typeof extras.archetypeInput === "object" ? extras.archetypeInput : {}
-  ) as JsonRecord;
-  const aspectRatio = describeAspectRatio(firstString(archetypeInput.aspect_ratio, extras.aspect_ratio, "auto"));
-  const resolution = firstString(archetypeInput.resolution, extras.resolution, "1K");
-  const mode =
-    request.kind === "image_edit" || referenceCount > 0
-      ? "edit/reference image generation"
-      : "text-to-image generation";
-  return [
-    "Use the built-in image_gen.imagegen tool only. Do not use the OpenAI API fallback.",
-    "Invoke image_gen.imagegen exactly once. If that call fails, times out, or reports a network/service error, do not retry; return the failure immediately.",
-    "Do not inspect project files, memory, profiles, or other skills. Do not read AGENTS files. Invoke image_gen.imagegen immediately.",
-    `Task: ${mode}.`,
-    referenceCount > 0
-      ? `Use ${referenceCount} attached image file(s) as references/edit targets. Pass every attached local path through referenced_image_paths; do not use num_last_images_to_include.`
-      : "No reference images. This is a brand-new image: omit both referenced_image_paths and num_last_images_to_include entirely. Never pass either field as 0, null, or an empty array.",
-    `Prompt: ${request.prompt}`,
-    `Aspect ratio: ${aspectRatio}. Resolution: ${resolution}.`,
-    "No watermark. Do not add text unless explicitly requested.",
-    `Save/copy the final raster image to: ${outputPath}`,
-    `Reply JSON only: {"ok":true,"path":"${outputPath}"} or {"ok":false,"error":"short reason"}.`,
-  ]
-    .filter(Boolean)
-    .join("\n");
 }
 
 type ExecResult = {
@@ -482,6 +489,20 @@ function isRetryableCodexNetworkFailure(result: ExecResult): boolean {
   );
 }
 
+function reportedCodexImagegenError(lastMessage: string): string {
+  try {
+    const parsed = JSON.parse(lastMessage) as { ok?: boolean; error?: unknown };
+    if (parsed?.ok === false) return trim(parsed.error);
+  } catch {
+    // The final message is not required to be JSON.
+  }
+  return "";
+}
+
+function reportedErrorAllowsOutputRecovery(message: string): boolean {
+  return /(?:saved|written|copied|generated).{0,80}(?:different|another|other).{0,40}(?:path|location)/i.test(message);
+}
+
 function normalizeAttemptCount(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return CODEX_IMG2_MAX_NETWORK_ATTEMPTS;
   return Math.max(1, Math.min(3, Math.floor(value)));
@@ -501,55 +522,16 @@ export function resolveCodexImagegenTimeoutMs(
   return CODEX_IMG2_DEFAULT_TIMEOUT_MS;
 }
 
+export function resolveCodexImagegenIdleTimeoutMs(inputIdleTimeoutMs: number | undefined): number {
+  if (typeof inputIdleTimeoutMs === "number" && Number.isFinite(inputIdleTimeoutMs)) {
+    return Math.max(0, Math.floor(inputIdleTimeoutMs));
+  }
+  return CODEX_IMG2_IDLE_TIMEOUT_MS;
+}
+
 async function waitForNetworkRetry(delayMs: number): Promise<void> {
   if (delayMs <= 0) return;
   await new Promise((resolve) => setTimeout(resolve, delayMs));
-}
-
-const RECOVERABLE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".avif"]);
-
-function recoverGeneratedImageFromCodexHome(
-  codexHome: string,
-  requestedOutputPath: string,
-  generatedAfterMs: number,
-): string | null {
-  const candidates: Array<{ path: string; mtimeMs: number }> = [];
-  const pending: Array<{ dir: string; depth: number }> = [{ dir: codexHome, depth: 0 }];
-  let visited = 0;
-  while (pending.length > 0 && visited < 2_000) {
-    const current = pending.pop();
-    if (!current) break;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(current.dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      visited += 1;
-      const candidatePath = path.join(current.dir, entry.name);
-      if (entry.isDirectory() && current.depth < 6) {
-        pending.push({ dir: candidatePath, depth: current.depth + 1 });
-        continue;
-      }
-      if (!entry.isFile() || !RECOVERABLE_IMAGE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
-      try {
-        const stat = fs.statSync(candidatePath);
-        if (stat.size > 0 && stat.mtimeMs >= generatedAfterMs - 5_000) {
-          candidates.push({ path: candidatePath, mtimeMs: stat.mtimeMs });
-        }
-      } catch {
-        // Ignore files that disappear while Codex is finalizing its output.
-      }
-    }
-  }
-  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  const source = candidates[0]?.path;
-  if (!source) return null;
-  const ext = path.extname(source).toLowerCase() || ".png";
-  const recoveredPath = path.join(path.dirname(requestedOutputPath), `result-recovered${ext}`);
-  fs.copyFileSync(source, recoveredPath);
-  return recoveredPath;
 }
 
 export async function runCodexImageGeneration(input: {
@@ -560,6 +542,7 @@ export async function runCodexImageGeneration(input: {
   terminationGraceMs?: number;
   maxNetworkAttempts?: number;
   networkRetryDelayMs?: number;
+  validateOutput?: (outputPath: string) => Promise<void>;
 }): Promise<CodexImagegenRunResult> {
   const requestedAt = Date.now();
   const runKey = trim(input.request.extras?.idempotencyKey);
@@ -579,10 +562,10 @@ export async function runCodexImageGeneration(input: {
       const stdoutPath = path.join(tempDir, "codex-stdout.jsonl");
       const stderrPath = path.join(tempDir, "codex-stderr.txt");
       const referenceStartedAt = Date.now();
-      const references = await materializeReferences(collectCodexReferenceUrls(input.request), tempDir);
+      const references = await materializeReferences(collectCodexReferences(input.request), tempDir);
       const referenceMs = Date.now() - referenceStartedAt;
       const promptStartedAt = Date.now();
-      const prompt = buildCodexImagegenPrompt(input.request, outputPath, references.length);
+      const prompt = buildCodexImagegenPrompt(input.request, outputPath, references);
       const promptBuildMs = Date.now() - promptStartedAt;
       const isolatedCodexHome = prepareIsolatedCodexHome();
       if (!isolatedCodexHome) {
@@ -622,7 +605,7 @@ export async function runCodexImageGeneration(input: {
       ];
       const execStartedAt = Date.now();
       const timeoutMs = resolveCodexImagegenTimeoutMs(input.timeoutMs);
-      const idleTimeoutMs = Math.max(0, input.idleTimeoutMs ?? CODEX_IMG2_IDLE_TIMEOUT_MS);
+      const idleTimeoutMs = resolveCodexImagegenIdleTimeoutMs(input.idleTimeoutMs);
       const maxNetworkAttempts = normalizeAttemptCount(input.maxNetworkAttempts);
       const networkRetryDelayMs = Math.max(0, input.networkRetryDelayMs ?? CODEX_IMG2_NETWORK_RETRY_DELAY_MS);
       let result: ExecResult | null = null;
@@ -687,10 +670,32 @@ export async function runCodexImageGeneration(input: {
               .join("\n"),
           );
         }
-        const resolvedOutputPath =
-          fs.existsSync(outputPath) && fs.statSync(outputPath).isFile()
-            ? outputPath
-            : recoverGeneratedImageFromCodexHome(isolatedCodexHome.path, outputPath, execStartedAt);
+        const hasRequestedOutput = fs.existsSync(outputPath) && fs.statSync(outputPath).isFile();
+        if (!hasRequestedOutput && isRetryableCodexNetworkFailure(result)) {
+          throw new Error(
+            [
+              "Codex Img2 网络请求失败：ChatGPT 图片服务没有返回图片。本次没有自动重试，避免重复提交或重复计费。",
+              `诊断目录：${tempDir}`,
+              `stderr：${stderrPath}`,
+              `stdout：${stdoutPath}`,
+            ].join("\n"),
+          );
+        }
+        const reportedError = reportedCodexImagegenError(lastMessage);
+        if (!hasRequestedOutput && reportedError && !reportedErrorAllowsOutputRecovery(reportedError)) {
+          throw new Error(
+            [
+              `Codex Img2 生成失败：${reportedError}`,
+              "本次没有自动重试，避免重复提交或重复计费。",
+              `诊断目录：${tempDir}`,
+              `stderr：${stderrPath}`,
+              `stdout：${stdoutPath}`,
+            ].join("\n"),
+          );
+        }
+        const resolvedOutputPath = hasRequestedOutput
+          ? outputPath
+          : await recoverGeneratedImageFromCodexHome(isolatedCodexHome.path, outputPath, execStartedAt);
         if (!resolvedOutputPath || !fs.existsSync(resolvedOutputPath) || !fs.statSync(resolvedOutputPath).isFile()) {
           throw new Error(
             [
@@ -704,6 +709,34 @@ export async function runCodexImageGeneration(input: {
               .join("\n"),
           );
         }
+        const invocationAudit = auditCodexImagegenInvocations(result.stdout, result.stderr);
+        if (invocationAudit.retryDetected || invocationAudit.count > 1) {
+          throw new Error(
+            [
+              invocationAudit.retryDetected
+                ? "Codex Img2 检测到 imagegen 内部重试，已按单次提交策略拒绝结果"
+                : `Codex Img2 检测到 imagegen 调用了 ${invocationAudit.count} 次，已拒绝可能重复计费的结果`,
+              `诊断目录：${tempDir}`,
+              `stderr：${stderrPath}`,
+              `stdout：${stdoutPath}`,
+            ].join("\n"),
+          );
+        }
+        try {
+          await (input.validateOutput || ((candidate) => validateCodexGeneratedImage(candidate, input.request)))(
+            resolvedOutputPath,
+          );
+        } catch (error) {
+          throw new Error(
+            [
+              error instanceof Error ? error.message : String(error),
+              `诊断目录：${tempDir}`,
+              `stderr：${stderrPath}`,
+              `stdout：${stdoutPath}`,
+            ].join("\n"),
+            { cause: error },
+          );
+        }
         const outputVerifyMs = Date.now() - verifyStartedAt;
         const timings: CodexImagegenTimings = {
           queueMs,
@@ -714,6 +747,8 @@ export async function runCodexImageGeneration(input: {
           totalMs: Date.now() - requestedAt,
           referenceCount: references.length,
           attemptCount,
+          imagegenInvocationCount: invocationAudit.count,
+          imagegenInvocationAudit: invocationAudit.status,
           cwd: codexCwd,
         };
         return {

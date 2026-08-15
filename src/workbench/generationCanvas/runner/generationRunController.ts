@@ -149,6 +149,10 @@ function isRetryableGenerationError(error: unknown): boolean {
   if (error instanceof TypeError) return true
   if (!(error instanceof Error)) return false
   const candidate = error as RetryableGenerationError
+  // A Codex image may already have reached imagegen before the local watchdog
+  // fires. Never turn that timeout into another paid submission implicitly.
+  if (candidate.message.includes('Codex Img2 长时间无进展') || candidate.message.includes('Codex Img2 生成超时'))
+    return false
   if (typeof candidate.status === 'number') {
     return (
       candidate.status === 408 ||
@@ -303,6 +307,18 @@ export async function runGenerationNode(
             }),
           {
             signal: controller.signal,
+            onQueueWait: ({ providerKey, queueAhead, activeForProvider, providerLimit }) => {
+              useGenerationCanvasStore.getState().setNodeProgress(id, {
+                runId: run.id,
+                phase: 'queued',
+                message: narrateProgress('queued', {
+                  providerKey,
+                  queueAhead,
+                  activeForProvider,
+                  providerLimit,
+                }),
+              })
+            },
             onRateLimitWait: ({ waitMs }) => {
               useGenerationCanvasStore.getState().setNodeProgress(id, {
                 runId: run.id,
@@ -760,6 +776,7 @@ export function canRunGenerationNode(
   return Boolean(
     references.firstFrameUrl ||
     references.lastFrameUrl ||
+    references.relayFromVideoUrl ||
     references.referenceImages.length > 0 ||
     (archetype && hasArchetypeArrayReferences(meta, archetype)),
   )

@@ -26,7 +26,10 @@ describe('summarizeToolCall — 时间线步骤标题(人话,无 toolName 原文
         recipeId: 'portrait.refine',
         requestedOutputs: 1,
       }),
-    ).toBe('为「镜1」生成「人像真实化」新结果（将产生生成费用）')
+    ).toBe('为「镜1」生成「人像真实化」新结果（将产生费用）')
+    expect(summarizeToolCall('apply_capability_recipe', {
+      sourceNodeId: 'n1', recipeId: 'image.multiview.custom', visionReview: { modelKey: 'vision' },
+    })).toContain('并执行一次视觉复核')
     expect(summarizeToolCall('save_creative_resource', {
       sourceNodeId: 'n1', kind: 'style', label: '柔和胶片',
     })).toBe('把「镜1」保存为风格资源「柔和胶片」')
@@ -89,6 +92,9 @@ describe('describeToolCallDetail — 副标题翻 args(杀 raw id/JSON)', () => 
         requestedOutputs: 3,
       }),
     ).toBe('gpt-image-2 · image-edit · 3 个结果')
+    expect(describeToolCallDetail('apply_capability_recipe', {
+      modelKey: 'gpt-image-2', requestedOutputs: 2, visionReview: { modelKey: 'vision' },
+    })).toBe('gpt-image-2 · 2 个结果 · 视觉复核 1 次')
     expect(describeToolCallDetail('handoff_model3d', {
       targetNodeId: 'director-1', license: 'user-owned',
     })).toBe('追加到 director-1 · 许可 user-owned')

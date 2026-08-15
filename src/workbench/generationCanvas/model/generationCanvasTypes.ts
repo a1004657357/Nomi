@@ -116,6 +116,26 @@ export type GenerationNodeResult = {
   alternatives?: GenerationNodeResult[]
   /** Phase E E11: Complete provenance for reproducibility. */
   provenance?: GenerationProvenance
+  // ── Gate 1 Slice 3：AssetRevision v1 兼容字段（§9.6, §17）──────────────────────
+  // 全 optional，向后兼容。history[] + resultId 是 revision 模型的迁移起点（非平行数组）。
+  // §17.1 不覆盖原则：重新生成创建新条目，旧条目 status 变化但不删。
+  /** 父 revision（派生编辑/重生成时指向来源）。 */
+  parentRevisionId?: string
+  /** Revision 种类（§9.6）。迁移期可空；新生成默认 'generated'。 */
+  revisionKind?: 'imported' | 'generated' | 'edited' | 'blender-preview' | 'exported'
+  /**
+   * Revision 生命周期状态（§17）。迁移期缺省 = 'candidate'（既有条目无此字段时按 candidate 处理）。
+   * selected = 当前选中版本（只是指针，旧条目不删）；rejected = 淘汰；archived = 归档。
+   */
+  revisionStatus?: 'candidate' | 'selected' | 'rejected' | 'archived'
+  /** 内容哈希（结果去重用，§21.5）。 */
+  sha256?: string
+  /** 实际费用（人民币；Provider 未返回时空）。 */
+  costCny?: number
+  /** 关联的验收报告 id（Gate 5 起）。 */
+  evaluationReportId?: string
+  /** prompt 快照（便于 revision 比较，§17.2）。 */
+  promptSnapshot?: string
 }
 
 export type GenerationResultCollectionItem = {

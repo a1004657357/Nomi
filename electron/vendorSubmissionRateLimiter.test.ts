@@ -27,7 +27,7 @@ describe("vendor submission rate policy", () => {
   it("uses the public Agnes free/default start intervals by modality", () => {
     expect(vendorSubmissionRatePolicy("agnes", "video")).toMatchObject({
       rateKey: "agnes:video",
-      minimumStartIntervalMs: 60_000,
+      minimumStartIntervalMs: 75_000,
     });
     expect(vendorSubmissionRatePolicy("agnes", "image")).toMatchObject({
       rateKey: "agnes:image",
@@ -47,8 +47,8 @@ describe("vendor submission rate policy", () => {
     const second = reserveVendorSubmissionSlot(first.nextStartByRateKey, policy!, 1_000);
 
     expect(first).toMatchObject({ startAt: 1_000, waitMs: 0 });
-    expect(second).toMatchObject({ startAt: 61_000, waitMs: 60_000 });
-    expect(second.nextStartByRateKey["agnes:video"]).toBe(121_000);
+    expect(second).toMatchObject({ startAt: 76_000, waitMs: 75_000 });
+    expect(second.nextStartByRateKey["agnes:video"]).toBe(151_000);
   });
 });
 
@@ -71,15 +71,15 @@ describe("persistent vendor submission limiter", () => {
     await firstProcess.wait("agnes", "video");
     const second = await secondProcess.wait("agnes", "video");
 
-    expect(waits).toEqual([60_000]);
+    expect(waits).toEqual([75_000]);
     expect(second).toMatchObject({
       rateKey: "agnes:video",
-      waitMs: 60_000,
-      minimumStartIntervalMs: 60_000,
+      waitMs: 75_000,
+      minimumStartIntervalMs: 75_000,
     });
     expect(JSON.parse(fs.readFileSync(ledgerPath, "utf8"))).toMatchObject({
       version: 1,
-      nextStartByRateKey: { "agnes:video": 130_000 },
+      nextStartByRateKey: { "agnes:video": 160_000 },
     });
   });
 

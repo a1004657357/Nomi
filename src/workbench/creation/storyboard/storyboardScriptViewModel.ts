@@ -52,8 +52,19 @@ function hasResult(node: GenerationCanvasNode | null | undefined): boolean {
   return Boolean(generationResultUrl(node?.result))
 }
 
+function resultCreatedAt(node: GenerationCanvasNode): number {
+  const createdAt = Number(node.result?.createdAt)
+  if (Number.isFinite(createdAt)) return createdAt
+  const provenanceAt = Number(node.result?.provenance?.timestamp)
+  return Number.isFinite(provenanceAt) ? provenanceAt : 0
+}
+
 function pickNodeWithResult(nodes: GenerationCanvasNode[]): GenerationCanvasNode | null {
-  return nodes.find(hasResult) ?? nodes[0] ?? null
+  const generated = nodes.filter(hasResult)
+  if (generated.length === 0) return nodes[0] ?? null
+  return generated.reduce((latest, candidate) => (
+    resultCreatedAt(candidate) > resultCreatedAt(latest) ? candidate : latest
+  ))
 }
 
 function rowStatus(nodes: readonly GenerationCanvasNode[]): StoryboardScriptRow['status'] {
@@ -96,6 +107,11 @@ function nodeShotIndexForPlan(
   planShotByIndex: ReadonlyMap<number, PlanShot>,
   nodes: readonly GenerationCanvasNode[],
 ): number | null {
+  if (node.regeneratedFrom) {
+    const source = nodes.find((candidate) => candidate.id === node.regeneratedFrom)
+    const sourceTitleIndex = source ? nodeTitleShotIndex(source) : null
+    if (sourceTitleIndex !== null && planShotByIndex.has(sourceTitleIndex)) return sourceTitleIndex
+  }
   const titleIndex = nodeTitleShotIndex(node)
   if (titleIndex !== null) {
     const shot = planShotByIndex.get(titleIndex)

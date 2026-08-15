@@ -401,6 +401,8 @@ describe("deriveVendorKeyFromBaseUrl", () => {
     expect(deriveVendorKeyFromBaseUrl("http://localhost:11434/v1")).toBe("local-11434");
     expect(deriveVendorKeyFromBaseUrl("http://127.0.0.1:8188")).toBe("local-8188");
     expect(deriveVendorKeyFromBaseUrl("https://api.openai.com/v1")).toBe("api-openai-com");
+    expect(deriveVendorKeyFromBaseUrl("https://ark.cn-beijing.volces.com/api/plan/v3")).toBe("volcengine-agent-plan");
+    expect(deriveVendorKeyFromBaseUrl("https://api.kimi.com/coding/v1")).toBe("kimi-code");
     expect(deriveVendorKeyFromBaseUrl("not a url")).toBe("");
   });
 });

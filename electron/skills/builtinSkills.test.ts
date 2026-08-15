@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { parseSkillManifest } from "./skillManifestSchema";
 import { orderPlaybookStages } from "./playbookOrchestrator";
+import { canvasToolNames } from "../ai/canvasTools";
+import { documentToolNames } from "../ai/documentTools";
+import { vibingDirectorToolNames } from "../ai/vibingDirectorTools";
+import { cinematicDirectorToolNames } from "../ai/cinematicDirectorTools";
 
 // 内置 skill 回归门：仓库里 skills/<name>/skill.json 一旦写坏（schema/JSON）这里就红，
 // 防「改坏内置包没人发现」。直接读磁盘（vitest cwd = 仓库根），不经 electron app。
@@ -22,6 +26,8 @@ describe("built-in skill packs", () => {
 
   it("finds at least the brand-promo playbook + legacy packs", () => {
     expect(dirs).toContain("brand-promo");
+    expect(dirs).toContain("workbench-fixation-planner");
+    expect(dirs).toContain("workbench-vibing-director");
     expect(dirs.length).toBeGreaterThanOrEqual(4);
   });
 
@@ -29,6 +35,22 @@ describe("built-in skill packs", () => {
     const raw = JSON.parse(fs.readFileSync(path.join(SKILLS_DIR, dir, "skill.json"), "utf8"));
     const result = parseSkillManifest(raw);
     expect(result.ok, result.ok ? "" : (result as { error: string }).error).toBe(true);
+  });
+
+  it.each(dirs)("%s only declares tools registered by the Agent harness", (dir) => {
+    const raw = JSON.parse(fs.readFileSync(path.join(SKILLS_DIR, dir, "skill.json"), "utf8"));
+    const parsed = parseSkillManifest(raw);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const registered = new Set<string>([
+      ...canvasToolNames,
+      ...documentToolNames,
+      ...vibingDirectorToolNames,
+      ...cinematicDirectorToolNames,
+    ]);
+    for (const tool of parsed.manifest.tools) expect(registered.has(tool), tool).toBe(true);
+    for (const stage of parsed.manifest.stages ?? []) {
+      for (const tool of stage.tools) expect(registered.has(tool), `${stage.id}:${tool}`).toBe(true);
+    }
   });
 
   it("brand-promo is a 4-stage playbook that topo-sorts cleanly", () => {

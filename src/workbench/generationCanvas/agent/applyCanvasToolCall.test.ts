@@ -11,6 +11,10 @@ vi.mock('../runner/capabilityRecipeController', () => ({
   }),
 }))
 vi.mock('../../api/taskApi', () => ({ mintSpendGrant: vi.fn(async () => 'grant-1') }))
+vi.mock('../quality/visionReviewModels', () => ({ listVisionReviewModelOptions: vi.fn(async () => []) }))
+vi.mock('../quality/multiviewSubjectVisionReviewService', () => ({
+  createWorkbenchMultiviewSubjectComparator: vi.fn(() => vi.fn()),
+}))
 vi.mock('./model3dHandoff', () => ({
   handoffModel3dNode: vi.fn(async () => ({ targetNodeId: 'director-node', objectId: 'object-1', createdTarget: true })),
 }))
@@ -26,12 +30,16 @@ import { listAvailableModelsForAgent, type AgentModelEntry } from './availableMo
 import { runCapabilityRecipeOnNode } from '../runner/capabilityRecipeController'
 import { mintSpendGrant } from '../../api/taskApi'
 import { handoffModel3dNode } from './model3dHandoff'
+import { listVisionReviewModelOptions } from '../quality/visionReviewModels'
+import { createWorkbenchMultiviewSubjectComparator } from '../quality/multiviewSubjectVisionReviewService'
 
 const mockedGetDesktopBridge = vi.mocked(getDesktopBridge)
 const mockedListAvailableModels = vi.mocked(listAvailableModelsForAgent)
 const mockedRunCapabilityRecipe = vi.mocked(runCapabilityRecipeOnNode)
 const mockedMintSpendGrant = vi.mocked(mintSpendGrant)
 const mockedHandoffModel3d = vi.mocked(handoffModel3dNode)
+const mockedListVisionReviewModels = vi.mocked(listVisionReviewModelOptions)
+const mockedCreateVisionComparator = vi.mocked(createWorkbenchMultiviewSubjectComparator)
 
 function resetCanvas() {
   const state = useGenerationCanvasStore.getState()
@@ -43,6 +51,9 @@ function resetCanvas() {
   mockedRunCapabilityRecipe.mockClear()
   mockedMintSpendGrant.mockClear()
   mockedHandoffModel3d.mockClear()
+  mockedListVisionReviewModels.mockReset()
+  mockedListVisionReviewModels.mockResolvedValue([])
+  mockedCreateVisionComparator.mockClear()
 }
 
 const capabilityModels: AgentModelEntry[] = [
@@ -681,6 +692,22 @@ describe('applyCanvasToolCall capability recipes', () => {
     }))
   })
 
+  it('lists connected image-capable text models for optional batch review', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+    mockedListVisionReviewModels.mockResolvedValue([{
+      id: '["relay","qwen-vl-plus"]',
+      vendorKey: 'relay',
+      modelKey: 'qwen-vl-plus',
+      label: 'Qwen VL Plus · Relay',
+    }])
+
+    const result = await applyCanvasToolCall('list_capability_recipes', {}) as {
+      visionReviewModels: Array<{ modelKey: string }>
+    }
+
+    expect(result.visionReviewModels).toEqual([expect.objectContaining({ modelKey: 'qwen-vl-plus' })])
+  })
+
   it('lists compact reusable creative resources alongside recipes', async () => {
     const created = await applyCanvasToolCall('create_canvas_nodes', {
       nodes: [{ clientId: 'style-source', kind: 'image', title: '风格样张', prompt: 'soft film' }],
@@ -750,6 +777,80 @@ describe('applyCanvasToolCall capability recipes', () => {
     expect(options.concurrency).toBe(2)
     await expect(options.grantFactory?.('new-node', 2)).resolves.toBe('grant-1')
     expect(mockedMintSpendGrant).toHaveBeenCalledWith(['new-node'], 2)
+  })
+
+  it('attaches one validated visual comparator to a multiview batch', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+    mockedListVisionReviewModels.mockResolvedValue([{
+      id: '["relay","qwen-vl-plus"]',
+      vendorKey: 'relay',
+      modelKey: 'qwen-vl-plus',
+      label: 'Qwen VL Plus · Relay',
+    }])
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'review-source', kind: 'image', title: '人物原图', prompt: 'same person' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+    const sourceNodeId = created.clientIdToNodeId['review-source']
+    useGenerationCanvasStore.getState().addNodeResult(sourceNodeId, {
+      id: 'source-result', type: 'image', url: 'nomi-local://source.png', createdAt: 1,
+    })
+
+    const result = await applyCanvasToolCall('apply_capability_recipe', {
+      sourceNodeId,
+      recipeId: 'image.multiview.custom',
+      modelKey: 'gpt-image-2',
+      modeId: 'i2i',
+      requestedOutputs: 2,
+      visionReview: { vendorKey: 'relay', modelKey: 'qwen-vl-plus' },
+    }) as { visionReview?: { calls: number } }
+
+    const comparator = mockedCreateVisionComparator.mock.results[0]?.value
+    expect(mockedCreateVisionComparator).toHaveBeenCalledWith(expect.objectContaining({
+      model: expect.objectContaining({ modelKey: 'qwen-vl-plus' }),
+      sessionId: expect.stringMatching(/^recipe-run-/),
+    }))
+    expect(mockedRunCapabilityRecipe.mock.calls[0]?.[2].compareMultiviewSubjects).toBe(comparator)
+    expect(result.visionReview).toEqual(expect.objectContaining({ calls: 1 }))
+  })
+
+  it('rejects unavailable review models before starting generation', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'missing-review-source', kind: 'image', title: '人物原图', prompt: 'same person' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+    const sourceNodeId = created.clientIdToNodeId['missing-review-source']
+    useGenerationCanvasStore.getState().addNodeResult(sourceNodeId, {
+      id: 'source-result', type: 'image', url: 'nomi-local://source.png', createdAt: 1,
+    })
+
+    await expect(applyCanvasToolCall('apply_capability_recipe', {
+      sourceNodeId,
+      recipeId: 'image.multiview.custom',
+      modelKey: 'gpt-image-2',
+      modeId: 'i2i',
+      visionReview: { vendorKey: 'missing', modelKey: 'vision' },
+    })).rejects.toThrow('未连接或不支持图片输入')
+    expect(mockedRunCapabilityRecipe).not.toHaveBeenCalled()
+  })
+
+  it('rejects automatic multiview review on unrelated recipes', async () => {
+    mockedListAvailableModels.mockResolvedValue(capabilityModels)
+    const created = await applyCanvasToolCall('create_canvas_nodes', {
+      nodes: [{ clientId: 'portrait-review-source', kind: 'image', title: '人物原图', prompt: 'same person' }],
+    }) as { clientIdToNodeId: Record<string, string> }
+    const sourceNodeId = created.clientIdToNodeId['portrait-review-source']
+    useGenerationCanvasStore.getState().addNodeResult(sourceNodeId, {
+      id: 'source-result', type: 'image', url: 'nomi-local://source.png', createdAt: 1,
+    })
+
+    await expect(applyCanvasToolCall('apply_capability_recipe', {
+      sourceNodeId,
+      recipeId: 'portrait.refine',
+      modelKey: 'gpt-image-2',
+      modeId: 'i2i',
+      visionReview: { vendorKey: 'relay', modelKey: 'qwen-vl-plus' },
+    })).rejects.toThrow('只支持九宫格或自定义机位')
+    expect(mockedRunCapabilityRecipe).not.toHaveBeenCalled()
   })
 
   it('expands an Agent-requested mood matrix to 25 ordered tasks with bounded concurrency', async () => {

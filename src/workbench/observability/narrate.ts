@@ -29,10 +29,21 @@ export type ProgressNarrationContext = {
   totalNodes?: number
   /** comfyui-queued：前面还有几个任务。 */
   queueAhead?: number
+  providerKey?: string
+  activeForProvider?: number
+  providerLimit?: number
 }
 
 const NARRATE_PROGRESS: Record<GenerationProgressPhase, (ctx: ProgressNarrationContext) => string> = {
-  queued: () => i18n.t('generationCommon.observability.progress.queued'),
+  queued: (ctx) =>
+    typeof ctx.queueAhead === 'number' && ctx.providerKey && ctx.providerLimit
+      ? i18n.t('generationCommon.observability.progress.providerQueued', {
+          provider: ctx.providerKey,
+          active: ctx.activeForProvider || 0,
+          limit: ctx.providerLimit,
+          count: ctx.queueAhead,
+        })
+      : i18n.t('generationCommon.observability.progress.queued'),
   resolving: () => i18n.t('generationCommon.observability.progress.resolving'),
   requesting: () => i18n.t('generationCommon.observability.progress.requesting'),
   waiting: () => i18n.t('generationCommon.observability.progress.waiting'),
@@ -91,6 +102,8 @@ export type GenerationErrorKind =
   | 'auth'
   | 'balance'
   | 'quota'
+  | 'codex-timeout'
+  | 'codex-network'
   | 'poll-timeout'
   | 'network'
   | 'model-config'
@@ -113,6 +126,8 @@ const ERROR_KEY_BY_KIND: Record<GenerationErrorKind, string> = {
   auth: 'auth',
   balance: 'balance',
   quota: 'quota',
+  'codex-timeout': 'codexTimeout',
+  'codex-network': 'codexNetwork',
   'poll-timeout': 'pollTimeout',
   network: 'network',
   'model-config': 'modelConfig',
@@ -173,6 +188,8 @@ const ACTION_BY_KIND: Record<GenerationErrorKind, GenerationErrorAction> = {
   // 「一劳永逸」那条（接一个自带上传通道的服务商）写在 hint 里，不占按钮。
   'asset-upload-failed': 'retry',
   quota: 'retry',
+  'codex-timeout': 'retry',
+  'codex-network': 'retry',
   'poll-timeout': 'retry',
   network: 'retry',
   server: 'retry',

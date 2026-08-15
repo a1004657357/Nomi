@@ -75,12 +75,17 @@ export const createCanvasRunActions: CanvasSliceCreator<CanvasRunActions> = (set
           return
         }
         const nextProgress = createProgress(progress, node.runs?.[0]?.id)
+        const waitingForProviderSlot = nextProgress.phase === 'queued' || nextProgress.phase === 'rate-limited'
         const runs = node.runs?.length
           ? [
               mergeRunRecord(
                 node.runs[0],
                 {
-                  status: node.runs[0].status === 'queued' ? 'running' : node.runs[0].status,
+                  status: waitingForProviderSlot
+                    ? 'queued'
+                    : node.runs[0].status === 'queued'
+                      ? 'running'
+                      : node.runs[0].status,
                   progress: nextProgress,
                   taskId: nextProgress.taskId ?? node.runs[0].taskId,
                   taskKind: nextProgress.taskKind ?? node.runs[0].taskKind,
@@ -90,7 +95,11 @@ export const createCanvasRunActions: CanvasSliceCreator<CanvasRunActions> = (set
               ...node.runs.slice(1),
             ]
           : node.runs
-        node.status = node.status === 'queued' ? 'running' : node.status || 'running'
+        node.status = waitingForProviderSlot
+          ? 'queued'
+          : node.status === 'queued'
+            ? 'running'
+            : node.status || 'running'
         node.error = undefined
         node.progress = nextProgress
         node.runs = runs

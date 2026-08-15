@@ -8,7 +8,18 @@
     "batch_update_storyboard_shots",
     "create_canvas_nodes",
     "connect_canvas_edges",
-    "set_node_prompt"
+    "set_node_prompt",
+    "delete_canvas_nodes",
+    "run_generation_batch",
+    "attach_external_image_to_node",
+    "arrange_storyboard_to_timeline",
+    "tidy_canvas",
+    "create_staging_reference",
+    "create_camera_move",
+    "list_capability_recipes",
+    "apply_capability_recipe",
+    "save_creative_resource",
+    "handoff_model3d"
   ],
   "requiredProviders": [
     "text",

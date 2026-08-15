@@ -74,7 +74,13 @@ describe('generationNodeExecutor connected text prompt integration', () => {
 
     expect(runWorkbenchTaskByVendor).toHaveBeenCalledOnce()
     const [, request] = runWorkbenchTaskByVendor.mock.calls[0] as [string, TaskRequestDto]
-    expect(request.prompt).toBe('base prompt\n\nconnected story context')
+    expect(request.prompt).toContain('base prompt\n\nconnected story context')
+    if (kind === 'video') {
+      expect(request.prompt).toContain('【Nomi 视频编译约束】')
+      expect(request.prompt).toContain('不是照片动效')
+    } else {
+      expect(request.prompt).toBe('base prompt\n\nconnected story context')
+    }
     expect(target.prompt).toBe('base prompt')
   })
 })

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GenerationResultCollection } from '../model/generationCanvasTypes'
-import { reviewMultiviewCollectionWithVisionModel } from './multiviewSubjectVisionReviewService'
+import {
+  createWorkbenchMultiviewSubjectComparator,
+  reviewMultiviewCollectionWithVisionModel,
+} from './multiviewSubjectVisionReviewService'
 
 function collection(local = true): GenerationResultCollection {
   const url = (id: string) => local
@@ -54,6 +57,36 @@ function collection(local = true): GenerationResultCollection {
 }
 
 describe('reviewMultiviewCollectionWithVisionModel', () => {
+  it('builds one reusable batch comparator for the generation pipeline', async () => {
+    const clearSession = vi.fn(async () => {})
+    const send = vi.fn(async () => ({
+      text: JSON.stringify({
+        sourceSubjectDetected: true,
+        items: [{ itemId: 'front', outputSubjectDetected: true, sameSubject: true }],
+      }),
+      finishReason: 'stop',
+    }))
+    const comparator = createWorkbenchMultiviewSubjectComparator({
+      model: { vendorKey: 'relay', modelKey: 'qwen-vl-plus', label: 'Qwen VL Plus' },
+      sessionId: 'run-1',
+      projectId: 'project-1',
+      deps: { clearSession, send },
+    })
+
+    const result = await comparator({
+      source: { id: 'source', type: 'image', url: 'nomi-local://source.png', createdAt: 1 },
+      outputs: [{
+        itemId: 'front', label: '正面',
+        result: { id: 'front', type: 'image', url: 'nomi-local://front.png', createdAt: 1 },
+      }],
+    })
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(clearSession).toHaveBeenCalledWith('nomi:multiview-vision-review:project-1:run-1')
+    expect(send.mock.calls[0]?.[0].attachments).toHaveLength(2)
+    expect(result).toMatchObject({ evaluator: 'agent-vision-v1:relay/qwen-vl-plus' })
+  })
+
   it('uses one isolated multimodal chat call and records usage in the report', async () => {
     const clearSession = vi.fn(async () => {})
     const send = vi.fn(async () => ({
