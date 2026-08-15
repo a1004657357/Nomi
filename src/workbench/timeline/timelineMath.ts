@@ -186,6 +186,15 @@ export function computeTimelineDuration(timeline: TimelineState): number {
   return Math.max(trackMax, textMax)
 }
 
+/**
+ * 时间轴是否已有「画面」片段（图 / 视频轨，不含配乐 / 字幕）。
+ * 空态「一键拼成初稿」提示行的门控真相源：只要画面轨还空着就算「初稿未拼」，
+ * 光有配乐 / 字幕不算 —— 不被音频 / 文字 clip 迷惑（那不是成片画面）。
+ */
+export function timelineHasVisualClips(timeline: TimelineState): boolean {
+  return (timeline.tracks ?? []).some((track) => track.type !== 'audio' && track.clips.length > 0)
+}
+
 export function resolveActiveClipsAtFrame(timeline: TimelineState, frame: number): TimelineClip[] {
   const targetFrame = toFiniteNonNegativeInteger(frame, 0)
   return timeline.tracks.flatMap((track) =>

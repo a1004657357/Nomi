@@ -1,53 +1,57 @@
-// 框选 marquee（B2，2026-06-14）。空白处左键拖拽画选框，抬起按 AABB 选中当前分类节点。
-// 与平移分工：平移走 双指/空格/中键/右键（useCanvasViewportGestures，allowLeftDragPan=false），
-// 故左键拖空白只会进这里，二者不抢。纯点击空白（未拖动）= 清空选择（原 pan 路径让出后由此接管）。
+// 框选 marquee：**Shift + 左键拖**才进（裸左键是平移，2026-08-08 用户拍板）。
+// 既然入口只有 Shift，框选就恒「追加」——Shift 在本产品里到处都是「多选修饰键」
+// （Shift+点节点=加选），同一个键不该在这里换成另一种意思。要只框这一批：先点空白清空。
+// 是否该进框选由 useCanvasPointerInteractions 一处仲裁（canvasPointerGestureModel），这里只管拉框本身。
 import React from 'react'
-
-const MARQUEE_THRESHOLD = 4
+import { canvasDragExceededThreshold } from './canvasPointerGestureModel'
 
 type Offset = { x: number; y: number }
 
 export type MarqueeRect = { left: number; top: number; width: number; height: number }
 
 type UseMarqueeSelectionArgs = {
-  readOnly: boolean
   stageRef: React.RefObject<HTMLDivElement>
   offsetRef: React.MutableRefObject<Offset>
   zoomRef: React.MutableRefObject<number>
   activeCategoryId: string
   selectNodesInRect: (rect: { x1: number; y1: number; x2: number; y2: number }, categoryId?: string, additive?: boolean) => void
-  clearSelection: () => void
 }
 
 export type MarqueeSelection = {
   marqueeRect: MarqueeRect | null
+  cancel: () => void
   handlePointerDown: (event: React.PointerEvent<HTMLDivElement>) => void
   handlePointerMove: (event: React.PointerEvent<HTMLDivElement>) => void
   handlePointerUp: (event: React.PointerEvent<HTMLDivElement>) => void
   handlePointerCancel: (event: React.PointerEvent<HTMLDivElement>) => void
-  cancel: () => void
 }
 
-const EMPTY_TARGET_GUARD =
-  '.generation-canvas-v2-node, .generation-canvas-v2-toolbar, .generation-canvas-v2__zoom-bar, .generation-canvas-v2__minimap, .generation-canvas-v2__selection-toolbar, .generation-canvas-v2__edge-hit, .generation-canvas-v2__edge-cut, button, input, textarea, select, [role="menu"], [role="menuitem"]'
-
 export function useMarqueeSelection({
-  readOnly,
   stageRef,
   offsetRef,
   zoomRef,
   activeCategoryId,
   selectNodesInRect,
-  clearSelection,
 }: UseMarqueeSelectionArgs): MarqueeSelection {
-  const startRef = React.useRef<{
-    pointerId: number
-    clientX: number
-    clientY: number
-    additive: boolean
-    moved: boolean
-  } | null>(null)
+  const startRef = React.useRef<{ clientX: number; clientY: number; moved: boolean } | null>(null)
   const [marqueeRect, setMarqueeRect] = React.useState<MarqueeRect | null>(null)
+
+  const cancelMarquee = React.useCallback(() => {
+    startRef.current = null
+    setMarqueeRect(null)
+  }, [])
+
+  React.useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cancelMarquee()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('blur', cancelMarquee)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('blur', cancelMarquee)
+    }
+  }, [cancelMarquee])
 
   const computeStageRect = React.useCallback((clientX: number, clientY: number) => {
     const start = startRef.current
@@ -62,25 +66,16 @@ export function useMarqueeSelection({
   }, [stageRef])
 
   const handlePointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (readOnly || event.button !== 0) return
-    const target = event.target instanceof Element ? event.target : null
-    if (target?.closest(EMPTY_TARGET_GUARD)) return
-    startRef.current = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      additive: event.shiftKey,
-      moved: false,
-    }
+    startRef.current = { clientX: event.clientX, clientY: event.clientY, moved: false }
     setMarqueeRect(null)
     try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 无活动指针时忽略 */ }
-  }, [readOnly])
+  }, [])
 
   const handlePointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const start = startRef.current
     if (!start) return
     if (!start.moved) {
-      if (Math.abs(event.clientX - start.clientX) < MARQUEE_THRESHOLD && Math.abs(event.clientY - start.clientY) < MARQUEE_THRESHOLD) return
+      if (!canvasDragExceededThreshold(start.clientX, start.clientY, event.clientX, event.clientY)) return
       start.moved = true
     }
     setMarqueeRect(computeStageRect(event.clientX, event.clientY))
@@ -99,11 +94,9 @@ export function useMarqueeSelection({
     ) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
-    if (!start.moved || !stage) {
-      // 纯点击空白：清空选择（除非 Shift 追加意图）
-      if (!start.additive) clearSelection()
-      return
-    }
+    // Shift+点空白（没拉出框）：Shift 是「加选」，加了个空集合 = 保持现有选区不动。
+    if (!start.moved) return
+    if (!stage) return
     const bounds = stage.getBoundingClientRect()
     const z = zoomRef.current || 1
     const toCanvas = (clientX: number, clientY: number) => ({
@@ -112,33 +105,19 @@ export function useMarqueeSelection({
     })
     const a = toCanvas(start.clientX, start.clientY)
     const b = toCanvas(event.clientX, event.clientY)
-    selectNodesInRect({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, activeCategoryId, start.additive)
-  }, [activeCategoryId, clearSelection, offsetRef, selectNodesInRect, stageRef, zoomRef])
-
-  const finishCancelledMarquee = React.useCallback((event: React.PointerEvent<HTMLDivElement> | null) => {
-    const start = startRef.current
-    startRef.current = null
-    setMarqueeRect(null)
-    const target = event?.currentTarget ?? stageRef.current
-    const pointerId = event?.pointerId ?? start?.pointerId
-    if (
-      target &&
-      pointerId !== undefined &&
-      typeof target.hasPointerCapture === 'function' &&
-      typeof target.releasePointerCapture === 'function' &&
-      target.hasPointerCapture(pointerId)
-    ) {
-      target.releasePointerCapture(pointerId)
-    }
-  }, [stageRef])
+    selectNodesInRect({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, activeCategoryId, true)
+  }, [activeCategoryId, offsetRef, selectNodesInRect, stageRef, zoomRef])
 
   const handlePointerCancel = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    finishCancelledMarquee(event)
-  }, [finishCancelledMarquee])
+    cancelMarquee()
+    if (
+      typeof event.currentTarget.hasPointerCapture === 'function' &&
+      typeof event.currentTarget.releasePointerCapture === 'function' &&
+      event.currentTarget.hasPointerCapture(event.pointerId)
+    ) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [cancelMarquee])
 
-  const cancel = React.useCallback(() => {
-    finishCancelledMarquee(null)
-  }, [finishCancelledMarquee])
-
-  return { marqueeRect, handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel, cancel }
+  return { marqueeRect, cancel: cancelMarquee, handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel }
 }

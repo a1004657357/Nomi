@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-07-17",
+  "reviewedAt": "2026-08-15",
   "assets": [
     {
       "id": "scene3d-nomi-mannequin",
@@ -30,6 +30,35 @@
         "note": "First-party generated artifacts are redistributed under the repository license. Repository switched Apache-2.0 → AGPL-3.0-only on 2026-08-01 (docs/audit/2026-08-01-upstream-45-compatibility-license-audit.md); this record was updated 2026-08-02 to reconcile the prior stale Apache-2.0 label (Gate 7 P1 fix)."
       },
       "releasePolicy": "allowed"
+    },
+    {
+      "id": "scene3d-ue-mannequin-retopology-spike",
+      "distribution": "bundled",
+      "paths": [
+        "src/assets/ue-mannequin-retopology.glb",
+        "src/assets/ue-mannequin-retopology.license.txt"
+      ],
+      "sha256": {
+        "src/assets/ue-mannequin-retopology.glb": "5622c6150467fb96ff70d30eb3393286131c8523feaa3b78f80515d499cb1a14",
+        "src/assets/ue-mannequin-retopology.license.txt": "26b0b701ff1feaa5dccde23ae249681bd350ff219d773b8f717359810da4729b"
+      },
+      "source": {
+        "name": "UE Mannequin (Retopology) by William Luque",
+        "url": "https://sketchfab.com/3d-models/ue-mannequin-retopology-5394d9f894374a2ab7c57a21929ce4c2",
+        "evidence": [
+          "the downloaded model includes a Sketchfab Standard license notice beside the GLB",
+          "the asset is used only by the opt-in Scene3D UE mannequin evaluation path",
+          "redistribution clearance for shipping the original GLB has not been independently confirmed"
+        ]
+      },
+      "license": {
+        "name": "Sketchfab Standard License",
+        "url": "https://sketchfab.com/licenses",
+        "projectUse": "allowed",
+        "redistribution": "requires-review",
+        "note": "Local evaluation is allowed by the supplied notice. Release redistribution remains blocked until the original model terms are reviewed and documented."
+      },
+      "releasePolicy": "blocked"
     },
     {
       "id": "seedance2-chrome-extension",

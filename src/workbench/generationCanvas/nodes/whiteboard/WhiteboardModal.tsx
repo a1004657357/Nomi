@@ -1,7 +1,7 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { IconBrush, IconX } from '@tabler/icons-react'
+import { IconBrush } from '@tabler/icons-react'
 import { cn } from '../../../../utils/cn'
 import { WorkbenchButton } from '../../../../design'
 import { toast } from '../../../../ui/toast'
@@ -328,13 +328,16 @@ export default function WhiteboardModal({
             {nodeTitle || sourceNode?.title || t('generationCommon.whiteboard.title')}
           </div>
         </div>
+        {/* 「完成」而非裸 X：关闭即自动保存（handleClose），用户反馈「编辑之后不知道怎么办」——
+            文字明示出口语义（2026-08-07 飞书反馈）。 */}
         <WorkbenchButton
-          className="h-8 min-h-8 w-8 rounded-nomi-sm p-0"
-          title={t('generationCommon.whiteboard.close')}
-          aria-label={t('generationCommon.whiteboard.closeAria')}
+          variant="primary"
+          className="h-8 min-h-8 rounded-nomi-sm px-3"
+          title={t('generationCommon.whiteboard.doneAria')}
+          aria-label={t('generationCommon.whiteboard.doneAria')}
           onClick={handleClose}
         >
-          <IconX size={16} />
+          {t('generationCommon.whiteboard.done')}
         </WorkbenchButton>
       </header>
 

@@ -2,8 +2,8 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  /* Figma 标准：空白左键拖=框选，故默认光标；平移走空格/中键/右键/双指 */
-  cursor: default;
+  /* 空白左键拖=平移（grab→grabbing 是「拖我就能移动」的可见承诺）；Shift+左键拖=框选 */
+  cursor: grab;
   user-select: none;
   background:
     radial-gradient(circle, var(--nomi-ink-20) 1px, transparent 1.2px),
@@ -23,7 +23,6 @@
    关闭后由 NodeMediaPreviewDialog 清掉 data 属性，原布局与交互自动恢复。 */
 .workbench-generation[data-media-preview-open='true'] .generation-canvas-v2-toolbar,
 .workbench-generation[data-media-preview-open='true'] .generation-canvas-v2__navigation-stack,
-.workbench-generation[data-media-preview-open='true'] .generation-canvas-v2__gesture-hint,
 .workbench-generation[data-media-preview-open='true'] .generation-canvas-v2__selection-toolbar,
 .workbench-generation[data-media-preview-open='true'] .generation-canvas-v2-node__composer,
 .workbench-generation[data-media-preview-open='true'] .generation-canvas-v2-node [role='toolbar'],
@@ -265,47 +264,15 @@
 }
 
 /* 点亮：hover 该边 / 该边属于聚焦（单选）节点 / 该边被选中。 */
-.generation-canvas-v2__edge:hover .generation-canvas-v2__edge-path,
+.generation-canvas-v2__edge[data-hovered='true'] .generation-canvas-v2__edge-path,
 .generation-canvas-v2__edge[data-incident='true'] .generation-canvas-v2__edge-path,
 .generation-canvas-v2__edge[data-active='true'] .generation-canvas-v2__edge-path {
   stroke-opacity: 1;
 }
 
-.generation-canvas-v2__edge:hover .generation-canvas-v2__edge-dot,
+.generation-canvas-v2__edge[data-hovered='true'] .generation-canvas-v2__edge-dot,
 .generation-canvas-v2__edge[data-incident='true'] .generation-canvas-v2__edge-dot,
 .generation-canvas-v2__edge[data-active='true'] .generation-canvas-v2__edge-dot {
-  opacity: 1;
-}
-
-/* 参考类型小标签（仅 typed mode 渲染；反缩放恒定字号见 TSX 的 scale(1/zoom)）。 */
-.generation-canvas-v2__edge-tag-pill {
-  display: inline-flex;
-  align-items: center;
-  height: 17px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--nomi-accent-soft);
-  color: var(--nomi-accent);
-  font-size: 10.5px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.generation-canvas-v2__edge-tag {
-  opacity: 1;
-  pointer-events: none;
-  transition: opacity 140ms ease;
-}
-
-/* 密集区（同 target 有标签边超阈值）默认收起标签，hover 该边 / 边激活时才显——避免标签糊一片。 */
-.generation-canvas-v2__edge[data-dense='true'] .generation-canvas-v2__edge-tag {
-  opacity: 0;
-}
-
-.generation-canvas-v2__edge:hover .generation-canvas-v2__edge-tag,
-.generation-canvas-v2__edge[data-incident='true'] .generation-canvas-v2__edge-tag,
-.generation-canvas-v2__edge[data-active='true'] .generation-canvas-v2__edge-tag {
   opacity: 1;
 }
 

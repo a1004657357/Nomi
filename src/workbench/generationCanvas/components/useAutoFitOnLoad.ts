@@ -4,6 +4,21 @@ import { getNodeSize } from './generationCanvasGeometry'
 
 type Viewport = { zoom: number; offset: { x: number; y: number } }
 
+/** 空画布里用户刚建出的首个节点已在当前视口且被选中，不应再被“加载适应”拉回画布中心。 */
+export function isInteractiveFirstNodeInsertion(
+  nodes: readonly GenerationCanvasNode[],
+  selectedNodeIds: readonly string[],
+  zoom: number,
+  offset: { x: number; y: number },
+  rectWidth: number,
+  rectHeight: number,
+): boolean {
+  return nodes.length === 1
+    && selectedNodeIds.length === 1
+    && selectedNodeIds[0] === nodes[0].id
+    && anyNodeVisibleInViewport([...nodes], zoom, offset, rectWidth, rectHeight)
+}
+
 /**
  * 当前视口是否框住了至少一个节点。用于「自愈式适应」：历史视口若停在空白处
  * （所有节点都在视口外），盲目恢复它会让用户以为「图全没了」——其实只是被平移挡住。
@@ -35,6 +50,7 @@ export function anyNodeVisibleInViewport(
  */
 export function useAutoFitOnLoad(params: {
   nodes: GenerationCanvasNode[]
+  selectedNodeIds: string[]
   activeCategoryId: string
   categoryViewports: Record<string, Viewport | undefined>
   fitView: () => void
@@ -42,7 +58,7 @@ export function useAutoFitOnLoad(params: {
   zoomRef: React.MutableRefObject<number>
   offsetRef: React.MutableRefObject<{ x: number; y: number }>
 }): void {
-  const { nodes, activeCategoryId, categoryViewports, fitView, stageRef, zoomRef, offsetRef } = params
+  const { nodes, selectedNodeIds, activeCategoryId, categoryViewports, fitView, stageRef, zoomRef, offsetRef } = params
   const autoFitDoneRef = React.useRef(false)
   React.useEffect(() => { autoFitDoneRef.current = false }, [activeCategoryId])
   React.useEffect(() => {
@@ -53,8 +69,16 @@ export function useAutoFitOnLoad(params: {
       const shows = rect
         ? anyNodeVisibleInViewport(nodes, zoomRef.current, offsetRef.current, rect.width, rect.height)
         : true // 量不到尺寸时保守：不打扰用户视口
+      if (rect && isInteractiveFirstNodeInsertion(
+        nodes,
+        selectedNodeIds,
+        zoomRef.current,
+        offsetRef.current,
+        rect.width,
+        rect.height,
+      )) return
       if (!categoryViewports[activeCategoryId] || !shows) fitView()
     }, 350) // 等 DOM 完成一帧渲染
     return () => clearTimeout(tid)
-  }, [nodes, categoryViewports, activeCategoryId, fitView, stageRef, zoomRef, offsetRef])
+  }, [nodes, selectedNodeIds, categoryViewports, activeCategoryId, fitView, stageRef, zoomRef, offsetRef])
 }

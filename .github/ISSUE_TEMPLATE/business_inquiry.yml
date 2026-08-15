@@ -1,0 +1,63 @@
+name: Business inquiry
+description: Discuss a custom build, integration, white-label license, or ongoing iteration engagement.
+title: "[Business] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue is public. Do not include secrets, credentials, private contact details, budget details, or NDA-protected information. Share only a non-confidential summary; the maintainer will reply with the next private-contact step.
+  - type: dropdown
+    id: collaboration
+    attributes:
+      label: Collaboration type
+      options:
+        - Custom build
+        - Integration
+        - White-label / commercial license
+        - Ongoing iteration
+    validations:
+      required: true
+  - type: input
+    id: organization
+    attributes:
+      label: Organization or project
+      description: Use “Undisclosed” if the public name cannot be shared.
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Non-confidential summary
+      description: Describe the workflow problem and the outcome you need without private implementation details.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Target platform
+      multiple: true
+      options:
+        - Desktop
+        - Private deployment
+        - Existing product integration
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: timing
+    attributes:
+      label: Timing
+      options:
+        - Exploring
+        - Within 3 months
+        - Within 6 months
+        - No fixed date
+    validations:
+      required: true
+  - type: checkboxes
+    id: public_confirmation
+    attributes:
+      label: Public-information confirmation
+      options:
+        - label: I confirm this issue contains no secrets, credentials, private contact details, budget details, or NDA-protected information.
+          required: true

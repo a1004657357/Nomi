@@ -1,26 +1,95 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Portal } from '@mantine/core'
-import { IconAdjustmentsHorizontal, IconFolder, IconInfoCircle, IconX } from '@tabler/icons-react'
+import { IconAdjustmentsHorizontal, IconBrain, IconFolder, IconInfoCircle, IconLock, IconPlugConnected, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
-import { DesignSwitch } from '../../design'
+import { DesignSwitch, hasOpenDialogAbove, NOMI_OVERLAY_Z_INDEX } from '../../design'
 import { getDesktopBridge } from '../../desktop/bridge'
+import { useNomiColorScheme } from '../../theme/colorScheme'
+import { getAppLocale, setAppLocale, SUPPORTED_LOCALES, type AppLocale } from '../../i18n'
+import { ThemeToggleButton } from '../../ui/theme/ThemeToggleButton'
+import { ScreenshotHotkeySection } from './ScreenshotHotkeySection'
+import { CanvasGestureSection } from './CanvasGestureSection'
+import { AboutSection } from './AboutSection'
+import { ProjectLocationSection } from './ProjectLocationSection'
+import { AiModelsSection } from './AiModelsSection'
+import { lazyWithChunkBoundary } from '../../ui/chunkBoundary'
+import { AutomationPermissionsSection } from './AutomationPermissionsSection'
+import { defaultAutomationPolicySettings } from './settingsAutomationView'
+import type { AutomationPolicySettings } from '../../../electron/settings/automationPolicyContract'
+import type { ProductionPolicyRequirement } from '../production/productionPolicyRecovery'
+
+// ⚠️ 必须懒加载：SettingsDialog 本身是 NomiStudioApp 里**同步 import** 的，而接入面整棵树
+// （OnboardingWizard / 各家 VendorCard / ComfyUI 那套）是个 160KB+ 的独立 chunk。直接 import
+// 会把它整个拽进首屏主包——实测首帧慢到走查 60s 启动超时。走 chunkBoundary 保住边界，
+// 顺带 chunk 挂了只降级这一个 tab、不拖死设置页。
+const OnboardingDrawer = lazyWithChunkBoundary('模型', () =>
+  import('../../ui/onboarding/OnboardingDrawer').then((module) => ({ default: module.OnboardingDrawer })),
+)
+
+// 语言用「母语名」直读，不随界面语言翻译——换语言时两个名字都稳定可认（沿用 PR#50 的判断）。
+const LOCALE_LABEL_KEY: Record<AppLocale, string> = { 'zh-CN': 'common.chinese', en: 'common.english' }
 
 // 集中设置页（2026-08-01 用户拍板样张）：左 tab 右内容。首批「文件与保存」做实——自动另存开关+目录；
-// 其余 tab 占位。复用 OnboardingFloatingPanel 的外壳交互（Portal + Esc + 点遮罩关），布局是居中大 modal。
-type SettingsTab = 'file' | 'general' | 'about'
+// 其余 tab 占位。外壳交互为 Portal + Esc + 点遮罩关，布局是居中大 modal。
+// 2026-08-12 用户拍板：五 tab 变六 tab，「模型」独立成一档。
+// 为什么原拍板不再成立：定五 tab 那会儿「模型」= 几个 API key，塞进「AI 与模型」够用；
+// 现在多实例 ComfyUI + 自定义工作流已长成一个要整页的子系统。而那个 tab 里的东西
+// （默认模型策略 / 上传边界）其实服务的是 **MCP 代跑护栏**（trustedHosts=nomi/claude/codex/cursor），
+// 不是「我的模型」——名不副实正是「改 api url 翻半天找不到」的根因，故一并改名「AI 策略」。
+// 手法按 §1.5.3 取代价最低的那档：**分组**（代价 0），不是把东西收进 ▾。
+// plan: docs/plan/2026-08-12-model-settings-home-and-comfyui-workflow-page.md
+export type SettingsTab = 'file' | 'models' | 'ai' | 'automation' | 'general' | 'about'
+export type SettingsInitialSection = 'automation' | 'cursor-host' | 'ai-models' | 'production-policy' | null
 
 const TABS: { id: SettingsTab; icon: typeof IconFolder; labelKey: string }[] = [
   { id: 'file', icon: IconFolder, labelKey: 'settings.tab.file' },
+  { id: 'models', icon: IconPlugConnected, labelKey: 'settings.tab.models' },
+  { id: 'ai', icon: IconBrain, labelKey: 'settings.tab.ai' },
+  { id: 'automation', icon: IconLock, labelKey: 'settings.tab.automation' },
   { id: 'general', icon: IconAdjustmentsHorizontal, labelKey: 'settings.tab.general' },
   { id: 'about', icon: IconInfoCircle, labelKey: 'settings.tab.about' },
 ]
 
-export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
+export function SettingsDialog({
+  initialTab = 'file',
+  initialSection = null,
+  onClose,
+  onReplaySplash,
+  productionPolicyRequirement = null,
+}: {
+  initialTab?: SettingsTab
+  initialSection?: SettingsInitialSection
+  onClose: () => void
+  onReplaySplash?: () => void
+  productionPolicyRequirement?: ProductionPolicyRequirement | null
+}): JSX.Element {
   const { t } = useTranslation()
-  const [tab, setTab] = React.useState<SettingsTab>('file')
+  const { isDark } = useNomiColorScheme()
+  const [tab, setTab] = React.useState<SettingsTab>(initialTab)
+  // t 随语言变化重渲，渲染时读 getAppLocale() 即拿最新值（沿用 LanguageMenuButton 的做法）。
+  const locale = getAppLocale()
   const [enabled, setEnabled] = React.useState(false)
   const [dir, setDir] = React.useState('')
+  const [automationPolicy, setAutomationPolicy] = React.useState<AutomationPolicySettings>(defaultAutomationPolicySettings)
+  const [automationPolicyLoaded, setAutomationPolicyLoaded] = React.useState(false)
+  const dialogRef = React.useRef<HTMLDivElement>(null)
+  const contentRef = React.useRef<HTMLElement>(null)
+
+  React.useEffect(() => setTab(initialTab), [initialTab])
+
+  React.useEffect(() => {
+    if (!initialSection) return
+    const frame = window.requestAnimationFrame(() => {
+      const section = contentRef.current?.querySelector<HTMLElement>(`[data-settings-section="${initialSection}"]`)
+      section?.scrollIntoView({ block: 'center' })
+      if (automationPolicyLoaded && initialSection !== 'production-policy') {
+        const focusTarget = section?.querySelector<HTMLElement>('button, input, [tabindex]')
+        focusTarget?.focus({ preventScroll: true })
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [automationPolicyLoaded, initialSection, tab])
 
   // 打开时读当前偏好（主进程 download-prefs.json）。
   React.useEffect(() => {
@@ -34,10 +103,31 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
       .catch(() => undefined)
   }, [])
 
+  React.useEffect(() => {
+    let active = true
+    const policy = getDesktopBridge()?.settings?.automationPolicy
+    if (!policy?.get) {
+      setAutomationPolicyLoaded(true)
+      return
+    }
+    void policy.get()
+      .then((value) => {
+        if (active && value) setAutomationPolicy(value)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setAutomationPolicyLoaded(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
   // capture 阶段拦 Esc：先于画布/素材库的 window keydown 关自己（不误触删节点等）。
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
+        if (dialogRef.current && hasOpenDialogAbove(dialogRef.current)) return
         event.stopPropagation()
         onClose()
       }
@@ -62,10 +152,29 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
     }
   }
 
+  const updateAutomationPolicy = React.useCallback((patch: Partial<AutomationPolicySettings>): void => {
+    if (!automationPolicyLoaded) return
+    setAutomationPolicy((current) => {
+      const next = { ...current, ...patch }
+      void getDesktopBridge()
+        ?.settings?.automationPolicy?.set(next)
+        .then((stored) => {
+          if (stored) {
+            setAutomationPolicy(stored)
+            window.dispatchEvent(new CustomEvent('nomi-automation-policy-changed'))
+          }
+        })
+        .catch(() => undefined)
+      return next
+    })
+  }, [automationPolicyLoaded])
+
   return (
     <Portal>
       <div
-        className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/45 p-6"
+        ref={dialogRef}
+        className="fixed inset-0 flex items-center justify-center bg-black/45 p-2 sm:p-6"
+        style={{ zIndex: NOMI_OVERLAY_Z_INDEX.applicationModal }}
         role="dialog"
         aria-modal="true"
         aria-label={t('settings.title')}
@@ -74,17 +183,16 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
         }}
       >
         <div
-          className="flex max-w-full overflow-hidden rounded-nomi-lg border border-nomi-line bg-nomi-paper shadow-nomi-lg"
-          style={{ width: 600, height: 420 }}
+          className="flex h-[calc(100svh-16px)] w-full max-w-[760px] flex-col overflow-hidden rounded-nomi-lg border border-nomi-line bg-nomi-paper shadow-nomi-lg sm:h-[min(560px,calc(100svh-48px))] sm:flex-row"
         >
-          <aside className="flex w-[168px] flex-none flex-col gap-0.5 border-r border-nomi-line bg-nomi-ink-05 p-3.5">
-            <div className="px-3 pb-3 pt-1 text-body-sm font-medium text-nomi-ink">{t('settings.title')}</div>
+          <aside className="flex w-full flex-none flex-row gap-0.5 overflow-x-auto border-b border-nomi-line bg-nomi-ink-05 p-2 sm:w-[196px] sm:flex-col sm:overflow-x-visible sm:border-b-0 sm:border-r sm:p-3.5">
+            <div className="hidden px-3 pb-3 pt-1 text-body-sm font-medium text-nomi-ink sm:block">{t('settings.title')}</div>
             {TABS.map(({ id, icon: Icon, labelKey }) => (
               <button
                 key={id}
                 type="button"
                 className={cn(
-                  'flex w-full items-center gap-2.5 rounded-nomi-sm border-0 px-3 py-2 text-left text-body-sm cursor-pointer',
+                  'flex w-auto shrink-0 items-center gap-2.5 rounded-nomi-sm border-0 px-3 py-2 text-left text-body-sm cursor-pointer sm:w-full',
                   tab === id ? 'bg-nomi-ink text-nomi-paper' : 'bg-transparent text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink',
                 )}
                 onClick={() => setTab(id)}
@@ -94,7 +202,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
             ))}
           </aside>
 
-          <section className="relative min-w-0 flex-1 overflow-y-auto p-6">
+          <section ref={contentRef} className="relative min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-6">
             <button
               type="button"
               className="absolute right-3 top-3 grid size-8 place-items-center rounded-nomi-sm border-0 bg-transparent cursor-pointer text-nomi-ink-40 hover:bg-nomi-ink-05 hover:text-nomi-ink"
@@ -135,16 +243,89 @@ export function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Elemen
                   </div>
                 </div>
 
-                <div className="border-t border-nomi-line pt-4">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="text-body-sm text-nomi-ink-60">{t('settings.file.saveRoot')}</span>
-                    <span className="rounded-nomi-sm bg-nomi-ink-05 px-2 py-0.5 text-micro text-nomi-ink-40">{t('settings.file.laterTag')}</span>
+                <ProjectLocationSection />
+              </div>
+            ) : tab === 'models' ? (
+              // 模型管理的唯一宿主。顶部、缺模型和错误恢复入口都由设置控制器深链到这里；
+              // 不再并行挂一套浮卡，避免两套层级、焦点和关闭语义继续漂移。
+              <div data-settings-section="models">
+                <h2 className="mb-4 text-title font-medium text-nomi-ink">{t('settings.tab.models')}</h2>
+                {/* 本地 Suspense：chunk 还在下载时只让这个 tab 显示占位，别把 suspend 抛给
+                    上层边界（那会连整张设置浮层一起卸掉重挂）。 */}
+                <React.Suspense fallback={<div className="text-caption text-nomi-ink-40">{t('settings.automation.loading')}</div>}>
+                  <OnboardingDrawer />
+                </React.Suspense>
+              </div>
+            ) : tab === 'ai' ? (
+              <fieldset
+                disabled={!automationPolicyLoaded}
+                aria-busy={!automationPolicyLoaded}
+                title={!automationPolicyLoaded ? t('settings.automation.loading') : undefined}
+                className="m-0 min-w-0 border-0 p-0"
+              >
+                <AiModelsSection
+                  settings={automationPolicy}
+                  onChange={updateAutomationPolicy}
+                  productionPolicyRequirement={productionPolicyRequirement}
+                  focusEnabled={automationPolicyLoaded}
+                  onOpenModelCatalog={() => setTab('models')}
+                />
+              </fieldset>
+            ) : tab === 'automation' ? (
+              <fieldset
+                disabled={!automationPolicyLoaded}
+                aria-busy={!automationPolicyLoaded}
+                title={!automationPolicyLoaded ? t('settings.automation.loading') : undefined}
+                className="m-0 min-w-0 border-0 p-0"
+              >
+                <AutomationPermissionsSection settings={automationPolicy} onChange={updateAutomationPolicy} />
+              </fieldset>
+            ) : tab === 'general' ? (
+              <div>
+                <div className="mb-4 text-body font-medium text-nomi-ink">{t('settings.general.title')}</div>
+                <ScreenshotHotkeySection />
+                <CanvasGestureSection />
+                {/* 语言 / 外观归位到这里（§1.5「归位」）：它们过去挤在 studio 顶栏右簇 + 项目库顶栏，
+                    外观还另有一份藏在品牌钮弹窗里——纯偏好项本来就该住设置，且这里是唯一一份（P1）。
+                    ⚠️ 这一步等于改写 PR#50 的判断（当时把语言从「关于」弹窗第三层提到顶栏常驻图标，
+                    理由是「换个语言要三步、藏得太深」）。改判的依据：① 首启已按系统语言探测（i18n/index.ts），
+                    切换只是「探测错了纠正一次」，10 次里用不到 1 次 = §1.5 的 L4；② PR#50 治的是
+                    「弹窗第三层里的一行下拉」不可发现，这里给的是设置「通用」里两个选项平铺可见的分段控件，
+                    不是同一个毛病。所以是归位，不是倒退。 */}
+                <div className="mt-5 border-t border-nomi-line pt-4">
+                  <div className="mb-1.5 text-body-sm text-nomi-ink">{t('common.language')}</div>
+                  <div className="mb-4 flex flex-wrap gap-1.5">
+                    {SUPPORTED_LOCALES.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        data-settings-locale={option}
+                        aria-pressed={option === locale}
+                        onClick={() => setAppLocale(option)}
+                        className={cn(
+                          'rounded-nomi-sm border px-2.5 py-1.5 text-caption cursor-pointer',
+                          'transition-colors duration-[var(--nomi-transition-fast)]',
+                          option === locale
+                            ? 'border-nomi-accent bg-nomi-accent-soft text-nomi-accent'
+                            : 'border-nomi-line bg-nomi-paper text-nomi-ink-60 hover:bg-nomi-ink-05',
+                        )}
+                      >
+                        {t(LOCALE_LABEL_KEY[option])}
+                      </button>
+                    ))}
                   </div>
-                  <div className="text-caption leading-relaxed text-nomi-ink-40">{t('settings.file.saveRootHint')}</div>
+
+                  <div className="flex min-h-9 items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-body-sm text-nomi-ink">{t('theme.appearance')}</div>
+                      <div className="mt-0.5 text-micro text-nomi-ink-40">{isDark ? t('theme.dark') : t('theme.light')}</div>
+                    </div>
+                    <ThemeToggleButton className="shrink-0 border-nomi-line bg-nomi-paper" />
+                  </div>
                 </div>
               </div>
             ) : (
-              <div className="pt-10 text-center text-caption text-nomi-ink-40">{t('settings.placeholder')}</div>
+              <AboutSection onClose={onClose} onReplaySplash={onReplaySplash} />
             )}
           </section>
         </div>

@@ -2,6 +2,7 @@ import {
   localizeAssetsForVendor,
   resolveAssetIngestionWithFallback,
   trustedLocalOutputOrigin,
+  type LocalAssetReader,
 } from "../catalog/assetLocalization";
 import { readNomiLocalAsset, postJsonForAssetUpload, postMultipartForAssetUpload } from "../assets/localAssetFile";
 import { localizedTaskAssetFileName, probeLocalizedDurationSeconds } from "../assets/localizedAsset";
@@ -17,7 +18,7 @@ import {
   collectAssetUrls,
   firstMappedString,
   providerMetaFromResponse,
-  taskStatusFromResponse,
+  resolveTaskStatus,
   valuesFromMapping,
 } from "./responseParsing";
 import { extractAssetUrl } from "./assetUrlExtract";
@@ -183,6 +184,7 @@ export async function executeProfileOperation(input: {
   operation: HttpOperation;
   providerMeta?: JsonRecord;
   enforceSubmissionRateLimit?: boolean;
+  localAssetReader?: LocalAssetReader;
 }): Promise<{ response: unknown; request: unknown; timings: ProfileOperationTimings }> {
   const operationStartedAt = Date.now();
   if (input.operation.process) {
@@ -252,7 +254,7 @@ export async function executeProfileOperation(input: {
         (key) => decryptApiKeyRecord(uploadCatalog.apiKeysByVendor[key]),
         mediaKind,
       ),
-    readNomiLocalAsset,
+    input.localAssetReader ?? readNomiLocalAsset,
     postJsonForAssetUpload,
     postMultipartForAssetUpload,
   );
@@ -276,6 +278,7 @@ export async function executeProfileOperation(input: {
   const providerRequestStartedAt = Date.now();
   const body = await applyRequestTransform(effectiveInput.operation.request_transform, built.body, {
     baseUrl: String(effectiveInput.vendor.baseUrlHint || ""),
+    promptId: firstString(effectiveInput.request.extras?.comfyPromptId),
   });
   const response = await requestJson(
     effectiveInput.vendor,
@@ -312,7 +315,7 @@ export async function buildProfileTaskResult(input: {
   vendor?: Vendor;
   model?: Model;
   operationTimings?: ProfileOperationTimings;
-}): Promise<{ result: TaskResult; providerMeta: JsonRecord }> {
+}): Promise<{ result: TaskResult; providerMeta: JsonRecord; unrecognizedStatus: string }> {
   const response = applyResponseTransform(input.operation.response_transform, input.response, {
     baseUrl: String(input.vendor?.baseUrlHint || ""),
   });
@@ -337,7 +340,12 @@ export async function buildProfileTaskResult(input: {
   const assetUrls = Array.from(
     new Set([...mappedAssetValues.flatMap(collectAssetUrls), ...collectAssetUrls(extractAssetUrl(response))]),
   );
-  const status = taskStatusFromResponse(response, responseMapping, input.mapping.statusMapping, assetUrls);
+  const { status, unrecognizedStatus } = resolveTaskStatus(
+    response,
+    responseMapping,
+    input.mapping.statusMapping,
+    assetUrls,
+  );
   // Gate 1 Slice 5（§10.2）：unknown 态细化——
   // create/query 返回了 taskId（被 provider 受理）但无 asset/状态词时，应视为 queued（在 provider 队列里），
   // 而非 unknown。unknown 只留给「既无 taskId 也无法分类」的真不明态（query miss 路径）。
@@ -363,6 +371,7 @@ export async function buildProfileTaskResult(input: {
     : undefined;
   return {
     providerMeta,
+    unrecognizedStatus,
     result: {
       id: taskId,
       kind: input.request.kind,

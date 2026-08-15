@@ -45,7 +45,16 @@ const workbenchBasePlugin = plugin(({ addBase, addUtilities }) => {
       '--nomi-line': 'oklch(0.91 0.004 80)',
       '--nomi-line-soft': 'oklch(0.95 0.003 80)',
       '--nomi-accent': 'oklch(0.55 0.13 250)',
-      '--nomi-accent-soft': 'color-mix(in oklch, var(--nomi-accent) 12%, var(--nomi-paper))',
+      // ⚠️ 必须 in srgb，别改回 in oklch：oklch 插值会对**色相走最短弧**，而 --nomi-paper 显式钉了色相
+      // （浅 h=0 / 暗 h=80）。白/近中性色的色相在感知上无意义，但只要在 oklch() 里写成数字，color-mix
+      // 就当真拿它插值 —— accent(h250) 被拽向 paper 的色相：浅色落 h≈347（粉）、暗色落 h≈124（橄榄绿），
+      // 全 App 80+ 个选中态/chip 跟着跑色（Chromium 126 实测）。in srgb 无色相分量，结果 h≈248 稳住蓝。
+      // 同类雷（有色相的色 × 钉了色相的中性色，用 in oklch 混）已由 check:tokens 门岗设闸拦住。
+      '--nomi-accent-soft': 'color-mix(in srgb, var(--nomi-accent) 12%, var(--nomi-paper))',
+      // 根层语义红。--workbench-danger 只活在 .workbench-shell 作用域，Portal 到 body 的浮层够不到它、
+      // 会静默退回继承色（任务中心走查实锤读到 rgb(201,201,201)）——根层浮层的错误色一律用这个。
+      '--nomi-danger': 'oklch(0.55 0.20 27)',
+      '--nomi-warning': 'oklch(0.62 0.14 75)',
       // 全局焦点环色（accent 42%）。所有交互控件 :focus-visible 统一用它，覆盖 macOS 系统强调色的
       // outline:auto（用户设了橙/黄就冒橙环）。全局 :root → portal 到 body 的面板也生效。
       '--nomi-focus': 'color-mix(in srgb, var(--nomi-accent) 42%, transparent)',
@@ -168,7 +177,10 @@ const workbenchBasePlugin = plugin(({ addBase, addUtilities }) => {
       '--nomi-line-soft': 'oklch(0.31 0.007 80)',
       '--nomi-accent': 'oklch(0.70 0.13 250)',
       // 暗底下 soft 混合比要更高，否则选中高亮(侧栏行/节点选中/上手步骤)几乎看不出（浅色 12% 够、暗色压没）。
-      '--nomi-accent-soft': 'color-mix(in oklch, var(--nomi-accent) 26%, var(--nomi-paper))',
+      // in srgb 的原因见浅色块同名 token 处（暗色 paper h=80，走 oklch 会把选中态混成橄榄绿）。
+      '--nomi-accent-soft': 'color-mix(in srgb, var(--nomi-accent) 26%, var(--nomi-paper))',
+      '--nomi-danger': 'oklch(0.72 0.16 25)',
+      '--nomi-warning': 'oklch(0.78 0.13 75)',
       '--nomi-focus': 'color-mix(in srgb, var(--nomi-accent) 50%, transparent)',
       // 时间轴三轨：暗底提亮以保持可辨（fork 未覆盖，本次补）。
       '--nomi-track-text': 'oklch(0.75 0.15 305)',
@@ -534,6 +546,7 @@ export default {
           'line-soft': tokenColor('--nomi-line-soft'),
           accent: tokenColor('--nomi-accent'),
           'accent-soft': tokenColor('--nomi-accent-soft'),
+          danger: tokenColor('--nomi-danger'),
           scrim: tokenColor('--nomi-scrim'),
           'overlay-chip': tokenColor('--nomi-overlay-chip'),
           'overlay-chip-strong': tokenColor('--nomi-overlay-chip-strong'),

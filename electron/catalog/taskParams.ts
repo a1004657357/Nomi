@@ -70,6 +70,11 @@ export function taskTemplateParams(request: TaskParamsInput): JsonRecord {
   // 导致 body 的 duration 为空（实测）。数字原样保留，字符串走 trim，缺省 ""。
   const durationRaw = extras.duration ?? extras.durationSeconds ?? extras.videoDuration;
   const duration = typeof durationRaw === "number" ? durationRaw : firstString(durationRaw);
+  // Numeric controls can arrive from persisted node params as strings. Keep the
+  // wire type stable for strict providers (APIMart TTS rejects speed="1.5").
+  // Invalid non-empty values remain visible to the provider instead of being
+  // silently replaced with a default.
+  const speed = numericWireParam(extras.speed);
   const refInput = referenceInputParams(extras);
   const jsonEditInput = jsonImageEditInput(refInput.reference_images);
   return {
@@ -85,6 +90,7 @@ export function taskTemplateParams(request: TaskParamsInput): JsonRecord {
     cfg_scale: request.cfgScale,
     negative_prompt: request.negativePrompt,
     duration,
+    ...(speed !== undefined ? { speed } : {}),
     // 空→undefined（不是 ""）：body 的 `image: "{{request.params.image_url}}"` 整 token 渲染时，
     // undefined 会被丢弃、"" 却会当空字段发出去（纯文生图/文生视频误带 image:"" 会被部分中转拒）。
     image_url: firstReferenceImage(request) || undefined,
@@ -102,6 +108,16 @@ export function taskTemplateParams(request: TaskParamsInput): JsonRecord {
     json_edit_aspect_ratio: jsonEditInput.images ? firstString(extras.aspect_ratio, extras.aspectRatio) || undefined : undefined,
     max_tokens: extras.maxTokens ?? extras.max_tokens,
   };
+}
+
+function numericWireParam(value: unknown): number | string | undefined {
+  if (value === null || typeof value === "undefined") return undefined;
+  if (typeof value === "number") return Number.isFinite(value) ? value : String(value);
+  if (typeof value !== "string") return value == null ? undefined : String(value);
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : trimmed;
 }
 
 // 参考值的 URL 形状（http/nomi-local/data/blob/绝对路径）。护栏判定只认它——archetypeInput 里还混着
@@ -129,21 +145,54 @@ export function hasImageEditReferences(request: TaskParamsInput): boolean {
   return containsRefUrl([extras.image, referenceInputParams(extras)]);
 }
 
-/** 本次请求真正携带的参考素材，按人话类别分组（只认 URL 形状的值）。 */
+/**
+ * 参考素材键 → 人话类别。**未登记的键回退「参考素材」而不是被丢掉**——闸门宁可标签泛一点，
+ * 也绝不能因为没登记就当它不存在（那正是下面 carriedReferences 修掉的根因）。
+ * 顺序有意义：first_frame_image 这类同时含 frame 和 image 的键必须先被帧规则接住。
+ */
+const REFERENCE_LABEL_RULES: Array<[RegExp, string]> = [
+  [/first_?frame|start_?frame/i, "首帧"],
+  [/last_?frame|end_?frame|tail_?frame/i, "尾帧"],
+  [/video/i, "参考视频"],
+  [/audio|voice/i, "参考音频"],
+  // 角色图槽（UI 同名，见 i18n generationCommon.image='角色图'）先于通用图规则，保住既有报错措辞。
+  [/reference_image_urls?|character/i, "角色参考图"],
+  [/image|img/i, "参考图"],
+];
+
+function referenceLabelForKey(key: string): string {
+  for (const [pattern, label] of REFERENCE_LABEL_RULES) if (pattern.test(key)) return label;
+  return "参考素材";
+}
+
+/**
+ * 本次请求真正携带的参考素材，按人话类别分组（只认 URL 形状的值）。
+ *
+ * **真相源 = referenceInputParams(extras)，与 wire 完全同源**（taskTemplateParams 铺的就是它）。
+ * 这是根因修法：旧实现在这里手抄 5 个 extras 键（firstFrameUrl/referenceImageUrls/…），而那 5 个
+ * 全是**手动上传**路才有的键；画布**连线**来的参考落在 extras.referenceImages 与档案投影
+ * extras.archetypeInput.{image_urls,video_urls,…} 上，一个都不在名单里 → carried 恒空 →
+ * unreachableReferenceLabels 直接 early-return [] → 第三闸对「连线来的参考」整个空转。
+ * 用户连了参考图、模板发不出、闸门不吭声，于是生成成功、扣费成功、和参考图毫无关系
+ * （正是本条被报的体感）。改读 refInput 后，任何新增参考键自动纳管，不需要回来补名单。
+ */
 function carriedReferences(extras: JsonRecord): Array<{ label: string; url: string }> {
   const out: Array<{ label: string; url: string }> = [];
-  const push = (label: string, value: unknown): void => {
-    const list = Array.isArray(value) ? value : [value];
-    for (const item of list) {
-      const url = typeof item === "string" ? item.trim() : "";
-      if (url && REF_URL_RE.test(url)) out.push({ label, url });
+  const seen = new Set<string>();
+  const walk = (key: string, value: unknown): void => {
+    if (typeof value === "string") {
+      const url = value.trim();
+      if (!url || !REF_URL_RE.test(url) || seen.has(url)) return;
+      seen.add(url);
+      out.push({ label: referenceLabelForKey(key), url });
+      return;
     }
+    // 数组沿用父键名（image_urls[0] 仍是「参考图」）；对象用子键名（volcengine content 项等嵌套结构）。
+    if (Array.isArray(value)) for (const item of value) walk(key, item);
+    else if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) walk(k, v);
   };
-  push("首帧", extras.firstFrameUrl);
-  push("尾帧", extras.lastFrameUrl);
-  push("角色参考图", extras.referenceImageUrls);
-  push("参考视频", extras.referenceVideoUrls);
-  push("参考音频", extras.referenceAudioUrls);
+  // referenceInputParams 的插入顺序把首/尾帧排在前，故同一 URL 既是首帧又在 image_urls 里时取「首帧」。
+  for (const [key, value] of Object.entries(referenceInputParams(extras))) walk(key, value);
   return out;
 }
 

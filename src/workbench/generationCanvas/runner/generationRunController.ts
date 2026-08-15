@@ -6,7 +6,7 @@ import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { useWorkbenchStore } from '../../workbenchStore'
 import { toast } from '../../../ui/toast'
 import { cancelWorkbenchTask, mintSpendGrant } from '../../api/taskApi'
-import { describeGenerationCost, useSpendConfirmStore } from '../spend/spendConfirm'
+import { confirmGenerationSpend, describeGenerationCost } from '../spend/spendConfirm'
 import { generationNodeExecutor, type GenerationNodeExecutor } from './generationNodeExecutor'
 import { narrateProgress } from '../../observability/narrate'
 import {
@@ -18,6 +18,12 @@ import {
 import { useComfyuiPreviewStore } from '../store/comfyuiPreviewStore'
 import { isRecoverableTimeoutError } from './recoverableTimeout'
 import { recordModelFailure, recordModelSuccess } from './modelHealthMemory'
+import {
+  beginSingletonBatch,
+  isEntryCancelled,
+  useGenerationQueueStore,
+  waitForQueueGate,
+} from './generationQueueStore'
 // 错误分类(classifyGenerationError)已抽到 observability/classifyError(人话叶子层,生成域+对话域共用);
 // 这里 re-export 保持 NodeErrorReport / classifyGenerationError.test 等既有 import 不破。
 export { classifyGenerationError, type GenerationErrorReport } from '../../observability/classifyError'
@@ -68,6 +74,8 @@ export type RunGenerationNodeOptions = {
   grantId?: string
   /** Optional external cancellation signal. */
   signal?: AbortSignal
+  /** 队列批次 id（任务中心的调度真相源，见 generationQueueStore）。不传 = 单发，内部自建 1 节点批次。 */
+  batchId?: string
 }
 
 type GenerationRunContext = {
@@ -253,6 +261,12 @@ export async function runGenerationNode(
   if (options.signal?.aborted) controller.abort()
   else options.signal?.addEventListener('abort', abortFromExternal, { once: true })
 
+  // 队列登记：批量路径由 runGenerationNodesByPlan 预先整批登记（含后续波次），单发路径自建 1 节点批次。
+  // markRunning 只把 queued 翻成 running（幂等），所以两条路都能安全调。
+  const ownsBatch = !options.batchId
+  const batchId = options.batchId ?? beginSingletonBatch(id)
+  useGenerationQueueStore.getState().markRunning(batchId, id)
+
   const run = initialState.appendNodeRun(id, {
     status: 'queued',
     startedAt: Date.now(),
@@ -354,11 +368,13 @@ export async function runGenerationNode(
         .catch(() => undefined)
     }
     recordModelSuccess(currentNodeModelKey(id))
+    useGenerationQueueStore.getState().markSettled(batchId, id, 'success')
     await persistActiveWorkbenchProjectNow().catch(() => {})
     return result
   } catch (error: unknown) {
     if (controller.signal.aborted || isAbortError(error)) {
       useGenerationCanvasStore.getState().setNodeStatus(id, 'idle')
+      useGenerationQueueStore.getState().markSettled(batchId, id, 'cancelled', { countsTowardBrake: false })
       throw isAbortError(error) ? error : new DOMException('生成已取消', 'AbortError')
     }
     // P 轨遮罩取消：用户主动停的，不进红色错误桶也不算模型失败——回 idle 静静结束。
@@ -366,6 +382,8 @@ export async function runGenerationNode(
     // 把 /history 的 interrupted 终态拉回来当失败抛（走查实锤），靠 cancelRequested 登记识别。
     if (isComfyuiTaskCancelledError(error) || isComfyuiCancelRequested(id)) {
       useGenerationCanvasStore.getState().setNodeStatus(id, 'idle')
+      // 用户主动停的：不进刹车计数（模型没挂，是人喊停的）。
+      useGenerationQueueStore.getState().markSettled(batchId, id, 'cancelled', { countsTowardBrake: false })
       throw isComfyuiTaskCancelledError(error) ? error : new ComfyuiTaskCancelledError()
     }
     // 可找回超时：上游可能仍在跑/已出片 → 落 recoverable（不进红色错误桶），给「重新拉取」入口。
@@ -373,6 +391,11 @@ export async function runGenerationNode(
     // 健康记账也不算失败——上游没有明确判死。
     if (isRecoverableTimeoutError(error)) {
       useGenerationCanvasStore.getState().setNodeStatus(id, 'recoverable', error.message)
+      // 上游没有明确判死（可能仍在跑/已出片）→ 健康记账不算失败，刹车也不该算。
+      useGenerationQueueStore.getState().markSettled(batchId, id, 'error', {
+        error: error.message,
+        countsTowardBrake: false,
+      })
       throw error
     }
     recordModelFailure(currentNodeModelKey(id))
@@ -381,6 +404,8 @@ export async function runGenerationNode(
     // string avoids a persisted-shape migration for existing project files.
     const rawMessage = error instanceof Error && error.message ? error.message : '生成失败'
     useGenerationCanvasStore.getState().setNodeStatus(id, 'error', rawMessage)
+    // 真执行失败 → 计入刹车（连续 3 个即暂停队列，防上游整体挂掉时把剩下的额度一路烧完）。
+    useGenerationQueueStore.getState().markSettled(batchId, id, 'error', { error: rawMessage })
     throw error
   } finally {
     options.signal?.removeEventListener('abort', abortFromExternal)
@@ -388,6 +413,8 @@ export async function runGenerationNode(
     // 取消登记与活预览帧都是会话瞬态：任务收尾（成/败/取消）一律清，防泄漏到下一次生成。
     clearComfyuiCancel(id)
     useComfyuiPreviewStore.getState().clearPreview(id)
+    // 单发路径的批次由本函数自建，也由本函数收尾（批量路径归 runGenerationNodesByPlan 收）。
+    if (ownsBatch) useGenerationQueueStore.getState().finishBatch(batchId)
   }
 }
 
@@ -428,15 +455,21 @@ export async function runGenerationNodesBatch(
 
   async function worker(): Promise<void> {
     while (!signal.aborted && cursor < queue.length) {
+      // 闸一：批次被整体取消 → 跳出；被连续失败刹车暂停 → 在此挂起，等用户「继续」或「全部取消」。
+      // 不传 batchId 时恒 'go'，退化回接队列前的行为。
+      if ((await waitForQueueGate(options.batchId)) === 'stop') break
       const nextIndex = cursor
       cursor += 1
       const nodeId = queue[nextIndex]
+      // 闸二：这一个被单独取消了 → 直接跳过。**零 vendor 调用零扣费**，这就是「取消不产生费用」的兑现处。
+      if (isEntryCancelled(options.batchId, nodeId)) continue
       try {
         const result = await runGenerationNode(nodeId, {
           executor: options.executor,
           retry: options.retry,
           ...(options.grantId ? { grantId: options.grantId } : {}),
           signal,
+          ...(options.batchId ? { batchId: options.batchId } : {}),
         })
         successes.push({ nodeId, result })
         options.onNodeResult?.({ ok: true, nodeId, result })
@@ -479,9 +512,17 @@ export async function runGenerationNodesByPlan(
   const signal = batchCancellation.controller.signal
   const successes: RunGenerationNodesBatchResult['successes'] = []
   const failures: RunGenerationNodesBatchResult['failures'] = []
+  // 整批一次登记（含后续波次 + 被拦下的）——「排队可见」的全部秘密：等 worker 空位的、等上游的，
+  // 从这一刻起就在任务中心里有名有姓，而不是像以前那样在 store 里still idle、看着像没被选中。
+  const batchId = useGenerationQueueStore
+    .getState()
+    .enqueueBatch([...plan.waves, plan.blocked.map((blocked) => blocked.nodeId)])
   const failNode = (nodeId: string, message: string) => {
     const error = new Error(message)
     useGenerationCanvasStore.getState().setNodeStatus(nodeId, 'error', message)
+    // 「上游缺果/成环」与「上游本批失败的连带」都不是模型挂了 → 不进刹车计数，否则一个上游失败
+    // 会把下游连锁标失败、瞬间凑满 3 个，误停整条队列。
+    useGenerationQueueStore.getState().markSettled(batchId, nodeId, 'error', { error: message, countsTowardBrake: false })
     failures.push({ nodeId, error })
     options.onNodeResult?.({ ok: false, nodeId, error })
   }
@@ -556,12 +597,17 @@ export async function runGenerationNodesByPlan(
           startedIds.add(nodeId)
           activeCount += 1
           activeByProvider.set(provider, (activeByProvider.get(provider) || 0) + 1)
-          void runGenerationNode(nodeId, {
-            executor: options.executor,
-            retry: options.retry,
-            ...(options.grantId ? { grantId: options.grantId } : {}),
-            signal,
-          })
+          void waitForQueueGate(batchId)
+            .then((gate) => {
+              if (gate === 'stop' || isEntryCancelled(batchId, nodeId)) throw generationAbortError()
+              return runGenerationNode(nodeId, {
+                executor: options.executor,
+                retry: options.retry,
+                ...(options.grantId ? { grantId: options.grantId } : {}),
+                signal,
+                batchId,
+              })
+            })
             .then(
               (result) => {
                 completedIds.add(nodeId)
@@ -592,6 +638,7 @@ export async function runGenerationNodesByPlan(
     })
     return { totalCount: plan.waves.flat().length + plan.blocked.length, successes, failures }
   } finally {
+    useGenerationQueueStore.getState().finishBatch(batchId)
     batchCancellation.dispose()
   }
 }
@@ -602,8 +649,10 @@ export async function runGenerationNodesByPlan(
  */
 export async function confirmAndRunNode(nodeId: string, opts: { rerun?: boolean } = {}): Promise<void> {
   const node = useGenerationCanvasStore.getState().nodes.find((n) => n.id === nodeId)
-  const ok = await useSpendConfirmStore.getState().requestConfirm({
-    title: opts.rerun ? '生成新版本' : '开始生成',
+  const ok = await confirmGenerationSpend([node], {
+    title: opts.rerun
+      ? i18n.t('generationCommon.spend.generateVariant')
+      : i18n.t('generationCommon.spend.startGeneration'),
     message: describeGenerationCost(1, node ? spendCostKind(node.kind) : 'image'),
     confirmLabel: opts.rerun ? '生成新版本' : '生成',
     light: true,
@@ -649,7 +698,7 @@ export async function confirmAndRunNodeVariants(
   if (!id) return
   const total = Math.max(1, Math.min(8, Math.floor(count)))
   const node = useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)
-  const ok = await useSpendConfirmStore.getState().requestConfirm({
+  const ok = await confirmGenerationSpend([node], {
     title: i18n.t('generationCommon.spend.startGeneration'),
     message: describeGenerationCost(total, node ? spendCostKind(node.kind) : 'image'),
     confirmLabel: i18n.t('generationCommon.spend.generate'),
@@ -697,8 +746,8 @@ export async function regenerateNodeInPlace(nodeId: string): Promise<void> {
   const id = String(nodeId || '').trim()
   if (!id) return
   const node = useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)
-  const ok = await useSpendConfirmStore.getState().requestConfirm({
-    title: '替换当前时间轴片段',
+  const ok = await confirmGenerationSpend([node], {
+    title: i18n.t('generationCommon.composer.regenerate'),
     message: describeGenerationCost(1, node ? spendCostKind(node.kind) : 'image'),
     confirmLabel: '生成并替换',
     light: true,

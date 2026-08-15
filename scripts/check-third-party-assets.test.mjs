@@ -43,10 +43,12 @@ afterEach(() => {
 });
 
 describe("third-party asset audit", () => {
-  test("validates the repository manifest with no bundled release blocker", () => {
+  test("validates the repository manifest and reports the reviewed UE spike release blocker", () => {
     const result = auditThirdPartyAssets();
     expect(result.errors).toEqual([]);
-    expect(result.blockers).toHaveLength(0);
+    expect(result.blockers).toEqual([
+      "scene3d-ue-mannequin-retopology-spike: bundled redistribution is not cleared",
+    ]);
     expect(result.external).toBe(1);
     expect(result.remote).toBe(1);
   });

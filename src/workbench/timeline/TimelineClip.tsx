@@ -7,7 +7,7 @@ import { frameToPixel, pixelToFrame, clampGroupDelta, clipVisibleFrames, type Cl
 import { buildSnapPoints, resolveSnap, pixelThresholdToFrames, type SnapResult } from './snapping'
 import type { TimelineClip as TimelineClipData } from './timelineTypes'
 import { resolveTimelineClipPreviewMedia } from './timelineClipPreview'
-import { useVideoPlaybackHeal } from '../../media/useVideoPlaybackHeal'
+import { useFilmstrip } from '../../media/useFilmstrip'
 
 type TimelineClipProps = {
   clip: TimelineClipData
@@ -18,7 +18,6 @@ function TimelineClip({ clip }: TimelineClipProps): JSX.Element {
   const scale = useWorkbenchStore((state) => state.timeline.scale)
   // 仅订阅"本 clip 是否选中"（布尔），避免选区变化时所有 clip 重渲染
   const isSelected = useWorkbenchStore((state) => state.selectedTimelineClipIds.includes(clip.id))
-  const selectedClipCount = useWorkbenchStore((state) => state.selectedTimelineClipIds.length)
   const splitMode = useWorkbenchStore((state) => state.timelineSplitMode)
 
   const [isDragging, setIsDragging] = React.useState(false)
@@ -31,12 +30,9 @@ function TimelineClip({ clip }: TimelineClipProps): JSX.Element {
   const didDragRef = React.useRef(false)
 
   const title = clip.label || clip.text || clip.sourceNodeId
-  const previewMedia = resolveTimelineClipPreviewMedia(clip, {
-    // 时间轴可有几十个视频片段；默认不批量挂 <video>，只让正在编辑的单个片段加载真实帧。
-    isSingleSelected: isSelected && selectedClipCount === 1,
-  })
-  // 缩略图太小，放不下报错文案；但自愈得挂上——此前这里失败只写 console，坏视频在轨上永远是灰的。
-  const thumbHeal = useVideoPlaybackHeal({ rawUrl: previewMedia.kind === 'video' ? previewMedia.src : '' })
+  const previewMedia = resolveTimelineClipPreviewMedia(clip)
+  // 视频 clip 全员真帧：后台抽 16 帧胶片条（同源共享缓存），未就绪/失败回退静态图或占位色块
+  const filmstrip = useFilmstrip(clip.type === 'video' ? clip.url : '')
 
   // 吸附"咔哒"微反馈：WAAPI 实现，免改全局 CSS（规则 10）；不与 React 的 style.left 冲突。
   const pulseSnap = React.useCallback(() => {
@@ -235,20 +231,20 @@ function TimelineClip({ clip }: TimelineClipProps): JSX.Element {
   const clipWidth = Math.max(36, frameToPixel(clipVisibleFrames(clip), scale))
 
   const thumbContent =
-    previewMedia.kind === 'video' ? (
-      <video
+    clip.type === 'video' && filmstrip?.status === 'ready' ? (
+      <div
         className={cn(
-          'workbench-timeline-clip__thumb',
-          'block absolute inset-0 w-full h-full object-cover rounded-[inherit] bg-[var(--nomi-ink-10)]',
+          'workbench-timeline-clip__thumb workbench-timeline-clip__filmstrip',
+          'absolute inset-0 rounded-[inherit] bg-[var(--nomi-ink-10)]',
         )}
-        src={thumbHeal.playbackUrl}
-        crossOrigin="use-credentials"
-        muted
-        playsInline
-        preload="metadata"
-        draggable={false}
-        onError={thumbHeal.onError}
-        onLoadedMetadata={thumbHeal.onLoadedMetadata}
+        style={{
+          backgroundImage: `url(${JSON.stringify(filmstrip.url)})`,
+          backgroundRepeat: 'no-repeat',
+          // 条图横向映射整个源时长；裁剪(offset)即背景位移——所见帧段=真实帧段
+          backgroundSize: `${Math.max(1, frameToPixel(clip.frameCount, scale))}px 100%`,
+          backgroundPosition: `-${frameToPixel(clip.offsetStartFrame, scale)}px 0`,
+        }}
+        aria-hidden="true"
       />
     ) : previewMedia.kind === 'image' ? (
       <NomiImage
@@ -289,7 +285,7 @@ function TimelineClip({ clip }: TimelineClipProps): JSX.Element {
   // trim 手柄：专门的等宽对称握把（非按钮原语，避免 px/min-width 撑开导致左右不一致）
   const handleClasses = cn(
     'workbench-timeline-clip__handle',
-    'absolute top-0 bottom-0 z-[2] w-3 p-0 m-0 border-0 bg-transparent appearance-none',
+    'absolute top-0 bottom-0 z-[2] w-4 p-0 m-0 border-0 bg-transparent appearance-none',
     'inline-flex items-center justify-center cursor-ew-resize',
   )
   const gripClasses = cn(
@@ -339,7 +335,10 @@ function TimelineClip({ clip }: TimelineClipProps): JSX.Element {
           return
         }
         store.selectTimelineClip(clip.id)
-        store.setTimelinePlayhead(clip.startFrame)
+        // 点哪播放头落哪（clip 内光标帧），不再一律跳 clip 头——预览随手可见点击处画面
+        const rect = clipRef.current?.getBoundingClientRect()
+        const frameInto = rect ? pixelToFrame(event.clientX - rect.left, scale) : 0
+        store.setTimelinePlayhead(clip.startFrame + Math.min(Math.max(0, clipVisibleFrames(clip) - 1), frameInto))
       }}
       onPointerMove={
         splitMode

@@ -2,7 +2,7 @@ import React from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { Slider } from '@mantine/core'
-import { IconChevronDown } from '@tabler/icons-react'
+import { IconAspectRatio, IconChevronDown } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import { DesignSwitch, NomiSegmented, NomiSelect, type NomiSegmentedOption } from '../../../design'
 import { formatVideoOptionLabel, type ModelParameterControl } from '../../../config/modelCatalogMeta'
@@ -20,6 +20,7 @@ import {
 import { commonRatioSortKey } from './aspectRatio'
 import { resolveArchetypeForOption } from './nodeModelArchetype'
 import { useDedupedModelSelect } from '../../common/useDedupedModelSelect'
+import { localizeAutoOption } from './parameterOptionPresentation'
 
 type InlineParameterBarProps = {
   modelOptions: readonly ModelOption[]
@@ -35,8 +36,6 @@ type InlineParameterBarProps = {
   variantChoices?: readonly { id: string; label: string }[]
   activeVariantId?: string
   onVariantSelect?: (id: string) => void
-  /** 参数面板开/合通知：composer 据此在打开期间冻结自身位置（调参时两个框都不许动，2026-07-17）。 */
-  onParamPanelOpenChange?: (open: boolean) => void
 }
 
 // section="parameters"：底栏 = 模型芯片 + 变体 + **摘要 pill**（当前参数一句话）。
@@ -47,7 +46,8 @@ type InlineParameterBarProps = {
 
 /** 比例文本（"16:9"）→ 宽高比小图形（描边矩形，最长边 18px）。
  *  value 和 label 都试（图片模型 size 值常是像素 "1024x1024"，label 才是 "16:9"——只看 value 会漏画）。 */
-function ratioShape(...candidates: string[]): JSX.Element | null {
+function ratioShape(isAuto: boolean, ...candidates: string[]): JSX.Element | null {
+  if (isAuto) return <IconAspectRatio aria-hidden size={18} stroke={1.6} />
   for (const candidate of candidates) {
     const m = /^(\d{1,3}):(\d{1,3})$/.exec(String(candidate || '').trim())
     if (!m) continue
@@ -91,8 +91,8 @@ function summaryPart(control: DynamicModelControl, meta: Record<string, unknown>
   if (!isParameterControl(control)) {
     const value = catalogControlInitialValue(control, meta)
     const matched = control.options.find((o) => optionValue(o) === value)
-    if (!matched) return value
-    return typeof matched === 'string' ? matched || autoLabel : matched.label
+    const label = matched ? (typeof matched === 'string' ? matched : matched.label) : value
+    return localizeAutoOption(value, label, autoLabel).text
   }
   if (control.type === 'boolean') {
     return (controlInitialValue(control, meta) || 'false') === 'true' ? control.label : ''
@@ -100,7 +100,8 @@ function summaryPart(control: DynamicModelControl, meta: Record<string, unknown>
   const value = controlInitialValue(control, meta)
   if (!value) return ''
   const matched = control.options.find((o) => controlValueToString(o.value) === value)
-  return matched ? matched.label : value.length > 8 ? `${value.slice(0, 8)}…` : value
+  const label = matched ? matched.label : value.length > 8 ? `${value.slice(0, 8)}…` : value
+  return localizeAutoOption(value, label, autoLabel).text
 }
 
 export default function InlineParameterBar({
@@ -115,7 +116,6 @@ export default function InlineParameterBar({
   variantChoices,
   activeVariantId,
   onVariantSelect,
-  onParamPanelOpenChange,
 }: InlineParameterBarProps): JSX.Element {
   const { t } = useTranslation()
   // 去重选择 view-model（hook 必须在任何早返回前调用）。
@@ -133,10 +133,8 @@ export default function InlineParameterBar({
     .join(' · ')
 
   // ── 参数浮层：静止定位（打开定位一次，绝不跟随）。 ──
-  // 三轮用户反馈的终解（2026-07-17）：调参期间**两个框（composer + 面板）都不许动**——
-  // 动的源头是节点按新比例变形推着 composer 跑。现在 composer 在面板打开期间冻结自身位置
-  // （经 onParamPanelOpenChange 通知，见 NodeGenerationComposer 冻结补偿），pill 不动 → 面板
-  // 静止定位即天然贴合，无需跟随。打开期间摘要文本冻结（pill 宽度稳定）。
+  // 打开时以 pill 中心定位一次，之后绝不跟随；比例变化通过节点原子锚定保证 pill 本身不动。
+  // 摘要文本也在打开期间冻结，触发器与浮层都不需要用户追着鼠标找。
   const [panelOpen, setPanelOpen] = React.useState(false)
   const [panelInit, setPanelInit] = React.useState<{
     left: number
@@ -156,7 +154,8 @@ export default function InlineParameterBar({
     if (!rect) return
     const vw = window.innerWidth
     const vh = window.innerHeight
-    const left = Math.min(Math.max(8, rect.left), Math.max(8, vw - PANEL_W - 8))
+    const centeredLeft = rect.left + rect.width / 2 - PANEL_W / 2
+    const left = Math.min(Math.max(8, centeredLeft), Math.max(8, vw - PANEL_W - 8))
     const spaceAbove = rect.top - 12
     // 翻向此刻锁定：上方优先（底栏贴卡底），上方不足 240px 才放下方。定位仅此一次。
     const side: 'above' | 'below' = spaceAbove >= 240 ? 'above' : 'below'
@@ -166,21 +165,11 @@ export default function InlineParameterBar({
     setPanelInit({ left, top, maxHeight, side })
     setFrozenSummary(summaryText)
     setPanelOpen(true)
-    onParamPanelOpenChange?.(true)
   }
   const closePanel = React.useCallback((): void => {
     setPanelOpen(false)
     setPanelInit(null)
-    onParamPanelOpenChange?.(false)
-  }, [onParamPanelOpenChange])
-
-  // 卸载兜底：面板开着时组件被卸（节点删除/取消选中）→ 通知 composer 解除冻结。
-  React.useEffect(
-    () => () => {
-      onParamPanelOpenChange?.(false)
-    },
-    [onParamPanelOpenChange],
-  )
+  }, [])
 
   React.useEffect(() => {
     if (!panelOpen) return
@@ -241,7 +230,17 @@ export default function InlineParameterBar({
     rawOptions: { value: string; text: string }[],
     onChange: (value: string) => void,
   ): JSX.Element => {
-    let entries = rawOptions.map((o) => ({ ...o, shape: ratioShape(o.value, o.text) }))
+    let entries = rawOptions.map((option) => {
+      const localized = localizeAutoOption(
+        option.value,
+        option.text,
+        t('generationCommon.parameters.auto'),
+      )
+      return {
+        ...localized,
+        shape: ratioShape(localized.isAuto, localized.value, localized.text),
+      }
+    })
     const anyShape = entries.some((e) => e.shape)
     if (anyShape) {
       // Array.sort 稳定：同键项保持声明相对序。
@@ -395,7 +394,7 @@ export default function InlineParameterBar({
             onClick={() => (panelOpen ? closePanel() : openPanel())}
             className={cn(
               'inline-flex items-center gap-1 h-7 pl-2.5 pr-2 rounded-pill border border-nomi-line bg-nomi-ink-05',
-              'text-caption text-nomi-ink-80 cursor-pointer min-w-0',
+              'w-[110px] shrink-0 justify-between text-caption text-nomi-ink-80 cursor-pointer min-w-0',
               'hover:border-nomi-ink-20 focus:outline-none focus-visible:border-nomi-accent',
             )}
           >

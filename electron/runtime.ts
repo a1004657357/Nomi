@@ -47,6 +47,7 @@ import { billingKindForTaskKind } from "./catalog/types";
 import { applyHeadlessParamDefaults, imageEditGuardError } from "./catalog/taskParams";
 import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
 import { JIMENG_WEB_VENDOR_SEED } from "./catalog/jimengWeb";
+import { runCustomCallTask } from "./catalog/customCallDispatch";
 import { assertAndConsumeSpendGrant } from "./spendGrant";
 import { waitForVendorSubmissionWindow } from "./vendorSubmissionRateLimiter";
 import {
@@ -192,6 +193,8 @@ export type CachedTask = {
   projectId?: string;
   nodeId?: string;
   wantedKind?: BillingModelKind;
+  /** Consecutive unrecognized provider status observations for bounded polling. */
+  unrecognizedStatusStreak?: { verb: string; polls: number; firstSeenAt: number };
   /** S8 指纹:异步任务终态成功时写回指纹缓存用。 */
   fingerprint?: string;
 };
@@ -348,13 +351,14 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     vendorKey,
     mapping?.create?.defaultParams,
   ); // headless 缺参兜底(档案默认+mapping)
+  const customCallScript = trim(model.customCall?.script);
   // L3 诚实护栏：图生图/图生视频缺参考或缺 mapping → 付费守卫之前拒发人话，绝不静默退化纯文生（判定在 taskParams.imageEditGuardError）。
   const guardError = imageEditGuardError(
     kind,
     request,
-    Boolean(mapping),
+    Boolean(mapping) || Boolean(customCallScript),
     model.labelZh || model.modelKey,
-    mapping?.create?.body,
+    customCallScript ? undefined : mapping?.create?.body,
   );
   if (guardError) throw new Error(guardError);
   // 第四路 audio：TTS/Whisper 同步收口（二进制/multipart）。付费守卫：必发 vendor，进来即校验消费令牌。
@@ -362,6 +366,23 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     assertAndConsumeSpendGrant(grantId, nodeId);
     await waitForVendorSubmissionWindow(vendor.key, wantedKind);
     return runAudioTask({ vendor, model, apiKey, request, kind, taskId, projectId, nodeId, mapping });
+  }
+  if (customCallScript) {
+    return runCustomCallTask({
+      vendor,
+      model,
+      apiKey,
+      script: customCallScript,
+      request,
+      kind,
+      wantedKind,
+      projectId,
+      nodeId,
+      grantId,
+      taskId,
+      localizeTaskAsset,
+      writeAsset,
+    });
   }
   if (mapping) {
     // S8 指纹缓存:同配方(参数没动)秒回上次成功结果,零 vendor 调用;强制重跑经 extras.forceRerun 绕读。

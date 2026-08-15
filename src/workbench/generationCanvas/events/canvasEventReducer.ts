@@ -15,6 +15,11 @@ export const emptyCanvasProjection = (): CanvasProjection => ({ nodes: [], edges
 
 type ReplayableEvent = { type: string; payload: Record<string, unknown> }
 
+/** 事件重放的幂等语义是 source+target+mode；ID 是交互身份，不代替图语义去重。 */
+function sameEdgeSemantic(a: GenerationCanvasEdge, b: GenerationCanvasEdge): boolean {
+  return a.source === b.source && a.target === b.target && a.mode === b.mode
+}
+
 export function applyCanvasEvent(projection: CanvasProjection, event: ReplayableEvent): CanvasProjection {
   const payload = event.payload || {}
   switch (event.type) {
@@ -96,8 +101,20 @@ export function applyCanvasEvent(projection: CanvasProjection, event: Replayable
       const source = String(payload.sourceNodeId || '')
       const target = String(payload.targetNodeId || '')
       if (!source || !target) return projection
-      // 与 store 同一只手:graphOps.connectNodes(构造性等价)
-      return { ...projection, edges: connectNodes(projection.edges, source, target, payload.mode as GenerationCanvasEdge['mode']) }
+      // 仅用于重放旧日志：历史 connected 事件不带完整边对象，后续 mode-changed /
+      // disconnected 却用旧式 edge-source-target ID。先复用统一算子判重/算 order，再把
+      // 新增边恢复为旧 ID，才能让同一条历史尾巴里的后续事件继续命中。
+      const legacyId = String(payload.edgeId || `edge-${source}-${target}`)
+      // 快照 lastSeq 可能落后于快照内容，同一尾巴会被重复应用；此时 mode 可能已被
+      // 后续事件改过，不能再按 mode 判重，legacy ID 才是这条历史边的稳定身份。
+      if (projection.edges.some((edge) => edge.id === legacyId)) return projection
+      const edges = connectNodes(projection.edges, source, target, payload.mode as GenerationCanvasEdge['mode'])
+      if (edges === projection.edges) return projection
+      const lastIndex = edges.length - 1
+      return {
+        ...projection,
+        edges: edges.map((edge, index) => (index === lastIndex ? { ...edge, id: legacyId } : edge)),
+      }
     }
     case 'canvas.edge.mode-changed': {
       const edgeId = String(payload.edgeId || '')
@@ -149,7 +166,22 @@ export function applyCanvasEvent(projection: CanvasProjection, event: Replayable
       // 整边对象(paste 等克隆路径:边 id 已定,不能走 connectNodes 重铸 id)
       const edge = payload.edge as GenerationCanvasEdge | undefined
       if (!edge?.id) return projection
-      return { ...projection, edges: [...projection.edges.filter((candidate) => candidate.id !== edge.id), edge] }
+      // ID 是新事件的稳定身份；semantic fallback 兼容被旧快照规范化过 ID 的同一条边。
+      // 已存在时必须保留快照里的较新 mode，不能拿较早的 added 后态覆盖它。
+      if (projection.edges.some((candidate) => candidate.id === edge.id || sameEdgeSemantic(candidate, edge))) return projection
+      return { ...projection, edges: [...projection.edges, edge] }
+    }
+    case 'canvas.edge.removed': {
+      // ID 主定位保证边后来改过 mode 仍能被重复尾巴删掉；semantic fallback 兼容旧事件。
+      const edge = payload.edge as GenerationCanvasEdge | undefined
+      if (!edge?.id) return projection
+      const hasExactId = projection.edges.some((candidate) => candidate.id === edge.id)
+      return {
+        ...projection,
+        edges: projection.edges.filter((candidate) => (
+          hasExactId ? candidate.id !== edge.id : !sameEdgeSemantic(candidate, edge)
+        )),
+      }
     }
     case 'canvas.snapshot.restored': {
       // 全量后态(undo/redo/hydrate 的影子记账;S5-b 翻正后 undo 改为按 txn 重放)

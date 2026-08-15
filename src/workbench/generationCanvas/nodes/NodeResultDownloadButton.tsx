@@ -2,7 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconBrandBlender, IconCube, IconDownload } from '@tabler/icons-react'
 import { useResultDownload } from './useResultDownload'
-import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton, ToolbarDivider } from './NodeFloatingToolbar'
+import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton, ToolbarDivider, ToolbarProvenanceButton } from './NodeFloatingToolbar'
 import NodeVideoFrameToolbar from './NodeVideoFrameToolbar'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { handoffModel3dNode, type Model3dHandoffTarget } from '../agent/model3dHandoff'
@@ -16,9 +16,11 @@ type Props = {
   node: GenerationCanvasNode
   selected: boolean
   onPreview: () => void
+  /** 生成记录（从卡片右上角迁来；这条链覆盖视频与其它非图片结果）。 */
+  onOpenProvenance: () => void
 }
 
-export default function NodeResultDownloadButton({ node, selected, onPreview }: Props): JSX.Element | null {
+export default function NodeResultDownloadButton({ node, selected, onPreview, onOpenProvenance }: Props): JSX.Element | null {
   const { t } = useTranslation()
   const { canDownload, downloading, download } = useResultDownload(node)
   const [handoffBusy, setHandoffBusy] = React.useState<Model3dHandoffTarget | null>(null)
@@ -34,7 +36,7 @@ export default function NodeResultDownloadButton({ node, selected, onPreview }: 
 
   // 视频结果 → 专用浮条（抽首/尾帧 + 下载）。
   if (node.result?.type === 'video') {
-    return <NodeVideoFrameToolbar node={node} downloading={downloading} onDownload={download} onPreview={onPreview} />
+    return <NodeVideoFrameToolbar node={node} downloading={downloading} onDownload={download} onPreview={onPreview} onOpenProvenance={onOpenProvenance} />
   }
 
   if (node.result?.type === 'model3d' && isCapabilityRecipesEnabled()) {
@@ -63,6 +65,7 @@ export default function NodeResultDownloadButton({ node, selected, onPreview }: 
           disabled={downloading || Boolean(handoffBusy)}
           onClick={download}
         />
+        <ToolbarProvenanceButton onOpen={onOpenProvenance} />
       </FloatingToolbarShell>
     )
   }
@@ -76,6 +79,7 @@ export default function NodeResultDownloadButton({ node, selected, onPreview }: 
         disabled={downloading}
         onClick={download}
       />
+      <ToolbarProvenanceButton onOpen={onOpenProvenance} />
     </FloatingToolbarShell>
   )
 }

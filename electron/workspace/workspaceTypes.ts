@@ -25,12 +25,19 @@ export type WorkspaceProjectRecordV2 = z.infer<typeof workspaceProjectRecordSche
   revision: number;
 };
 
+export type WorkspaceProjectSource = "native" | "folder";
+export type WorkspaceOrigin =
+  | { source: "native"; nativeRootPath: string }
+  | { source: "folder" };
+
 export const recentWorkspaceEntrySchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   rootPath: z.string().min(1),
   lastOpenedAt: z.number().finite(),
   missing: z.boolean().optional(),
+  source: z.enum(["native", "folder"]).optional(),
+  nativeRootPath: z.string().min(1).optional(),
 });
 
 export type RecentWorkspaceEntry = z.infer<typeof recentWorkspaceEntrySchema> & {
@@ -48,8 +55,17 @@ export function normalizeWorkspaceProjectRecord(input: unknown): WorkspaceProjec
 
 export function normalizeRecentWorkspaceEntry(input: unknown): RecentWorkspaceEntry {
   const parsed = recentWorkspaceEntrySchema.parse(input);
+  const origin =
+    parsed.source === "native" && parsed.nativeRootPath
+      ? { source: "native" as const, nativeRootPath: parsed.nativeRootPath }
+      : parsed.source === "folder"
+        ? { source: "folder" as const }
+        : {};
   return {
     ...parsed,
+    source: undefined,
+    nativeRootPath: undefined,
+    ...origin,
     missing: parsed.missing ?? false,
   };
 }

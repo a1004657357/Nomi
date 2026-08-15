@@ -38,7 +38,7 @@ import { readNestedRecord, trim, type JsonRecord } from "../jsonUtils";
 import { readSkillRecords } from "../skills/skillStore";
 import { decryptApiKeyRecord } from "../catalog/secrets";
 import { normalizeProviderKind, readCatalog } from "../catalog/catalogStore";
-import type { Model, Vendor } from "../catalog/types";
+import type { CatalogState, Model, Vendor } from "../catalog/types";
 import { readNomiLocalAsset } from "../assets/localAssetFile";
 import { extractTextFromLocalAsset } from "../files/extractText";
 import {
@@ -98,7 +98,7 @@ function imageInputRank(model: Model): number {
   return modelSupportsImageInput(model.modelKey, model.modelAlias, model.meta) ? 1 : 0;
 }
 
-type TextModelPreference = { modelKey?: string; vendorKey?: string };
+export type TextModelPreference = { modelKey?: string; vendorKey?: string };
 
 function preferenceRank(model: Model, preference: TextModelPreference): number {
   const modelKey = trim(preference.modelKey);
@@ -121,18 +121,52 @@ export function orderTextModelsForAgent(
   return [...texts].sort((a, b) => autoTextModelPenalty(a) - autoTextModelPenalty(b));
 }
 
+/**
+ * Some catalog text entries are asynchronous task profiles rather than
+ * chat-completions models (for example APIMart MiniMax H3 Context-IR). Keep
+ * those available to the workbench's prompt_refine mapping, but never let the
+ * generic Agent route them through /v1/chat/completions.
+ */
+function isPromptRefineOnlyModel(model: Model): boolean {
+  return Boolean(
+    model.meta &&
+      typeof model.meta === "object" &&
+      (model.meta as { promptRefineOnly?: unknown }).promptRefineOnly === true,
+  );
+}
+
+/**
+ * Rank catalog candidates before credentials are resolved. The exact
+ * (vendorKey, modelKey) identity always wins; a matching modelKey without a
+ * vendor is only a compatibility fallback for old callers. This keeps a
+ * same-named model from silently switching providers when the user selected
+ * a specific vendor in the picker.
+ */
+export function selectTextModelCandidates(
+  state: CatalogState,
+  preference?: TextModelPreference,
+  preferImageInput = false,
+): Array<{ vendor: Vendor; model: Model }> {
+  const texts = state.models.filter(
+    (item) => item.kind === "text" && item.enabled && !isPromptRefineOnlyModel(item),
+  );
+  // 有偏好：用户选的排第一（其余作回退）。
+  // 无偏好且本轮带图：优先支持图片输入的 text 模型（gpt-4o/claude/gemini 既能看图又擅长 tool_use）。
+  // 无偏好无图：不盲选第一个，按「是否像通用对话模型」稳定排序，vision/preview 降到末尾。
+  const ordered = orderTextModelsForAgent(texts, preference, preferImageInput);
+  return ordered.flatMap((model) => {
+    const vendor = state.vendors.find((item) => item.key === model.vendorKey && item.enabled);
+    return vendor ? [{ vendor, model }] : [];
+  });
+}
+
 function chooseTextModel(
   preference: TextModelPreference = {},
   preferImageInput = false,
 ): { vendor: Vendor; model: Model; apiKey: string } {
   const state = readCatalog();
-  const texts = state.models.filter((item) => item.kind === "text" && item.enabled);
-  // 有偏好：用户选的 vendor+model 精确排第一（同名模型在多供应商里不能串台），其余作回退。
-  // 无偏好且本轮带图：优先支持图片输入的 text 模型（gpt-4o/claude/gemini 既能看图又擅长 tool_use）。
-  // 无偏好无图：不盲选第一个，按「是否像通用对话模型」稳定排序，vision/preview 降到末尾。
-  const ordered = orderTextModelsForAgent(texts, preference, preferImageInput);
-  for (const model of ordered) {
-    const vendor = state.vendors.find((item) => item.key === model.vendorKey && item.enabled);
+  const candidates = selectTextModelCandidates(state, preference, preferImageInput);
+  for (const { vendor, model } of candidates) {
     const apiKey = decryptApiKeyRecord(state.apiKeysByVendor[model.vendorKey]);
     if (vendor && (vendor.authType === "none" || apiKey)) return { vendor, model, apiKey };
   }
@@ -702,6 +736,8 @@ export async function runAgentChatV2(
   const messages: CoreMessage[] = [...priorMessages, userMessage];
 
   const abortController = createLinkedAbortController(hooks.abortSignal);
+  // 只使用模型目录明确配置的输出上限，不在代码里编造短上限截断分镜 JSON。
+  const metaMaxOutputTokens = Number((model.meta as Record<string, unknown> | undefined)?.maxOutputTokens);
   // 统一循环内核（S0）：maxSteps(skill)/retry/repair/prompt 缓存全在 agentLoop 一处。
   const result = runAgentLoop(
     {
@@ -711,9 +747,13 @@ export async function runAgentChatV2(
       tools,
       isAnthropic: normalizeProviderKind(vendor.providerKind) === "anthropic",
       temperature: payload.disableTools ? 0.2 : typeof payload.temperature === "number" ? payload.temperature : 0.7,
+      ...(Number.isFinite(metaMaxOutputTokens) && metaMaxOutputTokens > 0
+        ? { maxTokens: Math.floor(metaMaxOutputTokens) }
+        : {}),
       skillKey: resolvedSkillKey,
       structuredJson: payload.disableTools === true,
       abortSignal: abortController.signal,
+      vendorKey: vendor.key,
     },
     { onError: (message) => hooks.emit({ type: "error", message }) },
     { mode: "stream" },
@@ -727,6 +767,7 @@ export async function runAgentChatV2(
       firstChunkTimeoutMs: 90_000,
       idleTimeoutMs: 120_000,
       label: `${vendor?.key}/${model?.modelKey}/${resolvedSkillKey}`,
+      vendorKey: vendor.key,
     },
   );
 

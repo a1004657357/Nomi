@@ -1,39 +1,46 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import {
-  describeBlockedNotice,
-  forkRegenerationNodesInPlan,
-  forkRegenerationPlan,
-} from './batchPlanPreview'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { BATCH_RUN_TOAST_ID, describeBlockedNotice, runPlanWithToasts } from './batchPlanPreview'
 import type { DependencyWavePlan } from '../runner/dependencyWaves'
-import { buildDependencyWaves } from '../runner/dependencyWaves'
-import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
-import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { runGenerationNodesByPlan } from '../runner/generationRunController'
+
+const mocks = vi.hoisted(() => ({
+  toast: vi.fn(),
+  toastPush: vi.fn(),
+  confirmGenerationSpend: vi.fn(async () => true),
+  mintSpendGrant: vi.fn(async () => 'retry-grant'),
+  nodes: [{ id: 'a', kind: 'image', title: 'A', position: { x: 0, y: 0 } }],
+  edges: [],
+}))
+
+vi.mock('../../../ui/toast', () => ({
+  toast: mocks.toast,
+  useToastStore: { getState: () => ({ push: mocks.toastPush }) },
+}))
+
+vi.mock('../spend/spendConfirm', () => ({
+  confirmGenerationSpend: mocks.confirmGenerationSpend,
+  describeGenerationCost: vi.fn(() => '1 image'),
+  batchSpendGrantTtlMs: vi.fn(() => 60_000),
+}))
+
+vi.mock('../../api/taskApi', () => ({
+  mintSpendGrant: mocks.mintSpendGrant,
+}))
+
+vi.mock('../store/generationCanvasStore', () => ({
+  useGenerationCanvasStore: { getState: () => ({ nodes: mocks.nodes, edges: mocks.edges }) },
+}))
+
+vi.mock('../agent/shotVerifyStore', () => ({ verifyShotsAndReport: vi.fn() }))
+
+vi.mock('../runner/generationRunController', () => ({
+  runGenerationNodesByPlan: vi.fn(async () => ({ totalCount: 1, successes: [], failures: [] })),
+  spendCostKindForNodes: vi.fn(() => 'image'),
+}))
 
 function plan(over: Partial<DependencyWavePlan>): DependencyWavePlan {
   return { waves: [], blocked: [], edgesUsed: [], ...over }
 }
-
-function imageNode(id: string, generated = false): GenerationCanvasNode {
-  return {
-    id,
-    kind: 'image',
-    title: id,
-    position: { x: 0, y: 0 },
-    prompt: `${id} prompt`,
-    ...(generated
-      ? { result: { id: `${id}-result`, type: 'image', url: `https://x/${id}.png`, createdAt: 1 } }
-      : {}),
-  }
-}
-
-beforeEach(() => {
-  useGenerationCanvasStore.getState().restoreSnapshot({
-    nodes: [],
-    edges: [],
-    groups: [],
-    selectedNodeIds: [],
-  })
-})
 
 describe('describeBlockedNotice — 批量「缺啥提示啥」', () => {
   it('无 blocked → null（不提示）', () => {
@@ -63,66 +70,67 @@ describe('describeBlockedNotice — 批量「缺啥提示啥」', () => {
   })
 })
 
-describe('regeneration dependency plan', () => {
-  it('replaces the generated target with a new version after confirmation planning', () => {
-    const nodes = [imageNode('pending-ref'), imageNode('shot-v1', true)]
-    const edges = [{
-      id: 'edge-pending-shot',
-      source: 'pending-ref',
-      target: 'shot-v1',
-      mode: 'reference' as const,
-      order: 0,
-    }]
-    useGenerationCanvasStore.getState().restoreSnapshot({ nodes, edges, groups: [], selectedNodeIds: [] })
-    const originalPlan = buildDependencyWaves(['pending-ref', 'shot-v1'], { nodes, edges })
-
-    const forked = forkRegenerationPlan(originalPlan, 'shot-v1')
-
-    expect(forked).toBeTruthy()
-    expect(forked?.plan.waves.flat()).toContain('pending-ref')
-    expect(forked?.plan.waves.flat()).toContain(forked?.variantNodeId)
-    expect(forked?.plan.waves.flat()).not.toContain('shot-v1')
-    const state = useGenerationCanvasStore.getState()
-    expect(state.nodes.find((node) => node.id === 'shot-v1')?.result?.id).toBe('shot-v1-result')
-    expect(state.nodes.find((node) => node.id === forked?.variantNodeId)?.regeneratedFrom).toBe('shot-v1')
-    expect(state.edges).toContainEqual(expect.objectContaining({
-      source: 'pending-ref',
-      target: forked?.variantNodeId,
-      mode: 'reference',
-    }))
+describe('runPlanWithToasts concurrency', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(runGenerationNodesByPlan).mockResolvedValue({ totalCount: 1, successes: [], failures: [] })
+    mocks.mintSpendGrant.mockResolvedValue('retry-grant')
   })
 
-  it('forks every completed node and rewires a regenerated dependency chain', () => {
-    const nodes = [imageNode('source-v1', true), imageNode('target-v1', true)]
-    const edges = [{
-      id: 'edge-source-target',
-      source: 'source-v1',
-      target: 'target-v1',
-      mode: 'reference' as const,
-      order: 0,
-    }]
-    useGenerationCanvasStore.getState().restoreSnapshot({ nodes, edges, groups: [], selectedNodeIds: [] })
-    const originalPlan = buildDependencyWaves(['source-v1', 'target-v1'], { nodes, edges })
+  it('passes the chosen concurrency to the dependency-wave runner', async () => {
+    const dependencyPlan = plan({ waves: [['a']] })
 
-    const forked = forkRegenerationNodesInPlan(originalPlan, ['source-v1', 'target-v1'])
+    await runPlanWithToasts(dependencyPlan, { grantId: 'grant-1', concurrency: 4 })
 
-    expect(forked).toBeTruthy()
-    const sourceV2 = forked?.sourceToVariant.get('source-v1')
-    const targetV2 = forked?.sourceToVariant.get('target-v1')
-    expect(sourceV2).toBeTruthy()
-    expect(targetV2).toBeTruthy()
-    expect(forked?.plan.waves).toEqual([[sourceV2], [targetV2]])
-    expect(forked?.plan.waves.flat()).not.toContain('source-v1')
-    expect(forked?.plan.waves.flat()).not.toContain('target-v1')
+    expect(runGenerationNodesByPlan).toHaveBeenCalledWith(dependencyPlan, {
+      grantId: 'grant-1',
+      concurrency: 4,
+    })
+  })
 
-    const state = useGenerationCanvasStore.getState()
-    expect(state.nodes.find((node) => node.id === 'source-v1')?.result?.id).toBe('source-v1-result')
-    expect(state.nodes.find((node) => node.id === 'target-v1')?.result?.id).toBe('target-v1-result')
-    expect(state.edges).toContainEqual(expect.objectContaining({
-      source: sourceV2,
-      target: targetV2,
-      mode: 'reference',
-    }))
-    expect(state.edges.some((edge) => edge.source === 'source-v1' && edge.target === targetV2)).toBe(false)
+  it('updates start and terminal feedback through one stable notification id', async () => {
+    vi.mocked(runGenerationNodesByPlan).mockResolvedValueOnce({
+      totalCount: 1,
+      successes: [{ nodeId: 'a', result: { id: 'result-a', type: 'image', url: 'data:image/png;base64,a', createdAt: 1 } }],
+      failures: [],
+    })
+
+    await runPlanWithToasts(plan({ waves: [['a']] }))
+
+    expect(mocks.toastPush).toHaveBeenCalledTimes(2)
+    expect(mocks.toastPush.mock.calls[0][0]).toMatchObject({ id: BATCH_RUN_TOAST_ID, ttl: false })
+    expect(mocks.toastPush.mock.calls[1][0]).toMatchObject({ id: BATCH_RUN_TOAST_ID, type: 'success' })
+  })
+
+  it('keeps the selected concurrency when the explicit retry action reruns failures', async () => {
+    vi.mocked(runGenerationNodesByPlan)
+      .mockResolvedValueOnce({
+        totalCount: 1,
+        successes: [],
+        failures: [{ nodeId: 'a', error: 'mock failure' }],
+      })
+      .mockResolvedValueOnce({
+        totalCount: 1,
+        successes: [{ nodeId: 'a', result: { id: 'result-a', type: 'image', url: 'data:image/png;base64,a', createdAt: 1 } }],
+        failures: [],
+      })
+
+    await runPlanWithToasts(plan({ waves: [['a']] }), { concurrency: 4 })
+    const failedToast = mocks.toastPush.mock.calls[1][0]
+    expect(failedToast).toMatchObject({
+      id: BATCH_RUN_TOAST_ID,
+      type: 'error',
+      actionLabel: expect.any(String),
+      onAction: expect.any(Function),
+    })
+
+    failedToast.onAction()
+    await vi.waitFor(() => expect(runGenerationNodesByPlan).toHaveBeenCalledTimes(2))
+
+    expect(runGenerationNodesByPlan).toHaveBeenLastCalledWith(expect.any(Object), {
+      grantId: 'retry-grant',
+      concurrency: 4,
+    })
+    expect(mocks.toastPush.mock.calls.slice(2).every(([input]) => input.id === BATCH_RUN_TOAST_ID)).toBe(true)
   })
 })

@@ -32,7 +32,7 @@ export const SEEDREAM_ARCHETYPE: ModelArchetype = {
   kind: "image",
   defaultModeId: "t2i",
   transportTaskKind: "text_to_image",
-  identifierPatterns: ["seedream", "seedream/4.5-text-to-image", "seedream/4.5-edit", "seedream/5-lite-text-to-image", "bytedance/seedream-v4-edit", "bytedance/seedream-v4-text-to-image", "seedream-4-5", "seedream-v4"],
+  identifierPatterns: ["seedream", "seedream/4.5-text-to-image", "seedream/4.5-edit", "seedream/5-lite-text-to-image", "bytedance/seedream-v4-edit", "bytedance/seedream-v4-text-to-image", "seedream-4-5", "seedream-v4", "doubao-seedream-4.5"],
   modes: [
     {
       id: "t2i",

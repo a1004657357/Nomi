@@ -171,7 +171,7 @@ export function applyBrowserAssetOverlayShape(
 
 export function applyBrowserAssetOverlayMouseEvents(record: BrowserAssetOverlayRecord): void {
   if (record.window.isDestroyed()) return;
-  const shapedDockInteractive = Boolean(record.dockMode && record.popoverRect);
+  const shapedDockInteractive = Boolean(record.shapeInteractive && record.dockMode && record.popoverRect);
   const dragCaptureInteractive = browserAssetOverlayUsesDragCapture({
     dragInteractive: record.dragInteractive,
     dockMode: record.dockMode,
@@ -269,6 +269,10 @@ export function setBrowserAssetOverlayDragInteractive(record: BrowserAssetOverla
 /** 原生拖拽可能吞掉 renderer 的 pointerup；结束时同时释放两层全窗命中态，避免继续挡住网页。 */
 export function finishBrowserAssetOverlayDrag(record: BrowserAssetOverlayRecord): void {
   record.pointerInteractive = false;
+  // A drag that starts in the overlay is headed for the owner window's canvas.
+  // Leaving hoverInteractive latched would keep the transparent overlay above
+  // the canvas and swallow the drop on macOS where setShape is unavailable.
+  record.hoverInteractive = false;
   setBrowserAssetOverlayDragInteractive(record, false);
 }
 

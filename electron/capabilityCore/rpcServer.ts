@@ -14,7 +14,10 @@ import type { FetchTaskResultFn, RunDirectorFn, RunTaskFn } from './core'
 import { dispatch, RpcError } from './dispatcher'
 import { createDiskGateway, createHybridGateway, createRendererGateway, type ProjectGateway } from './gateway'
 import { isRendererAvailable, requestRenderer } from './rendererBridge'
-import { verifyToken } from './security'
+import { resolveMcpOrigin, verifyToken } from './security'
+import { getProductionRunService } from '../productionRun/productionRunRuntime'
+import { handleArtifactPreviewHttpRequest } from '../productionRun/artifactPreviewHttpServer'
+import { setArtifactPreviewHttpOrigin } from '../productionRun/artifactProjection'
 
 export type RpcServerOptions = {
   /** 真实生成入口（runtime.runTask）。注入式：headless host 与 app 各自传同一份。 */
@@ -25,6 +28,7 @@ export type RpcServerOptions = {
   runDirector?: RunDirectorFn
   /** 该 projectId 是否正在某个 app 窗口里打开（命中则拒绝直写图变更）。headless: ()=>false。 */
   isProjectOpen?: (projectId: string) => boolean
+  productionRuns?: ReturnType<typeof getProductionRunService>
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -52,6 +56,10 @@ function bearerToken(req: http.IncomingMessage): string {
   return match ? match[1].trim() : ''
 }
 
+function firstHeader(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
+}
+
 export type RpcServerHandle = {
   port: number
   close: () => Promise<void>
@@ -59,6 +67,7 @@ export type RpcServerHandle = {
 
 /** 启动 RPC server，监听 127.0.0.1 随机端口。返回端口与关闭句柄。 */
 export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHandle> {
+  const productionRuns = options.productionRuns ?? getProductionRunService()
   const isProjectOpen = options.isProjectOpen || (() => false)
   // 三态路由（治「外部 MCP 生成到非当前项目 → 静默黑洞」，用户拍板 A）：
   // - 项目正在前台打开 + 渲染层可达 → 渲染层网关（A：读写实时刷画布 + 弹卡）。
@@ -77,6 +86,7 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
         res.end(body)
       }
       try {
+        if (await handleArtifactPreviewHttpRequest(req, res, productionRuns)) return
         if (req.method !== 'POST' || req.url !== '/rpc') throw new RpcError('仅支持 POST /rpc', 404)
         if (!verifyToken(bearerToken(req))) throw new RpcError('鉴权失败：token 无效', 401)
         const raw = await readBody(req)
@@ -88,6 +98,10 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
         }
         const method = String(parsed.method || '')
         const params = (parsed.params && typeof parsed.params === 'object' ? parsed.params : {}) as Record<string, unknown>
+        const origin = resolveMcpOrigin(
+          firstHeader(req.headers['x-nomi-mcp-client']),
+          firstHeader(req.headers['x-nomi-mcp-client-proof']),
+        )
         const result = await dispatch(method, params, {
           runTask: options.runTask,
           fetchTaskResult: options.fetchTaskResult,
@@ -100,6 +114,8 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
             return requestRenderer('generation.batch', { projectId, nodeIds }, 130_000)
           },
           makeGateway,
+          productionRuns,
+          origin: { host: origin },
         })
         send(200, { ok: true, result })
       } catch (error) {
@@ -114,11 +130,16 @@ export function startRpcServer(options: RpcServerOptions): Promise<RpcServerHand
     // 0.0.0.0 绝不用——只 127.0.0.1，外网/局域网够不着。
     server.listen(0, '127.0.0.1', () => {
       const address = server.address() as AddressInfo
+      const previewOrigin = `http://127.0.0.1:${address.port}`
+      setArtifactPreviewHttpOrigin(previewOrigin)
       resolve({
         port: address.port,
         close: () =>
           new Promise<void>((resolveClose) => {
-            server.close(() => resolveClose())
+            server.close(() => {
+              setArtifactPreviewHttpOrigin(null)
+              resolveClose()
+            })
           }),
       })
     })

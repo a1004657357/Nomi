@@ -1,38 +1,33 @@
 // 真实端到端（接入即验证 · Issue #9 验收门 S2）：验证 apimart 的默认文本大脑
-// `deepseek-v4-pro` 在真实服务端上 **chat + tool_use 双通**——这是创作助手 / 拆镜头能跑的前提，
+// `deepseek-v3.1-250821` 在真实服务端上 **chat + tool_use 双通**——这是创作助手 / 拆镜头能跑的前提，
 // 也是「默认播一个文本模型」是否真有用的唯一硬证据（单测只能证种子写进 catalog，证不了 vendor 接受）。
 //
 // 走真实 app 栈（safeStorage 身份一致，复用 app 已配 apimart key 自解密）：
-//   chatV2Start(agentModelKey="deepseek-v4-pro") → 发一段拆镜头 prompt → 监听 chatV2 事件。
+//   chatV2Start(agentModelKey="deepseek-v3.1-250821") → 发一段拆镜头 prompt → 监听 chatV2 事件。
 //   判定：① 收到 content-delta/result = chat 解析成功（模型在 apimart 真实存在）；
 //        ② 收到 tool-call / tool-call-pending = function calling 可用（agent 主控必需）。
 //   两者皆中 → PASS。只 chat 不 tool_use → 退回 gpt-5 系（回填 plan + apimartTexts.ts）。
 //
 // **会花真实额度（仅文本，极少）**。额度闸：不显式 APIMART_E2E=1 / APIMART_API_KEY 就 SKIP。
 // 用法：pnpm run build && APIMART_E2E=1 node tests/ux/apimart-text-brain.e2e.mjs
-import { _electron as electron } from "playwright";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
+import { launchNomiApp } from "./_launchApp.mjs";
 
-const require = createRequire(import.meta.url);
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 if (!process.env.APIMART_E2E && !process.env.APIMART_API_KEY) {
   console.log("SKIP apimart-text-brain.e2e: 会花额度。APIMART_E2E=1 node tests/ux/apimart-text-brain.e2e.mjs 才跑（用 app 已配 apimart key）。");
   process.exit(0);
 }
 
-const MODEL_KEY = process.env.APIMART_TEXT_MODEL || "deepseek-v4-pro";
+const MODEL_KEY = process.env.APIMART_TEXT_MODEL || "deepseek-v3.1-250821";
 const ENV_KEY = process.env.APIMART_API_KEY;
 const STORY = "一个程序员深夜加班，灵感突现，敲下最后一行代码，窗外天亮了。";
 
-const app = await electron.launch({ executablePath: require("electron"), args: [".", "--disable-gpu", "--disable-software-rasterizer"], cwd: repoRoot, env: { ...process.env } });
+const { app, win } = await launchNomiApp({
+  name: "apimart-text-brain",
+  args: ["--disable-gpu", "--disable-software-rasterizer"],
+});
 
 try {
-  const win = await app.firstWindow();
-  await win.waitForLoadState("domcontentloaded");
-  await win.waitForTimeout(1500);
 
   // key：env 覆盖否则用已存的（自解密）。未配 → SKIP。
   if (ENV_KEY) {
@@ -53,7 +48,7 @@ try {
   }, MODEL_KEY).catch(() => null);
   console.log(`apimart 文本大脑 ${MODEL_KEY} 在 catalog：${hasBrain === null ? "(listModels 未暴露,跳过自检)" : hasBrain}`);
 
-  // 驱动一整轮 agent：强制 agentModelKey=deepseek-v4-pro，发拆镜头 prompt，监听 chatV2 事件。
+  // 驱动一整轮 agent：强制 agentModelKey=deepseek-v3.1-250821，发拆镜头 prompt，监听 chatV2 事件。
   // 顺序同真实渲染层：先 start 拿 sessionId，再 onChatV2Event(sessionId, cb)（vendor 网络延迟覆盖订阅窗口）。
   console.log(`\n▶ chatV2 拆镜头（agentModelKey=${MODEL_KEY}）`);
   const outcome = await win.evaluate(async ({ mk, story }) => {

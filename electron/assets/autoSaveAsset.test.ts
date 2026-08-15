@@ -1,4 +1,5 @@
 // 自动另存 runtime（集中设置页首批项）。核心：best-effort（关/失败绝不打断生成）+ 同名不覆盖。
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -26,12 +27,13 @@ beforeEach(() => {
 });
 
 describe("uniqueSavePath — 同名不覆盖", () => {
+  // 实现走 path.join → 期望值按宿主分隔符算，Windows 上才不恒红（同 e3f45787 先例）
   it("不存在 → 原名", () => {
-    expect(uniqueSavePath("/d", "a.png", () => false)).toBe("/d/a.png");
+    expect(uniqueSavePath("/d", "a.png", () => false)).toBe(path.join("/d", "a.png"));
   });
   it("已存在 → 加 -1；连续存在 → -2", () => {
-    const taken = new Set(["/d/a.png", "/d/a-1.png"]);
-    expect(uniqueSavePath("/d", "a.png", (p) => taken.has(p))).toBe("/d/a-2.png");
+    const taken = new Set([path.join("/d", "a.png"), path.join("/d", "a-1.png")]);
+    expect(uniqueSavePath("/d", "a.png", (p) => taken.has(p))).toBe(path.join("/d", "a-2.png"));
   });
 });
 

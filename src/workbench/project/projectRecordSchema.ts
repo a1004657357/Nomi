@@ -82,8 +82,15 @@ export type WorkbenchProjectSummary = {
   revision?: number
   savedAt?: number
   thumbStyle?: string
+  /** 可 `<img>` 渲染的封面（图片结果 / 视频 poster）。thumbnail = thumbnailUrls[0]。 */
   thumbnail?: string
   thumbnailUrls?: string[]
+  /**
+   * 无任何可 `<img>` 封面时的兜底：首个视频结果 url，项目库卡片用 `<video>` 首帧当封面
+   * （纯导入视频素材项目靠它有真封面）。**transient**：list/save 时从画布内容现场派生，
+   * 刻意不进持久化 schema——封面 URL 持久化会随环境/会话腐坏（bundle-asset 教训同族）。
+   */
+  coverVideoUrl?: string
   /**
    * 播种来源的幂等键（如 `example:product-demo`）。「一键示例」等程序化创建入口
    * 用它识别「这个种子已经播过」——名字不是身份，靠名字去重必堆重复项目（审计 A8）。

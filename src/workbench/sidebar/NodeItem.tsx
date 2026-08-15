@@ -2,6 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../utils/cn'
 import type { GenerationCanvasNode } from '../generationCanvas/model/generationCanvasTypes'
+import { NODE_DRAG_MIME } from './groupDragDisclosure'
 
 const SHORT_LABEL_KINDS = new Set<GenerationCanvasNode['kind']>([
   'text',
@@ -20,18 +21,27 @@ type Props = {
   active?: boolean
   depth?: number
   onSelect?: (nodeId: string) => void
+  onDragStartNode?: (nodeId: string) => void
   onContextMenu?: (event: React.MouseEvent<HTMLButtonElement>, nodeId: string) => void
 }
 
-export default function NodeItem({ node, active = false, depth = 0, onSelect, onContextMenu }: Props): JSX.Element {
+export default function NodeItem({
+  node,
+  active = false,
+  depth = 0,
+  onSelect,
+  onDragStartNode,
+  onContextMenu,
+}: Props): JSX.Element {
   const { t } = useTranslation()
   const shortKind = SHORT_LABEL_KINDS.has(node.kind) ? node.kind : 'fallback'
   const handleDragStart = React.useCallback(
     (event: React.DragEvent<HTMLButtonElement>) => {
-      event.dataTransfer.setData('application/x-nomi-node-id', node.id)
+      event.dataTransfer.setData(NODE_DRAG_MIME, node.id)
       event.dataTransfer.effectAllowed = 'move'
+      onDragStartNode?.(node.id)
     },
-    [node.id],
+    [node.id, onDragStartNode],
   )
 
   const handleClick = React.useCallback(() => {

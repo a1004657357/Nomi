@@ -30,6 +30,7 @@ import {
 } from './timeline/timelineTextEdit'
 import type { Vec2 } from './timeline/overlayTransform'
 import { createDefaultTimeline, normalizeTimeline } from './timeline/timelineMath'
+import { readPreviewSourceCollapsed, writePreviewSourceCollapsed } from './preview/previewSourcePanelPreference'
 import type { TimelineClip, TimelineState, TimelineTextStyle, TimelineTrackType } from './timeline/timelineTypes'
 import { createDefaultWorkbenchDocument, normalizeWorkbenchDocument, type CreationDocumentTools, type PreviewAspectRatio, type WorkbenchDocument } from './workbenchTypes'
 import type { WorkbenchAiMessage } from './ai/workbenchAiTypes'
@@ -81,6 +82,9 @@ type WorkbenchState = {
   workspaceMode: WorkspaceMode
   /** 生成/预览区右侧助手侧栏宽度（px，可拖宽）。 */
   assistantWidth: number
+  /** 左侧项目/素材侧栏展开态宽度覆盖值（px，可拖宽；null = 跟随 tab 默认：库 500 / 分组 300）。
+      2026-08-08 飞书反馈「素材库宽度锁死不能拖拽」。 */
+  projectSidebarWidth: number | null
   /** Phase E: which directory-tree category is currently selected */
   activeCategoryId: string
   /** 顶层分类列表（内置 5 + 用户自定义）。单一真相源，持久化随项目。 */
@@ -139,6 +143,12 @@ type WorkbenchState = {
   timelineSnapGuide: TimelineSnapGuide | null
   /** 剪刀模式：进入后悬停片段出切点线、点击在光标处分割；平时点片段是选中。 */
   timelineSplitMode: boolean
+  /** 生成页底部时间轴收起/展开（会话级 UI 态；节点「加入时间轴」成功后会展开它）。 */
+  timelinePanelCollapsed: boolean
+  setTimelinePanelCollapsed: (collapsed: boolean) => void
+  /** 剪辑页左侧素材来源栏收起/展开（跨会话记住：剪片习惯因人而异）。 */
+  previewSourcePanelCollapsed: boolean
+  setPreviewSourcePanelCollapsed: (collapsed: boolean) => void
   /** 时间轴撤销栈（仅时间轴编辑，非持久化）。封顶后丢最旧。 */
   timelineUndoStack: TimelineState[]
   /** 时间轴重做栈。撤销时压入；任一新编辑清空（新编辑使 redo 失效，标准语义）。 */
@@ -152,6 +162,7 @@ type WorkbenchState = {
   redoTimeline: () => void
   setWorkspaceMode: (mode: unknown) => void
   setAssistantWidth: (width: number) => void
+  setProjectSidebarWidth: (width: number) => void
   setWorkbenchDocument: (document: WorkbenchDocument) => void
   setCreationDocumentTools: (tools: CreationDocumentTools | null) => void
   setCreationSelectionText: (text: string) => void
@@ -246,6 +257,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   persistRevision: 0,
   workspaceMode: 'generation',
   assistantWidth: 340,
+  projectSidebarWidth: null,
   activeCategoryId: 'shots',
   categories: cloneBuiltinCategories(),
   sidebarCollapsed: true,
@@ -335,6 +347,13 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   selectedTextClipId: '',
   timelineSnapGuide: null,
   timelineSplitMode: false,
+  timelinePanelCollapsed: true,
+  setTimelinePanelCollapsed: (collapsed) => set({ timelinePanelCollapsed: Boolean(collapsed) }),
+  previewSourcePanelCollapsed: readPreviewSourceCollapsed(),
+  setPreviewSourcePanelCollapsed: (collapsed) => {
+    writePreviewSourceCollapsed(Boolean(collapsed))
+    set({ previewSourcePanelCollapsed: Boolean(collapsed) })
+  },
   timelineUndoStack: [],
   timelineRedoStack: [],
   setWorkspaceMode: (mode) => {
@@ -342,6 +361,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
     set({ workspaceMode: mode })
   },
   setAssistantWidth: (width) => set({ assistantWidth: Math.max(300, Math.min(600, Math.round(width))) }),
+  setProjectSidebarWidth: (width) => set({ projectSidebarWidth: Math.max(240, Math.min(720, Math.round(width))) }),
   setWorkbenchDocument: (workbenchDocument) => {
     set((state) => ({
       workbenchDocument: normalizeWorkbenchDocument(workbenchDocument),

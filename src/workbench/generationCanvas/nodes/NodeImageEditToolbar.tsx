@@ -1,10 +1,10 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconBrush, IconCrop, IconCube, IconDownload, IconFlipHorizontal, IconFlipVertical, IconGrid3x3, IconGridDots, IconLayersSubtract, IconLayoutGrid, IconMaximize, IconRotate2, IconRotateClockwise2, IconScissors, IconSparkles, IconTransform, IconTypography, IconWand } from '@tabler/icons-react'
+import { IconBrush, IconCrop, IconDownload, IconFlipHorizontal, IconFlipVertical, IconGrid3x3, IconGridDots, IconLayersSubtract, IconLayoutGrid, IconMaximize, IconRotate2, IconRotateClockwise2, IconScissors, IconSparkles, IconTransform, IconTypography, IconWand } from '@tabler/icons-react'
 import { type ImageGridSize, type ImageTransformOp } from './useNodeImageEditing'
 import type { CropGridSize } from './render/ImageCropGridOverlay'
 import { useResultDownload } from './useResultDownload'
-import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton, ToolbarDivider, ToolbarIconButton, ToolbarMenu } from './NodeFloatingToolbar'
+import { FloatingToolbarShell, TOOLBAR_ICON as I, ToolbarButton, ToolbarDivider, ToolbarIconButton, ToolbarMenu, ToolbarProvenanceButton } from './NodeFloatingToolbar'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import WhiteboardModal from './whiteboard/WhiteboardModal'
 import { inferWhiteboardAspectRatio, readWhiteboardState } from './whiteboard/whiteboardState'
@@ -30,13 +30,13 @@ type Props = {
   removeBackgroundBusy?: boolean
   /** 打开共享图片全屏预览。 */
   onPreview: () => void
+  /** 打开生成记录（原先住卡片右上角，常驻压在图上；2026-08-04 迁来这条浮条）。 */
+  onOpenProvenance: () => void
   /** Tier1「定妆」：基于当前图建一个预填身份板提示词的新节点（不自动生成）。缺省不渲染该按钮。 */
   onMakeup?: () => void
-  /** 用现有图片转 3D 配方创建可调相机的 GLB 代理。 */
-  onCreate3dCameraProxy?: () => void
 }
 
-export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGridSplit, onCrop, onTransform, onRemoveBackground, removeBackgroundBusy = false, onPreview, onMakeup, onCreate3dCameraProxy }: Props): JSX.Element {
+export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGridSplit, onCrop, onTransform, onRemoveBackground, removeBackgroundBusy = false, onPreview, onOpenProvenance, onMakeup }: Props): JSX.Element {
   const { t } = useTranslation()
   const { downloading, download } = useResultDownload(node)
   const [whiteboardOpen, setWhiteboardOpen] = React.useState(false)
@@ -68,15 +68,6 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
             { icon: <IconTypography size={I.size} stroke={I.stroke} />, label: t('generationCommon.imageToolbar.editText'), onClick: () => applyTextEdit(node) },
           ]}
         />
-        {onCreate3dCameraProxy ? (
-          <ToolbarButton
-            icon={<IconCube size={I.size} stroke={I.stroke} />}
-            label="3D 机位"
-            title="把当前图片转换为可环绕、可精确回拍的 3D 机位代理"
-            disabled={busy || !imageUrl}
-            onClick={onCreate3dCameraProxy}
-          />
-        ) : null}
         <ToolbarDivider />
         <ToolbarButton
           icon={<IconCrop size={I.size} stroke={I.stroke} />}
@@ -142,6 +133,7 @@ export default function NodeImageEditToolbar({ node, editGrid, imageOpBusy, onGr
           disabled={downloading}
           onClick={download}
         />
+        <ToolbarProvenanceButton onOpen={onOpenProvenance} />
       </FloatingToolbarShell>
       {whiteboardOpen && imageUrl ? (
         <WhiteboardModal

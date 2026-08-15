@@ -10,16 +10,19 @@ import {
   saveLocalProject as saveProjectRecord,
 } from '../project/projectRepository'
 import type {
+  WorkbenchProjectPayload,
   WorkbenchProjectRecordV1 as LocalProjectRecord,
   WorkbenchProjectSummary as LocalProjectSummary,
 } from '../project/projectRecordSchema'
-import type { GenerationCanvasSnapshot } from '../generationCanvas/model/generationCanvasTypes'
-import type { TimelineState } from '../timeline/timelineTypes'
-import type { WorkbenchDocument } from '../workbenchTypes'
+import { deriveProjectCoverFromRaw } from '../project/projectCoverDerive'
 
 const LOCAL_PROJECTS_SWR_KEY = 'nomi:local-projects:v1'
 
 function toProjectSummary(record: LocalProjectRecord): LocalProjectSummary {
+  // 封面从 record 内容现场派生（与 list 同语义、单一来源）：桌面 save 返回的 record 会被
+  // manifest schema strip 掉缩略图字段，抄 record.thumbnail 会让保存后的卡片封面闪空；
+  // 且视频兜底封面（coverVideoUrl）本就是 transient、只能派生拿到。
+  const cover = deriveProjectCoverFromRaw(record)
   return {
     id: record.id,
     name: record.name,
@@ -28,8 +31,8 @@ function toProjectSummary(record: LocalProjectRecord): LocalProjectSummary {
     revision: record.revision,
     savedAt: record.savedAt,
     thumbStyle: record.thumbStyle,
-    thumbnail: record.thumbnail,
-    thumbnailUrls: record.thumbnailUrls,
+    ...(cover.imageUrls.length ? { thumbnail: cover.imageUrls[0], thumbnailUrls: cover.imageUrls } : {}),
+    ...(cover.videoUrl ? { coverVideoUrl: cover.videoUrl } : {}),
     seedKey: record.seedKey,
     source: record.source,
     rootPath: record.rootPath,
@@ -107,11 +110,7 @@ export { readLocalProject, readLocalProjectAsync }
 
 export function saveLocalProject(
   projectId: string,
-  state: {
-    workbenchDocument: WorkbenchDocument
-    timeline: TimelineState
-    generationCanvas: GenerationCanvasSnapshot
-  },
+  state: WorkbenchProjectPayload,
   name?: string,
 ): LocalProjectRecord {
   const record = saveProjectRecord(projectId, state, name)

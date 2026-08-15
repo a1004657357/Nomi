@@ -2,6 +2,12 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../utils/cn'
 import type { GenerationCanvasNode, NodeGroup } from '../generationCanvas/model/generationCanvasTypes'
+import {
+  GROUP_DRAG_MIME,
+  NODE_DRAG_EXPAND_DELAY_MS,
+  NODE_DRAG_MIME,
+  classifySidebarDrag,
+} from './groupDragDisclosure'
 import NodeItem from './NodeItem'
 
 // 用户子组未指定颜色时的默认色点底色（暖灰半透明，与品牌一致）。
@@ -37,15 +43,23 @@ export default function GroupItem({
   const { t } = useTranslation()
   const [expanded, setExpanded] = React.useState(!group.collapsed)
   const [dragOver, setDragOver] = React.useState(false)
+  const expandTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   // 已提交/取消标记：避免 Enter/Escape 后 input 再 blur 触发二次提交。
   const settledRef = React.useRef(false)
   React.useEffect(() => {
     if (editing) settledRef.current = false
   }, [editing])
 
+  const clearExpandTimer = React.useCallback(() => {
+    if (expandTimerRef.current) clearTimeout(expandTimerRef.current)
+    expandTimerRef.current = null
+  }, [])
+
+  React.useEffect(() => clearExpandTimer, [clearExpandTimer])
+
   const handleDragStart = React.useCallback(
     (event: React.DragEvent<HTMLButtonElement>) => {
-      event.dataTransfer.setData('application/x-nomi-group-id', group.id)
+      event.dataTransfer.setData(GROUP_DRAG_MIME, group.id)
       event.dataTransfer.effectAllowed = 'move'
     },
     [group.id],
@@ -53,19 +67,26 @@ export default function GroupItem({
 
   const handleDragOver = React.useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      const types = Array.from(event.dataTransfer?.types || [])
-      if (!types.includes('application/x-nomi-node-id') && !types.includes('application/x-nomi-group-id')) return
+      const dragKind = classifySidebarDrag(Array.from(event.dataTransfer?.types || []))
+      if (!dragKind) return
       event.preventDefault()
       event.dataTransfer.dropEffect = 'move'
       if (!dragOver) setDragOver(true)
+      if (dragKind === 'node' && !expanded && !expandTimerRef.current) {
+        expandTimerRef.current = setTimeout(() => {
+          setExpanded(true)
+          expandTimerRef.current = null
+        }, NODE_DRAG_EXPAND_DELAY_MS)
+      }
     },
-    [dragOver],
+    [dragOver, expanded],
   )
 
   const handleDrop = React.useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      const nodeId = event.dataTransfer.getData('application/x-nomi-node-id')
-      const activeGroupId = event.dataTransfer.getData('application/x-nomi-group-id')
+      const nodeId = event.dataTransfer.getData(NODE_DRAG_MIME)
+      const activeGroupId = event.dataTransfer.getData(GROUP_DRAG_MIME)
+      clearExpandTimer()
       setDragOver(false)
       if (nodeId) {
         event.preventDefault()
@@ -77,7 +98,17 @@ export default function GroupItem({
         onDropGroup?.(activeGroupId, group.id)
       }
     },
-    [group.id, onDropGroup, onDropNode],
+    [clearExpandTimer, group.id, onDropGroup, onDropNode],
+  )
+
+  const handleDragLeave = React.useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const nextTarget = event.relatedTarget
+      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return
+      clearExpandTimer()
+      setDragOver(false)
+    },
+    [clearExpandTimer],
   )
 
   return (
@@ -87,7 +118,7 @@ export default function GroupItem({
         dragOver && 'ring-2 ring-nomi-accent/60',
       )}
       onDragOver={handleDragOver}
-      onDragLeave={() => setDragOver(false)}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {editing ? (
@@ -160,6 +191,7 @@ export default function GroupItem({
                 active={selectedNodeIds.includes(node.id)}
                 depth={1}
                 onSelect={onSelectNode}
+                onDragStartNode={() => setExpanded(false)}
                 onContextMenu={onNodeContextMenu}
               />
             ))

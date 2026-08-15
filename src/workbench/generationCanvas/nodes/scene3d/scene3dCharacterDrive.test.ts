@@ -82,22 +82,22 @@ describe('facingYawFromDirection', () => {
     expect(facingYawFromDirection(new THREE.Vector3(0, 0, 0))).toBeNull()
   })
 
-  it('朝 -Z → yaw 0（角色正面朝 -Z）', () => {
-    expect(facingYawFromDirection(new THREE.Vector3(0, 0, -1))).toBeCloseTo(0, 5)
+  it('朝 +Z → yaw 0（假人正面 = 本地 +Z，Mixamo 约定，与 stagingBuilder 同一份）', () => {
+    expect(facingYawFromDirection(new THREE.Vector3(0, 0, 1))).toBeCloseTo(0, 5)
   })
 
-  it('朝 +X → yaw -π/2（绕 Y 旋转后 -Z 指向 +X）', () => {
-    expect(facingYawFromDirection(new THREE.Vector3(1, 0, 0))).toBeCloseTo(-Math.PI / 2, 5)
+  it('朝 +X → yaw π/2（绕 Y 旋转后 +Z 指向 +X）', () => {
+    expect(facingYawFromDirection(new THREE.Vector3(1, 0, 0))).toBeCloseTo(Math.PI / 2, 5)
   })
 
-  it('朝 +Z → yaw π（背对 -Z 起始朝向）', () => {
-    expect(Math.abs(facingYawFromDirection(new THREE.Vector3(0, 0, 1)) ?? 0)).toBeCloseTo(Math.PI, 5)
+  it('朝 -Z → yaw π（转身背对初始朝向）', () => {
+    expect(Math.abs(facingYawFromDirection(new THREE.Vector3(0, 0, -1)) ?? 0)).toBeCloseTo(Math.PI, 5)
   })
 
-  it('面向 yaw 后旋转该角度的 -Z 轴确实指回移动方向（往返一致）', () => {
+  it('面向 yaw 后旋转该角度的 +Z 轴确实指回移动方向（往返一致，防再写回相机 -Z 约定致人背朝前走）', () => {
     const direction = new THREE.Vector3(0.6, 0, -0.8).normalize()
     const yaw = facingYawFromDirection(direction)!
-    const forward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, yaw, 0))
+    const forward = new THREE.Vector3(0, 0, 1).applyEuler(new THREE.Euler(0, yaw, 0))
     expect(forward.x).toBeCloseTo(direction.x, 5)
     expect(forward.z).toBeCloseTo(direction.z, 5)
   })

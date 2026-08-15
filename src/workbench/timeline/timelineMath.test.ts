@@ -7,6 +7,7 @@ import {
   resolveActiveClipsAtFrame,
   hasClipOverlap,
   findAppendFrame,
+  timelineHasVisualClips,
 } from './timelineMath'
 
 // 构造一个合法 TimelineClip（喂给纯数学函数；这些函数收 trusted state）
@@ -40,6 +41,34 @@ function timelineState(imageClips: TimelineClip[], videoClips: TimelineClip[] = 
 function videoTrackClips(timeline: TimelineState): TimelineClip[] {
   return timeline.tracks.find((t) => t.type === 'video')!.clips
 }
+
+describe('timelineHasVisualClips — 空态「拼成初稿」门控', () => {
+  const audioTrack = (clips: TimelineClip[]): TimelineTrack => ({
+    id: 'audioTrack', type: 'audio', label: '音频轨', clips,
+  })
+  const withTracks = (tracks: TimelineTrack[]): TimelineState => ({
+    version: 1, fps: 30, scale: 1, playheadFrame: 0, tracks,
+  })
+
+  it('空时间轴 = 无画面片段', () => {
+    expect(timelineHasVisualClips(createDefaultTimeline())).toBe(false)
+    expect(timelineHasVisualClips(timelineState([], []))).toBe(false)
+  })
+
+  it('只有配乐（音频轨）不算有画面 —— 空态 CTA 仍应出现', () => {
+    const state = withTracks([
+      track('image', []),
+      track('video', []),
+      audioTrack([clip('a1', 0, 90, 'audio')]),
+    ])
+    expect(timelineHasVisualClips(state)).toBe(false)
+  })
+
+  it('图片轨或视频轨有片段 = 有画面 —— 空态 CTA 隐去', () => {
+    expect(timelineHasVisualClips(timelineState([clip('i1', 0, 30)], []))).toBe(true)
+    expect(timelineHasVisualClips(timelineState([], [clip('v1', 0, 30, 'video')]))).toBe(true)
+  })
+})
 
 describe('normalizeTimeline — video/audio 裁剪不变量（回归）', () => {
   // video/audio 的 frameCount 是素材全长，可见窗口 = endFrame - startFrame 可小于它。

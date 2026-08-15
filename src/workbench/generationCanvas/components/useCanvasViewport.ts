@@ -65,7 +65,9 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategoryId])
   const stageRef = React.useRef<HTMLDivElement>(null)
-  const canvasRef = React.useRef<HTMLDivElement>(null)
+  // 承载 translate+scale 的那一层（stage 的唯一子层）。单独给 ref 是为了让「视口」这件事
+  // 有一个明确的 DOM 抓手：合成层提升挂在它身上，未来若要做惯性/吸附也只碰这一层。
+  const canvasLayerRef = React.useRef<HTMLDivElement>(null)
   const [stageSize, setStageSize] = React.useState<{ width: number; height: number }>({ width: 0, height: 0 })
   React.useEffect(() => {
     const el = stageRef.current
@@ -92,7 +94,7 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
   const stageSizeRef = React.useRef(stageSize)
   stageSizeRef.current = stageSize
   const applyCanvasTransform = React.useCallback((nextZoom: number, nextOffset: { x: number; y: number }) => {
-    if (canvasRef.current) canvasRef.current.style.transform = canvasViewportTransformStyle(nextZoom, nextOffset)
+    if (canvasLayerRef.current) canvasLayerRef.current.style.transform = canvasViewportTransformStyle(nextZoom, nextOffset)
   }, [])
   React.useLayoutEffect(() => {
     offsetRef.current = offset
@@ -106,7 +108,7 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
     zoom,
     offset,
     stageRef,
-    canvasRef,
+    canvasLayerRef,
     stageSize,
     visibleNodesForRender,
     visibleEdgeNodeIds,

@@ -329,9 +329,14 @@ export function BrowserAssetOverlayApp(): JSX.Element {
       interactiveRef.current = false
       overlayBridge?.finishDrag?.()
     }
+    // Native drag from an asset tile can swallow pointerup before the canvas
+    // receives it. Release the overlay at dragstart so the owner window can
+    // accept the drop as soon as the pointer leaves the asset box.
+    window.addEventListener('dragstart', finishDrag, { capture: true })
     window.addEventListener('drop', finishDrag, { capture: true })
     window.addEventListener('dragend', finishDrag, { capture: true })
     return () => {
+      window.removeEventListener('dragstart', finishDrag, { capture: true })
       window.removeEventListener('drop', finishDrag, { capture: true })
       window.removeEventListener('dragend', finishDrag, { capture: true })
     }

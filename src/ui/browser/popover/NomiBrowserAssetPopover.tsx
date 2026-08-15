@@ -19,6 +19,7 @@ import {
   createDefaultBrowserPromptExtractionTemplateSettings,
   normalizeBrowserPromptExtractionTemplateSettings,
 } from '../prompt/browserPromptExtractionSettings'
+import { PROMPT_EXTRACTION_FEEDBACK_EVENT } from '../prompt/browserPromptExtractionRunner'
 import { useBrowserAssetPopoverWindow } from '../window/useBrowserAssetPopoverWindow'
 import { useBrowserAssetMarquee } from './useBrowserAssetMarquee'
 import { useCanvasImportAvailability } from './useCanvasImportAvailability'
@@ -94,6 +95,14 @@ export function NomiBrowserAssetPopover({
   }, [deleteConfirmOpen, onFullWindowModalChange, promptExtractionSettingsOpen])
   // 「已放到画布」就地成功反馈（导入是跨窗 fire-and-forget，乐观显示一小段，超时自清）。
   const [canvasImportedFeedback, setCanvasImportedFeedback] = React.useState(false)
+  // 「提示词提取」就地反馈（2026-08-07 飞书反馈「提取复刻提示词后不知道生成哪去了」根因）：
+  // runner 是 fire-and-forget，全局 toast 在主窗 DOM、会被原生 WebContentsView 盖住 →
+  // 用户看不到任何结果。这里监听 runner 的就地反馈事件：自动展开素材盒 + 顶下反馈条
+  // 明示落点（成功=已存入提示词库；失败=原因）。
+  const [promptExtractionFeedback, setPromptExtractionFeedback] = React.useState<
+    { ok: boolean; title?: string; error?: string } | null
+  >(null)
+  const promptFeedbackTimerRef = React.useRef<number | null>(null)
   const [promptExtractionSettings, setPromptExtractionSettings] = React.useState<BrowserPromptExtractionTemplateSettings>(
     () => createDefaultBrowserPromptExtractionTemplateSettings(),
   )
@@ -169,6 +178,26 @@ export function NomiBrowserAssetPopover({
     },
     [],
   )
+
+  // 提示词提取就地反馈：runner 完成（成功/失败）→ 自动展开素材盒 + 反馈条，4 秒自清。
+  React.useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ ok: boolean; title?: string; error?: string }>).detail
+      if (!detail) return
+      setPromptExtractionFeedback(detail)
+      setPopoverOpen(true)
+      if (promptFeedbackTimerRef.current !== null) window.clearTimeout(promptFeedbackTimerRef.current)
+      promptFeedbackTimerRef.current = window.setTimeout(() => {
+        setPromptExtractionFeedback(null)
+        promptFeedbackTimerRef.current = null
+      }, 4000)
+    }
+    window.addEventListener(PROMPT_EXTRACTION_FEEDBACK_EVENT, handler)
+    return () => {
+      window.removeEventListener(PROMPT_EXTRACTION_FEEDBACK_EVENT, handler)
+      if (promptFeedbackTimerRef.current !== null) window.clearTimeout(promptFeedbackTimerRef.current)
+    }
+  }, [setPopoverOpen])
 
   React.useEffect(() => {
     if (libraryProjectId !== undefined) return undefined
@@ -490,6 +519,7 @@ export function NomiBrowserAssetPopover({
         promptExtractionSettings, promptExtractionSettingsProjectAvailable, savePromptExtractionSettings, activeResizeEdges, startResize,
         assetContextMenu, assetContextMenuRef, canImportSelectedAssetsToCanvas, importSelectedAssetsToCanvas, deleteSelectedAssets,
         showCanvasImportAction, canvasImportedFeedback, canvasImportSelectedCount: selectedCanvasImportAssets.length,
+        promptExtractionFeedback,
         captureTransients, retryCaptureImport, dismissCaptureTransient,
       }}
     />

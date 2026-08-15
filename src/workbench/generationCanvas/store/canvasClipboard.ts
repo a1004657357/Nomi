@@ -69,7 +69,7 @@ export function cloneClipboardPayload(payload: GenerationCanvasClipboard): Clipb
     if (!source || !target) return []
     return [{
       ...edge,
-      id: createEdgeId(source, target, edge.mode),
+      id: createEdgeId(source, target, edge.order ?? 0),
       source,
       target,
     }]

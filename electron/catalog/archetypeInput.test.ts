@@ -22,6 +22,8 @@ describe("referenceInputParams", () => {
     ).toEqual({
       reference_image_urls: ["c1", "c2", "c3"],
       reference_video_urls: ["v1"],
+      // 单源视频的标准键（ComfyUI 补帧/视频超分这类「视频进视频出」的工作流引用它）
+      source_video_url: "v1",
       reference_images: [],
     });
   });

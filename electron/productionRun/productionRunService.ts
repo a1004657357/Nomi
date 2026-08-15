@@ -1,0 +1,654 @@
+import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+
+import {
+  createProductionRunRepository,
+  type ProductionRunRepository,
+} from './productionRunRepository'
+import { resolveWorkspaceProjectDir } from '../workspace/workspaceRepository'
+import { getWorkspaceRepositoryDeps } from '../runtimePaths'
+import {
+  createArtifactProjection,
+  getArtifactPreviewSecret,
+  resolveOwnedArtifactFile,
+  verifyArtifactPreviewHandle,
+  type ArtifactProjection,
+} from './artifactProjection'
+import { buildProductionDeepLink } from './productionDeepLink'
+import { applyRunControl } from './productionRunControl'
+import { createDriverOps } from './productionRunDriverOps'
+import { withEventTap } from './productionRunEventTap'
+import { safeExternalText, safeProductionContract } from './productionRunProjectionSanitizer'
+import { readAutomationPolicySettings } from '../settings/automationPolicySettings'
+import { assertProductionPolicyReady } from './productionPolicyReadiness'
+import { normalizeTrustLevel, trustLevelOf } from './productionRunTypes'
+import type {
+  AutomationPolicy,
+  CreateProductionRunInput,
+  ProductionArtifact,
+  ProductionRun,
+  RunEvent,
+  RunCommand,
+} from './productionRunTypes'
+
+type SafeProductionGate = Omit<ProductionRun['gates'][number], 'planHash' | 'jobIds' | 'contract'> & {
+  contract?: ReturnType<typeof safeProductionContract>
+}
+type SafeProductionJob = Pick<ProductionRun['jobs'][number], 'jobId' | 'stageId' | 'status' | 'attempt' | 'progressPercent' | 'lastPollAt' | 'lastVendorStateChangeAt' | 'createdAt' | 'updatedAt' | 'errorCode'>
+export type ProductionRunProjection = {
+  schemaVersion: number
+  runId: string
+  projectId: string
+  revision: number
+  status: ProductionRun['status']
+  stageId: string
+  playbook: ProductionRun['playbook']
+  origin: ProductionRun['origin']
+  budget: ProductionRun['budget']
+  planVersion: number
+  snapshotCursor: number
+  stages: ProductionRun['stages']
+  gates: SafeProductionGate[]
+  jobs: SafeProductionJob[]
+  artifacts: Array<Omit<ArtifactProjection, 'projectId' | 'runId' | 'openInNomi'>>
+  /** B3：信任档位（run 级）。老 run 无字段 → 默认 key_confirm。用于合同/状态转述。 */
+  trustLevel: import('./productionRunTypes').TrustLevel
+  createdAt: string
+  updatedAt: string
+  openInNomi: string
+}
+
+export type ProductionEventProjection = Pick<RunEvent, 'schemaVersion' | 'eventId' | 'cursor' | 'runId' | 'runRevision' | 'commandId' | 'type' | 'message' | 'emittedAt' | 'stageId' | 'jobId' | 'artifactId' | 'causationId' | 'correlationId' | 'attemptId' | 'providerOccurredAt'>
+
+export type ProductionArtifactProjection = ArtifactProjection
+
+type ServiceDeps = {
+  repository?: ProductionRunRepository
+  sleep?: (delayMs: number) => Promise<void>
+  projectRootResolver?: (projectId: string) => string | null
+  previewSecret?: string
+  requestRenderer?: (op: string, payload: unknown, timeoutMs: number) => Promise<unknown>
+  policyResolver?: () => Partial<AutomationPolicy>
+  reconcileProviderTask?: (job: ProductionRun['jobs'][number]) => Promise<{
+    status?: string
+    assets?: Array<{ type?: string; url?: string; thumbnailUrl?: string }>
+    error?: string
+  }>
+  /** A5：每批持久化事件的旁路监听（系统通知等）。异常被吞，绝不影响制作主流程。 */
+  onEvents?: (events: RunEvent[], run: ProductionRun) => void
+}
+
+const MEANINGFUL_EVENT_TYPES = new Set([
+  'run.created',
+  'run.status.changed',
+  'run.stage.changed',
+  'stage.updated',
+  'gate.waiting',
+  'gate.candidates',
+  'gate.decided',
+  'artifact.ready',
+  'artifact.adopted',
+  'job.ready',
+  'job.adopted',
+  'job.submission_unknown',
+  'job.needs_attention',
+  'job.vendor_state_stale',
+  'skill.loaded',
+  'skill.applied',
+  'plan.proposed',
+  'plan.attached',
+])
+
+function identifier(value: string, label: string): string {
+  const normalized = String(value || '').trim()
+  if (!/^[A-Za-z0-9._-]{1,160}$/.test(normalized) || normalized === '.' || normalized === '..') throw new Error(`Invalid ${label} id`)
+  return normalized
+}
+
+function metadataProjection(run: ProductionRun, artifact: ProductionArtifact): Omit<ArtifactProjection, 'preview'> {
+  return {
+    artifactId: artifact.artifactId,
+    runId: run.runId,
+    projectId: run.projectId,
+    stageId: artifact.stageId,
+    ...(artifact.jobId ? { jobId: artifact.jobId } : {}),
+    kind: artifact.kind,
+    status: artifact.status,
+    createdAt: artifact.createdAt,
+    ...(artifact.adoptedAt ? { adoptedAt: artifact.adoptedAt } : {}),
+    nomiUri: `nomi://project/${encodeURIComponent(run.projectId)}/run/${encodeURIComponent(run.runId)}/artifact/${encodeURIComponent(artifact.artifactId)}`,
+    openInNomi: buildProductionDeepLink(run.projectId, run.runId, artifact.artifactId),
+  }
+}
+
+function safeRunProjection(run: ProductionRun): Omit<ProductionRunProjection, 'artifacts' | 'openInNomi'> {
+  return {
+    schemaVersion: run.schemaVersion,
+    runId: run.runId,
+    projectId: run.projectId,
+    revision: run.revision,
+    status: run.status,
+    stageId: run.stageId,
+    playbook: { name: run.playbook.name, version: run.playbook.version },
+    origin: { host: run.origin.host, ...(run.origin.actorId ? { actorId: run.origin.actorId } : {}) },
+    budget: { ...run.budget },
+    planVersion: run.planVersion,
+    snapshotCursor: run.snapshotCursor,
+    // B3：run 级信任档位（老 run 无字段 → 默认 key_confirm）。合同/状态转述据此显示打扰程度。
+    trustLevel: trustLevelOf(run.policy),
+    stages: run.stages.map((stage) => ({
+      stageId: stage.stageId, title: safeExternalText(stage.title), status: stage.status, order: stage.order,
+      ...(stage.startedAt ? { startedAt: stage.startedAt } : {}),
+      ...(stage.completedAt ? { completedAt: stage.completedAt } : {}),
+    })),
+    gates: run.gates.map((gate) => ({
+      gateId: gate.gateId, scope: gate.scope, status: gate.status, title: safeExternalText(gate.title), summary: safeExternalText(gate.summary),
+      createdAt: gate.createdAt, expiresAt: gate.expiresAt, ...(gate.decidedAt ? { decidedAt: gate.decidedAt } : {}),
+      ...(gate.contract ? { contract: safeProductionContract(gate.contract) } : {}),
+      // B1：方向候选透出（文本经 sanitizer）；决议后回填的 choiceKey 供转述/审计。
+      ...(gate.directionCandidates ? { directionCandidates: gate.directionCandidates.map((candidate) => ({ key: candidate.key, title: safeExternalText(candidate.title), oneLiner: safeExternalText(candidate.oneLiner) })) } : {}),
+      ...(gate.decidedChoiceKey ? { decidedChoiceKey: gate.decidedChoiceKey } : {}),
+    })),
+    jobs: run.jobs.map((job) => ({
+      jobId: job.jobId, stageId: job.stageId, status: job.status, attempt: job.attempt,
+      ...(job.progressPercent !== undefined ? { progressPercent: job.progressPercent } : {}),
+      ...(job.lastPollAt ? { lastPollAt: job.lastPollAt } : {}),
+      ...(job.lastVendorStateChangeAt ? { lastVendorStateChangeAt: job.lastVendorStateChangeAt } : {}),
+      ...(job.errorCode ? { errorCode: job.errorCode } : {}),
+      createdAt: job.createdAt, updatedAt: job.updatedAt,
+    })),
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+  }
+}
+
+function runProjection(
+  run: ProductionRun,
+  projectRootResolver: (projectId: string) => string | null,
+  previewSecret: string,
+): ProductionRunProjection {
+  const { artifacts } = run
+  const safeRun = safeRunProjection(run)
+  return {
+    ...safeRun,
+    artifacts: artifacts.map((artifact) => {
+      const root = projectRootResolver(run.projectId)
+      if (root && (artifact.projectRelativePath || artifact.thumbnailRelativePath)) {
+        try {
+          const projected = createArtifactProjection({ projectRoot: root, run, artifact, secret: previewSecret })
+          const { runId: _runId, projectId: _projectId, openInNomi: _openInNomi, ...safeArtifact } = projected
+          return safeArtifact
+        } catch {
+          // Missing or changed files must not hide the Run itself; expose metadata without a preview.
+        }
+      }
+      const { runId: _runId, projectId: _projectId, openInNomi: _openInNomi, ...safeArtifact } = metadataProjection(run, artifact)
+      return safeArtifact
+    }),
+    openInNomi: buildProductionDeepLink(run.projectId, run.runId),
+  }
+}
+
+function eventProjection(event: RunEvent): ProductionEventProjection {
+  return {
+    schemaVersion: event.schemaVersion,
+    eventId: event.eventId,
+    cursor: event.cursor,
+    runId: event.runId,
+    runRevision: event.runRevision,
+    commandId: event.commandId,
+    type: event.type,
+    message: safeExternalText(event.message),
+    emittedAt: event.emittedAt,
+    ...(event.stageId ? { stageId: event.stageId } : {}),
+    ...(event.jobId ? { jobId: event.jobId } : {}),
+    ...(event.artifactId ? { artifactId: event.artifactId } : {}),
+    ...(event.causationId ? { causationId: event.causationId } : {}),
+    ...(event.correlationId ? { correlationId: event.correlationId } : {}),
+    ...(event.attemptId ? { attemptId: event.attemptId } : {}),
+    ...(event.providerOccurredAt ? { providerOccurredAt: event.providerOccurredAt } : {}),
+  }
+}
+
+export function createProductionRunService(deps: ServiceDeps = {}) {
+  // A5：事件旁路装饰（通知等），见 productionRunEventTap.ts。
+  const repository = withEventTap(deps.repository ?? createProductionRunRepository(), deps.onEvents)
+  const sleep = deps.sleep ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)))
+  const projectRootResolver = deps.projectRootResolver ?? ((projectId: string) => resolveWorkspaceProjectDir(projectId, getWorkspaceRepositoryDeps()))
+  const previewSecret = deps.previewSecret ?? getArtifactPreviewSecret()
+  const requestRenderer = deps.requestRenderer ?? (async (op: string, payload: unknown, timeoutMs: number) => {
+    const bridge = await import('../capabilityCore/rendererBridge')
+    return bridge.requestRenderer(op, payload, timeoutMs)
+  })
+  const policyResolver = deps.policyResolver ?? (() => {
+    const settings = readAutomationPolicySettings()
+    return {
+      mode: settings.mode,
+      trustedHosts: [...settings.trustedHosts],
+      allowedProviders: [...settings.allowedProviders],
+      allowedModels: [...settings.allowedModels],
+      maxSpend: settings.maxSpend,
+      maxAttemptsPerJob: settings.maxAttemptsPerJob,
+      minimizeUploads: settings.minimizeUploads,
+    }
+  })
+  const inFlight = new Set<string>()
+  const recoveryInFlight = new Set<string>()
+  const reconciliationInFlight = new Set<string>()
+  const directionsInFlight = new Set<string>()
+  const reconcileProviderTask = deps.reconcileProviderTask ?? (async (job) => {
+    if (!job.providerTaskId) throw new Error('供应商任务标识尚未收到，不能自动对账')
+    const runtime = await import('../runtime')
+    const response = await runtime.fetchTaskResult({
+      taskId: job.providerTaskId,
+      vendor: job.provider,
+      taskKind: job.taskKind || 'text_to_video',
+      prompt: '',
+      modelKey: job.model,
+    })
+    return response.result
+  })
+
+  function requireRun(projectId: string, runId: string): ProductionRun {
+    const safeProjectId = identifier(projectId, 'project')
+    const safeRunId = identifier(runId, 'run')
+    const run = repository.read(safeProjectId, safeRunId)
+    if (!run) throw new Error(`Production run not found: ${safeRunId}`)
+    if (run.projectId !== safeProjectId) throw new Error('Production run project mismatch')
+    return run
+  }
+
+  function createDraft(input: CreateProductionRunInput): ProductionRunProjection {
+    const run = repository.create({
+      ...input,
+      runId: input.runId ? identifier(input.runId, 'run') : undefined,
+      policy: { ...policyResolver(), ...(input.policy || {}) },
+    })
+    if (!['draft', 'awaiting_direction'].includes(run.status) || run.jobs.length > 0 || (run.status === 'draft' && run.gates.length > 0) || run.budget.authorized !== 0) {
+      throw new Error('Production draft invariant failed')
+    }
+    if (run.status === 'awaiting_direction') {
+      // B3：budget_only（「别问了直接出」）→ 自动批准创意方向门（留痕），不拟候选、不打扰。
+      // 其余档位 → 异步拟方向候选（GUI 有 LLM 才成；关着则保持兜底 gate）。均不阻塞返回。
+      if (trustLevelOf(run.policy) === 'budget_only') void autoApproveGate(run.projectId, run.runId, 'gate-direction-v1')
+      else void proposeDirections(run)
+    }
+    return runProjection(run, projectRootResolver, previewSecret)
+  }
+
+  function writeProjectJson(projectId: string, relativePath: string, value: unknown): void {
+    const root = projectRootResolver(projectId)
+    if (!root || relativePath.startsWith('/') || relativePath.split(/[\\/]+/).includes('..')) throw new Error('Production project artifact root unavailable')
+    const target = path.resolve(root, relativePath)
+    const rootWithSep = `${path.resolve(root)}${path.sep}`
+    if (target !== path.resolve(root) && !target.startsWith(rootWithSep)) throw new Error('Production artifact path escapes project')
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+  }
+
+  function executeInternal(projectId: string, runId: string, current: ProductionRun, type: string, payload: Record<string, unknown>, commandId: string) {
+    return repository.execute(projectId, runId, { commandId, expectedRevision: current.revision, type, payload, issuedAt: new Date().toISOString() })
+  }
+
+  function localAssetPath(projectId: string, rawUrl: unknown): string | undefined {
+    if (typeof rawUrl !== 'string' || !rawUrl.startsWith('nomi-local://asset/')) return undefined
+    const rest = rawUrl.slice('nomi-local://asset/'.length).split(/[?#]/, 1)[0]
+    const segments = rest.split('/').filter(Boolean)
+    if (segments.length < 2) return undefined
+    try {
+      const owner = decodeURIComponent(segments[0])
+      const relativePath = segments.slice(1).map((segment) => decodeURIComponent(segment)).join('/')
+      if (owner !== projectId || !relativePath || relativePath.split(/[\\/]+/).includes('..') || relativePath.startsWith('/')) return undefined
+      return relativePath
+    } catch {
+      return undefined
+    }
+  }
+
+  function projectRelativePath(projectId: string, rawPath: unknown, options: { requireFile?: boolean } = {}): string {
+    const relativePath = typeof rawPath === 'string' ? rawPath.trim() : ''
+    const root = projectRootResolver(projectId)
+    if (!root || !relativePath || relativePath.includes('\0') || relativePath.startsWith('/') || relativePath.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(relativePath) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(relativePath) || relativePath.split(/[\\/]+/).includes('..')) {
+      throw new Error('导出必须返回项目目录内的相对路径')
+    }
+    const target = path.resolve(root, relativePath)
+    const rootPath = path.resolve(root)
+    const rootWithSep = `${rootPath}${path.sep}`
+    if (target !== rootPath && !target.startsWith(rootWithSep)) throw new Error('导出路径不能离开项目目录')
+    if (options.requireFile) {
+      let stat: fs.Stats
+      try { stat = fs.statSync(target) } catch { throw new Error('导出文件不存在') }
+      if (!stat.isFile()) throw new Error('导出结果不是文件')
+    }
+    return relativePath.replaceAll('\\', '/')
+  }
+
+  function stageValue(run: ProductionRun, stageId: string, patch: Record<string, unknown>): Record<string, unknown> {
+    const stage = run.stages.find((candidate) => candidate.stageId === stageId)
+    if (!stage) throw new Error(`Production stage not found: ${stageId}`)
+    return { ...stage, ...patch, stageId }
+  }
+
+  // B0：driver 编排（拟分镜 / 生成 / 导出 / 对账）抽到 productionRunDriverOps.ts，行为零变化。
+  // service 保留其依赖的路径工具 + in-flight 去重集，经参数注入，仍可单测（R9 ≤800）。
+  const { proposeDirections, proposeStoryboard, driveGeneration, driveExport, driveReconciliation } = createDriverOps({
+    repository,
+    sleep,
+    requireRun,
+    executeInternal,
+    requestRenderer,
+    writeProjectJson,
+    localAssetPath,
+    projectRelativePath,
+    stageValue,
+    reconcileProviderTask,
+    inFlight,
+    reconciliationInFlight,
+    directionsInFlight,
+  })
+
+  async function command(projectId: string, runId: string, runCommand: RunCommand) {
+    const safeProjectId = identifier(projectId, 'project')
+    const safeRunId = identifier(runId, 'run')
+    const prior = repository.readEvents(safeProjectId, safeRunId).filter((event) => event.commandId === runCommand.commandId)
+    if (prior.length > 0) return { run: requireRun(safeProjectId, safeRunId), events: prior }
+    if (runCommand.type === 'policy.refresh') {
+      const current = requireRun(safeProjectId, safeRunId)
+      return repository.execute(safeProjectId, safeRunId, {
+        ...runCommand,
+        type: 'policy.set',
+        payload: { policy: { ...current.policy, ...policyResolver() } },
+      })
+    }
+    if (runCommand.type === 'job.reconcile') {
+      const current = requireRun(safeProjectId, safeRunId)
+      const jobId = typeof runCommand.payload.jobId === 'string' ? runCommand.payload.jobId.trim() : ''
+      const outcome = runCommand.payload.outcome
+      const job = current.jobs.find((candidate) => candidate.jobId === jobId)
+      if (!job || job.status !== 'submission_unknown') throw new Error('Production job is not awaiting reconciliation')
+      if (outcome === 'not_found') {
+        return repository.execute(safeProjectId, safeRunId, {
+          ...runCommand,
+          type: 'job.status',
+          payload: { jobId, status: 'needs_attention', patch: { errorCode: 'provider_task_not_found', errorMessage: '已核对供应商：没有找到原任务；Nomi 未自动重新提交' } },
+        })
+      }
+      if (outcome !== 'found') throw new Error('Invalid production reconciliation outcome')
+      if (!job.providerTaskId) throw new Error('尚未收到供应商任务标识，不能自动恢复；请保持暂停并联系供应商核对')
+      const result = repository.execute(safeProjectId, safeRunId, {
+        ...runCommand,
+        type: 'job.status',
+        payload: { jobId, status: 'reconciling' },
+      })
+      void driveReconciliation(safeProjectId, safeRunId, jobId)
+      return result
+    }
+    if (runCommand.type === 'run.control' && runCommand.payload.action === 'set_trust') {
+      // B3：对话改档（「别问了直接出」= 降 budget_only）。写 policy + 事件留痕（policy.set→policy.updated）。
+      // 若正卡在创意/样片门等待且新档位是 budget_only → 顺手自动批准该门，让「直接出」立刻生效。
+      const current = requireRun(safeProjectId, safeRunId)
+      const trustLevel = normalizeTrustLevel(runCommand.payload.trustLevel)
+      const result = repository.execute(safeProjectId, safeRunId, {
+        ...runCommand,
+        type: 'policy.set',
+        payload: { policy: { ...current.policy, trustLevel } },
+      })
+      if (trustLevel === 'budget_only') {
+        const waitingCreativeGate = result.run.gates.find((gate) => gate.status === 'waiting' && gate.scope === 'stage' && (gate.gateId.startsWith('gate-direction-') || gate.gateId.startsWith('gate-sample-')))
+        if (waitingCreativeGate) void autoApproveGate(safeProjectId, safeRunId, waitingCreativeGate.gateId)
+      }
+      return result
+    }
+    if (runCommand.type === 'run.control') {
+      // A4 run 控制：逻辑在 productionRunControl.ts（MCP 与渲染端同一收口）。
+      const controlled = applyRunControl(repository, safeProjectId, safeRunId, requireRun(safeProjectId, safeRunId), runCommand)
+      if (runCommand.payload.action === 'resume' && controlled.run.status === 'running') void driveGeneration(controlled.run) // 恢复必须重踢 driver：只回状态不回工作=假 resume
+      return controlled
+    }
+    if (runCommand.type === 'plan.attach') {
+      const current = requireRun(safeProjectId, safeRunId)
+      const artifactId = typeof runCommand.payload.artifactId === 'string' ? runCommand.payload.artifactId : ''
+      const artifact = current.artifacts.find((item) => item.artifactId === artifactId && item.kind === 'storyboard')
+      if (!artifact) throw new Error('Storyboard artifact is not ready to attach')
+      const bindings = Array.isArray(runCommand.payload.bindings) ? runCommand.payload.bindings : []
+      const jobs = bindings.map((value, index) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid storyboard binding ${index}`)
+        const binding = value as Record<string, unknown>
+        const nodeId = typeof binding.nodeId === 'string' ? binding.nodeId.trim() : ''
+        const provider = typeof binding.provider === 'string' ? binding.provider.trim() : ''
+        const model = typeof binding.model === 'string' ? binding.model.trim() : ''
+        const stageId = typeof binding.stageId === 'string' && binding.stageId.trim() ? binding.stageId.trim() : 'generate'
+        if (!nodeId || !provider || !model) throw new Error('Every production shot must have a provider and model before approval')
+        return {
+          jobId: `job:${safeRunId}:${nodeId}`,
+          stageId,
+          status: 'authorization_required' as const,
+          attempt: 0,
+          provider,
+          model,
+          idempotencyKey: `production:${safeRunId}:${nodeId}`,
+          nodeId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+      })
+      const maxSpend = current.policy.maxSpend
+      const gate = {
+        gateId: `gate-contract-v${current.planVersion}`,
+        scope: 'budget_envelope' as const,
+        status: 'waiting' as const,
+        planHash: typeof runCommand.payload.planHash === 'string' ? runCommand.payload.planHash : crypto.createHash('sha256').update(JSON.stringify(runCommand.payload.bindings)).digest('hex'),
+        jobIds: jobs.map((job) => job.jobId),
+        title: 'Approve production contract and budget',
+        summary: 'Review shots, models, and the hard spend limit before Nomi submits any paid generation.',
+        contract: {
+          specs: { durationSeconds: current.brief?.durationSeconds, shotCount: jobs.length },
+          claims: (current.brief?.sellingPoints || []).map((text, index) => ({ text, evidenceIds: [`brief-${index + 1}`] })),
+          evidence: (current.brief?.sellingPoints || []).map((label, index) => ({ evidenceId: `brief-${index + 1}`, label })),
+          skills: [{ name: 'brand.promo', version: current.playbook.version }],
+          ...(maxSpend !== null ? { estimatedCost: { currency: current.budget.currency, minimum: 0, maximum: maxSpend } } : {}),
+        },
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }
+      const result = repository.execute(safeProjectId, safeRunId, {
+        ...runCommand,
+        type: 'plan.attach',
+        payload: { artifactId, jobs, gate },
+      })
+      return result
+    }
+    if (runCommand.type === 'gate.decide') {
+      // B4 幂等：两个审批同时来（异 commandId、同决议）——门已按同方向决过 → 幂等 no-op，
+      // 返回当前态、不再执行（不重复授权预算 / 不重踢 driver / 不炸「already decided」）。
+      // 翻决议（approved↔rejected）不在此放行 → 落到 reducer 拒改写。竞态的输家由此静默收敛。
+      const current = requireRun(safeProjectId, safeRunId)
+      const gateId = typeof runCommand.payload.gateId === 'string' ? runCommand.payload.gateId.trim() : ''
+      const decidedGate = current.gates.find((item) => item.gateId === gateId)
+      if (decidedGate && decidedGate.status !== 'waiting' && decidedGate.status === runCommand.payload.status) {
+        return { run: current, events: [] }
+      }
+    }
+    if (runCommand.type === 'gate.decide' && runCommand.payload.status === 'approved') {
+      const current = requireRun(safeProjectId, safeRunId)
+      const gateId = typeof runCommand.payload.gateId === 'string' ? runCommand.payload.gateId.trim() : ''
+      const gate = current.gates.find((item) => item.gateId === gateId)
+      if (gate?.scope === 'export' && current.status !== 'awaiting_export') {
+        throw new Error('请先完成粗剪审看，再单独批准导出')
+      }
+      if (gate?.scope === 'budget_envelope' && gate.jobIds.length > 0) {
+        const jobs = gate.jobIds
+          .map((jobId) => current.jobs.find((job) => job.jobId === jobId))
+          .filter((job): job is ProductionRun['jobs'][number] => Boolean(job))
+        assertProductionPolicyReady(current.policy, jobs)
+      }
+    }
+    const result = repository.execute(safeProjectId, safeRunId, runCommand)
+    if (runCommand.type === 'gate.decide' && runCommand.payload.status === 'approved' && runCommand.payload.gateId === 'gate-direction-v1') {
+      void proposeStoryboard(result.run)
+    }
+    if (runCommand.type === 'gate.decide' && runCommand.payload.status === 'approved' && runCommand.payload.gateId === `gate-contract-v${result.run.planVersion}`) {
+      void driveGeneration(result.run)
+    }
+    // B2 样片门：批准 → 续跑剩余镜头（重踢 driver）；否决 → 暂停 run，让用户改提示词后再继续（不作废已生成的样片）。
+    if (runCommand.type === 'gate.decide' && runCommand.payload.gateId === `gate-sample-v${result.run.planVersion}`) {
+      if (runCommand.payload.status === 'approved') {
+        void driveGeneration(result.run)
+      } else if (runCommand.payload.status === 'rejected' && result.run.status === 'running') {
+        try {
+          applyRunControl(repository, safeProjectId, safeRunId, result.run, {
+            commandId: `${runCommand.commandId}:sample-reject-pause`,
+            expectedRevision: result.run.revision,
+            type: 'run.control',
+            payload: { action: 'pause' },
+            issuedAt: new Date().toISOString(),
+          })
+        } catch (error) {
+          // 暂停失败不掩盖否决本身（门已落 rejected）；run 状态仍可查、可手动暂停。
+          console.error('[nomi:production] sample gate reject pause failed:', error instanceof Error ? error.message : String(error))
+        }
+      }
+    }
+    if (runCommand.type === 'gate.decide' && runCommand.payload.status === 'approved' && runCommand.payload.gateId === `gate-export-v${result.run.planVersion}`) {
+      void driveExport(result.run)
+    }
+    return result
+  }
+
+  /**
+   * B3：按信任档位自动批准一道创意门（budget_only 用）。走同一条 command 路径（driver 钩子照常触发），
+   * commandId 自证「按档位自动批准」= 留痕（事件流透出 commandId）。门已不在 waiting（并发/重放）→ 静默跳过。
+   */
+  async function autoApproveGate(projectId: string, runId: string, gateId: string): Promise<void> {
+    try {
+      const current = requireRun(projectId, runId)
+      const gate = current.gates.find((item) => item.gateId === gateId)
+      if (!gate || gate.status !== 'waiting') return
+      await command(projectId, runId, {
+        commandId: `auto-trust-budget-only:${gateId}:${current.revision}`,
+        expectedRevision: current.revision,
+        type: 'gate.decide',
+        payload: { gateId, status: 'approved' },
+        issuedAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      // 自动批准失败不掩盖 run：门仍 waiting、可手动批。
+      console.error('[nomi:production] auto-approve gate failed:', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function resumeUnfinishedRuns(projectId: string): Promise<void> {
+    const safeProjectId = identifier(projectId, 'project')
+    if (recoveryInFlight.has(safeProjectId)) return
+    recoveryInFlight.add(safeProjectId)
+    try {
+      const summaries = typeof repository.list === 'function' ? repository.list(safeProjectId) : []
+      for (const summary of summaries) {
+        let current = repository.read(safeProjectId, summary.runId)
+        if (!current || ['completed', 'cancelled'].includes(current.status)) continue
+        let changedUnknown = false
+        for (const job of current.jobs) {
+          if (!['submitting', 'provider_accepted', 'polling', 'retry_wait', 'downloading', 'validating_technical', 'validating_content'].includes(job.status)) continue
+          try {
+            current = executeInternal(safeProjectId, current.runId, current, 'job.status', {
+              jobId: job.jobId,
+              status: 'submission_unknown',
+              patch: { errorCode: 'restart_recovery_required', errorMessage: 'Nomi 重启后无法确认供应商状态，请先对账' },
+            }, `recovery-${current.runId}-${job.jobId}-${current.revision}`).run
+            changedUnknown = true
+          } catch {
+            // A concurrent command may have already reconciled this job.
+          }
+        }
+        current = requireRun(safeProjectId, current.runId)
+        if (changedUnknown && current.status !== 'needs_attention') {
+          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention' }, `recovery-${current.runId}-attention-${current.revision}`).run } catch { /* preserve the durable job state */ }
+        }
+        if (current.status === 'exporting') {
+          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention' }, `recovery-${current.runId}-export-attention-${current.revision}`).run } catch { /* preserve exporting state for inspection */ }
+        }
+        // B1/B3：草稿建好时 GUI 关着 → 重开时补动作。budget_only 自动批准方向门，其余补拟候选（gate 还 waiting 且无候选才跑）。
+        if (current.status === 'awaiting_direction') {
+          if (trustLevelOf(current.policy) === 'budget_only') void autoApproveGate(current.projectId, current.runId, 'gate-direction-v1')
+          else void proposeDirections(current)
+        }
+        if (current.status === 'running' && current.stageId === 'direction') void proposeStoryboard(current)
+        if (current.status === 'ready') void driveGeneration(current)
+      }
+    } catch (error) {
+      console.error('[nomi:production] recovery scan failed:', error instanceof Error ? error.message : String(error))
+    } finally {
+      recoveryInFlight.delete(safeProjectId)
+    }
+  }
+
+  function readProjection(projectId: string, runId: string): ProductionRunProjection {
+    void resumeUnfinishedRuns(projectId)
+    return runProjection(requireRun(projectId, runId), projectRootResolver, previewSecret)
+  }
+
+  function readFull(projectId: string, runId: string): ProductionRun {
+    return requireRun(projectId, runId)
+  }
+
+  async function readEvents(projectId: string, runId: string, afterCursor = 0, waitMs = 0): Promise<{
+    events: ProductionEventProjection[]
+    nextCursor: number
+  }> {
+    const run = requireRun(projectId, runId)
+    const cursor = Number.isInteger(afterCursor) && afterCursor >= 0 ? afterCursor : 0
+    const boundedWaitMs = Math.min(25_000, Math.max(0, Math.floor(waitMs)))
+    const deadline = Date.now() + boundedWaitMs
+    let durableEvents = repository.readEvents(run.projectId, run.runId, cursor)
+    while (durableEvents.length === 0 && Date.now() < deadline) {
+      await sleep(Math.min(250, Math.max(1, deadline - Date.now())))
+      durableEvents = repository.readEvents(run.projectId, run.runId, cursor)
+    }
+    const nextCursor = durableEvents.reduce((latest, event) => Math.max(latest, event.cursor), cursor)
+    return { events: durableEvents.filter((event) => MEANINGFUL_EVENT_TYPES.has(event.type)).map(eventProjection), nextCursor }
+  }
+
+  function readArtifactProjection(projectId: string, runId: string, artifactId: string): ProductionArtifactProjection {
+    const run = requireRun(projectId, runId)
+    const safeArtifactId = identifier(artifactId, 'artifact')
+    const artifact = run.artifacts.find((candidate) => candidate.artifactId === safeArtifactId)
+    if (!artifact) throw new Error(`Production artifact not found in run ${run.runId}: ${safeArtifactId}`)
+    const root = projectRootResolver(run.projectId)
+    if (root && (artifact.projectRelativePath || artifact.thumbnailRelativePath)) {
+      try {
+        return createArtifactProjection({ projectRoot: root, run, artifact, secret: previewSecret })
+      } catch {
+        // Return safe metadata when a previously-ready file has been moved or removed.
+      }
+    }
+    return metadataProjection(run, artifact)
+  }
+
+  function resolveArtifactPreview(token: string): { filePath: string; expiresAt: string } {
+    const claims = verifyArtifactPreviewHandle({ token, secret: previewSecret })
+    const run = requireRun(claims.projectId, claims.runId)
+    const artifact = run.artifacts.find((candidate) => candidate.artifactId === claims.artifactId)
+    if (!artifact) throw new Error('Production artifact preview scope mismatch')
+    const relativePath = artifact.thumbnailRelativePath || artifact.projectRelativePath
+    if (!relativePath || relativePath.replaceAll('\\', '/') !== claims.relativePath) {
+      throw new Error('Production artifact preview path mismatch')
+    }
+    const root = projectRootResolver(run.projectId)
+    if (!root) throw new Error('Production artifact preview root unavailable')
+    return { filePath: resolveOwnedArtifactFile(root, claims.relativePath), expiresAt: claims.expiresAt }
+  }
+
+  function listProjections(projectId: string): ProductionRunProjection[] {
+    return repository.list(identifier(projectId, 'project')).map((summary) => runProjection(requireRun(projectId, summary.runId), projectRootResolver, previewSecret))
+  }
+
+  function listFull(projectId: string): ProductionRun[] {
+    void resumeUnfinishedRuns(projectId)
+    return repository.list(identifier(projectId, 'project')).map((summary) => requireRun(projectId, summary.runId))
+  }
+
+  return { createDraft, readProjection, readFull, readEvents, readArtifactProjection, resolveArtifactPreview, command, proposeStoryboard, resumeUnfinishedRuns, listProjections, listFull }
+}
+
+export type ProductionRunService = ReturnType<typeof createProductionRunService>

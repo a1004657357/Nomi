@@ -17,6 +17,7 @@ import {
 } from '../model/generationNodeKinds'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { importWorkbenchLocalAssetFile } from '../../api/assetUploadApi'
+import { comfyWorkflowTakesPrompt } from '../runner/promptRequirement'
 import {
   type DynamicCatalogControl,
   type ImageUrlSlot,
@@ -24,18 +25,16 @@ import {
   buildEffectiveImageCatalogConfig,
   buildComfyWorkflowImageUrlSlots,
   buildImageUrlSlots,
-  buildModelControls,
   defaultPatchForCatalogControl,
-  defaultPatchForControls,
   videoAspectDefaultPatch,
   edgeModeForGroup,
   getEdgeSourceForSlot,
   getSlotNodeRef,
   getSlotThumbUrl,
   imageCatalogReferenceSlot,
+  nodeSelectedModelAddress,
   parseControlInput,
   readMeta,
-  removePreviousControlParams,
   resultPreviewUrl,
   shouldUseVideoFrameSlotFallback,
 } from './controls/parameterControlModel'
@@ -46,6 +45,7 @@ import {
   applyArchetypeVariantSwitch,
   archetypeModeArraySlots,
   archetypeModeChoices,
+  archetypeModeSlotReachByKey,
   archetypeModeSlots,
   archetypeModeSourceVideoSlot,
   archetypeVariantChoices,
@@ -55,7 +55,8 @@ import {
   referenceSlotStorage,
 } from './controls/archetypeMeta'
 import { resolveReferenceSlots, decideArrayReferenceRemoval } from '../runner/referenceSlots'
-import { resolveModeForConnectedReferences } from '../agent/referenceEdgeCapability'
+import { useChannelCreateBody } from './controls/useChannelCreateBody'
+import { translateModelDisplayText } from '../../../i18n/modelDisplayText'
 import { specializeArchetypeForVariant } from '../../../config/modelArchetypes'
 import ModeBar from './controls/ModeBar'
 import AssetReference, { type AssetSlot } from '../../assets/AssetReference'
@@ -67,11 +68,17 @@ import InlineParameterBar from './InlineParameterBar'
 import { useNodeModelAutoSelect } from './useNodeModelAutoSelect'
 import { resolveArchetypeForOption, resolveRenderedControls } from './nodeModelArchetype'
 import {
+  buildAspectRatioNodePatch,
+  type ComposerAttachmentSide,
+} from './nodeSizing'
+import {
   ASPECT_RATIO_KEYS,
   collectInputAspectRatios,
   normalizeAspectRatioToWH,
+  parseAspectRatioValue,
   preferredVideoAspect,
 } from './aspectRatio'
+import { buildNodeModelChangePatch } from './buildNodeModelChangePatch'
 
 // 模块级常量：比例参数的 key 白名单（与 aspectRatio.ts 的 ASPECT_RATIO_KEYS 保持一致）。
 const ASPECT_RATIO_KEY_SET = new Set<string>(ASPECT_RATIO_KEYS)
@@ -81,15 +88,15 @@ type NodeParameterControlsProps = {
   section?: 'all' | 'references' | 'parameters' | 'model' | 'controls'
   /** 点参考 tile → 在描述框光标处插入 @ 引用 chip(主路径,由 composer 注入 editor 命令)。 */
   onInsertMention?: (url: string) => void
-  /** 参数面板开/合（透传给 InlineParameterBar → composer 冻结位置用）。 */
-  onParamPanelOpenChange?: (open: boolean) => void
+  /** 当前 composer 连在节点哪条边；比例切换用它保持同一连接锚点。 */
+  composerAttachmentSide?: ComposerAttachmentSide
 }
 
 export default function NodeParameterControls({
   node,
   section = 'all',
   onInsertMention,
-  onParamPanelOpenChange,
+  composerAttachmentSide = 'bottom',
 }: NodeParameterControlsProps): JSX.Element | null {
   const { t } = useTranslation()
   const nodes = useGenerationCanvasStore((state) => state.nodes)
@@ -115,18 +122,10 @@ export default function NodeParameterControls({
   const isAudioLike = isAudioLikeGenerationNodeKind(node.kind)
   const isGenerationNode = isImageLike || isVideoLike || isTextLike || isAudioLike
 
-  const selectedModelValue =
-    readMeta(meta, 'modelKey') ||
-    readMeta(meta, 'modelAlias') ||
-    readMeta(meta, 'imageModel') ||
-    readMeta(meta, 'videoModel')
+  // 模型寻址链单源在 parameterControlModel.nodeSelectedModelAddress（报错卡自定义调用入口共用）。
   // 必须带上节点存的 vendor 寻址：两个中转站可提供同名 modelKey，裸身份匹配永远命中数组首条
   // （最新接入那家），下方 vendor 同步 effect 会跟着把 meta.vendor 改写过去——用户锁定被静默翻家。
-  const selectedModelVendor =
-    readMeta(meta, 'modelVendor') ||
-    readMeta(meta, 'vendor') ||
-    readMeta(meta, 'imageModelVendor') ||
-    readMeta(meta, 'videoModelVendor')
+  const { modelKey: selectedModelValue, vendorKey: selectedModelVendor } = nodeSelectedModelAddress(meta)
   const selectedModelOption = findModelOptionByIdentifier(modelOptions, selectedModelValue, selectedModelVendor) || null
   // 认得的模型 → 内置档案（供应商无关）；驱动模式分段切换 + 当前模式的槽/参数。认不出 → null（走 flat）。
   const archetype = resolveArchetypeForOption(selectedModelOption)
@@ -140,6 +139,21 @@ export default function NodeParameterControls({
   const imageCatalogConfig = archetype ? null : buildEffectiveImageCatalogConfig(selectedModelOption?.meta)
   const renderedControls = resolveRenderedControls(selectedModelOption, meta, isImageLike, isVideoLike)
 
+  // ── 渠道诚实：档案声明的槽 × **这条渠道真发得出的键** ──────────────────────────────
+  // UI 能力由档案声明（供应商无关），发得出什么由渠道 mapping 决定；此前两者只在「点生成那一刻」
+  // 才对账，于是用户连好参考、切到「全能参考」、点了生成才被拒。这里提前算出来，发不出的槽不显示、
+  // 只带得动 1 张的槽如实收成 1 张。判据与第三闸同一套（referenceReachability），不另起一份。
+  // 拿不到 body（老 preload / 查不到 mapping）→ 空表 → 一律不收窄，绝不因为查不到就藏用户的槽。
+  const channelCreateBody = useChannelCreateBody(
+    selectedModelOption?.vendor ?? '',
+    selectedModelOption?.value ?? '',
+    (archMode?.transportTaskKind ?? effectiveArchetype?.transportTaskKind ?? '') as string,
+  )
+  const slotReachByKey = React.useMemo(
+    () => (archMode && channelCreateBody ? archetypeModeSlotReachByKey(archMode, channelCreateBody) : {}),
+    [archMode, channelCreateBody],
+  )
+
   // P1 单一真相源：所有 meta 增量 patch 都从 store 读**最新** meta 再 spread，绝不基于渲染快照 prop
   // `node.meta`（那是第二份真相源）。连边赋图 + 紧接改参数等「先后两次写」时，读快照会让后写覆盖前写
   // (lost-update 竞态)。updateNode 是整体替换 meta（Object.assign 浅替换），故必须在此处自己合并最新值。
@@ -152,41 +166,27 @@ export default function NodeParameterControls({
     })
   }
 
+  const updateAspectRatioMeta = (patch: Record<string, unknown>, targetRatio: number | null) => {
+    const latest = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id)
+    if (!latest) return
+    const nextMeta = { ...(latest.meta || {}), ...patch }
+    updateNode(
+      node.id,
+      buildAspectRatioNodePatch(latest, nextMeta, targetRatio, composerAttachmentSide),
+    )
+  }
+
   const handleModelChange = (value: string, vendor?: string) => {
-    const nextOption = findModelOptionByIdentifier(modelOptions, value, vendor)
-    const controls = buildModelControls(nextOption?.meta, isImageLike, isVideoLike)
-    const defaultPatch = defaultPatchForControls(controls)
-    const nextArchetype = resolveArchetypeForOption(nextOption)
-    // 视频比例产品默认（覆盖档案默认）：首选 16:9，已连输入全竖才 9:16（2026-07-17 用户拍板）。
-    const aspectPatch = isVideoLike
-      ? videoAspectDefaultPatch(controls, preferredVideoAspect(collectInputAspectRatios(node.id, edges, nodes)))
-      : {}
-    let nextMeta: Record<string, unknown> = {
-      ...removePreviousControlParams(getLatestMeta(), renderedControls),
-      modelKey: nextOption?.modelKey || nextOption?.value || value || null,
-      modelAlias: nextOption?.modelAlias || nextOption?.value || value || null,
-      modelVendor: nextOption?.vendor || null,
-      vendor: nextOption?.vendor || null,
-      modelLabel: nextOption?.label || value || null,
-      ...defaultPatch,
-      ...aspectPatch,
-      ...(isVideoLike
-        ? { videoModel: nextOption?.value || value || null, videoModelVendor: nextOption?.vendor || null }
-        : { imageModel: nextOption?.value || value || null, imageModelVendor: nextOption?.vendor || null }),
-    }
-    if (!nextArchetype) {
-      delete nextMeta.archetype
-    } else {
-      // 换模型后旧 meta.archetype 失配 → currentArchetypeMode 落回新档案默认（常为 t2i 空槽）。
-      // 身上挂着活边参考时就地促到能收的模式（与建边 auto-promote 同一把尺子），UI 立即正确、
-      // 不等提交咽喉兜底——否则用户看着「文生图」还以为参考没用（2026-07-28 群反馈根因之一）。
-      const state = useGenerationCanvasStore.getState()
-      const promotedModeId = resolveModeForConnectedReferences({ ...node, meta: nextMeta }, state.nodes, state.edges)
-      if (promotedModeId) nextMeta = applyArchetypeModeSwitch(nextMeta, nextArchetype, promotedModeId)
-    }
-    updateNode(node.id, {
-      meta: nextMeta,
-    })
+    const state = useGenerationCanvasStore.getState()
+    const latestNode = state.nodes.find((candidate) => candidate.id === node.id) || node
+    updateNode(node.id, buildNodeModelChangePatch({
+      node: latestNode,
+      nodes: state.nodes,
+      edges: state.edges,
+      modelOptions,
+      value,
+      vendor,
+    }))
   }
 
   useNodeModelAutoSelect({
@@ -240,9 +240,11 @@ export default function NodeParameterControls({
     // 防止旧模式遗留的 stale aspect_ratio 遮蔽当前模式的比例选择（如 t2i→改图后 image_size 被旧值盖住）。
     if (ASPECT_RATIO_KEY_SET.has(control.key)) {
       const wh = normalizeAspectRatioToWH(parsed)
-      if (wh) patch.aspect_ratio = wh
+      patch.aspect_ratio = wh ?? (control.key === 'aspect_ratio' ? parsed : null)
       // 用户显式选过比例 → 打标记，连边联动不再自动改（用户选择优先于产品默认）。
       patch.aspect_ratio_user_set = true
+      updateAspectRatioMeta(patch, parseAspectRatioValue(parsed))
+      return
     }
     updateMeta(patch)
   }
@@ -250,10 +252,15 @@ export default function NodeParameterControls({
   const handleCatalogControlChange = (control: DynamicCatalogControl, value: string) => {
     const isAspect =
       control.binding === 'size' || control.binding === 'aspectRatio' || ASPECT_RATIO_KEY_SET.has(control.key)
-    updateMeta({
+    const patch = {
       ...defaultPatchForCatalogControl({ ...control, defaultValue: value }),
       ...(isAspect ? { aspect_ratio_user_set: true } : {}),
-    })
+    }
+    if (isAspect) {
+      updateAspectRatioMeta(patch, parseAspectRatioValue(value))
+      return
+    }
+    updateMeta(patch)
   }
 
   // 切生成方式：只改 modeId，参考值全局保留（切回照片还在）；互斥发生在传输投影。
@@ -490,7 +497,10 @@ export default function NodeParameterControls({
     ...imageUrlSlots.map(
       (s): AssetSlot => ({
         key: s.key,
-        label: s.label,
+        // 唯一翻译点：档案路的槽标签在 archetypeModeSlots 里已翻过（对已是英文的再翻是 no-op，
+        // 查不到即原样返回），**启发式路（通用中转/ComfyUI 导入）此前根本没翻** → 英文用户在这个槽
+        // 上看到的是中文「参考图」。收在这里翻一次，两条路才真的一个口径。
+        label: translateModelDisplayText(s.label),
         accept: 'image',
         form: 'single',
         persistAsEdge: true,
@@ -524,6 +534,14 @@ export default function NodeParameterControls({
         ]
       : []),
   ]
+    // 这条渠道压根发不出的槽：不显示。让用户连上一个「连了也不会进请求」的东西，才是真的坑。
+    .filter((slot) => slotReachByKey[slot.key] !== 'none')
+    // 只挤得进单图聚合位的槽：如实收成 1 张并说明白，别让用户放了 9 张以为都发得出去。
+    .map((slot) =>
+      slotReachByKey[slot.key] === 'single' && slot.max > 1
+        ? { ...slot, max: 1, caption: t('generationCommon.parameters.channelSingleReferenceOnly') }
+        : slot,
+    )
   // 档案节点：槽值统一由 resolveReferenceSlots（边 + 上传单一真相源）派生——这样连线参考在槽里
   // 真的看得见（根治「显示读 meta、生成读边」分裂导致的「连线没用」）。按存储键回填到 assetValuesByKey。
   // pending（连了边但源未生成/待抽帧）本片先不显示空位（占位态留 S4b）；非档案模型仍走旧启发式路径。
@@ -636,19 +654,24 @@ export default function NodeParameterControls({
         variantChoices={showVariantBar ? variantChoices : []}
         activeVariantId={activeVariantId}
         onVariantSelect={handleVariantSwitch}
-        onParamPanelOpenChange={onParamPanelOpenChange}
       />
     )
   }
 
   // 模式分段切换要常驻（即便当前模式无参考槽，如纯文生）——有 modeBar / 数组槽 / 源视频槽都不空返回。
   // 变体（型号）已从这里挪到底栏 InlineParameterBar 的小下拉（用户拍板：和模型并排在最下面），不再占顶部一排。
+  // 处理类 ComfyUI 工作流（去背景/超分/补帧）图里没有提示词槽——诚实说一句，
+  // 否则用户在下面的提示词框里打了字却毫无作用，只会以为是我们坏了（D4 缺口明着标）。
+  const comfyTakesPrompt = comfyWorkflowTakesPrompt(selectedModelOption?.meta)
+  const showNoPromptNote = section === 'references' && comfyTakesPrompt === false
+
   if (
     section === 'references' &&
     imageUrlSlots.length === 0 &&
     arraySlots.length === 0 &&
     !sourceVideoSlot &&
-    !showModeBar
+    !showModeBar &&
+    !showNoPromptNote
   )
     return null
 
@@ -680,6 +703,12 @@ export default function NodeParameterControls({
           onReorder={handleReorder}
           onBrowseAll={handleBrowseAll}
         />
+      ) : null}
+
+      {showNoPromptNote ? (
+        <div className={cn('text-ink-40 text-micro leading-tight')}>
+          {t('generationCommon.parameters.comfyNoPrompt')}
+        </div>
       ) : null}
 
       {showReferences && uploadError ? (

@@ -1,77 +1,17 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconInfoCircle, IconMaximize } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
-import { NodeImageLightbox } from './NodeImageLightbox'
 import { EditableNodeTitle } from './render/EditableNodeTitle'
 
-export function NodeImagePreviewButton({ src, title }: { src: string; title?: string }): JSX.Element {
-  const { t } = useTranslation()
-  const [open, setOpen] = React.useState(false)
-  const close = React.useCallback(() => setOpen(false), [])
-  const label = title || t('generationCommon.imagePreview.image')
-  return (
-    <>
-      <button
-        type="button"
-        className={cn(
-          'inline-grid place-items-center w-6 h-6 rounded-full border-0',
-          'bg-nomi-paper/[0.82] text-nomi-ink-60 hover:text-nomi-ink',
-          'backdrop-blur-[8px] cursor-pointer pointer-events-auto',
-          'transition-colors duration-150',
-          'focus-visible:outline-2 focus-visible:outline-nomi-accent focus-visible:outline-offset-2',
-        )}
-        aria-label={t('generationCommon.imagePreview.enlargeAria', { label })}
-        title={t('generationCommon.imagePreview.enlarge')}
-        data-node-image-preview-open="true"
-        onClick={(event) => {
-          event.stopPropagation()
-          setOpen(true)
-        }}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <IconMaximize size={14} stroke={1.6} aria-hidden="true" />
-      </button>
-      <NodeImageLightbox open={open} src={src} title={title} onClose={close} />
-    </>
-  )
-}
-
-export function NodeResultHeaderActions({
-  imageSrc,
-  title,
-  onOpenProvenance,
-}: {
-  imageSrc?: string
-  title?: string
-  onOpenProvenance: () => void
-}): JSX.Element {
-  const { t } = useTranslation()
-  return (
-    <span className="ml-auto inline-flex items-center gap-1">
-      {imageSrc ? <NodeImagePreviewButton src={imageSrc} title={title} /> : null}
-      <button
-        type="button"
-        className={cn(
-          'inline-grid place-items-center w-6 h-6 rounded-full border-0',
-          'bg-nomi-paper/[0.82] text-nomi-ink-60 hover:text-nomi-ink',
-          'backdrop-blur-[8px] cursor-pointer pointer-events-auto',
-          'transition-colors duration-150',
-          'focus-visible:outline-2 focus-visible:outline-nomi-accent focus-visible:outline-offset-2',
-        )}
-        aria-label={t('generationCommon.provenance.view')}
-        title={t('generationCommon.provenance.actionTitle')}
-        onClick={(event) => {
-          event.stopPropagation()
-          onOpenProvenance()
-        }}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <IconInfoCircle size={14} stroke={1.6} aria-hidden="true" />
-      </button>
-    </span>
-  )
-}
+// 注：这里原本还有 NodeImagePreviewButton（body-portal 大图）和 NodeResultHeaderActions
+// （卡片右上角那两颗 bg-nomi-paper/[0.82] 半透明**常驻**按钮：放大 + 生成记录）。
+// 2026-08-04 §1.5「动作不许压在内容上」落地时删除：
+//   · 「放大」和图片浮条的「全屏」本就重复，而且是两套不同实现（body portal vs 画布 portal）。
+//     留画布 portal 那套（NodeMediaPreviewDialog）——它图/视频都支持、带视频自愈，
+//     且 portal 到画布区是有意设计（只覆盖红框区、能压住区域内的助手和时间轴把手）。
+//   · 「生成记录」是 ProvenancePanel 的唯一入口，不能删，已迁进浮动工具栏
+//     （ToolbarProvenanceButton，一份定义四处复用）。⚠️ 那条工具栏是**选中**才出、不是 hover 才出。
+// 本文件只剩下面这个内联标题——它是标题不是动作，且本来就 hover/选中才显形，不遮画面。
 
 export function NodeInlineImageTitle({
   nodeId,

@@ -26,7 +26,13 @@ export const MODELSCOPE_IMAGE_ARCHETYPE: ModelArchetype = {
   transportTaskKind: "text_to_image",
   // 用魔搭命名空间形式（带斜杠），不与 apimart 的裸名 z-image / qwen-image 撞；
   // 且 seed 模型已显式带 archetypeId（resolveArchetypeForModel 显式优先），这里只是给用户自接同名模型兜底。
-  identifierPatterns: ["tongyi-mai/z-image", "qwen/qwen-image-2", "black-forest-labs/flux", "modelscope"],
+  // ⚠️ 匹配是严格相等不是前缀：只写 "black-forest-labs/flux" 这类前缀形永远匹配不到真实 key，
+  // 必须列完整 key（seededModelIdentity.test 会红）。前缀项保留——对同名裸模型仍有意义。
+  identifierPatterns: [
+    "tongyi-mai/z-image", "qwen/qwen-image-2", "black-forest-labs/flux", "modelscope",
+    "Tongyi-MAI/Z-Image-Turbo", "Tongyi-MAI/Z-Image", "Qwen/Qwen-Image-2512",
+    "black-forest-labs/FLUX.2-klein-9B", "black-forest-labs/FLUX.1-Krea-dev", "MAILAND/majicflus_v1",
+  ],
   modes: [
     {
       id: "t2i",
@@ -50,7 +56,7 @@ export const MODELSCOPE_IMAGE_EDIT_ARCHETYPE: ModelArchetype = {
   kind: "image",
   defaultModeId: "edit",
   transportTaskKind: "image_edit",
-  identifierPatterns: ["qwen/qwen-image-edit", "modelscope-edit"],
+  identifierPatterns: ["qwen/qwen-image-edit", "modelscope-edit", "Qwen/Qwen-Image-Edit-2511"],
   modes: [
     {
       id: "edit",

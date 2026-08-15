@@ -17,7 +17,7 @@ import {
   resolveCapabilityPollIntervalMs,
   setProjectNodePrompt,
 } from './core'
-import { createDiskGateway } from './gateway'
+import { createDiskGateway, type PlanConfirmInfo, type ProjectGateway } from './gateway'
 
 describe('referencesFromEdges（连参考边=喂参考图，headless 兜底）', () => {
   const snap = {
@@ -168,6 +168,43 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
     expect(shot?.prompt).toBe('电影感写实，黄昏光线')
   })
 
+  it('方案门（Phase B）：≥2 节点弹门确认，批准落画布 / 拒绝不落回 cancelled / 单节点不弹', async () => {
+    function mockGateway(planApproved: boolean) {
+      const planCalls: PlanConfirmInfo[] = []
+      let applyCount = 0
+      const gateway: ProjectGateway = {
+        readDoc: async () => ({ nodes: [], edges: [] }),
+        apply: async () => { applyCount += 1 },
+        confirmSpend: async () => null,
+        confirmPlan: async (info) => { planCalls.push(info); return planApproved },
+      }
+      return { gateway, planCalls, getApplyCount: () => applyCount }
+    }
+
+    // 批准 → 落画布，方案门带对齐的 nodeCount/titles/projectId。
+    const approved = mockGateway(true)
+    const okRes = await addProjectNodes(approved.gateway, [{ kind: 'image', title: '镜 1' }, { kind: 'image', title: '镜 2' }], 'proj-1')
+    expect(approved.planCalls).toHaveLength(1)
+    expect(approved.planCalls[0]).toMatchObject({ nodeCount: 2, projectId: 'proj-1', titles: ['镜 1', '镜 2'] })
+    expect(okRes.ids).toHaveLength(2)
+    expect(okRes.cancelled).toBeUndefined()
+    expect(approved.getApplyCount()).toBe(1)
+
+    // 拒绝 → 不落画布（apply 零调用）、回 cancelled。
+    const rejected = mockGateway(false)
+    const noRes = await addProjectNodes(rejected.gateway, [{ kind: 'image' }, { kind: 'video' }], 'proj-1')
+    expect(rejected.planCalls).toHaveLength(1)
+    expect(noRes.cancelled).toBe(true)
+    expect(noRes.ids).toEqual([])
+    expect(rejected.getApplyCount()).toBe(0)
+
+    // 单节点不算「方案」→ 不弹门，直落。
+    const single = mockGateway(true)
+    const oneRes = await addProjectNodes(single.gateway, [{ kind: 'image', title: '一张图' }], 'proj-1')
+    expect(single.planCalls).toHaveLength(0)
+    expect(oneRes.ids).toHaveLength(1)
+  })
+
   it('删节点连带清边，落盘后边为空', async () => {
     const project = createNamedProject('删节点测试')
     const gateway = createDiskGateway(project.id)
@@ -203,7 +240,11 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
     // 请求体：高层 TaskRequest，extras 带 modelKey/projectId/nodeId/referenceImages，kind 由 intent 推。
     const req = captured[0].request as { kind: string; prompt: string; extras: Record<string, unknown> }
     expect(captured[0].vendor).toBe('apimart')
-    expect(req.kind).toBe('text_to_image')
+    // ⚠️ 这条**曾经断言 text_to_image**——本用例明明传了 references，却把「参考图被丢掉」写成了规范，
+    // 于是 bug 有测试保护、一直没人发现。真生成实测才暴露：喂「橘猫戴红围巾坐雪景窗台」的照片说
+    // 「把围巾改成蓝色」，出来的是另一只白猫的插画（火山 Seedream 与 apimart 两条路都中招）。
+    // 带参考图 = 改图，与 video 那支对称。
+    expect(req.kind).toBe('image_edit')
     expect(req.prompt).toBe('一只赛博朋克猫')
     expect(req.extras.modelKey).toBe('seedream-4')
     expect(req.extras.projectId).toBe(project.id)
@@ -213,6 +254,20 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
     // 结果落回节点：重读画布该节点 hasResult。
     const canvas = await readProjectCanvas(createDiskGateway(project.id))
     expect(canvas.nodes.find((node) => node.id === out.nodeId)?.hasResult).toBe(true)
+  })
+
+  it('generate：image + 没有参考图 → text_to_image（别反过来把纯文生也当改图）', async () => {
+    const project = createNamedProject('纯文生图意图测试')
+    let kind = ''
+    await generateOnProject(
+      { projectId: project.id, intent: 'image', prompt: '一只赛博朋克猫', vendor: 'apimart', modelKey: 'seedream-4' },
+      createDiskGateway(project.id),
+      async (payload) => {
+        kind = (payload.request as { kind: string }).kind
+        return { id: 't', status: 'succeeded', assets: [] }
+      },
+    )
+    expect(kind).toBe('text_to_image')
   })
 
   it('generate：video + 有参考图 → image_to_video', async () => {
@@ -382,6 +437,31 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
 
     expect(capturedScene).toMatchObject({ objects: [{ type: 'mannequin' }], cameras: [{ aspectRatio: '16:9' }] })
     expect((await gateway.readDoc()).nodes.find((node) => node.id === 'scene-node')?.meta?.scene3dState).toBeTruthy()
+  })
+
+  // 病根回归：轮询到点旧版只 break，result 保持 queued 且不带 error —— 调用方（MCP/agent/CLI）
+  // 拿到一个**永远非终态**的结果，等同「一直转圈但没人告诉你出了什么事」。到点必须落终态。
+  it('generate：轮询超时必须落 failed + 诚实原因，不能静默返回 queued', async () => {
+    const project = createNamedProject('轮询超时测试')
+    const previous = process.env.NOMI_POLL_TIMEOUT_MS
+    process.env.NOMI_POLL_TIMEOUT_MS = '1'
+    try {
+      let polls = 0
+      const out = await generateOnProject(
+        { projectId: project.id, intent: 'image', prompt: '一只猫', vendor: 'apimart', modelKey: 'seedream-4' },
+        createDiskGateway(project.id),
+        async () => ({ id: 'task-stuck', status: 'queued', assets: [] }),
+        async () => {
+          polls += 1
+          return { result: { id: 'task-stuck', status: 'queued', assets: [] } }
+        },
+      )
+      expect(polls).toBeGreaterThan(0)
+      expect(out.status).toBe('failed')
+    } finally {
+      if (previous === undefined) delete process.env.NOMI_POLL_TIMEOUT_MS
+      else process.env.NOMI_POLL_TIMEOUT_MS = previous
+    }
   })
 
   it('未知项目抛清晰错误', async () => {

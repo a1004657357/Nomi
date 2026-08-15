@@ -6,7 +6,7 @@ import fc from 'fast-check'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useGenerationCanvasStore, __resetGenerationCanvasHistoryForTests } from '../store/generationCanvasStore'
 import { setCanvasEventSinkForTests, type CanvasShadowEvent } from './canvasEventEmitter'
-import { replayCanvasEvents } from './canvasEventReducer'
+import { applyCanvasEvent, replayCanvasEvents } from './canvasEventReducer'
 
 type Op =
   | { kind: 'add'; title: string; prompt: string; nodeKind: 'image' | 'video' | 'text' }
@@ -295,6 +295,102 @@ describe('S5-a replay ≡ snapshot(属性测试,CI 安全网)', () => {
     expect(twice).toEqual(once)
     expect(once.n).toHaveLength(1)
     expect(once.g).toHaveLength(1)
+  })
+
+  it('旧 connected 尾巴沿用旧 edge id，后续改标签与断开仍能命中', () => {
+    const connected = applyCanvasEvent(
+      { nodes: [], edges: [], groups: [] },
+      { type: 'canvas.edge.connected', payload: { sourceNodeId: 'source', targetNodeId: 'target', mode: 'reference' } },
+    )
+    expect(connected.edges).toHaveLength(1)
+    expect(connected.edges[0]?.id).toBe('edge-source-target')
+
+    const relabeled = applyCanvasEvent(connected, {
+      type: 'canvas.edge.mode-changed',
+      payload: { edgeId: 'edge-source-target', mode: 'style_ref' },
+    })
+    expect(relabeled.edges[0]?.mode).toBe('style_ref')
+
+    const disconnected = applyCanvasEvent(relabeled, {
+      type: 'canvas.edge.disconnected',
+      payload: { edgeId: 'edge-source-target' },
+    })
+    expect(disconnected.edges).toEqual([])
+  })
+
+  it('旧快照重复重放 connected 尾巴时按 legacy edge id 幂等，不生成双参考', () => {
+    const snapshot = {
+      nodes: [],
+      groups: [],
+      edges: [{ id: 'edge-source-target', source: 'source', target: 'target', mode: 'style_ref' as const, order: 0 }],
+    }
+    const repeatedConnect = applyCanvasEvent(snapshot, {
+      type: 'canvas.edge.connected',
+      payload: { sourceNodeId: 'source', targetNodeId: 'target', mode: 'reference' },
+    })
+    const relabeled = applyCanvasEvent(repeatedConnect, {
+      type: 'canvas.edge.mode-changed',
+      payload: { edgeId: 'edge-source-target', mode: 'style_ref' },
+    })
+
+    expect(relabeled.edges).toEqual(snapshot.edges)
+  })
+
+  it('新快照重复重放 full-edge added 尾巴时按 edge id 幂等', () => {
+    const snapshot = {
+      nodes: [],
+      groups: [],
+      edges: [{ id: 'edge-source::target::0', source: 'source', target: 'target', mode: 'style_ref' as const, order: 0 }],
+    }
+    const repeatedAdd = applyCanvasEvent(snapshot, {
+      type: 'canvas.edge.added',
+      payload: {
+        edge: { id: 'edge-source::target::0', source: 'source', target: 'target', mode: 'reference', order: 0 },
+      },
+    })
+    const relabeled = applyCanvasEvent(repeatedAdd, {
+      type: 'canvas.edge.mode-changed',
+      payload: { edgeId: 'edge-source::target::0', mode: 'style_ref' },
+    })
+
+    expect(relabeled.edges).toEqual(snapshot.edges)
+  })
+
+  it('重复 removed 尾巴按 edge id 删除已改过标签的边', () => {
+    const snapshot = {
+      nodes: [],
+      groups: [],
+      edges: [{ id: 'edge-source::target::0', source: 'source', target: 'target', mode: 'style_ref' as const, order: 0 }],
+    }
+    const removed = applyCanvasEvent(snapshot, {
+      type: 'canvas.edge.removed',
+      payload: {
+        edge: { id: 'edge-source::target::0', source: 'source', target: 'target', mode: 'reference', order: 0 },
+      },
+    })
+
+    expect(removed.edges).toEqual([])
+    expect(applyCanvasEvent(removed, {
+      type: 'canvas.edge.removed',
+      payload: {
+        edge: { id: 'edge-source::target::0', source: 'source', target: 'target', mode: 'reference', order: 0 },
+      },
+    })).toEqual(removed)
+  })
+
+  it('新连接事件携带完整边对象和真实 edge id', () => {
+    __resetGenerationCanvasHistoryForTests()
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [], edges: [], groups: [] })
+    const source = useGenerationCanvasStore.getState().addNode({ kind: 'image', title: 'source', prompt: '' })
+    const target = useGenerationCanvasStore.getState().addNode({ kind: 'image', title: 'target', prompt: '' })
+    captured = []
+
+    useGenerationCanvasStore.getState().connectNodes(source.id, target.id, 'reference')
+
+    const edge = useGenerationCanvasStore.getState().edges[0]
+    expect(edge).toBeDefined()
+    expect(captured).toHaveLength(1)
+    expect(captured[0]).toMatchObject({ type: 'canvas.edge.added', payload: { edge } })
   })
 
   it('setNodeProgress(轮询 tick)不发事件——瞬态不入日志(§4.3 终态收敛)', () => {

@@ -47,8 +47,10 @@ describe("fetch 层（stub 全局 fetch）", () => {
   });
 
   it("fetchComfyuiCheckpoints：/object_info/CheckpointLoaderSimple → 文件名列表", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ CheckpointLoaderSimple: FULL.CheckpointLoaderSimple }))));
-    expect(await fetchComfyuiCheckpoints("http://127.0.0.1:8188")).toEqual(["a.safetensors", "b.safetensors"]);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ CheckpointLoaderSimple: FULL.CheckpointLoaderSimple })));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchComfyuiCheckpoints("127.0.0.1:8188/")).toEqual(["a.safetensors", "b.safetensors"]);
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8188/object_info/CheckpointLoaderSimple", expect.any(Object));
   });
 
   it("连不上 → null（调用方按「不可核对」处理，不误报全缺）", async () => {
@@ -68,5 +70,53 @@ describe("fetch 层（stub 全局 fetch）", () => {
     await fetchComfyuiObjectInfoIndex("http://127.0.0.1:8188");
     await fetchComfyuiObjectInfoIndex("http://127.0.0.1:8188");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("并发缓存：同 URL 的未完成请求合并成一次 fetch", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetchMock = vi.fn(async () => {
+      await gate;
+      return new Response(JSON.stringify(FULL));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const requests = Array.from({ length: 20 }, () => fetchComfyuiObjectInfoIndex("http://127.0.0.1:8188"));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    release?.();
+    const results = await Promise.all(requests);
+    expect(results.every((item) => item?.classNames.has("KSampler"))).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("空 combo 列表 = 枚举（真服务器实测抓到的沉默失灵）", () => {
+  // 真 ComfyUI 0.29.0 实测：models/checkpoints 为空时 ckpt_name 的 spec 就是 [[]]。
+  // 早先把「空数组」当「不是枚举」跳过 → 一个模型都没装的用户，缺件对账整个沉默。
+  const emptyDir = parseObjectInfoIndex({
+    CheckpointLoaderSimple: { input: { required: { ckpt_name: [[]] } } },
+    KSampler: { input: { required: { sampler_name: [["euler", "ddim"]], seed: ["INT", {}] } } },
+  });
+
+  it("空 combo 仍进枚举表（不是「这输入不是枚举」）", () => {
+    expect(emptyDir.enumsByClass.get("CheckpointLoaderSimple")?.get("ckpt_name")).toEqual([]);
+  });
+
+  it("对账后果：本机没装任何模型 → 图里的 ckpt 如实报缺（而不是沉默）", async () => {
+    const { reconcileComfyWorkflow } = await import("./catalog/comfyuiWorkflowImport");
+    const graph = { "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "sd15.safetensors" } } };
+    const r = reconcileComfyWorkflow(graph, emptyDir);
+    expect(r.missingEnumValues).toEqual([
+      { nodeId: "1", classType: "CheckpointLoaderSimple", title: undefined, inputKey: "ckpt_name", value: "sd15.safetensors" },
+    ]);
+  });
+
+  it("烤入侧不受影响：空列表不烤成空下拉", async () => {
+    const { collectGraphEnumOptions } = await import("./catalog/comfyuiWorkflowImport");
+    const graph = { "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "sd15.safetensors" } } };
+    expect(collectGraphEnumOptions(graph, emptyDir)).toEqual([]);
+  });
+
+  it("非枚举 spec（类型名字符串）仍不收", () => {
+    expect(emptyDir.enumsByClass.get("KSampler")?.has("seed")).toBe(false);
   });
 });

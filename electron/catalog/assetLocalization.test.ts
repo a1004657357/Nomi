@@ -530,15 +530,19 @@ describe("comfyui-upload（本地 ComfyUI 首帧上传，S2）", () => {
 
   it("resolveAssetIngestionWithFallback：comfyui-local 图片 → comfyui-upload，端点从 baseUrl 派生（默认 + 自定义 + 尾斜杠归一）", () => {
     const def = resolveAssetIngestionWithFallback({ key: "comfyui-local" }, [], () => null, "image");
-    expect(def?.ingestion).toEqual({ strategy: "comfyui-upload", endpoint: "http://127.0.0.1:8188/upload/image", accepts: ["image"] });
+    expect(def?.ingestion).toEqual({ strategy: "comfyui-upload", endpoint: "http://127.0.0.1:8188/upload/image", accepts: ["image", "video"] });
     const custom = resolveAssetIngestionWithFallback({ key: "comfyui-local", baseUrlHint: "http://192.168.1.9:8000/" }, [], () => null, "image");
     expect((custom?.ingestion as { endpoint: string }).endpoint).toBe("http://192.168.1.9:8000/upload/image");
   });
 
-  it("resolveAssetIngestionWithFallback：comfyui-local 视频不被 image-only 拦截（v2v 是另一套机制，暂走通用兜底）", () => {
-    // 拦截仅图片；视频落到通用匿名链兜底（strategy≠comfyui-upload）——v2v 支持是后续工作，非本次范围。
+  it("resolveAssetIngestionWithFallback：comfyui-local **视频也走 comfyui-upload**（真机实测同一端点收视频）", () => {
+    // 旧断言写的是「视频落通用匿名链兜底，v2v 是另一套机制」——**那是没验过的假设**。
+    // 真机 ComfyUI 0.29 实测：POST mp4 进 /upload/image 返回 {name,subfolder,type}，
+    // 返回的文件名当场出现在 LoadVideo.file 的 combo 里。走通用兜底（litterbox 等公网链）反而是错的：
+    // ComfyUI 的 LoadVideo 只认自己 input 目录里的文件名，给它公网 URL 必失败。
     const vid = resolveAssetIngestionWithFallback({ key: "comfyui-local" }, [], () => null, "video");
-    expect(vid?.ingestion.strategy).not.toBe("comfyui-upload");
+    expect(vid?.ingestion.strategy).toBe("comfyui-upload");
+    expect((vid?.ingestion as { endpoint: string }).endpoint).toBe("http://127.0.0.1:8188/upload/image");
   });
 
   it("resolveLocalAsset comfyui-upload：POST /upload/image（field image + type/overwrite）→ 返回 subfolder/name", async () => {

@@ -10,14 +10,11 @@ import {
   IconPlugConnected,
   IconPlus,
   IconSettings,
-  IconSparkles,
   IconTrash,
 } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { ActionCard, NomiLogoMark, NomiWordmark, DesignEmptyState, DesignSearchInput } from '../../design'
 import { NomiImage } from '../../design/media'
-import { ThemeToggleButton } from '../../ui/theme/ThemeToggleButton'
-import { LanguageMenuButton } from '../../ui/app-shell/LanguageMenuButton'
 import { WindowControls } from '../../ui/app-shell/WindowControls'
 import { handleWindowTitlebarDoubleClick } from '../../ui/app-shell/windowTitlebarDoubleClick'
 import type { LocalProjectSummary } from './localProjectStore'
@@ -39,7 +36,6 @@ type Props = {
   /** 旅途是否看过——决定 CTA 文案在「看一遍 / 重看」之间切换 */
   journeyTourSeen?: boolean
   /** 重看开屏动画（首启播完后从这里可主动重播）；缺省则不渲染重看入口 */
-  onReplaySplash?: () => void
   /** null = 查询中（不渲染告警）；false 时弱入口隐藏、状态条升权（单一入口互斥） */
   hasTextModel?: boolean | null
   projects: LocalProjectSummary[]
@@ -58,23 +54,49 @@ function formatUpdatedAt(value: number): string {
   return new Date(value).toLocaleDateString(getAppLocale())
 }
 
-// memo 化：搜索/筛选触发父组件重渲时，urls 未变的封面不重渲（图多时省下整片缩略图重建）。
+function CoverPlaceholder(): JSX.Element {
+  // 无封面的中性占位；名称由卡片下方统一显示，缩略图里不再重复（去重）。
+  return (
+    <div className="absolute inset-0 grid place-items-center bg-nomi-ink-05">
+      <IconMovie size={26} stroke={1.5} className="text-nomi-ink-30" aria-hidden />
+    </div>
+  )
+}
+
+// 视频封面：无任何可 <img> 渲染封面时（纯导入视频素材项目）用 <video> 首帧当封面。
+// #t=0.1 媒体片段强制解出首帧（preload="metadata" 单独不保证 paint）；失败降级为中性占位
+//（不是「加载失败」文案——那是图片语境的 NomiImage 兜底）。调用方用 key={url} 换源清失败态。
+function CoverVideo({ url }: { url: string }): JSX.Element {
+  const [failed, setFailed] = React.useState(false)
+  if (failed) return <CoverPlaceholder />
+  return (
+    <video
+      src={`${url}#t=0.1`}
+      muted
+      playsInline
+      preload="metadata"
+      disablePictureInPicture
+      tabIndex={-1}
+      aria-hidden
+      className="absolute inset-0 w-full h-full object-cover block pointer-events-none"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
+// memo 化：搜索/筛选触发父组件重渲时，封面源未变的卡不重渲（图多时省下整片缩略图重建）。
 // urls 每次是新数组引用，故用按值比较的 comparator。
 const ThumbnailMosaic = React.memo(
-  function ThumbnailMosaic({ urls }: { urls: string[] }): JSX.Element {
+  function ThumbnailMosaic({ urls, videoUrl }: { urls: string[]; videoUrl?: string }): JSX.Element {
     if (urls.length === 0) {
-      // 未生成的项目无封面 → 只放中性占位图标；名称由卡片下方统一显示，缩略图里不再重复（去重）。
-      return (
-        <div className="absolute inset-0 grid place-items-center bg-nomi-ink-05">
-          <IconMovie size={26} stroke={1.5} className="text-nomi-ink-30" aria-hidden />
-        </div>
-      )
+      if (videoUrl) return <CoverVideo key={videoUrl} url={videoUrl} />
+      return <CoverPlaceholder />
     }
     // 单封面：一个项目用一张代表图（首个产物）。早先 2–4 宫格把不同镜头并排塞进 200px 小卡，
     // 读起来像一张糊在一起的图、看不出是什么项目（用户报「糊在一起」）。改单封面更干净、可识别。
     return <NomiImage className="absolute inset-0 w-full h-full object-cover block" src={urls[0]} alt="" />
   },
-  (prev, next) => (prev.urls[0] || '') === (next.urls[0] || ''),
+  (prev, next) => (prev.urls[0] || '') === (next.urls[0] || '') && (prev.videoUrl || '') === (next.videoUrl || ''),
 )
 
 export default function ProjectLibraryPage({
@@ -88,7 +110,6 @@ export default function ProjectLibraryPage({
   onOpenSettings,
   onPlayJourneyTour,
   journeyTourSeen = false,
-  onReplaySplash,
   hasTextModel = null,
   projects,
 }: Props): JSX.Element {
@@ -140,23 +161,11 @@ export default function ProjectLibraryPage({
     window.dispatchEvent(new CustomEvent('nomi-open-browser'))
   }, [])
 
+  // 弱入口 6 → 3（§1.5）：「看看 Nomi」（重放开屏动画）归位到设置「关于」——它和主卡
+  // 「重看一遍引导」是两个不同功能却名字撞车（后者会建 demo 项目回放整条流水线），
+  // 搬走后主卡独占「引导」语义；语言/外观归位到设置「通用」。剩下=模型 · 浏览器 · 设置。
   const libraryTopActions = (
     <div className="app-no-drag flex items-center gap-1">
-      {onReplaySplash ? (
-        <button
-          type="button"
-          onClick={onReplaySplash}
-          className={cn(
-            'inline-flex items-center gap-1.5 h-7 px-2 rounded-pill border-0 bg-transparent cursor-pointer font-inherit',
-            'text-caption text-nomi-ink-60 transition-colors hover:text-nomi-ink',
-          )}
-          data-replay-splash="true"
-          aria-label={t('library.replaySplash')}
-        >
-          <IconSparkles size={14} stroke={1.8} aria-hidden="true" />
-          {t('library.watchNomi')}
-        </button>
-      ) : null}
       {showModelEntry ? (
         <button
           type="button"
@@ -165,10 +174,10 @@ export default function ProjectLibraryPage({
             'inline-flex items-center gap-1.5 h-7 px-2 rounded-pill border-0 bg-transparent cursor-pointer font-inherit',
             'text-caption text-nomi-ink-60 transition-colors hover:text-nomi-ink',
           )}
-          aria-label={t('library.connectModel')}
+          aria-label={t('library.models')}
         >
           <IconPlugConnected size={14} stroke={1.8} aria-hidden="true" />
-          {t('library.connectModel')}
+          {t('library.models')}
         </button>
       ) : null}
       <button
@@ -197,8 +206,6 @@ export default function ProjectLibraryPage({
           <IconSettings size={15} stroke={1.8} aria-hidden="true" />
         </button>
       ) : null}
-      <LanguageMenuButton className="size-7 rounded-pill" />
-      <ThemeToggleButton className="size-7 rounded-pill" />
     </div>
   )
 
@@ -369,7 +376,7 @@ export default function ProjectLibraryPage({
                     className="aspect-video relative overflow-hidden bg-nomi-ink-05"
                     style={urls.length === 0 && project.thumbStyle ? { background: project.thumbStyle } : undefined}
                   >
-                    <ThumbnailMosaic urls={urls} />
+                    <ThumbnailMosaic urls={urls} videoUrl={project.coverVideoUrl} />
                     <div
                       className={cn(
                         'absolute inset-0 bg-nomi-scrim opacity-0 transition-opacity duration-150',

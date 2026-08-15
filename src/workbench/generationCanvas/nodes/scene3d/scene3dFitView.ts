@@ -31,8 +31,16 @@ export function fitEditorCameraToScene(
     box.expandByPoint(center.clone().addScalar(pad))
     box.expandByPoint(center.clone().addScalar(-pad))
   })
+  // 相机 gizmo 纳入 fit 是为了「看见相机1」（2026-07-20 反馈）；但被 WASD 飞远的相机会把位姿
+  // 写回场景（CameraViewEditController）——position 成天文数字后把包围盒撑爆，distance 算出
+  // 极远端机位，场景主体缩成亚像素/被远裁剪面切掉 → 「点看全场就没东西了」白屏
+  // （2026-08-07 飞书反馈根因）。离群相机（离对象中心过远）不参与取景；正常相机行为不变。
+  const objectCenter = box.isEmpty() ? new THREE.Vector3(0, 0.75, 0) : box.getCenter(new THREE.Vector3())
+  const objectRadius = box.isEmpty() ? 2 : Math.max(box.getSize(new THREE.Vector3()).length() / 2, 2)
+  const cameraInclusionRadius = Math.max(objectRadius * 4, 50)
   cameras.forEach((camera) => {
     const center = new THREE.Vector3(...camera.position)
+    if (center.distanceTo(objectCenter) > cameraInclusionRadius) return
     box.expandByPoint(center.clone().addScalar(0.8))
     box.expandByPoint(center.clone().addScalar(-0.8))
   })

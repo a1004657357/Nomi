@@ -4,11 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
+import { installChildProcessLifecycle } from "./child-process-lifecycle.mjs";
 import { ensureElectronSignature } from "./ensure-electron-signature.mjs";
 
 const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const buildTailwindScript = path.join(repoRoot, "scripts", "build-tailwind.mjs");
+const childProcessLifecycle = installChildProcessLifecycle();
 
 function configureWindowsConsoleEncoding() {
   if (process.platform !== "win32" || process.env.NOMI_SKIP_UTF8_CONSOLE === "1") return;
@@ -82,16 +84,19 @@ function compileTailwindStyles() {
 }
 
 function start(command, args, options = {}) {
-  const child = spawn(command, args, {
+  const child = childProcessLifecycle.track(spawn(command, args, {
     stdio: "inherit",
     shell: false,
     ...options,
-  });
+  }));
   child.nomiExit = { exited: false, code: null, signal: null };
   child.on("exit", (code, signal) => {
     child.nomiExit = { exited: true, code, signal };
-    if (signal) process.kill(process.pid, signal);
-    else if (typeof code === "number" && code !== 0) process.exit(code);
+    if (childProcessLifecycle.isShuttingDown()) return;
+    if (signal) childProcessLifecycle.shutdown("SIGTERM", 1);
+    else if (typeof code === "number" && code !== 0) {
+      childProcessLifecycle.shutdown("SIGTERM", code);
+    }
   });
   return child;
 }
@@ -346,7 +351,7 @@ async function warmCriticalRendererResources(vite, baseUrl) {
     "/src/workbench/library/ProjectLibraryRoute.tsx",
     "/src/workbench/library/ProjectLibraryPage.tsx",
     "/src/workbench/library/localProjectStore.ts",
-    "/src/workbench/project/projectSummaryRepository.ts",
+    "/src/workbench/project/projectCoverDerive.ts",
   ];
 
   if (vite && typeof vite.warmupRequest === "function") {
@@ -453,14 +458,6 @@ compileElectronMain();
 const vite = startRendererServer(rendererPort);
 let tailwind = null;
 
-const shutdown = () => {
-  tailwind?.kill();
-  vite.kill();
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-process.on("exit", shutdown);
-
 await waitForRenderer(rendererUrl, undefined, vite);
 if (process.env.NOMI_BLOCKING_RENDERER_WARMUP === "1") {
   await warmRendererShell(rendererUrl);
@@ -476,6 +473,7 @@ const app = startElectron({
     VITE_DEV_SERVER_URL: electronRendererUrl,
     NOMI_RENDERER_URL: electronRendererUrl,
     ...loadOnboardingAgentEnv(),
+    NOMI_LAUNCHER_PID: String(process.pid),
   }),
 });
 
@@ -495,6 +493,9 @@ if (process.env.NOMI_WARM_RENDERER === "1") {
 }
 
 app.on("exit", () => {
-  tailwind?.kill();
-  vite.kill();
+  if (childProcessLifecycle.isShuttingDown()) return;
+  childProcessLifecycle.shutdown(
+    "SIGTERM",
+    app.nomiExit.code ?? (app.nomiExit.signal ? 1 : 0),
+  );
 });

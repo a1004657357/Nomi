@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { deriveThumbnailUrls } from "./workspaceRepository";
-import { extractThumbnailUrlsFromRaw } from "../../src/workbench/project/projectNormalize";
+import { deriveProjectCover } from "./workspaceRepository";
+import { deriveProjectCoverFromRaw } from "../../src/workbench/project/projectCoverDerive";
 
-// 缩略图派生唯一真相源（P4）：renderer(src) 与 main(electron) 各持一份等价实现，跨 tsconfig
+// 封面派生唯一真相源（P4）：renderer(src) 与 main(electron) 各持一份等价实现，跨 tsconfig
 // 无法 import 共享一个纯模块（CJS/ESM + rootDir 隔离）。本测试用同一组 fixture 跑两份并断言
-// 输出逐字相等——任一侧规则漂移（max、length>4 过滤、payload/顶层 generationCanvas 取址、脏数据
-// 降级）立刻红。这是「证明等价」式收口的回归门。
+// 输出逐字相等——任一侧规则漂移（媒体类型分流、max、length>4 过滤、payload/顶层 generationCanvas
+// 取址、脏数据降级）立刻红。这是「证明等价」式收口的回归门。
 const fixtures: Array<{ name: string; record: unknown }> = [
   { name: "null", record: null },
   { name: "undefined", record: undefined },
@@ -30,7 +30,7 @@ const fixtures: Array<{ name: string; record: unknown }> = [
     },
   },
   {
-    name: "脏节点混入（null / 非对象 / 无 result）",
+    name: "脏节点混入（null / 非对象 / 无 result / result 非对象）",
     record: {
       payload: {
         generationCanvas: {
@@ -39,6 +39,7 @@ const fixtures: Array<{ name: string; record: unknown }> = [
             7,
             {},
             { result: null },
+            { result: "oops" },
             { result: { url: "https://cdn/a.png" } },
           ],
         },
@@ -71,12 +72,68 @@ const fixtures: Array<{ name: string; record: unknown }> = [
       },
     },
   },
+  // —— 媒体类型分流（2026-08-01 根治「导入视频项目封面加载失败」）——
+  {
+    name: "纯导入视频（type=video 无 poster）→ videoUrl 兜底、imageUrls 空",
+    record: {
+      payload: {
+        generationCanvas: {
+          nodes: [
+            { kind: "asset", result: { type: "video", url: "nomi-local://asset/p1/assets/imported/clip.mp4" } },
+          ],
+        },
+      },
+    },
+  },
+  {
+    name: "视频带 poster → poster 进 imageUrls、视频 url 不混进 <img> 桶",
+    record: {
+      payload: {
+        generationCanvas: {
+          nodes: [
+            { result: { type: "video", url: "https://cdn/v.mp4", thumbnailUrl: "https://cdn/poster.jpg" } },
+          ],
+        },
+      },
+    },
+  },
+  {
+    name: "text/audio 跳过、model3d 只认 poster、type 缺失按图取（混排）",
+    record: {
+      payload: {
+        generationCanvas: {
+          nodes: [
+            { result: { type: "text", text: "旁白", url: "https://cdn/should-not-leak.txt" } },
+            { result: { type: "audio", url: "https://cdn/voice.mp3" } },
+            { result: { type: "model3d", url: "https://cdn/x.glb" } },
+            { result: { type: "model3d", url: "https://cdn/y.glb", thumbnailUrl: "https://cdn/snap.png" } },
+            { result: { url: "https://cdn/legacy-untyped.png" } },
+            { result: { type: "video", url: "https://cdn/first-video.mp4" } },
+            { result: { type: "video", url: "https://cdn/second-video.mp4" } },
+          ],
+        },
+      },
+    },
+  },
+  {
+    name: "非字符串字段脏值（url 数字 / thumbnailUrl 对象）→ 逐字段降级不崩",
+    record: {
+      payload: {
+        generationCanvas: {
+          nodes: [
+            { result: { type: "image", url: 42, thumbnailUrl: "https://cdn/still-works.png" } },
+            { result: { type: "video", url: { nested: true } } },
+          ],
+        },
+      },
+    },
+  },
 ];
 
-describe("缩略图派生 main↔renderer 等价（收口回归门）", () => {
+describe("封面派生 main↔renderer 等价（收口回归门）", () => {
   for (const { name, record } of fixtures) {
     it(`输出逐字相等（默认 max）：${name}`, () => {
-      expect(deriveThumbnailUrls(record)).toEqual(extractThumbnailUrlsFromRaw(record));
+      expect(deriveProjectCover(record)).toEqual(deriveProjectCoverFromRaw(record));
     });
   }
 
@@ -91,11 +148,24 @@ describe("缩略图派生 main↔renderer 等价（收口回归门）", () => {
       },
     };
     // renderer 入口固定 max=4；main 默认也 4，两者在默认下必相等。
-    expect(deriveThumbnailUrls(record, 4)).toEqual(extractThumbnailUrlsFromRaw(record));
-    expect(deriveThumbnailUrls(record, 2)).toHaveLength(2);
-    expect(deriveThumbnailUrls(record, 2)).toEqual([
+    expect(deriveProjectCover(record, 4)).toEqual(deriveProjectCoverFromRaw(record));
+    expect(deriveProjectCover(record, 2).imageUrls).toHaveLength(2);
+    expect(deriveProjectCover(record, 2).imageUrls).toEqual([
       "https://cdn/n0.png",
       "https://cdn/n1.png",
     ]);
+  });
+
+  it("典型直击：导入 mp4 素材项目在两侧都派生出 videoUrl（修的就是这个案例）", () => {
+    const record = {
+      payload: {
+        generationCanvas: {
+          nodes: [{ kind: "asset", result: { type: "video", url: "nomi-local://asset/p/assets/imported/a.mp4" } }],
+        },
+      },
+    };
+    const main = deriveProjectCover(record);
+    expect(main).toEqual(deriveProjectCoverFromRaw(record));
+    expect(main).toEqual({ imageUrls: [], videoUrl: "nomi-local://asset/p/assets/imported/a.mp4" });
   });
 });

@@ -5,6 +5,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import { cn } from '../../utils/cn'
 import { AssetMention } from './AssetMentionNode'
 import { createAssetMentionSuggestion } from './AssetMentionSuggestion'
+import type { MentionSuggestionItem } from './AssetMentionSuggestionList'
 import { promptToContent } from './promptEditorContent'
 import { encodeMention } from './promptMentions'
 
@@ -29,19 +30,37 @@ type PromptEditorProps = {
   onBlur?: () => void
   /** 暴露 editor 实例,供「点 tile 插入 chip」等外部命令(insertAssetMention)。 */
   onReady?: (editor: Editor) => void
-  /** 打 @ 时可引用的 image 参考 url 列表(= node 的 referenceImageUrls,单源)。 */
+  /**
+   * **有序参考 url 列表**（= 发送时 `@imageN` 的那一份）。只管 chip 编号：初次渲染定编号 + 参考顺序变了实时重编。
+   * 与下面的 @ 候选是两件事：候选可以来自素材库/画布（还没成为参考），编号只认已经在槽里的。
+   */
   mentionCandidates?: string[]
+  /** 打 @ 时按 query 给候选（当前参考 / 画布 / 素材库三组）。缺省 = 不开 @ 面板。 */
+  mentionSearch?: (query: string) => MentionSuggestionItem[]
+  /** 选中候选：负责真的建立引用（建边/落上传槽），返回最终 chip 编号；返回 null = 没插成。 */
+  onMentionSelect?: (item: MentionSuggestionItem) => number | null
   /** S6-4 节点锁:false=只读(Tiptap 官方 editable/setEditable);缺省可编辑。 */
   editable?: boolean
 }
 
-export default function PromptEditor({ value, onChange, placeholder, className, onBlur, onReady, mentionCandidates, editable }: PromptEditorProps): JSX.Element {
+export default function PromptEditor({ value, onChange, placeholder, className, onBlur, onReady, mentionCandidates, mentionSearch, onMentionSelect, editable }: PromptEditorProps): JSX.Element {
   const onChangeRef = React.useRef(onChange)
   React.useEffect(() => { onChangeRef.current = onChange }, [onChange])
-  // @ suggestion 候选用 ref 喂(扩展只在 editor 创建时配一次,靠 ref 读最新参考列表)。
-  const candidatesRef = React.useRef<string[]>(mentionCandidates || [])
-  React.useEffect(() => { candidatesRef.current = mentionCandidates || [] }, [mentionCandidates])
-  const suggestionExt = React.useMemo(() => createAssetMentionSuggestion({ getCandidates: () => candidatesRef.current }), [])
+  // 有序参考 url 也留一份 ref：外部 value 变化时 setContent 要用它给 chip 编号（那个 effect 不该依赖它重跑）。
+  const orderedUrlsRef = React.useRef<string[]>(mentionCandidates || [])
+  React.useEffect(() => { orderedUrlsRef.current = mentionCandidates || [] }, [mentionCandidates])
+  // @ suggestion 的两个回调用 ref 喂(扩展只在 editor 创建时配一次,靠 ref 读最新实现)。
+  const searchRef = React.useRef(mentionSearch)
+  React.useEffect(() => { searchRef.current = mentionSearch }, [mentionSearch])
+  const selectRef = React.useRef(onMentionSelect)
+  React.useEffect(() => { selectRef.current = onMentionSelect }, [onMentionSelect])
+  const suggestionExt = React.useMemo(
+    () => createAssetMentionSuggestion({
+      getCandidates: (query) => searchRef.current?.(query) ?? [],
+      onSelect: (item) => selectRef.current?.(item) ?? null,
+    }),
+    [],
+  )
   // 防控制内容回灌死循环:记下编辑器自身最后产出的字符串,外部 value 等于它就不重设。
   const lastStringRef = React.useRef(value)
 
@@ -78,7 +97,7 @@ export default function PromptEditor({ value, onChange, placeholder, className, 
     if (!editor || editor.isDestroyed) return
     if (value === lastStringRef.current) return
     lastStringRef.current = value
-    editor.commands.setContent(promptToContent(value, candidatesRef.current))
+    editor.commands.setContent(promptToContent(value, orderedUrlsRef.current))
   }, [editor, value])
 
   // 参考图拖拽重排后，prompt 字符串仍是同一批 url，但 chip 的「图片N」必须按最新列表立即刷新。

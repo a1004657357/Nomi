@@ -1,14 +1,21 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  IconArmchair,
+  IconBackpack,
+  IconBike,
   IconBox,
   IconBuildingSkyscraper,
   IconBulb,
+  IconBus,
   IconCamera,
   IconCar,
+  IconCarSuv,
   IconChevronRight,
   IconChevronUp,
+  IconCreditCard,
   IconCylinder,
+  IconFridge,
   IconLamp,
   IconMap2,
   IconMaximize,
@@ -16,10 +23,14 @@ import {
   IconPackage,
   IconPlane,
   IconPlus,
+  IconScooter,
   IconSphere,
+  IconTable,
+  IconTrash,
   IconTrees,
   IconUser,
   IconWall,
+  IconWashMachine,
   type Icon,
 } from '@tabler/icons-react'
 import { IconArrowsMove, IconRotate, IconZoomScan } from '@tabler/icons-react'
@@ -35,6 +46,17 @@ const PROP_MENU_ICONS: Record<Scene3DPropKind, Icon> = {
   tree: IconTrees,
   streetlamp: IconLamp,
   wall: IconWall,
+  suv: IconCarSuv,
+  bus: IconBus,
+  bicycle: IconBike,
+  scooter: IconScooter,
+  sofa: IconArmchair,
+  diningTable: IconTable,
+  fridge: IconFridge,
+  washingMachine: IconWashMachine,
+  trashBins: IconTrash,
+  atm: IconCreditCard,
+  backpack: IconBackpack,
 }
 
 export function PanelButton({

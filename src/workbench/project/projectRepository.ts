@@ -1,11 +1,9 @@
-import type { TimelineState } from '../timeline/timelineTypes'
 import {
   workbenchProjectRecordSchema,
+  type WorkbenchProjectPayload,
   type WorkbenchProjectRecordV1,
   type WorkbenchProjectSummary,
 } from './projectRecordSchema'
-import type { GenerationCanvasSnapshot } from '../generationCanvas/model/generationCanvasTypes'
-import type { WorkbenchDocument } from '../workbenchTypes'
 import { assertWorkbenchProjectMediaUrlsPersistable } from './projectMediaMigration'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { buildTemplateCategories, getProjectTemplate } from '../library/projectTemplates'
@@ -27,13 +25,12 @@ import {
 import { readBackupIndex, rememberProjectBackup } from './projectBackup'
 import {
   createProjectRecord,
-  extractCanvasThumbnailUrls,
-  extractThumbnailUrlsFromRaw,
   normalizePayload,
   normalizeRecord,
   normalizeSummary,
   seedDocFromMarkdown,
 } from './projectNormalize'
+import { deriveProjectCoverFromNodes, deriveProjectCoverFromRaw, type ProjectCover } from './projectCoverDerive'
 import i18n, { getAppLocale } from '../../i18n'
 
 // 重导出：实现已拆到 projectStorage（localStorage 原语 + 配额错误），
@@ -87,22 +84,28 @@ function writeIndex(items: readonly WorkbenchProjectSummary[]): void {
   writeJson(PROJECT_INDEX_KEY, items)
 }
 
+/** 封面字段统一从现场派生的 ProjectCover 铺进 summary（imageUrls 才进 thumbnail 字段；视频兜底走 coverVideoUrl）。 */
+function summaryCoverFields(cover: ProjectCover): Pick<WorkbenchProjectSummary, 'thumbnail' | 'thumbnailUrls' | 'coverVideoUrl'> {
+  return {
+    ...(cover.imageUrls.length ? { thumbnail: cover.imageUrls[0], thumbnailUrls: cover.imageUrls } : {}),
+    ...(cover.videoUrl ? { coverVideoUrl: cover.videoUrl } : {}),
+  }
+}
+
 export function listLocalProjects(): WorkbenchProjectSummary[] {
   const desktop = getDesktopBridge()
   if (desktop) {
     return (desktop.projects.list() as WorkbenchProjectSummary[]).sort((a, b) => b.updatedAt - a.updatedAt)
   }
+  // 封面永远从 record 内容现场派生（与桌面 main list 同语义）；持久化 summary 里的缩略图
+  // 字段只在 record 读不出来时兜底——避免陈旧封面 URL（尤其视频 url 混进 <img>）钉死在列表里。
   return readMergedProjectSummaries().map((summary) => {
-    if (summary.thumbnailUrls?.length) return summary
     try {
       const raw = readJson(projectRecordKey(summary.id))
-      const thumbnailUrls = extractThumbnailUrlsFromRaw(raw)
-      if (thumbnailUrls.length)
-        return {
-          ...summary,
-          thumbnailUrls,
-          thumbnail: thumbnailUrls[0],
-        }
+      if (raw) {
+        const { thumbnail: _t, thumbnailUrls: _ts, ...rest } = summary
+        return { ...rest, ...summaryCoverFields(deriveProjectCoverFromRaw(raw)) }
+      }
     } catch {
       // ignore
     }
@@ -181,11 +184,7 @@ export async function readLocalProjectAsync(projectId: string): Promise<Workbenc
 
 export function saveLocalProject(
   projectId: string,
-  state: {
-    workbenchDocument: WorkbenchDocument
-    timeline: TimelineState
-    generationCanvas: GenerationCanvasSnapshot
-  },
+  state: WorkbenchProjectPayload,
   name?: string,
 ): WorkbenchProjectRecordV1 {
   const id = String(projectId || '').trim()
@@ -201,8 +200,9 @@ export function saveLocalProject(
     if (parsed.success && typeof parsed.data.revision === 'number') return parsed.data.revision
     return existing?.revision ?? 0
   })()
-  const thumbnailUrls = extractCanvasThumbnailUrls(state.generationCanvas.nodes)
-  const thumbnail = thumbnailUrls[0] || existing?.thumbnail
+  // 封面 = 本次保存内容的现场派生（媒体类型分流）。刻意不沿用 existing 旧封面：
+  // 「派生为空就 keep 旧值」会让陈旧 URL（换环境失效 / 视频 url 混 <img>）永远钉在列表里。
+  const cover = deriveProjectCoverFromNodes(state.generationCanvas.nodes)
   const summary: WorkbenchProjectSummary = {
     id,
     name: typeof name === 'string' && name.trim() ? name.trim() : existing?.name || i18n.t('runtime.project.untitled'),
@@ -212,12 +212,7 @@ export function saveLocalProject(
     savedAt: now,
     ...(existing?.thumbStyle ? { thumbStyle: existing.thumbStyle } : {}),
     ...(existing?.seedKey ? { seedKey: existing.seedKey } : {}),
-    ...(thumbnail ? { thumbnail } : {}),
-    ...(thumbnailUrls.length
-      ? { thumbnailUrls }
-      : existing?.thumbnailUrls?.length
-        ? { thumbnailUrls: existing.thumbnailUrls }
-        : {}),
+    ...(cover.imageUrls.length ? { thumbnail: cover.imageUrls[0], thumbnailUrls: cover.imageUrls } : {}),
   }
   const payload = normalizePayload(state)
   const record: WorkbenchProjectRecordV1 = {

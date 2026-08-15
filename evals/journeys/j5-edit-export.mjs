@@ -16,11 +16,11 @@ export default {
       title: "在空项目中创建一个画面",
       async act(ctx) {
         await ctx.win.getByRole("button", { name: "生成", exact: false }).first().click();
-        const cta = ctx.win.getByText("新建画面", { exact: false }).first();
-        if (await cta.count()) await cta.click();
+        await ctx.win.locator('button[aria-label="新建一个画面节点"]').first().click({ timeout: 5000 });
+        await ctx.win.locator('.generation-canvas-v2-node').first().waitFor({ state: "visible", timeout: 10_000 });
       },
       async verify(ctx) {
-        const canvasVisible = await ctx.win.locator(".generation-canvas-v2").first().isVisible().catch(() => false);
+        const canvasVisible = await ctx.win.locator('.generation-canvas-v2-node').first().isVisible().catch(() => false);
         return [check("项目内容已从空态变为生成画布", canvasVisible, "generation canvas not visible")];
       },
     },
@@ -28,13 +28,14 @@ export default {
       id: "open-export",
       title: "进入导出工作区",
       async act(ctx) {
-        await ctx.win.getByRole("button", { name: "导出", exact: false }).first().click({ timeout: 5000 });
+        await ctx.win.locator('[aria-label="去出片"]:visible').first().click({ timeout: 5000 });
+        await ctx.win.locator('[data-workspace-mode="preview"]').waitFor({ state: "attached", timeout: 5000 });
+        await ctx.win.getByRole("button", { name: "导出 MP4", exact: true }).first().waitFor({ state: "visible", timeout: 15_000 });
       },
       async verify(ctx) {
-        const exportText = await ctx.win.getByText(/导出|输出文件|导出视频/, { exact: false }).count();
-        const exportButton = ctx.win.getByRole("button", { name: "导出", exact: false }).first();
-        const active = await exportButton.getAttribute("data-active").catch(() => null);
-        return [check("导出工作区已挂载", exportText > 1 || active === "true", `matches=${exportText} active=${active}`)];
+        const previewMode = await ctx.win.locator('[data-workspace-mode="preview"]').count() > 0;
+        const exportButtonVisible = await ctx.win.getByRole("button", { name: "导出 MP4", exact: true }).first().isVisible().catch(() => false);
+        return [check("导出工作区已挂载", previewMode && exportButtonVisible, `mode=${previewMode} exportButton=${exportButtonVisible}`)];
       },
     },
   ],

@@ -5,6 +5,11 @@ export default defineConfig({
   test: {
     include: ["electron/**/*.test.ts", "src/**/*.test.ts", "evals/**/*.test.ts", "scripts/**/*.test.mjs", "tests/**/*.test.mjs"],
     environment: "node",
+    // Production-run tests exercise real filesystem journals and async gates.
+    // The custom suite is large enough that Vitest's 5s default flakes under
+    // worker contention even though isolated runs complete in 1-4 seconds.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
   resolve: {
     alias: {

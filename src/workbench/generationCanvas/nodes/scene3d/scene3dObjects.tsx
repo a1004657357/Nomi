@@ -9,12 +9,16 @@ import type {
   Scene3DVector3,
 } from './scene3dTypes'
 import { PropObject } from './scene3dProps'
-import { propGroundFootprint } from './scene3dPropSpecs'
+import {
+  crowdLocalOffset,
+  crowdLocalOffsets,
+  mannequinFootRingRadius,
+  mannequinLabelHeight,
+} from './scene3dCrowd'
 import {
   SCENE3D_EDITOR_ONLY_FLAG,
   OBJECT_GROUND_GUIDE_ELEVATION,
   MANNEQUIN_FOOT_RING_COLOR,
-  MANNEQUIN_LABEL_BASE_HEIGHT,
   CROWD_DETAILED_MODEL_LIMIT,
   CROWD_INSTANCED_GEOMETRY_SEGMENTS,
   CROWD_FOOT_RING_SEGMENTS,
@@ -24,9 +28,6 @@ import {
 import {
   vectorFromArray,
   vectorToArray,
-  crowdRows,
-  crowdColumns,
-  crowdSpacing,
   crowdCount,
   rememberMannequinRestPose,
   applyMannequinSkeletonPose,
@@ -38,6 +39,11 @@ import {
 } from './scene3dMath'
 import { locomotionAnimationClip } from './scene3dCharacterDrive'
 import { useMannequinLocomotion, type MannequinLocomotionDriver } from './scene3dMannequinLocomotion'
+// UE 素体 spike（评估用）：见 Mannequin 组件内 __nomiUeSpike 开关
+import { UE4_MANNEQUIN_MODEL_URL, getUE4ModelScale } from './ueSpike/ue4MannequinRig'
+import { alignUE4MannequinToGround } from './ueSpike/ueGrounding'
+import { applyUE4RestPoseAndRig, captureUE4RestPose } from './ueSpike/ue4MannequinPoseApplication'
+import { MANNEQUIN_POSE_PRESETS as UE_POSE_PRESETS } from './ueSpike/mannequinPosePresets'
 
 export function Scene3DMeshGeometry({ geometry }: { geometry: Scene3DGeometry | undefined }): JSX.Element {
   if (geometry === 'sphere') return <sphereGeometry args={[0.55, 40, 24]} />
@@ -112,9 +118,42 @@ export function Mannequin({
   // 缺省 → LIVE 实时推进（possess 走路不变）。
   driverRef?: React.MutableRefObject<MannequinLocomotionDriver | null>
 }): JSX.Element {
-  const { scene } = useGLTF(MANNEQUIN_MODEL_URL)
+  // ── UE 素体 spike（评估用，不落 main）：localStorage.__nomiUeSpike = 姿势id 时，
+  // 换 UE GLB + 他们的姿势控制系统渲染，验证「直接用他们的模型+姿势」在我们场景里的观感。
+  const ueSpikePose = typeof window !== 'undefined' ? window.localStorage.getItem('__nomiUeSpike') : null
+  const { scene } = useGLTF(ueSpikePose ? UE4_MANNEQUIN_MODEL_URL : MANNEQUIN_MODEL_URL)
   const model = React.useMemo(() => {
     const skeletonClone = cloneSkeleton(scene)
+    if (ueSpikePose) {
+      // 照抄他们的挂载：固定 modelScale 包装组（不走 bbox normalize），姿势施加后由通用贴地兜底。
+      const restPose = captureUE4RestPose(skeletonClone)
+      const preset = UE_POSE_PRESETS.find((item) => item.id === ueSpikePose) ?? UE_POSE_PRESETS[0]
+      applyUE4RestPoseAndRig(skeletonClone, { controls: preset.controls, restPose })
+      const wrapper = new THREE.Group()
+      const [sx, sy, sz] = getUE4ModelScale('mannequin')
+      // 抵消外层假人挂载约定（scale 2.5 + 中心点抬升 y=scale*0.5）：他们的 GLB 骨骼即真实米制、脚在 0。
+      const counter = 1 / 2.5
+      wrapper.scale.set(sx * counter, sy * counter, sz * counter)
+      wrapper.add(skeletonClone)
+      wrapper.updateMatrixWorld(true)
+      alignUE4MannequinToGround(skeletonClone)
+      // 我们会把模型重挂进带缩放的外层树（他们不会）——按当前 matrixWorld 重绑，蒙皮三明治恒等消去。
+      wrapper.updateMatrixWorld(true)
+      skeletonClone.traverse((o) => {
+        if (o instanceof THREE.SkinnedMesh) o.bind(o.skeleton, o.matrixWorld.clone())
+      })
+      // 内衬位移必须在 rebind 之后设（先设会被冻进 bind 矩阵抵消掉）：抵消外层中心点抬升。
+      wrapper.position.set(0, -0.5, 0)
+      const materials: THREE.Material[] = []
+      wrapper.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.castShadow = true
+          object.receiveShadow = true
+          object.frustumCulled = false
+        }
+      })
+      return { object: wrapper, materials }
+    }
     rememberMannequinRestPose(skeletonClone)
     const cloned = normalizeMannequinModel(skeletonClone)
     const materials: THREE.Material[] = []
@@ -137,7 +176,7 @@ export function Mannequin({
     })
     captureMannequinGroundReference(cloned)
     return { object: cloned, materials }
-  }, [scene])
+  }, [scene, ueSpikePose])
 
   React.useEffect(() => {
     const materials = model.materials
@@ -162,46 +201,24 @@ export function Mannequin({
   // idle/空（animationClip=undefined）走这里：可能有用户摆的 pose，缺省则 MANNEQUIN_DEFAULT_POSE = 自然站姿。
   React.useLayoutEffect(() => {
     if (animationClip) return
+    if (ueSpikePose) return // spike：姿势+贴地已在 useMemo 内按他们的管线做完
     applyMannequinSkeletonPose(model.object, pose)
     groundMannequinModel(model.object)
-  }, [model, pose, animationClip])
+  }, [model, pose, animationClip, ueSpikePose])
 
-  useMannequinLocomotion(model.object, animationClip, driverRef)
+  // UE spike：locomotion 的 retargetClip 按 mixamorig 髋骨名驱动目标骨架，Bip001 骨架会被搅爆
+  //（实测世界包围盒炸到 1142m）——spike 喂空对象让 hook 惰性化，静态姿势不需要它。
+  const locomotionTarget = React.useMemo(
+    () => (ueSpikePose ? new THREE.Group() : model.object),
+    [ueSpikePose, model.object],
+  )
+  useMannequinLocomotion(locomotionTarget, animationClip, driverRef)
 
   return <primitive object={model.object} />
 }
 
 useGLTF.preload(MANNEQUIN_MODEL_URL)
 useGLTF.preload(MANNEQUIN_ANIMATION_URL)
-
-export function mannequinFootRingRadius(object: Scene3DObject): number {
-  const scaleX = Math.max(0.08, Math.abs(object.scale[0] || 1))
-  const scaleZ = Math.max(0.08, Math.abs(object.scale[2] || 1))
-  return Math.max(0.28, Math.max(0.78 * scaleX, 0.54 * scaleZ) * 0.36)
-}
-
-export function crowdCenterSpacing(object: Scene3DObject): number {
-  return crowdSpacing(object) + mannequinFootRingRadius(object) * 2
-}
-
-export function crowdLocalOffset(object: Scene3DObject, index: number): THREE.Vector3 {
-  const rows = crowdRows(object)
-  const columns = crowdColumns(object)
-  const spacing = crowdCenterSpacing(object)
-  const row = Math.floor(index / columns)
-  const column = index % columns
-  const scaleX = Math.max(0.001, Math.abs(object.scale[0] || 1))
-  const scaleZ = Math.max(0.001, Math.abs(object.scale[2] || 1))
-  return new THREE.Vector3(
-    ((column - (columns - 1) / 2) * spacing) / scaleX,
-    0,
-    ((row - (rows - 1) / 2) * spacing) / scaleZ,
-  )
-}
-
-export function crowdLocalOffsets(object: Scene3DObject): THREE.Vector3[] {
-  return Array.from({ length: crowdCount(object) }, (_, index) => crowdLocalOffset(object, index))
-}
 
 type CrowdInstancePart = {
   key: string
@@ -449,10 +466,6 @@ export function StaticObjectVisual({ object }: { object: Scene3DObject }): JSX.E
   return <StaticMeshVisual object={object} />
 }
 
-export function mannequinLabelHeight(object: Scene3DObject): number {
-  return Math.max(0.8, Math.abs(object.scale[1] || 1) * MANNEQUIN_LABEL_BASE_HEIGHT)
-}
-
 export function MannequinRoleLabel({ position, label }: { position: Scene3DVector3; label: string }): JSX.Element {
   const ref = React.useRef<THREE.Group>(null)
   const { camera } = useThree()
@@ -523,110 +536,6 @@ export function crowdLabelPositions(object: Scene3DObject): Scene3DVector3[] {
     position.y = localLabelY
     return vectorToArray(position.applyMatrix4(matrix))
   })
-}
-
-export function objectGroundFootprint(object: Scene3DObject): { width: number; depth: number } {
-  const scaleX = Math.max(0.08, Math.abs(object.scale[0] || 1))
-  const scaleY = Math.max(0.08, Math.abs(object.scale[1] || 1))
-  const scaleZ = Math.max(0.08, Math.abs(object.scale[2] || 1))
-
-  if (object.type === 'light') return { width: 0.42 * scaleX, depth: 0.42 * scaleZ }
-  if (object.type === 'mannequinCrowd') {
-    const ringDiameter = mannequinFootRingRadius(object) * 2
-    const centerSpacing = crowdCenterSpacing(object)
-    return {
-      width: (crowdColumns(object) - 1) * centerSpacing + ringDiameter,
-      depth: (crowdRows(object) - 1) * centerSpacing + ringDiameter,
-    }
-  }
-  if (object.type === 'mannequin') return { width: 0.78 * scaleX, depth: 0.54 * scaleZ }
-  if (object.type === 'prop' && object.propKind) {
-    const footprint = propGroundFootprint(object.propKind)
-    return { width: footprint.width * scaleX, depth: footprint.depth * scaleZ }
-  }
-  if (object.type === 'model' || object.type === 'group') return { width: 1 * scaleX, depth: 1 * scaleZ }
-  if (object.geometry === 'sphere') return { width: 1.1 * scaleX, depth: 1.1 * scaleZ }
-  if (object.geometry === 'cylinder') return { width: 0.92 * scaleX, depth: 0.92 * scaleZ }
-  if (object.geometry === 'plane') return { width: scaleX, depth: scaleY }
-  return { width: scaleX, depth: scaleZ }
-}
-
-export function objectVisualHalfHeight(object: Scene3DObject, scale: Scene3DVector3 = object.scale): number {
-  const scaleY = Math.max(0.08, Math.abs(scale[1] || 1))
-  if (object.type === 'light') return 0.12 * scaleY
-  if (object.type === 'prop') return 0 // origin 在地面中心：绑轨迹/落地时底面直接贴着走
-  if (object.type === 'mannequin' || object.type === 'mannequinCrowd') return 0.5 * scaleY
-  if (object.geometry === 'sphere') return 0.55 * scaleY
-  if (object.geometry === 'cylinder') return 0.55 * scaleY
-  if (object.geometry === 'plane') return 0
-  return 0.5 * scaleY
-}
-
-export function objectTransformAnchorPosition(object: Scene3DObject): Scene3DVector3 {
-  return [
-    object.position[0],
-    object.position[1] - objectVisualHalfHeight(object),
-    object.position[2],
-  ]
-}
-
-export function nextAvailableObjectPosition(object: Scene3DObject, objects: Scene3DObject[]): Scene3DVector3 {
-  const targetFootprint = objectGroundFootprint(object)
-  const targetRadius = Math.max(targetFootprint.width, targetFootprint.depth) / 2
-  const gap = 0.45
-  const occupied = objects.map((existing) => {
-    const footprint = objectGroundFootprint(existing)
-    return {
-      x: existing.position[0],
-      z: existing.position[2],
-      radius: Math.max(footprint.width, footprint.depth) / 2,
-    }
-  })
-  const fits = (x: number, z: number) => occupied.every((existing) => {
-    const dx = x - existing.x
-    const dz = z - existing.z
-    return Math.sqrt(dx * dx + dz * dz) >= targetRadius + existing.radius + gap
-  })
-  const makePosition = (x: number, z: number): Scene3DVector3 => [
-    Number(x.toFixed(4)),
-    object.position[1],
-    Number(z.toFixed(4)),
-  ]
-
-  if (fits(object.position[0], object.position[2])) return object.position
-
-  const step = Math.max(1.5, targetRadius * 2 + gap)
-  for (let ring = 1; ring <= 10; ring += 1) {
-    const offsets: Array<[number, number]> = [
-      [ring, 0],
-      [-ring, 0],
-      [0, ring],
-      [0, -ring],
-      [ring, ring],
-      [ring, -ring],
-      [-ring, ring],
-      [-ring, -ring],
-    ]
-    for (let axis = 1; axis < ring; axis += 1) {
-      offsets.push(
-        [ring, axis],
-        [ring, -axis],
-        [-ring, axis],
-        [-ring, -axis],
-        [axis, ring],
-        [-axis, ring],
-        [axis, -ring],
-        [-axis, -ring],
-      )
-    }
-    for (const [x, z] of offsets) {
-      const nextX = x * step
-      const nextZ = z * step
-      if (fits(nextX, nextZ)) return makePosition(nextX, nextZ)
-    }
-  }
-
-  return makePosition((occupied.length + 1) * step, 0)
 }
 
 // 脚环的共享环面（几何 + 材质），所有脚环组件同用，单一真相源（位置由各自的 mesh 决定）。

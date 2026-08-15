@@ -133,8 +133,20 @@ export type AssetIngestion =
       accepts?: ReadonlyArray<AssetMediaKind>;
     };
 
-/** 本地 ComfyUI 供应商固定 key（种子 + assetLocalization 识别它走自己的 /upload/image，单源防漂移）。 */
+/** 本地 ComfyUI **第一台**的固定 key（种子 + assetLocalization 识别它走自己的 /upload/image，单源防漂移）。 */
 export const COMFYUI_VENDOR_KEY = "comfyui-local";
+/** 第 2+ 台 ComfyUI 的 key 前缀（`comfyui-local-工作站` 等）。见 docs/plan/2026-08-01-comfyui-multi-instance.md。 */
+export const COMFYUI_VENDOR_KEY_PREFIX = `${COMFYUI_VENDOR_KEY}-`;
+
+/**
+ * 「这个 vendor 是不是一台 ComfyUI」——多实例的**唯一判据**（P4 通用：判类不判具体哪台）。
+ * 用 key 前缀而非 meta 标记：key 是稳定身份、不会被 upsert 覆盖，且存量单实例天然是第一台（零迁移）。
+ * 注意各处仍必须用 vendor **自己的** baseUrlHint（信任/连接/对账都按实例走），本判据只回答"是不是"。
+ */
+export function isComfyuiVendor(vendor: { key?: string } | null | undefined): boolean {
+  const key = vendor?.key;
+  return typeof key === "string" && (key === COMFYUI_VENDOR_KEY || key.startsWith(COMFYUI_VENDOR_KEY_PREFIX));
+}
 
 export type Vendor = {
   key: string;
@@ -166,6 +178,12 @@ export type Model = {
   kind: BillingModelKind;
   enabled: boolean;
   meta?: unknown;
+  /**
+   * 自定义调用脚本（用户数据，2026-08-04 拍板）：存在即整体接管该模型的请求构造/轮询/响应解析
+   * （runtime.runTask 单一派发点，先于 mapping）。与 enabled 同级的用户配置——拉取/重接入的
+   * upsert 不得清掉它（applyModelUpsert：undefined=保留，null=显式删除）。
+   */
+  customCall?: { script: string; updatedAt: string };
   pricing?: {
     cost: number;
     enabled: boolean;

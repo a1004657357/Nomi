@@ -28,7 +28,8 @@ export type GenerationNodeIconKey =
     | "compare"
     | "skill"
     | "whiteboard"
-    | "audio";
+    | "audio"
+    | "clip";
 
 export type GenerationNodePluginDefinition<TKind extends string = string> = {
   kind: TKind
@@ -160,6 +161,19 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
         quickAdd: true,
         agentCreatable: true,
         promptPlaceholder: "输入台词或旁白…",
+    },
+    {
+        kind: "clip",
+        label: "Clip",
+        menuLabel: "剪辑",
+        component: () => import('./ClipNode'),
+        icon: "clip",
+        defaultTitle: "剪辑",
+        defaultSize: { width: 640, height: 132 },
+        catalogKind: "video",
+        quickAdd: true,
+        agentCreatable: false,
+        promptPlaceholder: "添加媒体并进行剪辑...",
     },
     {
         kind: "shot",

@@ -1,5 +1,6 @@
 import React from 'react'
-import { IconChevronDown } from '@tabler/icons-react'
+import { useTranslation } from 'react-i18next'
+import { IconInfoCircle, IconChevronDown } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { NODE_FLOATING_TOOLBAR_MARKER } from './nodeFloatingToolbarLayout'
@@ -22,8 +23,13 @@ export function FloatingToolbarShell({ ariaLabel, children }: { ariaLabel: strin
         'absolute left-1/2 bottom-[calc(100%+16px)] z-[12]',
         'inline-flex items-center gap-1 min-h-9 px-1.5 py-1',
         'border border-nomi-line rounded-nomi',
-        'bg-nomi-paper/[0.96] shadow-nomi-md backdrop-blur-[12px]',
+        'bg-nomi-paper shadow-nomi-md',
+        // 画布上**任何**节点被拖动时隐身（用户 2026-08-08 提、08-09 扩到全画布）：工具条跟着飞、
+        // 或杵在原地看着别人被拖走，都脏。用 visibility 不卸载——松手要原样回来，也不丢按钮忙态。
+        // 状态源见 canvasDraggingFlag（stage 上的 data-dragging）。
+        'group-data-[dragging=true]/canvas:invisible',
       )}
+      data-node-floating-toolbar="true"
       style={{ transform: `translateX(-50%) scale(${1 / (canvasZoom || 1)})`, transformOrigin: 'bottom center' }}
       role="toolbar"
       aria-label={ariaLabel}
@@ -156,6 +162,32 @@ export function ToolbarMenu({ icon, label, items, disabled }: { icon: React.Reac
         </div>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * 「生成记录」按钮。原先住在卡片右上角，是 `bg-nomi-paper/[0.82]` 半透明**常驻**盖在图上的
+ * （条件是 hasResult，跟选中/hover 无关）——设计系统 §1.5：动作不许压在内容上。
+ * 2026-08-04 迁进浮动工具栏的「看和拿」组：工具栏浮在卡片**上方**，不遮画面。
+ *
+ * ⚠️ 这条工具栏是「**选中**才出」，不是「hover 才出」——门是
+ * `selected && !isMultiSelectActive && !readOnly`（见 BaseGenerationNode）。
+ * 光把鼠标移上去不出现，得单击选中节点。最初这里写的是「hover 浮条」，
+ * 2026-08-04 对着渲染条件复核时改正——注释写错会让下一个人按错的前提做判断。
+ *
+ * 它是 ProvenancePanel 的**唯一入口**，所以只能搬不能删。一份定义、**四处**复用：
+ * 图片与图编辑（同一条 NodeImageEditToolbar）/ 视频（NodeVideoFrameToolbar）/
+ * 全景（BaseGenerationNode）/ 其余结果（NodeResultDownloadButton）。不留近似拷贝（P1）。
+ */
+export function ToolbarProvenanceButton({ onOpen }: { onOpen: () => void }): JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <ToolbarIconButton
+      icon={<IconInfoCircle size={ICON.size} stroke={ICON.stroke} />}
+      title={t('generationCommon.provenance.actionTitle')}
+      ariaLabel={t('generationCommon.provenance.view')}
+      onClick={onOpen}
+    />
   )
 }
 

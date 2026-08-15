@@ -7,11 +7,13 @@
  */
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconSearch, IconTrash, IconCheck } from '@tabler/icons-react'
+import { IconSearch, IconTrash, IconCheck, IconCode } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
+import { NomiSelect } from '../../design'
 import type { ChipModel } from './ModelChipGroups'
-import { groupModelsByKind, MODEL_CHIP_KIND_LABEL } from './modelChipGrouping'
+import { groupModelsByKind, isKnownModelChipKind, MODEL_CHIP_KINDS } from './modelChipGrouping'
 import { bulkToggleTargets, enabledCount, filterModelsByQuery, modelRowKey, selectedModelRows } from './modelEnableEditing'
+import { isAdapterModelLocked } from './adapterVerificationViewModel'
 
 type ModelEnableEditorProps = {
   models: ChipModel[]
@@ -19,11 +21,20 @@ type ModelEnableEditorProps = {
   onToggle: (rows: ChipModel[], enabled: boolean) => void
   /** 彻底删除（不可逆，需重拉）。单删=1 行；批删=多行。父层弹一次确认框后一次删 + 一次 refresh。 */
   onDelete: (rows: ChipModel[]) => void
+  /** 传入则每行显示「自定义调用」动作（仅中转/自定义家用；已设脚本=图标点亮+角标）。 */
+  onCustomCall?: (row: ChipModel) => void
+  /**
+   * 传入则可改类型的行上出现类型选择器（改 kind + 重建调用通道，父层包 IPC）。
+   * 为什么这个控件必须**常驻可见**而不是收进 hover/二级：接入时的类型是猜的、必然有猜错的，
+   * 而猜错之后模型不是报错、是**从对应下拉里消失**——用户永远不会想到「去某个二级菜单改类型」。
+   * 把它摆在行上，「这条被登记成什么」和「原来能改」才同时可见（这正是此前唯一缺失的信息）。
+   */
+  onRetype?: (row: ChipModel, kind: string) => void
 }
 
 const PILL = 'h-6 px-2.5 rounded-full border text-micro inline-flex items-center gap-1'
 
-export function ModelEnableEditor({ models, onToggle, onDelete }: ModelEnableEditorProps): JSX.Element {
+export function ModelEnableEditor({ models, onToggle, onDelete, onCustomCall, onRetype }: ModelEnableEditorProps): JSX.Element {
   const { t } = useTranslation()
   const [query, setQuery] = React.useState('')
   const [selectMode, setSelectMode] = React.useState(false)
@@ -34,7 +45,7 @@ export function ModelEnableEditor({ models, onToggle, onDelete }: ModelEnableEdi
   const selectedRows = React.useMemo(() => selectedModelRows(models, selected), [models, selected])
 
   const bulk = React.useCallback((enable: boolean) => {
-    const targets = bulkToggleTargets(visible, enable)
+    const targets = bulkToggleTargets(visible, enable).filter(model => !isAdapterModelLocked(model.meta))
     if (targets.length > 0) onToggle(targets, enable)
   }, [visible, onToggle])
 
@@ -145,11 +156,12 @@ export function ModelEnableEditor({ models, onToggle, onDelete }: ModelEnableEdi
           {groups.map((g) => (
             <div key={g.kind}>
               <div className="text-micro font-semibold text-nomi-ink-60 mt-2 mb-1 px-1">
-                {g.kind in MODEL_CHIP_KIND_LABEL ? t(`onboardingProviders.modelControls.kind.${g.kind}` as 'onboardingProviders.modelControls.kind.text') : g.kind}{' '}
+                {isKnownModelChipKind(g.kind) ? t(`onboardingProviders.modelControls.kind.${g.kind}` as 'onboardingProviders.modelControls.kind.text') : g.kind}{' '}
                 <span className="font-normal text-nomi-ink-40">{enabledCount(g.models)}/{g.models.length}</span>
               </div>
               {g.models.map((m) => {
                 const key = modelRowKey(m)
+                const adapterLocked = isAdapterModelLocked(m.meta)
                 if (selectMode) {
                   const isSelected = selected.has(key)
                   return (
@@ -193,11 +205,14 @@ export function ModelEnableEditor({ models, onToggle, onDelete }: ModelEnableEdi
                       type="button"
                       role="checkbox"
                       aria-checked={m.enabled}
+                      disabled={adapterLocked}
                       aria-label={t(m.enabled ? 'onboardingProviders.modelControls.disableModelAria' : 'onboardingProviders.modelControls.enableModelAria', { name: m.labelZh })}
                       onClick={() => onToggle([m], !m.enabled)}
                       className={cn(
                         'w-[18px] h-[18px] rounded-nomi-sm shrink-0 grid place-items-center border',
-                        m.enabled
+                        adapterLocked
+                          ? 'bg-nomi-ink-05 border-nomi-line text-nomi-ink-20 cursor-not-allowed'
+                          : m.enabled
                           ? 'bg-nomi-accent border-nomi-accent text-nomi-paper'
                           : 'bg-nomi-paper border-nomi-ink-20 text-transparent',
                       )}
@@ -206,11 +221,51 @@ export function ModelEnableEditor({ models, onToggle, onDelete }: ModelEnableEdi
                     </button>
                     <button
                       type="button"
+                      disabled={adapterLocked}
                       onClick={() => onToggle([m], !m.enabled)}
-                      className={cn('flex-1 min-w-0 text-left text-body-sm truncate', m.enabled ? 'text-nomi-ink' : 'text-nomi-ink-60')}
+                      className={cn(
+                        'flex-1 min-w-0 text-left text-body-sm truncate',
+                        adapterLocked ? 'cursor-not-allowed text-nomi-ink-40' : m.enabled ? 'text-nomi-ink' : 'text-nomi-ink-60',
+                      )}
                     >
                       {m.labelZh}
                     </button>
+                    {onRetype && m.canRetype ? (
+                      <NomiSelect
+                        value={m.kind}
+                        options={MODEL_CHIP_KINDS.map((k) => ({
+                          value: k,
+                          label: t(`onboardingProviders.modelControls.kind.${k}` as 'onboardingProviders.modelControls.kind.text'),
+                        }))}
+                        onChange={(next) => { if (next !== m.kind) onRetype(m, next) }}
+                        ariaLabel={t('onboardingProviders.modelControls.retypeAria', { name: m.labelZh })}
+                        title={t('onboardingProviders.modelControls.retypeTitle')}
+                        size="xs"
+                        className="shrink-0"
+                      />
+                    ) : null}
+                    {onCustomCall ? (
+                      <button
+                        type="button"
+                        aria-label={t(
+                          m.hasCustomCall
+                            ? 'onboardingProviders.customCall.rowSetAria'
+                            : 'onboardingProviders.customCall.rowAria',
+                          { name: m.labelZh },
+                        )}
+                        title={t(m.hasCustomCall ? 'onboardingProviders.customCall.rowSetTitle' : 'onboardingProviders.customCall.rowTitle')}
+                        onClick={() => onCustomCall(m)}
+                        className={cn(
+                          'relative shrink-0 p-1',
+                          m.hasCustomCall ? 'text-nomi-accent' : 'text-nomi-ink-30 hover:text-nomi-ink-60',
+                        )}
+                      >
+                        <IconCode size={13} stroke={1.8} />
+                        {m.hasCustomCall ? (
+                          <span className="absolute right-[1px] top-[1px] size-[6px] rounded-full bg-nomi-accent" />
+                        ) : null}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       aria-label={t('onboardingProviders.modelControls.deleteModelAria', { name: m.labelZh })}

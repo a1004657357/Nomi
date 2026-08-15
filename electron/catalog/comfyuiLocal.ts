@@ -22,6 +22,7 @@ import { COMFYUI_VENDOR_KEY, type HttpOperation } from "./types";
 import { registerResponseTransform, type ResponseTransformFn } from "../tasks/responseTransforms";
 import { registerRequestTransform } from "../tasks/requestTransforms";
 import { fetchComfyuiCheckpoints } from "../comfyuiObjectInfo";
+import { getComfyuiClientId, resolveComfyuiPromptId } from "../comfyui/clientSession";
 
 function isRec(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -56,7 +57,9 @@ function buildViewUrl(baseUrl: string, img: Record<string, unknown>): string {
   return `${base}/view?${qs}`;
 }
 
-type ComfyAssetKind = "image" | "video";
+// model3d 是 Nomi 的一等公民产物（GenerationResultType 含 model3d；runtime 读 model_url 取它；
+// runninghub3d 早有先例；画布 Model3DViewer 能转着看）——ComfyUI 这层认 .glb 即可接上，不是新能力。
+type ComfyAssetKind = "image" | "video" | "model3d";
 
 // 落盘扩展名集合（实查内置 SaveImage/SaveAnimatedWEBP/SaveAnimatedPNG、VHS_VideoCombine、原生 SaveVideo、
 // 社区 save-image-extended[AVIF/WebP/JPEG]，docs.comfy.org + 各节点源 2026-07）——放宽到含 heic/jxl/ts/flv 等
@@ -68,6 +71,8 @@ const IMAGE_EXTENSIONS = new Set([
 const VIDEO_EXTENSIONS = new Set([
   "3gp", "avi", "flv", "m2ts", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "ogv", "ts", "webm",
 ]);
+// 3D 网格（SaveGLB/Preview3D 等；官方模板里混元3D/Tripo/Rodin 都出这些）。obj/ply 少见但真实会有。
+const MODEL3D_EXTENSIONS = new Set(["glb", "gltf", "obj", "ply", "stl", "fbx", "usdz"]);
 // 中间产物 / 非可预览文件：即便带完整 {filename,subfolder,type} 三元组也不当产物拉
 // （SaveLatent 同样出 /view 三元组，靠这条挡住，别把 latent/权重/文本误当图）。
 const NON_MEDIA_EXTENSIONS = new Set([
@@ -97,6 +102,7 @@ function assetExtension(asset: Record<string, unknown>): string {
 function kindFromAsset(asset: Record<string, unknown>, parentKey: string): ComfyAssetKind | null {
   const extension = assetExtension(asset);
   if (VIDEO_EXTENSIONS.has(extension)) return "video";
+  if (MODEL3D_EXTENSIONS.has(extension)) return "model3d";
   if (IMAGE_EXTENSIONS.has(extension)) return "image";
   if (NON_MEDIA_EXTENSIONS.has(extension)) return null;
 
@@ -122,13 +128,14 @@ function kindFromAsset(asset: Record<string, unknown>, parentKey: string): Comfy
  * 自定义保存节点的键名，同时不会把 latent/checkpoint 误当成可预览产物。标准键（gifs/videos/images）先访问，
  * 只是为了同节点同时出「预览图 + 最终视频」时选对，不影响自定义键的识别。
  */
-function findOutputAssets(outputs: Record<string, unknown>): { image: Record<string, unknown> | null; video: Record<string, unknown> | null } {
+function findOutputAssets(outputs: Record<string, unknown>): { image: Record<string, unknown> | null; video: Record<string, unknown> | null; model3d: Record<string, unknown> | null } {
   let image: Record<string, unknown> | null = null;
   let video: Record<string, unknown> | null = null;
+  let model3d: Record<string, unknown> | null = null;
   const seen = new Set<unknown>();
 
   const visit = (value: unknown, parentKey = ""): void => {
-    if (image && video) return;
+    if (image && video && model3d) return;
     if ((isRec(value) || Array.isArray(value)) && seen.has(value)) return;
     if (isRec(value) || Array.isArray(value)) seen.add(value);
 
@@ -136,6 +143,7 @@ function findOutputAssets(outputs: Record<string, unknown>): { image: Record<str
       const kind = kindFromAsset(value, parentKey);
       if (kind === "image" && !image) image = value;
       if (kind === "video" && !video) video = value;
+      if (kind === "model3d" && !model3d) model3d = value;
     }
     if (Array.isArray(value)) {
       for (const item of value) visit(item, parentKey);
@@ -144,17 +152,17 @@ function findOutputAssets(outputs: Record<string, unknown>): { image: Record<str
     if (!isRec(value)) return;
 
     // 标准键优先，避免同一节点同时带预览图和最终视频时选错。
-    for (const key of ["gifs", "videos", "images"]) {
+    for (const key of ["gifs", "videos", "images", "3d", "model_file", "result"]) {
       if (key in value) visit(value[key], key);
     }
     for (const [key, nested] of Object.entries(value)) {
-      if (key === "gifs" || key === "videos" || key === "images") continue;
+      if (key === "gifs" || key === "videos" || key === "images" || key === "3d" || key === "model_file" || key === "result") continue;
       visit(nested, key);
     }
   };
 
   visit(outputs);
-  return { image, video };
+  return { image, video, model3d };
 }
 
 /** 找到真正的 history entry，兼容动态 prompt_id、多顶层字段以及 data/history/result 包装。 */
@@ -203,8 +211,8 @@ export const comfyuiHistoryTransform: ResponseTransformFn = (response, { baseUrl
 
   const outputs = isRec(entry.outputs) ? entry.outputs : null;
   if (!outputs) return response; // outputs 未出现 → 未完成
-  const { video, image } = findOutputAssets(outputs);
-  if (!video && !image) {
+  const { video, image, model3d } = findOutputAssets(outputs);
+  if (!video && !image && !model3d) {
     const statusText = typeof status?.status_str === "string" ? status.status_str.toLowerCase() : "";
     const explicitlyIncomplete = status?.completed === false;
     const completed = status?.completed === true || (!explicitlyIncomplete && ["success", "completed", "complete"].includes(statusText));
@@ -214,6 +222,8 @@ export const comfyuiHistoryTransform: ResponseTransformFn = (response, { baseUrl
     return response;
   }
   return {
+    // model_url 是 runtime 既有的 3D 产物读点（mappedAssetValues 含它；runninghub3d 同款）。
+    ...(model3d ? { model_url: buildViewUrl(baseUrl, model3d) } : {}),
     ...(video ? { video_url: buildViewUrl(baseUrl, video) } : {}),
     ...(image ? { image_url: buildViewUrl(baseUrl, image) } : {}),
   };
@@ -313,14 +323,75 @@ export function fillEmptyCheckpoint(prompt: Record<string, unknown>, checkpoints
   return out;
 }
 
+const STANDARD_MEDIA_LOADER_INPUTS = new Map<string, readonly string[]>([
+  ["LoadImage", ["image"]],
+  ["LoadVideo", ["file", "video"]],
+  ["VHS_LoadVideo", ["file", "video"]],
+  ["LoadAudio", ["audio", "file"]],
+  ["VHS_LoadAudio", ["audio", "file"]],
+]);
+
+function hasMediaInput(inputs: Record<string, unknown>, inputKeys: readonly string[]): boolean {
+  return inputKeys.some((inputKey) => {
+    const value = inputs[inputKey];
+    return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
+  });
+}
+
+/**
+ * 删除本次请求没有文件的媒体 loader，并断开对这些 loader 的直接引用。
+ *
+ * 带 `nomi_bound_media_input` 的节点表示文件槽由 Nomi 本次请求负责；未标记节点只识别
+ * ComfyUI/常见套件的标准 loader。未知社区节点没有标记时保持原样，避免猜错它的输入语义。
+ */
+export function pruneEmptyMediaLoaders(prompt: Record<string, unknown>): Record<string, unknown> {
+  const emptyLoaderIds = new Set<string>();
+  for (const [nodeId, node] of Object.entries(prompt)) {
+    if (!isRec(node) || !isRec(node.inputs)) continue;
+    const boundInputKey = isRec(node._meta) && typeof node._meta.nomi_bound_media_input === "string"
+      ? node._meta.nomi_bound_media_input.trim()
+      : "";
+    const standardInputKeys = STANDARD_MEDIA_LOADER_INPUTS.get(String(node.class_type ?? ""));
+    const inputKeys = boundInputKey ? [boundInputKey] : standardInputKeys;
+    if (!inputKeys || hasMediaInput(node.inputs, inputKeys)) continue;
+    emptyLoaderIds.add(nodeId);
+  }
+  if (emptyLoaderIds.size === 0) return prompt;
+
+  const out: Record<string, unknown> = {};
+  for (const [nodeId, node] of Object.entries(prompt)) {
+    if (emptyLoaderIds.has(nodeId)) continue;
+    if (!isRec(node) || !isRec(node.inputs)) {
+      out[nodeId] = node;
+      continue;
+    }
+    let nextInputs: Record<string, unknown> | undefined;
+    for (const [inputKey, value] of Object.entries(node.inputs)) {
+      const sourceNodeId = Array.isArray(value) && value.length === 2 ? value[0] : undefined;
+      if ((typeof sourceNodeId !== "string" && typeof sourceNodeId !== "number") || !emptyLoaderIds.has(String(sourceNodeId))) continue;
+      nextInputs ??= { ...node.inputs };
+      delete nextInputs[inputKey];
+    }
+    out[nodeId] = nextInputs ? { ...node, inputs: nextInputs } : node;
+  }
+  return out;
+}
+
 // "comfyui-prompt" 请求变换：ckpt_name 留空时按本机实况补全（derive 不 hardcode）。
 // 只抛「面向用户的确定性错误」（连不上 / 没有任何 checkpoint —— 两者提交出去也必失败，fail fast 更省一轮）。
-registerRequestTransform("comfyui-prompt", async (body, { baseUrl }) => {
+registerRequestTransform("comfyui-prompt", async (body, { baseUrl, promptId }) => {
   if (!isRec(body) || !isRec(body.prompt)) return body;
-  const needsFill = Object.values(body.prompt).some(
+  const prompt = pruneEmptyMediaLoaders(body.prompt);
+  const sessionBody = {
+    ...body,
+    ...(prompt === body.prompt ? {} : { prompt }),
+    client_id: getComfyuiClientId(),
+    prompt_id: resolveComfyuiPromptId(promptId),
+  };
+  const needsFill = Object.values(prompt).some(
     (node) => isRec(node) && node.class_type === "CheckpointLoaderSimple" && isRec(node.inputs) && String(node.inputs.ckpt_name ?? "").trim() === "",
   );
-  if (!needsFill) return body;
+  if (!needsFill) return sessionBody;
   const checkpoints = await fetchComfyuiCheckpoints(baseUrl);
   if (checkpoints === null) {
     throw new Error(`没连上 ComfyUI（${baseUrl || "http://127.0.0.1:8188"}）——确认 ComfyUI 已启动，或在参数里手填 checkpoint 文件名`);
@@ -328,7 +399,7 @@ registerRequestTransform("comfyui-prompt", async (body, { baseUrl }) => {
   if (checkpoints.length === 0) {
     throw new Error("ComfyUI 的 models/checkpoints 目录里没有任何模型文件——先放一个 checkpoint（.safetensors）再生成");
   }
-  return { ...body, prompt: fillEmptyCheckpoint(body.prompt, checkpoints) };
+  return { ...sessionBody, prompt: fillEmptyCheckpoint(prompt, checkpoints) };
 });
 
 const TXT2IMG_QUERY_OP: HttpOperation = {

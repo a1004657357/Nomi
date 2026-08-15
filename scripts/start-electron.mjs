@@ -3,10 +3,16 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { installChildProcessLifecycle } from "./child-process-lifecycle.mjs";
+import { ensureElectronSignature } from "./ensure-electron-signature.mjs";
 
 const require = createRequire(import.meta.url);
 const electron = require("electron");
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// Match `pnpm dev`: launching a revoked dev Electron lets XProtect delete the
+// bundle, so repair its local signature before the first spawn.
+ensureElectronSignature(electron, { log: (msg) => console.log(msg) });
 
 // Auto-load the onboarding agent LLM (dm-fox gpt-5.5) from .secrets/agent.key so
 // model onboarding works without manual `export`s. Already-set env vars win.
@@ -28,22 +34,20 @@ function loadOnboardingAgentEnv() {
 const env = {
   ...process.env,
   ...loadOnboardingAgentEnv(),
-  // `pnpm start` launches the built renderer from this source checkout. Mark
-  // that runtime explicitly so local Gate 8 slices do not disappear merely
-  // because Vite's production build has import.meta.env.DEV=false.
-  NOMI_SOURCE_RUN: process.env.NOMI_SOURCE_RUN ?? "1",
+  NOMI_LAUNCHER_PID: String(process.pid),
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
 const args = process.argv.length > 2 ? process.argv.slice(2) : ["."];
 
-const child = spawn(electron, args, {
+const childProcessLifecycle = installChildProcessLifecycle();
+const child = childProcessLifecycle.track(spawn(electron, args, {
   stdio: "inherit",
   shell: false,
   env,
-});
+}));
 
 child.on("exit", (code, signal) => {
-  if (signal) process.kill(process.pid, signal);
-  else process.exit(code ?? 0);
+  if (childProcessLifecycle.isShuttingDown()) return;
+  childProcessLifecycle.shutdown("SIGTERM", code ?? (signal ? 1 : 0));
 });

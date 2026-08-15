@@ -1,0 +1,141 @@
+import type {
+  AiSdkProviderKind,
+  BillingModelKind,
+  HttpOperation,
+  ProfileKind,
+} from "../catalog/types";
+
+export type AdapterAuthType = "none" | "bearer" | "x-api-key" | "query";
+
+export type AdapterSourceEvidence = {
+  url: string;
+  title?: string;
+  evidence: string;
+};
+
+export type AdapterModeDraft = {
+  taskKind: ProfileKind;
+  create: HttpOperation;
+  query?: HttpOperation;
+  statusMapping?: Record<string, string[]>;
+  /** request.params key that receives the local reference fixture during verification. */
+  referenceParam?: string;
+  referenceShape?: "single" | "array";
+  testParams?: Record<string, unknown>;
+  sourceUrls: string[];
+};
+
+export type AdapterModelDraft = {
+  modelKey: string;
+  labelZh: string;
+  kind: BillingModelKind;
+  parameters?: Array<{
+    key: string;
+    label: string;
+    type: "select" | "number" | "text" | "boolean";
+    options?: Array<{ value: string; label: string }>;
+    default?: string | number | boolean;
+    min?: number;
+    max?: number;
+  }>;
+  modes: AdapterModeDraft[];
+};
+
+export type ProviderAdapterDraft = {
+  provider: {
+    baseUrl: string;
+    authType: AdapterAuthType;
+    authHeader?: string;
+    authQueryParam?: string;
+    providerKind?: AiSdkProviderKind;
+  };
+  sources: AdapterSourceEvidence[];
+  models: AdapterModelDraft[];
+};
+
+export type ProviderAdapterCompileFailure = {
+  modelKey: string;
+  error: string;
+};
+
+export type ProviderAdapterCompilation = {
+  draft: ProviderAdapterDraft;
+  failures: ProviderAdapterCompileFailure[];
+};
+
+export type AdapterRunStage =
+  | "queued"
+  | "discovering_docs"
+  | "compiling"
+  | "testing"
+  | "repairing"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "needs_ai"
+  | "stale";
+
+export type AdapterModeState = "queued" | "testing" | "repairing" | "verified" | "failed";
+
+export type AdapterModeResult = {
+  taskKind: ProfileKind;
+  state: AdapterModeState;
+  attempts: number;
+  stage?: "docs" | "compile" | "localize_reference" | "create" | "poll" | "verify_asset" | "promote";
+  error?: string;
+  /**
+   * 失败归类，抛出点查表得来（vendorHttp：401/403→auth、402→balance、429→quota、400/422→input、5xx→server）。
+   * 渲染层据此说人话 + 给对应的下一步动作；**不要在 UI 里用关键词猜**（同型 bug 已反复出现 5 轮，
+   * 见 2026-08-12 `fix(errors): 文本侧错误也在源头留住 category`）。
+   */
+  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "unknown";
+  httpStatus?: number;
+  verifiedAt?: string;
+};
+
+export type AdapterModelResult = {
+  modelKey: string;
+  labelZh: string;
+  kind: BillingModelKind;
+  modes: AdapterModeResult[];
+};
+
+export type ProviderAdapterRun = {
+  id: string;
+  vendorKey: string;
+  vendorName: string;
+  connectionFingerprint: string;
+  selectedModelKeys: string[];
+  stage: AdapterRunStage;
+  currentModelKey?: string;
+  repairAttempt: number;
+  models: AdapterModelResult[];
+  sourceUrls: string[];
+  activeRevision?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProviderAdapterRevision = {
+  id: string;
+  vendorKey: string;
+  digest: string;
+  draft: ProviderAdapterDraft;
+  verifiedModes: Array<{ modelKey: string; taskKind: ProfileKind }>;
+  createdAt: string;
+};
+
+export type ProviderAdapterStoreState = {
+  version: 1;
+  runs: ProviderAdapterRun[];
+  revisions: ProviderAdapterRevision[];
+};
+
+export type AdapterModelMeta = {
+  state: "testing" | "verified" | "partial" | "failed";
+  runId: string;
+  activeRevision?: string;
+  modes: AdapterModeResult[];
+  updatedAt: string;
+};

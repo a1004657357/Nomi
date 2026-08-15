@@ -251,7 +251,7 @@ export const stagingReferenceParamsSchema = z.object({
   props: z
     .array(
       z.object({
-        kind: z.enum(["car", "building", "tree", "streetlamp", "wall"]),
+        kind: z.enum(["car", "building", "tree", "streetlamp", "wall", "suv", "bus", "bicycle", "scooter", "sofa", "diningTable", "fridge", "washingMachine", "trashBins", "atm", "backpack"]),
         position: z.array(z.number()).length(2).optional().describe("[x, z] ground position in meters. Character(s) are at origin; omit to auto-spread props to the character's right."),
         rotationY: z.number().optional().describe("Yaw in degrees."),
         scale: z.number().optional().describe("Uniform scale (0.1–10, default 1)."),
@@ -320,7 +320,7 @@ export const cameraMoveParamsSchema = z.object({
   props: z
     .array(
       z.object({
-        kind: z.enum(["car", "building", "tree", "streetlamp", "wall"]),
+        kind: z.enum(["car", "building", "tree", "streetlamp", "wall", "suv", "bus", "bicycle", "scooter", "sofa", "diningTable", "fridge", "washingMachine", "trashBins", "atm", "backpack"]),
         position: z.array(z.number()).length(2).optional().describe("[x, z] ground position in meters. Subject is at origin; omit to auto-spread props to its right."),
         rotationY: z.number().optional().describe("Yaw in degrees."),
         scale: z.number().optional().describe("Uniform scale (0.1–10, default 1)."),

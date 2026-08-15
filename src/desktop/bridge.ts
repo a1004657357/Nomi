@@ -3,8 +3,14 @@ import type { WorkspaceFileListResult } from '../../electron/workspace/workspace
 import type { DesktopModel3dValidation, DesktopVideoQualityInspection } from './assetInspectionBridgeTypes'
 import type { ProviderKind } from './providerKind'
 import type { DesktopVibingDirectorBridge } from './vibingDirectorBridgeTypes'
-
+import type { DesktopMediaBridge } from './bridgeMedia'
+import type { McpInfo, McpVerifyResult } from './mcpBridgeTypes'
+import type { DesktopSettingsBridge } from './settingsBridge'
+import type { DesktopOnboardingBridge } from './onboardingBridgeTypes'
+import type { DesktopProductionRunBridge } from './productionRunBridgeTypes'
 export type { ProviderKind }
+export type { DesktopAdapterModeResult, DesktopProviderAdapterRun } from './onboardingBridgeTypes'
+export type { ScreenshotHotkeyStatus } from './bridgeMedia'
 export type { DesktopModel3dValidation, DesktopVideoQualityInspection } from './assetInspectionBridgeTypes'
 
 /** 落盘的对话消息(conversation 域;draft/附件是 session 域不落盘)。 */
@@ -283,7 +289,7 @@ export type DesktopUpdateEvent =
   | { type: 'downloaded'; version: string }
   | { type: 'error'; message: string }
 
-export type DesktopBridge = {
+export type DesktopBridge = DesktopMediaBridge & {
   platform: string
   i18n?: {
     setLocale: (locale: 'zh-CN' | 'en') => void
@@ -307,7 +313,10 @@ export type DesktopBridge = {
   app?: {
     reopenLibraryWindow: () => void
     hardReloadWindow?: () => void
+    onProductionDeepLink?: (cb: (payload: { projectId: string; runId: string; artifactId?: string }) => void) => () => void
   }
+  settings?: DesktopSettingsBridge
+  productionRuns?: DesktopProductionRunBridge
   startupProbe?: {
     enabled: boolean
     mark: (label: string, payload?: Record<string, unknown>) => void
@@ -326,12 +335,18 @@ export type DesktopBridge = {
   files: {
     extractText: (payload: { fileName: string; contentType: string; bytes: ArrayBuffer }) => Promise<{ text: string }>
   }
+  /** 系统通知（任务中心：跑完且窗口失焦才发）。可选 —— 老 preload / 测试环境没有时调用端降级到自制提示音。 */
+  notifications?: {
+    show: (payload: { title: string; body?: string; silent?: boolean }) => Promise<{ ok: boolean; reason?: string }>
+  }
   projects: {
     list: () => unknown[]
     listAsync?: () => Promise<unknown[]>
     create: (record: unknown) => unknown
     read: (projectId: string) => unknown | null
     readAsync?: (projectId: string) => Promise<unknown | null>
+    diagnose?: (projectId: string) => Promise<{ projectId: string; rootPath?: string; status: 'ok' | 'not-registered' | 'missing-folder' | 'missing-manifest' | 'corrupt-manifest' | 'id-mismatch'; recoverable: boolean; backupAvailable: boolean }>
+    recover?: (projectId: string) => Promise<unknown>
     save: (projectId: string, record: unknown) => unknown
     saveAsync?: (projectId: string, record: unknown) => Promise<unknown>
     delete: (projectId: string) => { id: string; deleted: boolean }
@@ -375,6 +390,14 @@ export type DesktopBridge = {
       contentType?: string
       ownerNodeId?: string | null
     }) => Promise<DesktopAssetDto>
+    /** Electron 原生 File 直传 preload；路径只在隔离桥内解析，大文件不复制进 renderer 内存。 */
+    importNativeFile?: (file: File, payload: {
+      projectId: string
+      fileName: string
+      contentType?: string
+      kind?: string
+     }) => Promise<DesktopAssetDto | null>
+     /** 播放懒自愈：nomi-local 视频解不了（HEVC 存量/供应商 HEVC 产物）→ 转码出新 MP4 资产；不适用 → null。 */
     ensurePlayable?: (payload: { url: string }) => Promise<DesktopAssetDto | null>
     inspectModel3d?: (payload: { url: string }) => Promise<DesktopModel3dValidation>
     inspectVideo?: (payload: { url: string }) => Promise<DesktopVideoQualityInspection>
@@ -499,22 +522,6 @@ export type DesktopBridge = {
     onResourceCapture?: (callback: (event: DesktopBrowserResourceCaptureEvent) => void) => () => void
     onState: (callback: (event: DesktopBrowserViewState) => void) => () => void
   }
-  video: {
-    /** 视频抽帧（首/尾帧/指定秒）→ 项目素材 nomi-local:// URL。通用基建，见 electron/video/extractVideoFrame.ts。 */
-    extractFrame: (payload: {
-      videoUrl: string
-      which: 'first' | 'last' | number
-      projectId: string
-      forceRerun?: boolean
-    }) => Promise<{ url: string }>
-    /** 批量指定秒抽帧。桌面端只解析/下载一次源视频，避免检查器重复拉取远程文件。 */
-    extractFrames: (payload: {
-      videoUrl: string
-      times: number[]
-      projectId: string
-      forceRerun?: boolean
-    }) => Promise<{ frames: Array<{ timeSeconds: number; url: string }> }>
-  }
   image: {
     /** 元素拆解：一张图 → Replicate qwen-image-layered → N 张落地 RGBA 图层 URL（对标 Lovart Edit Elements）。
      *  走付费令牌（grantId）；见 electron/image/decomposeLayers.ts。 */
@@ -599,9 +606,10 @@ export type DesktopBridge = {
       projectId?: string
       taskKind?: string
       modelKey?: string | null
+      vendorKey?: string
     }) => Promise<{ ok: boolean }>
     comfyuiUnwatch?: (promptId: string) => Promise<void>
-    comfyuiInterrupt?: (promptId: string) => Promise<{ ok: boolean }>
+    comfyuiInterrupt?: (promptId: string) => Promise<{ ok: boolean; mode: 'targeted' | 'queue-only' | 'failed' }>
     onComfyuiProgress?: (callback: (event: unknown) => void) => () => void
   }
   agents: {
@@ -674,60 +682,7 @@ export type DesktopBridge = {
       },
     ) => Promise<{ ok: boolean }>
   }
-  onboarding: {
-    manualCommit: (payload: {
-      vendorName: string
-      baseUrl: string
-      apiKey: string
-      providerKind?: ProviderKind
-      headers?: Record<string, string>
-      models: Array<{ id: string; displayName?: string; kind?: 'text' | 'image' | 'video' | 'audio' }>
-    }) => Promise<{
-      ok: boolean
-      vendorKey?: string
-      committed?: Array<{ modelKey: string; displayName: string }>
-      error?: string
-    }>
-    testConnection: (payload: {
-      baseUrl: string
-      apiKey: string
-      modelId?: string
-      /** 专家强制指定的协议。省略 + autoProbe=true 时由主进程探测。 */
-      providerKind?: ProviderKind
-      /** true = 自动探测 chat↔responses（anthropic 按 hostname 提示）。 */
-      autoProbe?: boolean
-      /**
-       * 'reachability' = 只验「地址+Key 通不通」（GET /models），不发聊天请求、不探协议。
-       * 用于上游一个文本模型都没有时（纯图片/视频中转）——协议只管文本，那时探协议毫无意义，
-       * 拿视频模型 id 发 chat/completions 只会被上游拒、误报「连不上」。
-       */
-      probe?: 'reachability'
-      headers?: Record<string, string>
-    }) => Promise<{
-      ok: boolean
-      status?: number
-      error?: string
-      /** 探测/确认成功的协议——渲染层据此显示「用的是 X 协议」并存盘。 */
-      detectedKind?: ProviderKind
-      /** true = 这次只验了可达性（没探协议），文案要如实说清，别谎称「模型能用」。 */
-      reachabilityOnly?: boolean
-    }>
-    listModels: (payload: {
-      baseUrl: string
-      apiKey: string
-      providerKind?: ProviderKind
-      headers?: Record<string, string>
-    }) => Promise<{
-      ok: boolean
-      models?: string[]
-      status?: number
-      error?: string
-    }>
-    /** 按 id 关键词猜模型类型（图片/视频/配音/文本），给「类型」下拉预填，用户可改（Issue #8）。 */
-    guessKinds: (payload: { ids: string[] }) => Promise<{
-      kinds: Record<string, 'text' | 'image' | 'video' | 'audio'>
-    }>
-  }
+  onboarding: DesktopOnboardingBridge
   /** 版本号 + 检查更新 + 一键更新（功能需求1/2/3）。check/download/install 用户显式触发，进度/状态走 onEvent。 */
   update?: {
     appInfo: () => Promise<DesktopAppInfo>
@@ -760,6 +715,42 @@ export type DesktopBridge = {
     upsertVendorApiKey: (vendorKey: string, payload: unknown) => unknown
     clearVendorApiKey: (vendorKey: string) => unknown
     upsertModel: (payload: unknown) => unknown
+    /**
+     * 改类型 = 改 kind + 按新 kind 重建调用通道（单事务，见 electron/catalog/modelRetype.ts）。
+     * 刻意不复用 upsertModel：只改 kind 不重建通道等于把「类型错」换成「没有通道」，仍然跑不了。
+     * 可选（`?`）：旧 preload 没有这个方法，调用方须自己兜住 undefined。
+     */
+    retypeModel?: (payload: { vendorKey: string; modelKey: string; kind: string }) => unknown
+    /** 自定义调用（2026-08-04）：契约（编辑器变量表/模板）。旧 preload 可能没有 → 可选。 */
+    customCallContract?: () => {
+      variables: Array<{ name: string; type: string }>
+      templates: Array<{ id: string; script: string }>
+    }
+    /** AI 帮写指令（主进程契约单源拼好，渲染层喂给文本脑）。 */
+    customCallAiInstruction?: (payload: {
+      vendorKey: string
+      modelKey: string
+      material: string
+      currentScript?: string
+      lastError?: string
+    }) => string
+    /** 试跑：真调一次最小请求，返回产物 + 请求/响应 transcript（Authorization 已脱敏）。 */
+    customCallTestRun?: (payload: { vendorKey: string; modelKey: string; script: string }) => Promise<{
+      ok: boolean
+      assets: string[]
+      text?: string
+      errorMessage?: string
+      transcript: Array<{
+        method: string
+        url: string
+        status: 'ok' | 'error'
+        durationMs: number
+        requestPreview?: string
+        responsePreview?: string
+        errorMessage?: string
+      }>
+      durationMs: number
+    }>
     deleteModel: (vendorKey: string, modelKey: string) => void
     deleteModels: (targets: { vendorKey: string; modelKey: string }[]) => void
     upsertMapping: (payload: unknown) => unknown
@@ -768,28 +759,64 @@ export type DesktopBridge = {
     importPackage: (payload: unknown) => unknown
     testMapping: (id: string, payload: unknown) => Promise<unknown>
     fetchDocs: (payload: unknown) => Promise<unknown>
-    probeComfyui: (
-      baseUrl?: string,
-    ) => Promise<{ ok: true; summary: string; version?: string } | { ok: false; error: string }>
+    probeComfyui: (baseUrl?: string) => Promise<
+      { ok: true; summary: string; version?: string; protocol?: 'enhanced' | 'compatibility' } | { ok: false; error: string }
+    >
     /** 校验 + 识别 workflow_api.json 可绑定节点（同步）。analysis 结构见 comfyuiWorkflowImport.WorkflowAnalysis。 */
     analyzeComfyWorkflow: (text: string) => { ok: true; analysis: unknown } | { ok: false; error: string }
     /** 缺件对账（异步问本机 /object_info）：缺节点类 + 引用了本机没有的模型文件。旧 preload 可能没有 → 可选。 */
-    reconcileComfyWorkflow?: (
-      text: string,
-    ) => Promise<
+    reconcileComfyWorkflow?: (text: string, vendorKey?: string) => Promise<
+    /** 校验 + 识别 workflow_api.json 可绑定节点（同步）。analysis 结构见 comfyuiWorkflowImport.WorkflowAnalysis。 */
+    /** 缺件对账（异步问本机 /object_info）：缺节点类 + 引用了本机没有的模型文件 + combo 可选值。旧 preload 可能没有 → 可选。 */
       | {
           ok: true
           serverReachable: boolean
           unknownNodeTypes: string[]
-          missingEnumValues: Array<{
-            nodeId: string
-            classType: string
-            title?: string
-            inputKey: string
-            value: string
+          missingEnumValues: Array<{ nodeId: string; classType: string; title?: string; inputKey: string; value: string }>
+          enumOptions?: Array<{ classType: string; inputKey: string; options: string[] }>
+        }
+      | { ok: false; error: string }
+    >
+    /** 设置页批量缺件对账：整台实例共享一次 /object_info，结果按 id 回传。 */
+    reconcileComfyWorkflows?: (items: Array<{ id: string; text: string }>, vendorKey?: string) => Promise<
+      | {
+          ok: true
+          results: Array<{
+            id: string
+            result:
+              | {
+                  ok: true
+                  serverReachable: boolean
+                  unknownNodeTypes: string[]
+                  missingEnumValues: Array<{ nodeId: string; classType: string; title?: string; inputKey: string; value: string }>
+                  enumOptions?: Array<{ classType: string; inputKey: string; options: string[] }>
+                }
+              | { ok: false; error: string }
           }>
         }
       | { ok: false; error: string }
+    >
+    /** T1：贴什么格式都吃——界面格式借 ComfyUI 自己的前端转成 API 再分析。旧 preload 可能没有 → 可选。 */
+    analyzeComfyWorkflowSmart?: (text: string, vendorKey?: string) => Promise<
+      | { ok: true; analysis: unknown; convertedText?: string; sourceWorkflowText?: string }
+      | { ok: false; error: string }
+    >
+    /** T2：读用户自己 ComfyUI 里的官方模板库（几百个）。null = 没连上/这台没有模板包。 */
+    listComfyuiTemplates?: (vendorKey?: string) => Promise<Array<{
+      name: string; title: string; description: string; group: string; groupType: string
+      tags: string[]; tutorialUrl: string; thumbnailUrl: string
+    }> | null>
+    /** T2：取一个模板并备好导入所需（已转 API 格式 + 缺件对账 + combo 选项）。 */
+    getComfyuiTemplateDetail?: (name: string, vendorKey?: string) => Promise<
+      | {
+          apiText: string
+          uiWorkflowText: string
+          unknownNodeTypes: string[]
+          missingEnumValues: Array<{ nodeId: string; classType: string; title?: string; inputKey: string; value: string }>
+          enumOptions: Array<{ classType: string; inputKey: string; options: string[] }>
+          serverReachable: boolean
+        }
+      | { error: string }
     >
     /** ComfyUI 预置模板清单（S5）：静态数据，启用前走 reconcile 缺件闸。旧 preload 可能没有 → 可选。 */
     listComfyuiPresets?: () => Array<{
@@ -800,19 +827,12 @@ export type DesktopBridge = {
       binding: unknown
       models: Array<{ file: string; dir: string; url: string }>
     }>
-    /** 按绑定落库为用户自有 model+mapping（同步）。 */
-    importComfyWorkflow: (payload: {
-      text: string
-      binding: unknown
-      labelZh: string
-    }) => { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
+    /** 按绑定落库为用户自有 model+mapping（同步）。enumOptions 可选 = combo 参数烤成真实文件下拉。 */
+    importComfyWorkflow: (payload: { text: string; binding: unknown; labelZh: string; enumOptions?: unknown; vendorKey?: string; uiWorkflowText?: string }) =>
+      { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
     /** 用同一 modelKey 更新已导入 workflow（同步）。 */
-    updateComfyWorkflow?: (payload: {
-      modelKey: string
-      text: string
-      binding: unknown
-      labelZh: string
-    }) => { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
+    updateComfyWorkflow?: (payload: { modelKey: string; text: string; binding: unknown; labelZh: string; enumOptions?: unknown; vendorKey?: string; uiWorkflowText?: string }) =>
+      { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string }
   }
   skill: {
     list: () => unknown[]
@@ -911,25 +931,17 @@ export type DesktopBridge = {
   /** 能力核：上报当前打开项目，供外部调用的 A/B 守卫（可选——老 preload 无此口）。 */
   capability?: {
     setActiveProject: (projectId: string) => void
-    /** 「接入 AI 编程助手」卡：读接入状态 + 各客户端配置片段。 */
-    mcpInfo: () => {
-      tokenReady: boolean
-      rpcRunning: boolean
-      server: { command: string; args: string[]; env?: Record<string, string> }
-      clients: Record<
-        'claude' | 'codex' | 'cursor',
-        {
-          installed: boolean
-          stale: boolean
-          configPath: string
-          snippet: string
-        }
-      >
-    }
+    /** 「接入 AI 编程助手」卡：读接入状态 + 各客户端配置片段（类型见 mcpBridgeTypes）。 */
+    mcpInfo: () => McpInfo
     /** 一键写入指定客户端配置的 nomi 条目（合并 + 备份）。默认 Claude Code。 */
     installMcp: (client?: string) => { ok: boolean; client: string; configPath: string; backupPath: string | null }
     /** 撤销接入指定客户端：删 nomi 条目。默认 Claude Code。 */
     uninstallMcp: (client?: string) => { ok: boolean; client: string }
+    /**
+     * 实连验证：真起一次**配置里那条**命令握手。可选（老 preload 无此口 → 卡片退回只读配置的老口径）。
+     * 「配置里有 nomi 这行字」≠「还连得上」：老版本写的脚本已被删、dev 构建钉的 worktree 被删都会失效。
+     */
+    verifyMcp?: (client?: string) => Promise<McpVerifyResult>
     /** A 模式实时桥：注册处理器，接主进程转发来的外部 MCP 画布读/写/付费确认。返回反注册函数。 */
     onApply?: (handler: (op: string, payload: unknown) => unknown | Promise<unknown>) => () => void
   }

@@ -242,7 +242,7 @@ export function DreaminaMemberCard({ status, onChanged }: DreaminaMemberCardProp
         /* 已登录。注意：user_credit 成功 ≠ 能生成（「not maestro vip」只在生成时才报），故这里**不承诺**
            能出片，始终诚实标门槛——避免给非会员账号误报「可以出片」（D4）。 */
         <>
-          <div className="flex items-start gap-2 rounded-nomi-sm bg-[var(--workbench-success-soft)] px-3 py-2.5">
+          <div className="flex items-start gap-2 rounded-nomi-sm bg-nomi-ink-05 px-3 py-2.5">
             <IconCircleCheck size={17} className="shrink-0 mt-0.5 text-workbench-success" />
             <div className="min-w-0">
               <div className="text-body-sm font-semibold text-nomi-ink">

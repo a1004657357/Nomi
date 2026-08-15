@@ -5,9 +5,10 @@ import { useGenerationCanvasStore } from '../generationCanvas/store/generationCa
 import { cn } from '../../utils/cn'
 import { buildClipFromGenerationNode } from '../generationCanvas/model/buildClipFromGenerationNode'
 import { buildGenerationNodeTimelineClip } from './buildGenerationNodeTimelineClip'
-import { tryAddAudioAssetFromDragData } from './dropAudioAssetToTimeline'
+import { tryAddAssetFromDragData } from './addAssetToTimeline'
 import { ASSET_LIBRARY_DRAG_MIME } from '../assets/assetLibraryDrag'
-import { clientXToFrame } from './timelineEdit'
+import { clientXToFrame, frameToPixel } from './timelineEdit'
+import { findAppendFrame } from './timelineMath'
 import { buildTimelineDropPreview, type TimelineDropPreview } from './timelineDropFeedback'
 import { decodeTimelineGenerationNodeDragPayload, TIMELINE_GENERATION_NODE_DRAG_MIME } from './timelineDragPayload'
 import TimelineClip from './TimelineClip'
@@ -41,6 +42,8 @@ function TimelineTrack({ track, variant = 'primary' }: TimelineTrackProps): JSX.
   const [dragPreview, setDragPreview] = React.useState<TimelineDropPreview | null>(null)
   // v0.7.4: dragenter/over 期间无法 getData → 用单独的 hover state 提供视觉反馈
   const [isDragHovering, setIsDragHovering] = React.useState(false)
+  // 拖入将落位光标线：默认贴尾追加（不需要 payload 即可算），按 ⌥ 才用光标处自由落点
+  const [dropCaretFrame, setDropCaretFrame] = React.useState<number | null>(null)
 
   const resolveFrame = React.useCallback(
     (clientX: number) => {
@@ -51,14 +54,21 @@ function TimelineTrack({ track, variant = 'primary' }: TimelineTrackProps): JSX.
     [scale],
   )
 
-  // 接受拖入的类型：生成节点（任意轨）或素材库音频（仅音频轨）。dragover 时只能读 types 不能读 data。
+  // 接受拖入的类型：生成节点或素材库三类媒体。dragover 时只能读 types 不能读 payload，
+  // 具体 kind 与轨道匹配在 drop 时校验。
   const acceptsDragTypes = React.useCallback(
     (types: readonly string[]) => {
       if (types.includes(TIMELINE_GENERATION_NODE_DRAG_MIME)) return true
-      if (track.type === 'audio' && types.includes(ASSET_LIBRARY_DRAG_MIME)) return true
-      return false
+      return types.includes(ASSET_LIBRARY_DRAG_MIME)
     },
-    [track.type],
+    [],
+  )
+
+  // L3 落点语义：默认贴尾追加（免思考串片）；按住 ⌥ 用光标处自由落点（精排）
+  const resolveDesiredStart = React.useCallback(
+    (event: { altKey: boolean; clientX: number }): number =>
+      event.altKey ? resolveFrame(event.clientX) : findAppendFrame(track),
+    [resolveFrame, track],
   )
 
   const resolveDropPreview = React.useCallback(
@@ -71,7 +81,7 @@ function TimelineTrack({ track, variant = 'primary' }: TimelineTrackProps): JSX.
         .getState()
         .nodes.find((node) => node.id === generationNodePayload.nodeId)
       const generationNode = liveNode || generationNodePayload.node
-      const startFrame = resolveFrame(event.clientX)
+      const startFrame = resolveDesiredStart(event)
       const clip = buildClipFromGenerationNode(generationNode, {
         fps,
         startFrame,
@@ -86,22 +96,30 @@ function TimelineTrack({ track, variant = 'primary' }: TimelineTrackProps): JSX.
         fps,
       })
     },
-    [resolveFrame, fps, scale, track],
+    [resolveDesiredStart, fps, scale, track],
   )
 
-  // 素材库音频拖到音频轨：payload 同步可读，时长离屏探测后落 clip（核心逻辑共用 dropAudioAssetToTimeline）。
-  const handleAssetAudioDrop = React.useCallback(
+  // 素材库三类素材：拖拽本身就是精排，直接使用光标落点；时长探测/clip 构建走统一 action。
+  const handleAssetDrop = React.useCallback(
     (event: React.DragEvent<HTMLDivElement>): boolean => {
-      if (track.type !== 'audio') return false
-      const result = tryAddAudioAssetFromDragData(event.dataTransfer.getData(ASSET_LIBRARY_DRAG_MIME), {
+      const result = tryAddAssetFromDragData(event.dataTransfer.getData(ASSET_LIBRARY_DRAG_MIME), {
         fps,
         startFrame: resolveFrame(event.clientX),
+        targetTrackType: track.type,
       })
       if (!result) return false
       event.preventDefault()
       setDragPreview(null)
       setIsDragHovering(false)
-      if (result === 'reject') toast(t('timelineEditor.track.audioOnly'), 'warning')
+      setDropCaretFrame(null)
+      if (result.status === 'reject') {
+        const expectedTrack = result.expectedTrack === 'image'
+          ? t('timelineEditor.track.imageLabel')
+          : result.expectedTrack === 'video'
+            ? t('timelineEditor.track.videoLabel')
+            : t('timelineEditor.track.audioLabel')
+        toast(t('timelineEditor.track.wrongType', { track: expectedTrack }), 'warning')
+      }
       return true
     },
     [track.type, resolveFrame, fps, t],
@@ -109,11 +127,12 @@ function TimelineTrack({ track, variant = 'primary' }: TimelineTrackProps): JSX.
 
   const handleDrop = React.useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      if (handleAssetAudioDrop(event)) return
+      if (handleAssetDrop(event)) return
       const preview = resolveDropPreview(event) || dragPreview
       if (!preview) return
       event.preventDefault()
       setDragPreview(null)
+      setDropCaretFrame(null)
       if (!preview.canPlace) {
         toast(preview.reason || t('timelineEditor.track.unavailable'), 'warning')
         return
@@ -138,7 +157,7 @@ function TimelineTrack({ track, variant = 'primary' }: TimelineTrackProps): JSX.
         addTimelineClipAtFrame(nextClip, getTrackTypeForClipType(nextClip.type), preview.startFrame)
       })
     },
-    [handleAssetAudioDrop, addTimelineClipAtFrame, dragPreview, resolveDropPreview, fps, t],
+    [handleAssetDrop, addTimelineClipAtFrame, dragPreview, resolveDropPreview, fps, t],
   )
 
   return (
@@ -234,11 +253,17 @@ function TimelineTrack({ track, variant = 'primary' }: TimelineTrackProps): JSX.
           if (event.currentTarget.contains(event.relatedTarget as globalThis.Node | null)) return
           setDragPreview(null)
           setIsDragHovering(false)
+          setDropCaretFrame(null)
         }}
         onDragOver={(event) => {
           if (!acceptsDragTypes(event.dataTransfer.types)) return
           event.preventDefault()
           event.dataTransfer.dropEffect = 'copy'
+          setDropCaretFrame(
+            event.dataTransfer.types.includes(ASSET_LIBRARY_DRAG_MIME)
+              ? resolveFrame(event.clientX)
+              : resolveDesiredStart(event),
+          )
         }}
         onDrop={(event) => {
           setIsDragHovering(false)
@@ -256,6 +281,17 @@ function TimelineTrack({ track, variant = 'primary' }: TimelineTrackProps): JSX.
           >
             {track.type === 'audio' ? t('timelineEditor.track.emptyAudio') : t('timelineEditor.track.emptyVisual')}
           </div>
+        ) : null}
+        {dropCaretFrame != null ? (
+          <div
+            className={cn(
+              'workbench-timeline-track__drop-caret',
+              'absolute top-0 bottom-0 z-[2] w-0.5 -translate-x-1/2 rounded-full',
+              'bg-[var(--workbench-accent)] opacity-80 pointer-events-none',
+            )}
+            style={{ left: frameToPixel(dropCaretFrame, scale) }}
+            aria-hidden="true"
+          />
         ) : null}
         {dragPreview ? (
           <div

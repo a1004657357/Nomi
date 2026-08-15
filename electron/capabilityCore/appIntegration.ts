@@ -11,6 +11,7 @@ import { startRpcServer, type RpcServerHandle } from './rpcServer'
 import { ensureToken } from './security'
 import { clearInstanceAdvertisement, writeInstanceAdvertisement } from './lockfile'
 import type { FetchTaskResultFn, RunDirectorFn, RunTaskFn } from './core'
+import { getProductionRunService } from '../productionRun/productionRunRuntime'
 
 let handle: RpcServerHandle | null = null
 let openProjectId = ''
@@ -28,7 +29,11 @@ export function getCapabilityPort(): number | null {
 /**
  * 启动能力核对外口。绝不拖垮 app 启动：任何失败只记日志、不抛（fail-open，与 applySystemProxy 同纪律）。
  */
-export async function startCapabilityCore(runTask: RunTaskFn, fetchTaskResult: FetchTaskResultFn, runDirector?: RunDirectorFn): Promise<void> {
+export async function startCapabilityCore(
+  runTask: RunTaskFn,
+  fetchTaskResult: FetchTaskResultFn,
+  runDirector?: RunDirectorFn,
+): Promise<void> {
   try {
     const token = ensureToken()
     handle = await startRpcServer({
@@ -36,6 +41,7 @@ export async function startCapabilityCore(runTask: RunTaskFn, fetchTaskResult: F
       fetchTaskResult,
       runDirector,
       isProjectOpen: (id) => Boolean(openProjectId) && id === openProjectId,
+      productionRuns: getProductionRunService(),
     })
     writeInstanceAdvertisement({
       pid: process.pid,

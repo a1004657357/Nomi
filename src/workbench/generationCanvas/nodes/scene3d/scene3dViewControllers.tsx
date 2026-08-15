@@ -16,18 +16,20 @@ import {
   aspectDimensions,
   cameraPoseSampleChanged,
   captureScene,
-  clearMovementKeyState,
   eulerToArray,
   findSceneObjectByRuntimeId,
   followOrbitPolarBounds,
-  hasActiveMovementKey,
-  isEditableKeyboardTarget,
-  isMovementCode,
-  pointerCaptureTarget,
   vectorFromArray,
   vectorToArray,
   type CameraPoseSample,
 } from './scene3dMath'
+import {
+  clearMovementKeyState,
+  hasActiveMovementKey,
+  isEditableKeyboardTarget,
+  isMovementCode,
+  pointerCaptureTarget,
+} from './scene3dInput'
 import { objectGroundFootprint, objectVisualHalfHeight } from './scene3dCrowd'
 import { groundSpeedMultiplier } from './scene3dCharacterDrive'
 import { cameraWithPlaybackPosition, playbackCameraAtPlayhead } from './scene3dPlayback'

@@ -139,8 +139,10 @@ describe("runtime workspace project APIs", () => {
   });
 
   it("deleteProject 对 native(默认根内)项目真删盘:整目录消失", () => {
-    const nativeRoot = path.join(mockedDocumentsRoot, "Nomi Projects", "Native Proj");
-    const created = createProject({ rootPath: nativeRoot, name: "Native Proj", payload: {} });
+    // 不传 rootPath 才是产品里的“新建项目”；显式 rootPath 永远代表用户“打开文件夹”。
+    const created = createProject({ name: "Native Proj", payload: {} });
+    const nativeRoot = String((created as { lastKnownRootPath?: string }).lastKnownRootPath || "");
+    expect(nativeRoot.startsWith(path.join(mockedDocumentsRoot, "Nomi Projects"))).toBe(true);
 
     const result = deleteProject(created.id);
 

@@ -40,7 +40,10 @@ function isRevoked(appPath) {
     encoding: "utf8",
   });
   const output = `${result.stdout || ""}${result.stderr || ""}`;
-  return /revoked/i.test(output);
+  // "invalid API object reference"：spctl 无法评估该 bundle（2026-08-03 新 worktree 实测——
+  // 判成 healthy 后一启动就被 SIGKILL + XProtect 删除，连环三次）。评不了就当需要重签：
+  // re-sign 幂等且便宜，误伤为零；漏放行的代价是二进制被系统删掉。
+  return /revoked|invalid API object reference/i.test(output);
 }
 
 function adhocSign(target) {

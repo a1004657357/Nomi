@@ -24,7 +24,7 @@ export const NANO_BANANA_ARCHETYPE: ModelArchetype = {
   kind: "image",
   defaultModeId: "t2i",
   transportTaskKind: "text_to_image",
-  identifierPatterns: ["nano-banana", "google/nano-banana", "google/nano-banana-edit", "nano-banana-pro"],
+  identifierPatterns: ["nano-banana", "google/nano-banana", "google/nano-banana-edit", "nano-banana-pro", "gemini-2.5-flash-image-preview"],
   modes: [
     {
       id: "t2i",

@@ -1,10 +1,15 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconCheck, IconChevronRight } from '@tabler/icons-react'
+import { IconCheck, IconChevronRight, IconTrash } from '@tabler/icons-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { cn } from '../../../utils/cn'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import type { GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
+import { listNodeMediaResults, promoteNodeResult, resultIdentity } from '../model/nodeResultLifecycle'
+import { canvasNodeToAssetRefs } from '../../assets/assetTypes'
+import { deleteAssetResult } from '../../assets/deleteAssetResult'
+import { confirmDialog } from '../../../design'
+import { toast } from '../../../ui/toast'
 
 type ImageStackEntry = GenerationNodeResult & { url: string }
 
@@ -13,18 +18,7 @@ function isImageStackEntry(result: GenerationNodeResult | undefined): result is 
 }
 
 function getImageResultStack(node: GenerationCanvasNode): ImageStackEntry[] {
-  const entries: ImageStackEntry[] = []
-  const seen = new Set<string>()
-  const add = (result: GenerationNodeResult | undefined) => {
-    if (!isImageStackEntry(result)) return
-    const key = result.id || result.url
-    if (seen.has(key)) return
-    seen.add(key)
-    entries.push(result)
-  }
-  add(node.result)
-  ;(node.history || []).forEach(add)
-  return entries
+  return listNodeMediaResults(node).filter(isImageStackEntry)
 }
 
 export function ImageResultStackControls({
@@ -60,37 +54,41 @@ export function ImageResultStackControls({
   const setMainImage = React.useCallback(
     (entry: ImageStackEntry) => {
       if (readOnly) return
-      const entryKey = entry.id || entry.url
+      const entryKey = resultIdentity(entry)
       const latestNode = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id)
-      const nextResult = [latestNode?.result, ...(latestNode?.history || [])].find((candidate) => {
-        if (!isImageStackEntry(candidate)) return false
-        return (candidate.id || candidate.url) === entryKey
-      })
-      if (!latestNode || !nextResult) return
-
-      const nextHistory: GenerationNodeResult[] = []
-      const seen = new Set<string>()
-      const add = (result: GenerationNodeResult | undefined) => {
-        if (!result) return
-        const key = result.id || result.url || result.thumbnailUrl || result.text || ''
-        if (!key || seen.has(key)) return
-        seen.add(key)
-        nextHistory.push(result)
-      }
-      const nextMain = { ...nextResult }
-      add(nextMain)
-      add(latestNode.result)
-      ;(latestNode.history || []).forEach(add)
-      updateNode(node.id, {
-        result: nextMain,
-        history: nextHistory,
-        status: 'success',
-        error: undefined,
-      })
+      if (!latestNode) return
+      const patch = promoteNodeResult(latestNode, entryKey)
+      if (!patch) return
+      updateNode(node.id, patch)
       setOpen(false)
     },
     [node.id, readOnly, updateNode],
   )
+
+  const removeImage = React.useCallback(async (entry: ImageStackEntry) => {
+    if (readOnly) return
+    const confirmed = await confirmDialog({
+      title: t('generationCommon.imagePreview.deleteTitle'),
+      message: t('generationCommon.imagePreview.deleteMessage'),
+      confirmLabel: t('generationCommon.imagePreview.delete'),
+      danger: true,
+    })
+    if (!confirmed) return
+    const entryKey = resultIdentity(entry)
+    const latestNode = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id)
+    const asset = latestNode
+      ? canvasNodeToAssetRefs(latestNode).find((candidate) => candidate.ownerResultId === entryKey)
+      : undefined
+    if (!asset) return
+    try {
+      const outcome = await deleteAssetResult(asset)
+      if (outcome.failedFileCount > 0) toast(t('generationCommon.imagePreview.deleteFileFailed'), 'warning')
+      else toast(t('generationCommon.imagePreview.deleted'), 'success')
+    } catch (error) {
+      console.error('delete image result failed', error)
+      toast(t('generationCommon.imagePreview.deleteFailed'), 'error')
+    }
+  }, [node.id, readOnly, t])
 
   React.useEffect(() => {
     if (!selected || entries.length < 2 || otherEntries.length === 0) setOpen(false)
@@ -120,6 +118,8 @@ export function ImageResultStackControls({
           'absolute bottom-2 right-2 z-[8] inline-flex overflow-hidden rounded-full',
           'border border-nomi-line bg-nomi-paper text-nomi-ink shadow-nomi-md',
           'pointer-events-auto',
+          // 它压在图上，属于「节点的工具条」：拖动期间和浮条/提示词面板一起隐身（画布保持干净）。
+          'group-data-[dragging=true]/canvas:invisible',
         )}
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -239,28 +239,40 @@ export function ImageResultStackControls({
                     alt=""
                     draggable={false}
                   />
-                  <button
-                    type="button"
-                    className={cn(
-                      'absolute right-2 top-2 inline-flex h-7 items-center gap-1 rounded-nomi-sm px-2',
-                      'border border-nomi-line bg-nomi-paper text-micro font-medium text-nomi-ink shadow-nomi-sm',
-                      'opacity-0 translate-y-[-2px] transition-[opacity,transform,background,color,border-color] duration-150 ease-out',
-                      'hover:border-nomi-ink-20 hover:bg-nomi-ink-05 focus-visible:border-nomi-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent/25',
-                      'group-hover:opacity-100 group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0',
-                      readOnly && 'opacity-0 group-hover:opacity-60 group-focus-within:opacity-60',
-                    )}
-                    disabled={readOnly}
-                    onPointerDown={(event) => {
-                      event.stopPropagation()
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setMainImage(entry)
-                    }}
-                  >
-                    <IconCheck size={13} stroke={2.2} />
-                    {t('generationCommon.imagePreview.setPrimary')}
-                  </button>
+                  <div className="absolute right-2 top-2 flex translate-y-[-2px] gap-1 opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100">
+                    <button
+                      type="button"
+                      className={cn(
+                        'inline-flex h-7 items-center gap-1 rounded-nomi-sm px-2',
+                        'border border-nomi-line bg-nomi-paper text-micro font-medium text-nomi-ink shadow-nomi-sm',
+                        'hover:border-nomi-ink-20 hover:bg-nomi-ink-05 focus-visible:border-nomi-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent/25',
+                        readOnly && 'opacity-60',
+                      )}
+                      disabled={readOnly}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setMainImage(entry)
+                      }}
+                    >
+                      <IconCheck size={13} stroke={2.2} />
+                      {t('generationCommon.imagePreview.setPrimary')}
+                    </button>
+                    <button
+                      type="button"
+                      className="grid size-7 place-items-center rounded-nomi-sm border border-workbench-danger/20 bg-nomi-paper text-workbench-danger shadow-nomi-sm hover:bg-workbench-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-workbench-danger/25 disabled:opacity-60"
+                      disabled={readOnly}
+                      aria-label={t('generationCommon.imagePreview.delete')}
+                      title={t('generationCommon.imagePreview.delete')}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void removeImage(entry)
+                      }}
+                    >
+                      <IconTrash size={14} stroke={2} aria-hidden="true" />
+                    </button>
+                  </div>
                 </motion.div>
               )
             })}

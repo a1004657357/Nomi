@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildCatalogTaskRequest,
   isRateLimitedPollError,
+  isSlowLaneBackend,
   nextPollDelayMs,
   normalizeCatalogTaskResult,
+  resolvePollBudget,
   resolvePollIntervalMs,
   runCatalogGenerationTask,
 } from './catalogTaskActions'
@@ -13,6 +15,10 @@ import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import type { TaskRequestDto, TaskResultDto } from '../../api/taskApi'
 import type { ModelCatalogModelDto, ModelCatalogVendorDto } from '../../api/modelCatalogApi'
 import type { RecoverableTimeoutError } from './recoverableTimeout'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 function textNode(): GenerationCanvasNode {
   return { id: 'n1', kind: 'text', title: '', position: { x: 0, y: 0 }, meta: { modelKey: 'gpt-x' } }
@@ -665,6 +671,80 @@ describe('runCatalogGenerationTask — 视频节点被图片模型元数据污�
   })
 })
 
+describe('runCatalogGenerationTask — ComfyUI 提交时序与 prompt UUID', () => {
+  const comfyNode: GenerationCanvasNode = {
+    id: 'comfy-node',
+    kind: 'image',
+    title: '',
+    position: { x: 0, y: 0 },
+    prompt: '画一个红色立方体',
+    meta: { modelKey: 'my-comfy-workflow', modelVendor: 'comfyui-local', vendor: 'comfyui-local' },
+  }
+
+  function stubComfyBridge(events: string[], watched: Array<Record<string, unknown>>) {
+    vi.stubGlobal('window', {
+      nomiDesktop: {
+        tasks: {
+          comfyuiWatch: async (payload: Record<string, unknown>) => {
+            events.push('watch:start')
+            watched.push(payload)
+            await Promise.resolve()
+            events.push('watch:ready')
+            return { ok: true }
+          },
+          comfyuiUnwatch: async (promptId: string) => {
+            events.push(`unwatch:${promptId}`)
+          },
+        },
+      },
+    })
+  }
+
+  it('先等 watcher 就绪再提交，且客户端 UUID 原样穿透给 runTask', async () => {
+    const events: string[] = []
+    const watched: Array<Record<string, unknown>> = []
+    stubComfyBridge(events, watched)
+
+    const result = await runCatalogGenerationTask(comfyNode, {
+      runTask: async (_vendor, request) => {
+        events.push('run')
+        const promptId = String(request.extras?.comfyPromptId || '')
+        expect(promptId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+        expect(promptId).toBe(watched[0]?.promptId)
+        return {
+          id: promptId,
+          kind: request.kind,
+          status: 'succeeded',
+          assets: [{ type: 'image', url: 'nomi-local://comfy-output.png' }],
+          raw: {},
+        }
+      },
+    })
+
+    const promptId = String(watched[0]?.promptId)
+    expect(events).toEqual(['watch:start', 'watch:ready', 'run', `unwatch:${promptId}`])
+    expect(result.url).toBe('nomi-local://comfy-output.png')
+  })
+
+  it('提交失败时立即注销预登记 watcher', async () => {
+    const events: string[] = []
+    const watched: Array<Record<string, unknown>> = []
+    stubComfyBridge(events, watched)
+
+    await expect(
+      runCatalogGenerationTask(comfyNode, {
+        runTask: async () => {
+          events.push('run')
+          throw new Error('submit failed')
+        },
+      }),
+    ).rejects.toThrow('submit failed')
+
+    const promptId = String(watched[0]?.promptId)
+    expect(events).toEqual(['watch:start', 'watch:ready', 'run', `unwatch:${promptId}`])
+  })
+})
+
 describe('runCatalogGenerationTask — 轮询硬超时抛 RecoverableTimeoutError（可找回，非普通失败）', () => {
   const videoNode: GenerationCanvasNode = {
     id: 'v1',
@@ -1311,5 +1391,58 @@ describe('runCatalogGenerationTask — 同步生成等待心跳', () => {
         raw: {},
       })
     }
+  })
+})
+
+describe('normalizeCatalogTaskResult — 终态失败抛出上游原因', () => {
+  function failed(extra: Partial<TaskResultDto>): TaskResultDto {
+    return {
+      id: 'task_01KYRKKK35KCAASMFC7ND2PR6P',
+      kind: 'text_to_image',
+      status: 'failed',
+      assets: [],
+      raw: {},
+      ...extra,
+    }
+  }
+
+  it('优先显示主进程提供的 error', () => {
+    expect(() => normalizeCatalogTaskResult(failed({ error: 'Requested entity was not found.' }), imageNode())).toThrow(
+      /Requested entity was not found\./,
+    )
+  })
+
+  it('保留 taskId 和 kind 供排查', () => {
+    expect(() => normalizeCatalogTaskResult(failed({ error: 'boom' }), imageNode())).toThrow(
+      /taskId=task_01KYRKKK35KCAASMFC7ND2PR6P, kind=text_to_image/,
+    )
+  })
+
+  it('没有上游原因时才使用兜底文案', () => {
+    expect(() => normalizeCatalogTaskResult(failed({ raw: { data: { status: 'failed' } } }), imageNode())).toThrow(
+      /模型任务执行失败/,
+    )
+  })
+})
+
+describe('resolvePollBudget / isSlowLaneBackend — 按后端时延分档', () => {
+  it('本地进程图像后端使用慢道预算', () => {
+    for (const vendor of ['codex-local', 'comfyui-local']) {
+      for (const kind of ['text_to_image', 'image_edit'] as const) {
+        expect(isSlowLaneBackend(kind, vendor)).toBe(true)
+        expect(resolvePollBudget(kind, vendor)).toEqual({ softMs: 300000, hardMs: 1200000 })
+      }
+    }
+  })
+
+  it('视频任务均使用慢道预算', () => {
+    expect(isSlowLaneBackend('text_to_video', 'apimart')).toBe(true)
+    expect(resolvePollBudget('image_to_video', 'kie')).toEqual({ softMs: 300000, hardMs: 1200000 })
+  })
+
+  it('云图像 API 保持快道预算', () => {
+    expect(isSlowLaneBackend('text_to_image', 'apimart')).toBe(false)
+    expect(resolvePollBudget('text_to_image', 'apimart')).toEqual({ softMs: 120000, hardMs: 120000 })
+    expect(resolvePollBudget('image_edit', 'kie')).toEqual({ softMs: 120000, hardMs: 120000 })
   })
 })

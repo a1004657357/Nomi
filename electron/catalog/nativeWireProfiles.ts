@@ -1,4 +1,5 @@
 import { VOLCENGINE_SEEDANCE_QUERY_OP, VOLCENGINE_SEEDANCE_STATUS_MAPPING, VOLCENGINE_VIDEO_MODELS } from "./volcengineVideos";
+import { VOLCENGINE_IMAGE_MODELS } from "./volcengineImages";
 import type { HttpOperation, ProfileKind } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -52,7 +53,32 @@ function volcengineSeedanceProfile(): NativeWireProfile {
   };
 }
 
-const PROFILES: NativeWireProfile[] = [volcengineSeedanceProfile()];
+/**
+ * 火山方舟原生（Seedream 图像）。**同步**族：只有 create、无轮询。
+ *
+ * 为什么要它：通用中转的改图走 `chat/completions` 多模态（chat_image_parts）——那是给聊天模型用的路，
+ * 而 Seedream 不是聊天模型。于是「中转代理了方舟、但 Nomi 仍把 Seedream 当聊天模型改图」= 改图不按原图
+ * 甚至直接失败。原生形状里改图是 `image ← image_urls`（整数组），已在 volcengineImages 真实 E2E 出图验证。
+ *
+ * 与视频 profile 同在 `/api/v3` 命名空间——中转若代理了方舟视频，通常同时代理图像，探测会各探各的。
+ * 全 family 共用同一份 op（model 字段是 `{{model.modelKey}}` 动态值），故取任一模型的 mappings 即可。
+ */
+function volcengineSeedreamProfile(): NativeWireProfile {
+  const model = VOLCENGINE_IMAGE_MODELS.find((m) => m.archetypeId === "volcengine-seedream");
+  const create: Partial<Record<ProfileKind, HttpOperation>> = {};
+  for (const mapping of model?.mappings ?? []) {
+    // 原生端点不在 /v1 命名空间下；中转用户常把地址填成 .../v1 → 必须从主机根拼。
+    create[mapping.taskKind] = { ...mapping.create, pathFrom: "host-root" };
+  }
+  return {
+    archetypeId: "volcengine-seedream",
+    wireName: "火山方舟原生",
+    probePath: "/api/v3/images/generations",
+    create,
+  };
+}
+
+const PROFILES: NativeWireProfile[] = [volcengineSeedanceProfile(), volcengineSeedreamProfile()];
 
 /** 按档案 id 查原生 wire 配方；没有就返回 null（该模型没有可复用的原生形状）。 */
 export function nativeWireProfileForArchetype(archetypeId: string | null | undefined): NativeWireProfile | null {

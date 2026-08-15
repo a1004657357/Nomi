@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeJsonFileAtomic } from "../jsonFile";
-import { normalizeRecentWorkspaceEntry, type RecentWorkspaceEntry, type WorkspaceProjectRecordV2 } from "./workspaceTypes";
+import {
+  normalizeRecentWorkspaceEntry,
+  type RecentWorkspaceEntry,
+  type WorkspaceOrigin,
+  type WorkspaceProjectRecordV2,
+} from "./workspaceTypes";
 
 function readRecentWorkspaceEntries(settingsRoot: string): RecentWorkspaceEntry[] {
   const registryPath = recentWorkspacesPath(settingsRoot);
@@ -105,22 +110,71 @@ export function findRecentWorkspace(
   return entry ? withMissingState(entry) : null;
 }
 
-export function rememberWorkspace(settingsRoot: string, record: WorkspaceProjectRecordV2): RecentWorkspaceEntry[] {
+function storedOrigin(entry: RecentWorkspaceEntry | undefined): WorkspaceOrigin | undefined {
+  if (entry?.source === "native" && entry.nativeRootPath) {
+    return { source: "native", nativeRootPath: path.resolve(entry.nativeRootPath) };
+  }
+  return entry?.source === "folder" ? { source: "folder" } : undefined;
+}
+
+function strictDescendantOf(rootPath: string, candidatePath: string): boolean {
+  const root = path.resolve(rootPath);
+  const candidate = path.resolve(candidatePath);
+  return candidate !== root && candidate.startsWith(`${root}${path.sep}`);
+}
+
+/**
+ * 老 registry 没有来源字段。切换默认位置前，必须用“旧默认根”冻结一次来源；之后永不重算。
+ */
+export function backfillWorkspaceOrigins(
+  settingsRoot: string,
+  defaultProjectsRoot: string,
+): RecentWorkspaceEntry[] {
+  const nativeRootPath = path.resolve(defaultProjectsRoot);
+  return withRegistryLock(settingsRoot, () => {
+    const entries = readRecentWorkspaceEntries(settingsRoot);
+    let changed = false;
+    const next = entries.map((entry) => {
+      if (storedOrigin(entry)) return entry;
+      changed = true;
+      return normalizeRecentWorkspaceEntry({
+        ...entry,
+        ...(strictDescendantOf(nativeRootPath, entry.rootPath)
+          ? { source: "native", nativeRootPath }
+          : { source: "folder" }),
+      });
+    });
+    const sorted = sortRecentWorkspaces(next);
+    if (changed) writeRecentWorkspaces(settingsRoot, sorted);
+    return sorted.map((entry) => withMissingState(entry));
+  });
+}
+
+export function rememberWorkspace(
+  settingsRoot: string,
+  record: WorkspaceProjectRecordV2,
+  origin?: WorkspaceOrigin,
+): RecentWorkspaceEntry[] {
   if (!record.lastKnownRootPath) {
     throw new Error("Workspace registry entry requires rootPath from the selected workspace");
   }
 
-  const rootPath = path.resolve(record.lastKnownRootPath);
-  const nextEntry = normalizeRecentWorkspaceEntry({
-    id: record.id,
-    name: record.name,
-    rootPath,
-    lastOpenedAt: Date.now(),
-    missing: !fs.existsSync(rootPath),
-  });
   // 锁内重读→改→写：与并发的 host/app 串行，杜绝「后写覆盖先写丢条目」。
   return withRegistryLock(settingsRoot, () => {
-    const entries = readRecentWorkspaceEntries(settingsRoot).filter((entry) => entry.id !== record.id);
+    const currentEntries = readRecentWorkspaceEntries(settingsRoot);
+    const existing = currentEntries.find((entry) => entry.id === record.id);
+    // 已冻结的来源优先：保存/恢复/legacy 再发现都不能把外部项目改成 native。
+    const effectiveOrigin = storedOrigin(existing) ?? origin;
+    const rootPath = path.resolve(record.lastKnownRootPath as string);
+    const nextEntry = normalizeRecentWorkspaceEntry({
+      id: record.id,
+      name: record.name,
+      rootPath,
+      lastOpenedAt: Date.now(),
+      missing: !fs.existsSync(rootPath),
+      ...effectiveOrigin,
+    });
+    const entries = currentEntries.filter((entry) => entry.id !== record.id);
     const next = sortRecentWorkspaces([nextEntry, ...entries]);
     writeRecentWorkspaces(settingsRoot, next);
     return next;

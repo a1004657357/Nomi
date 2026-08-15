@@ -1,8 +1,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import type { GenerationCanvasNode, GenerationProvenance } from '../model/generationCanvasTypes'
+import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { cn } from '../../../utils/cn'
-import { WorkbenchButton } from '../../../design'
 
 /**
  * Phase E Task E11 — Provenance viewer.
@@ -19,7 +18,6 @@ type Props = {
   open: boolean
   onClose: () => void
   /** Optional regenerate handler — if absent, button is hidden. */
-  onRegenerate?: (provenance: GenerationProvenance) => void
 }
 
 function copyToClipboard(text: string): void {
@@ -31,7 +29,7 @@ function copyToClipboard(text: string): void {
   }
 }
 
-export default function ProvenancePanel({ node, open, onClose, onRegenerate }: Props): JSX.Element | null {
+export default function ProvenancePanel({ node, open, onClose }: Props): JSX.Element | null {
   const { t, i18n } = useTranslation()
   if (!open) return null
   const provenance = node.result?.provenance
@@ -134,17 +132,6 @@ export default function ProvenancePanel({ node, open, onClose, onRegenerate }: P
             ) : null}
           </div>
         )}
-
-        <div className="flex items-center justify-end gap-2 mt-5 pt-3 border-t border-nomi-line-soft">
-          {provenance && onRegenerate ? (
-            <WorkbenchButton variant="primary" onClick={() => onRegenerate(provenance)}>
-              {t('generationCommon.provenance.regenerate')}
-            </WorkbenchButton>
-          ) : null}
-          <WorkbenchButton variant="default" onClick={onClose}>
-            {t('common.close')}
-          </WorkbenchButton>
-        </div>
       </div>
     </div>
   )

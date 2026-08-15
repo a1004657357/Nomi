@@ -18,6 +18,19 @@ describe("taskTemplateParams — 时长类型", () => {
   });
 });
 
+describe("taskTemplateParams — 数字线参数", () => {
+  it("speed 字符串归一化为 number（修复中转 TTS 的严格 JSON 类型错误）", () => {
+    expect(taskTemplateParams({ extras: { speed: " 1.5 " } }).speed).toBe(1.5);
+  });
+  it("speed number 原样保留，缺省不凭空造字段", () => {
+    expect(taskTemplateParams({ extras: { speed: 0.75 } }).speed).toBe(0.75);
+    expect(taskTemplateParams({ extras: {} })).not.toHaveProperty("speed");
+  });
+  it("非法 speed 不静默改成默认值", () => {
+    expect(taskTemplateParams({ extras: { speed: "fast" } }).speed).toBe("fast");
+  });
+});
+
 describe("taskTemplateParams — 档案参考输入（omni）", () => {
   it("archetypeInput 的 reference_image_urls 透传进 params（数组），generate_audio 布尔原样", () => {
     const params = taskTemplateParams({

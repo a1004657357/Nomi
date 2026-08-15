@@ -32,7 +32,12 @@ export function referenceInputParams(extras: JsonRecord): JsonRecord {
   const videoUrls = stringArray(extras.referenceVideoUrls);
   const audioUrls = stringArray(extras.referenceAudioUrls);
   if (imageUrls.length) out.reference_image_urls = imageUrls;
-  if (videoUrls.length) out.reference_video_urls = videoUrls;
+  if (videoUrls.length) {
+    out.reference_video_urls = videoUrls;
+    // 单源视频的标准键（与 first_frame_url 同构）：「视频进视频出」的工作流（补帧/视频超分/
+    // 视频去背景）只吃一条源视频，模板引用它比引用数组第 0 项直白得多。
+    out.source_video_url = videoUrls[0];
+  }
   if (audioUrls.length) out.reference_audio_urls = audioUrls;
 
   out.reference_images = Array.isArray(extras.referenceImages) ? extras.referenceImages : [];

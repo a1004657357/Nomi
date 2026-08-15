@@ -142,9 +142,7 @@ export function NetworkSection(): JSX.Element | null {
         <span
           className={cn(
             'inline-flex items-center gap-1.5 px-2 py-[3px] rounded-full text-micro font-semibold',
-            pill.ok
-              ? 'bg-[var(--workbench-success-soft)] text-[var(--workbench-success-ink)]'
-              : 'bg-nomi-ink-10 text-nomi-ink-60',
+            'bg-nomi-ink-10 text-nomi-ink-60',
           )}
         >
           <span className={cn('w-1.5 h-1.5 rounded-full', pill.ok ? 'bg-workbench-success' : 'bg-nomi-ink-30')} />

@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>控件分层法 · 四面样张 v1（2026-08-02）</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" />
+<style>
+:root{
+  --nomi-bg: oklch(0.985 0.003 90);
+  --nomi-paper: oklch(1 0 0);
+  --nomi-ink: oklch(0.22 0.01 80);
+  --nomi-ink-80: oklch(0.32 0.01 80);
+  --nomi-ink-60: oklch(0.50 0.01 80);
+  --nomi-ink-45: oklch(0.63 0.01 80);
+  --nomi-ink-30: oklch(0.78 0.01 80);
+  --nomi-ink-10: oklch(0.94 0.003 80);
+  --nomi-ink-05: oklch(0.97 0.003 80);
+  --nomi-line: oklch(0.91 0.004 80);
+  --nomi-line-soft: oklch(0.95 0.003 80);
+  --nomi-accent: oklch(0.55 0.13 250);
+  --nomi-accent-soft: color-mix(in oklch, var(--nomi-accent) 12%, var(--nomi-paper));
+  --r-sm: 6px; --r: 10px; --r-lg: 16px;
+  --danger: oklch(0.55 0.16 25);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--nomi-bg);color:var(--nomi-ink);
+  font:13px/1.5 -apple-system,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;padding:40px 32px 80px}
+h1{font-size:24px;font-weight:400;letter-spacing:-.02em;margin:0 0 4px}
+h2{font-size:16px;font-weight:500;margin:56px 0 4px;padding-top:20px;border-top:1px solid var(--nomi-line)}
+h2:first-of-type{border-top:0;padding-top:0}
+.sub{color:var(--nomi-ink-60);font-size:13px;margin:0 0 20px;max-width:900px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+/* 横向长条（顶栏/控制条/3D 三栏）并排会被压缩失真 → 改上下堆叠、各占全宽 */
+.pair.stack{grid-template-columns:1fr;gap:14px}
+.pane{background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:var(--r);overflow:hidden}
+.pane-hd{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--nomi-line-soft);
+  font-size:12px;color:var(--nomi-ink-60)}
+.tag{font-size:11px;padding:2px 7px;border-radius:99px;font-weight:500}
+.tag-now{background:color-mix(in oklch,var(--danger) 10%,var(--nomi-paper));color:var(--danger)}
+.tag-new{background:var(--nomi-accent-soft);color:var(--nomi-accent)}
+.count{margin-left:auto;font-variant-numeric:tabular-nums;font-size:11px;color:var(--nomi-ink-45)}
+.pane-bd{padding:16px;background:var(--nomi-bg)}
+.note{font-size:12px;color:var(--nomi-ink-60);margin:10px 2px 0;line-height:1.65}
+.note b{font-weight:500;color:var(--nomi-ink)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--nomi-ink-60);margin:12px 0 0}
+.legend i{font-style:normal;display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+/* ---- 通用 App 控件（贴真实 token/尺寸） ---- */
+.bar{display:flex;align-items:center;height:44px;padding:0 14px;background:var(--nomi-paper);
+  border-bottom:1px solid var(--nomi-line);gap:10px}
+.brand{display:flex;align-items:center;gap:6px;font-weight:500;letter-spacing:-.01em}
+.brand .dot{width:16px;height:16px;border-radius:4px;background:var(--nomi-ink)}
+.crumb{display:inline-flex;align-items:center;height:26px;border:1px solid var(--nomi-line);
+  border-radius:var(--r-sm);background:var(--nomi-bg);overflow:hidden;font-size:12px}
+.crumb span{padding:0 9px;line-height:24px}
+.crumb .lib{color:var(--nomi-ink-45)}
+.crumb .arrow{color:var(--nomi-ink-30);padding:0 1px}
+.stepper{display:inline-flex;border:1px solid var(--nomi-line);border-radius:99px;background:var(--nomi-bg);padding:2px;gap:2px}
+.stepper b{font-weight:400;font-size:12px;padding:3px 12px;border-radius:99px;color:var(--nomi-ink-60)}
+.stepper b.on{background:var(--nomi-paper);color:var(--nomi-ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.spacer{flex:1}
+.gbtn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border-radius:var(--r-sm);
+  border:1px solid transparent;background:transparent;color:var(--nomi-ink-80);font-size:12px;white-space:nowrap}
+.gbtn.icon{width:28px;padding:0;justify-content:center}
+.gbtn.primary{background:var(--nomi-ink);color:var(--nomi-paper)}
+.gbtn.ghosted{border-color:var(--nomi-line)}
+.hi{outline:2px solid var(--danger);outline-offset:1px;border-radius:var(--r-sm)}
+.hi-ok{outline:2px solid var(--nomi-accent);outline-offset:1px;border-radius:var(--r-sm)}
+.menu{margin-top:8px;width:210px;background:var(--nomi-paper);border:1px solid var(--nomi-line);
+  border-radius:var(--r);padding:5px;box-shadow:0 8px 26px rgba(0,0,0,.10)}
+.menu .mi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--r-sm);font-size:12px;color:var(--nomi-ink-80)}
+.menu .mi i{color:var(--nomi-ink-45);font-size:15px}
+.menu .sep{height:1px;background:var(--nomi-line-soft);margin:4px 6px}
+.menu .grp{font-size:11px;color:var(--nomi-ink-45);padding:5px 8px 3px}
+
+/* ---- 画布节点 ---- */
+.node-stage{padding:34px 10px 10px;display:flex;justify-content:center}
+.node{width:352px;position:relative}
+.floatbar{position:absolute;top:-34px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:2px;
+  background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:99px;padding:3px 5px;
+  box-shadow:0 6px 20px rgba(0,0,0,.10);white-space:nowrap}
+.fb{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 7px;border-radius:99px;font-size:11px;color:var(--nomi-ink-60)}
+.fb.acc{color:var(--nomi-accent);background:var(--nomi-accent-soft)}
+.fb i{font-size:13px}
+.fbdiv{width:1px;height:14px;background:var(--nomi-line);margin:0 2px}
+.card{border:1px solid var(--nomi-line);border-radius:var(--r);background:var(--nomi-paper);overflow:hidden;
+  box-shadow:0 4px 14px rgba(0,0,0,.06);position:relative}
+.thumb{height:132px;background:
+  repeating-linear-gradient(45deg,var(--nomi-ink-05) 0 10px,var(--nomi-ink-10) 10px 20px);position:relative}
+.badge{position:absolute;top:8px;left:8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  background:rgba(255,255,255,.85);color:var(--nomi-ink-60);padding:2px 6px;border-radius:var(--r-sm)}
+.tr{position:absolute;top:7px;right:7px;display:flex;gap:3px}
+.tr b{width:22px;height:22px;border-radius:var(--r-sm);background:rgba(255,255,255,.9);display:grid;place-items:center;
+  color:var(--nomi-ink-60);font-weight:400}
+.tr b i{font-size:13px}
+.composer{border-top:1px solid var(--nomi-line);padding:10px;display:flex;flex-direction:column;gap:8px}
+.refrow{display:flex;align-items:center;gap:6px}
+.slot{width:30px;height:30px;border-radius:var(--r-sm);border:1px dashed var(--nomi-ink-30);display:grid;place-items:center;
+  color:var(--nomi-ink-30);font-size:12px}
+.slot.filled{border-style:solid;background:var(--nomi-ink-10);border-color:var(--nomi-line)}
+.prompt{min-height:44px;font-size:12px;color:var(--nomi-ink-60);line-height:1.6}
+.footrow{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 9px;border-radius:99px;
+  border:1px solid var(--nomi-line);font-size:11px;color:var(--nomi-ink-60);background:transparent;white-space:nowrap}
+.chip i{font-size:12px}
+.chip.plain{border-color:transparent}
+.go{margin-left:auto;width:28px;height:28px;border-radius:50%;background:var(--nomi-ink);color:var(--nomi-paper);
+  display:grid;place-items:center;font-size:13px}
+
+/* ---- 剪辑控制条 ---- */
+.ctlbar{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;padding:6px;
+  border:1px solid var(--nomi-line);border-radius:var(--r-lg);background:var(--nomi-paper)}
+.cb{display:inline-flex;align-items:center;justify-content:center;height:26px;min-width:26px;padding:0 5px;
+  border-radius:var(--r-sm);color:var(--nomi-ink-60);font-size:12px}
+.cb.play{width:28px;height:28px;border-radius:50%;background:var(--nomi-ink);color:var(--nomi-paper)}
+.cb.sel{border:1px solid var(--nomi-line);border-radius:var(--r-sm);padding:0 8px;font-size:11px;gap:5px}
+.cb.exp{background:var(--nomi-ink);color:var(--nomi-paper);border-radius:99px;padding:0 11px;height:26px;font-size:11px;gap:5px}
+.cbsep{width:1px;height:16px;background:var(--nomi-line-soft)}
+.range{width:46px;height:3px;border-radius:2px;background:var(--nomi-ink-10);position:relative}
+.range::after{content:"";position:absolute;left:0;top:0;height:3px;width:60%;background:var(--nomi-accent);border-radius:2px}
+.tl{margin-top:10px;border:1px solid var(--nomi-line);border-radius:var(--r);background:var(--nomi-paper);padding:8px;position:relative}
+.tlhd{position:absolute;top:7px;right:8px;display:inline-flex;align-items:center;gap:1px;
+  background:rgba(255,255,255,.86);border-radius:99px;padding:1px}
+.tlhd .t{height:24px;min-width:26px;padding:0 6px;display:inline-grid;place-items:center;border-radius:var(--r-sm);
+  color:var(--nomi-ink-60);font-size:11px}
+.tlhd .t.acc{color:var(--nomi-accent)}
+.ruler{height:14px;border-bottom:1px solid var(--nomi-line-soft);margin-bottom:6px}
+.track{height:34px;border-radius:var(--r-sm);background:var(--nomi-ink-05);display:flex;gap:3px;padding:3px;margin-bottom:5px}
+.clip{width:74px;border-radius:4px;background:var(--nomi-ink-10);border:1px solid var(--nomi-line);position:relative}
+.clip.on{border-color:var(--nomi-accent);background:var(--nomi-accent-soft)}
+.cliptools{position:absolute;top:-27px;left:50%;transform:translateX(-50%);display:flex;gap:1px;background:var(--nomi-paper);
+  border:1px solid var(--nomi-line);border-radius:99px;padding:2px 3px;box-shadow:0 4px 14px rgba(0,0,0,.10);white-space:nowrap}
+.cliptools b{width:22px;height:20px;display:grid;place-items:center;border-radius:99px;color:var(--nomi-ink-60);font-weight:400}
+.cliptools b i{font-size:12px}
+.cliptools b.acc{color:var(--nomi-accent)}
+
+/* ---- 3D ---- */
+.s3{border:1px solid var(--nomi-line);border-radius:var(--r);overflow:hidden;background:var(--nomi-paper)}
+.s3hd{display:flex;align-items:center;gap:8px;height:38px;padding:0 10px;border-bottom:1px solid var(--nomi-line);font-size:12px}
+.s3body{display:grid;grid-template-columns:150px 1fr 252px;min-height:430px}
+.s3col{padding:10px;font-size:12px}
+.s3col.l{border-right:1px solid var(--nomi-line-soft)}
+.s3col.r{border-left:1px solid var(--nomi-line-soft);background:var(--nomi-paper)}
+.s3view{background:repeating-linear-gradient(45deg,var(--nomi-ink-05) 0 12px,var(--nomi-ink-10) 12px 24px);position:relative}
+.s3ttl{color:var(--nomi-ink-45);margin:0 0 6px;font-size:10px;letter-spacing:.05em;text-transform:uppercase}
+.s3row{display:flex;align-items:center;gap:5px;padding:3px 4px;border-radius:4px;color:var(--nomi-ink-80)}
+.s3row i{font-size:12px;color:var(--nomi-ink-45)}
+.s3grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
+.s3grid b{font-weight:400;font-size:11px;text-align:center;padding:4px 2px;border:1px solid var(--nomi-line);
+  border-radius:4px;color:var(--nomi-ink-60)}
+.s3sl{height:3px;border-radius:2px;background:var(--nomi-ink-10);margin:6px 0}
+.s3fold{display:flex;align-items:center;gap:5px;padding:5px 6px;border:1px solid var(--nomi-line);border-radius:var(--r-sm);
+  color:var(--nomi-ink-60);font-size:11px;margin-top:6px}
+.s3btm{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:4px;
+  background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:99px;padding:3px 5px;font-size:11px}
+.s3btm b{font-weight:400;padding:3px 8px;border-radius:99px;color:var(--nomi-ink-60)}
+.s3ov{position:absolute;top:8px;left:8px;display:flex;gap:4px}
+.s3ov b{font-weight:400;font-size:10px;padding:3px 7px;border-radius:99px;background:rgba(255,255,255,.88);color:var(--nomi-ink-60)}
+.s3cam{position:absolute;top:8px;right:8px;width:150px;border:1px solid var(--nomi-line);border-radius:var(--r-sm);
+  background:var(--nomi-paper);overflow:hidden}
+.s3cam .h{font-size:10px;padding:3px 6px;color:var(--nomi-ink-60);border-bottom:1px solid var(--nomi-line-soft)}
+.s3cam .v{height:74px;background:var(--nomi-ink-10)}
+.s3cam .f{display:flex;gap:2px;padding:4px}
+.s3cam .f b{font-weight:400;font-size:9px;padding:2px 4px;border:1px solid var(--nomi-line);border-radius:3px;color:var(--nomi-ink-60)}
+</style>
+</head>
+<body>
+
+<h1>控件分层法 · 四面样张 v1</h1>
+<p class="sub">
+判定：<b>用户 10 次里有几次会用它。</b> ≥7 次 = L1 常驻（每面 ≤5 个功能簇）｜3–7 次 = L2 选中/hover 才出｜1–3 次 = L3 收进 ▾｜&lt;1 次 = L4 溢出菜单或只留快捷键。
+左栏是<b>今天的真实布局</b>（按组件源码逐项复原，非脑补）；右栏是按这条法重排后的提案。红框 = 该降级的，蓝框 = 新的收纳口。
+</p>
+<div class="legend">
+  <span><i style="background:oklch(0.55 0.16 25)"></i>现状里超预算 / 该降级</span>
+  <span><i style="background:oklch(0.55 0.13 250)"></i>提案的新收纳口</span>
+</div>
+
+<!-- ══════════════ 1. 顶栏 ══════════════ -->
+<h2>一、顶栏：右簇 7 个 → 2 个常驻 + 1 个情境</h2>
+<p class="sub">现在右簇把「主流水线动作（模型接入·导出·任务）」「学习入口（上手）」「环境设置（语言·外观·浏览器·设置）」三类心智平铺在一条，没有分组、只靠 <code>gap-2</code> 排排坐。</p>
+<div class="pair stack">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 顶栏 · mac<span class="count">右簇 7 个</span></div>
+    <div class="pane-bd" style="padding:0">
+      <div class="bar">
+        <div class="brand"><span class="dot"></span>Nomi</div>
+        <div class="crumb"><span class="lib">项目库</span><span class="arrow">›</span><span>星尘旅人</span></div>
+        <div class="spacer"></div>
+        <div class="stepper"><b>创作</b><b class="on">生成</b><b>预览</b></div>
+        <div class="spacer"></div>
+        <div class="hi" style="display:flex;gap:6px;align-items:center">
+          <span class="gbtn icon"><i class="ti ti-progress"></i></span>
+          <span class="gbtn icon">文/A</span>
+          <span class="gbtn"><i class="ti ti-checklist"></i>上手 2/4</span>
+          <span class="gbtn"><i class="ti ti-browser"></i>浏览器</span>
+          <span class="gbtn icon"><i class="ti ti-settings"></i></span>
+          <span class="gbtn"><i class="ti ti-plug-connected"></i>模型接入</span>
+          <span class="gbtn primary"><i class="ti ti-download"></i>导出</span>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 16px 16px">
+      <p class="note">7 个控件、7 类心智。「切语言」和「导出成片」视觉权重几乎一样，只能靠图标记忆。<br>
+      「导出」在生成页点了其实只是<b>跳到预览页</b>——一个按钮同时承担导航和执行两义。</p>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">提案</span> 顶栏 · mac<span class="count">常驻 2 + 情境 2</span></div>
+    <div class="pane-bd" style="padding:0">
+      <div class="bar">
+        <div class="brand"><span class="dot"></span>Nomi</div>
+        <div class="crumb"><span class="lib">项目库</span><span class="arrow">›</span><span>星尘旅人</span></div>
+        <div class="spacer"></div>
+        <div class="stepper"><b>创作</b><b class="on">生成</b><b>预览</b></div>
+        <div class="spacer"></div>
+        <span class="gbtn icon" title="任务（入口常驻）"><i class="ti ti-list-details"></i></span>
+        <span class="gbtn ghosted" title="上手未完成时才常驻"><i class="ti ti-plug-connected"></i>模型接入</span>
+        <span class="gbtn primary"><i class="ti ti-arrow-right"></i>去出片</span>
+        <span class="gbtn icon hi-ok"><i class="ti ti-dots"></i></span>
+      </div>
+      <div style="display:flex;justify-content:flex-end;padding:0 14px">
+        <div class="menu">
+          <div class="grp">这个项目</div>
+          <div class="mi"><i class="ti ti-browser"></i>打开浏览器</div>
+          <div class="mi"><i class="ti ti-checklist"></i>上手引导 <span style="margin-left:auto;color:var(--nomi-ink-45)">2/4</span></div>
+          <div class="sep"></div>
+          <div class="grp">应用</div>
+          <div class="mi"><i class="ti ti-settings"></i>设置</div>
+          <div class="mi"><i class="ti ti-language"></i>语言 <span style="margin-left:auto;color:var(--nomi-ink-45)">简体中文</span></div>
+          <div class="mi"><i class="ti ti-moon"></i>外观 <span style="margin-left:auto;color:var(--nomi-ink-45)">浅色</span></div>
+          <div class="mi"><i class="ti ti-info-circle"></i>关于与更新</div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 16px 16px">
+      <p class="note">
+      <b>任务</b>入口常驻（空队列无徽标，有任务显示数量和状态）；<b>模型接入</b>改成上手 4/4 后自动收进 ⋯（和上手清单同一套「学完就消失」的逻辑，derive 不写死）。<br>
+      <b>「导出」拆成两个诚实的词</b>：不在预览页时叫<b>「去出片」</b>（它就是跳转），在预览页时顶栏这颗<b>隐藏</b>，控制条那颗「导出 MP4」是唯一的家。<br>
+      稳态下右侧至少保留<b>「任务」+「去出片」+ ⋯</b> 三颗。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 2. 画布节点 ══════════════ -->
+<h2>二、画布节点：同屏 30+ → 5 个功能簇</h2>
+<p class="sub">全 App 最挤的一处。图片节点被选中且 hover 时，「图片编辑」（上方浮条 9 件）和「生成」（下方 composer 7 件）两组心智同时在场，加上卡片本身的角标/把手/缩放点，同屏 30+ 个可点位。</p>
+<div class="pair">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 图片节点 · 成功态 · 选中 + hover<span class="count">同屏 30+</span></div>
+    <div class="pane-bd">
+      <div class="node-stage"><div class="node">
+        <div class="floatbar hi">
+          <span class="fb acc"><i class="ti ti-sparkles"></i>定妆</span>
+          <span class="fb"><i class="ti ti-wand"></i>AI 编辑<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="fb"><i class="ti ti-crop"></i>裁剪</span>
+          <span class="fb"><i class="ti ti-scissors"></i>抠图</span>
+          <span class="fb"><i class="ti ti-grid-dots"></i>切图<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="fb"><i class="ti ti-transform"></i>变换<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="fb"><i class="ti ti-brush"></i>画板</span>
+          <span class="fbdiv"></span>
+          <span class="fb"><i class="ti ti-maximize"></i></span>
+          <span class="fb"><i class="ti ti-download"></i>下载</span>
+        </div>
+        <div class="card">
+          <div class="thumb">
+            <span class="badge">已完成</span>
+            <div class="tr"><b><i class="ti ti-maximize"></i></b><b><i class="ti ti-info-circle"></i></b></div>
+          </div>
+          <div class="composer">
+            <div class="refrow">
+              <span class="slot filled">1</span><span class="slot filled">2</span><span class="slot">+</span>
+              <span style="flex:1"></span>
+              <span class="chip plain"><i class="ti ti-file-text"></i>提示词</span>
+            </div>
+            <div style="height:1px;background:var(--nomi-line-soft)"></div>
+            <div class="prompt">黄昏的天台，少女背对镜头，风吹起校服衣角，逆光剪影……</div>
+            <div class="footrow hi">
+              <span class="chip plain"><i class="ti ti-lock-open"></i></span>
+              <span class="chip">Seedream 4<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+              <span class="chip">16:9 · 2K<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+              <span class="chip">优化</span>
+              <span class="chip">×1</span>
+              <span class="go">↑</span>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+    <div style="padding:4px 16px 16px">
+      <p class="note">另有：8 个缩放手柄、左右 2 个连线把手、顶部时间轴拖柄、状态徽标、独立副本角标——都还没画进来。<br>
+      <b>下载有 5 个入口、放大预览有 4 个</b>（且图片的大图是<b>两套不同实现</b>）。</p>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">提案</span> 图片节点 · 成功态 · 选中 + hover<span class="count">常驻 5 簇</span></div>
+    <div class="pane-bd">
+      <div class="node-stage"><div class="node">
+        <div class="floatbar">
+          <span class="fb acc"><i class="ti ti-sparkles"></i>定妆</span>
+          <span class="fb"><i class="ti ti-crop"></i>裁剪</span>
+          <span class="fb hi-ok"><i class="ti ti-wand"></i>编辑<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        </div>
+        <div class="card">
+          <div class="thumb">
+            <span class="badge">已完成</span>
+            <div class="tr"><b><i class="ti ti-maximize"></i></b><b class="hi-ok"><i class="ti ti-dots"></i></b></div>
+          </div>
+          <div class="composer">
+            <div class="refrow">
+              <span class="slot filled">1</span><span class="slot filled">2</span><span class="slot">+</span>
+              <span style="flex:1"></span>
+              <span class="chip plain"><i class="ti ti-file-text"></i>提示词</span>
+            </div>
+            <div style="height:1px;background:var(--nomi-line-soft)"></div>
+            <div class="prompt">黄昏的天台，少女背对镜头，风吹起校服衣角，逆光剪影……</div>
+            <div class="footrow">
+              <span class="chip plain"><i class="ti ti-lock-open"></i></span>
+              <span class="chip">Seedream 4 · 16:9 · 2K<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+              <span class="chip hi-ok">更多<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+              <span class="go">↑</span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <div class="menu" style="width:150px;margin-top:0">
+            <div class="grp">编辑 ▾</div>
+            <div class="mi"><i class="ti ti-scissors"></i>抠图</div>
+            <div class="mi"><i class="ti ti-layers-subtract"></i>拆解元素</div>
+            <div class="mi"><i class="ti ti-typography"></i>改字</div>
+            <div class="mi"><i class="ti ti-grid-dots"></i>切图</div>
+            <div class="mi"><i class="ti ti-transform"></i>变换</div>
+            <div class="mi"><i class="ti ti-brush"></i>画板</div>
+          </div>
+          <div class="menu" style="width:150px;margin-top:0">
+            <div class="grp">更多 ▾</div>
+            <div class="mi"><i class="ti ti-sparkles"></i>优化提示词</div>
+            <div class="mi"><i class="ti ti-copy"></i>一次生成 ×2 / ×4</div>
+            <div class="mi"><i class="ti ti-video"></i>运镜</div>
+            <div class="sep"></div>
+            <div class="grp">⋯（卡片右上）</div>
+            <div class="mi"><i class="ti ti-download"></i>下载</div>
+            <div class="mi"><i class="ti ti-info-circle"></i>生成记录</div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+    <div style="padding:4px 16px 16px">
+      <p class="note">
+      <b>L1 五簇</b>：主生成钮 ↑ · 模型+参数（合成一句话）· 提示词 · 参考槽 · 编辑▾。<br>
+      浮条 9 → 3：<b>定妆 · 裁剪</b> 是高频直出，其余 6 个进「编辑▾」；<b>下载和预览各收敛成一个自适应入口</b>（图/视频/全景共用），两套大图实现合并成一套。<br>
+      底栏「模型 + 变体 + 参数」三颗 pill 合成一句话 <code>Seedream 4 · 16:9 · 2K</code>，点开还是现在那个参数面板——<b>不新增东西，只是把已经在的三颗合并显示</b>。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 3. 剪辑 ══════════════ -->
+<h2>三、剪辑页：控制条 15 件横铺 → 3 簇；时间轴头部不再抖</h2>
+<p class="sub">现在一条 toolbar 从「播放/音量/全屏」（审片）一路平铺到「画幅/显示/取景缩放」（构图）、「文字/字号/字体」（文字）、「导出」（出片）——4 类心智塞进一行，窗口一窄就 <code>flex-wrap</code> 换行。中间虽有 5 道分隔线，但分段没有名字，只能靠猜。</p>
+<div class="pair stack">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 播放器控制条 + 时间轴头部<span class="count">15 + 8 常驻</span></div>
+    <div class="pane-bd">
+      <div class="ctlbar hi">
+        <span class="cb play"><i class="ti ti-player-play"></i></span>
+        <span class="cb"><i class="ti ti-player-skip-back"></i></span>
+        <span class="cb"><i class="ti ti-player-skip-forward"></i></span>
+        <span class="cb" style="font-variant-numeric:tabular-nums">4.2s / 18.0s</span>
+        <span class="cb"><i class="ti ti-volume"></i></span><span class="range"></span>
+        <span class="cb"><i class="ti ti-maximize"></i></span>
+        <span class="cbsep"></span>
+        <span class="cb sel">画幅 16:9<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        <span class="cbsep"></span>
+        <span class="cb sel">显示 适应<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        <span class="cbsep"></span>
+        <span class="cb"><i class="ti ti-zoom-out"></i></span>
+        <span class="cb" style="font-size:11px">100%</span>
+        <span class="cb"><i class="ti ti-refresh"></i></span>
+        <span class="cb"><i class="ti ti-zoom-in"></i></span>
+        <span class="cbsep"></span>
+        <span class="cb sel"><i class="ti ti-letter-case"></i>文字<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        <span class="cbsep"></span>
+        <span class="cb exp"><i class="ti ti-download"></i>导出 MP4</span>
+      </div>
+      <div class="tl">
+        <div class="tlhd hi">
+          <span class="t acc"><i class="ti ti-sparkles"></i></span>
+          <span class="t"><i class="ti ti-arrow-left"></i></span>
+          <span class="t"><i class="ti ti-copy"></i></span>
+          <span class="t"><i class="ti ti-arrow-right"></i></span>
+          <span class="t acc"><i class="ti ti-wand"></i></span>
+          <span class="t"><i class="ti ti-cut"></i></span>
+          <span class="t"><i class="ti ti-arrow-back-up"></i></span>
+          <span class="t"><i class="ti ti-minus"></i></span>
+          <span class="t">100%</span>
+          <span class="t"><i class="ti ti-refresh"></i></span>
+          <span class="t"><i class="ti ti-plus"></i></span>
+          <span class="t"><i class="ti ti-trash"></i></span>
+        </div>
+        <div class="ruler"></div>
+        <div class="track"><span class="clip"></span><span class="clip on"></span><span class="clip"></span><span class="clip"></span></div>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px">
+      <p class="note">时间轴头部前 4 颗（重生成/前移/复制/后移）<b>选中片段才冒出来</b>，整条 pill 会变长——布局跟着抖。<br>
+      另外「导出」在顶栏还有一颗，「加字幕」在时间轴叠加层还有一个入口。</p>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">提案</span> 播放器控制条 + 时间轴头部<span class="count">3 + 4 簇</span></div>
+    <div class="pane-bd">
+      <div class="ctlbar">
+        <span class="cb play"><i class="ti ti-player-play"></i></span>
+        <span class="cb"><i class="ti ti-player-skip-back"></i></span>
+        <span class="cb"><i class="ti ti-player-skip-forward"></i></span>
+        <span class="cb" style="font-variant-numeric:tabular-nums">4.2s / 18.0s</span>
+        <span class="cb"><i class="ti ti-volume"></i></span><span class="range"></span>
+        <span class="cb"><i class="ti ti-maximize"></i></span>
+        <span class="cbsep"></span>
+        <span class="cb sel hi-ok"><i class="ti ti-aspect-ratio"></i>画面<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        <span class="cbsep"></span>
+        <span class="cb exp"><i class="ti ti-download"></i>导出 MP4</span>
+      </div>
+      <div style="display:flex;justify-content:center">
+        <div class="menu" style="width:196px">
+          <div class="grp">画面 ▾</div>
+          <div class="mi"><i class="ti ti-aspect-ratio"></i>画幅 <span style="margin-left:auto;color:var(--nomi-ink-45)">16:9</span></div>
+          <div class="mi"><i class="ti ti-arrows-maximize"></i>显示 <span style="margin-left:auto;color:var(--nomi-ink-45)">适应</span></div>
+          <div class="sep"></div>
+          <div class="grp">这一段的取景</div>
+          <div class="mi"><i class="ti ti-zoom-in"></i>缩放 <span style="margin-left:auto;color:var(--nomi-ink-45)">100%</span></div>
+          <div class="mi"><i class="ti ti-refresh"></i>重置取景</div>
+        </div>
+      </div>
+      <div class="tl" style="margin-top:12px">
+        <div class="tlhd">
+          <span class="t acc"><i class="ti ti-wand"></i></span>
+          <span class="t"><i class="ti ti-cut"></i></span>
+          <span class="t"><i class="ti ti-arrow-back-up"></i></span>
+          <span class="t"><i class="ti ti-minus"></i></span>
+          <span class="t">100%</span>
+          <span class="t"><i class="ti ti-plus"></i></span>
+        </div>
+        <div class="ruler"></div>
+        <div class="track" style="margin-top:26px">
+          <span class="clip"></span>
+          <span class="clip on">
+            <span class="cliptools hi-ok">
+              <b class="acc"><i class="ti ti-sparkles"></i></b>
+              <b><i class="ti ti-arrow-left"></i></b>
+              <b><i class="ti ti-copy"></i></b>
+              <b><i class="ti ti-arrow-right"></i></b>
+              <b><i class="ti ti-trash"></i></b>
+            </span>
+          </span>
+          <span class="clip"></span><span class="clip"></span>
+        </div>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px">
+      <p class="note">
+      <b>L1 三簇</b>：播放器组（播放/帧步进/时间/音量/全屏 是一个簇，别拆开数）· 画面▾ · 导出。<br>
+      「画面▾」把 <b>整片属性</b>（画幅、显示）和 <b>这一段的取景</b>（缩放、重置）分了组——现在这两类混排在同一条里，用户根本不知道改的是整片还是这一段。<br>
+      <b>选中片段的 4 个工具移到片段自己头上</b>（就近，且常驻条不再变长）；「文字」从控制条撤掉，统一走时间轴已有的 +字幕，选中文字时字号/字体就近浮现。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 4. 3D ══════════════ -->
+<h2>四、3D 导演台：同屏 90–100 → 骨架不动，长尾收纳</h2>
+<p class="sub">这一面的骨架（顶栏任务优先三选一 + 左对象 / 右属性 / 底添加）是对的，不动。挤的是三处长尾：<b>约 40 个逐骨骼姿势滑杆</b>平铺、<b>13 个运镜预设</b>三列平铺、<b>截图有三份语义</b>（视口截图 / 相机截图 / 任务 CTA）用户分不清截的是哪张。</p>
+<div class="pair stack">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 全屏 · 选中相机 · 右栏展开<span class="count">同屏 90–100</span></div>
+    <div class="pane-bd">
+      <div class="s3">
+        <div class="s3hd">
+          <i class="ti ti-cube" style="color:var(--nomi-ink-45)"></i><span>天台镜头</span>
+          <span class="stepper" style="margin-left:8px"><b>构图图</b><b class="on">人物动作</b><b>运镜参考</b></span>
+          <span class="spacer"></span>
+          <span class="cb sel">精调</span><span class="cb"><i class="ti ti-help"></i></span>
+          <span class="cb exp">开始录制</span><span class="cb"><i class="ti ti-x"></i></span>
+        </div>
+        <div class="s3body">
+          <div class="s3col l">
+            <p class="s3ttl">场景节点</p>
+            <div class="s3row"><i class="ti ti-focus-centered"></i>街道<i class="ti ti-eye" style="margin-left:auto"></i><i class="ti ti-trash"></i></div>
+            <div class="s3row"><i class="ti ti-focus-centered"></i>假人<i class="ti ti-eye" style="margin-left:auto"></i><i class="ti ti-trash"></i></div>
+            <div class="s3row"><i class="ti ti-focus-centered"></i>相机<i class="ti ti-eye" style="margin-left:auto"></i><i class="ti ti-trash"></i></div>
+          </div>
+          <div class="s3view">
+            <div class="s3ov"><b>移动</b><b>旋转</b><b>看全场</b><b class="hi">工作视图</b><b class="hi"><i class="ti ti-camera"></i></b></div>
+            <div class="s3cam">
+              <div class="h">相机 1 · 16:9</div><div class="v"></div>
+              <div class="f"><b>取景</b><b>摆正</b><b class="hi"><i class="ti ti-camera"></i></b></div>
+              <div class="f"><b>16:9</b><b>9:16</b><b>4:3</b><b>1:1</b></div>
+              <div style="padding:0 4px 5px"><div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div></div>
+            </div>
+            <div class="s3btm"><b><i class="ti ti-plus"></i> 添加</b><b><i class="ti ti-maximize"></i></b></div>
+          </div>
+          <div class="s3col r">
+            <p class="s3ttl">姿势</p>
+            <div class="s3grid">
+              <b>站立</b><b>T型</b><b>行走</b><b>跑步</b><b>坐姿</b><b>蹲下</b><b>半蹲</b><b>单膝跪</b><b>双膝跪</b><b>叉腰</b><b>指向</b><b>举手</b>
+            </div>
+            <div class="hi" style="margin-top:6px;padding:4px">
+              <div style="font-size:10px;color:var(--nomi-ink-45);margin-bottom:3px">身体前倾 / 转身 / 侧倾 …… 约 40 个滑杆</div>
+              <div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div>
+              <div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div>
+            </div>
+            <p class="s3ttl" style="margin-top:8px">整运镜</p>
+            <div class="s3grid hi">
+              <b>左环绕</b><b>右环绕</b><b>推近</b><b>拉远</b><b>升镜</b><b>降镜</b><b>左跟拍</b><b>右跟拍</b><b>左弧线</b><b>右弧线</b><b>变焦推</b><b>变焦拉</b>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px">
+      <p class="note">三处截图语义并存：画布左上「视口截图」、相机预览窗「相机截图」、顶栏任务 CTA。现在靠一个「工作视图 / 输出画面」chip 打补丁消歧。</p>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">提案</span> 全屏 · 选中相机 · 右栏展开<span class="count">同屏 ≈ 40</span></div>
+    <div class="pane-bd">
+      <div class="s3">
+        <div class="s3hd">
+          <i class="ti ti-cube" style="color:var(--nomi-ink-45)"></i><span>天台镜头</span>
+          <span class="stepper" style="margin-left:8px"><b>构图图</b><b class="on">人物动作</b><b>运镜参考</b></span>
+          <span class="spacer"></span>
+          <span class="cb sel">精调</span><span class="cb"><i class="ti ti-help"></i></span>
+          <span class="cb exp">开始录制</span><span class="cb"><i class="ti ti-x"></i></span>
+        </div>
+        <div class="s3body">
+          <div class="s3col l">
+            <p class="s3ttl">场景节点</p>
+            <div class="s3row"><i class="ti ti-focus-centered"></i>街道<i class="ti ti-eye" style="margin-left:auto"></i><i class="ti ti-trash"></i></div>
+            <div class="s3row"><i class="ti ti-focus-centered"></i>假人<i class="ti ti-eye" style="margin-left:auto"></i><i class="ti ti-trash"></i></div>
+            <div class="s3row"><i class="ti ti-focus-centered"></i>相机<i class="ti ti-eye" style="margin-left:auto"></i><i class="ti ti-trash"></i></div>
+          </div>
+          <div class="s3view">
+            <div class="s3ov"><b>移动</b><b>旋转</b><b>看全场</b><b class="hi-ok">工作视图 · 不出片</b></div>
+            <div class="s3cam">
+              <div class="h">相机 1 · 16:9</div><div class="v"></div>
+              <div class="f"><b>取景</b><b>摆正</b><b class="hi-ok">镜头 ▾</b></div>
+            </div>
+            <div class="s3btm"><b><i class="ti ti-plus"></i> 添加</b><b><i class="ti ti-maximize"></i></b></div>
+          </div>
+          <div class="s3col r">
+            <p class="s3ttl">姿势</p>
+            <div class="s3grid">
+              <b>站立</b><b>T型</b><b>行走</b><b>跑步</b><b>坐姿</b><b>蹲下</b><b>半蹲</b><b>单膝跪</b><b>双膝跪</b><b>叉腰</b><b>指向</b><b>举手</b>
+            </div>
+            <div class="s3fold hi-ok"><i class="ti ti-adjustments-horizontal"></i>逐关节微调<i class="ti ti-chevron-down" style="margin-left:auto"></i></div>
+            <p class="s3ttl" style="margin-top:10px">整运镜</p>
+            <div style="font-size:10px;color:var(--nomi-ink-45);margin-bottom:3px">环绕</div>
+            <div class="s3grid"><b>左环绕</b><b>右环绕</b><b>左弧线</b></div>
+            <div style="font-size:10px;color:var(--nomi-ink-45);margin:5px 0 3px">推拉 · 升降</div>
+            <div class="s3grid"><b>推近</b><b>拉远</b><b>升镜</b></div>
+            <div class="s3fold hi-ok"><i class="ti ti-dots"></i>更多运镜（横移 · 变焦 · 希区柯克）<i class="ti ti-chevron-down" style="margin-left:auto"></i></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px">
+      <p class="note">
+      骨架一个没动，只做三件事：<br>
+      ① <b>40 个逐骨骼滑杆</b> → 折进「逐关节微调▾」，默认只露 13 个姿势预设（普通用户从不逐关节拖）；<br>
+      ② <b>13 个运镜</b> → 按「环绕 / 推拉升降 / 横移变焦」分族，前两族直出、长尾进「更多运镜▾」；<br>
+      ③ <b>三份截图语义收成一份</b>：出片只认顶栏任务 CTA，画布上的「视口截图」和相机预览窗的「相机截图」都撤掉；视图身份 chip 保留并写清「工作视图 · 不出片」。相机预览窗的焦段/景深/手持抖动收进「镜头▾」。
+      </p>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

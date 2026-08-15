@@ -74,10 +74,47 @@ describe('connectToNode — 连一张图进图片节点自动切到「参考图/
     const dst = useGenerationCanvasStore.getState().nodes.find((n) => n.id === 'dst')
     expect((dst?.meta?.archetype as { modeId?: string } | undefined)?.modeId).toBe('edit')
   })
+
+  it('从目标左侧输入端起拖到源图 → 真边仍是源图→目标，并自动切到改图', () => {
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [node('src', 'shots'), archImageNode('dst', 't2i')],
+      edges: [],
+      selectedNodeIds: [],
+      groups: [],
+    })
+    useGenerationCanvasStore.getState().startConnection('dst', 'left')
+    const verdict = useGenerationCanvasStore.getState().connectToNode('src')
+    expect(verdict.ok).toBe(true)
+
+    const state = useGenerationCanvasStore.getState()
+    expect(state.edges).toMatchObject([{ source: 'src', target: 'dst' }])
+    const dst = state.nodes.find((n) => n.id === 'dst')
+    expect((dst?.meta?.archetype as { modeId?: string } | undefined)?.modeId).toBe('edit')
+  })
+})
+
+describe('边命令的唯一身份', () => {
+  it('同两点多语义边改标签时只改命中的那一条', () => {
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [node('src', 'shots'), node('dst', 'shots')],
+      edges: [],
+      selectedNodeIds: [],
+      groups: [],
+    })
+    const state = useGenerationCanvasStore.getState()
+    state.connectNodes('src', 'dst', 'first_frame')
+    state.connectNodes('src', 'dst', 'last_frame')
+    const [first, last] = useGenerationCanvasStore.getState().edges
+    expect(first?.id).not.toBe(last?.id)
+
+    useGenerationCanvasStore.getState().updateEdgeMode(last!.id, 'style_ref')
+
+    expect(useGenerationCanvasStore.getState().edges.map((edge) => edge.mode)).toEqual(['first_frame', 'style_ref'])
+  })
 })
 
 describe('edge mode id consistency', () => {
-  it('rekeys an edge when its mode changes, then allows the original mode with a unique id', () => {
+  it('preserves an edge id when its mode changes, then allows the original mode with a unique id', () => {
     useGenerationCanvasStore.getState().restoreSnapshot({
       nodes: [node('src', 'shots'), { ...node('dst', 'shots'), kind: 'video' }],
       edges: [],
@@ -93,7 +130,8 @@ describe('edge mode id consistency', () => {
     const edges = useGenerationCanvasStore.getState().edges
     expect(edges).toHaveLength(2)
     expect(new Set(edges.map((edge) => edge.id)).size).toBe(2)
-    expect(edges.map((edge) => edge.id).sort()).toEqual(['edge-src-dst-first_frame', 'edge-src-dst-reference'])
+    expect(edges.find((edge) => edge.mode === 'first_frame')?.id).toBe(originalId)
+    expect(edges.find((edge) => edge.mode === 'reference')?.id).not.toBe(originalId)
   })
 })
 
@@ -739,5 +777,30 @@ describe('selectNodesInRect (框选 AABB)', () => {
     useGenerationCanvasStore.getState().selectNode('b')
     useGenerationCanvasStore.getState().selectNodesInRect({ x1: -10, y1: -10, x2: 110, y2: 110 }, 'shots', true)
     expect([...useGenerationCanvasStore.getState().selectedNodeIds].sort()).toEqual(['a', 'b'])
+  })
+})
+
+describe('updateNodes', () => {
+  it('applies a bulk edit with one persist revision and one undo step', () => {
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [node('a', 'shots'), node('b', 'shots')],
+      edges: [],
+      selectedNodeIds: [],
+      groups: [],
+    })
+    const beforeRevision = useGenerationCanvasStore.getState().persistRevision
+
+    useGenerationCanvasStore.getState().updateNodes([
+      { nodeId: 'a', patch: { meta: { modelKey: 'model-a' } } },
+      { nodeId: 'b', patch: { meta: { modelKey: 'model-b' } } },
+    ])
+
+    let state = useGenerationCanvasStore.getState()
+    expect(state.persistRevision).toBe(beforeRevision + 1)
+    expect(state.nodes.map((candidate) => candidate.meta?.modelKey)).toEqual(['model-a', 'model-b'])
+
+    state.undo()
+    state = useGenerationCanvasStore.getState()
+    expect(state.nodes.map((candidate) => candidate.meta?.modelKey)).toEqual([undefined, undefined])
   })
 })

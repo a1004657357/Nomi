@@ -1,4 +1,5 @@
 import { createTheme } from '@mantine/core'
+import { NOMI_OVERLAY_Z_INDEX } from '../design/overlayLayers'
 
 export const nomiDesignTokens = {
   radius: {
@@ -181,13 +182,15 @@ export function buildNomiTheme() {
       Select: {
         defaultProps: {
           radius: 'xs',
-          size: 'sm'
+          size: 'sm',
+          comboboxProps: { zIndex: NOMI_OVERLAY_Z_INDEX.popover }
         }
       },
       MultiSelect: {
         defaultProps: {
           radius: 'xs',
-          size: 'sm'
+          size: 'sm',
+          comboboxProps: { zIndex: NOMI_OVERLAY_Z_INDEX.popover }
         }
       },
       Card: {
@@ -204,25 +207,29 @@ export function buildNomiTheme() {
       Modal: {
         defaultProps: {
           radius: 'md',
-          shadow: 'lg'
+          shadow: 'lg',
+          zIndex: NOMI_OVERLAY_Z_INDEX.dialog
         }
       },
       Drawer: {
         defaultProps: {
           radius: 'sm',
-          shadow: 'lg'
+          shadow: 'lg',
+          zIndex: NOMI_OVERLAY_Z_INDEX.dialog
         }
       },
       Menu: {
         defaultProps: {
           radius: 'sm',
-          shadow: 'md'
+          shadow: 'md',
+          zIndex: NOMI_OVERLAY_Z_INDEX.popover
         }
       },
       Popover: {
         defaultProps: {
           radius: 'sm',
-          shadow: 'md'
+          shadow: 'md',
+          zIndex: NOMI_OVERLAY_Z_INDEX.popover
         }
       },
       Tabs: {
@@ -244,6 +251,41 @@ export function buildNomiTheme() {
       Tooltip: {
         defaultProps: {
           openDelay: 140
+        }
+      },
+      Notification: {
+        defaultProps: {
+          radius: 'sm',
+          withBorder: true
+        },
+        styles: {
+          root: {
+            minHeight: '44px',
+            padding: '10px 10px 10px 12px',
+            backgroundColor: 'var(--nomi-paper)',
+            borderColor: 'var(--nomi-line)',
+            boxShadow: 'var(--nomi-shadow-md)'
+          },
+          icon: {
+            width: '20px',
+            height: '20px',
+            minWidth: '20px',
+            marginInlineEnd: nomiDesignTokens.spacing[2],
+            backgroundColor: 'transparent',
+            color: 'var(--notification-color, var(--nomi-accent))'
+          },
+          body: {
+            marginInlineEnd: nomiDesignTokens.spacing[1]
+          },
+          description: {
+            color: 'var(--nomi-ink-80)',
+            fontSize: nomiDesignTokens.fontSize.bodySm,
+            lineHeight: nomiDesignTokens.lineHeight.bodySm
+          },
+          closeButton: {
+            color: 'var(--nomi-ink-40)',
+            borderRadius: nomiDesignTokens.radius.field
+          }
         }
       }
     }

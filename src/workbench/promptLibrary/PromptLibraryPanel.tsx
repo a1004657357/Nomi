@@ -5,7 +5,6 @@
  */
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Portal } from '@mantine/core'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { IconX, IconBulb, IconRefresh, IconPlus } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -37,11 +36,6 @@ const CATEGORY_OPTIONS: { value: PromptCategory; labelKey: 'libraries.prompt.cat
   { value: 'image', labelKey: 'libraries.prompt.category.image' },
   { value: 'video', labelKey: 'libraries.prompt.category.video' },
 ]
-
-type Props = {
-  opened: boolean
-  onClose: () => void
-}
 
 type PromptLibraryContentProps = {
   active: boolean
@@ -343,30 +337,6 @@ export function PromptLibraryContent({
   )
 }
 
-export function PromptLibraryPanel({ opened, onClose }: Props): JSX.Element | null {
-  const { t } = useTranslation()
-  if (!opened) return null
-
-  return (
-    <Portal>
-      <div
-        className={cn('fixed inset-0 grid place-items-center p-6')}
-        style={{ zIndex: 4000, background: 'var(--nomi-scrim)', animation: 'nomi-fade 140ms cubic-bezier(.2,.7,.3,1)' }}
-        onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
-      >
-        <div
-          role="dialog"
-          aria-label={t('libraries.prompt.title')}
-          className={cn('w-[960px] max-w-full h-[86vh] flex flex-col overflow-hidden', 'bg-nomi-paper border border-nomi-line rounded-nomi-lg shadow-nomi-lg')}
-          style={{ animation: 'nomi-panel-pop 160ms cubic-bezier(.2,.7,.3,1)' }}
-        >
-          <PromptLibraryContent active={opened} onClose={onClose} />
-        </div>
-        <style>{`
-          @keyframes nomi-fade { from { opacity: 0 } to { opacity: 1 } }
-          @keyframes nomi-panel-pop { from { opacity: 0; transform: translateY(-6px) scale(0.99) } to { opacity: 1; transform: translateY(0) scale(1) } }
-        `}</style>
-      </div>
-    </Portal>
-  )
-}
+// 注：这里原本还有一个 PromptLibraryPanel（960px 全屏 modal 壳）。它只监听 nomi-open-prompt-library，
+// 全仓零 dispatch —— 永远打不开，用户从没见过（活的是侧栏用的 Content 版）。
+// 2026-08-02 §1.5 清死码时删除，并焊了 src/customEventWiring.test.ts 防同类复发。

@@ -5,7 +5,6 @@ import "./workbench-ai.css";
 import { IconBrowser } from "@tabler/icons-react";
 import { NomiBrand, NomiLoadingMark } from "../design";
 import NomiAppBar from "../ui/app-shell/NomiAppBar";
-import { AboutNomiPopover } from "../ui/app-shell/AboutNomiPopover";
 import {
     isWorkspaceMode,
     useWorkbenchStore,
@@ -144,8 +143,6 @@ export default function WorkbenchShell({
     const [mountedWorkspaceModes, setMountedWorkspaceModes] = React.useState<
         WorkspaceMode[]
     >(() => [workspaceMode]);
-    const [aboutOpen, setAboutOpen] = React.useState(false);
-    const brandRef = React.useRef<HTMLButtonElement | null>(null);
 
     // 仅 win32 自绘标题栏：mac/Linux 保持原生窗口 chrome，不渲染 windowbar（P4 通用·按平台分流）。
     const isWindows = window.nomiDesktop?.platform === "win32";
@@ -202,25 +199,17 @@ export default function WorkbenchShell({
                     aria-label={t("appBar.windowTitleBar")}
                     onDoubleClick={handleWindowTitlebarDoubleClick}
                 >
-                    <button
-                        ref={brandRef}
-                        type="button"
+                    {/* 品牌回归纯品牌（§1.5 归位）：过去这颗钮一钮四用（品牌 + 上手手册 + 明暗 + 检查更新），
+                        四件事已各自归位到设置「关于」/「通用」。mac 那面（NomiAppBar）同步处理，两平台一致。 */}
+                    <span
                         className={cn(
                             "workbench-windowbar__brand",
                             "app-no-drag relative z-[2] inline-flex h-full items-center pl-4 pr-3",
-                            "border-0 bg-transparent cursor-pointer rounded-none text-workbench-ink",
-                            "transition-[opacity] duration-[var(--nomi-transition-fast)] hover:opacity-80",
+                            "text-workbench-ink",
                         )}
-                        aria-label={t("appBar.aboutAndUpdate")}
-                        aria-haspopup="dialog"
-                        aria-expanded={aboutOpen}
-                        onClick={() => setAboutOpen((open) => !open)}
                     >
                         <NomiBrand markSize={18} wordSize={14} />
-                    </button>
-                    {aboutOpen ? (
-                        <AboutNomiPopover anchorEl={brandRef.current} onClose={() => setAboutOpen(false)} />
-                    ) : null}
+                    </span>
                     <div
                         className="app-drag relative z-[1] h-full min-w-0 flex-1"
                         data-window-drag-region="true"
@@ -259,6 +248,7 @@ export default function WorkbenchShell({
                 workspaceMode={workspaceMode}
                 onWorkspaceModeChange={handleWorkspaceModeChange}
                 projectName={projectName}
+                projectId={projectId}
                 onBackToLibrary={onBackToLibrary}
                 onOpenModelCatalog={onOpenModelCatalog}
                 onOpenSettings={onOpenSettings}

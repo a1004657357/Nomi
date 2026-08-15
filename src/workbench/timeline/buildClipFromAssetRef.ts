@@ -1,44 +1,58 @@
-import type { AssetRef } from '../assets/assetTypes'
+import type { AssetKind, AssetRef } from '../assets/assetTypes'
 import type { TimelineClip } from './timelineTypes'
 import i18n from '../../i18n'
 
-const DEFAULT_AUDIO_SECONDS = 10
+const DEFAULT_DURATION_SECONDS: Record<AssetKind, number> = {
+  image: 3,
+  video: 5,
+  audio: 10,
+}
+
+function fallbackLabel(kind: AssetKind): string {
+  if (kind === 'image') return i18n.t('assetLibrary.image')
+  if (kind === 'video') return i18n.t('assetLibrary.video')
+  return i18n.t('assetLibrary.audio')
+}
 
 /**
- * 素材库 AssetRef（音频）→ 时间轴 audio clip。
+ * Asset-library media → timeline clip.
  *
- * 与 buildClipFromGenerationNode 是姊妹：那条从画布生成节点建 clip，这条从「池里已有的素材」建。
- * 音频没有源节点 → 合成稳定 sourceNodeId（'asset:' + assetRef.id；项目文件的 id = relativePath，稳定可读）。
- * 导出/混音读 clip.url（nomi-local://），exportJobs 会 ffprobe 它拿真实时长 + 混音（见
- * docs/plan/2026-06-25-audio-first-class-timeline.md「导出侧已通」）。
- *
- * durationSeconds 由调用方离屏探测（readAudioDurationSeconds）后传入；缺省回落默认，用户可拖 trim。
+ * This is the single builder for image, video, and audio assets. Callers probe
+ * video/audio duration before invoking it; a failed probe falls back to a
+ * usable kind-specific duration so a readable local asset never becomes a
+ * dead click.
  */
-export function buildAudioClipFromAssetRef(
+export function buildClipFromAssetRef(
   asset: AssetRef,
   options: { fps: number; startFrame: number; durationSeconds?: number | null },
 ): TimelineClip | null {
-  if (asset.kind !== 'audio') return null
+  if (asset.kind !== 'image' && asset.kind !== 'video' && asset.kind !== 'audio') return null
   const url = String(asset.renderUrl || '').trim()
   if (!url) return null
 
   const fps = options.fps > 0 ? options.fps : 30
   const startFrame = Math.max(0, Math.floor(options.startFrame))
-  const seconds =
-    options.durationSeconds && options.durationSeconds > 0 ? options.durationSeconds : DEFAULT_AUDIO_SECONDS
+  const probedSeconds = options.durationSeconds && options.durationSeconds > 0
+    ? options.durationSeconds
+    : null
+  const seconds = asset.kind === 'image'
+    ? DEFAULT_DURATION_SECONDS.image
+    : probedSeconds ?? DEFAULT_DURATION_SECONDS[asset.kind]
   const frameCount = Math.max(1, Math.round(seconds * fps))
   const sourceNodeId = `asset:${asset.id}`
+  const thumbnailUrl = asset.kind === 'image' ? String(asset.thumbUrl || '').trim() : ''
 
   return {
-    id: `clip-${sourceNodeId}-audio-${startFrame}`,
-    type: 'audio',
+    id: `clip-${sourceNodeId}-${asset.kind}-${startFrame}`,
+    type: asset.kind,
     sourceNodeId,
-    label: asset.name || i18n.t('runtime.timeline.audio'),
+    label: asset.name || fallbackLabel(asset.kind),
     startFrame,
     endFrame: startFrame + frameCount,
     frameCount,
     offsetStartFrame: 0,
     offsetEndFrame: 0,
     url,
+    ...(thumbnailUrl ? { thumbnailUrl } : {}),
   }
 }

@@ -48,7 +48,7 @@ describe('timeline drop feedback', () => {
     })
   })
 
-  it('marks colliding drops invalid with a user-facing reason', () => {
+  it('碰撞不再拒收：滑入最近合法位，预览即真实落点（与移动同一碰撞模型）', () => {
     const preview = buildTimelineDropPreview({
       track: makeTrack({ clips: [makeClip({ id: 'existing', startFrame: 60, endFrame: 150 })] }),
       clip: makeClip(),
@@ -57,8 +57,11 @@ describe('timeline drop feedback', () => {
       fps: 30,
     })
 
-    expect(preview.canPlace).toBe(false)
-    expect(preview.reason).toBe('这里已有片段，试试拖到空白位置')
+    expect(preview.canPlace).toBe(true)
+    expect(preview.reason).toBeUndefined()
+    // 90 帧长、期望 30 撞 existing(60-150) → 唯一近空位是其尾部 150
+    expect(preview.startFrame).toBe(150)
+    expect(preview.endFrame).toBe(240)
   })
 
   it('marks wrong-track drops invalid with a clear reason', () => {

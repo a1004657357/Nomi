@@ -1,4 +1,4 @@
-import { canPlaceClip, frameToPixel, withClipStartFrame } from './timelineEdit'
+import { frameToPixel, resolveLegalInsertStart, withClipStartFrame } from './timelineEdit'
 import type { TimelineClip, TimelineTrack } from './timelineTypes'
 import { getTrackTypeForClipType } from './timelineTypes'
 import i18n from '../../i18n'
@@ -36,16 +36,16 @@ export function buildTimelineDropPreview(params: {
   scale: number
   fps: number
 }): TimelineDropPreview {
-  const startFrame = Math.max(0, Math.floor(Number(params.startFrame) || 0))
-  const placed = withClipStartFrame(params.clip, startFrame)
+  const desiredStart = Math.max(0, Math.floor(Number(params.startFrame) || 0))
   // v0.7.1: audio clip 落到 video 轨；getTrackTypeForClipType 做映射
-  const typeMatches = params.track.type === getTrackTypeForClipType(placed.type)
-  const canPlace = typeMatches && canPlaceClip(params.track, placed)
-  const reason = canPlace
-    ? undefined
-    : typeMatches
-      ? i18n.t('timelineEditor.track.occupied')
-      : i18n.t('timelineEditor.track.wrongType', { track: trackTypeLabel(placed.type) })
+  const typeMatches = params.track.type === getTrackTypeForClipType(params.clip.type)
+  // 同型落轨永不拒收：期望位被占则滑入最近合法空位（与移动同一碰撞模型），预览即真实落点
+  const placed = withClipStartFrame(
+    params.clip,
+    typeMatches ? resolveLegalInsertStart(params.track, params.clip, desiredStart) : desiredStart,
+  )
+  const canPlace = typeMatches
+  const reason = canPlace ? undefined : i18n.t('timelineEditor.track.wrongType', { track: trackTypeLabel(placed.type) })
 
   return {
     clip: placed,

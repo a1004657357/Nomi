@@ -1,15 +1,31 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import { IconPlugConnected } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 
-// @ suggestion 下拉(样张 v4 态②.atPicker):列出当前可引用的 image 参考缩略图,选一个插入 chip。
-// 键盘:↑↓←→ 移动、Enter 选、Esc 关(Esc 在扩展层处理)。空态:无参考时显「先加参考图」(规范 §4)。
+// @ suggestion 下拉：列出可引用的图，按「当前参考 / 画布 / 素材库」分组，打字即过滤。
+// 键盘：↑↓ 移动、Enter 选、Esc 关（Esc 在扩展层处理）。空态显「先加参考图」。
+//
+// 「当前参考」以外的两组选中后**会真的建立引用**（画布→建一条真边；素材库→落进上传参考槽），
+// 不是只在文本里留一句话——右侧那个「连上」角标就是在提前说清这件事（见 nodes/mentionCandidates.ts）。
 
-export type MentionSuggestionItem = { url: string; index: number } // index = 在有序参考图列表里的 0-based 位置
+export type MentionSuggestionItem = {
+  key: string
+  url: string
+  label: string
+  group: 'current' | 'canvas' | 'library'
+  index?: number
+}
 
 export type MentionSuggestionListRef = { onKeyDown: (args: { event: KeyboardEvent }) => boolean }
 
 type Props = { items: MentionSuggestionItem[]; command: (item: MentionSuggestionItem) => void }
+
+const GROUP_LABEL_KEY: Record<MentionSuggestionItem['group'], string> = {
+  current: 'assetLibrary.mentionGroupCurrent',
+  canvas: 'assetLibrary.mentionGroupCanvas',
+  library: 'assetLibrary.mentionGroupLibrary',
+}
 
 const AssetMentionSuggestionList = React.forwardRef<MentionSuggestionListRef, Props>(({ items, command }, ref) => {
   const { t } = useTranslation()
@@ -19,8 +35,8 @@ const AssetMentionSuggestionList = React.forwardRef<MentionSuggestionListRef, Pr
   React.useImperativeHandle(ref, () => ({
     onKeyDown: ({ event }) => {
       if (!items.length) return false
-      if (event.key === 'ArrowDown' || event.key === 'ArrowRight') { setSelected((s) => (s + 1) % items.length); return true }
-      if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') { setSelected((s) => (s - 1 + items.length) % items.length); return true }
+      if (event.key === 'ArrowDown') { setSelected((s) => (s + 1) % items.length); return true }
+      if (event.key === 'ArrowUp') { setSelected((s) => (s - 1 + items.length) % items.length); return true }
       if (event.key === 'Enter') { const it = items[selected]; if (it) command(it); return true }
       return false
     },
@@ -33,28 +49,58 @@ const AssetMentionSuggestionList = React.forwardRef<MentionSuggestionListRef, Pr
       </div>
     )
   }
+
+  let lastGroup: MentionSuggestionItem['group'] | null = null
   return (
     <div
-      className={cn('flex flex-wrap items-center gap-[6px] p-[6px] rounded-nomi-sm border border-nomi-line bg-nomi-paper shadow-nomi-sm')}
-      style={{ maxWidth: 'min(520px, calc(100vw - 16px))' }}
+      className={cn('flex flex-col gap-[1px] p-[5px] rounded-nomi-sm border border-nomi-line bg-nomi-paper shadow-nomi-sm overflow-y-auto')}
+      style={{ width: 'min(320px, calc(100vw - 16px))', maxHeight: 'min(320px, 60vh)' }}
+      data-mention-list="true"
     >
-      <span className={cn('text-nomi-ink-40 text-micro px-[2px]')}>{t('assetLibrary.mentionLabel')}</span>
-      {items.map((item, i) => (
-        <button
-          key={item.url}
-          type="button"
-          aria-label={t('assetLibrary.insertImageIndexed', { index: item.index + 1 })}
-          onMouseEnter={() => setSelected(i)}
-          onClick={() => command(item)}
-          className={cn(
-            'relative inline-flex h-[34px] items-center gap-[5px] rounded-nomi-sm overflow-hidden border border-nomi-line bg-nomi-paper pr-[7px] cursor-pointer',
-            i === selected && 'outline outline-2 outline-offset-1 outline-nomi-accent',
-          )}
-        >
-          <img src={item.url} alt="" draggable={false} className={cn('w-[34px] h-[34px] object-cover select-none shrink-0')} />
-          <span className={cn('text-micro font-medium leading-none text-nomi-ink-70 whitespace-nowrap')}>{t('assetLibrary.referenceImageIndexed', { index: item.index + 1 })}</span>
-        </button>
-      ))}
+      {items.map((item, i) => {
+        const showHeader = item.group !== lastGroup
+        lastGroup = item.group
+        return (
+          <React.Fragment key={item.key}>
+            {showHeader ? (
+              <div className={cn('px-[6px] pt-[6px] pb-[2px] text-micro text-nomi-ink-40')}>
+                {t(GROUP_LABEL_KEY[item.group])}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              data-mention-item={item.key}
+              data-mention-group={item.group}
+              aria-label={item.label}
+              onMouseEnter={() => setSelected(i)}
+              onClick={() => command(item)}
+              className={cn(
+                'flex w-full items-center gap-[8px] rounded-nomi-sm border-0 bg-transparent px-[6px] py-[4px] text-left cursor-pointer',
+                'transition-colors duration-[var(--nomi-transition-fast)]',
+                i === selected ? 'bg-nomi-accent-soft' : 'hover:bg-nomi-ink-05',
+              )}
+            >
+              <img
+                src={item.url}
+                alt=""
+                draggable={false}
+                className={cn('size-[26px] shrink-0 select-none rounded-nomi-sm object-cover bg-nomi-ink-05')}
+              />
+              <span className={cn('min-w-0 flex-1 truncate text-micro leading-none text-nomi-ink-80')}>{item.label}</span>
+              {item.group === 'current' ? (
+                <span className={cn('shrink-0 rounded-nomi-sm bg-nomi-accent-soft px-[5px] py-[2px] text-micro text-nomi-accent')}>
+                  {t('assetLibrary.referenceImageIndexed', { index: (item.index ?? 0) + 1 })}
+                </span>
+              ) : (
+                <span className={cn('inline-flex shrink-0 items-center gap-[3px] rounded-nomi-sm bg-nomi-ink-05 px-[5px] py-[2px] text-micro text-nomi-ink-60')}>
+                  <IconPlugConnected size={11} stroke={1.8} aria-hidden />
+                  {t('assetLibrary.mentionWillConnect')}
+                </span>
+              )}
+            </button>
+          </React.Fragment>
+        )
+      })}
     </div>
   )
 })

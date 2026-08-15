@@ -5,10 +5,15 @@ import { ipcMain } from "electron";
 import { probeComfyuiSystemStats } from "./comfyuiProbe";
 import {
   analyzeComfyWorkflowText,
+  analyzeComfyWorkflowTextSmart,
   importComfyWorkflowToCatalog,
   reconcileComfyWorkflowText,
+  reconcileComfyWorkflowTexts,
   updateComfyWorkflowInCatalog,
 } from "./catalog/comfyuiWorkflowImportStore";
+import { fetchComfyuiTemplateDetail, fetchComfyuiTemplates } from "./comfyuiTemplates";
+import { readCatalog } from "./catalog/catalogStore";
+import { COMFYUI_VENDOR_KEY } from "./catalog/types";
 import { listComfyuiPresets } from "./catalog/comfyuiPresets";
 import { interruptComfyuiTask, unwatchComfyuiTask, watchComfyuiTask } from "./comfyuiProgressSocket";
 
@@ -20,13 +25,26 @@ export function registerComfyuiIpc(registerSyncIpc: RegisterSyncIpc): void {
   // 自定义 workflow 导入（S3）：analyze 同步纯解析；reconcile 异步问本机 /object_info 对账缺节点/缺模型；
   // import/update 落库为用户自有 model+mapping。
   registerSyncIpc("nomi:model-catalog:comfyui:analyze-workflow", (text: unknown) => analyzeComfyWorkflowText(text));
-  ipcMain.handle("nomi:model-catalog:comfyui:reconcile-workflow", (_event, text: unknown) => reconcileComfyWorkflowText(text));
+  // 智能分析（T1）：界面格式自动借 ComfyUI 前端转 API 再分析——用户贴什么格式都吃。
+  ipcMain.handle("nomi:model-catalog:comfyui:analyze-workflow-smart", (_e, text: unknown, vendorKey: unknown) =>
+    analyzeComfyWorkflowTextSmart(text, vendorKey));
+  ipcMain.handle("nomi:model-catalog:comfyui:reconcile-workflow", (_event, text: unknown, vendorKey: unknown) => reconcileComfyWorkflowText(text, vendorKey));
+  ipcMain.handle("nomi:model-catalog:comfyui:reconcile-workflows", (_event, items: unknown, vendorKey: unknown) => reconcileComfyWorkflowTexts(items, vendorKey));
   registerSyncIpc("nomi:model-catalog:comfyui:import-workflow", (payload: unknown) => importComfyWorkflowToCatalog(payload));
   registerSyncIpc("nomi:model-catalog:comfyui:update-workflow", (payload: unknown) => updateComfyWorkflowInCatalog(payload));
   // 预置模板（S5）：静态清单，启用前经 reconcile 缺件闸、启用走既有 import 链。
   registerSyncIpc("nomi:model-catalog:comfyui:presets", () => listComfyuiPresets());
+  // 模板库（T2）：读**用户自己 ComfyUI 里的**官方模板（几百个），我们零维护。
+  const comfyBaseUrl = (vendorKey: unknown): string => {
+    const key = String(vendorKey || "").trim() || COMFYUI_VENDOR_KEY;
+    return String(readCatalog().vendors.find((v) => v.key === key)?.baseUrlHint || "");
+  };
+  ipcMain.handle("nomi:model-catalog:comfyui:templates", (_e, vendorKey: unknown) =>
+    fetchComfyuiTemplates(comfyBaseUrl(vendorKey)));
+  ipcMain.handle("nomi:model-catalog:comfyui:template-detail", (_e, name: unknown, vendorKey: unknown) =>
+    fetchComfyuiTemplateDetail(comfyBaseUrl(vendorKey), String(name || "")));
   // ws 进度桥（P 轨）：提交后 watch 登记 prompt_id→节点，进度/预览经 nomi:tasks:comfyui:progress 推回；
-  // interrupt = 遮罩取消按钮（/interrupt + /queue delete 双发 best-effort）。
+  // interrupt = 遮罩取消按钮（新服定向 jobs cancel；旧服只安全删除排队项）。
   ipcMain.handle("nomi:tasks:comfyui:watch", (event, payload: unknown) =>
     watchComfyuiTask((payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>, event.sender.id));
   ipcMain.handle("nomi:tasks:comfyui:unwatch", (_event, promptId: unknown) => unwatchComfyuiTask(promptId));

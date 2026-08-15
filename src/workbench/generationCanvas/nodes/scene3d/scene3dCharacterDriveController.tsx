@@ -7,10 +7,12 @@ import {
 } from './scene3dConstants'
 import {
   clearMovementKeyState,
-  eulerToArray,
-  findSceneObjectByRuntimeId,
   isEditableKeyboardTarget,
   isMovementCode,
+} from './scene3dInput'
+import {
+  eulerToArray,
+  findSceneObjectByRuntimeId,
 } from './scene3dMath'
 import {
   applyGroundTranslation,

@@ -1,11 +1,10 @@
 // Playwright Electron check for the frameless top drag region.
 // Success means BrowserWindow bounds changed after dragging the top windowbar.
-import { _electron as electron } from "playwright";
+import { launchNomiApp } from "./_launchApp.mjs";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 
 // 平台守卫：自绘标题栏/拖拽区只在 Windows（frame:false）渲染。mac/Linux 用原生窗口 chrome，
 // 这条测试不适用 → 干净跳过（exit 0），不在非 Windows 机器误报红。
@@ -14,7 +13,6 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const userData = path.join(repoRoot, ".tmp", "window-drag-e2e", String(Date.now()));
 fs.mkdirSync(userData, { recursive: true });
@@ -326,25 +324,17 @@ async function dragWindowTitlebar(app, page, dragPoint) {
   return "";
 }
 
-const launchEnv = {
-  ...process.env,
-  NOMI_E2E: "1",
-  NOMI_E2E_WINDOW_DRAG: "1",
-  NOMI_ELECTRON_USER_DATA_DIR: userData,
-};
-delete launchEnv.ELECTRON_RUN_AS_NODE;
-
 let app;
+let win;
 try {
-  app = await electron.launch({
-    executablePath: require("electron"),
-    args: [".", "--disable-gpu", `--user-data-dir=${userData}`],
-    cwd: repoRoot,
-    env: launchEnv,
-  });
+  ({ app, win } = await launchNomiApp({
+    name: "window-drag",
+    userDataDir: userData,
+    args: ["--disable-gpu"],
+    env: { NOMI_E2E_WINDOW_DRAG: "1" },
+    settleMs: 0,
+  }));
 
-  const win = await app.firstWindow();
-  await win.waitForLoadState("domcontentloaded");
   const primaryCard = win.locator('[data-variant="primary"]', { hasText: "新建空白项目" });
   await primaryCard.waitFor({ timeout: 15000 });
 
@@ -429,6 +419,7 @@ try {
       hasControlsInWindowbar: Boolean(controls),
       hasControlsInHeader: Boolean(headerControls),
       windowbarAppRegion: getComputedStyle(windowbar).getPropertyValue("-webkit-app-region"),
+      headerAppRegion: getComputedStyle(header).getPropertyValue("-webkit-app-region"),
       controlsAppRegion: controls ? getComputedStyle(controls).getPropertyValue("-webkit-app-region") : null,
     };
   });
@@ -437,6 +428,7 @@ try {
   assert(layout.hasControlsInWindowbar, "window controls live in the separate top titlebar");
   assert(!layout.hasControlsInHeader, "project header no longer contains window controls");
   assert(layout.windowbarAppRegion === "drag", `workbench titlebar uses native drag region (${layout.windowbarAppRegion})`);
+  assert(layout.headerAppRegion !== "drag", `functional app header is not a native drag region (${layout.headerAppRegion || "auto"})`);
   assert(layout.controlsAppRegion === "no-drag", `workbench window controls are excluded from native drag (${layout.controlsAppRegion})`);
   assert(Math.abs(layout.windowbar.top) <= 1, `titlebar starts at window top (top=${layout.windowbar.top})`);
   assert(layout.windowbar.height >= 30 && layout.windowbar.height <= 34, `titlebar height is 32px-ish (height=${layout.windowbar.height})`);

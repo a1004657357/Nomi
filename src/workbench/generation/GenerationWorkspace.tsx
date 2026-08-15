@@ -5,6 +5,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { cn } from '../../utils/cn'
 import { lazyWithChunkBoundary } from '../../ui/chunkBoundary'
 import { useWorkbenchStore } from '../workbenchStore'
+import TimelineMiniPreview from '../timeline/TimelineMiniPreview'
 
 const TimelinePanel = lazyWithChunkBoundary(
   'i18n:generationCommon.workspace.timelineChunk',
@@ -35,7 +36,8 @@ export default function GenerationWorkspace({
   const setWidth = useWorkbenchStore((s) => s.setAssistantWidth)
   const timeline = useWorkbenchStore((s) => s.timeline)
   const reduceMotion = useReducedMotion()
-  const [timelineCollapsed, setTimelineCollapsed] = React.useState(true)
+  const timelineCollapsed = useWorkbenchStore((state) => state.timelinePanelCollapsed)
+  const setTimelineCollapsed = useWorkbenchStore((state) => state.setTimelinePanelCollapsed)
   // 折叠态悬浮把手的真实摘要：段数（含字幕/标题卡）+ 总时长，绝不编造。
   const timelineSummary = React.useMemo(() => {
     const clipCount =
@@ -108,13 +110,14 @@ export default function GenerationWorkspace({
         )}
       >
         {canvas}
-        {/* 折叠态：底部悬浮把手——画布吃满高度，把手给一眼可见的成片摘要 + 拉起入口。 */}
+        {/* 折叠态：底部居中把手——2026-08-06 曾挪到右下「避开中央编辑通道」，但用户拍板
+            （2026-08-08 飞书反馈）时间轴是主时间观入口，应在底部中间。 */}
         {timelineCollapsed ? (
           <button
             type="button"
             className={cn(
               'workbench-generation__timeline-handle',
-              'absolute bottom-3 left-1/2 z-[8] -translate-x-1/2',
+              'absolute bottom-3 left-1/2 -translate-x-1/2 z-[8]',
               'inline-flex items-center gap-2 rounded-full px-3 py-1.5',
               'border border-[var(--workbench-border)] bg-nomi-paper shadow-workbench-pop',
               'text-body-sm font-medium text-nomi-ink',
@@ -134,6 +137,8 @@ export default function GenerationWorkspace({
             <IconChevronUp size={15} stroke={1.8} className="text-nomi-ink-60" />
           </button>
         ) : null}
+        {/* 时间轴展开时的迷你画面窗：跟播放头，治画布上盲剪（收起态自持久化）。 */}
+        {timelineCollapsed ? null : <TimelineMiniPreview />}
       </div>
       {aiSidebar ? (
         <aside
@@ -141,6 +146,8 @@ export default function GenerationWorkspace({
             'workbench-generation__ai relative',
             'grid min-w-0 min-h-0 overflow-hidden border-b border-[var(--workbench-border)]',
             aiLayout === 'overlay'
+              // 收起态胶囊置右上角（2026-08-08 飞书反馈「Nomi 生成按钮和创作框重叠」）：
+              // 浮层落画布右上，与编辑器框不重叠，遮挡面最小。
               ? 'absolute top-4 right-4 z-[80] block w-auto h-auto border-0 bg-transparent pointer-events-auto'
               : 'justify-items-end border-l border-l-[var(--workbench-border)] bg-[var(--workbench-surface)]',
           )}

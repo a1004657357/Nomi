@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>飞书自我对话反馈 · 解决对照 — 2026-08-07</title>
+<style>
+  :root{
+    --paper:#fafaf8; --ink:#1a1a18; --ink2:#5c5c57; --ink3:#9a9a92;
+    --line:#e6e6e0; --line2:#f0f0ea;
+    --green:#1a7f4b; --green-bg:#e9f5ee;
+    --amber:#a66a00; --amber-bg:#fbf2e0;
+    --red:#b4372e; --red-bg:#fbecea;
+    --blue:#2456c9; --blue-bg:#e9eefa;
+    --purple:#6b4fc9; --purple-bg:#efeafb;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--paper);color:var(--ink);line-height:1.65;padding:48px 20px 80px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1060px;margin:0 auto}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+  h1{font-size:30px;font-weight:700;letter-spacing:-.02em;margin:8px 0 6px}
+  .sub{color:var(--ink2);font-size:14px;margin-bottom:26px}
+  .banner{background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:var(--radius);padding:16px 20px;margin-bottom:26px;font-size:13.5px;color:var(--ink2)}
+  .banner b{color:var(--ink)}
+  .banner code{background:var(--line2);padding:1px 6px;border-radius:5px;font-size:12px;color:var(--ink)}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:30px}
+  .stat{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+  .stat .n{font-size:30px;font-weight:700;letter-spacing:-.02em}
+  .stat .l{font-size:12px;color:var(--ink2);margin-top:2px}
+  .stat.g .n{color:var(--green)} .stat.a .n{color:var(--amber)} .stat.r .n{color:var(--red)} .stat.b .n{color:var(--blue)}
+  h2{font-size:17px;font-weight:700;margin:34px 0 14px;display:flex;align-items:center;gap:9px}
+  h2 .dot{width:9px;height:9px;border-radius:50%}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;margin-bottom:12px;transition:box-shadow .15s}
+  .card:hover{box-shadow:0 3px 14px rgba(0,0,0,.05)}
+  .card .top{display:flex;align-items:flex-start;gap:12px}
+  .badge{flex-shrink:0;font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap;margin-top:2px}
+  .b-fixed{background:var(--green-bg);color:var(--green)}
+  .b-part{background:var(--amber-bg);color:var(--amber)}
+  .b-open{background:var(--red-bg);color:var(--red)}
+  .b-ext{background:var(--purple-bg);color:var(--purple)}
+  .b-idea{background:var(--blue-bg);color:var(--blue)}
+  .card .tt{font-size:14.5px;font-weight:600;flex:1}
+  .card .time{font-size:11.5px;color:var(--ink3);white-space:nowrap;margin-top:3px}
+  .seen{margin-top:9px;font-size:13px;color:var(--ink2);background:var(--line2);border-radius:9px;padding:9px 13px}
+  .seen b{color:var(--ink);font-weight:600}
+  .evi{margin-top:8px;font-size:12.5px;color:var(--ink3)}
+  .evi code{background:var(--line2);padding:1px 6px;border-radius:5px;font-size:11.5px;color:var(--ink2)}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12.5px;color:var(--ink2);margin-bottom:18px}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .sw{width:11px;height:11px;border-radius:3px}
+  .missing{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:8px}
+  .missing .row{display:flex;gap:12px;padding:13px 18px;align-items:flex-start;border-bottom:1px solid var(--line2)}
+  .missing .row:last-child{border-bottom:none}
+  .missing .pri{flex-shrink:0;font-size:11px;font-weight:700;color:#fff;background:var(--red);width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .missing .pri.med{background:var(--amber)}
+  .missing .txt{font-size:13.5px}
+  .missing .txt small{display:block;color:var(--ink3);font-size:12px;margin-top:2px}
+  .foot{margin-top:34px;font-size:12px;color:var(--ink3);border-top:1px solid var(--line);padding-top:16px}
+  @media(max-width:680px){.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Nomi · 反馈闭环核对</div>
+  <h1>飞书「自我对话」反馈 · 解决对照</h1>
+  <div class="sub">对话区间 2026-08-03 → 08-07 · 共 29 条消息 / 20 张截图 · 逐条对照 commit 与代码现状</div>
+
+  <div class="banner">
+    <b>⚠️ 先看版本状态（决定「已修」你那边看不看得到）：</b>
+    本地 <code>main = 0d375a95</code>，落后 <code>origin/main</code> <b>29 个 commit</b>（远端 8/6 晚–8/7 晚已推一批修复，本地还没拉）；
+    同时本地工作树有 <b>19 个文件改动未 commit</b>（拖拽、TTS speed、key 连通性测试等修复都在这，还没提交）。
+    所以「已修」分两种：<b>已推远端（你没拉）</b> 和 <b>只在工作树（没提交没推）</b>。
+  </div>
+
+  <div class="stats">
+    <div class="stat g"><div class="n">7</div><div class="l">已解决（有代码/commit 实证）</div></div>
+    <div class="stat a"><div class="n">6</div><div class="l">部分修复 / 需走查确认</div></div>
+    <div class="stat r"><div class="n">9</div><div class="l">未解决 / 缺失</div></div>
+    <div class="stat b"><div class="n">2</div><div class="l">外部阻塞 / 产品构思（非 bug）</div></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:var(--green)"></span>已解决</span>
+    <span><span class="sw" style="background:var(--amber)"></span>部分修复</span>
+    <span><span class="sw" style="background:var(--red)"></span>未解决/缺失</span>
+    <span><span class="sw" style="background:var(--purple)"></span>外部阻塞</span>
+    <span><span class="sw" style="background:var(--blue)"></span>构思/灵感</span>
+  </div>
+
+  <!-- ================= 已解决 ================= -->
+  <h2><span class="dot" style="background:var(--green)"></span>已解决（有实证）</h2>
+
+  <div class="card"><div class="top"><span class="badge b-fixed">已解决</span><div class="tt">顶栏右簇一堆图标平铺 + 浮动胶囊</div><span class="time">08-07 15:45–47 · 5 张截图</span></div>
+    <div class="seen"><b>截图看到：</b>项目库/创作/生成三页，顶栏右侧「看看 Nomi / 接入模型 / 浏览器 / 语言 / 主题」五六个图标一字平铺，旁边还悬着「Nomi 创作 / Nomi 生成」黑色浮动胶囊，右上角拥挤。</div>
+    <div class="evi">修复：<code>feeb575b</code> 顶栏右簇 7 个平铺 → 分 3 组，语言/外观/关于归位设置（§1.5 落地）。已在本地 main。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-fixed">已解决</span><div class="tt">素材库点开后不能拖动</div><span class="time">08-07 16:34</span></div>
+    <div class="evi">修复：<code>browserViewOverlay.ts</code> 原生 dragstart 捕获阶段释放 overlay 命中 + <code>BrowserAssetOverlayApp.tsx</code> finishDrag。在<b>工作树（未提交）</b>。root-causes 报告第 1 条。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-fixed">已解决</span><div class="tt">筛选按钮背景颜色有问题</div><span class="time">08-07 16:35</span></div>
+    <div class="evi">已核对：当前已用中性色 token，不再是历史截图的粉色底，未再加第二套样式。root-causes「已核对」第 1 条。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-fixed">已解决</span><div class="tt">填入 key 直接显示「可联通」，没有测试</div><span class="time">08-07 16:57</span></div>
+    <div class="evi">修复：<code>VendorOnboardCard.tsx</code> 加 connectionState 四态（未测试/测试中/已验证/失败）+ 保存后旁路调 <code>onboarding.testConnection</code> reachability probe；<code>knownVendors.ts</code> 声明 connectionTest。在<b>工作树（未提交）</b>。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-fixed">已解决</span><div class="tt">APImart 配音报 speed 类型错误（string→float64）</div><span class="time">08-07 17:02</span></div>
+    <div class="evi">修复：<code>taskParams.ts</code> 新增 <code>numericWireParam</code>，把数字字符串归一化成 JSON number 再发。在<b>工作树（未提交）</b>。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-fixed">已解决</span><div class="tt">成图卡片右上角两颗按钮压在画面上</div><span class="time">08-07 17:08</span></div>
+    <div class="seen"><b>截图看到：</b>「荣耀时刻」杂志封面镜头卡，右上角两个半透明圆形按钮（返回箭头 + ⓘ 信息）直接压在画面上，挡住标题字。</div>
+    <div class="evi">修复：<code>fe0c85f3</code> 成图卡片右上角按钮搬进 hover 浮条。已在本地 main。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-fixed">已解决</span><div class="tt">运镜参考视频没法看、点了不播放</div><span class="time">08-07 17:11</span></div>
+    <div class="seen"><b>截图看到：</b>素材库里视频卡片是灰色占位 + 播放三角（没有真实封面帧），生成面板里的参考视频也是灰占位，点播放没反应。</div>
+    <div class="evi">修复：<code>750d46e8</code> 修复视频封面并打通预览入轨（useFilmstrip / AssetVideoCover / assetLibraryUsage）。<b>在 origin/main，本地还没拉。</b></div></div>
+
+  <!-- ================= 部分 ================= -->
+  <h2><span class="dot" style="background:var(--amber)"></span>部分修复 / 需走查确认</h2>
+
+  <div class="card"><div class="top"><span class="badge b-part">部分</span><div class="tt">按钮遮挡、用户迷惑不知道怎么退出</div><span class="time">08-07 16:54</span></div>
+    <div class="seen"><b>截图看到：</b>右侧供应商面板（Hailuo 2.3 / Omni-Flash-Ext 模型标签 + 「音频1/声音」+「可以用我们的链接注册…」推广文案）一大片盖在画布上，没有明显的关闭/退出入口。</div>
+    <div class="evi">控件层级 U0–U4 已梳理落地（<code>f4213ad7</code>），但「这个面板的退出路径」需真机走查确认是否够显眼。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-part">部分</span><div class="tt">没接入火山语音却报「豆包语音凭证」错</div><span class="time">08-07 17:03</span></div>
+    <div class="evi">已修「中转模型认错身份」<code>0dff9e66</code>（13/31 内置模型认不回档案，在 main）。但「错误供应商/模型归因」是否彻底、火山语音真实接入属外部阻塞。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-part">部分</span><div class="tt">没装即梦 CLI，模型列表却出现即梦、选了报错</div><span class="time">08-07 17:09</span></div>
+    <div class="seen"><b>截图看到：</b>图生视频模型下拉里「即梦 Seedance 2.0（会员）/ 即梦多帧视频（会员）」仍在列表，用户没装 dreamina CLI，选中生成报「未找到即梦 CLI」。</div>
+    <div class="evi"><code>18d70f8b</code>「渠道发不出的参考槽不再显示」已修同类（在 main）。但「模型列表过滤未安装能力」需确认；即梦真实接入=外部阻塞。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-part">部分</span><div class="tt">3D 场景「一点都不知道该怎么用」</div><span class="time">08-07 17:16</span></div>
+    <div class="evi">Scene3DCoachMarks 引导 + 跳过按钮加 <code>data-coach-skip</code> 语义属性（<b>工作树</b>）。但整体上手引导够不够，需真机走查。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-ext">外部阻塞</span><div class="tt">Kie 已上 Seedance 2.5，Nomi 没接入</div><span class="time">08-07 17:23</span></div>
+    <div class="evi">root-causes「外部阻塞」：无真实 Kie 凭据与官方 API 规格，不能凭空接入或把未可用能力标成可用。需你提供凭据/拍板方向。</div></div>
+
+  <div class="card"><div class="top"><span class="badge b-idea">构思</span><div class="tt">手写草图：电商带货视频「一键生成」流程</div><span class="time">08-03</span></div>
+    <div class="seen"><b>截图看到（手写）：</b>场景设置 → 卖点 → 商品图 → 抄款拍照 → 套模板 → 一键生成 mp4/xml；另一张：爆款 → 换图 → 一键生成 → 零门槛 → 分享。是产品方向构思，不是 bug。</div></div>
+
+  <!-- ================= 未解决 ================= -->
+  
+  <div class="banner" style="border-left-color:var(--green);margin-top:8px">
+    <b>✅ 2026-08-08 修复落地（commit <code>50f2bf23</code> 已推 origin/main）：</b>
+    下列未解决项中 <b>8 条已修</b>：生成记录双关闭、画板按钮失灵+无出口（X→「完成」、删假死全屏按钮）、
+    3D 白屏（fit 排除离群相机）、3D 操控失灵（守卫只挡文本控件）、3D tab 点不动（引导遮罩非模态化）、
+    添加模型对话框遮罩（zIndex 4100）、上传落点（selectNode+画布 fit）、复刻提示词落点（素材盒就地反馈条）、
+    创作页上下布局（断点 1120→880）。<b>剩 1 条外部阻塞</b>：Seedance 2.5 分辨率高档位待真机验证。
+    验证：typecheck / 全量 3687 测试 / build / filesize / tokens / i18n 全过。
+  </div>
+
+<h2><span class="dot" style="background:var(--red)"></span>未解决 / 缺失（重点）</h2>
+
+  <div class="missing">
+    <div class="row"><span class="pri">1</span><div class="txt"><b>生成记录弹窗「× + 关闭」双按钮</b>（17:05「两个关闭 太傻了」）
+      <small>代码实证未修：<code>ProvenancePanel.tsx</code> 第 58 行右上角 × 和第 138 行底部「关闭」按钮都还在。建议只留右上角 ×。</small></div></div>
+    <div class="row"><span class="pri">2</span><div class="txt"><b>画板右上角「相机 + 全屏」按钮没法点击 + 编辑完没出口</b>（17:08）
+      <small>截图：画板里画了红圈蓝圈后，没有「完成/保存」按钮，不知怎么办。未见对应修复。</small></div></div>
+    <div class="row"><span class="pri">3</span><div class="txt"><b>3D 场景点按钮后白屏</b>（17:15「点这个按钮 然后就没东西了」）
+      <small>截图：点「环绕/重置」图标后人偶全消失、视图空白。<code>.scene3d-whitescreen-lab</code> 实验目录在查，未见修复落地。</small></div></div>
+    <div class="row"><span class="pri">4</span><div class="txt"><b>3D 操控相机中途失灵</b>（17:14「一开始可以 后来没法操控了」）
+      <small>截图：群众(3x3) 人偶 + 底部操控条在，但相机操控中途失效。<code>.scene3d-ctxloss-lab</code> 在查，未见修复落地。</small></div></div>
+    <div class="row"><span class="pri">5</span><div class="txt"><b>3D 顶栏「构图图/人物动作/运镜参考」tab 点不动</b>（17:15「这几个按钮都没法点击」）
+      <small>截图：处于「精调」态时，左侧三个 tab 无法点击切换。未见对应修复。</small></div></div>
+    <div class="row"><span class="pri">6</span><div class="txt"><b>「添加 AI 模型」对话框遮罩不全</b>（16:59「存在遮挡」）
+      <small>截图：对话框弹出后，右侧供应商面板没被遮罩压暗，前后层级错乱、看着都能点。未见对应修复。</small></div></div>
+    <div class="row"><span class="pri med">7</span><div class="txt"><b>上传图片传到另一个位置、没看到</b>（17:04）
+      <small>上传落点不明确。root-causes 计划任务 D 提到「图片上传落点」，但已落地清单里没有它。未见修复。</small></div></div>
+    <div class="row"><span class="pri med">8</span><div class="txt"><b>「提取画面复刻提示词」后不知道生成到哪去了</b>（17:18）
+      <small>截图：Pinterest hover 出「N 获取提示词」，点击后结果落点无提示。<code>browserPromptExtraction</code> 存在，但落点反馈不明确。未见修复。</small></div></div>
+    <div class="row"><span class="pri med">9</span><div class="txt"><b>创作页「为什么变成上下了」</b>（17:16）
+      <small>截图：文本编辑器在上、创作助手在下（上下分栏）。需确认是响应式断点还是面板状态被改，未见明确修复。</small></div></div>
+  </div>
+
+  <div class="foot">
+    依据：飞书「自我颠覆」单聊 29 条消息 + 20 张截图逐张核对 · 本地 git（main 落后 origin/main 29 commit）· 工作树 19 个未提交文件 · <code>docs/qa/2026-08-07-feishu-feedback-root-causes.md</code> 根因矩阵。<br>
+    建议下一步：先 <code>git pull</code> 把远端 29 个修复拉下来（含视频封面 750d46e8、control clarity、selection-first 等），再把工作树 19 个修复 commit + push，最后集中攻克上面 9 条未解决（3D 场景三条 + 弹窗/画板/落点是同一批「体验闭环」问题）。
+  </div>
+</div>
+</body>
+</html>

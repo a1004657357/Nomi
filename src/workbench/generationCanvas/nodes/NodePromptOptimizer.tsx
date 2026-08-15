@@ -163,7 +163,7 @@ export function NodePromptOptimizer({ node, isVideo }: { node: GenerationCanvasN
               <textarea
                 className={cn(
                   'w-full h-[52px] resize-none rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2 py-1.5',
-                  'text-body-sm text-nomi-ink placeholder:text-nomi-ink-40 outline-none focus:border-nomi-accent',
+                  'text-body-sm text-nomi-ink placeholder:text-nomi-ink-60 outline-none focus:border-nomi-accent',
                 )}
                 value={idea}
                 placeholder={t('generationCommon.optimizer.placeholder')}

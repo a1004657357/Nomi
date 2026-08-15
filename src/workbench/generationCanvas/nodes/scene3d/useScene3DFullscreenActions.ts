@@ -16,8 +16,8 @@ import {
   type Scene3DVector3,
 } from './scene3dTypes'
 import { OBJECT_LIMIT, type CrowdAddOptions } from './scene3dConstants'
+import { isEditableKeyboardTarget } from './scene3dInput'
 import {
-  isEditableKeyboardTarget,
   cloneObjectForClipboard,
   cloneCameraForClipboard,
   makePastedObject,
@@ -27,7 +27,7 @@ import {
   makeCrowdObject,
   makeCamera,
 } from './scene3dMath'
-import { nextAvailableObjectPosition } from './scene3dObjects'
+import { nextAvailableObjectPosition } from './scene3dCrowd'
 import { addObjectTrajectoryBinding } from './useScene3DTrajectoryEditing'
 import { removeTrajectoryBindingsForNode } from './scene3dTrajectoryState'
 import { useScene3DTrajectoryEditing } from './useScene3DTrajectoryEditing'

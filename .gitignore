@@ -1,5 +1,7 @@
 # Dependencies
-node_modules/
+# 不带斜杠：并行 worktree 按 CLAUDE.md 用 `ln -s` 复用主仓依赖，那是符号链接不是目录，
+# `node_modules/` 匹配不上，会以 untracked 冒出来等着被误提交。
+node_modules
 .pnpm-store/
 .npm-cache/
 
@@ -58,14 +60,21 @@ tests/ux/_marketing/
 tests/system/runs/
 .scene3d-ux-lab/
 .scene3d-panorama-lab/
+.scene3d-stamp-lab/
+.viewfinder-marker-lab/
 .onboarding-demo-lab/
 .video-playback-heal-lab/
+.library-cover-walk-lab/
 .project-asset-healthcheck-lab/
 .toolbar-order-lab/
+.text-error-lab/
 
 # 3D 预设动作校准台的本地输出（pose-lab）
 .pose-lab/
 .pose-lab-vite.log
+
+# 浏览器自动化测试 profile 缓存（含 Service Worker 缓存里的第三方 key，绝不入库）
+.independent-retest/
 
 .tmp/
 
@@ -94,16 +103,12 @@ integrations/blender/agent-harness/**/__pycache__/
 integrations/blender/agent-harness/**/*.pyc
 
 # R13 走查截图产物（scripts/*-walkthrough.mjs 输出，纯本地证据，不进 git）
-.failure-walk/
+# 通用模式覆盖所有 .{name}-walk/ 输出目录；不合模式的特例单列
+.*-walk/
+.comfyui-real-user-journey/
 .failure-walk-ok/
-.batch-walk/
-.relay-fetch-walk/
-.relay-i2v-walk/
-.retired-walk/
-.error-card-walk/
-.proxy-setting-walk/
 .model-panel-shot/
-.poll-cadence-walk/
+.custom-call-recon/
 
 # Python 运行副产物（decrypt_wechat.py 等被 import/执行时生成，绝不入库）
 __pycache__/

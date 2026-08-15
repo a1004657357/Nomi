@@ -4,8 +4,6 @@ import {
   IconBrush,
   IconCamera,
   IconCheck,
-  IconMaximize,
-  IconMinimize,
   IconPhotoPlus,
   IconTrash,
 } from '@tabler/icons-react'
@@ -129,10 +127,8 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
     const [assetDragOver, setAssetDragOver] = React.useState(false)
     const [activeLibraryTab, setActiveLibraryTab] = React.useState<WhiteboardLibraryTabKey>('board')
     const leaferCanvasRef = React.useRef<LeaferCanvasHandle | null>(null)
-    const fullscreenPanelRef = React.useRef<HTMLDivElement | null>(null)
     const fileInputRef = React.useRef<HTMLInputElement | null>(null)
     const importedInitialImageRef = React.useRef('')
-    const [isFullscreen, setIsFullscreen] = React.useState(false)
 
     const canvasDimensions = React.useMemo(() => getCanvasDimensions(state.activeRatio, 1280), [state.activeRatio])
     const assetPanelItems = React.useMemo(
@@ -218,15 +214,6 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
       importedInitialImageRef.current = initialImage.url
       void addImageToCanvas(initialImage.url, t('generationCommon.whiteboard.originalImage'))
     }, [addImageToCanvas, initialImage?.url, initialState, t])
-
-    React.useEffect(() => {
-      if (typeof document === 'undefined') return undefined
-      const handleFullscreenChange = () => {
-        setIsFullscreen(document.fullscreenElement === fullscreenPanelRef.current)
-      }
-      document.addEventListener('fullscreenchange', handleFullscreenChange)
-      return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
-    }, [])
 
     const handleUploadImage = React.useCallback(
       async (file: File | null | undefined) => {
@@ -405,16 +392,6 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
       setActiveCanvasObject(null)
     }, [state, t])
 
-    const toggleFullscreen = React.useCallback(() => {
-      const panel = fullscreenPanelRef.current
-      if (!panel || typeof document === 'undefined') return
-      if (document.fullscreenElement) {
-        void document.exitFullscreen()
-        return
-      }
-      void panel.requestFullscreen?.()
-    }, [])
-
     const handleScreenshotClick = React.useCallback(() => {
       if (focusResultsOnScreenshot) setActiveLibraryTab('results')
       onScreenshot?.()
@@ -460,14 +437,12 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
 
     return (
       <div
-        ref={fullscreenPanelRef}
         className={cn(
           'whiteboard-tool grid h-full min-h-0 w-full overflow-hidden',
           'bg-nomi-bg text-nomi-ink',
           '[--accent:var(--nomi-accent)] [--accent-strong:var(--nomi-accent)] [--canvas:var(--nomi-paper)]',
           '[--danger:var(--workbench-danger)] [--muted:var(--nomi-ink-60)] [--text:var(--nomi-ink)]',
         )}
-        style={isFullscreen ? { width: '100vw', height: '100vh' } : undefined}
       >
         <div className="flex h-full min-h-0 w-full overflow-hidden">
           <section className="grid min-h-0 min-w-0 flex-[1_1_0] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden border-r border-nomi-line-soft bg-nomi-ink-05">
@@ -500,28 +475,12 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
                 >
                   <IconCamera size={17} stroke={1.7} />
                 </ToolIconButton>
-                <ToolIconButton
-                  title={
-                    isFullscreen
-                      ? t('generationCommon.whiteboard.exitFullscreen')
-                      : t('generationCommon.whiteboard.fullscreen')
-                  }
-                  aria-label={
-                    isFullscreen
-                      ? t('generationCommon.whiteboard.exitFullscreen')
-                      : t('generationCommon.whiteboard.fullscreen')
-                  }
-                  onClick={toggleFullscreen}
-                >
-                  {isFullscreen ? <IconMinimize size={17} stroke={1.7} /> : <IconMaximize size={17} stroke={1.7} />}
-                </ToolIconButton>
               </div>
             </header>
 
             <main
               className={cn(
-                'relative grid min-h-0 place-items-center overflow-hidden bg-nomi-ink-05 [container-type:size]',
-                isFullscreen ? 'p-0' : 'p-4',
+                'relative grid min-h-0 place-items-center overflow-hidden bg-nomi-ink-05 [container-type:size] p-4',
                 assetDragOver &&
                   'after:pointer-events-none after:absolute after:inset-3 after:rounded-nomi after:border after:border-dashed after:border-nomi-accent after:bg-nomi-accent-soft/40',
               )}
@@ -535,7 +494,7 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
                 ref={leaferCanvasRef}
                 ratio={state.activeRatio}
                 dimensions={canvasDimensions}
-                fitMode={isFullscreen ? 'bounded' : 'natural'}
+                fitMode="natural"
                 activeTool={activeTool}
                 activeLayerId={state.activeLayerId}
                 layers={state.layers}
@@ -715,21 +674,19 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
             </footer>
           </section>
 
-          {!isFullscreen ? (
-            <WhiteboardLibraryPanel
-              activeObject={activeCanvasObject}
-              activeTab={activeLibraryTab}
-              assetPanelItems={assetPanelItems}
-              canvasImageItems={canvasImageItems}
-              resultItems={resultItems}
-              onActiveTabChange={setActiveLibraryTab}
-              onAssetDragEnd={() => setAssetDragOver(false)}
-              onAssetDragStart={handleAssetDragStart}
-              onDeleteTarget={deleteCanvasObject}
-              onSelectAsset={selectAssetPanelItem}
-              onToggleLayerVisibility={toggleLayerVisibility}
-            />
-          ) : null}
+          <WhiteboardLibraryPanel
+            activeObject={activeCanvasObject}
+            activeTab={activeLibraryTab}
+            assetPanelItems={assetPanelItems}
+            canvasImageItems={canvasImageItems}
+            resultItems={resultItems}
+            onActiveTabChange={setActiveLibraryTab}
+            onAssetDragEnd={() => setAssetDragOver(false)}
+            onAssetDragStart={handleAssetDragStart}
+            onDeleteTarget={deleteCanvasObject}
+            onSelectAsset={selectAssetPanelItem}
+            onToggleLayerVisibility={toggleLayerVisibility}
+          />
         </div>
         <input
           ref={fileInputRef}

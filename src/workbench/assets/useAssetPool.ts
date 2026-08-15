@@ -6,7 +6,7 @@ import React from 'react'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
 import { useWorkspaceFiles } from '../workspace/useWorkspaceFiles'
 import {
-  canvasNodeToAssetRef,
+  canvasNodeToAssetRefs,
   workspaceNodeToAssetRef,
   flattenWorkspaceFiles,
   type AssetRef,
@@ -48,8 +48,7 @@ export function useAssetPool(projectId: string | null): AssetPool {
   return React.useMemo<AssetPool>(() => {
     const canvasAssets: AssetRef[] = []
     for (const node of nodes) {
-      const ref = canvasNodeToAssetRef(node)
-      if (ref) canvasAssets.push(ref)
+      canvasAssets.push(...canvasNodeToAssetRefs(node))
     }
 
     const projectAssets: AssetRef[] = []

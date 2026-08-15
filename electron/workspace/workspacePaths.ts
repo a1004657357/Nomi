@@ -104,6 +104,17 @@ export function workspaceProjectFile(workspaceRoot: string): string {
   return assertInsideWorkspace(root, path.join(workspaceNomiDir(root), "project.json"));
 }
 
+export function workspaceProjectBackupFile(workspaceRoot: string): string {
+  const root = assertWorkspaceRoot(workspaceRoot);
+  return assertInsideWorkspace(root, path.join(workspaceNomiDir(root), "project.backup.json"));
+}
+
+export function workspaceProjectQuarantineFile(workspaceRoot: string, timestamp: number): string {
+  const root = assertWorkspaceRoot(workspaceRoot);
+  const safeTimestamp = Number.isFinite(timestamp) ? Math.max(0, Math.trunc(timestamp)) : Date.now();
+  return assertInsideWorkspace(root, path.join(workspaceNomiDir(root), `project.corrupt-${safeTimestamp}.json`));
+}
+
 export function workspaceAssetsGeneratedDir(workspaceRoot: string, date: Date = new Date()): string {
   const root = assertWorkspaceRoot(workspaceRoot);
   return assertInsideWorkspace(root, path.join(root, "assets", "generated", normalizeDateFolder(date)));

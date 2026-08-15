@@ -55,6 +55,21 @@ describe('confirmAndRunNodeVariants', () => {
     expect(after?.status).toBe('success')
   })
 
+  it('显式选择 3 张时恰好执行三次', async () => {
+    const node = useGenerationCanvasStore.getState().addNode({ kind: 'image', prompt: '三张构图' })
+    let runs = 0
+
+    await confirmAndRunNodeVariants(node.id, 3, {
+      executor: async () => {
+        runs += 1
+        return fakeResult(`three-${runs}`)
+      },
+    })
+
+    expect(confirmCalls).toBe(1)
+    expect(runs).toBe(3)
+  })
+
   it('取消确认 → 零执行零扣费', async () => {
     confirmAnswer = false
     const node = useGenerationCanvasStore.getState().addNode({ kind: 'image', prompt: '一只猫' })

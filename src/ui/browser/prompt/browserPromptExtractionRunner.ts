@@ -90,7 +90,7 @@ async function runPromptExtraction(
 ): Promise<{ title: string; prompt: string }> {
   if (!modelImageUrl) throw new Error('没有可分析的参考图')
   const brain = await getTextBrain()
-  if (!brain) throw new Error('请先在「模型接入」里启用一个支持图片输入的文本模型')
+  if (!brain) throw new Error('请先在「设置 → 模型」里启用一个支持图片输入的文本模型')
   const result = await runWorkbenchTaskByVendor(brain.vendor, {
     kind: 'image_to_prompt',
     prompt: browserPromptExtractionPromptFromSettings(settings, mode),
@@ -116,6 +116,19 @@ function fallbackTitle(request: BrowserAssetPromptCaptureRequest, extractedTitle
   return request.sourceType === 'screenshot' ? i18n.t('browserAssets.screenshotPromptTitle') : i18n.t('browserAssets.extraction.imagePrompt')
 }
 
+/** 就地反馈事件：浏览器页是原生 WebContentsView，恒盖主窗 DOM——全局 toast 用户根本看不见
+ * （2026-08-07 飞书反馈「点击提取画面复刻提示词 然后就不知道生成哪里去了」根因）。
+ * 素材盒（DOM 浮层）监听这个事件做就地反馈条。 */
+export const PROMPT_EXTRACTION_FEEDBACK_EVENT = 'nomi:prompt-extraction-feedback'
+
+function dispatchExtractionFeedback(detail: { ok: boolean; title?: string; error?: string }): void {
+  try {
+    window.dispatchEvent(new CustomEvent(PROMPT_EXTRACTION_FEEDBACK_EVENT, { detail }))
+  } catch {
+    /* 非浏览器环境（测试）静默放行 */
+  }
+}
+
 /** 浏览器截图/图片右键 → 提取提示词 → 直存主提示词库。fire-and-forget，进度/结果全走 toast。 */
 export async function runBrowserPromptExtractionToLibrary(request: BrowserAssetPromptCaptureRequest): Promise<void> {
   const mode = promptExtractionModeFromRequest(request)
@@ -134,9 +147,11 @@ export async function runBrowserPromptExtractionToLibrary(request: BrowserAssetP
       referenceImages: prepared.references,
     })
     toast(i18n.t('browserAssets.savedToPromptLibraryNamed', { name: title }), 'success')
+    dispatchExtractionFeedback({ ok: true, title })
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     console.error('[nomi:browser] 提示词提取失败:', reason)
     toast(i18n.t('browserAssets.promptExtractionFailedToast', { error: reason }), 'error')
+    dispatchExtractionFeedback({ ok: false, error: reason })
   }
 }

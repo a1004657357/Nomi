@@ -23,6 +23,7 @@ import {
 } from '../../../../config/modelArchetypes'
 import type { ImageUrlSlot } from './parameterControlModel'
 import { translateModelDisplayText } from '../../../../i18n/modelDisplayText'
+import { DEFAULT_SLOT_INPUT_KEY, modeSlotReach, type SlotReach } from '../../../../../electron/catalog/referenceReachability'
 
 export { resolveArchetypeForModel }
 export type { ModelArchetype, ArchetypeMode, ModelArchetypeVariant }
@@ -197,6 +198,26 @@ export function hasArchetypeArrayReferences(
 ): boolean {
   const mode = currentArchetypeMode(archetype, meta)
   return archetypeModeArraySlots(mode).some((slot) => readArchetypeArray(meta, slot.metaKey).length > 0)
+}
+
+/**
+ * 当前模式各槽在**这条渠道**上的真实承载力，按 assetSlots 用的存储键索引。
+ *
+ * 判据来自 electron/catalog/referenceReachability——与第三闸**同一套计算**，不另起一份（UI 说能发、
+ * 闸门判发不出，正是本轮反复在修的病）。createBody = 这条 mapping 的 create.body；拿不到时上层
+ * 一律按「不收窄」处理，绝不因为查不到就把用户的槽藏掉。
+ */
+export function archetypeModeSlotReachByKey(mode: ArchetypeMode, createBody: unknown): Record<string, SlotReach> {
+  const reach = modeSlotReach(mode.slots, createBody, mode.combineSlotsInto?.key)
+  const out: Record<string, SlotReach> = {}
+  mode.slots.forEach((slot, index) => {
+    const key =
+      FRAME_SLOT_FLAT[slot.kind]?.urlKey ??
+      ARRAY_SLOT_ROUTE[slot.kind]?.metaKey ??
+      (slot.kind === 'source_video' ? SINGLE_SLOT_META_KEY.source_video : undefined)
+    if (key) out[key] = reach[index]
+  })
+  return out
 }
 
 /** 当前模式的「源视频」单槽（HappyHorse video-edit）。返回 meta 存储键 + 标签；无则 null。 */
@@ -429,15 +450,9 @@ const SINGLE_SLOT_META_KEY: Partial<Record<ArchetypeReferenceSlotKind, string>> 
   source_video: 'sourceVideoUrl',
 }
 
-/** 缺省的 API 输入键（模型契约，供应商无关）。slot.inputKey 可覆盖。 */
-const DEFAULT_INPUT_KEY: Record<ArchetypeReferenceSlotKind, string> = {
-  first_frame: 'first_frame_url',
-  last_frame: 'last_frame_url',
-  image_ref: 'reference_image_urls',
-  video_ref: 'reference_video_urls',
-  audio_ref: 'reference_audio_urls',
-  source_video: 'video_url',
-}
+// 缺省 API 输入键（模型契约，供应商无关）的**单一真相源**在 electron/catalog/referenceReachability——
+// 渲染层（发送构造）与 electron 侧（渠道承载力判定 + 第三闸）必须同一张表，否则「UI 以为发得出、
+// 闸门判发不出」会再次分家（本轮修的正是这类）。slot.inputKey 仍可逐槽覆盖。
 const DEFAULT_AS_ARRAY: Record<ArchetypeReferenceSlotKind, boolean> = {
   first_frame: false,
   last_frame: false,
@@ -481,7 +496,7 @@ export function referenceSlotStorage(slot: { kind: ArchetypeReferenceSlotKind })
 }
 
 function slotInputKey(slot: { kind: ArchetypeReferenceSlotKind; inputKey?: string }): string {
-  return slot.inputKey ?? DEFAULT_INPUT_KEY[slot.kind]
+  return slot.inputKey ?? DEFAULT_SLOT_INPUT_KEY[slot.kind]
 }
 function slotAsArray(slot: { kind: ArchetypeReferenceSlotKind; asArray?: boolean }): boolean {
   return slot.asArray ?? DEFAULT_AS_ARRAY[slot.kind]

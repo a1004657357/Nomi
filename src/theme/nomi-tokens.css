@@ -12,7 +12,13 @@
   --nomi-line: oklch(0.91 0.004 80);
   --nomi-line-soft: oklch(0.95 0.003 80);
   --nomi-accent: oklch(0.55 0.13 250);
-  --nomi-accent-soft: color-mix(in oklch, var(--nomi-accent) 12%, var(--nomi-paper));
+  /* ⚠️ 必须 in srgb，别改回 in oklch —— oklch 会对色相走最短弧插值，把 accent(h250) 拽向 paper 被钉死的
+     色相（浅 h=0 → 粉 h≈347 / 暗 h=80 → 橄榄绿 h≈124）。完整原委见 tailwind.config.ts 同名 token（运行时真源）。 */
+  --nomi-accent-soft: color-mix(in srgb, var(--nomi-accent) 12%, var(--nomi-paper));
+  /* 根层语义红。--workbench-danger 只活在 .workbench-shell 作用域里，Portal 到 body 的浮层（任务中心等）
+     够不到它、会静默退回继承色（走查实锤读到 rgb(201,201,201)）——根层浮层一律用这个。 */
+  --nomi-danger: oklch(0.55 0.20 27);
+  --nomi-warning: oklch(0.62 0.14 75);
   --nomi-track-text: var(--nomi-accent);
   --nomi-track-image: oklch(0.7 0.13 200);
   --nomi-track-video: oklch(0.65 0.13 150);
@@ -61,7 +67,10 @@
   --nomi-line: oklch(0.36 0.007 80);
   --nomi-line-soft: oklch(0.31 0.007 80);
   --nomi-accent: oklch(0.70 0.13 250);
-  --nomi-accent-soft: color-mix(in oklch, var(--nomi-accent) 26%, var(--nomi-paper));
+  /* in srgb 同上：暗色 paper h=80，走 oklch 会把选中态混成橄榄绿。 */
+  --nomi-accent-soft: color-mix(in srgb, var(--nomi-accent) 26%, var(--nomi-paper));
+  --nomi-danger: oklch(0.72 0.16 25);
+  --nomi-warning: oklch(0.78 0.13 75);
   --nomi-track-text: oklch(0.75 0.15 305);
   --nomi-track-image: oklch(0.72 0.13 200);
   --nomi-track-video: oklch(0.70 0.13 150);

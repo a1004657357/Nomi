@@ -401,8 +401,8 @@ export function UploadFallback({
     [onUpload],
   )
   // v0.7.3 fix: 不 stopPropagation onPointerDown — 否则空卡片没法拖动。
-  // drag threshold (2px) 保证短按弹文件框、长按拖动不冲突。
-  // 但要拦 click 防止点 label 立刻弹文件框时也触发 selectNode 之外的副作用。
+  // 「短按弹文件框、长按拖动」由外壳 useNodeDragResize 保证：pointer capture 推迟到拖拽
+  // 阈值(2px)跨过才抢——按下就抢会把 click 重定向到外壳，label 弹文件框整类失效（2026-08-03 群反馈）。
   return (
     <label
       className={cn(

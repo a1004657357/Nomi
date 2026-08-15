@@ -1,17 +1,73 @@
-import { IconFolderMinus, IconFolderPlus, IconPlayerPlay, IconX } from '@tabler/icons-react'
-import type { ReactNode } from 'react'
+import { IconFolderMinus, IconFolderPlus, IconLayoutGrid, IconPlayerPlay, IconX } from '@tabler/icons-react'
+import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { WorkbenchIconButton } from '../../../design'
+import type { ModelOption } from '../../../config/models'
+import { NomiSelect, WorkbenchIconButton } from '../../../design'
 import { cn } from '../../../utils/cn'
+import { useDedupedModelSelect } from '../../common/useDedupedModelSelect'
+import { useGenerationModelOptionsState } from '../adapters/modelOptionsAdapter'
+import type { CanvasGenerationExecutionGroup } from './canvasProductionScope'
+
+const CONCURRENCY_OPTIONS = [1, 2, 4, 6, 8].map((value) => ({ value: String(value), label: String(value) }))
+
+function modelGroupLabel(executionKind: string, count: number, t: ReturnType<typeof useTranslation>['t']): string {
+  return t(`generationCommon.production.modelGroup.${executionKind}` as 'generationCommon.production.modelGroup.image', { count })
+}
+
+function BulkModelSelect({
+  group,
+  onApplyModel,
+}: {
+  group: CanvasGenerationExecutionGroup
+  onApplyModel: (input: {
+    executionKind: string
+    value: string
+    vendor?: string
+    modelOptions: readonly ModelOption[]
+  }) => void
+}): JSX.Element | null {
+  const { t } = useTranslation()
+  const state = useGenerationModelOptionsState(group.representativeKind)
+  const handleChange = React.useCallback((value: string, vendor?: string) => {
+    onApplyModel({ executionKind: group.executionKind, value, vendor, modelOptions: state.options })
+  }, [group.executionKind, onApplyModel, state.options])
+  const modelSelect = useDedupedModelSelect(state.options, '', handleChange)
+  if (modelSelect.modelOptions.length === 0) return null
+  const label = modelGroupLabel(group.executionKind, group.nodeIds.length, t)
+  return (
+    <NomiSelect
+      ariaLabel={label}
+      leadingLabel={label}
+      placeholder={t('generationCommon.production.unifyModel')}
+      value=""
+      options={modelSelect.modelOptions}
+      onChange={modelSelect.onModelPick}
+      size="xs"
+      triggerMaxWidth={140}
+    />
+  )
+}
 
 type CanvasSelectionToolbarProps = {
   selectedCount: number
   selectedGroupCount: number
   transform: string
-  generationControls?: ReactNode
-  onBatchGenerate: () => void
+  eligibleCount: number
+  executionGroups: CanvasGenerationExecutionGroup[]
+  concurrency: number
+  /** 选中的节点里已经出图的张数——不足 2 张就没有联系表可拼，钮直接不出现（不给点了才说不行）。 */
+  contactSheetCount: number
+  onConcurrencyChange: (value: number) => void
+  onGenerate: () => void
+  onApplyModel: (input: {
+    executionKind: string
+    value: string
+    vendor?: string
+    modelOptions: readonly ModelOption[]
+  }) => void
   onGroupSelectedNodes: () => void
   onUngroupSelectedNodes: () => void
+  onBuildContactSheet: () => void
   onClearSelection: () => void
 }
 
@@ -19,18 +75,25 @@ export function CanvasSelectionToolbar({
   selectedCount,
   selectedGroupCount,
   transform,
-  generationControls,
-  onBatchGenerate,
+  eligibleCount,
+  executionGroups,
+  concurrency,
+  contactSheetCount,
+  onConcurrencyChange,
+  onGenerate,
+  onApplyModel,
   onGroupSelectedNodes,
   onUngroupSelectedNodes,
+  onBuildContactSheet,
   onClearSelection,
 }: CanvasSelectionToolbarProps): JSX.Element {
   const { t } = useTranslation()
+  const generateLabel = t('generationCommon.production.generateSelected', { count: eligibleCount })
   return (
     <div
       className={cn(
         'generation-canvas-v2__selection-toolbar',
-        'absolute z-[11] inline-flex items-center gap-2 px-2.5 py-1.5',
+        'absolute z-[11] inline-flex max-w-[760px] items-center gap-2 overflow-x-auto px-2.5 py-1.5',
         'border border-nomi-line rounded-full',
         'bg-nomi-paper/[0.96] shadow-nomi-md pointer-events-auto',
       )}
@@ -38,24 +101,46 @@ export function CanvasSelectionToolbar({
       aria-label={t('generationCommon.selection.aria')}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <span className={cn('pl-1.5 pr-1 text-nomi-ink-60 text-body-sm whitespace-nowrap')}>已选 {selectedCount} 个</span>
-      {generationControls ?? (
-        <button
-          type="button"
-          data-storyboard-run-all="true"
-          className={cn(
-            'inline-flex items-center gap-2 h-9 px-4 rounded-full border-0 cursor-pointer',
-            'bg-nomi-ink text-nomi-paper text-body font-medium hover:bg-nomi-accent',
-            'transition-colors duration-[var(--nomi-transition-fast)]',
-          )}
-          title="生成选中节点（参考先生成、镜头后生成；缺参考的会提示先生成参考卡）"
-          onClick={onBatchGenerate}
-        >
-          <IconPlayerPlay size={16} stroke={1.6} aria-hidden />
-          生成 {selectedCount} 个
-        </button>
-      )}
+      <span className={cn('pl-1.5 pr-1 text-nomi-ink-60 text-body-sm whitespace-nowrap')}>
+        {t('generationCommon.selection.count', { count: selectedCount })}
+      </span>
+      {executionGroups.map((group) => (
+        <BulkModelSelect key={group.executionKind} group={group} onApplyModel={onApplyModel} />
+      ))}
+      <button
+        type="button"
+        data-storyboard-run-all="true"
+        data-batch-scope="selection"
+        className={cn(
+          'inline-flex h-9 shrink-0 items-center gap-2 rounded-full border-0 px-4 text-body font-medium',
+          'bg-nomi-ink text-nomi-paper',
+          'transition-colors duration-[var(--nomi-transition-fast)]',
+          eligibleCount > 0 ? 'cursor-pointer hover:bg-nomi-accent' : 'cursor-not-allowed opacity-45',
+        )}
+        disabled={eligibleCount === 0}
+        title={eligibleCount === 0 ? t('generationCommon.production.noPending') : t('generationCommon.selection.generateHint')}
+        onClick={onGenerate}
+      >
+        <IconPlayerPlay size={16} stroke={1.6} aria-hidden />
+        {generateLabel}
+      </button>
+      <NomiSelect
+        ariaLabel={t('generationCommon.production.concurrency')}
+        leadingLabel={t('generationCommon.production.concurrency')}
+        value={String(concurrency)}
+        options={CONCURRENCY_OPTIONS}
+        size="xs"
+        onChange={(value) => onConcurrencyChange(Number(value))}
+      />
       <span className={cn('w-px h-4 bg-nomi-line')} />
+      {contactSheetCount >= 2 ? (
+        <WorkbenchIconButton
+          data-contact-sheet="true"
+          label={t('generationCommon.contactSheet.action', { count: contactSheetCount })}
+          icon={<IconLayoutGrid size={16} />}
+          onClick={onBuildContactSheet}
+        />
+      ) : null}
       {selectedGroupCount > 0 ? (
         <WorkbenchIconButton
           label={t('generationCommon.selection.ungroup')}

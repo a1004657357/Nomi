@@ -24,6 +24,15 @@ export type SpendConfirmInfo = {
   prompt: string
 }
 
+/** 方案门（Phase B）：外部 agent 要往画布落一套节点方案时，弹应用内卡让用户一眼看懂 AI 要建什么。 */
+export type PlanConfirmInfo = {
+  projectId: string
+  /** 本批要创建的节点数（≥2 才算「方案」，单节点不弹门）。 */
+  nodeCount: number
+  /** 前几个节点标题，给用户扫一眼这是什么方案。 */
+  titles: string[]
+}
+
 export interface ProjectGateway {
   /** 读当前画布文档快照（A 模式读运行中 store，B 模式读盘）。 */
   readDoc(): Promise<CanvasSnapshot>
@@ -31,6 +40,12 @@ export interface ProjectGateway {
   apply(snapshot: CanvasSnapshot): Promise<void>
   /** 取付费授权：返回 grantId（已确认）或 null（未确认/超时/无 UI）。enforcement 仍在 runTask 硬闸。 */
   confirmSpend(info: SpendConfirmInfo): Promise<string | null>
+  /**
+   * 方案门（免费、可撤）：确认后返回 true 落画布，否则 false 不落。
+   * app 开着 → 弹应用内方案卡；app 关着（headless）→ true 放行（自由可撤操作，无人值守不阻断，
+   * 与付费门不同：付费门无 UI 时拒发，方案门无 UI 时放行——按「可逆性/是否花钱」分级，见 core.addProjectNodes）。
+   */
+  confirmPlan(info: PlanConfirmInfo): Promise<boolean>
 }
 
 function readDiskSnapshot(projectId: string): CanvasSnapshot {
@@ -66,6 +81,10 @@ export function createDiskGateway(projectId: string): ProjectGateway {
     async confirmSpend(info) {
       return process.env.NOMI_LOOP_SPEND_OK === '1' ? mintSpendGrant({ nodeIds: [info.nodeId] }) : null
     },
+    async confirmPlan() {
+      // 无窗口可弹方案卡（headless）。方案是免费可撤操作 → 放行（不像付费门要拒发）。
+      return true
+    },
   }
 }
 
@@ -87,6 +106,7 @@ export function createHybridGateway(projectId: string): ProjectGateway {
     readDoc: disk.readDoc,
     apply: disk.apply,
     confirmSpend: renderer.confirmSpend,
+    confirmPlan: renderer.confirmPlan,
   }
 }
 
@@ -107,6 +127,15 @@ export function createRendererGateway(projectId: string): ProjectGateway {
       } catch {
         // 超时/渲染层不可用 → 当作未确认（不死等，把干净错误透传给 agent）。
         return null
+      }
+    },
+    async confirmPlan(info) {
+      try {
+        const reply = (await requestRenderer('plan.confirm', info, RENDERER_SPEND_TIMEOUT_MS)) as { confirmed?: boolean } | null
+        return Boolean(reply?.confirmed)
+      } catch {
+        // 弹卡失败/超时 → 当未确认（不静默落一堆节点；用户可让 agent 再试）。
+        return false
       }
     },
   }

@@ -17,6 +17,16 @@ import type { NodeProgressInput, NodeRunRecordInput, NodeRunRecordPatch } from '
 
 export type ConnectionAnchorSide = 'left' | 'right'
 
+/** 「连到组」的结果：给 UI 出人话用（跳过多少个必须说清，不许静默丢）。 */
+export type GroupConnectResult = {
+  ok: boolean
+  connected: number
+  /** 过不了连边能力校验、被跳过的成员数。 */
+  skipped: number
+  alreadyConnected: number
+  reason?: 'dangling' | 'group_missing' | 'group_empty' | 'all_skipped'
+}
+
 export type CreateNodeInput = {
   kind: GenerationNodeKind
   title?: string
@@ -35,6 +45,8 @@ export type CanvasNodeActions = {
   addNode: (input: CreateNodeInput) => GenerationCanvasNode
   commitPersistedChange: () => void
   updateNode: (nodeId: string, patch: Partial<GenerationCanvasNode>, options?: CanvasMutationOptions) => void
+  /** Apply many user edits with one undo barrier and one persist revision. */
+  updateNodes: (updates: readonly { nodeId: string; patch: Partial<GenerationCanvasNode> }[]) => void
   updateNodePrompt: (nodeId: string, prompt: string) => void
   /** S6-4 节点锁(N11):用户一键锁/解锁;AI 改它由 gate deny,事件 source 恒 user。 */
   setNodeLocked: (nodeId: string, locked: boolean) => void
@@ -62,6 +74,11 @@ export type CanvasGraphActions = {
   // 返回连边能力校验结果:ok=已连;否则带 reason(手动连线总闸,UI 据此提示)。
   connectToNode: (targetNodeId: string) => EdgeCapabilityResult
   connectNodes: (sourceNodeId: string, targetNodeId: string, mode?: GenerationCanvasEdge['mode']) => void
+  /**
+   * 把待连的线落到**一个组**上：给组内每个成员各连一根真边，并记下组入参
+   * （以后新进组的成员自动补一根）。图结构不变——组只是输入手势的语法糖，见 model/groupInputLinks.ts。
+   */
+  connectToGroup: (groupId: string) => GroupConnectResult
   updateEdgeMode: (edgeId: string, mode: GenerationCanvasEdge['mode']) => void
   disconnectEdge: (edgeId: string) => void
   moveGroupNodes: (groupId: string, delta: { x: number; y: number }, options?: CanvasMutationOptions) => void

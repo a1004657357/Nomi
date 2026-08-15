@@ -3,6 +3,7 @@
 import React from 'react'
 import { completeNodeConnection } from '../nodes/completeNodeConnection'
 import type { ConnectionAnchorSide } from '../store/canvasStoreTypes'
+import { shouldFinishCanvasConnection } from './canvasPointerGestureModel'
 
 type Offset = { x: number; y: number }
 
@@ -18,6 +19,21 @@ function findConnectionTargetNodeId(clientX: number, clientY: number, sourceNode
   return sourceHit ? sourceNodeId : null
 }
 
+/**
+ * 松手处落在哪个组框上（组内空白区）。**优先级低于节点**：落在组内某个节点上仍是连那个节点，
+ * 只有落在组框空白处才算「连到整组」。
+ *
+ * 必须在这里判，不能只靠 GroupFrame 的 onClick：拖着线松手走的是 pointerup，
+ * 压根不产生 click —— 只挂 click 的话「拖到组上松手」这个最自然的手势会掉进「空白处新建节点」菜单。
+ */
+function findConnectionTargetGroupId(clientX: number, clientY: number): string | null {
+  for (const hit of document.elementsFromPoint(clientX, clientY)) {
+    const groupId = hit.closest<HTMLElement>('[data-group-id]')?.dataset.groupId
+    if (groupId) return groupId
+  }
+  return null
+}
+
 type UseDragToConnectArgs = {
   readOnly: boolean
   pendingConnectionSourceId: string
@@ -26,6 +42,8 @@ type UseDragToConnectArgs = {
   offsetRef: React.MutableRefObject<Offset>
   zoomRef: React.MutableRefObject<number>
   cancelConnection: () => void
+  /** 松手落在组框空白处 → 连到整组（组内每个成员各一根边）。 */
+  onDropOnGroup?: (groupId: string) => void
   onDropOnEmpty?: (input: {
     sourceNodeId: string
     sourceSide: ConnectionAnchorSide
@@ -43,6 +61,7 @@ export function useDragToConnect({
   offsetRef,
   zoomRef,
   cancelConnection,
+  onDropOnGroup,
   onDropOnEmpty,
 }: UseDragToConnectArgs): { pendingCursorPos: Offset | null } {
   const [pendingCursorPos, setPendingCursorPos] = React.useState<Offset | null>(null)
@@ -68,16 +87,21 @@ export function useDragToConnect({
       })
     }
     const handleUp = (event: PointerEvent) => {
+      if (!shouldFinishCanvasConnection(event.button, event.defaultPrevented)) return
       // 命中用**真实渲染的节点 DOM**（松手处完整元素栈），不再用名义尺寸算 AABB——
       // 节点真实渲染高（resolvePreviewHeight：生成后按图比例、卡片类固定高）常比名义尺寸高，
       // 旧 AABB 命中盒比可见卡矮 → 松手落在卡片可见下半区时 find 落空、静默取消（「线连不上」R1）。
       // elementsFromPoint 会穿过节点上的浮层/工具条/透明交互层，找到下方第一张非源节点卡；
       // 用户只要把线拉到可落节点的任意可见区域即可，不必精确命中连接点。
       const targetId = findConnectionTargetNodeId(event.clientX, event.clientY, pendingConnectionSourceId)
+      // 组框空白处松手 = 连到整组。必须在「空白处新建节点」之前判，否则组内空白会被当成画布空白。
+      const targetGroupId = targetId ? null : findConnectionTargetGroupId(event.clientX, event.clientY)
       if (targetId === pendingConnectionSourceId) {
         cancelConnection()
       } else if (targetId) {
         completeNodeConnection(targetId)
+      } else if (targetGroupId && onDropOnGroup) {
+        onDropOnGroup(targetGroupId)
       } else {
         if (!stageRef.current || !onDropOnEmpty) {
           cancelConnection()
@@ -104,7 +128,7 @@ export function useDragToConnect({
       document.removeEventListener('pointerup', handleUp)
       if (frame !== null) window.cancelAnimationFrame(frame)
     }
-  }, [pendingConnectionSourceId, pendingConnectionSourceSide, cancelConnection, onDropOnEmpty, readOnly, offsetRef, stageRef, zoomRef])
+  }, [pendingConnectionSourceId, pendingConnectionSourceSide, cancelConnection, onDropOnGroup, onDropOnEmpty, readOnly, offsetRef, stageRef, zoomRef])
 
   return { pendingCursorPos }
 }

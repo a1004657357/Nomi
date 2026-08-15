@@ -18,10 +18,11 @@ import { useAssetPool } from './useAssetPool'
 import { useAllProjectAssets } from './useAllProjectAssets'
 import { assetsForFolderScope, folderCountsForAssets, useAssetFolderInteractions, useAssetFolders } from './useAssetFolders'
 import { filterAssets, type AssetKind, type AssetRef } from './assetTypes'
-import { ASSET_LIBRARY_DRAG_MIME, serializeAssetLibraryDrag, type AssetLibraryDragPayload } from './assetLibraryDrag'
+import { ASSET_LIBRARY_DRAG_MIME, serializeAssetLibraryDrag } from './assetLibraryDrag'
 import { importAudioFilesToLibrary, type AudioImportResult } from './importAudioToLibrary'
 import type { GenerationAssetImportResult } from '../generationCanvas/adapters/assetImportAdapter'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
+import { useWorkbenchStore } from '../workbenchStore'
 import { confirmDialog, DesignEmptyState, DesignSearchInput, TooltipProvider } from '../../design'
 import AssetFinderPanel from './autoGroup/AssetFinderPanel'
 import { acceptAttrForKinds, mediaKindFromExtension } from '../../../electron/assets/mediaTypes'
@@ -34,7 +35,20 @@ import {
 } from './AssetLibraryPanelParts'
 import { AssetPreviewDialog } from './AssetPreviewDialog'
 import { ASSET_KIND_FILTER_VALUES, FILTER_OPTIONS, type FilterValue } from './assetLibraryPanelFilters'
-import { buildAssetLibraryDeletePlan, filterImageVideoAssets } from './assetLibrarySources'
+import { filterImageVideoAssets, filterPlayableAssets } from './assetLibrarySources'
+import { deleteAssetResult } from './deleteAssetResult'
+import { addAssetToTimelineEnd } from '../timeline/addAssetToTimeline'
+import {
+  assetToDragPayload,
+  assetsForLibraryDrag,
+  canManageAssetFolders,
+  resolveAssetLibraryItemAction,
+  shouldRunAssetItemAction,
+  sourceOptionsForUsage,
+  type AssetLibrarySourceFilter,
+  type AssetLibraryUsageContext,
+  type AssetGridActivationEvent,
+} from './assetLibraryUsage'
 
 const DEFAULT_GRID_COLS = 3
 const ESTIMATED_ROW_HEIGHT = 121
@@ -89,41 +103,18 @@ function reportAudioImport(result: AudioImportResult): void {
   if (skipped.length) toast(i18n.t('assetLibrary.skippedSummary', { items: skipped.join(i18n.t('assetLibrary.listSeparator')) }), result.failedCount ? 'error' : 'warning')
 }
 
-type SourceFilterValue = 'all' | 'project' | 'smart'
-
-const SOURCE_OPTIONS: { value: SourceFilterValue; labelKey: string }[] = [
-  { value: 'all', labelKey: 'assetLibrary.allAssets' },
-  { value: 'project', labelKey: 'assetLibrary.projectAssets' },
-  // 找素材并入素材库（2026-07-13 ③）：AI 自动分组是素材库的一个视图，不再独占左栏一格。
-  { value: 'smart', labelKey: 'assetLibrary.smartGroups' },
-]
-
-function assetToDragPayload(asset: AssetRef, dragAnchor?: AssetLibraryDragPayload['dragAnchor']): AssetLibraryDragPayload {
-  return {
-    kind: asset.kind,
-    name: asset.name,
-    renderUrl: asset.renderUrl,
-    origin: asset.origin,
-    ...(dragAnchor ? { dragAnchor } : {}),
-  }
-}
-
-export function assetsForLibraryDrag(
-  visibleAssets: readonly AssetRef[],
-  selectedIds: ReadonlySet<string>,
-  draggedAsset: AssetRef,
-): AssetRef[] {
-  if (!selectedIds.has(draggedAsset.id)) return [draggedAsset]
-  return [
-    draggedAsset,
-    ...visibleAssets.filter((asset) => asset.id !== draggedAsset.id && selectedIds.has(asset.id)),
-  ]
-}
-
 type AssetLibraryContentProps = {
   projectId: string | null
   compact?: boolean
   showHeader?: boolean
+  /**
+   * 放行音频素材（默认 false = 只列图/视频，生成页侧栏的既有行为）。
+   * 剪辑页左栏传 true：音频是配乐来源——此前全 App 没有任何地方拖得出音频素材，
+   * 时间轴那句「拖音频到此当配乐」等于无源（唯一现实路径是画布音频节点走节点把手）。
+   */
+  includeAudio?: boolean
+  /** Explicit consumer semantics: asset management on canvas, direct placement in Preview. */
+  usageContext?: AssetLibraryUsageContext
   onClose?: () => void
   className?: string
 }
@@ -132,6 +123,8 @@ export function AssetLibraryContent({
   projectId,
   compact = false,
   showHeader = true,
+  includeAudio = false,
+  usageContext = 'canvas',
   onClose,
   className,
 }: AssetLibraryContentProps): JSX.Element {
@@ -140,7 +133,7 @@ export function AssetLibraryContent({
   const filterButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const filterMenuRef = React.useRef<HTMLDivElement | null>(null)
   const [previewAsset, setPreviewAsset] = React.useState<AssetRef | null>(null)
-  const [sourceFilter, setSourceFilter] = React.useState<SourceFilterValue>('all')
+  const [sourceFilter, setSourceFilter] = React.useState<AssetLibrarySourceFilter>('all')
   const [visibleKinds, setVisibleKinds] = React.useState<Set<AssetKind>>(() => new Set(ASSET_KIND_FILTER_VALUES))
   const [filterOpen, setFilterOpen] = React.useState(false)
   const [query, setQuery] = React.useState('')
@@ -151,6 +144,7 @@ export function AssetLibraryContent({
   const lastSelectedIdRef = React.useRef<string | null>(null)
   const selectedIdsRef = React.useRef(selectedIds)
   selectedIdsRef.current = selectedIds
+  const sourceOptions = sourceOptionsForUsage(usageContext)
 
   const {
     canvasAssets,
@@ -159,12 +153,12 @@ export function AssetLibraryContent({
   const { assets: allProjectAssets, refresh: refreshAllProjectAssets } = useAllProjectAssets()
   const folderApi = useAssetFolders(projectId)
   const allSourceAssets = React.useMemo(
-    () => filterImageVideoAssets(allProjectAssets),
-    [allProjectAssets],
+    () => (includeAudio ? filterPlayableAssets(allProjectAssets) : filterImageVideoAssets(allProjectAssets)),
+    [allProjectAssets, includeAudio],
   )
   const projectSourceAssets = React.useMemo(
-    () => filterImageVideoAssets(canvasAssets),
-    [canvasAssets],
+    () => (includeAudio ? filterPlayableAssets(canvasAssets) : filterImageVideoAssets(canvasAssets)),
+    [canvasAssets, includeAudio],
   )
 
   const sourceFilteredAssets = React.useMemo(
@@ -197,9 +191,14 @@ export function AssetLibraryContent({
     () => filterBaseAssets.filter((asset) => visibleKinds.has(asset.kind)),
     [filterBaseAssets, visibleKinds],
   )
-  const projectSelectionEnabled = sourceFilter === 'project'
+  const itemAction = resolveAssetLibraryItemAction(
+    usageContext,
+    sourceFilter === 'project' ? 'project' : 'all',
+  )
+  const projectSelectionEnabled = itemAction === 'select'
+  const folderManagementEnabled = canManageAssetFolders(usageContext)
   // 文件夹作用域：项目素材 tab + 无搜索词时生效（root=未分类;夹内=归属素材;搜索=全量平铺）。
-  const folderViewActive = projectSelectionEnabled && query.trim() === ''
+  const folderViewActive = sourceFilter === 'project' && query.trim() === ''
   const scopedAssets = React.useMemo(
     () => (folderViewActive ? assetsForFolderScope(visible, folderApi.state.assignments, activeFolderId) : visible),
     [activeFolderId, folderApi.state.assignments, folderViewActive, visible],
@@ -262,6 +261,13 @@ export function AssetLibraryContent({
           refreshProjectAssets()
           refreshAllProjectAssets()
           reportMediaImport(result)
+          // 落点可见性（2026-08-07 飞书反馈「上传传到另一个位置没看到」）：选中首个新节点 +
+          // 请求画布 fit 平移视口过去（复用 Scene3DEditor 同款组合，不造第二套）。
+          const firstNode = result.created[0]?.node
+          if (firstNode) {
+            useGenerationCanvasStore.getState().selectNode(firstNode.id)
+            useWorkbenchStore.getState().requestCanvasFit()
+          }
         })
         .catch((error) => {
           console.error('asset library upload failed', error)
@@ -325,7 +331,7 @@ export function AssetLibraryContent({
     if (lastSelectedIdRef.current && !visibleIdSet.has(lastSelectedIdRef.current)) lastSelectedIdRef.current = null
   }, [visibleIds])
 
-  const selectAsset = React.useCallback((asset: AssetRef, event: React.MouseEvent<HTMLDivElement>): void => {
+  const selectAsset = React.useCallback((asset: AssetRef, event: AssetGridActivationEvent): void => {
     const visibleAssets = visibleAssetsRef.current
     const additive = event.metaKey || event.ctrlKey
     const anchorId = lastSelectedIdRef.current
@@ -352,6 +358,19 @@ export function AssetLibraryContent({
     })
     lastSelectedIdRef.current = asset.id
   }, [])
+
+  const activateAsset = React.useCallback((asset: AssetRef, event: AssetGridActivationEvent): void => {
+    if (!shouldRunAssetItemAction(itemAction, event.detail)) return
+    if (itemAction === 'append') {
+      void addAssetToTimelineEnd(asset)
+      return
+    }
+    if (itemAction === 'preview') {
+      setPreviewAsset(asset)
+      return
+    }
+    selectAsset(asset, event)
+  }, [itemAction, selectAsset])
 
   const showAllAssetKinds = React.useCallback((): void => {
     setVisibleKinds(new Set(ASSET_KIND_FILTER_VALUES))
@@ -397,6 +416,13 @@ export function AssetLibraryContent({
     setActiveFolderId,
     collectSelection: assetsForLibraryDrag,
   })
+  const assetDragHint = usageContext === 'timeline'
+    ? t('timelineEditor.dragToTimeline')
+    : projectSelectionEnabled
+      ? t('assetLibrary.dragHintFolder')
+      : undefined
+  const assetPreviewAction = itemAction === 'select' ? setPreviewAsset : undefined
+  const assetDragStartAction = projectSelectionEnabled ? handleFolderAssignDragStart : handleAssetDragStart
 
   const deleteSelectedProjectAssets = React.useCallback(async (): Promise<void> => {
     if (!projectId) {
@@ -407,64 +433,53 @@ export function AssetLibraryContent({
       toast(t('assetLibrary.selectToDelete'), 'warning')
       return
     }
-    const canvasStore = useGenerationCanvasStore.getState()
-    const deletePlan = buildAssetLibraryDeletePlan({
-      selectedAssets: selectedProjectAssets,
-      canvasNodes: canvasStore.nodes,
-      allProjectAssets,
-      currentProjectId: projectId,
-    })
-    if (deletePlan.nodeIds.length === 0) {
-      toast(t('assetLibrary.cannotDeleteSelected'), 'warning')
-      return
-    }
     const confirmed = await confirmDialog({
-      title: t('assetLibrary.confirmDeleteTitle', { count: deletePlan.nodeIds.length }),
+      title: t('assetLibrary.confirmDeleteTitle', { count: selectedProjectAssets.length }),
       message: t('assetLibrary.confirmDeleteMessage'),
       confirmLabel: t('assetLibrary.delete'),
       danger: true,
     })
     if (!confirmed) return
-    const bridge = getDesktopBridge()
-    const deleteFiles = bridge?.workspace?.deleteFiles
-    if (deletePlan.fileTargets.length > 0 && !deleteFiles) {
-      toast(t('assetLibrary.deleteUnsupported'), 'error')
-      return
-    }
     try {
-      let deletedFileCount = 0
-      let failedFileCount = 0
-      if (deletePlan.fileTargets.length > 0 && deleteFiles) {
-        const pathsByProject = new Map<string, string[]>()
-        for (const target of deletePlan.fileTargets) {
-          const paths = pathsByProject.get(target.projectId)
-          if (paths) paths.push(target.relativePath)
-          else pathsByProject.set(target.projectId, [target.relativePath])
-        }
-        const results = await Promise.all([...pathsByProject].map(([targetProjectId, relativePaths]) =>
-          deleteFiles({ projectId: targetProjectId, relativePaths }),
-        ))
-        deletedFileCount = results.reduce((total, result) => total + result.deletedCount, 0)
-        failedFileCount = results.reduce((total, result) => total + result.failedCount, 0)
-      }
-      const latestCanvasStore = useGenerationCanvasStore.getState()
-      const existingCanvasIds = new Set(latestCanvasStore.nodes.map((node) => node.id))
-      const deletableCanvasNodeIds = deletePlan.nodeIds.filter((nodeId) => existingCanvasIds.has(nodeId))
-      if (deletableCanvasNodeIds.length > 0) {
-        latestCanvasStore.selectNodes(deletableCanvasNodeIds)
-        latestCanvasStore.deleteSelectedNodes()
-      }
+      // 串行：同一关闭项目的多张结果必须一张张基于最新 record 改，Promise.all 会各读同一旧快照后互相覆盖。
+      const outcomes: Awaited<ReturnType<typeof deleteAssetResult>>[] = []
+      for (const asset of selectedProjectAssets) outcomes.push(await deleteAssetResult(asset, projectId))
+      const removedCount = outcomes.reduce((total, outcome) => total + outcome.removedResultCount, 0)
+      const deletedFileCount = outcomes.reduce((total, outcome) => total + outcome.deletedFileCount, 0)
+      const failedFileCount = outcomes.reduce((total, outcome) => total + outcome.failedFileCount, 0)
       refreshProjectAssets()
       refreshAllProjectAssets()
       setSelectedIds(new Set())
-      if (deletableCanvasNodeIds.length > 0) toast(t('assetLibrary.deletedProjectAssets', { count: deletableCanvasNodeIds.length }), 'success')
-      if (deletedFileCount > 0 && deletableCanvasNodeIds.length === 0) toast(t('assetLibrary.deletedFiles', { count: deletedFileCount }), 'success')
+      if (removedCount > 0) toast(t('assetLibrary.deletedProjectAssets', { count: removedCount }), 'success')
+      else if (deletedFileCount > 0) toast(t('assetLibrary.deletedFiles', { count: deletedFileCount }), 'success')
+      else if (failedFileCount === 0) toast(t('assetLibrary.cannotDeleteSelected'), 'warning')
       if (failedFileCount > 0) toast(t('assetLibrary.failedFiles', { count: failedFileCount }), 'warning')
     } catch (error) {
       console.error('delete project assets failed', error)
       toast(t('assetLibrary.deleteFailed'), 'error')
     }
-  }, [allProjectAssets, projectId, refreshAllProjectAssets, refreshProjectAssets, selectedProjectAssets, t])
+  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, selectedProjectAssets, t])
+
+  const deleteOneAsset = React.useCallback(async (asset: AssetRef): Promise<void> => {
+    const confirmed = await confirmDialog({
+      title: t('assetLibrary.confirmDeleteTitle', { count: 1 }),
+      message: t('assetLibrary.confirmDeleteMessage'),
+      confirmLabel: t('assetLibrary.delete'),
+      danger: true,
+    })
+    if (!confirmed) return
+    try {
+      const outcome = await deleteAssetResult(asset, projectId || '')
+      refreshProjectAssets()
+      refreshAllProjectAssets()
+      setPreviewAsset((current) => current?.id === asset.id ? null : current)
+      if (outcome.failedFileCount > 0) toast(t('assetLibrary.failedFiles', { count: outcome.failedFileCount }), 'warning')
+      else toast(t('assetLibrary.deletedProjectAssets', { count: 1 }), 'success')
+    } catch (error) {
+      console.error('delete asset result failed', error)
+      toast(t('assetLibrary.deleteFailed'), 'error')
+    }
+  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, t])
 
   const uploadButton = (
     <button
@@ -516,7 +531,7 @@ export function AssetLibraryContent({
       role="tablist"
       aria-label={t('assetLibrary.sourceFilter')}
     >
-      {SOURCE_OPTIONS.map((option) => {
+      {sourceOptions.map((option) => {
         const active = sourceFilter === option.value
         return (
           <button
@@ -663,13 +678,13 @@ export function AssetLibraryContent({
                   'cursor-pointer text-caption text-nomi-accent transition-colors duration-[var(--nomi-transition-fast)] hover:bg-nomi-ink-05',
                 )}
                 aria-label={t('assetLibrary.backToAllAssets')}
-                title={t('assetLibrary.backDropToRemove')}
+                title={t(folderManagementEnabled ? 'assetLibrary.backDropToRemove' : 'assetLibrary.backToAllAssets')}
                 onClick={() => setActiveFolderId(null)}
-                onDragOver={(event) => {
+                onDragOver={folderManagementEnabled ? (event) => {
                   event.preventDefault()
                   event.dataTransfer.dropEffect = 'copy'
-                }}
-                onDrop={(event) => handleFolderDropAssets(null, event)}
+                } : undefined}
+                onDrop={folderManagementEnabled ? (event) => handleFolderDropAssets(null, event) : undefined}
               >
                 <IconChevronLeft size={14} stroke={2} aria-hidden="true" />
                 {t('common.back')}
@@ -698,6 +713,7 @@ export function AssetLibraryContent({
                   id={folder.id}
                   label={folder.label}
                   count={folderCounts.get(folder.id) ?? 0}
+                  manageable={folderManagementEnabled}
                   onOpen={setActiveFolderId}
                   onDelete={handleDeleteFolder}
                   onDropAssets={(folderId, event) => handleFolderDropAssets(folderId, event)}
@@ -723,13 +739,14 @@ export function AssetLibraryContent({
                   key={asset.id}
                   asset={asset}
                   compact
-                  selectable
+                  selectable={projectSelectionEnabled}
                   draggable
                   selected={selectedIds.has(asset.id)}
-                  dragHint={projectSelectionEnabled ? t('assetLibrary.dragHintFolder') : undefined}
-                  onSelect={selectAsset}
-                  onPreview={setPreviewAsset}
-                  onDragStartAsset={projectSelectionEnabled ? handleFolderAssignDragStart : handleAssetDragStart}
+                  dragHint={assetDragHint}
+                  onSelect={activateAsset}
+                  onPreview={assetPreviewAction}
+                  onDragStartAsset={assetDragStartAction}
+                  onDelete={usageContext === 'canvas' && sourceFilter === 'all' ? (assetToDelete) => void deleteOneAsset(assetToDelete) : undefined}
                 />
               ))}
             </div>
@@ -757,13 +774,14 @@ export function AssetLibraryContent({
                       <AssetGridCell
                         key={asset.id}
                         asset={asset}
-                        selectable
+                        selectable={projectSelectionEnabled}
                         draggable
                         selected={selectedIds.has(asset.id)}
-                        dragHint={projectSelectionEnabled ? t('assetLibrary.dragHintFolder') : undefined}
-                        onSelect={selectAsset}
-                        onPreview={setPreviewAsset}
-                        onDragStartAsset={projectSelectionEnabled ? handleFolderAssignDragStart : handleAssetDragStart}
+                        dragHint={assetDragHint}
+                        onSelect={activateAsset}
+                        onPreview={assetPreviewAction}
+                        onDragStartAsset={assetDragStartAction}
+                        onDelete={usageContext === 'canvas' && sourceFilter === 'all' ? (assetToDelete) => void deleteOneAsset(assetToDelete) : undefined}
                       />
                     ))}
                   </div>
@@ -780,4 +798,3 @@ export function AssetLibraryContent({
     </TooltipProvider>
   )
 }
-

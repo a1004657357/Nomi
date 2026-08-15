@@ -1,0 +1,76 @@
+/**
+ * 「成组处理」这一族画布动作：编组 / 解组 / 连到组 / 拼联系表。
+ *
+ * 批量生成由 useCanvasProductionActions 单独收口，避免两个生成入口逐渐分叉。
+ */
+import React from 'react'
+import { useTranslation } from 'react-i18next'
+import { showInfoToast } from '../../../utils/showInfoToast'
+import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { buildContactSheetNode, contactSheetSources } from '../nodes/buildContactSheetNode'
+
+export function useCanvasGroupActions(params: {
+  activeCategoryId: string
+  selectedGroupIds: string[]
+  selectedNodeIds: string[]
+}): {
+  handleGroupSelectedNodes: () => void
+  handleUngroupSelectedNodes: () => void
+  handleConnectToGroup: (groupId: string) => void
+  /** 选中里已出图的张数（<2 就没有联系表可拼，浮条上那个钮不出现）。 */
+  contactSheetCount: number
+  handleBuildContactSheet: () => void
+} {
+  const { activeCategoryId, selectedGroupIds, selectedNodeIds } = params
+  const { t } = useTranslation()
+  const groupSelectedNodes = useGenerationCanvasStore((state) => state.groupSelectedNodes)
+  const ungroupGroups = useGenerationCanvasStore((state) => state.ungroupGroups)
+
+  const handleGroupSelectedNodes = React.useCallback(() => {
+    groupSelectedNodes(activeCategoryId)
+    // 编组结果即时显示为画布上的组框 → 成功 toast 是噪音（弹窗审计 R2）。
+  }, [activeCategoryId, groupSelectedNodes])
+
+  const handleUngroupSelectedNodes = React.useCallback(() => {
+    if (!selectedGroupIds.length) return
+    ungroupGroups(selectedGroupIds)
+    // 解组结果画布即时可见 → 成功 toast 是噪音（弹窗审计 R2）。
+  }, [selectedGroupIds, ungroupGroups])
+
+  // 连到组：给组内每个成员各连一根真边（图结构不变）。被能力校验跳过的必须说清，不许静默丢。
+  const handleConnectToGroup = React.useCallback((groupId: string) => {
+    const result = useGenerationCanvasStore.getState().connectToGroup(groupId)
+    if (result.ok) {
+      if (result.skipped > 0) {
+        showInfoToast(t('generationCommon.canvas.group.connectedWithSkips', {
+          connected: result.connected,
+          skipped: result.skipped,
+        }))
+      }
+      return
+    }
+    if (result.reason === 'all_skipped') {
+      showInfoToast(t('generationCommon.canvas.group.connectAllSkipped', { count: result.skipped }))
+    } else if (result.reason === 'group_empty') {
+      showInfoToast(t('generationCommon.canvas.group.connectEmpty'))
+    }
+  }, [t])
+
+  // 联系表：把选中的成图拼成一张，给客户/团队看整场戏。产物是普通图片节点（不新增节点 kind）。
+  const nodes = useGenerationCanvasStore((state) => state.nodes)
+  const contactSheetCount = React.useMemo(
+    () => contactSheetSources(selectedNodeIds, nodes).length,
+    [selectedNodeIds, nodes],
+  )
+  const handleBuildContactSheet = React.useCallback(() => {
+    void buildContactSheetNode(selectedNodeIds)
+  }, [selectedNodeIds])
+
+  return {
+    handleGroupSelectedNodes,
+    handleUngroupSelectedNodes,
+    handleConnectToGroup,
+    contactSheetCount,
+    handleBuildContactSheet,
+  }
+}

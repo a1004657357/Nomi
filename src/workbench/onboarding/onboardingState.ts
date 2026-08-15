@@ -11,28 +11,10 @@ const CHECKLIST_KEY = 'nomi:checklist:v1'
 const CHECKLIST_COLLAPSED_KEY = 'nomi:checklist-collapsed:v1'
 const CHECKLIST_FIRST_SHOWN_KEY = 'nomi:checklist-first-shown:v1'
 const CHECKLIST_DISMISSED_KEY = 'nomi:checklist-dismissed:v1'
-const CANVAS_GESTURE_HINT_KEY = 'nomi:canvas-gesture-hint:v1'
 const JOURNEY_TOUR_KEY = 'nomi:journey-tour:v1'
 
 /** 上手清单生命周期上限：首次显示满 2 天仍未完成 → 自动永久关闭，不再回来。 */
 export const CHECKLIST_TTL_MS = 2 * 24 * 60 * 60 * 1000
-
-export function hasSeenCanvasGestureHint(): boolean {
-  try {
-    return window.localStorage.getItem(CANVAS_GESTURE_HINT_KEY) === 'seen'
-  } catch {
-    // localStorage 不可用：退化为「已看过」，不反复弹手势卡
-    return true
-  }
-}
-
-export function markCanvasGestureHintSeen(): void {
-  try {
-    window.localStorage.setItem(CANVAS_GESTURE_HINT_KEY, 'seen')
-  } catch {
-    /* ignore */
-  }
-}
 
 const SCENE3D_COACH_KEY = 'nomi.onboarding.scene3dCoach.v1'
 

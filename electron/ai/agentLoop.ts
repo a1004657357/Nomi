@@ -38,6 +38,8 @@ export type AgentLoopRequest = {
   /** Ask OpenAI-compatible providers for a JSON object without native tools. */
   structuredJson?: boolean;
   abortSignal?: AbortSignal;
+  /** 目录里的 vendor key——落进错误的结构化载荷(describeAgentError → VendorRequestError)。 */
+  vendorKey?: string;
 };
 
 export type AgentLoopHooks = {
@@ -96,7 +98,10 @@ export function runAgentLoop(
     ...shared,
     toolCallStreaming: true,
     ...(hooks.onError
-      ? { onError: ({ error }: { error: unknown }) => hooks.onError?.(describeAgentError(error)) }
+      ? {
+          onError: ({ error }: { error: unknown }) =>
+            hooks.onError?.(describeAgentError(error, { ...(req.vendorKey ? { vendorKey: req.vendorKey } : {}) })),
+        }
       : {}),
   });
 }

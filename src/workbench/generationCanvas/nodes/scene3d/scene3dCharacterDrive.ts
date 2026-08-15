@@ -51,13 +51,15 @@ export function groundMoveDirection(
   return direction.normalize()
 }
 
-// 由地面移动方向推出「角色应面向的 yaw」。约定与 groundMoveDirection 的前向一致：
-// 绕 Y 旋转 yaw 后物体本地 -Z 轴 = (-sin(yaw), 0, -cos(yaw))。令其等于移动方向 d
-// → yaw = atan2(-d.x, -d.z)，角色正面（-Z）即指向移动方向。
+// 由地面移动方向推出「角色应面向的 yaw」。⚠️ 假人正面是本地 **+Z**（Mixamo 系 GLB 约定，
+// 与 stagingBuilder「默认 +Z 朝向」同一份、实测自顶视核对过）——不是相机的 -Z。
+// 绕 Y 旋转 yaw 后物体本地 +Z 轴 = (sin(yaw), 0, cos(yaw))。令其等于移动方向 d
+// → yaw = atan2(d.x, d.z)，角色正面（+Z）即指向移动方向。
+// 曾按相机约定写成 atan2(-d.x, -d.z)：差 180°，WASD 走位人背朝移动方向（2026-08-03 群反馈）。
 // 零向量（无移动）→ 返回 null（保持当前朝向，不要突然转回正前方）。
 export function facingYawFromDirection(direction: THREE.Vector3): number | null {
   if (direction.lengthSq() < 1e-9) return null
-  return Math.atan2(-direction.x, -direction.z)
+  return Math.atan2(direction.x, direction.z)
 }
 
 // 把任意角度归一化到 (-π, π]。

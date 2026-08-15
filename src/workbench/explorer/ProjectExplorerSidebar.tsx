@@ -1,8 +1,9 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
+  IconBooks,
   IconBulb,
-  IconComponents,
   IconFolder,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
@@ -21,7 +22,7 @@ const PromptLibraryContent = lazyWithChunkBoundary('i18n:sidebar.promptLibrary',
     default: module.PromptLibraryContent,
   })),
 )
-const SkillLibraryContent = lazyWithChunkBoundary('能力组件', () =>
+const SkillLibraryContent = lazyWithChunkBoundary('i18n:sidebar.skillLibrary', () =>
   import('../skillLibrary/SkillLibraryPanel').then((module) => ({
     default: module.SkillLibraryContent,
   })),
@@ -67,11 +68,11 @@ const PANEL_ICON_BUTTON_CLASS = cn(
   'hover:bg-nomi-ink-05 hover:text-nomi-ink',
 )
 
-function sidebarPanelTitle(tab: ProjectSidebarTab): string {
-  if (tab === 'categories') return '分组'
-  if (tab === 'prompt-library') return '提示词库'
-  if (tab === 'skill-library') return '能力组件'
-  return '素材库'
+function sidebarPanelTitle(tab: ProjectSidebarTab, t: TFunction): string {
+  if (tab === 'categories') return t('sidebar.groups')
+  if (tab === 'prompt-library') return t('sidebar.promptLibrary')
+  if (tab === 'skill-library') return t('sidebar.skillLibrary')
+  return t('sidebar.assetLibrary')
 }
 
 function isLibraryTab(tab: ProjectSidebarTab): boolean {
@@ -93,17 +94,14 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
     setCreateCategoryNonce((n) => n + 1)
   }, [setSidebarCollapsed])
 
-  const selectTab = React.useCallback(
-    (nextTab: ProjectSidebarTab) => {
-      if (!collapsed && tab === nextTab) {
-        setSidebarCollapsed(true)
-        return
-      }
-      setTab(nextTab)
-      setSidebarCollapsed(false)
-    },
-    [collapsed, setSidebarCollapsed, tab],
-  )
+  const selectTab = React.useCallback((nextTab: ProjectSidebarTab) => {
+    if (!collapsed && tab === nextTab) {
+      setSidebarCollapsed(true)
+      return
+    }
+    setTab(nextTab)
+    setSidebarCollapsed(false)
+  }, [collapsed, setSidebarCollapsed, tab])
 
   // picker 的「浏览全部 →」→ 展开侧栏 + 切到素材库（弹层只做快速取）。
   React.useEffect(() => {
@@ -143,23 +141,58 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
       },
       {
         id: 'skill-library' as const,
-        label: '能力组件',
-        railLabel: '组件',
-        icon: IconComponents,
+        label: t('sidebar.skillLibrary'),
+        railLabel: t('sidebar.skills'),
+        icon: IconBooks,
       },
     ],
     [t],
   )
 
-  const panelTitle = sidebarPanelTitle(tab)
-  const expandedWidth = isLibraryTab(tab) ? PROJECT_LIBRARY_SIDEBAR_EXPANDED_WIDTH : PROJECT_SIDEBAR_EXPANDED_WIDTH
+  const panelTitle = sidebarPanelTitle(tab, t)
+  const sidebarWidthOverride = useWorkbenchStore((s) => s.projectSidebarWidth)
+  const setSidebarWidth = useWorkbenchStore((s) => s.setProjectSidebarWidth)
+  const defaultExpandedWidth = isLibraryTab(tab) ? PROJECT_LIBRARY_SIDEBAR_EXPANDED_WIDTH : PROJECT_SIDEBAR_EXPANDED_WIDTH
+  const expandedWidth = sidebarWidthOverride ?? defaultExpandedWidth
+
+  // 右缘拖拽调宽（2026-08-08 飞书反馈「素材库宽度锁死不能拽」）——照右侧 AI 栏的
+  // pointer-capture separator 模式（GenerationWorkspace），不造第二套。拖拽中关掉 width
+  // transition，否则跟手被动画拖住。
+  const dragRef = React.useRef<{ startX: number; startW: number } | null>(null)
+  const [dragging, setDragging] = React.useState(false)
+  const onHandlePointerDown = React.useCallback(
+    (e: React.PointerEvent) => {
+      dragRef.current = { startX: e.clientX, startW: expandedWidth }
+      e.currentTarget.setPointerCapture(e.pointerId)
+      setDragging(true)
+    },
+    [expandedWidth],
+  )
+  const onHandlePointerMove = React.useCallback(
+    (e: React.PointerEvent) => {
+      const st = dragRef.current
+      if (!st) return
+      // 左侧停靠：往右拖（clientX 变大）= 加宽。
+      setSidebarWidth(st.startW + (e.clientX - st.startX))
+    },
+    [setSidebarWidth],
+  )
+  const onHandlePointerEnd = React.useCallback((e: React.PointerEvent) => {
+    dragRef.current = null
+    setDragging(false)
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* noop */
+    }
+  }, [])
 
   return (
     <aside
       data-collapsed={collapsed ? 'true' : 'false'}
       className={cn(
-        'flex h-full min-h-0 shrink-0 overflow-hidden border-r border-nomi-line bg-nomi-paper text-nomi-ink',
-        'transition-[width] duration-150 ease-out',
+        'relative flex h-full min-h-0 shrink-0 overflow-hidden border-r border-nomi-line bg-nomi-paper text-nomi-ink',
+        !dragging && 'transition-[width] duration-150 ease-out',
       )}
       style={{ width: collapsed ? PROJECT_SIDEBAR_COLLAPSED_WIDTH : expandedWidth }}
       aria-label={t('sidebar.explorer')}
@@ -217,18 +250,18 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
           <div className="flex flex-col items-center gap-2 pb-1">
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={toggle}
-                  className={RAIL_BUTTON_CLASS}
-                  aria-label={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
-                >
-                  {collapsed ? (
-                    <IconLayoutSidebarLeftExpand size={18} stroke={1.8} aria-hidden="true" />
-                  ) : (
-                    <IconLayoutSidebarLeftCollapse size={18} stroke={1.8} aria-hidden="true" />
-                  )}
-                </button>
+              <button
+                type="button"
+                onClick={toggle}
+                className={RAIL_BUTTON_CLASS}
+                aria-label={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+              >
+                {collapsed ? (
+                  <IconLayoutSidebarLeftExpand size={18} stroke={1.8} aria-hidden="true" />
+                ) : (
+                  <IconLayoutSidebarLeftCollapse size={18} stroke={1.8} aria-hidden="true" />
+                )}
+              </button>
               </TooltipTrigger>
               <TooltipContent side="right">{collapsed ? t('sidebar.expand') : t('sidebar.collapse')}</TooltipContent>
             </Tooltip>
@@ -239,60 +272,83 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
           <section className="relative flex min-w-0 flex-1 flex-col bg-nomi-paper" aria-label={panelTitle}>
             <>
               <header className="flex h-12 shrink-0 items-center border-b border-nomi-line-soft px-3">
-                <h2 className="m-0 min-w-0 flex-1 truncate text-body-sm font-bold leading-none text-nomi-ink">
-                  {panelTitle}
-                </h2>
-                {/* 「网页捕捞」入口已删（方案一 2026-07-12）：顶栏「浏览器」是唯一上网门。 */}
-                {tab === 'categories' ? (
+                  <h2 className="m-0 min-w-0 flex-1 truncate text-body-sm font-bold leading-none text-nomi-ink">
+                    {panelTitle}
+                  </h2>
+                  {/* 「网页捕捞」入口已删（方案一 2026-07-12）：顶栏「浏览器」是唯一上网门。 */}
+                  {tab === 'categories' ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={handleAddCategory}
+                          className={PANEL_ICON_BUTTON_CLASS}
+                          aria-label={t('sidebar.newGroup')}
+                        >
+                          <IconPlus size={18} stroke={1.8} aria-hidden="true" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">{t('sidebar.newGroup')}</TooltipContent>
+                    </Tooltip>
+                  ) : null}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         type="button"
-                        onClick={handleAddCategory}
+                        onClick={toggle}
                         className={PANEL_ICON_BUTTON_CLASS}
-                        aria-label={t('sidebar.newGroup')}
+                        aria-label={t('sidebar.collapse')}
                       >
-                        <IconPlus size={18} stroke={1.8} aria-hidden="true" />
+                        <IconLayoutSidebarLeftCollapse size={18} stroke={1.8} aria-hidden="true" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">{t('sidebar.newGroup')}</TooltipContent>
+                    <TooltipContent side="bottom">{t('sidebar.collapse')}</TooltipContent>
                   </Tooltip>
-                ) : null}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={toggle}
-                      className={PANEL_ICON_BUTTON_CLASS}
-                      aria-label={t('sidebar.collapse')}
-                    >
-                      <IconLayoutSidebarLeftCollapse size={18} stroke={1.8} aria-hidden="true" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{t('sidebar.collapse')}</TooltipContent>
-                </Tooltip>
               </header>
               {tab === 'categories' ? (
-                <React.Suspense fallback={null}>
-                  <CategoryTree categories={categories} createCategoryNonce={createCategoryNonce} />
-                </React.Suspense>
-              ) : tab === 'prompt-library' ? (
-                <React.Suspense fallback={null}>
-                  <PromptLibraryContent active compact showHeader={false} />
-                </React.Suspense>
-              ) : tab === 'skill-library' ? (
-                <React.Suspense fallback={null}>
-                  <SkillLibraryContent active compact showHeader={false} componentFirst />
-                </React.Suspense>
-              ) : (
-                <React.Suspense fallback={null}>
-                  <AssetLibraryContent projectId={projectId} compact showHeader={false} />
-                </React.Suspense>
+                  <React.Suspense fallback={null}>
+                    <CategoryTree categories={categories} createCategoryNonce={createCategoryNonce} />
+                  </React.Suspense>
+                ) : tab === 'prompt-library' ? (
+                  <React.Suspense fallback={null}>
+                    <PromptLibraryContent active compact showHeader={false} />
+                  </React.Suspense>
+                ) : tab === 'skill-library' ? (
+                  <React.Suspense fallback={null}>
+                    <SkillLibraryContent active compact showHeader={false} />
+                  </React.Suspense>
+                ) : (
+                  <React.Suspense fallback={null}>
+                    <AssetLibraryContent projectId={projectId} compact showHeader={false} />
+                  </React.Suspense>
               )}
             </>
           </section>
         ) : null}
       </TooltipProvider>
+      {/* 右缘拖拽调宽手柄：仅展开态显示。视觉条常驻淡显、hover/拖拽中加深。 */}
+      {!collapsed ? (
+        <div
+          role="separator"
+          aria-label={t('sidebar.resize')}
+          aria-orientation="vertical"
+          className={cn(
+            'group absolute right-0 top-0 bottom-0 z-10 w-2.5',
+            'flex cursor-col-resize items-center justify-center touch-none',
+          )}
+          onPointerDown={onHandlePointerDown}
+          onPointerMove={onHandlePointerMove}
+          onPointerUp={onHandlePointerEnd}
+          onPointerCancel={onHandlePointerEnd}
+        >
+          <span
+            className={cn(
+              'h-8 w-[3px] rounded-full bg-nomi-ink-30 transition-colors',
+              dragging ? 'bg-nomi-accent' : 'group-hover:bg-nomi-accent',
+            )}
+          />
+        </div>
+      ) : null}
     </aside>
   )
 }

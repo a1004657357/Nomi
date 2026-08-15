@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { GenerationCanvasNode } from '../generationCanvas/model/generationCanvasTypes'
 import type { WorkspaceFileNode } from '../../../electron/workspace/workspaceFileIndex'
-import { canvasNodeToAssetRef, workspaceNodeToAssetRef, flattenWorkspaceFiles, filterAssets, moveArrayItem } from './assetTypes'
+import { canvasNodeToAssetRefs, workspaceNodeToAssetRef, flattenWorkspaceFiles, filterAssets, moveArrayItem } from './assetTypes'
 import type { AssetRef } from './assetTypes'
 
 const canvasNode = (overrides: Partial<GenerationCanvasNode>): GenerationCanvasNode =>
@@ -10,31 +10,41 @@ const canvasNode = (overrides: Partial<GenerationCanvasNode>): GenerationCanvasN
 const wsNode = (overrides: Partial<WorkspaceFileNode>): WorkspaceFileNode =>
   ({ id: '', name: '', relativePath: '', kind: 'file', ...overrides } as WorkspaceFileNode)
 
-describe('canvasNodeToAssetRef', () => {
-  it('maps an image result node, carrying canvas origin', () => {
-    const ref = canvasNodeToAssetRef(
+describe('canvasNodeToAssetRefs', () => {
+  it('maps every unique image result, carrying node and result identity', () => {
+    const refs = canvasNodeToAssetRefs(
       canvasNode({ id: 'n1', title: '日落', result: { id: 'r1', type: 'image', url: 'nomi-local://asset/p/a.png' } as never }),
     )
-    expect(ref).toMatchObject({
-      id: 'n1',
+    expect(refs).toHaveLength(1)
+    expect(refs[0]).toMatchObject({
+      id: 'n1:r1',
       kind: 'image',
       name: '日落',
       renderUrl: 'nomi-local://asset/p/a.png',
+      ownerNodeId: 'n1',
+      ownerResultId: 'r1',
       source: 'canvas',
-      origin: { source: 'canvas', nodeId: 'n1' },
+      origin: { source: 'canvas', nodeId: 'n1', resultId: 'r1' },
     })
   })
 
   it('skips text results and nodes without a url', () => {
-    expect(canvasNodeToAssetRef(canvasNode({ result: { id: 'r', type: 'text', text: 'hi' } as never }))).toBeNull()
-    expect(canvasNodeToAssetRef(canvasNode({ result: { id: 'r', type: 'image' } as never }))).toBeNull()
-    expect(canvasNodeToAssetRef(canvasNode({}))).toBeNull()
+    expect(canvasNodeToAssetRefs(canvasNode({ result: { id: 'r', type: 'text', text: 'hi' } as never }))).toEqual([])
+    expect(canvasNodeToAssetRefs(canvasNode({ result: { id: 'r', type: 'image' } as never }))).toEqual([])
+    expect(canvasNodeToAssetRefs(canvasNode({}))).toEqual([])
   })
 
   it('falls back to thumbnailUrl when url is absent and defaults name to kind', () => {
-    const ref = canvasNodeToAssetRef(canvasNode({ result: { id: 'r', type: 'video', thumbnailUrl: 'nomi-local://t.jpg' } as never }))
+    const ref = canvasNodeToAssetRefs(canvasNode({ result: { id: 'r', type: 'video', thumbnailUrl: 'nomi-local://t.jpg' } as never }))[0]
     expect(ref?.renderUrl).toBe('nomi-local://t.jpg')
     expect(ref?.name).toBe('video')
+  })
+
+  it('includes non-primary history results once', () => {
+    const first = { id: 'r1', type: 'image', url: 'a.png', createdAt: 1 } as never
+    const second = { id: 'r2', type: 'image', url: 'b.png', createdAt: 2 } as never
+    const refs = canvasNodeToAssetRefs(canvasNode({ result: first, history: [first, second] }))
+    expect(refs.map((ref) => ref.ownerResultId)).toEqual(['r1', 'r2'])
   })
 })
 

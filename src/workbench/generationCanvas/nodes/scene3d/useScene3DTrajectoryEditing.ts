@@ -4,7 +4,7 @@ import {
   createScene3DTrajectoryGroupId,
   createScene3DTrajectoryId,
   createScene3DTrajectoryPointId,
-} from './scene3dSerializer'
+} from './scene3dBindingIds'
 import { UNGROUPED_TRAJECTORY_GROUP_ID } from './scene3dConstants'
 import { trajectoryBindTargetsFromState } from './scene3dTrajectoryState'
 import { syncSceneTimelineDuration } from './scene3dTimeline'
@@ -112,9 +112,9 @@ function nextTrajectoryColor(count: number): string {
   return TRAJECTORY_COLOR_SEQUENCE[count % TRAJECTORY_COLOR_SEQUENCE.length]
 }
 
-function makeTrajectory(index: number, firstPosition: Scene3DVector3): Scene3DTrajectory {
+function makeTrajectory(id: string, index: number, firstPosition: Scene3DVector3): Scene3DTrajectory {
   return {
-    id: createScene3DTrajectoryId(),
+    id,
     name: `轨迹${index + 1}`,
     points: [
       { id: createScene3DTrajectoryPointId(), position: [...firstPosition] },
@@ -212,19 +212,20 @@ export function useScene3DTrajectoryEditing({
     if (!enabled) setActivePointId(null)
   }, [])
 
+  // 新对象 id 必须在 updater 外生成、不许从 updater 里往外带（本文件三处同律：建轨迹/插点/建组）。
+  // React 只在 fiber 无 pending update 时才同步跑 updater（eager-eval）；同一 handler 里只要先调过
+  // 任何别的 setter（如「新建」按钮先 setTimelineOpen(true)），外带的 id 就静默拿空 →
+  // 「新建后面板不激活，得再点一次时间轴行」（2026-08-04）。updater 保持纯函数。
   const createTrajectoryAt = React.useCallback((position: Scene3DVector3) => {
     if (readOnly) return
-    let createdId = ''
-    setState((current) => {
-      const trajectory = makeTrajectory(current.trajectories.length, position)
-      createdId = trajectory.id
-      return { ...current, trajectories: [...current.trajectories, trajectory] }
-    })
-    if (createdId) {
-      setActiveTrajectoryId(createdId)
-      setActivePointId(null)
-      setTrajectoryEditModeState(true)
-    }
+    const trajectoryId = createScene3DTrajectoryId()
+    setState((current) => ({
+      ...current,
+      trajectories: [...current.trajectories, makeTrajectory(trajectoryId, current.trajectories.length, position)],
+    }))
+    setActiveTrajectoryId(trajectoryId)
+    setActivePointId(null)
+    setTrajectoryEditModeState(true)
   }, [readOnly, setState])
 
   const createTrajectory = React.useCallback(() => {
@@ -294,10 +295,10 @@ export function useScene3DTrajectoryEditing({
     targetPointId?: string | null,
     placement: 'before' | 'after' = 'after',
   ) => {
-    let insertedId = ''
+    if (readOnly) return
+    const pointId = createScene3DTrajectoryPointId()
     mutateTrajectoryPoints(trajectoryId, (trajectory) => {
-      const point: Scene3DTrajectoryPoint = { id: createScene3DTrajectoryPointId(), position: [...position] }
-      insertedId = point.id
+      const point: Scene3DTrajectoryPoint = { id: pointId, position: [...position] }
       if (!targetPointId) {
         return { ...trajectory, points: [...trajectory.points, point] }
       }
@@ -308,11 +309,9 @@ export function useScene3DTrajectoryEditing({
       points.splice(insertIndex, 0, point)
       return { ...trajectory, points }
     })
-    if (insertedId) {
-      setActiveTrajectoryId(trajectoryId)
-      setActivePointId(insertedId)
-    }
-  }, [mutateTrajectoryPoints])
+    setActiveTrajectoryId(trajectoryId)
+    setActivePointId(pointId)
+  }, [mutateTrajectoryPoints, readOnly])
 
   const updatePoint = React.useCallback((trajectoryId: string, pointId: string, position: Scene3DVector3) => {
     mutateTrajectoryPoints(trajectoryId, (trajectory) => ({
@@ -454,17 +453,15 @@ export function useScene3DTrajectoryEditing({
 
   const addGroup = React.useCallback(() => {
     if (readOnly) return
-    let createdId = ''
-    setState((current) => {
-      const group = {
-        id: createScene3DTrajectoryGroupId(),
-        name: `组${current.trajectoryGroups.length + 1}`,
-        trajectoryIds: [],
-      }
-      createdId = group.id
-      return { ...current, trajectoryGroups: [...current.trajectoryGroups, group] }
-    })
-    if (createdId) setActiveGroupId(createdId)
+    const groupId = createScene3DTrajectoryGroupId()
+    setState((current) => ({
+      ...current,
+      trajectoryGroups: [
+        ...current.trajectoryGroups,
+        { id: groupId, name: `组${current.trajectoryGroups.length + 1}`, trajectoryIds: [] },
+      ],
+    }))
+    setActiveGroupId(groupId)
   }, [readOnly, setState])
 
   const renameGroup = React.useCallback((groupId: string, name: string) => {

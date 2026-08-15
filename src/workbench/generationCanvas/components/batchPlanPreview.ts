@@ -4,11 +4,13 @@ import { create } from 'zustand'
 import { toast, useToastStore } from '../../../ui/toast'
 import { runGenerationNodesByPlan, spendCostKindForNodes } from '../runner/generationRunController'
 import { mintSpendGrant } from '../../api/taskApi'
-import { batchSpendGrantTtlMs, describeGenerationCost, useSpendConfirmStore } from '../spend/spendConfirm'
+import { batchSpendGrantTtlMs, confirmGenerationSpend, describeGenerationCost } from '../spend/spendConfirm'
 import { buildDependencyWaves, type DependencyWavePlan } from '../runner/dependencyWaves'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { verifyShotsAndReport } from '../agent/shotVerifyStore'
 import i18n from '../../../i18n'
+
+export const BATCH_RUN_TOAST_ID = 'canvas-batch-run'
 
 type BatchPlanPreviewState = {
   plan: DependencyWavePlan | null
@@ -130,7 +132,7 @@ export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, ge
       return
     }
     set({ plan: null, regenerationSourceNodeId: null, running: false })
-    await runPlanWithToasts(executablePlan, grantId)
+    await runPlanWithToasts(executablePlan, { grantId })
   },
 }))
 
@@ -159,6 +161,7 @@ export async function confirmAndRunPlan(
   options: {
     regenerationNodeIds?: readonly string[]
     onForked?: (sourceToVariant: ReadonlyMap<string, string>) => void
+    concurrency?: number
   } = {},
 ): Promise<void> {
   const ids = plan.waves.flat()
@@ -169,7 +172,9 @@ export async function confirmAndRunPlan(
   const regenerationNodeIds = options.regenerationNodeIds
     ? ids.filter((nodeId) => options.regenerationNodeIds?.includes(nodeId) && hasUsableResult(nodeId))
     : ids.filter(hasUsableResult)
-  const ok = await useSpendConfirmStore.getState().requestConfirm({
+  const state = useGenerationCanvasStore.getState()
+  const nodes = ids.map((id) => state.nodes.find((node) => node.id === id))
+  const ok = await confirmGenerationSpend(nodes, {
     title: '开始生成',
     message: describeGenerationCost(ids.length, spendCostKindForNodes(ids)),
     confirmLabel: i18n.t('generationCommon.batchPlan.confirmGenerate'),
@@ -200,12 +205,15 @@ export async function confirmAndRunPlan(
     toast(error instanceof Error && error.message ? error.message : '付费授权失败', 'error')
     return
   }
-  await runPlanWithToasts(forked.plan, grantId)
+  await runPlanWithToasts(forked.plan, { grantId, concurrency: options.concurrency })
 }
 
 /** 按计划真实生成 + 进度人话 toast。「全部生成」与 S6b agent 受理路径共用(单一执行口)。
  * grantId：付费守卫令牌（确认后铸），随 plan 下到每个节点的 request.extras 供主进程核验。 */
-export async function runPlanWithToasts(plan: DependencyWavePlan, grantId?: string): Promise<void> {
+export async function runPlanWithToasts(
+  plan: DependencyWavePlan,
+  options: { grantId?: string; concurrency?: number } = {},
+): Promise<void> {
   const waves = plan.waves
   const runnable = waves.flat().length
   const notice = describeBlockedNotice(plan)
@@ -231,15 +239,28 @@ export async function runPlanWithToasts(plan: DependencyWavePlan, grantId?: stri
           remaining: runnable - firstWave,
         })
       : i18n.t('generationCommon.batchPlan.start', { count: runnable })
-  toast(startMsg, 'info')
+  useToastStore.getState().push({
+    id: BATCH_RUN_TOAST_ID,
+    message: startMsg,
+    type: 'info',
+    ttl: false,
+    dismissible: true,
+  })
   try {
-    const result = await runGenerationNodesByPlan(plan, grantId ? { grantId } : {})
+    const result = await runGenerationNodesByPlan(plan, {
+      ...(options.grantId ? { grantId: options.grantId } : {}),
+      ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
+    })
     const okCount = result.successes.length
     const failCount = result.failures.length
     // 完成汇总：把「还有谁没跑、为什么」(notice) 并进同一条，不再跑完补弹第二条（消除连环弹，弹窗审计）。
     const tail = notice ? i18n.t('generationCommon.batchPlan.blockedTail', { notice }) : ''
     if (failCount === 0) {
-      toast(i18n.t('generationCommon.batchPlan.completed', { count: okCount, tail }), notice ? 'warning' : 'success')
+      useToastStore.getState().push({
+        id: BATCH_RUN_TOAST_ID,
+        message: i18n.t('generationCommon.batchPlan.completed', { count: okCount, tail }),
+        type: notice ? 'warning' : 'success',
+      })
     } else {
       // 失败汇总挂「重试失败的 N 个」一键动作（样张拍板 2026-07-29）：只对失败节点重建依赖波次
       // → 重新轻确认（新令牌，不绕付费闸）→ 并发重跑；成功的不重付。上游仍缺果的会再次被
@@ -250,13 +271,17 @@ export async function runPlanWithToasts(plan: DependencyWavePlan, grantId?: stri
           ? i18n.t('generationCommon.batchPlan.failed', { count: failCount, tail })
           : i18n.t('generationCommon.batchPlan.partiallyCompleted', { successes: okCount, failures: failCount, tail })
       useToastStore.getState().push({
+        id: BATCH_RUN_TOAST_ID,
         message,
         type: okCount === 0 ? 'error' : 'warning',
         ttl: 12_000,
         actionLabel: i18n.t('generationCommon.batchPlan.retryFailed', { count: failCount }),
         onAction: () => {
           const state = useGenerationCanvasStore.getState()
-          void confirmAndRunPlan(buildDependencyWaves(failureIds, { nodes: state.nodes, edges: state.edges }))
+          void confirmAndRunPlan(
+            buildDependencyWaves(failureIds, { nodes: state.nodes, edges: state.edges }),
+            { concurrency: options.concurrency },
+          )
         },
       })
     }
@@ -270,9 +295,10 @@ export async function runPlanWithToasts(plan: DependencyWavePlan, grantId?: stri
       if (shotIds.length > 0) void verifyShotsAndReport(shotIds)
     }
   } catch (error: unknown) {
-    toast(
-      error instanceof Error && error.message ? error.message : i18n.t('generationCommon.batchPlan.exception'),
-      'error',
-    )
+    useToastStore.getState().push({
+      id: BATCH_RUN_TOAST_ID,
+      message: error instanceof Error && error.message ? error.message : i18n.t('generationCommon.batchPlan.exception'),
+      type: 'error',
+    })
   }
 }

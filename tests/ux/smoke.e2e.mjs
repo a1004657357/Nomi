@@ -3,15 +3,11 @@
 // 任一断言失败即抛错、非零退出（CI-ready）。不触发真实 AI 生成/导出（不花额度）。
 //
 // 用法：pnpm run build && pnpm run test:e2e
-import { _electron as electron } from "playwright";
+import { launchNomiApp } from "./_launchApp.mjs";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 
-const require = createRequire(import.meta.url);
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), "nomi-smoke-e2e-"));
 const userDataDir = path.join(tempRoot, "user-data");
 const projectsDir = path.join(tempRoot, "projects");
@@ -24,26 +20,16 @@ function assert(cond, label) {
   console.log(`  ✓ ${label}`);
 }
 
-const app = await electron.launch({
-  executablePath: require("electron"),
-  args: [".", `--user-data-dir=${userDataDir}`],
-  cwd: repoRoot,
-  env: {
-    ...process.env,
-    NOMI_E2E: "1",
-    NOMI_E2E_SMOKE: "1",
-    NOMI_E2E_ALLOW_MULTI_INSTANCE: "1",
-    NOMI_ELECTRON_USER_DATA_DIR: userDataDir,
-    NOMI_SETTINGS_DIR: userDataDir,
-    NOMI_PROJECTS_DIR: projectsDir,
-  },
+const { app, win } = await launchNomiApp({
+  name: "smoke",
+  userDataDir: userDataDir,
+  settingsDir: userDataDir,
+  projectsDir: projectsDir,
+  env: { NOMI_E2E_SMOKE: "1" },
 });
 const electronProcess = app.process();
 
 try {
-  const win = await app.firstWindow();
-  await win.waitForLoadState("domcontentloaded");
-  await win.waitForTimeout(1500);
 
   // 1) 主进程启动 + 渲染层加载（runtime.ts 拆分后的回归底线）
   assert((await win.title()).toLowerCase().includes("nomi"), "窗口标题含 Nomi");
@@ -79,7 +65,8 @@ try {
     await win.getByText("新建空白项目", { exact: false }).first().click();
   }
   await win.waitForTimeout(2500);
-  for (const name of ["创作", "生成", "预览", "导出"]) {
+  // 「导出」在控件层级梳理（U 系列）里拆成诚实的「去出片」跳转钮（预览页隐藏，真导出=预览页「导出 MP4」）
+  for (const name of ["创作", "生成", "预览", "去出片"]) {
     assert(await win.getByRole("button", { name, exact: false }).first().isVisible(), `工作台工具栏「${name}」可见`);
   }
   assert(/projectId=/.test(win.url()), "工作台 URL 含 projectId");
@@ -126,6 +113,46 @@ try {
   });
   assert(composerCheck.scrolls, "超长提示词在编辑区内部滚动（不撑爆卡片）");
   assert(composerCheck.btnClickable, "超长提示词下生成钮 hit-test 可点（底栏未被溢出文字盖住）");
+
+  // 5) 3D 导演台：右栏「整运镜→轨迹」点「新建」→ 轨迹属性面板必须即时激活
+  //（回归 2026-08-04：createdId 从 setState updater 里往外带，依赖 React eager-eval 才同步执行；
+  // 「新建」handler 先 setTimelineOpen(true) 把 fiber 弄脏 → updater 推迟 → active 从未设置 →
+  // 面板永远停在「请选择一条轨迹」，用户被迫再去时间轴点一次「轨迹1」行）。
+  await win.evaluate(() => window.localStorage.setItem("nomi.onboarding.scene3dCoach.v1", "seen"));
+  await win.locator('button[aria-label="添加3D 场景节点"]').first().click()
+    .catch(() => win.getByRole("button", { name: /添加.*3D.*场景.*节点/ }).first().click());
+  await win.waitForTimeout(1200);
+  // 新节点落点不定（画布已被上一段平移过），Playwright actionability 可能够不着 → DOM click 兜底
+  await win.locator('[aria-label="打开 3D 编辑器"]').first().click({ timeout: 3000 })
+    .catch(() => win.evaluate(() => document.querySelector('[aria-label="打开 3D 编辑器"]')?.click()));
+  await win.waitForTimeout(3000);
+  const coachSkip = win.locator('[data-coach-skip="true"]').first();
+  if (await coachSkip.count()) {
+    await coachSkip.click({ timeout: 1500 }).catch(() => win.evaluate(() => {
+      const button = document.querySelector('[data-coach-skip="true"]');
+      if (button instanceof HTMLElement) button.click();
+    }));
+    await coachSkip.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
+  }
+  await win.getByRole("button", { name: "轨迹", exact: true }).first().click();
+  await win.waitForTimeout(400);
+  await win.getByRole("button", { name: "新建", exact: true }).first().click();
+  await win.waitForTimeout(800);
+  const trajectoryPanel = await win.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll("button"));
+    return {
+      // setTimelineOpen 是普通布尔 setter 永远成功 → 修复前时间轴已有「轨迹1」行而面板未激活，
+      // 两个断言拆开才能把「建成了但没激活」与「压根没建成」分开。
+      rowExists: buttons.some((b) => /^轨迹\d/.test((b.textContent || "").trim())),
+      appendPointVisible: buttons.some((b) => (b.textContent || "").includes("追加点")),
+      stillPlaceholder: Boolean(document.body.textContent?.includes("请选择一条轨迹")),
+    };
+  });
+  assert(trajectoryPanel.rowExists, "3D 轨迹「新建」后时间轴出现「轨迹1」行（轨迹已创建）");
+  assert(
+    trajectoryPanel.appendPointVisible && !trajectoryPanel.stillPlaceholder,
+    "3D 轨迹「新建」后属性面板即时激活（「追加点」可见、无「请选择一条轨迹」占位，无需再点时间轴行）",
+  );
 
   console.log(`\nSMOKE PASS: ${passed} assertions`);
   await finishAndExit(0);

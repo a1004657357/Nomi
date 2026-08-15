@@ -196,6 +196,25 @@ export function readMeta(meta: Record<string, unknown> | undefined, key: string)
   return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
 }
 
+/**
+ * 节点 meta 里的当前模型寻址（modelKey + vendor 双键）。
+ * 与模型选择器同一条 fallback 链的**唯一出处**——NodeParameterControls 与报错卡
+ * （自定义调用入口）共用，防两处各抄一份后漂移（同 vendor 双键防误路由，见选择器注释）。
+ */
+export function nodeSelectedModelAddress(meta: Record<string, unknown> | undefined): {
+  modelKey: string
+  vendorKey: string
+} {
+  const modelKey =
+    readMeta(meta, 'modelKey') || readMeta(meta, 'modelAlias') || readMeta(meta, 'imageModel') || readMeta(meta, 'videoModel')
+  const vendorKey =
+    readMeta(meta, 'modelVendor') ||
+    readMeta(meta, 'vendor') ||
+    readMeta(meta, 'imageModelVendor') ||
+    readMeta(meta, 'videoModelVendor')
+  return { modelKey, vendorKey }
+}
+
 function readStringArray(meta: unknown, key: string): string[] {
   if (!meta || typeof meta !== 'object') return []
   const value = (meta as Record<string, unknown>)[key]

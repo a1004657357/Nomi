@@ -16,10 +16,13 @@ import { isTextPromptEdge } from '../agent/referenceEdgeCapability'
 import { resolveReferenceSlots } from '../runner/referenceSlots'
 import i18n from '../../../i18n'
 
-export function completeNodeConnection(targetNodeId: string): void {
-  // 连接成功后会清空 pendingConnectionSourceId，先存下来（用于 D4 槽满检测）。
-  const sourceNodeId = useGenerationCanvasStore.getState().pendingConnectionSourceId
-  const verdict = useGenerationCanvasStore.getState().connectToNode(targetNodeId)
+export function completeNodeConnection(connectedNodeId: string): void {
+  // 连接成功后会清空待连态，先按端口方向算出真正 source/target（用于 D4 槽满检测）。
+  const before = useGenerationCanvasStore.getState()
+  const pendingNodeId = before.pendingConnectionSourceId
+  const sourceNodeId = before.pendingConnectionSourceSide === 'left' ? connectedNodeId : pendingNodeId
+  const targetNodeId = before.pendingConnectionSourceSide === 'left' ? pendingNodeId : connectedNodeId
+  const verdict = before.connectToNode(connectedNodeId)
   // 连边能力校验失败:给手动连线的用户即时反馈,而非静默不连(或落库后到生成期才被丢)。
   if (!verdict.ok && verdict.reason === 'source_not_referenceable') {
     showInfoToast(i18n.t('connection.sourceUnavailable'))

@@ -107,14 +107,18 @@ export function Scene3DCoachMarks({ onDone }: { onDone: () => void }): JSX.Eleme
   const cardTop = below + CARD_H + 8 > rect.hostHeight ? rect.top - CARD_H - 10 : Math.max(40, below)
 
   return (
-    <div ref={hostRef} className="absolute inset-0 z-[6]">
-      <div className="absolute inset-0 bg-nomi-ink/45" onClick={finish} />
+    // 非模态引导（2026-08-07 飞书反馈「这几个按钮都没法点击」根因）：此前遮罩 onClick={finish}
+    // 全窗吞点击——用户点顶栏 tab/3D 场景时点击被遮罩吃掉（只关掉引导、操作不生效），
+    // 体感「按钮全失灵」。改为遮罩只变暗不拦截（pointer-events-none），操作直接落到下方控件；
+    // 关闭引导走卡片上显眼的「跳过/下一步」按钮。
+    <div ref={hostRef} className="pointer-events-none absolute inset-0 z-[6]">
+      <div className="absolute inset-0 bg-nomi-ink/45" />
       <div
         className="pointer-events-none absolute rounded-nomi border-2 border-nomi-paper shadow-nomi-md"
         style={{ left: rect.left - 4, top: rect.top - 4, width: rect.width + 8, height: rect.height + 8 }}
       />
       <div
-        className="absolute rounded-nomi border border-nomi-line bg-nomi-paper p-3 shadow-nomi-lg"
+        className="pointer-events-auto absolute rounded-nomi border border-nomi-line bg-nomi-paper p-3 shadow-nomi-lg"
         style={{ left: cardLeft, top: cardTop, width: CARD_W }}
       >
         <div className="text-caption font-medium text-nomi-ink">{t(current.titleKey)}</div>
@@ -124,6 +128,7 @@ export function Scene3DCoachMarks({ onDone }: { onDone: () => void }): JSX.Eleme
           <span className="flex items-center gap-3">
             <button
               className="border-0 bg-transparent p-0 text-micro text-nomi-ink-60 hover:text-nomi-ink"
+              data-coach-skip="true"
               type="button"
               onClick={finish}
             >

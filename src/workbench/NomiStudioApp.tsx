@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { ConfirmDialogHost, confirmDialog, NomiLoadingMark } from '../design'
 import ProjectLibraryPage from './library/ProjectLibraryPage'
 import { SettingsDialog } from './settings/SettingsDialog'
+import { useSettingsDialogController } from './settings/useSettingsDialogController'
 import {
   createLocalProject,
   deleteLocalProject,
@@ -38,8 +39,8 @@ import { openWorkspaceFromLibrary } from './library/openWorkspaceFlow'
 import { lazyWithChunkBoundary } from '../ui/chunkBoundary'
 import { releaseWorkbenchProjectRuntimeState } from './project/releaseWorkbenchProjectSession'
 import { useSpendConfirmStore } from './generationCanvas/spend/spendConfirm'
-import { useFilePreviewStore } from './explorer/useFilePreviewStore'
 import { runAssetSurfaceMigrations } from './assets/assetSurfaceMigration'
+import { useProductionRunStore } from './production/productionRunStore'
 
 type AppView = 'library' | 'studio'
 
@@ -58,21 +59,6 @@ type ProjectPersistenceModule = typeof import('./project/projectPersistenceServi
 
 // 懒加载点位全部走容错域（审计 A5）：chunk 失败只降级该区域，不再拖死整个 app。
 const WorkbenchShell = lazyWithChunkBoundary('工作台', () => import('./WorkbenchShell'))
-const OnboardingFloatingPanel = lazyWithChunkBoundary('模型设置面板', () =>
-  import('../ui/onboarding/OnboardingFloatingPanel').then((module) => ({
-    default: module.OnboardingFloatingPanel,
-  })),
-)
-const PromptLibraryPanel = lazyWithChunkBoundary('提示词库', () =>
-  import('./promptLibrary/PromptLibraryPanel').then((module) => ({
-    default: module.PromptLibraryPanel,
-  })),
-)
-const SkillLibraryPanel = lazyWithChunkBoundary('技能库', () =>
-  import('./skillLibrary/SkillLibraryPanel').then((module) => ({
-    default: module.SkillLibraryPanel,
-  })),
-)
 const HandbookPanel = lazyWithChunkBoundary('上手手册', () =>
   import('./onboarding/HandbookPanel').then((module) => ({
     default: module.HandbookPanel,
@@ -94,11 +80,6 @@ const SpendConfirmDialog = lazyWithChunkBoundary('付费确认', () =>
 const JourneyTourController = lazyWithChunkBoundary('引导旅途', () =>
   import('./onboarding/JourneyTourController').then((module) => ({
     default: module.JourneyTourController,
-  })),
-)
-const FilePreviewPanel = lazyWithChunkBoundary('文件预览', () =>
-  import('./explorer/FilePreviewPanel').then((module) => ({
-    default: module.FilePreviewPanel,
   })),
 )
 const NomiBrowserDialog = lazyWithChunkBoundary('浏览器', () =>
@@ -136,23 +117,15 @@ export default function NomiStudioApp(): JSX.Element {
   const { projects, refreshProjects } = useLocalProjects()
   const [activeProject, setActiveProject] = React.useState<LocalProjectSummary | null>(null)
   const generationAiCollapsed = useGenerationCanvasStore((state) => state.generationAiCollapsed)
-  const [modelCatalogOpened, setModelCatalogOpened] = React.useState(false)
-  const [settingsOpened, setSettingsOpened] = React.useState(false)
-  const [promptLibraryOpened, setPromptLibraryOpened] = React.useState(false)
-  const [skillLibraryOpened, setSkillLibraryOpened] = React.useState(false)
+  const settingsDialogController = useSettingsDialogController()
   const [handbookOpened, setHandbookOpened] = React.useState(false)
   const [browserOpened, setBrowserOpened] = React.useState(false)
   const [browserMounted, setBrowserMounted] = React.useState(false)
   const hasPendingSpendConfirm = useSpendConfirmStore((state) => Boolean(state.pending))
-  const filePreviewOpen = useFilePreviewStore((state) => state.open)
-  // 首启开屏：仅首次未看过时自动放；看过后可经项目库「看看 Nomi」重看。
+  // 首启开屏：仅首次未看过时自动放；看过后可经设置「关于」→「重看开屏动画」重看。
   const [splashDone, setSplashDone] = React.useState(() => hasSeenSplash())
   const [journeyTourControllerMounted, setJourneyTourControllerMounted] = React.useState(false)
   const { hasTextModel, refresh: refreshModelStatus } = useHasTextModel()
-  // 模型接入面板关闭后重查（用户可能刚接完模型 → 状态条/弱入口要立即翻面）
-  React.useEffect(() => {
-    if (!modelCatalogOpened) refreshModelStatus()
-  }, [modelCatalogOpened, refreshModelStatus])
   const hydratingProjectRef = React.useRef(false)
   const activeProjectIdRef = React.useRef<string | null>(null)
   const initialHydrationAttemptedRef = React.useRef(false)
@@ -201,24 +174,6 @@ export default function NomiStudioApp(): JSX.Element {
   // 素材面收敛一次性迁移（幂等）：旧素材盒 localStorage 提示词卡并入主提示词库。
   React.useEffect(() => {
     runAssetSurfaceMigrations()
-  }, [])
-
-  React.useEffect(() => {
-    const handleOpenModelCatalog = () => setModelCatalogOpened(true)
-    window.addEventListener('nomi-open-model-catalog', handleOpenModelCatalog)
-    return () => window.removeEventListener('nomi-open-model-catalog', handleOpenModelCatalog)
-  }, [])
-
-  React.useEffect(() => {
-    const handleOpenPromptLibrary = () => setPromptLibraryOpened(true)
-    window.addEventListener('nomi-open-prompt-library', handleOpenPromptLibrary)
-    return () => window.removeEventListener('nomi-open-prompt-library', handleOpenPromptLibrary)
-  }, [])
-
-  React.useEffect(() => {
-    const handleOpenSkillLibrary = () => setSkillLibraryOpened(true)
-    window.addEventListener('nomi-open-skill-library', handleOpenSkillLibrary)
-    return () => window.removeEventListener('nomi-open-skill-library', handleOpenSkillLibrary)
   }, [])
 
   React.useEffect(() => {
@@ -311,10 +266,47 @@ export default function NomiStudioApp(): JSX.Element {
       const previousDesktopProjectId = activeProjectIdRef.current
       setDesktopActiveProjectId(null)
       try {
-        const hydrated = await service.hydrateProject(projectId)
+        let hydrateError: unknown = null
+        let hydrated = await service.hydrateProject(projectId).catch((error: unknown) => {
+          hydrateError = error
+          return null
+        })
+        if (!hydrated) {
+          const projectBridge = getDesktopBridge()?.projects
+          const diagnostic = projectBridge?.diagnose
+            ? await projectBridge.diagnose(projectId).catch(() => null)
+            : null
+          if (diagnostic?.recoverable && projectBridge?.recover) {
+            const confirmed = await confirmDialog({
+              title: t('studio.projectRecoveryTitle'),
+              message: t('studio.projectRecoveryMessage'),
+              confirmLabel: t('studio.projectRecoveryConfirm'),
+              cancelLabel: t('common.cancel'),
+              tone: 'info',
+            })
+            if (confirmed) {
+              await projectBridge.recover(projectId)
+              hydrated = await service.hydrateProject(projectId)
+              if (hydrated) toast(t('studio.projectRecoveryComplete'), 'success')
+            }
+          } else if (diagnostic?.status === 'missing-folder') {
+            toast(t('studio.projectFolderMissing'), 'error')
+          } else if (diagnostic?.rootPath) {
+            const reveal = await confirmDialog({
+              title: t('studio.projectRepairTitle'),
+              message: t('studio.projectRepairMessage', { path: diagnostic.rootPath }),
+              confirmLabel: t('studio.openProjectFolder'),
+              cancelLabel: t('common.cancel'),
+              tone: 'info',
+            })
+            if (reveal) await getDesktopBridge()?.workspace?.revealProjectFolder({ projectId })
+          } else {
+            toast(t('studio.projectNotFound'), 'error')
+          }
+        }
         if (!hydrated) {
           setDesktopActiveProjectId(previousDesktopProjectId)
-          toast('找不到项目文件，可能已被删除，请刷新项目库', 'error')
+          if (hydrateError) console.error('project hydrate failed', hydrateError)
           refreshProjects()
           return false
         }
@@ -360,6 +352,26 @@ export default function NomiStudioApp(): JSX.Element {
     },
     [hydrateProject],
   )
+
+  React.useEffect(() => {
+    const onDeepLink = getDesktopBridge()?.app?.onProductionDeepLink
+    if (!onDeepLink) return undefined
+    return onDeepLink((payload) => {
+      const projectId = typeof payload?.projectId === 'string' ? payload.projectId.trim() : ''
+      const runId = typeof payload?.runId === 'string' ? payload.runId.trim() : ''
+      if (!projectId || !runId) return
+      void (async () => {
+        useWorkbenchStore.getState().setWorkspaceMode('generation')
+        if (activeProjectIdRef.current !== projectId) {
+          const opened = await hydrateProject(projectId, { replaceUrl: true })
+          if (!opened) return
+        }
+        // 深链落到制作任务的新家：任务中心（不再展开画布助手面板——制作已从那儿搬走）。
+        window.dispatchEvent(new CustomEvent('nomi-open-task-center'))
+        await useProductionRunStore.getState().navigateTo(projectId, runId, payload.artifactId)
+      })().catch((error) => console.error('production deep link failed', error))
+    })
+  }, [hydrateProject])
 
   const openWorkspaceFolder = React.useCallback(async () => {
     await openWorkspaceFromLibrary({
@@ -440,10 +452,6 @@ export default function NomiStudioApp(): JSX.Element {
     window.addEventListener('nomi-model-catalog-changed', handleCatalogChanged)
     return () => window.removeEventListener('nomi-model-catalog-changed', handleCatalogChanged)
   }, [refreshModelStatus])
-
-  const closeModelCatalog = React.useCallback(() => {
-    setModelCatalogOpened(false)
-  }, [])
 
   const closeBrowser = React.useCallback(() => {
     setBrowserOpened(false)
@@ -640,6 +648,15 @@ export default function NomiStudioApp(): JSX.Element {
       <NomiBrowserDialog opened={browserOpened} onClose={closeBrowser} />
     </React.Suspense>
   ) : null
+  const settingsDialog = settingsDialogController.opened ? (
+    <SettingsDialog
+      initialTab={settingsDialogController.initialTab}
+      initialSection={settingsDialogController.initialSection}
+      productionPolicyRequirement={settingsDialogController.productionPolicyRequirement}
+      onClose={settingsDialogController.closeSettings}
+      onReplaySplash={() => setSplashDone(false)}
+    />
+  ) : null
   const viewContent = view === 'library' ? (
       <>
         <ProjectLibraryPage
@@ -650,37 +667,13 @@ export default function NomiStudioApp(): JSX.Element {
           onNewProject={() => void newProject()}
           onOpenFolder={() => void openWorkspaceFolder()}
           onRevealProjectFolder={revealProjectFolder}
-          onOpenModelCatalog={() => setModelCatalogOpened(true)}
-          onOpenSettings={() => setSettingsOpened(true)}
+          onOpenModelCatalog={settingsDialogController.openModelSettings}
+          onOpenSettings={settingsDialogController.openDefaultSettings}
           onPlayJourneyTour={playJourneyTour}
           journeyTourSeen={hasSeenJourneyTour()}
-          onReplaySplash={() => setSplashDone(false)}
           hasTextModel={hasTextModel}
         />
-        {!splashDone ? (
-          <SplashIntro
-            onDone={() => {
-              markSplashSeen()
-              setSplashDone(true)
-            }}
-          />
-        ) : null}
-        {/* 模型接入面板也要在首页可用：全新安装零模型时，「30 秒体验」会派发
-                    nomi-open-model-catalog 引导接入；之前此面板只挂在 studio 视图 →
-                    首页派发事件无人响应，用户卡死（冷启动 J3 P0）。 */}
-        {modelCatalogOpened ? (
-          <React.Suspense fallback={null}>
-            <OnboardingFloatingPanel opened={modelCatalogOpened} onClose={closeModelCatalog} />
-          </React.Suspense>
-        ) : null}
-        {settingsOpened ? <SettingsDialog onClose={() => setSettingsOpened(false)} /> : null}
-        {/* 付费确认卡提全局：外部 MCP 想在「非当前项目」生成时，用户停在项目库首页也能弹卡确认
-                    （治静默黑洞，用户拍板 A）。同一全局 store，库/studio 任一时刻只一个分支渲染、不双弹。 */}
-        {hasPendingSpendConfirm ? (
-          <React.Suspense fallback={null}>
-            <SpendConfirmDialog />
-          </React.Suspense>
-        ) : null}
+        {settingsDialog}
         <ConfirmDialogHost />
       </>
     ) : (
@@ -690,12 +683,7 @@ export default function NomiStudioApp(): JSX.Element {
             <React.Suspense fallback={<GenerationCanvasLoading />}>
               {/* relative 包一层:S2b 计划 overlay 与画布同坐标系,且不喂巨壳 */}
               <div className={cn('relative w-full h-full')}>
-                <GenerationCanvas projectName={activeProject?.name} />
-                {hasPendingSpendConfirm ? (
-                  <React.Suspense fallback={null}>
-                    <SpendConfirmDialog />
-                  </React.Suspense>
-                ) : null}
+                <GenerationCanvas />
               </div>
             </React.Suspense>
           }
@@ -708,39 +696,16 @@ export default function NomiStudioApp(): JSX.Element {
           projectId={activeProject?.id ?? null}
           projectName={activeProject?.name}
           onBackToLibrary={backToLibrary}
-          onOpenModelCatalog={() => setModelCatalogOpened(true)}
-          onOpenSettings={() => setSettingsOpened(true)}
+          onOpenModelCatalog={settingsDialogController.openModelSettings}
+          onOpenSettings={settingsDialogController.openDefaultSettings}
           onRenameProject={handleRenameProject}
         />
 
-        {modelCatalogOpened ? (
-          <React.Suspense fallback={null}>
-            <OnboardingFloatingPanel opened={modelCatalogOpened} onClose={closeModelCatalog} />
-          </React.Suspense>
-        ) : null}
-        {settingsOpened ? <SettingsDialog onClose={() => setSettingsOpened(false)} /> : null}
-
-        {promptLibraryOpened ? (
-          <React.Suspense fallback={null}>
-            <PromptLibraryPanel opened={promptLibraryOpened} onClose={() => setPromptLibraryOpened(false)} />
-          </React.Suspense>
-        ) : null}
-
-        {skillLibraryOpened ? (
-          <React.Suspense fallback={null}>
-            <SkillLibraryPanel opened={skillLibraryOpened} onClose={() => setSkillLibraryOpened(false)} />
-          </React.Suspense>
-        ) : null}
+        {settingsDialog}
 
         {handbookOpened ? (
           <React.Suspense fallback={null}>
             <HandbookPanel opened={handbookOpened} onClose={() => setHandbookOpened(false)} />
-          </React.Suspense>
-        ) : null}
-
-        {filePreviewOpen ? (
-          <React.Suspense fallback={null}>
-            <FilePreviewPanel />
           </React.Suspense>
         ) : null}
 
@@ -758,6 +723,24 @@ export default function NomiStudioApp(): JSX.Element {
     <>
       {globalBrowserDialog}
       {viewContent}
+      {/* 付费确认卡挂在公共根：制作任务的家是任务中心（顶栏常驻、创作/生成/预览都能开），
+          门的兜底决策必须在任一视图都弹得出来。原先库页一处、生成区插槽内一处——创作/预览视图
+          下根本没挂载，在那儿点确认永远没反应（本轮走查实测抓出）。单一挂载，不留并行版（P1）。 */}
+      {hasPendingSpendConfirm ? (
+        <React.Suspense fallback={null}>
+          <SpendConfirmDialog />
+        </React.Suspense>
+      ) : null}
+      {/* 开屏动画提到视图之外（原先只挂在库页分支）：重放入口已归位到设置「关于」，
+          而设置在库页和 studio 都能开——不提上来的话从 studio 点「重看开屏动画」不会有任何反应。 */}
+      {!splashDone ? (
+        <SplashIntro
+          onDone={() => {
+            markSplashSeen()
+            setSplashDone(true)
+          }}
+        />
+      ) : null}
     </>
   )
 }

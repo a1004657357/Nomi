@@ -184,6 +184,15 @@ export const generationCanvasNodeSchema = z.object({
   contentJson: z.object({ type: z.literal('doc') }).passthrough().optional(),
 })
 
+const generationCanvasEdgeModeSchema = z.enum([
+  'reference',
+  'first_frame',
+  'last_frame',
+  'style_ref',
+  'character_ref',
+  'composition_ref',
+])
+
 export const nodeGroupSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -197,6 +206,15 @@ export const nodeGroupSchema = z.object({
     h: z.number(),
   }).optional(),
   collapsed: z.boolean().optional(),
+  // 组入参声明（真边仍是普通 node→node 边）；旧快照无 → undefined。
+  inputLinks: z.array(z.object({
+    sourceNodeId: z.string().min(1),
+    mode: generationCanvasEdgeModeSchema.optional(),
+  })).optional(),
+  // 组出参声明：编组作为来源时，每个成员都向 target 物化普通真边；旧快照无 → undefined。
+  outputLinks: z.array(z.object({
+    targetNodeId: z.string().min(1),
+  })).optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
 })
@@ -205,16 +223,11 @@ export const generationCanvasEdgeSchema = z.object({
   id: z.string().min(1),
   source: z.string().min(1),
   target: z.string().min(1),
-  mode: z.enum([
-    'reference',
-    'first_frame',
-    'last_frame',
-    'style_ref',
-    'character_ref',
-    'composition_ref',
-  ]).optional(),
+  mode: generationCanvasEdgeModeSchema.optional(),
   // 落入同一 target 的放入顺序（数组参考 character1..N 的真相源；旧快照无 → undefined，排序退化为原序）。
   order: z.number().optional(),
+  // 溯源：由哪个组的输入/输出声明物化而来（只用于撤边时不误伤手工边）。
+  viaGroupId: z.string().optional(),
 })
 
 export const generationCanvasSnapshotSchema = z.object({

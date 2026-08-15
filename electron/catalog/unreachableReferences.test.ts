@@ -8,6 +8,7 @@ import { VOLCENGINE_VIDEO_MODELS } from "./volcengineVideos";
 const FIRST = "https://cdn.example.com/first.png";
 const LAST = "https://cdn.example.com/last.png";
 const ROLE = "https://cdn.example.com/role-1.png";
+const ROLE_2 = "https://cdn.example.com/role-2.png";
 const VIDEO = "https://cdn.example.com/move.mp4";
 
 const nativeI2vBody = VOLCENGINE_VIDEO_MODELS[0].mappings.find((m) => m.taskKind === "image_to_video")?.create.body;
@@ -61,5 +62,53 @@ describe("unreachableReferenceLabels", () => {
 
   it("只带首帧走通用模板 → 放行（刚修好的那条路必须不被自己拦住）", () => {
     expect(unreachableReferenceLabels({ extras: { firstFrameUrl: FIRST } }, NEWAPI_VIDEO_CREATE_OP.body)).toEqual([]);
+  });
+
+  // ── 画布**连线**来的参考（此前第三闸对这一路整个空转：carried 恒空 → 直接 early-return []）──
+  // 上面几条喂的全是**手动上传**键（referenceImageUrls/referenceVideoUrls…）；连线来的参考落在
+  // referenceImages + 档案投影 archetypeInput.{image_urls,video_urls} 上，旧实现一个都不认。
+  // 用户连了参考图、通用中转模板发不出、闸门不吭声 → 生成成功、扣费成功、跟参考图无关。
+
+  it("连线多张参考图走通用中转：第 1 张发得出，第 2 张发不出 → 拦住（旧实现静默丢）", () => {
+    const labels = unreachableReferenceLabels(
+      { extras: { referenceImages: [ROLE, ROLE_2], archetypeInput: { image_urls: [ROLE, ROLE_2] } } },
+      NEWAPI_VIDEO_CREATE_OP.body,
+    );
+    expect(labels).toEqual(["参考图"]);
+  });
+
+  it("连线参考视频走通用中转 → 拦住（body 里根本没有视频位，运镜整个空转的那条）", () => {
+    const labels = unreachableReferenceLabels(
+      { extras: { archetypeInput: { video_urls: [VIDEO] } } },
+      NEWAPI_VIDEO_CREATE_OP.body,
+    );
+    expect(labels).toEqual(["参考视频"]);
+  });
+
+  it("连线单张参考图走通用中转 → 放行（聚合进 image_url，不能被自己拦住）", () => {
+    expect(
+      unreachableReferenceLabels(
+        { extras: { referenceImages: [ROLE], archetypeInput: { image_urls: [ROLE] } } },
+        NEWAPI_VIDEO_CREATE_OP.body,
+      ),
+    ).toEqual([]);
+  });
+
+  it("连线多张参考图 + body 真发得出数组 → 零误伤（修完不能反过来误拦原生通道）", () => {
+    expect(
+      unreachableReferenceLabels(
+        { extras: { referenceImages: [ROLE, ROLE_2], archetypeInput: { image_urls: [ROLE, ROLE_2] } } },
+        { model: "x", image_urls: "{{request.params.image_urls}}" },
+      ),
+    ).toEqual([]);
+  });
+
+  it("没登记过的新参考键也要被看见（回退「参考素材」，绝不因没登记就放过）", () => {
+    expect(
+      unreachableReferenceLabels(
+        { extras: { archetypeInput: { some_future_ref_url: "https://cdn.example.com/new.bin" } } },
+        NEWAPI_VIDEO_CREATE_OP.body,
+      ),
+    ).toEqual(["参考素材"]);
   });
 });

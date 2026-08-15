@@ -15,6 +15,7 @@ import {
   resetEmptyDraftGcGuard,
   sanitizeName,
 } from "./repository";
+import { findRecentWorkspace } from "../workspace/workspaceRegistry";
 
 describe("sanitizeName", () => {
   it("replaces filesystem-unsafe characters with underscore", () => {
@@ -131,5 +132,17 @@ describe("listProjects 启动一次 GC（空白草稿回收）", () => {
   it("非草稿项目不被回收", () => {
     const keep = createProject({ name: "正常项目" });
     expect(listProjects().some((p) => p.id === keep.id)).toBe(true);
+  });
+
+  it("在创建入口冻结默认项目与打开文件夹的来源", () => {
+    const native = createProject({ name: "默认位置项目" });
+    const externalRoot = path.join(projectsRoot, "用户显式打开的文件夹");
+    const external = createProject({ name: "外部文件夹", rootPath: externalRoot });
+
+    expect(findRecentWorkspace(settingsRoot, native.id)).toMatchObject({
+      source: "native",
+      nativeRootPath: path.resolve(projectsRoot),
+    });
+    expect(findRecentWorkspace(settingsRoot, external.id)).toMatchObject({ source: "folder" });
   });
 });

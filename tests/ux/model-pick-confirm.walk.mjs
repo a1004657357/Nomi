@@ -3,13 +3,10 @@
 // 产出: tests/ux/shots/pick-confirm/*.png —— 人眼判断：来源名称字段 / 模型空态 / 第二屏分组勾选 /
 //        手填 id 自动按 文本·图片·视频·配音 归类 / 回表单「已选 N 个」摘要。
 // 不需要真 relay：手填 id 走的是 candidate→picker→summary 同一条管线，guessKinds 本机纯启发式。
-import { _electron as electron } from 'playwright'
+import { launchNomiApp } from './_launchApp.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
-
-const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const shotsDir = path.join(repoRoot, 'tests/ux/shots/pick-confirm')
 fs.mkdirSync(shotsDir, { recursive: true })
@@ -25,15 +22,10 @@ async function snap(win, name) {
   console.log(`  · shot ${tag}`)
 }
 
-const app = await electron.launch({
-  executablePath: require('electron'),
-  args: ['.', `--user-data-dir=${userData}`],
-  cwd: repoRoot,
-  env: { ...process.env, NOMI_E2E: '1' },
+const { app, win } = await launchNomiApp({
+  name: 'model-pick-confirm',
+  userDataDir: userData,
 })
-const win = await app.firstWindow()
-await win.waitForLoadState('domcontentloaded')
-await win.waitForTimeout(1500)
 
 await win.evaluate(() => {
   for (const k of ['nomi:splash:v1', 'nomi:journey-tour:v1', 'nomi:canvas-gesture-hint:v1']) {
@@ -92,7 +84,7 @@ await snap(win, 'picker-empty')
 
 // 手填四类 id，验证自动归类到 文本/图片/视频/配音
 const manual = win.getByPlaceholder(/没列出来的/).first()
-for (const id of ['gpt-5.5', 'flux-2-flex', 'kling-v3', 'doubao-tts-2.0', 'deepseek-v4-pro']) {
+for (const id of ['gpt-5.5', 'flux-2-flex', 'kling-v3', 'doubao-tts-2.0', 'deepseek-v3.1-250821']) {
   await manual.fill(id)
   await manual.press('Enter')
   await win.waitForTimeout(500)
@@ -102,7 +94,7 @@ console.log('— 第二屏：五个 id 自动按 文本·图片·视频·配音 
 await snap(win, 'picker-grouped')
 
 // 取消一个（点 gpt-5.5 行）测试勾选交互 + 计数
-const row = win.locator('button', { hasText: 'deepseek-v4-pro' }).first()
+const row = win.locator('button', { hasText: 'deepseek-v3.1-250821' }).first()
 if (await row.count()) await row.click().catch(() => {})
 await win.waitForTimeout(400)
 console.log('— 取消一个 → 计数 / 按钮数字应 -1 —')

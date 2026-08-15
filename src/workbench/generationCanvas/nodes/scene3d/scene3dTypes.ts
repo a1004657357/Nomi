@@ -5,8 +5,25 @@ export type Scene3DVector3 = [number, number, number]
 export type Scene3DTransformMode = 'translate' | 'rotate' | 'scale'
 export type Scene3DControlMode = 'edit' | 'fly'
 export type Scene3DObjectType = 'mesh' | 'model' | 'light' | 'group' | 'mannequin' | 'mannequinCrowd' | 'prop'
-// 语义道具（灰模摆场件）。spec 数据在 scene3dProps.tsx，新增 kind 只加一条 spec。
-export type Scene3DPropKind = 'car' | 'building' | 'tree' | 'streetlamp' | 'wall'
+// 语义道具（灰模摆场件）。spec 数据在 scene3dPropSpecs.ts，新增 kind 只加一条 spec。
+// 2026-08-03 批量扩充 11 种（交通/家居/街景，几何参考 3d-director-desk BuiltInLifeModel，MIT）。
+export type Scene3DPropKind =
+  | 'car'
+  | 'building'
+  | 'tree'
+  | 'streetlamp'
+  | 'wall'
+  | 'suv'
+  | 'bus'
+  | 'bicycle'
+  | 'scooter'
+  | 'sofa'
+  | 'diningTable'
+  | 'fridge'
+  | 'washingMachine'
+  | 'trashBins'
+  | 'atm'
+  | 'backpack'
 export type Scene3DGeometry = 'box' | 'sphere' | 'cylinder' | 'plane'
 export type Scene3DLightType = 'point' | 'directional' | 'spot'
 export type Scene3DAspectRatio = '16:9' | '9:16' | '4:3' | '3:4' | '1:1' | '2.39:1'

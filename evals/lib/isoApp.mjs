@@ -4,13 +4,10 @@
 //
 // 安全铁律(评审后端#7):自动批准必须过工具白名单;白名单外一律拒绝;
 // eval:score 兜底断言 zeroVendorCalls(评测环境绝不烧生成额度)。
-import { _electron as electron } from "playwright";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
+import { buildNomiLaunchEnv, launchNomiApp } from "../../tests/ux/_launchApp.mjs";
 
 /** 今天全部 5 个画布工具都免额度;将来出现 costy 工具(如 run_generation_batch)默认就被拒。 */
 export const TOOL_WHITELIST = new Set([
@@ -42,26 +39,23 @@ export function prepareIsolation(isoDir, { requireCatalog = true } = {}) {
 }
 
 export function isolatedAppEnv(iso, baseEnv = process.env) {
-  return {
-    ...baseEnv,
-    NOMI_E2E: "1",
-    NOMI_E2E_ALLOW_MULTI_INSTANCE: "1",
-    NOMI_ELECTRON_USER_DATA_DIR: iso.chromiumDir,
-    NOMI_PROJECTS_DIR: iso.projectsDir,
-    NOMI_SETTINGS_DIR: iso.settingsDir,
-  };
+  // 单一真相源在 tests/ux/_launchApp.mjs——那套 env 少一条窗口就起不来，不能有第二份定义。
+  return buildNomiLaunchEnv({
+    baseEnv,
+    userDataDir: iso.chromiumDir,
+    projectsDir: iso.projectsDir,
+    settingsDir: iso.settingsDir,
+  });
 }
 
+/** repoRoot 参数保留（评测各处都这么调），实际根路径由启动器自己派生。 */
 export async function launchIsolatedApp(repoRoot, iso) {
-  const app = await electron.launch({
-    executablePath: require("electron"),
-    args: [".", `--user-data-dir=${iso.chromiumDir}`],
-    cwd: repoRoot,
-    env: isolatedAppEnv(iso),
+  const { app, win } = await launchNomiApp({
+    name: "eval-iso",
+    userDataDir: iso.chromiumDir,
+    projectsDir: iso.projectsDir,
+    settingsDir: iso.settingsDir,
   });
-  const win = await app.firstWindow();
-  await win.waitForLoadState("domcontentloaded");
-  await win.waitForTimeout(1500);
   return { app, win };
 }
 
@@ -72,7 +66,13 @@ export async function dismissSplashIfPresent(win) {
     await skip.click({ timeout: 4_000 });
     await win.locator(".nomi-splash").waitFor({ state: "detached", timeout: 4_000 }).catch(() => undefined);
   } catch {
-    // 开屏没出现 / 已自动收尾 → 放行
+    // React 动画首帧偶发让 Playwright actionability 观察不到按钮；保留同一语义
+    // 控件，用 DOM click 收尾，避免遮罩仍在时把后续失败误报成产品入口故障。
+    await win.evaluate(() => {
+      const button = document.querySelector('[data-splash-skip="true"]');
+      if (button instanceof HTMLElement) button.click();
+    }).catch(() => undefined);
+    await win.locator(".nomi-splash").waitFor({ state: "detached", timeout: 4_000 }).catch(() => undefined);
   }
 }
 
@@ -103,7 +103,7 @@ export async function openGenerationAiPanel(win) {
   if (await input.count()) return;
   // 空白项目默认无「画面」board(空态显示「这里还没有画面 / 新建画面」)→ 助手输入框不挂载。
   // 先建一个 board(无则 no-op),再开面板。
-  const boardCta = win.getByText("新建画面", { exact: false }).first();
+  const boardCta = win.locator('button[aria-label^="新建一个"][aria-label$="节点"]').first();
   if (await boardCta.count()) {
     await boardCta.click({ timeout: 5000 }).catch(() => {});
     await win.waitForTimeout(1200);

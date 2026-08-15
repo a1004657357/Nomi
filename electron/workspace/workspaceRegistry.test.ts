@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  backfillWorkspaceOrigins,
   findRecentWorkspace,
   listRecentWorkspaces,
   recentWorkspacesPath,
@@ -90,6 +91,42 @@ describe("workspace registry", () => {
       lastOpenedAt: Date.parse("2026-05-31T12:10:00Z"),
       missing: false,
     });
+  });
+
+  it("persists a project's creation origin across later saves", () => {
+    const settingsRoot = makeTempDir();
+    const nativeRoot = makeTempDir();
+    const projectRoot = path.join(nativeRoot, "project-1");
+    fs.mkdirSync(projectRoot);
+
+    rememberWorkspace(settingsRoot, record("project-1", projectRoot), {
+      source: "native",
+      nativeRootPath: nativeRoot,
+    });
+    rememberWorkspace(settingsRoot, record("project-1", projectRoot, "Saved Again"));
+
+    expect(findRecentWorkspace(settingsRoot, "project-1")).toMatchObject({
+      source: "native",
+      nativeRootPath: path.resolve(nativeRoot),
+    });
+  });
+
+  it("backfills legacy entries once from the old default root", () => {
+    const settingsRoot = makeTempDir();
+    const oldDefaultRoot = makeTempDir();
+    const nativeProjectRoot = path.join(oldDefaultRoot, "native-project");
+    const externalProjectRoot = makeTempDir();
+    fs.mkdirSync(nativeProjectRoot);
+    rememberWorkspace(settingsRoot, record("native", nativeProjectRoot));
+    rememberWorkspace(settingsRoot, record("external", externalProjectRoot));
+
+    backfillWorkspaceOrigins(settingsRoot, oldDefaultRoot);
+
+    expect(findRecentWorkspace(settingsRoot, "native")).toMatchObject({
+      source: "native",
+      nativeRootPath: path.resolve(oldDefaultRoot),
+    });
+    expect(findRecentWorkspace(settingsRoot, "external")).toMatchObject({ source: "folder" });
   });
 
   it("marks missing root paths without deleting entries", () => {

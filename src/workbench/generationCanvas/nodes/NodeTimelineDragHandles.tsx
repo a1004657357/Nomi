@@ -42,7 +42,7 @@ export function TimelineNotchDragHandle({ onAddAtPlayhead, onDragStart }: Timeli
       aria-label={label}
       title={t('timelineEditor.dragToTimelineHold', { label })}
       draggable
-      onClick={(event) => event.stopPropagation()}
+      onClick={onAddAtPlayhead}
       onDragStart={onDragStart}
       onKeyDown={(event) => handleKeyboardAdd(event, onAddAtPlayhead)}
       onPointerDown={(event) => event.stopPropagation()}

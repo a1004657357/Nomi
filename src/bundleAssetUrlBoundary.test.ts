@@ -22,6 +22,8 @@ const RENDER_ONLY_ALLOWLIST: Record<string, string> = {
   'config/knownVendors.ts': '厂商 logo：只喂 <img src>，接入卡渲染完即弃，不进 catalog/项目文件。',
   'workbench/generationCanvas/nodes/scene3d/scene3dConstants.ts':
     '假人 GLB / 动画 GLB：只喂 three 的 loader，不进节点结果，也不落项目。',
+  'workbench/generationCanvas/nodes/scene3d/ueSpike/ue4MannequinRig.ts':
+    'UE 人偶 GLB（3d-director-desk 收编 spike）：只喂 useGLTF 渲染，不进节点结果，也不落项目。',
   'lib/removeBackground.ts': 'Worker 脚本地址：new Worker 当场消费，不是资产 URL。',
 }
 

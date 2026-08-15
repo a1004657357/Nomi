@@ -1,0 +1,54 @@
+<!doctype html><meta charset="utf-8"><title>自定义调用 · 样张 2026-08-04</title>
+<body style="margin:0;padding:32px;background:#0f0e0c;font-family:-apple-system,'PingFang SC',sans-serif;color:#e8e5df">
+<h1 style="font-size:18px;font-weight:600">自定义调用 · 三处呈现样张（基于 .custom-call-recon 真机截图布局）</h1>
+<p style="color:#a5a19a;font-size:13px;max-width:640px;line-height:1.7">①模型设置抽屉·中转站卡的模型行加「自定义调用」图标入口（已设=点亮+角标）；②编辑器弹窗：贴材料→AI 生成→试跑，试跑摊开真实请求/响应；③报错卡 hint 行入口（限报文不匹配类错误×自定义 vendor，主按钮结构不动）。交互版见会话内 widget；实现对账以本文件 + 会话 widget 为准。</p>
+
+<h2 style="font-size:14px;margin-top:28px">1 · 模型行入口</h2>
+<div style="width:360px;background:#211f1c;border:1px solid #383530;border-radius:10px;padding:12px;font-size:13px">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="width:26px;height:26px;border-radius:6px;background:#2e2b27"></span><span style="flex:1;font-weight:500">我的中转站</span><span style="font-size:11px;color:#9fd08c;background:rgba(125,186,106,.14);padding:2px 8px;border-radius:99px">已配置</span></div>
+  <div style="font-size:11px;font-weight:500;color:#a5a19a;margin:6px 2px">视频 <span style="font-weight:400;color:#7b776f">2/2</span></div>
+  <div style="display:flex;align-items:center;gap:9px;padding:6px"><span style="width:17px;height:17px;border-radius:5px;background:#6c6cf0"></span><span style="flex:1">kling-v3</span><span style="color:#6e6a63;font-size:12px">‹/›</span><span style="color:#6e6a63;font-size:12px">🗑</span></div>
+  <div style="display:flex;align-items:center;gap:9px;padding:6px;background:#282521;border-radius:7px"><span style="width:17px;height:17px;border-radius:5px;background:#6c6cf0"></span><span style="flex:1">seedance-2-pro</span><span style="color:#8f8ff5;font-size:12px;position:relative">‹/›<span style="position:absolute;top:-3px;right:-5px;width:6px;height:6px;border-radius:99px;background:#8f8ff5"></span></span><span style="color:#6e6a63;font-size:12px">🗑</span></div>
+  <div style="font-size:11px;color:#7b776f;margin:4px 6px 0">已设脚本：图标点亮 + 角标；仅自定义/中转 vendor 行显示</div>
+</div>
+
+<h2 style="font-size:14px;margin-top:28px">2 · 编辑器弹窗（600px 居中）</h2>
+<div style="width:600px;background:#211f1c;border:1px solid #3a3732;border-radius:12px;padding:18px 20px;font-size:13px">
+  <div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:15px;font-weight:500">自定义调用</span><span style="color:#a5a19a">seedance-2-pro · 我的中转站</span></div>
+  <div style="color:#8f8b83;margin:4px 0 14px">接不通的模型，教 Nomi 怎么调它。留空并保存 = 恢复默认调用。</div>
+  <div style="font-weight:500;margin-bottom:6px">① 贴接口材料（文档片段 / curl 示例 / 群里大佬的说明）</div>
+  <div style="background:#191715;border:1px solid #383530;border-radius:8px;color:#7b776f;padding:8px 10px;font-size:12px">curl -X POST …/v1/video/generations -d '{"model":"…","image_url":"…"}'</div>
+  <div style="margin:8px 0 14px;display:inline-flex;height:30px;padding:0 12px;border-radius:7px;background:#2e2b27;align-items:center;gap:6px;font-size:12px">✦ AI 生成脚本</div>
+  <div style="display:flex;margin-bottom:6px"><span style="font-weight:500">② 调用脚本</span><span style="flex:1"></span><span style="font-size:12px;color:#a5a19a">插入模板 ▾ · 清空恢复默认</span></div>
+  <pre style="background:#191715;border:1px solid #383530;border-radius:8px;color:#cfe0cf;padding:8px 10px;font-size:11.5px;line-height:1.55;margin:0">const task = await http.post('/video/generations', {
+  model, prompt,
+  image_url: references.firstFrame ?? undefined,
+  duration: params.duration, size: params.size,
+})
+return await poll(
+  () => http.get('/video/generations/' + task.id),
+  (s) => s.status === 'succeeded' ? { url: s.video_url } : null,
+)</pre>
+  <div style="font-size:11.5px;color:#7b776f;margin:6px 0 14px">可用变量：prompt · params · references · model · baseUrl · apiKey · http · request · poll · sleep · signal</div>
+  <div style="display:inline-flex;height:32px;padding:0 14px;border-radius:7px;background:#e8e5df;color:#191715;font-size:12.5px;font-weight:500;align-items:center;gap:6px">▶ 试跑一次（花一次最小额度）</div>
+  <div style="margin-top:12px;border:1px solid #33463a;background:#1b211c;border-radius:8px;padding:10px 12px">
+    <div style="color:#9fd08c;font-weight:500">✓ 试跑成功 · 出图 1 张 · 6.8 秒</div>
+    <div style="display:flex;gap:14px;margin-top:8px;font-size:12px;color:#a5a19a"><span style="border-bottom:1px dashed #55524b">发出的请求</span><span style="border-bottom:1px dashed #55524b">收到的响应</span></div>
+    <div style="margin-top:8px;background:#15130f;border-radius:6px;padding:8px 10px;font-family:ui-monospace,monospace;font-size:11px;color:#8f8b83">POST /v1/video/generations<br>{"model":"seedance-2-pro","prompt":"…","image_url":"https://…/first-frame.png"} ← 首帧真的发出去了</div>
+  </div>
+  <div style="margin-top:12px;border:1px solid #4a3330;background:#221b19;border-radius:8px;padding:10px 12px">
+    <div style="color:#e08a6f;font-weight:500">⚠ 试跑失败 · 上游返回 400</div>
+    <div style="margin-top:6px;background:#15130f;border-radius:6px;padding:8px 10px;font-family:ui-monospace,monospace;font-size:11px;color:#8f8b83">{"error":"unknown field: image_url, did you mean first_frame_image?"}</div>
+    <div style="margin-top:8px;display:inline-flex;height:28px;padding:0 11px;border-radius:7px;background:#2e2b27;font-size:12px;align-items:center;gap:6px">✦ 让 AI 按报错修改</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-top:16px;border-top:1px solid #33302b;padding-top:13px"><span style="display:inline-flex;height:32px;padding:0 16px;border-radius:7px;background:#6c6cf0;color:#fff;font-size:12.5px;font-weight:500;align-items:center">保存并启用</span><span style="font-size:12px;color:#a5a19a">取消</span><span style="flex:1"></span><span style="font-size:12px;color:#c96a52">删除脚本，恢复默认</span></div>
+</div>
+
+<h2 style="font-size:14px;margin-top:28px">3 · 报错卡入口</h2>
+<div style="width:430px;background:#241d1a;border:1px solid #513a33;border-radius:10px;padding:14px;font-size:13px">
+  <div style="font-weight:600">⚠ 模型不接受当前参数</div>
+  <div style="color:#a5a19a;margin:8px 0 0;line-height:1.6">这家服务的调用格式和 Nomi 的默认格式对不上，重试会是同样结果。<span style="color:#8f8ff5">高级：自定义调用 ›</span></div>
+  <div style="margin-top:8px;background:#1b1614;border-radius:6px;padding:7px 9px;font-size:11.5px;color:#8f8b83;font-family:ui-monospace,monospace">服务商原话：{"error":"unknown field: image_url"}</div>
+  <div style="display:flex;align-items:center;gap:12px;margin-top:11px"><span style="display:inline-flex;height:29px;padding:0 12px;border-radius:7px;background:#c96a52;color:#fff;font-size:12px;font-weight:500;align-items:center">换个模型</span><span style="font-size:12px;color:#a5a19a">复制详情</span><span style="flex:1"></span><span style="font-size:11px;color:#7b776f">技术详情 ›</span></div>
+</div>
+</body>

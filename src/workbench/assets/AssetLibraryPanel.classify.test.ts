@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { assetsForLibraryDrag, classifyUploadFiles } from './AssetLibraryPanel'
+import { classifyUploadFiles } from './AssetLibraryPanel'
+import { assetsForLibraryDrag } from './assetLibraryUsage'
 import type { AssetRef } from './assetTypes'
 
 function makeFile(name: string, type: string, size = 1024): File {

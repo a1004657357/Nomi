@@ -38,9 +38,89 @@ export type NodeSizeBounds = {
     minHeight: number;
     maxHeight: number;
 };
+export type ComposerAttachmentSide = "top" | "bottom";
+
+/**
+ * 比例切换会同时改节点尺寸和位置；这类同一用户动作不应顺带把 composer 翻到节点另一侧。
+ * 首次挂载或比例未变时仍允许正常的视口避让逻辑决定连接侧。
+ */
+export function shouldPreserveComposerAttachmentOnRatioChange(
+    previousRatio: string | null,
+    nextRatio: string,
+): boolean {
+    return previousRatio !== null && previousRatio !== "" && nextRatio !== "" && previousRatio !== nextRatio;
+}
+
+export type ComposerAvailableSpaceMeasurement = {
+    anchor: { width: number; height: number };
+    stage: { width: number; height: number };
+};
+
+type ComposerObstacleRect = {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+};
+
+/**
+ * 返回 composer 朝下展开时真正可用的屏幕高度。
+ * 折叠时间轴把手等浮层虽然不改变 stage 尺寸，却会盖住同一水平区间内的 composer；
+ * 因此它们的顶边也必须成为下边界，不能只看 stage.bottom。
+ */
+export function getUnobstructedComposerSpaceBelow(input: {
+    stage: ComposerObstacleRect;
+    node: ComposerObstacleRect;
+    composer: Pick<ComposerObstacleRect, "left" | "right">;
+    obstacles: ComposerObstacleRect[];
+}): number {
+    const boundary = input.obstacles.reduce((current, obstacle) => {
+        const isBelowNode = obstacle.top >= input.node.bottom;
+        const overlapsComposer = obstacle.left < input.composer.right && obstacle.right > input.composer.left;
+        return isBelowNode && overlapsComposer ? Math.min(current, obstacle.top) : current;
+    }, input.stage.bottom);
+
+    return Math.max(0, boundary - input.node.bottom);
+}
+
+/** composer 或舞台尺寸改变时，可用空间已经不同，必须解除比例切换期间的连接侧保持。 */
+export function didComposerAvailableSpaceChange(
+    previous: ComposerAvailableSpaceMeasurement,
+    next: ComposerAvailableSpaceMeasurement,
+): boolean {
+    return (
+        previous.anchor.width !== next.anchor.width ||
+        previous.anchor.height !== next.anchor.height ||
+        previous.stage.width !== next.stage.width ||
+        previous.stage.height !== next.stage.height
+    );
+}
+
+/** 比例切换只在边界完全没变时保持原连接侧；真实空间或浮层障碍变化必须重新避让。 */
+export function shouldAllowComposerAttachmentRecompute(input: {
+    preserveForRatioChange: boolean;
+    availableSpaceChanged: boolean;
+    obstacleChanged: boolean;
+    attachmentObstructed: boolean;
+}): boolean {
+    return (
+        !input.preserveForRatioChange ||
+        input.availableSpaceChanged ||
+        input.obstacleChanged ||
+        input.attachmentObstructed
+    );
+}
 // 非媒体节点（含 text）自由缩放时的 min/max。媒体（图/视频）走比例锁定分支，
 // 仍用上面的 MIN/MAX_NODE_*，故此处只为「自由拉伸」路径按 kind 取边界。
 export function getNodeSizeBounds(kind: GenerationCanvasNode["kind"]): NodeSizeBounds {
+    if (kind === "clip") {
+        return {
+            minWidth: 240,
+            maxWidth: MAX_NODE_WIDTH,
+            minHeight: 120,
+            maxHeight: 180,
+        };
+    }
     if (kind === "text") {
         return {
             minWidth: TEXT_MIN_WIDTH,
@@ -71,6 +151,54 @@ export const FOCUS_GENERATION_NODE_EVENT = "nomi-focus-generation-node";
 
 export function clampNumber(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * 换画幅时保持节点的视觉面积，而不是固定宽度只压扁高度。
+ * 当最小/最大边界互相冲突（极端长条比例）时优先守住最大边界与真实比例，
+ * 允许短边略低于通用 resize 下限，避免节点跑出画布或谎报画幅。
+ */
+export function resolveAreaPreservingSize(
+    current: { width: number; height: number },
+    targetRatio: number,
+    bounds: NodeSizeBounds,
+): { width: number; height: number } {
+    if (!Number.isFinite(targetRatio) || targetRatio <= 0) return current;
+    const area = Math.max(1, current.width * current.height);
+    const raw = {
+        width: Math.sqrt(area * targetRatio),
+        height: Math.sqrt(area / targetRatio),
+    };
+    const minScale = Math.max(
+        bounds.minWidth / raw.width,
+        bounds.minHeight / raw.height,
+    );
+    const maxScale = Math.min(
+        bounds.maxWidth / raw.width,
+        bounds.maxHeight / raw.height,
+    );
+    const scale =
+        minScale <= maxScale ? clampNumber(1, minScale, maxScale) : maxScale;
+    return {
+        width: Math.max(1, Math.round(raw.width * scale)),
+        height: Math.max(1, Math.round(raw.height * scale)),
+    };
+}
+
+/** 保持 composer 与节点相连的那条边的中心点不动。 */
+export function anchorNodePosition(
+    position: { x: number; y: number },
+    current: { width: number; height: number },
+    next: { width: number; height: number },
+    side: ComposerAttachmentSide,
+): { x: number; y: number } {
+    return {
+        x: position.x + (current.width - next.width) / 2,
+        y:
+            side === "bottom"
+                ? position.y + current.height - next.height
+                : position.y,
+    };
 }
 
 export function readFiniteNumber(value: unknown): number | null {
@@ -254,6 +382,13 @@ export function resolveNodeVisualSize(
     node: Pick<GenerationCanvasNode, "kind" | "size" | "renderKind" | "categoryId" | "meta" | "result">,
 ): { width: number; height: number } {
     const size = node.size || DEFAULT_VISUAL_SIZE;
+    if (node.kind === "clip") {
+        const bounds = getNodeSizeBounds("clip");
+        return {
+            width: clampNumber(size.width, bounds.minWidth, bounds.maxWidth),
+            height: 132,
+        };
+    }
     const renderKind = resolveNodeRenderKind(node);
     const isCardKind = isCardRenderKind(renderKind);
     const bounds = getNodeSizeBoundsForNode(node);
@@ -283,6 +418,30 @@ export function resolveNodeVisualSize(
     return {
         width: cardFixedWidth ?? Math.max(bounds.minWidth, size.width),
         height: previewHeight,
+    };
+}
+
+/**
+ * 比例变化的一次性 store patch：meta / size / position 同帧提交，外界不会看到
+ * 「尺寸已变、位置还没补」的断口。已有结果只更新下次生成参数，不扭曲当前媒体。
+ */
+export function buildAspectRatioNodePatch(
+    node: GenerationCanvasNode,
+    nextMeta: Record<string, unknown>,
+    targetRatio: number | null,
+    side: ComposerAttachmentSide,
+): Partial<GenerationCanvasNode> {
+    if (!targetRatio || node.result?.url) return { meta: nextMeta };
+    const current = resolveNodeVisualSize(node);
+    const size = resolveAreaPreservingSize(
+        current,
+        targetRatio,
+        getNodeSizeBounds(node.kind),
+    );
+    return {
+        meta: nextMeta,
+        size,
+        position: anchorNodePosition(node.position, current, size, side),
     };
 }
 

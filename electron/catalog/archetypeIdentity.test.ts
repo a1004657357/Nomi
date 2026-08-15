@@ -16,6 +16,20 @@ describe("archetypeIdForModel", () => {
     expect(archetypeIdForModel("models/seedance-2")).toBe("seedance-2");
   });
 
+  it("精确整串命中优先于末段命中，且不受档案声明顺序影响（认错模型=参数全错）", () => {
+    // Tongyi-MAI/Z-Image-Turbo 在 modelscope-image 里列了完整 key；而 z-image-turbo 档案排在更前面、
+    // 靠「末段相等」也能命中。单趟遍历会按声明顺序把它判给后者 —— 精确身份必须赢。
+    expect(archetypeIdForModel("Tongyi-MAI/Z-Image-Turbo")).toBe("modelscope-image");
+    expect(archetypeIdForModel("Tongyi-MAI/Z-Image")).toBe("modelscope-image");
+    // 末段匹配本身仍要留着（用户自接时常带 vendor 前缀）。
+    expect(archetypeIdForModel("bytedance/seedance-2")).toBe("seedance-2");
+  });
+
+  it("同名模型保留官方 key 大小写，分别命中 APIMart 与 KIE 档案", () => {
+    expect(archetypeIdForModel("MiniMax-H3")).toBe("minimax-h3-apimart");
+    expect(archetypeIdForModel("minimax-h3")).toBe("minimax-h3");
+  });
+
   it("认不出的返回 null（不瞎猜）", () => {
     expect(archetypeIdForModel("some-unknown-model-xyz")).toBeNull();
     expect(archetypeIdForModel("")).toBeNull();
@@ -41,6 +55,17 @@ describe("nativeWireProfileForArchetype", () => {
     ]) {
       expect(body).toContain(key);
     }
+  });
+
+  it("火山 Seedream（图像）也有原生报文配方：同步族只有 create/edit、无轮询", () => {
+    const p = nativeWireProfileForArchetype("volcengine-seedream");
+    expect(p?.probePath).toBe("/api/v3/images/generations");
+    expect(p?.create.text_to_image?.pathFrom).toBe("host-root");
+    expect(p?.create.image_edit?.pathFrom).toBe("host-root");
+    // 图像是同步族：出现轮询反而说明抄错了形状。
+    expect(p?.query).toBeUndefined();
+    // 走它的理由：改图读得到整组参考图（通用中转会把 Seedream 当**聊天模型**塞进 chat/completions）。
+    expect(JSON.stringify(p?.create.image_edit?.body)).toContain("image_urls");
   });
 
   it("没有原生配方的档案返回 null", () => {

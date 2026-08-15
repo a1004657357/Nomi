@@ -2,12 +2,17 @@ export const zhTimelineEditor = {
   arranged: '已把 {{count}} 个镜头按镜序排进时间轴',
   noShots: '生成区还没有镜头——先去生成区生成几个镜头再拼片',
   alreadyArranged: '镜头都已在时间轴上了',
+  arrangeCta: {
+    message: '有 {{count}} 个镜头可拼成初稿',
+    action: '一键拼成初稿',
+  },
   selectedClipActions: '选中片段操作',
   regenerate: '重新生成这个镜头',
   regenerateHint: '重新生成这个镜头（就地重出、贴回原位；改 prompt/参数请去画布节点）',
   nudgeEarlier: '向前微调片段',
   duplicateClip: '复制片段',
   nudgeLater: '向后微调片段',
+  clipToolsHint: '先在时间轴上点一个片段，才能对它重新生成 / 微调 / 复制',
   aiArrange: 'AI 拼片',
   aiArrangeHint: 'AI 拼片：把生成区的镜头按镜序排进时间轴（已在轨的跳过）',
   exitSplitMode: '退出剪刀模式',
@@ -25,7 +30,13 @@ export const zhTimelineEditor = {
   collapse: '{{prefix}}收起时间轴',
   ruler: '时间刻度',
   dragPlayhead: '拖动播放头',
-  dragToTimeline: '拖拽到时间轴',
+  dragToTimeline: '加入时间轴（点击贴尾 · 拖拽自选位置）',
+  addedToEnd: '已加入时间轴末尾',
+  miniPreview: {
+    title: '画面小窗',
+    collapse: '收起画面小窗',
+    expand: '展开画面小窗',
+  },
   dragToTimelineHold: '{{label}}（长按拖拽）',
   clip: {
     resizeStart: '调整片段起点',
@@ -41,7 +52,6 @@ export const zhTimelineEditor = {
     videoLabel: '视频轨',
     audioLabel: '音频轨',
     genericLabel: '对应轨道',
-    occupied: '这里已有片段，试试拖到空白位置',
     wrongType: '这个素材需要放到{{track}}',
   },
   snap: {
@@ -56,6 +66,8 @@ export const zhTimelineEditor = {
     caption: '字幕',
     overlay: '叠加层',
     dropAudio: '拖音频到此当配乐',
+    addMusic: '添加配乐',
+    music: '配乐',
   },
   textTrack: {
     title: '文字轨',
@@ -76,6 +88,10 @@ export const enTimelineEditor = {
   arranged: 'Arranged {{count}} shots on the timeline in shot order',
   noShots: 'There are no shots in Generation yet. Generate a few shots before arranging.',
   alreadyArranged: 'All shots are already on the timeline',
+  arrangeCta: {
+    message: '{{count}} shots ready to assemble into a draft',
+    action: 'Assemble draft',
+  },
   selectedClipActions: 'Selected clip actions',
   regenerate: 'Regenerate this shot',
   regenerateHint:
@@ -83,6 +99,7 @@ export const enTimelineEditor = {
   nudgeEarlier: 'Nudge clip earlier',
   duplicateClip: 'Duplicate clip',
   nudgeLater: 'Nudge clip later',
+  clipToolsHint: 'Select a clip on the timeline to regenerate, nudge or duplicate it',
   aiArrange: 'AI arrange',
   aiArrangeHint: 'Arrange Generation shots on the timeline in shot order, skipping clips already present',
   exitSplitMode: 'Exit blade mode',
@@ -100,7 +117,13 @@ export const enTimelineEditor = {
   collapse: '{{prefix}}collapse timeline',
   ruler: 'Time ruler',
   dragPlayhead: 'Drag playhead',
-  dragToTimeline: 'Drag to timeline',
+  dragToTimeline: 'Add to timeline (click appends · drag to place)',
+  addedToEnd: 'Added to the end of the timeline',
+  miniPreview: {
+    title: 'Mini preview',
+    collapse: 'Collapse mini preview',
+    expand: 'Expand mini preview',
+  },
   dragToTimelineHold: '{{label}} (press and hold to drag)',
   clip: {
     resizeStart: 'Adjust clip start',
@@ -116,7 +139,6 @@ export const enTimelineEditor = {
     videoLabel: 'Video track',
     audioLabel: 'Audio track',
     genericLabel: 'matching track',
-    occupied: 'A clip already occupies this position. Try an empty area.',
     wrongType: 'This asset belongs on the {{track}}',
   },
   snap: {
@@ -131,6 +153,8 @@ export const enTimelineEditor = {
     caption: 'Caption',
     overlay: 'Overlay',
     dropAudio: 'Drag audio here to use as music',
+    addMusic: 'Add music',
+    music: 'Music',
   },
   textTrack: {
     title: 'Text track',

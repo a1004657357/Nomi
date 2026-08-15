@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nomi 制作体验样张</title>
+  <style>
+    :root {
+      --paper: #ffffff;
+      --canvas: #f8f8f6;
+      --ink: #171714;
+      --ink-80: #45453f;
+      --ink-60: #6d6c64;
+      --ink-40: #9b9a91;
+      --line: #deddd7;
+      --line-soft: #ecebe6;
+      --soft: #f2f2ef;
+      --soft-strong: #e7e7e1;
+      --accent: #2876c8;
+      --accent-soft: #eaf3fc;
+      --teal: #178a7a;
+      --teal-soft: #e8f5f1;
+      --amber: #ad6c00;
+      --amber-soft: #fff4d7;
+      --danger: #ad3e37;
+      --danger-soft: #fbecea;
+      --shadow: 0 18px 54px rgba(28, 27, 24, 0.14);
+      --font: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      --serif: "Songti SC", "STSong", serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-width: 1080px; min-height: 720px; background: #d8d8d3; color: var(--ink); font-family: var(--font); }
+    button, input { font: inherit; letter-spacing: 0; }
+    button { color: inherit; }
+
+    .review-shell { min-height: 100vh; padding: 18px 18px 76px; }
+    .app {
+      position: relative;
+      height: calc(100vh - 94px);
+      min-height: 650px;
+      overflow: hidden;
+      border: 1px solid #c9c8c1;
+      border-radius: 7px;
+      background: var(--paper);
+      box-shadow: 0 12px 34px rgba(22, 22, 19, 0.14);
+    }
+
+    .topbar {
+      height: 58px;
+      display: grid;
+      grid-template-columns: minmax(330px, 1fr) auto minmax(440px, 1fr);
+      align-items: center;
+      gap: 12px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.98);
+    }
+    .brand-row, .top-actions, .segmented, .crumb, .run-chip, .mini-row, .status-line, .detail-row { display: flex; align-items: center; }
+    .brand-row { gap: 10px; min-width: 0; }
+    .logo { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 6px; background: var(--ink); color: white; font-family: Georgia, serif; font-size: 20px; font-weight: 700; }
+    .brand { font-family: Georgia, serif; font-size: 19px; color: #29364a; }
+    .divider { width: 1px; height: 24px; background: var(--line); }
+    .crumb { min-width: 0; gap: 8px; height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-60); font-size: 13px; }
+    .crumb strong { max-width: 210px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 520; }
+    .segmented { justify-self: center; padding: 3px; border-radius: 24px; background: var(--soft); }
+    .segmented button { min-width: 62px; height: 34px; border: 0; border-radius: 18px; background: transparent; color: var(--ink-60); cursor: pointer; }
+    .segmented button.active { background: var(--paper); color: var(--ink); box-shadow: 0 1px 4px rgba(20,20,18,.09); font-weight: 600; }
+    .top-actions { justify-content: flex-end; gap: 6px; }
+    .tool-button { height: 34px; border: 0; border-radius: 5px; padding: 0 10px; background: transparent; color: var(--ink-80); cursor: pointer; white-space: nowrap; }
+    .tool-button:hover { background: var(--soft); }
+    .tool-button.icon-only { width: 34px; padding: 0; font-size: 18px; }
+    .export { height: 36px; border: 0; border-radius: 6px; padding: 0 15px; background: var(--ink); color: white; cursor: pointer; }
+    .run-chip { gap: 7px; height: 34px; padding: 0 11px; border: 1px solid #bdd6ec; border-radius: 5px; background: var(--accent-soft); color: #1e629f; font-size: 13px; cursor: pointer; }
+    .run-chip .ring { width: 14px; height: 14px; border: 2px solid #78a7d5; border-top-color: var(--accent); border-radius: 50%; animation: spin 1.5s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .workspace { height: calc(100% - 58px); display: grid; grid-template-columns: 64px minmax(0, 1fr) 360px; }
+    .rail { border-right: 1px solid var(--line); background: var(--paper); display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 7px; }
+    .rail-button { width: 48px; min-height: 48px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-40); font-size: 11px; cursor: pointer; }
+    .rail-button b { display: block; margin-bottom: 4px; font-size: 18px; font-weight: 400; }
+    .rail-button.active { background: var(--ink); color: white; }
+
+    .canvas {
+      position: relative;
+      overflow: hidden;
+      background-color: var(--canvas);
+      background-image: radial-gradient(circle, #d7d6d0 1px, transparent 1.2px);
+      background-size: 18px 18px;
+    }
+    .canvas::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 1px rgba(0,0,0,.02); }
+    .flow-line { position: absolute; height: 2px; background: #9bbbdc; transform-origin: left center; z-index: 0; }
+    .flow-line.a { left: 24%; top: 32%; width: 18%; transform: rotate(4deg); }
+    .flow-line.b { left: 51%; top: 38%; width: 17%; transform: rotate(23deg); }
+    .node { position: absolute; width: 226px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); box-shadow: 0 5px 18px rgba(28,27,24,.09); overflow: hidden; z-index: 1; }
+    .node.one { left: 8%; top: 16%; }
+    .node.two { left: 38%; top: 20%; }
+    .node.three { left: 67%; top: 39%; border-color: #8bb9e1; box-shadow: 0 0 0 2px #c9e0f5, 0 5px 18px rgba(28,27,24,.1); }
+    .node-image { height: 126px; background: #e8e6df center/cover no-repeat; }
+    .node.one .node-image { background-image: url('../../../../../Nomi产品介绍视频/videos/nomi-local-ai-studio/assets/screen-script.png'); }
+    .node.two .node-image { background-image: url('../../../../../Nomi产品介绍视频/videos/nomi-local-ai-studio/assets/screen-agentic.jpg'); }
+    .node.three .node-image { position: relative; background-image: url('../../../../../Nomi产品介绍视频/videos/nomi-local-ai-studio/assets/screen-timeline.png'); }
+    .node.three .node-image::after { content: "生成中"; position: absolute; right: 8px; bottom: 8px; padding: 4px 7px; border-radius: 4px; background: rgba(23,23,20,.84); color: white; font-size: 11px; }
+    .node-body { padding: 10px 11px 11px; }
+    .node-title { font-size: 13px; font-weight: 600; }
+    .node-meta { margin-top: 5px; display: flex; justify-content: space-between; color: var(--ink-40); font-size: 11px; }
+    .canvas-tools { position: absolute; left: 18px; bottom: 18px; display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); box-shadow: 0 4px 14px rgba(28,27,24,.08); }
+    .canvas-tools button { width: 34px; height: 30px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; }
+    .canvas-tools button:hover { background: var(--soft); }
+
+    .assistant { min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--paper); }
+    .assistant-head { height: 50px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--line); }
+    .assistant-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 650; }
+    .assistant-logo { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; background: var(--ink); color: white; font-family: Georgia, serif; }
+    .origin { padding: 4px 7px; border-radius: 4px; background: var(--soft); color: var(--ink-60); font-size: 11px; font-weight: 400; }
+    .assistant-scroll { flex: 1; overflow: auto; padding: 15px 15px 24px; }
+    .state-kicker { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+    .status-line { gap: 7px; color: var(--ink-60); font-size: 12px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px var(--teal-soft); }
+    .dot.warn { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
+    .dot.error { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+    .updated { color: var(--ink-40); font-size: 11px; }
+    .state-title { margin: 0 0 9px; font-family: var(--serif); font-size: 20px; line-height: 1.45; font-weight: 650; letter-spacing: 0; }
+    .state-copy { margin: 0 0 15px; color: var(--ink-60); font-size: 12px; line-height: 1.7; }
+    .preview { margin: 0 0 12px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); }
+    .preview img { display: block; width: 100%; aspect-ratio: 16 / 8.2; object-fit: cover; object-position: center 34%; }
+    .preview figcaption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; color: var(--ink-60); font-size: 11px; }
+    .preview strong { color: var(--ink); font-size: 12px; font-weight: 600; }
+    .primary { width: 100%; min-height: 38px; border: 0; border-radius: 5px; background: var(--ink); color: white; cursor: pointer; font-weight: 600; }
+    .primary:hover { background: #2c2c28; }
+    .secondary { min-height: 36px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); padding: 0 13px; cursor: pointer; }
+    .secondary:hover { background: var(--soft); }
+    details { margin-top: 15px; border-top: 1px solid var(--line-soft); }
+    summary { padding: 13px 0; color: var(--ink-60); font-size: 12px; cursor: pointer; list-style: none; }
+    summary::before { content: "›"; display: inline-block; width: 15px; transform: rotate(0deg); transition: transform .15s ease; }
+    details[open] summary::before { transform: rotate(90deg); }
+    .stage-list { display: grid; gap: 10px; padding: 2px 0 4px; }
+    .detail-row { gap: 9px; font-size: 11px; color: var(--ink-60); }
+    .detail-row .tick { width: 17px; height: 17px; display: grid; place-items: center; border-radius: 50%; background: var(--teal-soft); color: var(--teal); font-size: 10px; }
+    .detail-row.current { color: var(--ink); font-weight: 600; }
+    .detail-row.current .tick { background: var(--accent-soft); color: var(--accent); }
+    .audit { margin-top: 13px; padding-top: 11px; border-top: 1px dashed var(--line); }
+    .audit p { margin: 0 0 8px; color: var(--ink-60); font-size: 11px; line-height: 1.55; }
+    .audit code { color: var(--ink-80); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .modal-backdrop { position: absolute; inset: 58px 0 0; z-index: 10; display: none; place-items: center; background: rgba(24,24,21,.43); padding: 28px; }
+    .modal-backdrop.visible { display: grid; }
+    .contract-modal { width: min(680px, calc(100vw - 80px)); max-height: calc(100vh - 145px); overflow: auto; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); box-shadow: var(--shadow); }
+    .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px 24px 17px; border-bottom: 1px solid var(--line); }
+    .modal-head h2 { margin: 0 0 6px; font-size: 18px; letter-spacing: 0; }
+    .modal-head p { margin: 0; color: var(--ink-60); font-size: 12px; }
+    .close { width: 30px; height: 30px; border: 0; border-radius: 4px; background: transparent; color: var(--ink-60); font-size: 19px; cursor: pointer; }
+    .close:hover { background: var(--soft); }
+    .contract-body { padding: 19px 24px 22px; }
+    .spec-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    .spec { padding: 11px 12px; border-right: 1px solid var(--line-soft); }
+    .spec:last-child { border-right: 0; }
+    .spec span { display: block; color: var(--ink-40); font-size: 10px; }
+    .spec strong { display: block; margin-top: 4px; font-size: 13px; font-weight: 600; }
+    .section-label { margin: 18px 0 8px; color: var(--ink-60); font-size: 11px; }
+    .contract-line { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+    .contract-line:last-child { border-bottom: 0; }
+    .contract-line .muted { color: var(--ink-60); }
+    .badge { padding: 4px 7px; border-radius: 4px; background: var(--teal-soft); color: var(--teal); font-size: 10px; white-space: nowrap; }
+    .budget { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 13px 14px; border: 1px solid #edce8b; border-radius: 6px; background: var(--amber-soft); }
+    .budget b { font-size: 13px; }
+    .budget small { display: block; margin-top: 3px; color: #765728; }
+    .budget strong { font-family: Georgia, serif; font-size: 19px; white-space: nowrap; }
+    .modal-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 19px; }
+    .modal-actions .note { color: var(--ink-40); font-size: 10px; line-height: 1.5; }
+    .action-row { display: flex; gap: 8px; }
+    .action-row .primary { width: auto; padding: 0 16px; }
+
+    .settings-modal { width: min(780px, calc(100vw - 80px)); height: min(590px, calc(100vh - 145px)); display: grid; grid-template-columns: 196px 1fr; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); box-shadow: var(--shadow); }
+    .settings-tabs { padding: 18px 12px; border-right: 1px solid var(--line); background: #f7f7f4; }
+    .settings-tabs h3 { margin: 0; padding: 0 12px 14px; font-size: 14px; }
+    .settings-tabs button { width: 100%; height: 38px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 5px; padding: 0 12px; background: transparent; color: var(--ink-60); cursor: pointer; text-align: left; }
+    .settings-tabs button.active { background: var(--ink); color: white; }
+    .settings-content { position: relative; overflow: auto; padding: 25px 27px 28px; }
+    .settings-content h2 { margin: 0 0 20px; font-size: 18px; }
+    .settings-content > .close { position: absolute; right: 16px; top: 14px; }
+    .setting-group { padding: 16px 0; border-top: 1px solid var(--line); }
+    .setting-group:first-of-type { padding-top: 0; border-top: 0; }
+    .setting-group h4 { margin: 0 0 11px; font-size: 13px; }
+    .setting-row { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+    .setting-row strong { display: block; font-size: 12px; font-weight: 520; }
+    .setting-row small { display: block; margin-top: 3px; color: var(--ink-40); font-size: 10px; line-height: 1.5; }
+    .switch { width: 34px; height: 20px; flex: none; position: relative; border: 0; border-radius: 12px; background: #c7c7c0; cursor: pointer; }
+    .switch::after { content: ""; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px; border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,.22); transition: transform .15s ease; }
+    .switch.on { background: var(--teal); }
+    .switch.on::after { transform: translateX(14px); }
+    .policy-control { display: flex; padding: 3px; border-radius: 6px; background: var(--soft); }
+    .policy-control button { height: 31px; min-width: 90px; border: 0; border-radius: 4px; background: transparent; color: var(--ink-60); cursor: pointer; font-size: 11px; }
+    .policy-control button.active { background: var(--paper); color: var(--ink); box-shadow: 0 1px 4px rgba(20,20,18,.1); font-weight: 600; }
+    .provider-list { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    .provider { min-height: 52px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px; padding: 9px 12px; border-top: 1px solid var(--line-soft); }
+    .provider:first-child { border-top: 0; }
+    .provider b { display: block; font-size: 12px; }
+    .provider span { display: block; margin-top: 3px; color: var(--ink-40); font-size: 10px; }
+    .connected { color: var(--teal); font-size: 11px; }
+    .hidden { display: none !important; }
+
+    .review-bar { position: fixed; left: 50%; bottom: 14px; z-index: 30; transform: translateX(-50%); display: flex; align-items: center; gap: 5px; padding: 5px; border: 1px solid rgba(255,255,255,.15); border-radius: 7px; background: #1c1c19; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+    .review-label { padding: 0 8px; color: #aaa99f; font-size: 11px; }
+    .review-bar button { height: 31px; border: 0; border-radius: 4px; padding: 0 11px; background: transparent; color: #cac9c1; cursor: pointer; font-size: 11px; }
+    .review-bar button.active { background: white; color: #1c1c19; }
+
+    @media (max-width: 1240px) {
+      .workspace { grid-template-columns: 56px minmax(0, 1fr) 330px; }
+      .brand { display: none; }
+      .topbar { grid-template-columns: minmax(270px, 1fr) auto minmax(370px, 1fr); }
+      .node { width: 195px; }
+      .node.three { left: 62%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="review-shell">
+    <section class="app" aria-label="Nomi 制作体验样张">
+      <header class="topbar">
+        <div class="brand-row">
+          <div class="logo">N</div>
+          <div class="brand">Nomi</div>
+          <div class="divider"></div>
+          <div class="crumb"><span>项目库</span><span>›</span><strong>Nomi 开源宣传片</strong></div>
+        </div>
+        <nav class="segmented" aria-label="工作区">
+          <button>创作</button><button class="active">生成</button><button>预览</button>
+        </nav>
+        <div class="top-actions">
+          <button class="run-chip" data-review-target="running"><span class="ring"></span><span>制作中 3/8</span></button>
+          <button class="tool-button">上手 4/4</button>
+          <button class="tool-button">浏览器</button>
+          <button class="tool-button icon-only" data-review-target="settings" title="设置" aria-label="设置">⚙</button>
+          <button class="tool-button">模型接入</button>
+          <button class="export">导出</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="rail" aria-label="素材工具">
+          <button class="rail-button active"><b>▣</b>素材库</button>
+          <button class="rail-button"><b>◇</b>分组</button>
+          <button class="rail-button"><b>☼</b>提示词</button>
+          <button class="rail-button"><b>⌘</b>技能</button>
+        </aside>
+
+        <section class="canvas" aria-label="生成画布">
+          <div class="flow-line a"></div><div class="flow-line b"></div>
+          <article class="node one">
+            <div class="node-image"></div>
+            <div class="node-body"><div class="node-title">镜头 01 · 本地数据</div><div class="node-meta"><span>已采用</span><span>00:00–00:05</span></div></div>
+          </article>
+          <article class="node two">
+            <div class="node-image"></div>
+            <div class="node-body"><div class="node-title">镜头 02 · 任意 API</div><div class="node-meta"><span>技术检查通过</span><span>00:05–00:11</span></div></div>
+          </article>
+          <article class="node three">
+            <div class="node-image"></div>
+            <div class="node-body"><div class="node-title">镜头 03 · Agent 协作</div><div class="node-meta"><span>供应商处理中</span><span>已等待 02:14</span></div></div>
+          </article>
+          <div class="canvas-tools"><button title="适应画布">⌗</button><button title="缩小">−</button><button title="放大">＋</button><button title="小地图">▦</button></div>
+        </section>
+
+        <aside class="assistant" id="assistant-running">
+          <div class="assistant-head">
+            <div class="assistant-title"><span class="assistant-logo">N</span>制作助手 <span class="origin">来自 Codex</span></div>
+            <button class="tool-button icon-only" title="关闭" aria-label="关闭">×</button>
+          </div>
+          <div class="assistant-scroll">
+            <div class="state-kicker"><div class="status-line"><span class="dot"></span>正在制作</div><span class="updated">刚刚查询</span></div>
+            <h1 class="state-title">正在生成镜头 03 / 08，供应商未提供进度。</h1>
+            <p class="state-copy">已等待 02:14；Nomi 仍在查询。镜头 01–02 已通过技术检查，期间不会自动发布或覆盖文件。</p>
+            <figure class="preview">
+              <img src="../../../../../Nomi产品介绍视频/videos/nomi-local-ai-studio/assets/screen-timeline.png" alt="镜头 02 的最近生成结果" />
+              <figcaption><strong>镜头 02 · 已完成</strong><span>最近产物</span></figcaption>
+            </figure>
+            <button class="primary">查看镜头 03</button>
+            <details>
+              <summary>制作详情</summary>
+              <div class="stage-list">
+                <div class="detail-row"><span class="tick">✓</span><span>方向与制作摘要已批准</span></div>
+                <div class="detail-row"><span class="tick">✓</span><span>脚本、分镜与参考锚已完成</span></div>
+                <div class="detail-row current"><span class="tick">3</span><span>生成 · 2 完成 / 1 进行 / 5 等待</span></div>
+                <div class="detail-row"><span class="tick">4</span><span>粗剪 · 尚未开始</span></div>
+                <div class="detail-row"><span class="tick">5</span><span>导出 · 尚未开始</span></div>
+              </div>
+              <div class="audit">
+                <p><b>已加载 Skills</b><br><code>brand.promo@1.2</code> · <code>director.storyboard@2.0</code></p>
+                <p><b>预算</b><br>已授权 ¥60 · 已预留 ¥27 · 已结算 ¥18</p>
+              </div>
+            </details>
+          </div>
+        </aside>
+
+        <aside class="assistant hidden" id="assistant-unknown">
+          <div class="assistant-head">
+            <div class="assistant-title"><span class="assistant-logo">N</span>制作助手 <span class="origin">来自 Claude Code</span></div>
+            <button class="tool-button icon-only" title="关闭" aria-label="关闭">×</button>
+          </div>
+          <div class="assistant-scroll">
+            <div class="state-kicker"><div class="status-line"><span class="dot error"></span>需要处理</div><span class="updated">1 分钟前</span></div>
+            <h1 class="state-title">镜头 03 的提交结果不明，Nomi 已停止自动重试。</h1>
+            <p class="state-copy">请求可能已经到达供应商。现在再次提交可能重复扣费；其他镜头也已暂停在安全边界。</p>
+            <figure class="preview">
+              <img src="../../../../../Nomi产品介绍视频/videos/nomi-local-ai-studio/assets/screen-agentic.jpg" alt="镜头 02 的最近可用结果" />
+              <figcaption><strong>镜头 02 · 最近可用</strong><span>未受影响</span></figcaption>
+            </figure>
+            <button class="primary">核对供应商任务</button>
+            <details open>
+              <summary>制作详情</summary>
+              <div class="stage-list">
+                <div class="detail-row"><span class="tick">✓</span><span>提交意图已持久化</span></div>
+                <div class="detail-row current"><span class="tick">!</span><span>供应商回执未收到 · 未自动重发</span></div>
+                <div class="detail-row"><span class="tick">Ⅱ</span><span>后续 5 个镜头已暂停</span></div>
+              </div>
+              <div class="audit">
+                <p><b>对账标识</b><br><code>submit_03_a91c</code></p>
+                <p><b>最后查询</b><br>14:32:08 · 网络不可达</p>
+              </div>
+            </details>
+          </div>
+        </aside>
+      </div>
+
+      <div class="modal-backdrop" id="contract-backdrop">
+        <section class="contract-modal" role="dialog" aria-modal="true" aria-labelledby="contract-title">
+          <div class="modal-head">
+            <div><h2 id="contract-title">确认制作摘要</h2><p>来自 Codex 的草稿；批准前不会调用付费生成。</p></div>
+            <button class="close" data-review-target="running" aria-label="关闭">×</button>
+          </div>
+          <div class="contract-body">
+            <div class="spec-grid">
+              <div class="spec"><span>片长</span><strong>约 60 秒</strong></div>
+              <div class="spec"><span>画幅</span><strong>16:9</strong></div>
+              <div class="spec"><span>语言</span><strong>中文</strong></div>
+              <div class="spec"><span>镜头</span><strong>8 个</strong></div>
+            </div>
+            <div class="section-label">本次将完成</div>
+            <div class="contract-line"><span class="muted">主张</span><span>本地优先、任意 API、Agent 协作、完整开源流程</span><span class="badge">已核对</span></div>
+            <div class="contract-line"><span class="muted">真实证据</span><span>Nomi 实机界面与本地项目目录，不使用虚构功能画面</span><span class="badge">4 处</span></div>
+            <div class="contract-line"><span class="muted">Skills</span><span>brand.promo · director.storyboard · video-prompting</span><span class="badge">将记录</span></div>
+            <div class="contract-line"><span class="muted">自动化边界</span><span>预算内生成与技术重试；换供应商、超预算、发布时暂停</span><span class="badge">Balanced</span></div>
+            <div class="budget">
+              <div><b>预计 ¥42–56 · 支出上限 ¥60</b><small>按当前模型报价；每镜最多自动重试 1 次</small></div>
+              <strong>≤ ¥60</strong>
+            </div>
+            <div class="modal-actions">
+              <span class="note">批准只覆盖本摘要。发布、删除和覆盖文件仍需单独确认。</span>
+              <div class="action-row"><button class="secondary">返回调整</button><button class="primary" data-review-target="running">批准并开始制作</button></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="modal-backdrop" id="settings-backdrop">
+        <section class="settings-modal" role="dialog" aria-modal="true" aria-label="设置">
+          <aside class="settings-tabs">
+            <h3>设置</h3>
+            <button>▣　文件与保存</button>
+            <button id="settings-ai-tab">⌁　AI 与模型</button>
+            <button class="active" id="settings-auto-tab">⌘　自动化与权限</button>
+            <button>☷　通用</button>
+            <button>ⓘ　关于</button>
+          </aside>
+          <div class="settings-content" id="settings-auto-content">
+            <button class="close" data-review-target="running" aria-label="关闭">×</button>
+            <h2>自动化与权限</h2>
+            <section class="setting-group">
+              <h4>默认制作模式</h4>
+              <div class="policy-control"><button>引导</button><button class="active">平衡</button><button>策略自动</button></div>
+            </section>
+            <section class="setting-group">
+              <h4>支出与风险边界</h4>
+              <div class="setting-row"><div><strong>首次付费前确认制作摘要</strong><small>确认镜头、模型、自动重试和支出上限。</small></div><button class="switch on" aria-label="首次付费前确认"></button></div>
+              <div class="setting-row"><div><strong>预算内自动继续后续镜头</strong><small>换供应商、超预算或结果不明时仍会暂停。</small></div><button class="switch on" aria-label="预算内自动继续"></button></div>
+              <div class="setting-row"><div><strong>对外发布与覆盖文件</strong><small>始终要求当次确认。</small></div><button class="switch on" aria-label="发布与覆盖确认"></button></div>
+            </section>
+            <section class="setting-group">
+              <h4>可信发起方</h4>
+              <div class="provider-list">
+                <div class="provider"><div><b>Nomi</b><span>本机工作台</span></div><span class="connected">允许</span></div>
+                <div class="provider"><div><b>Claude Code</b><span>只可发起草稿、查看状态与深链</span></div><button class="switch on" aria-label="Claude Code"></button></div>
+                <div class="provider"><div><b>Codex</b><span>只可发起草稿、查看状态与深链</span></div><button class="switch on" aria-label="Codex"></button></div>
+                <div class="provider"><div><b>Cursor</b><span>尚未授权</span></div><button class="switch" aria-label="Cursor"></button></div>
+              </div>
+            </section>
+            <section class="setting-group">
+              <h4>任务通知</h4>
+              <div class="setting-row"><div><strong>需要确认、失败和完成时系统通知</strong><small>通知只提供状态与安全深链，不显示本地绝对路径。</small></div><button class="switch on" aria-label="系统通知"></button></div>
+            </section>
+          </div>
+          <div class="settings-content hidden" id="settings-ai-content">
+            <button class="close" data-review-target="running" aria-label="关闭">×</button>
+            <h2>AI 与模型</h2>
+            <section class="setting-group">
+              <h4>模型连接</h4>
+              <div class="provider-list">
+                <div class="provider"><div><b>OpenAI Compatible</b><span>3 个模型可用于文本与图像</span></div><span class="connected">已连接</span></div>
+                <div class="provider"><div><b>Anthropic Compatible</b><span>Claude 可用于脚本与分镜</span></div><span class="connected">已连接</span></div>
+                <div class="provider"><div><b>本地 ComfyUI</b><span>媒体留在本机；工作流已验证</span></div><span class="connected">可用</span></div>
+              </div>
+            </section>
+            <section class="setting-group">
+              <h4>数据上传</h4>
+              <div class="setting-row"><div><strong>仅向当前任务选中的模型发送必要素材</strong><small>项目文件、历史和未采用素材默认不上传。</small></div><button class="switch on" aria-label="最小化数据上传"></button></div>
+            </section>
+            <section class="setting-group">
+              <h4>默认模型策略</h4>
+              <div class="setting-row"><div><strong>脚本与分镜</strong><small>Claude Sonnet · 可在制作摘要中更改</small></div><button class="secondary">更改</button></div>
+              <div class="setting-row"><div><strong>图像与视频</strong><small>按节点类型和可用性选择，不跨供应商静默降级</small></div><button class="secondary">查看规则</button></div>
+            </section>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <nav class="review-bar" aria-label="样张状态切换">
+    <span class="review-label">样张状态</span>
+    <button class="active" data-review-target="running">制作中</button>
+    <button data-review-target="contract">待确认</button>
+    <button data-review-target="unknown">提交结果不明</button>
+    <button data-review-target="settings">设置</button>
+  </nav>
+
+  <script>
+    const assistantRunning = document.querySelector('#assistant-running')
+    const assistantUnknown = document.querySelector('#assistant-unknown')
+    const contractBackdrop = document.querySelector('#contract-backdrop')
+    const settingsBackdrop = document.querySelector('#settings-backdrop')
+    const reviewButtons = [...document.querySelectorAll('.review-bar button')]
+
+    function show(target) {
+      assistantRunning.classList.toggle('hidden', target === 'unknown')
+      assistantUnknown.classList.toggle('hidden', target !== 'unknown')
+      contractBackdrop.classList.toggle('visible', target === 'contract')
+      settingsBackdrop.classList.toggle('visible', target === 'settings')
+      reviewButtons.forEach((button) => button.classList.toggle('active', button.dataset.reviewTarget === target))
+    }
+
+    document.querySelectorAll('[data-review-target]').forEach((button) => {
+      button.addEventListener('click', () => show(button.dataset.reviewTarget))
+    })
+
+    document.querySelectorAll('.switch').forEach((button) => {
+      button.addEventListener('click', () => button.classList.toggle('on'))
+    })
+
+    document.querySelectorAll('.policy-control button').forEach((button) => {
+      button.addEventListener('click', () => {
+        button.parentElement.querySelectorAll('button').forEach((item) => item.classList.remove('active'))
+        button.classList.add('active')
+      })
+    })
+
+    const autoTab = document.querySelector('#settings-auto-tab')
+    const aiTab = document.querySelector('#settings-ai-tab')
+    const autoContent = document.querySelector('#settings-auto-content')
+    const aiContent = document.querySelector('#settings-ai-content')
+    autoTab.addEventListener('click', () => {
+      autoTab.classList.add('active'); aiTab.classList.remove('active')
+      autoContent.classList.remove('hidden'); aiContent.classList.add('hidden')
+    })
+    aiTab.addEventListener('click', () => {
+      aiTab.classList.add('active'); autoTab.classList.remove('active')
+      aiContent.classList.remove('hidden'); autoContent.classList.add('hidden')
+    })
+  </script>
+</body>
+</html>

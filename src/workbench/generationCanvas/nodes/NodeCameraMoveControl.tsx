@@ -17,7 +17,6 @@ import {
   IconArrowNarrowRight,
   IconArrowRampLeft,
   IconArrowRampRight,
-  IconPlus,
   type Icon,
 } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
@@ -272,23 +271,6 @@ export default function NodeCameraMoveControl({ node }: { node: GenerationCanvas
             options={SHOT_ORDER.map((shot) => ({ value: shot, label: shotLabel(shot) }))}
             onChange={(shot) => setDraft((prev) => ({ ...prev, shot }))}
           />
-
-          {/* (4) 「叠一层」——脚手架占位（敬请期待）。禁用态，不引入并行产路（P1）。 */}
-          <button
-            type="button"
-            disabled
-            aria-disabled="true"
-            title={t('generationCommon.cameraMove.overlayHint')}
-            className={cn(
-              'inline-flex items-center justify-center gap-1 h-7 rounded-pill border border-dashed border-nomi-line',
-              'text-caption text-nomi-ink-40 self-start px-3 cursor-not-allowed opacity-70',
-            )}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <IconPlus size={12} stroke={1.6} aria-hidden />
-            {t('generationCommon.cameraMove.addLayer')}
-            <span className={cn('text-micro text-nomi-ink-40')}>{t('generationCommon.cameraMove.comingSoon')}</span>
-          </button>
 
           {/* (5) 底部读出 + 应用：readout 由当前草稿 derive（运镜 · 速度 · 秒 → 灰模片接入 video_ref）。 */}
           <div className={cn('flex items-center gap-2 pt-1 border-t border-nomi-line-soft')}>

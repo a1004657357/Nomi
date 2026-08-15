@@ -117,7 +117,9 @@ describe("runtime export job IPC functions", () => {
       }),
     });
     await cancelExportJob(result.jobId);
-  }, 15_000);
+  // Importing the full runtime graph can exceed 15s when all 678 test files
+  // transform concurrently; the isolated behavior completes in about 3s.
+  }, 30_000);
 
   it("returns status and can cancel a job", async () => {
     const { cancelExportJob, createProject, getExportJobStatus, startExportJob } = await import("../runtime");

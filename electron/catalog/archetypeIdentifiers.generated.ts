@@ -12,6 +12,22 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "seedance-2-mini",
     "seedance2mini"
   ],
+  "seedance-2.5": [
+    "bytedance/seedance-2-5",
+    "seedance-2-5",
+    "seedance-2.5",
+    "seedance2.5",
+    "seedance25"
+  ],
+  "minimax-h3": [
+    "minimax-h3",
+    "minimax-h3/text-to-video",
+    "minimax-h3/image-to-video",
+    "minimax-h3/reference-to-video",
+    "hailuo-3",
+    "hailuo-03",
+    "hailuo3"
+  ],
   "happyhorse": [
     "happyhorse",
     "happyhorse/text-to-video",
@@ -35,19 +51,22 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "bytedance/seedream-v4-edit",
     "bytedance/seedream-v4-text-to-image",
     "seedream-4-5",
-    "seedream-v4"
+    "seedream-v4",
+    "doubao-seedream-4.5"
   ],
   "nano-banana": [
     "nano-banana",
     "google/nano-banana",
     "google/nano-banana-edit",
-    "nano-banana-pro"
+    "nano-banana-pro",
+    "gemini-2.5-flash-image-preview"
   ],
   "kling-3.0": [
     "kling-3.0",
     "kling-3.0/video",
     "kling-3",
-    "kling3"
+    "kling3",
+    "kling-v3"
   ],
   "qwen-image": [
     "qwen-image",
@@ -110,6 +129,16 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "doubao-seedance-2.0-mini",
     "doubao-seedance-2-0-mini"
   ],
+  "seedance-2.5-apimart": [
+    "doubao-seedance-2.5",
+    "doubao-seedance-2-5"
+  ],
+  "minimax-h3-apimart": [
+    "MiniMax-H3"
+  ],
+  "minimax-h3-regeneration": [
+    "MiniMax-H3-Regeneration"
+  ],
   "vidu-q3": [
     "viduq3",
     "viduq3-mix",
@@ -147,15 +176,23 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "tongyi-mai/z-image",
     "qwen/qwen-image-2",
     "black-forest-labs/flux",
-    "modelscope"
+    "modelscope",
+    "Tongyi-MAI/Z-Image-Turbo",
+    "Tongyi-MAI/Z-Image",
+    "Qwen/Qwen-Image-2512",
+    "black-forest-labs/FLUX.2-klein-9B",
+    "black-forest-labs/FLUX.1-Krea-dev",
+    "MAILAND/majicflus_v1"
   ],
   "modelscope-image-edit": [
     "qwen/qwen-image-edit",
-    "modelscope-edit"
+    "modelscope-edit",
+    "Qwen/Qwen-Image-Edit-2511"
   ],
   "volcengine-seedream": [
-    "doubao-seedream-5",
-    "doubao-seedream-4"
+    "doubao-seedream-5-0-260128",
+    "doubao-seedream-4-5-251128",
+    "doubao-seedream-4-0-250828"
   ],
   "volcengine-seedance-2": [
     "doubao-seedance-2-0-260128",
@@ -175,26 +212,6 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "dreamina-seedance-2.5",
     "seedance2.5"
   ],
-  "jimeng-web-seedance-2": [
-    "jimeng-web-seedance-2.0",
-    "jimeng-seedance-2.0-mini",
-    "jimeng-seedance-2.0-fast-vip",
-    "jimeng-seedance-2.0-vip",
-    "jimeng-seedance-2.0-fast",
-    "jimeng-seedance-2.0"
-  ],
-  "jimeng-web-image": [
-    "jimeng-web-image",
-    "jimeng-image-5.0-pro",
-    "jimeng-image-5.0-lite",
-    "jimeng-image-4.7",
-    "jimeng-image-4.6",
-    "jimeng-image-4.5",
-    "jimeng-image-4.1",
-    "jimeng-image-4.0",
-    "jimeng-image-3.1",
-    "jimeng-image-3.0"
-  ],
   "dreamina-image": [
     "dreamina-image",
     "5.0",
@@ -211,6 +228,26 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   ],
   "dreamina-multiframe": [
     "dreamina-multiframe"
+  ],
+  "jimeng-web-image": [
+    "jimeng-web-image",
+    "jimeng-image-5.0-pro",
+    "jimeng-image-5.0-lite",
+    "jimeng-image-4.7",
+    "jimeng-image-4.6",
+    "jimeng-image-4.5",
+    "jimeng-image-4.1",
+    "jimeng-image-4.0",
+    "jimeng-image-3.1",
+    "jimeng-image-3.0"
+  ],
+  "jimeng-web-seedance-2": [
+    "jimeng-web-seedance-2.0",
+    "jimeng-seedance-2.0-mini",
+    "jimeng-seedance-2.0-fast-vip",
+    "jimeng-seedance-2.0-vip",
+    "jimeng-seedance-2.0-fast",
+    "jimeng-seedance-2.0"
   ],
   "codex-imagegen": [
     "codex-imagegen"

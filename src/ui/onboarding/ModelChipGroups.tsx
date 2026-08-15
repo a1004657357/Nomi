@@ -10,7 +10,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconCheck, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
-import { groupModelsByKind, sortEnabledFirst, type ModelChipKind } from './modelChipGrouping'
+import { groupModelsByKind, isKnownModelChipKind, sortEnabledFirst, type ModelChipKind } from './modelChipGrouping'
 
 export type ChipModel = {
   modelKey: string
@@ -21,6 +21,14 @@ export type ChipModel = {
   enabled: boolean
   /** 后端模型扩展信息；通用 chip 不消费，专用卡可透传读取。 */
   meta?: unknown
+  /** 该模型是否已设自定义调用脚本（模型行图标点亮 + 角标；chip 不消费）。 */
+  hasCustomCall?: boolean
+  /**
+   * 这一条的类型能不能由用户改（= 接入来源为手动/中转拉取，其调用通道可按新 kind 安全重建）。
+   * 内置种子与 agent 路的模型为 false：它们的 mapping 是手写/按文档推导出来的，套通用模板会破坏。
+   * 判据来自 model.onboarding.addedVia，推导链见 electron/catalog/modelRetype.ts 文件头。
+   */
+  canRetype?: boolean
 }
 
 type ModelChipGroupsProps = {
@@ -46,7 +54,7 @@ export function ModelChipGroups({ models, connected, onToggle, onDelete }: Model
         return (
           <div key={kind} className="flex flex-col gap-2">
             <div className="text-micro font-semibold text-nomi-ink-60">
-              {kind in { text: 1, image: 1, video: 1, audio: 1, model3d: 1 }
+              {isKnownModelChipKind(kind)
                 ? t(`onboardingProviders.modelControls.kind.${kind}` as 'onboardingProviders.modelControls.kind.text')
                 : kind}{' '}
               <span className="font-normal text-nomi-ink-40">
@@ -60,7 +68,7 @@ export function ModelChipGroups({ models, connected, onToggle, onDelete }: Model
                     {onToggle && m.enabled ? (
                       <IconCheck size={12} stroke={2.4} className="text-nomi-accent" aria-hidden="true" />
                     ) : (
-                      <span className={cn('w-1.5 h-1.5 rounded-full', connected && m.enabled ? 'bg-workbench-success' : 'bg-nomi-ink-20')} />
+                      <span className={cn('w-1.5 h-1.5 rounded-full', connected && m.enabled ? 'bg-nomi-accent' : 'bg-nomi-ink-20')} />
                     )}
                     {m.labelZh}
                     {onDelete ? (

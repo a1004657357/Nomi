@@ -488,6 +488,18 @@ export function clearModelCatalogVendorApiKey(vendorKey: string): unknown {
 }
 
 /** 纯函数:把一次 model upsert 应用到内存 state(原地改 state.models)。见 applyVendorUpsert 同理。 */
+/** customCall 三态归一：undefined=保留既有；null=删除；{script} 非空=覆写（空串脚本视同删除）。 */
+function normalizeCustomCall(
+  raw: unknown,
+  existing: Model["customCall"] | undefined,
+): Model["customCall"] | undefined {
+  if (raw === null) return undefined;
+  if (raw === undefined) return existing;
+  const script = isJsonRecord(raw) && typeof raw.script === "string" ? raw.script.trim() : "";
+  if (!script) return undefined;
+  return { script, updatedAt: nowIso() };
+}
+
 function applyModelUpsert(state: CatalogState, payload: unknown): Model {
   const raw = payload as JsonRecord;
   const modelKey = String(raw.modelKey || "").trim();
@@ -495,6 +507,7 @@ function applyModelUpsert(state: CatalogState, payload: unknown): Model {
   if (!modelKey || !vendorKey) throw new Error("modelKey and vendorKey are required");
   const existing = state.models.find((model) => model.vendorKey === vendorKey && model.modelKey === modelKey);
   const t = nowIso();
+  const customCall = normalizeCustomCall(raw.customCall, existing?.customCall);
   const model: Model = {
     modelKey,
     vendorKey,
@@ -506,6 +519,9 @@ function applyModelUpsert(state: CatalogState, payload: unknown): Model {
     meta: raw.meta ?? existing?.meta,
     pricing: raw.pricing as Model["pricing"] || existing?.pricing,
     onboarding: (raw.onboarding as Model["onboarding"]) ?? existing?.onboarding,
+    // 自定义调用脚本三态：undefined=保留既有（拉取/重接入流程不 clobber 用户脚本）；
+    // null=显式删除（编辑器「删除脚本恢复默认」）；对象=覆写。
+    ...(customCall ? { customCall } : {}),
     createdAt: existing?.createdAt || t,
     updatedAt: t,
   };
@@ -686,6 +702,7 @@ export function importModelCatalogPackage(payload: unknown): unknown {
 export type CatalogMutation = {
   upsertVendor: (payload: unknown) => Vendor;
   upsertApiKey: (vendorKey: string, payload: unknown) => void;
+  deleteApiKey: (vendorKey: string) => void;
   upsertModel: (payload: unknown) => Model;
   upsertMapping: (payload: unknown) => Mapping;
   deleteModelMappings: (vendorKey: string, modelKey: string) => void;
@@ -702,6 +719,9 @@ export function mutateCatalog<T>(fn: (tx: CatalogMutation) => T): T {
   const tx: CatalogMutation = {
     upsertVendor: (payload) => applyVendorUpsert(state, payload),
     upsertApiKey: (vendorKey, payload) => applyApiKeyUpsert(state, vendorKey, payload),
+    deleteApiKey: (vendorKey) => {
+      delete state.apiKeysByVendor[String(vendorKey || '').trim()];
+    },
     upsertModel: (payload) => applyModelUpsert(state, payload),
     upsertMapping: (payload) => applyMappingUpsert(state, payload),
     deleteModelMappings: (vendorKey, modelKey) => {

@@ -2,9 +2,9 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   IconArrowBackUp,
-  IconArrowForwardUp,
   IconArrowLeft,
   IconArrowRight,
+  IconArrowForwardUp,
   IconChevronDown,
   IconCopy,
   IconCut,
@@ -16,9 +16,12 @@ import {
   IconWand,
 } from '@tabler/icons-react'
 import { useWorkbenchStore } from '../workbenchStore'
+import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
+import { planStoryboardTimeline } from '../generationCanvas/agent/storyboardTimelinePlan'
 import { WorkbenchIconButton } from '../../design/workbenchActions'
+import { WorkbenchButton } from '../../design'
 import { cn } from '../../utils/cn'
-import { computeTimelineDuration } from './timelineMath'
+import { computeTimelineDuration, timelineHasVisualClips } from './timelineMath'
 import TimelineTrack from './TimelineTrack'
 import TimelineTextTrack from './TimelineTextTrack'
 import { TimelineSecondaryAddRow } from './TimelineSecondaryAddRow'
@@ -77,6 +80,9 @@ type TimelinePanelProps = {
   onCollapse?: () => void
 }
 
+const CLIP_TOOL_CLASS =
+  'workbench-timeline__tool w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer enabled:hover:bg-[var(--workbench-hover)] disabled:opacity-40'
+
 export default function TimelinePanel({ density = 'compact', regionLabel, actionLabelPrefix, showTextTrack = false, onCollapse }: TimelinePanelProps): JSX.Element {
   const { t } = useTranslation()
   const timeline = useWorkbenchStore((state) => state.timeline)
@@ -117,9 +123,16 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
       else toast(t('timelineEditor.alreadyArranged'), 'info')
     })
   }, [t])
+  // 空态「一键拼成初稿」入口的镜头数：取自与拼片同源的纯规划器（planStoryboardTimeline），
+  // 与 handleAiArrange 实际会排的单位一致；选择器只返回数字 → 数字不变不触发重渲。
+  const arrangeableShotCount = useGenerationCanvasStore(
+    (state) => planStoryboardTimeline(state.nodes, state.edges).units.length,
+  )
   const setTimelinePlayhead = useWorkbenchStore((state) => state.setTimelinePlayhead)
   const splitTimelineClip = useWorkbenchStore((state) => state.splitTimelineClip)
   const durationFrame = computeTimelineDuration(timeline)
+  // 画面轨还空着 + 画布已有可拼镜头 → 显示空态提示行（纯增益，有画面片段后自动隐去）。
+  const showArrangeCta = !timelineHasVisualClips(timeline) && arrangeableShotCount > 0
   const rulerEndFrame = React.useMemo(
     () => resolveTimelineRulerEndFrame({
       durationFrame,
@@ -209,6 +222,8 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
   ])
 
   const rulerContentRef = React.useRef<HTMLDivElement | null>(null)
+  // hover 幽灵播放头：预告点击落点的半透明竖线。拖动中（buttons>0）与剪刀模式下隐藏（后者有 clip 级切点线）。
+  const [hoverFrame, setHoverFrame] = React.useState<number | null>(null)
 
   const frameFromClientX = React.useCallback((clientX: number): number => {
     const rect = rulerContentRef.current?.getBoundingClientRect()
@@ -277,28 +292,31 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
           'workbench-timeline__right',
           'inline-flex items-center gap-0.5 min-w-0 p-0',
         )}>
-          {hasSelection ? (
-            <div className={cn(
-              'workbench-timeline__clip-tools',
-              'inline-flex items-center gap-0.5 pr-0 border-r-0',
-            )} aria-label={t('timelineEditor.selectedClipActions')}>
-              {primaryMediaClip ? (
-                <WorkbenchIconButton
-                  className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-accent)] shadow-none cursor-pointer hover:bg-[var(--workbench-accent-soft)]')}
-                  label="生成并替换当前片段"
-                  title="生成并替换当前时间轴片段（旧结果仍保留在画布节点的结果历史中）"
-                  icon={<IconSparkles size={14} />}
-                  onClick={() => {
-                    void import('../generationCanvas/runner/generationRunController')
-                      .then(({ regenerateNodeInPlace }) => regenerateNodeInPlace(primaryMediaClip.sourceNodeId))
-                  }}
-                />
-              ) : null}
-              <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.nudgeEarlier')} icon={<IconArrowLeft size={14} />} onClick={() => nudgeTimelineClip(primaryClipId, -1)} />
-              <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.duplicateClip')} icon={<IconCopy size={14} />} onClick={() => duplicateTimelineClip(primaryClipId)} />
-              <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.nudgeLater')} icon={<IconArrowRight size={14} />} onClick={() => nudgeTimelineClip(primaryClipId, 1)} />
+          {/* 单片工具（重新生成 / 前后微调 / 复制）：**恒常渲染**，没选中片段时禁用并说明原因。
+              改之前是 `hasSelection ? … : null`——一选中整条 pill 就变长、右侧按钮全体位移，布局抖一下
+              （设计系统 §1.5 硬规则③：情境控件不许挤常驻条）。
+              想过搬到片段自己头上做浮条，实测走不通：轨道为了横向滚动用了 overflow-x:auto，
+              按 CSS 规范这会把 overflow-y 也算成 auto，浮在片段上方的东西会被整条裁掉、点不到；
+              而塞进片段内部又违反「动作不许压在内容上」。恒常渲染 + 禁用带原因同样消掉抖动，
+              还顺带满足 §1.6 契约 C1/C4，且和旁边那颗「删除选中」的既有做法一致。 */}
+          <span title={hasSelection ? undefined : t('timelineEditor.clipToolsHint')} style={{ display: 'contents' }}>
+            <div className={cn('workbench-timeline__clip-tools', 'inline-flex items-center gap-0.5')} aria-label={t('timelineEditor.selectedClipActions')}>
+              <WorkbenchIconButton
+                className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-accent)] shadow-none cursor-pointer enabled:hover:bg-[var(--workbench-accent-soft)] disabled:opacity-40')}
+                label={t('timelineEditor.regenerate')}
+                icon={<IconSparkles size={14} />}
+                disabled={!primaryMediaClip}
+                onClick={() => {
+                  if (!primaryMediaClip) return
+                  void import('../generationCanvas/runner/generationRunController')
+                    .then(({ regenerateNodeInPlace }) => regenerateNodeInPlace(primaryMediaClip.sourceNodeId))
+                }}
+              />
+              <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.nudgeEarlier')} icon={<IconArrowLeft size={14} />} disabled={!primaryClipId} onClick={() => nudgeTimelineClip(primaryClipId, -1)} />
+              <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.duplicateClip')} icon={<IconCopy size={14} />} disabled={!primaryClipId} onClick={() => duplicateTimelineClip(primaryClipId)} />
+              <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.nudgeLater')} icon={<IconArrowRight size={14} />} disabled={!primaryClipId} onClick={() => nudgeTimelineClip(primaryClipId, 1)} />
             </div>
-          ) : null}
+          </span>
           {/* C2 一键拼片：把画布镜头按镜序排进时间轴（accent，主操作权重）。 */}
           <WorkbenchIconButton
             className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-accent)] shadow-none cursor-pointer hover:bg-[var(--workbench-accent-soft)]')}
@@ -355,6 +373,14 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
           const factor = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR
           setTimelineZoom(Math.min(TIMELINE_MAX_SCALE, Math.max(TIMELINE_MIN_SCALE, timeline.scale * factor)))
         }}
+        onPointerMove={(e) => {
+          if (e.buttons !== 0 || splitMode) {
+            setHoverFrame(null)
+            return
+          }
+          setHoverFrame(frameFromClientX(e.clientX))
+        }}
+        onPointerLeave={() => setHoverFrame(null)}
       >
         <div className={cn(
           'workbench-timeline__ruler',
@@ -398,6 +424,37 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
             ))}
           </div>
         </div>
+        {/* 空态「一键拼成初稿」提示行：整条「剧本→初稿」旅程的收尾动作——逐镜出完图后一键成初剪。
+            只在「画面轨空 + 画布已有可拼镜头」时出现，点击复用 handleAiArrange（幂等追加、单测已覆盖），
+            有画面片段 / 无可拼镜头后自动隐去 = 纯增益空态，不改任何拼片逻辑。右上角魔杖图标仍保留。 */}
+        {showArrangeCta ? (
+          <div
+            className={cn(
+              'workbench-timeline__arrange-cta',
+              'w-full grid grid-cols-[var(--workbench-timeline-label-width)_minmax(0,1fr)] mb-2',
+            )}
+            data-testid="timeline-arrange-cta"
+          >
+            <span aria-hidden="true" />
+            <div className={cn(
+              'flex items-center justify-between gap-2.5 min-w-0',
+              'px-2.5 py-1.5 rounded-[var(--nomi-radius-sm)]',
+              'bg-[var(--workbench-accent-soft)]',
+              'border border-[color-mix(in_oklch,var(--workbench-accent)_26%,transparent)]',
+            )}>
+              <span className="inline-flex items-center gap-2 min-w-0">
+                <IconSparkles size={15} className="flex-none text-[var(--workbench-accent)]" />
+                <span className="min-w-0 truncate text-xs text-[var(--workbench-ink)]">
+                  {t('timelineEditor.arrangeCta.message', { count: arrangeableShotCount })}
+                </span>
+              </span>
+              <WorkbenchButton variant="primary" size="sm" className="flex-none" onClick={handleAiArrange}>
+                <IconWand size={16} />
+                {t('timelineEditor.arrangeCta.action')}
+              </WorkbenchButton>
+            </div>
+          </div>
+        ) : null}
         {/* 吸附辅助线（暖橙虚线 + 标签），仅拖动中临时出现 */}
         {snapGuide ? (
           <div
@@ -414,6 +471,18 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
               'font-mono text-micro leading-[14px] text-[var(--nomi-paper)] bg-[var(--nomi-snap-tag)]',
             )}>{snapGuide.label}</span>
           </div>
+        ) : null}
+        {/* hover 幽灵播放头：半透明预告线，点击即落此处（真播放头由下方实线表达） */}
+        {hoverFrame != null && Math.abs(hoverFrame - timeline.playheadFrame) > 0 ? (
+          <div
+            className={cn(
+              'workbench-timeline__ghost-playhead',
+              'absolute top-0 bottom-0 left-[var(--workbench-timeline-label-width)] z-[5]',
+              'w-px bg-[var(--workbench-accent)] opacity-35 pointer-events-none',
+            )}
+            style={{ transform: `translateX(${frameToPixel(hoverFrame, timeline.scale)}px)` }}
+            aria-hidden="true"
+          />
         ) : null}
         {/* 播放头：竖线不拦事件；顶部把手可拖 scrub */}
         <div

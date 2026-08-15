@@ -73,12 +73,11 @@ export function removeNodes(
   }
 }
 
-export function createEdgeId(
-  source: string,
-  target: string,
-  mode: GenerationCanvasEdgeMode = 'reference',
-): string {
-  return `edge-${source}-${target}-${mode}`
+export function createEdgeId(source: string, target: string, order = 0): string {
+  // mode 不适合进 id：用户改边标签时 mode 会变，边身份应该稳定。
+  // 用 target 内单调 order 作序号，同两点的多语义边也能各自点中/删除。
+  // 端点先 encode，再用 `::` 分隔，避免 a-b→c 与 a→b-c 这类字符串拼接冲突。
+  return `edge-${encodeURIComponent(source)}::${encodeURIComponent(target)}::${order}`
 }
 
 export function connectNodes(
@@ -95,7 +94,7 @@ export function connectNodes(
   // order = 该 target 现有入边数：保住「放入顺序」= 数组参考 character1..N 的真相源（audit 2026-06-16 §1d）。
   // 全模式单调（不按 mode 分桶）→ 数组槽落槽用单调序、首尾帧用 mode 位置偏好，互不打架。
   const order = nextEdgeOrderForTarget(edges, target)
-  return [...edges, { id: createEdgeId(source, target, mode), source, target, mode, order }]
+  return [...edges, { id: createEdgeId(source, target, order), source, target, mode, order }]
 }
 
 export function changeEdgeMode(
@@ -114,13 +113,20 @@ export function changeEdgeMode(
   ))
   if (duplicate) return edges.filter((edge) => edge.id !== existing.id)
   return edges.map((edge) => edge.id === existing.id
-    ? { ...edge, id: createEdgeId(edge.source, edge.target, nextMode), mode: nextMode }
+    ? { ...edge, mode: nextMode }
     : edge)
 }
 
-/** 落入某 target 的下一个 order 序号 = 已有入边数（含无 order 的旧边，按存在即计数，保单调）。 */
+/** 落入某 target 的下一个 order 序号。删过中间边后也只向前走，不复用存量序号。 */
 export function nextEdgeOrderForTarget(edges: GenerationCanvasEdge[], target: string): number {
-  return edges.reduce((count, edge) => (edge.target === target ? count + 1 : count), 0)
+  const targetEdges = edges.filter((edge) => edge.target === target)
+  if (!targetEdges.length) return 0
+  const maxExplicitOrder = targetEdges.reduce(
+    (max, edge) => typeof edge.order === 'number' && Number.isFinite(edge.order) ? Math.max(max, edge.order) : max,
+    -1,
+  )
+  // 无 order 的旧边也占一个序号；两者取大确保升级后不撞身份。
+  return Math.max(targetEdges.length, maxExplicitOrder + 1)
 }
 
 /**

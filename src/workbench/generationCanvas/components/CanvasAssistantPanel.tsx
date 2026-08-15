@@ -615,6 +615,8 @@ export default function CanvasAssistantPanel({
         </div>
       </header>
       <MemoryFold refreshKey={memoryRefreshKey} />
+      {/* 制作任务不再挂这里：它的家是任务中心（顶栏常驻、任何视图可开）。助手面板只和 Nomi 聊画布，
+          不再让两套操作相邻（plan 2026-08-11-nomi-side-viewer-and-fallback N2）。 */}
       <AssistantTimeline
         messages={messages}
         staleBoundaryId={staleBoundaryId}

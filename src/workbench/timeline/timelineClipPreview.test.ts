@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import {
-  isLikelyStillImageUrl,
-  resolveTimelineClipPreviewMedia,
-  shouldMountTimelineClipVideoPreview,
-} from './timelineClipPreview'
+import { isLikelyStillImageUrl, resolveTimelineClipPreviewMedia } from './timelineClipPreview'
 import type { TimelineClip } from './timelineTypes'
+
+// 视频 clip 的主渲染已是胶片条（useTimelineFilmstrip）；本文件锁静态回退链：
+// 图片 clip 用自身图，视频 clip 无胶片时回退 thumbnail 图 → 占位色块，绝不冒充。
 
 function clip(overrides: Partial<TimelineClip> = {}): TimelineClip {
   return {
@@ -13,62 +12,46 @@ function clip(overrides: Partial<TimelineClip> = {}): TimelineClip {
     sourceNodeId: 'node-1',
     label: 'clip',
     startFrame: 0,
-    endFrame: 30,
-    frameCount: 30,
+    endFrame: 120,
+    frameCount: 120,
     offsetStartFrame: 0,
-    offsetEndFrame: 30,
-    url: 'nomi-local://asset/project/assets/video.mp4',
+    offsetEndFrame: 0,
     ...overrides,
   }
 }
 
-describe('timelineClipPreview', () => {
-  it('mounts a video preview only for the single selected video clip', () => {
-    const videoClip = clip()
-
-    expect(resolveTimelineClipPreviewMedia(videoClip, { isSingleSelected: false })).toEqual({ kind: 'placeholder' })
-    expect(resolveTimelineClipPreviewMedia(videoClip, { isSingleSelected: true })).toEqual({
-      kind: 'video',
-      src: videoClip.url,
+describe('resolveTimelineClipPreviewMedia', () => {
+  it('图片 clip：url 优先、thumbnail 兜底、都缺则 none', () => {
+    expect(resolveTimelineClipPreviewMedia(clip({ type: 'image', url: 'a.png' }))).toEqual({ kind: 'image', src: 'a.png' })
+    expect(resolveTimelineClipPreviewMedia(clip({ type: 'image', url: '', thumbnailUrl: 'b.webp' }))).toEqual({
+      kind: 'image',
+      src: 'b.webp',
     })
-    expect(shouldMountTimelineClipVideoPreview(videoClip, { isSingleSelected: true })).toBe(true)
+    expect(resolveTimelineClipPreviewMedia(clip({ type: 'image', url: '', thumbnailUrl: '' }))).toEqual({ kind: 'none' })
   })
 
-  it('does not mount video for still-image urls even when the clip is typed as video', () => {
-    const stillVideoClip = clip({
-      url: 'nomi-local://asset/project/assets/generated/frame.png',
-      thumbnailUrl: 'nomi-local://asset/project/assets/generated/frame.png',
-    })
-
-    expect(shouldMountTimelineClipVideoPreview(stillVideoClip, { isSingleSelected: true })).toBe(false)
-    expect(resolveTimelineClipPreviewMedia(stillVideoClip, { isSingleSelected: true })).toEqual({
-      kind: 'image',
-      src: stillVideoClip.thumbnailUrl,
-    })
+  it('视频 clip：静态回退不挂 video——thumbnail 图 → 占位', () => {
+    expect(
+      resolveTimelineClipPreviewMedia(clip({ url: 'nomi-local://asset/p/v.mp4', thumbnailUrl: 'cover.jpg' })),
+    ).toEqual({ kind: 'image', src: 'cover.jpg' })
+    expect(resolveTimelineClipPreviewMedia(clip({ url: 'nomi-local://asset/p/v.mp4' }))).toEqual({ kind: 'placeholder' })
+    expect(resolveTimelineClipPreviewMedia(clip({ url: '', thumbnailUrl: '' }))).toEqual({ kind: 'none' })
   })
 
-  it('uses a still thumbnail for an unselected video when one exists', () => {
-    const videoClip = clip({
-      url: 'nomi-local://asset/project/assets/video.mp4',
-      thumbnailUrl: 'nomi-local://asset/project/assets/video-cover.webp',
-    })
-
-    expect(resolveTimelineClipPreviewMedia(videoClip, { isSingleSelected: false })).toEqual({
-      kind: 'image',
-      src: videoClip.thumbnailUrl,
-    })
+  it('视频 clip 的 url 若本身是静态图（导入图伪装视频轨），直接当图渲', () => {
+    expect(resolveTimelineClipPreviewMedia(clip({ url: 'frame.png' }))).toEqual({ kind: 'image', src: 'frame.png' })
   })
 
-  it('keeps image clips as lazy images', () => {
-    const imageClip = clip({
-      type: 'image',
-      url: 'nomi-local://asset/project/assets/image.jpg?size=thumb',
-    })
+  it('音频 clip 不出媒体（保持色块）', () => {
+    expect(resolveTimelineClipPreviewMedia(clip({ type: 'audio', url: 'a.mp3' }))).toEqual({ kind: 'none' })
+  })
+})
 
-    expect(isLikelyStillImageUrl(imageClip.url)).toBe(true)
-    expect(resolveTimelineClipPreviewMedia(imageClip, { isSingleSelected: true })).toEqual({
-      kind: 'image',
-      src: imageClip.url,
-    })
+describe('isLikelyStillImageUrl', () => {
+  it('data:image 与常见扩展名判真，blob/视频判假', () => {
+    expect(isLikelyStillImageUrl('data:image/png;base64,xx')).toBe(true)
+    expect(isLikelyStillImageUrl('x.webp?sig=1')).toBe(true)
+    expect(isLikelyStillImageUrl('blob:abc')).toBe(false)
+    expect(isLikelyStillImageUrl('v.mp4')).toBe(false)
   })
 })

@@ -2,9 +2,10 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import { cn } from '../../../utils/cn'
-import { IconCoin, IconRobot } from '@tabler/icons-react'
+import { IconCoin, IconFileText, IconRobot, IconMovie, IconPhoto } from '@tabler/icons-react'
 import { WorkbenchButton } from '../../../design'
 import { useSpendConfirmStore } from './spendConfirm'
+import { ProductionContractSummary } from './ProductionContractSummary'
 
 // 付费生成确认对话框（单一收口，挂一次于工作区根）。极简：标题 + 一句人话 + 取消/确认。
 // 三种来源共用这一个对话框（不另造并行卡，P1）：
@@ -17,9 +18,13 @@ export function SpendConfirmDialog() {
   const resolvePending = useSpendConfirmStore((state) => state.resolvePending)
   const [suppress, setSuppress] = React.useState(false)
   const [remainingMs, setRemainingMs] = React.useState(0)
+  // B1：方向门单选（默认选第一个候选）。换 pending 时重置到第一个。
+  const directionCandidates = pending?.directionCandidates ?? []
+  const [choiceKey, setChoiceKey] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!pending) setSuppress(false)
+    setChoiceKey(pending?.directionCandidates?.[0]?.key ?? null)
   }, [pending])
 
   // 倒计时：设了 countdownMs 才跑。每 200ms 收敛，到点自动按「未确认」返回（不死等——外部调用方那头在等）。
@@ -46,7 +51,15 @@ export function SpendConfirmDialog() {
   if (!pending) return null
 
   const isAgent = pending.source === 'agent'
-  const Icon = isAgent ? IconRobot : IconCoin
+  const incompletePolicy = pending.kind === 'contract' && pending.contract && !pending.contract.policy.ready
+  // 图标按门类派生（Phase B）：方案门=分镜、参考图门=相机、生成门=机器人(agent)/金币(用户直发)。
+  const Icon = pending.kind === 'contract'
+    ? IconFileText
+    : pending.kind === 'plan'
+      ? IconMovie
+      : pending.kind === 'reference'
+        ? IconPhoto
+        : isAgent ? IconRobot : IconCoin
   const countdownTotal = pending.countdownMs || 0
   const remainingSec = countdownTotal ? Math.ceil(remainingMs / 1000) : 0
   const remainingPct = countdownTotal ? Math.max(0, Math.min(100, (remainingMs / countdownTotal) * 100)) : 0
@@ -64,7 +77,10 @@ export function SpendConfirmDialog() {
       }}
     >
       <div
-        className={cn('w-[380px] max-w-[88%] rounded-nomi-lg border border-nomi-line bg-nomi-paper p-4 shadow-nomi-md')}
+        className={cn(
+          pending.kind === 'contract' ? 'w-[680px]' : 'w-[380px]',
+          'max-h-[88vh] max-w-[88%] overflow-y-auto rounded-nomi-lg border border-nomi-line bg-nomi-paper p-4 shadow-nomi-md',
+        )}
       >
         <div className={cn('flex items-center gap-2.5 mb-2')}>
           <span
@@ -78,14 +94,76 @@ export function SpendConfirmDialog() {
           <div className={cn('min-w-0')}>
             <p className={cn('text-title font-medium text-nomi-ink truncate')}>{pending.title}</p>
             {isAgent ? (
-              <p className={cn('text-micro text-nomi-ink-60')}>{t('generationCommon.spend.agentNotice')}</p>
+              <p className={cn('text-micro text-nomi-ink-60')}>
+                {/* 方案门免费 → 副标不提「花费」（否则与「不花额度」正文自相矛盾，2026-08-02 走查抓出）。 */}
+                {t(pending.kind === 'plan' ? 'generationCommon.spend.agentNoticePlan' : 'generationCommon.spend.agentNotice')}
+              </p>
             ) : null}
           </div>
         </div>
 
         <p className={cn('text-body-sm text-nomi-ink-80 leading-relaxed mb-3')}>{pending.message}</p>
 
-        {pending.details?.length ? (
+        {directionCandidates.length ? (
+          <div className={cn('mb-3 grid gap-1.5')} role="radiogroup" data-direction-candidates>
+            {directionCandidates.map((candidate) => {
+              const selected = candidate.key === choiceKey
+              return (
+                <button
+                  key={candidate.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  data-direction-candidate={candidate.key}
+                  data-direction-selected={selected ? 'true' : 'false'}
+                  onClick={() => setChoiceKey(candidate.key)}
+                  className={cn(
+                    'grid gap-0.5 rounded-nomi-sm border px-2.5 py-2 text-left transition-colors cursor-pointer',
+                    selected ? 'border-nomi-accent bg-nomi-accent-soft' : 'border-nomi-line hover:border-nomi-accent',
+                  )}
+                >
+                  <span className={cn('text-caption font-medium text-nomi-ink')}>{candidate.title}</span>
+                  <span className={cn('text-micro text-nomi-ink-60')}>{candidate.oneLiner}</span>
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
+
+        {pending.kind === 'contract' && pending.contract ? (
+          <ProductionContractSummary view={pending.contract} />
+        ) : null}
+
+        {incompletePolicy ? (
+          <div
+            data-production-policy-readiness="incomplete"
+            className={cn('mt-3 rounded-nomi-sm border border-nomi-warning/40 bg-nomi-warning/10 px-3 py-2 text-caption leading-relaxed text-nomi-ink-80')}
+          >
+            <div className={cn('font-semibold text-nomi-ink')}>
+              {t('generationCommon.production.gate.missingPolicyTitle', { count: pending.contract!.policy.issueCount })}
+            </div>
+            <div className={cn('mt-1 grid gap-0.5')}>
+              {pending.contract!.policy.missingHardBudget ? (
+                <div data-production-policy-issue="budget">{t('generationCommon.production.gate.missingPolicyBudget')}</div>
+              ) : null}
+              {pending.contract!.policy.missingProviders.length ? (
+                <div data-production-policy-issue="providers">
+                  {t('generationCommon.production.gate.missingPolicyProviders', { providers: pending.contract!.policy.missingProviders.join(', ') })}
+                </div>
+              ) : null}
+              {pending.contract!.policy.missingModels.length ? (
+                <div data-production-policy-issue="models">
+                  {t('generationCommon.production.gate.missingPolicyModels', { models: pending.contract!.policy.missingModels.join(', ') })}
+                </div>
+              ) : null}
+            </div>
+            <div className={cn('mt-1 text-nomi-ink-60')}>
+              {t('generationCommon.production.gate.missingPolicyMessage')}
+            </div>
+          </div>
+        ) : null}
+
+        {pending.kind !== 'contract' && pending.details?.length ? (
           <div className={cn('mb-3 rounded-nomi-sm border border-nomi-line-soft divide-y divide-nomi-line-soft')}>
             {pending.details.map((row) => (
               <div key={row.label} className={cn('flex items-center justify-between gap-3 px-2.5 py-1.5')}>
@@ -123,14 +201,31 @@ export function SpendConfirmDialog() {
           <WorkbenchButton className={cn('h-8 px-4 cursor-pointer')} onClick={() => resolvePending(false)}>
             {isAgent ? t('generationCommon.spend.ignore') : t('generationCommon.spend.cancel')}
           </WorkbenchButton>
-          <WorkbenchButton
-            className={cn(
-              'h-8 px-4 cursor-pointer bg-nomi-ink text-nomi-paper border-nomi-ink hover:bg-nomi-accent hover:text-nomi-paper',
-            )}
-            onClick={() => resolvePending(true, suppress)}
-          >
-            {pending.confirmLabel || t('generationCommon.spend.confirm')}
-          </WorkbenchButton>
+          {incompletePolicy ? (
+            <WorkbenchButton
+              className={cn('h-8 px-4 cursor-pointer bg-nomi-ink text-nomi-paper border-nomi-ink hover:bg-nomi-accent hover:text-nomi-paper')}
+              onClick={() => {
+                const openPolicySettings = pending.onOpenPolicySettings
+                resolvePending(false)
+                openPolicySettings?.()
+              }}
+            >
+              {t('generationCommon.production.gate.openProductionPolicy')}
+            </WorkbenchButton>
+          ) : (
+            <WorkbenchButton
+              className={cn(
+                'h-8 px-4 cursor-pointer bg-nomi-ink text-nomi-paper border-nomi-ink hover:bg-nomi-accent hover:text-nomi-paper',
+              )}
+              onClick={() => {
+                // B1：方向门确认时先回传选中候选（沿用 onOpenPolicySettings 的回调模式），再 resolve。
+                if (directionCandidates.length) pending.onDirectionDecision?.(choiceKey)
+                resolvePending(true, suppress)
+              }}
+            >
+              {pending.confirmLabel || t('generationCommon.spend.confirm')}
+            </WorkbenchButton>
+          )}
         </div>
       </div>
     </div>,

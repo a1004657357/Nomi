@@ -18,6 +18,8 @@ export type SkillRecord = {
   directoryName: string;
   /** SKILL.md 绝对路径。 */
   filePath: string;
+  /** SKILL.md frontmatter / manifest 里的一句话描述（用于技能库卡片、MCP 资源/提示词元数据）。 */
+  description: string;
   /** SKILL.md 正文（去掉首尾空白）。 */
   body: string;
   /** skill.json 解析出的 manifest；缺失/非法 ⇒ null（legacy markdown-only）。 */
@@ -33,6 +35,14 @@ function parseSkillName(markdown: string, directoryName: string): string {
   const frontmatter = match?.[1] || "";
   const nameMatch = frontmatter.match(/^name:\s*["']?(.+?)["']?\s*$/m);
   return String(nameMatch?.[1] || directoryName).trim();
+}
+
+/** 从 SKILL.md frontmatter 取 `description:`（单行）。缺失 ⇒ ""。 */
+function parseSkillDescription(markdown: string): string {
+  const match = markdown.match(/^---\s*\n([\s\S]*?)\n---/);
+  const frontmatter = match?.[1] || "";
+  const descMatch = frontmatter.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+  return String(descMatch?.[1] || "").trim();
 }
 
 export function normalizeSkillLookupKey(value: unknown): string {
@@ -83,6 +93,7 @@ export function readSkillRecords(): SkillRecord[] {
         name: manifest?.name || parseSkillName(body, entry.name),
         directoryName: entry.name,
         filePath,
+        description: manifest?.description || parseSkillDescription(body),
         body,
         manifest,
         manifestError: error,
@@ -120,4 +131,47 @@ export function findSkillRecord(
         (normalizedName && normalizeSkillLookupKey(skill.directoryName) === normalizedName),
     ) || null
   );
+}
+
+/** 技能元数据（不含正文）——MCP 脊柱 resources/prompts 列表用，渐进披露。 */
+export type SkillSummary = {
+  name: string;
+  directoryName: string;
+  description: string;
+  origin: "builtin" | "user";
+};
+
+/**
+ * 面向 MCP 脊柱暴露的「导演 / 编剧技能库」= directoryName 以 director- / writer- 开头的内置技能。
+ * 这是从阿泽导演台整过来、供内外 agent 按需调用的电影方法论库；workbench.* 等内部编排技能不外暴露。
+ */
+const CRAFT_SKILL_PREFIXES = ["director-", "writer-"] as const;
+function isCraftSkill(directoryName: string): boolean {
+  return CRAFT_SKILL_PREFIXES.some((prefix) => directoryName.startsWith(prefix));
+}
+
+/** 技能元数据清单（渐进披露：只给 name+描述，不含正文）。默认只列导演/编剧技能库。 */
+export function listSkillSummaries(craftOnly = true): SkillSummary[] {
+  return readSkillRecords()
+    .filter((record) => (craftOnly ? isCraftSkill(record.directoryName) : true))
+    .map((record) => ({
+      name: record.name,
+      directoryName: record.directoryName,
+      description: record.description,
+      origin: record.origin,
+    }));
+}
+
+/** 读一个技能的完整正文（按 name / directoryName 匹配）。找不到 ⇒ null。 */
+export function readSkillContent(
+  key: string,
+): { name: string; directoryName: string; description: string; body: string } | null {
+  const record = findSkillRecord(key, key);
+  if (!record) return null;
+  return {
+    name: record.name,
+    directoryName: record.directoryName,
+    description: record.description,
+    body: record.body,
+  };
 }

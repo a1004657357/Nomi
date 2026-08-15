@@ -8,6 +8,7 @@
 //     （本地素材需先推到 vendor 够得着的地方）。这条传输能力是 P1 发送链的事，此处只负责带上线索。
 
 import type { GenerationCanvasNode } from '../generationCanvas/model/generationCanvasTypes'
+import { listNodeMediaResults, resultIdentity } from '../generationCanvas/model/nodeResultLifecycle'
 import type { WorkspaceFileNode } from '../../../electron/workspace/workspaceFileIndex'
 import { buildWorkspaceFileUrl } from '../explorer/workspaceFileDrag'
 
@@ -16,7 +17,7 @@ export type AssetSource = 'canvas' | 'project'
 
 /** 发送时解析「传输地址」所需的来源线索（discriminated union，给 R1 解析器用）。 */
 export type AssetOrigin =
-  | { source: 'canvas'; nodeId: string }
+  | { source: 'canvas'; nodeId: string; resultId?: string }
   | { source: 'project'; projectId: string; relativePath: string }
 
 export type AssetRef = {
@@ -32,6 +33,8 @@ export type AssetRef = {
   thumbUrl?: string
   /** 落盘素材所属的画布节点；用于从项目素材删除时同步清理全项目素材。 */
   ownerNodeId?: string
+  /** 画布节点中的单个生成结果；同一节点多图时用于精确设主图/删除。 */
+  ownerResultId?: string
   source: AssetSource
   /** 传输地址解析线索（见文件头 R1 说明）。 */
   origin: AssetOrigin
@@ -39,25 +42,26 @@ export type AssetRef = {
 
 const ASSET_KINDS: ReadonlySet<string> = new Set<AssetKind>(['image', 'video', 'audio'])
 
-/** 画布节点 → AssetRef；非图/视频结果、无 url 的节点返回 null。 */
-export function canvasNodeToAssetRef(node: GenerationCanvasNode): AssetRef | null {
-  const result = node.result
-  if (!result) return null
-  if (result.type !== 'image' && result.type !== 'video') return null
-  const renderUrl = String(result.url || result.thumbnailUrl || '').trim()
-  if (!renderUrl) return null
-  const thumbUrl = String(result.thumbnailUrl || '').trim()
-  return {
-    id: node.id,
-    kind: result.type,
-    name: String(node.title || '').trim() || result.type,
-    createdAt: result.createdAt ? new Date(result.createdAt).toISOString() : undefined,
-    updatedAt: result.createdAt ? new Date(result.createdAt).toISOString() : undefined,
-    renderUrl,
-    thumbUrl: thumbUrl || undefined,
-    source: 'canvas',
-    origin: { source: 'canvas', nodeId: node.id },
-  }
+/** 画布节点 → 全部媒体 AssetRef；主结果与 history 去重展开，同一节点多图不再只露主图。 */
+export function canvasNodeToAssetRefs(node: GenerationCanvasNode): AssetRef[] {
+  return listNodeMediaResults(node).map((result) => {
+    const identity = resultIdentity(result)
+    const renderUrl = String(result.url || result.thumbnailUrl || '').trim()
+    const thumbUrl = String(result.thumbnailUrl || '').trim()
+    return {
+      id: `${node.id}:${identity}`,
+      kind: result.type as AssetKind,
+      name: String(node.title || '').trim() || result.type,
+      createdAt: result.createdAt ? new Date(result.createdAt).toISOString() : undefined,
+      updatedAt: result.createdAt ? new Date(result.createdAt).toISOString() : undefined,
+      renderUrl,
+      thumbUrl: thumbUrl || undefined,
+      ownerNodeId: node.id,
+      ownerResultId: identity,
+      source: 'canvas',
+      origin: { source: 'canvas', nodeId: node.id, resultId: identity },
+    }
+  })
 }
 
 /** 项目文件节点 → AssetRef；非素材类（目录/文档/纯文本）返回 null。URL 现算（项目文件不存 url）。 */

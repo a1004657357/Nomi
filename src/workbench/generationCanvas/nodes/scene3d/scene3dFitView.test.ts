@@ -46,4 +46,18 @@ describe('fitEditorCameraToScene', () => {
     expect(pose.position).toEqual([-5, 3.2, 6])
     expect(pose.target).toEqual([0, 0.75, 0])
   })
+
+  // 离群相机排除（2026-08-07 飞书反馈「点看全场就没东西了」根因）：被 WASD 飞远、位姿写回
+  // 场景的相机不得把 fit 包围盒撑爆——否则 distance 算出极远端机位，场景缩成亚像素 = 白屏。
+  it('离群相机被排除：飞远到 5000 米的相机不再撑爆包围盒', () => {
+    const state = createDefaultScene3DState()
+    const normalPose = fitEditorCameraToScene(state.objects, state.cameras)
+    const withOutlier = fitEditorCameraToScene(state.objects, [
+      ...state.cameras,
+      { ...state.cameras[0], position: [5000, 3000, -5000] as [number, number, number] },
+    ])
+    expect(Math.hypot(...withOutlier.position)).toBeLessThan(100)
+    expect(withOutlier.position[0]).toBeCloseTo(normalPose.position[0], 0)
+    expect(withOutlier.target[0]).toBeCloseTo(normalPose.target[0], 0)
+  })
 })

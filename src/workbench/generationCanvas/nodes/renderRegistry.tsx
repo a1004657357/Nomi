@@ -14,6 +14,7 @@ import {
   IconVideo,
   IconWaveSine,
   IconWriting,
+  IconScissors,
 } from '@tabler/icons-react'
 import {
   GENERATION_NODE_PLUGIN_BY_KIND,
@@ -52,6 +53,7 @@ const NODE_ICONS: Record<GenerationNodeIconKey, GenerationNodeIcon> = {
   skill: IconSparkles,
   whiteboard: IconBrush,
   audio: IconWaveSine,
+  clip: IconScissors,
 }
 
 const lazyComponents = new Map<GenerationNodeKind, React.LazyExoticComponent<GenerationNodeComponent>>()

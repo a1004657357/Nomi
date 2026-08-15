@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>控件分层法 · 四面样张 v2（2026-08-02）</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" />
+<style>
+:root{
+  --nomi-bg: oklch(0.985 0.003 90);
+  --nomi-paper: oklch(1 0 0);
+  --nomi-ink: oklch(0.22 0.01 80);
+  --nomi-ink-80: oklch(0.32 0.01 80);
+  --nomi-ink-60: oklch(0.50 0.01 80);
+  --nomi-ink-45: oklch(0.63 0.01 80);
+  --nomi-ink-30: oklch(0.78 0.01 80);
+  --nomi-ink-10: oklch(0.94 0.003 80);
+  --nomi-ink-05: oklch(0.97 0.003 80);
+  --nomi-line: oklch(0.91 0.004 80);
+  --nomi-line-soft: oklch(0.95 0.003 80);
+  --nomi-accent: oklch(0.55 0.13 250);
+  /* 注：仓库里这条写的是 in oklch，会色相漂移成粉色（已单独派任务修）。样张按修好后的预期色渲染。 */
+  --nomi-accent-soft: color-mix(in srgb, var(--nomi-accent) 12%, var(--nomi-paper));
+  --r-sm: 6px; --r: 10px; --r-lg: 16px;
+  --danger: oklch(0.55 0.16 25);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--nomi-bg);color:var(--nomi-ink);
+  font:13px/1.5 -apple-system,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;padding:40px 32px 80px}
+h1{font-size:24px;font-weight:400;letter-spacing:-.02em;margin:0 0 4px}
+h2{font-size:16px;font-weight:500;margin:56px 0 4px;padding-top:20px;border-top:1px solid var(--nomi-line)}
+h2:first-of-type{border-top:0;padding-top:0}
+.sub{color:var(--nomi-ink-60);font-size:13px;margin:0 0 20px;max-width:900px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+/* 横向长条（顶栏/控制条/3D 三栏）并排会被压缩失真 → 改上下堆叠、各占全宽 */
+.pair.stack{grid-template-columns:1fr;gap:14px}
+.pane{background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:var(--r);overflow:hidden}
+.pane-hd{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--nomi-line-soft);
+  font-size:12px;color:var(--nomi-ink-60)}
+.tag{font-size:11px;padding:2px 7px;border-radius:99px;font-weight:500}
+.tag-now{background:color-mix(in oklch,var(--danger) 10%,var(--nomi-paper));color:var(--danger)}
+.tag-new{background:var(--nomi-accent-soft);color:var(--nomi-accent)}
+.count{margin-left:auto;font-variant-numeric:tabular-nums;font-size:11px;color:var(--nomi-ink-45)}
+.pane-bd{padding:16px;background:var(--nomi-bg)}
+.note{font-size:12px;color:var(--nomi-ink-60);margin:10px 2px 0;line-height:1.65}
+.note b{font-weight:500;color:var(--nomi-ink)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--nomi-ink-60);margin:12px 0 0}
+.legend i{font-style:normal;display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+/* ---- 通用 App 控件（贴真实 token/尺寸） ---- */
+.bar{display:flex;align-items:center;height:44px;padding:0 14px;background:var(--nomi-paper);
+  border-bottom:1px solid var(--nomi-line);gap:10px}
+.brand{display:flex;align-items:center;gap:6px;font-weight:500;letter-spacing:-.01em}
+.brand .dot{width:16px;height:16px;border-radius:4px;background:var(--nomi-ink)}
+.crumb{display:inline-flex;align-items:center;height:26px;border:1px solid var(--nomi-line);
+  border-radius:var(--r-sm);background:var(--nomi-bg);overflow:hidden;font-size:12px}
+.crumb span{padding:0 9px;line-height:24px}
+.crumb .lib{color:var(--nomi-ink-45)}
+.crumb .arrow{color:var(--nomi-ink-30);padding:0 1px}
+.stepper{display:inline-flex;border:1px solid var(--nomi-line);border-radius:99px;background:var(--nomi-bg);padding:2px;gap:2px}
+.stepper b{font-weight:400;font-size:12px;padding:3px 12px;border-radius:99px;color:var(--nomi-ink-60)}
+.stepper b.on{background:var(--nomi-paper);color:var(--nomi-ink);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.spacer{flex:1}
+.gbtn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border-radius:var(--r-sm);
+  border:1px solid transparent;background:transparent;color:var(--nomi-ink-80);font-size:12px;white-space:nowrap}
+.gbtn.icon{width:28px;padding:0;justify-content:center}
+.gbtn.primary{background:var(--nomi-ink);color:var(--nomi-paper)}
+.gbtn.ghosted{border-color:var(--nomi-line)}
+.hi{outline:2px solid var(--danger);outline-offset:1px;border-radius:var(--r-sm)}
+.hi-ok{outline:2px solid var(--nomi-accent);outline-offset:1px;border-radius:var(--r-sm)}
+.menu{margin-top:8px;width:210px;background:var(--nomi-paper);border:1px solid var(--nomi-line);
+  border-radius:var(--r);padding:5px;box-shadow:0 8px 26px rgba(0,0,0,.10)}
+.menu .mi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--r-sm);font-size:12px;color:var(--nomi-ink-80)}
+.menu .mi i{color:var(--nomi-ink-45);font-size:15px}
+.menu .sep{height:1px;background:var(--nomi-line-soft);margin:4px 6px}
+.menu .grp{font-size:11px;color:var(--nomi-ink-45);padding:5px 8px 3px}
+
+/* ---- 画布节点 ---- */
+.node-stage{padding:34px 10px 10px;display:flex;justify-content:center}
+.node{width:430px;position:relative}
+.floatbar{position:absolute;top:-34px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:2px;
+  background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:99px;padding:3px 5px;
+  box-shadow:0 6px 20px rgba(0,0,0,.10);white-space:nowrap}
+.fb{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 7px;border-radius:99px;font-size:11px;color:var(--nomi-ink-60)}
+.fb.acc{color:var(--nomi-accent);background:var(--nomi-accent-soft)}
+.fb i{font-size:13px}
+.fbdiv{width:1px;height:14px;background:var(--nomi-line);margin:0 2px}
+.card{border:1px solid var(--nomi-line);border-radius:var(--r);background:var(--nomi-paper);overflow:hidden;
+  box-shadow:0 4px 14px rgba(0,0,0,.06);position:relative}
+.thumb{height:158px;background:
+  repeating-linear-gradient(45deg,var(--nomi-ink-05) 0 10px,var(--nomi-ink-10) 10px 20px);position:relative}
+.badge{position:absolute;top:8px;left:8px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  background:rgba(255,255,255,.85);color:var(--nomi-ink-60);padding:2px 6px;border-radius:var(--r-sm)}
+.tr{position:absolute;top:7px;right:7px;display:flex;gap:3px}
+.tr b{width:22px;height:22px;border-radius:var(--r-sm);background:rgba(255,255,255,.9);display:grid;place-items:center;
+  color:var(--nomi-ink-60);font-weight:400}
+.tr b i{font-size:13px}
+.composer{border-top:1px solid var(--nomi-line);padding:10px;display:flex;flex-direction:column;gap:8px}
+.refrow{display:flex;align-items:center;gap:6px}
+.slot{width:30px;height:30px;border-radius:var(--r-sm);border:1px dashed var(--nomi-ink-30);display:grid;place-items:center;
+  color:var(--nomi-ink-30);font-size:12px}
+.slot.filled{border-style:solid;background:var(--nomi-ink-10);border-color:var(--nomi-line)}
+.prompt{min-height:44px;font-size:12px;color:var(--nomi-ink-60);line-height:1.6}
+.footrow{display:flex;align-items:center;gap:5px;flex-wrap:nowrap}
+.chip{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 9px;border-radius:99px;
+  border:1px solid var(--nomi-line);font-size:11px;color:var(--nomi-ink-60);background:transparent;white-space:nowrap}
+.chip i{font-size:12px}
+.chip.plain{border-color:transparent}
+.go{margin-left:auto;width:28px;height:28px;border-radius:50%;background:var(--nomi-ink);color:var(--nomi-paper);
+  display:grid;place-items:center;font-size:13px}
+
+/* ---- 剪辑控制条 ---- */
+.ctlbar{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:11px;padding:7px;
+  border:1px solid var(--nomi-line);border-radius:var(--r-lg);background:var(--nomi-paper)}
+.cb{display:inline-flex;align-items:center;justify-content:center;height:26px;min-width:26px;padding:0 5px;
+  border-radius:var(--r-sm);color:var(--nomi-ink-60);font-size:12px}
+.cb.play{width:28px;height:28px;border-radius:50%;background:var(--nomi-ink);color:var(--nomi-paper)}
+.cb.sel{border:1px solid var(--nomi-line);border-radius:var(--r-sm);padding:0 8px;font-size:11px;gap:5px}
+.cb.exp{background:var(--nomi-ink);color:var(--nomi-paper);border-radius:99px;padding:0 11px;height:26px;font-size:11px;gap:5px}
+.cbsep{width:1px;height:14px;background:var(--nomi-line-soft);opacity:.55}
+.range{width:46px;height:3px;border-radius:2px;background:var(--nomi-ink-10);position:relative}
+.range::after{content:"";position:absolute;left:0;top:0;height:3px;width:60%;background:var(--nomi-accent);border-radius:2px}
+.tl{margin-top:10px;border:1px solid var(--nomi-line);border-radius:var(--r);background:var(--nomi-paper);padding:8px;position:relative}
+.tlhd{position:absolute;top:7px;right:8px;display:inline-flex;align-items:center;gap:1px;
+  background:rgba(255,255,255,.86);border-radius:99px;padding:1px}
+.tlhd .t{height:24px;min-width:26px;padding:0 6px;display:inline-grid;place-items:center;border-radius:var(--r-sm);
+  color:var(--nomi-ink-60);font-size:11px}
+.tlhd .t.acc{color:var(--nomi-accent)}
+.ruler{height:14px;border-bottom:1px solid var(--nomi-line-soft);margin-bottom:6px}
+.track{height:34px;border-radius:var(--r-sm);background:var(--nomi-ink-05);display:flex;gap:3px;padding:3px;margin-bottom:5px}
+.clip{width:104px;border-radius:4px;background:var(--nomi-ink-10);border:1px solid var(--nomi-line);position:relative}
+.clip.on{border-color:var(--nomi-accent);border-width:2px;background:var(--nomi-accent-soft);
+  box-shadow:0 0 0 2px color-mix(in oklch,var(--nomi-accent) 18%,transparent)}
+.cliptools{position:absolute;top:-27px;left:50%;transform:translateX(-50%);display:flex;gap:1px;background:var(--nomi-paper);
+  border:1px solid var(--nomi-line);border-radius:99px;padding:2px 3px;box-shadow:0 4px 14px rgba(0,0,0,.10);white-space:nowrap}
+.cliptools b{width:22px;height:20px;display:grid;place-items:center;border-radius:99px;color:var(--nomi-ink-60);font-weight:400}
+.cliptools b i{font-size:12px}
+.cliptools b.acc{color:var(--nomi-accent)}
+
+/* ---- 3D ---- */
+.s3{border:1px solid var(--nomi-line);border-radius:var(--r);overflow:hidden;background:var(--nomi-paper)}
+.s3hd{display:flex;align-items:center;gap:8px;height:38px;padding:0 10px;border-bottom:1px solid var(--nomi-line);font-size:12px}
+.s3body{display:grid;grid-template-columns:150px 1fr 252px;min-height:430px}
+.s3col{padding:10px;font-size:12px}
+.s3col.l{border-right:1px solid var(--nomi-line-soft)}
+.s3col.r{border-left:1px solid var(--nomi-line-soft);background:var(--nomi-paper)}
+.s3view{background:repeating-linear-gradient(45deg,var(--nomi-ink-05) 0 12px,var(--nomi-ink-10) 12px 24px);position:relative}
+.s3ttl{color:var(--nomi-ink-45);margin:0 0 6px;font-size:10px;letter-spacing:.05em;text-transform:uppercase}
+.s3row{display:flex;align-items:center;gap:5px;padding:3px 4px;border-radius:4px;color:var(--nomi-ink-80)}
+.s3row i{font-size:12px;color:var(--nomi-ink-45)}
+.s3grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
+.s3grid b{font-weight:400;font-size:11px;text-align:center;padding:4px 2px;border:1px solid var(--nomi-line);
+  border-radius:4px;color:var(--nomi-ink-60)}
+.s3sl{height:3px;border-radius:2px;background:var(--nomi-ink-10);margin:6px 0}
+.rp{border:1px solid var(--nomi-line);border-radius:var(--r);background:var(--nomi-paper);padding:11px 12px;font-size:12px}
+.rphd{font-size:11px;color:var(--nomi-ink-45);border-bottom:1px solid var(--nomi-line-soft);padding-bottom:6px;margin-bottom:9px}
+.fld{display:flex;align-items:center;gap:6px;padding:4px 0;color:var(--nomi-ink-80)}
+.fld .k{color:var(--nomi-ink-45);width:64px;flex:none}
+.fld .v{flex:1;height:20px;border:1px solid var(--nomi-line);border-radius:4px}
+.s3fold{display:flex;align-items:center;gap:5px;padding:5px 6px;border:1px solid var(--nomi-line);border-radius:var(--r-sm);
+  color:var(--nomi-ink-60);font-size:11px;margin-top:6px}
+.s3btm{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:4px;
+  background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:99px;padding:3px 5px;font-size:11px}
+.s3btm b{font-weight:400;padding:3px 8px;border-radius:99px;color:var(--nomi-ink-60)}
+.s3ov{position:absolute;top:8px;left:8px;display:flex;gap:4px}
+.s3ov b{font-weight:400;font-size:10px;padding:3px 7px;border-radius:99px;background:rgba(255,255,255,.88);color:var(--nomi-ink-60)}
+.s3cam{position:absolute;top:8px;right:8px;width:150px;border:1px solid var(--nomi-line);border-radius:var(--r-sm);
+  background:var(--nomi-paper);overflow:hidden}
+.s3cam .h{font-size:10px;padding:3px 6px;color:var(--nomi-ink-60);border-bottom:1px solid var(--nomi-line-soft)}
+.s3cam .v{height:74px;background:var(--nomi-ink-10)}
+.s3cam .f{display:flex;gap:2px;padding:4px}
+.s3cam .f b{font-weight:400;font-size:9px;padding:2px 4px;border:1px solid var(--nomi-line);border-radius:3px;color:var(--nomi-ink-60)}
+</style>
+
+<style>
+.grpbox{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border:1px solid var(--nomi-ink-10);
+  border-radius:99px;background:var(--nomi-ink-05);position:relative}
+.grpbox.seg{border-radius:var(--r-sm)}
+.grplab{position:absolute;top:-9px;left:10px;font-size:10px;letter-spacing:.04em;padding:0 4px;
+  background:var(--nomi-paper);color:var(--nomi-ink-45)}
+.grpbox.clip-scope{background:var(--nomi-accent-soft);border-color:color-mix(in oklch,var(--nomi-accent) 30%,var(--nomi-paper))}
+.vdiv{width:1px;height:18px;background:var(--nomi-ink-30);opacity:.55}
+.tgrp{display:inline-flex;align-items:center;gap:3px}
+.tech{display:inline-block;font-size:10px;padding:1px 6px;border-radius:99px;margin-right:5px;font-weight:500;
+  background:var(--nomi-ink-05);color:var(--nomi-ink-60)}
+.tech.a{background:var(--nomi-accent-soft);color:var(--nomi-accent)}
+.ruleset{background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:var(--r);padding:14px 16px;margin:0 0 26px}
+.ruleset ol{margin:8px 0 0;padding-left:20px}
+.ruleset li{margin:5px 0;color:var(--nomi-ink-80)}
+.ruleset li b{font-weight:500}
+.ruleset li span{color:var(--nomi-ink-60)}
+.v1x{background:color-mix(in oklch,var(--danger) 6%,var(--nomi-paper));border:1px solid color-mix(in oklch,var(--danger) 25%,var(--nomi-paper));
+  border-radius:var(--r);padding:10px 14px;margin:0 0 18px;font-size:12px;color:var(--nomi-ink-80);line-height:1.7}
+.v1x b{font-weight:500;color:var(--danger)}
+</style>
+</head>
+<body>
+
+<h1>控件分层法 · 四面样张 v2</h1>
+<p class="sub">v1 收得太狠，这版换个顺序做。左/上 = 今天的真实布局；右/下 = v2 提案。<br><b>已用真机截图逐项对账</b>（<code>docs/design/mockups/2026-08-02-real-ui/</code>），对账中改掉了三处我原先画错的地方：3D 顶栏任务页签的位置、把「选中假人」和「选中相机」两个不会同屏的右栏画成了同屏、以及漏画的项目库页。</p>
+
+<div class="v1x">
+<b>v1 错在哪（已作废）：</b>① 把「常驻 ≤5」当硬指标去凑数，为了达标连中频的也收了（抠图、优化、×N 其实常用）。
+② 更蠢的一条——<b>切图▾ / 变换▾ 本来就是二级菜单、一次点击可达，v1 把它们塞进「编辑▾」变成三级</b>：为了少一个按钮，让用户多点一次。
+「≤5」从此只当观察指标，不当门槛。
+</div>
+
+<div class="ruleset">
+<b style="font-weight:500">v2 的顺序：先分组 → 再去重 → 再归位 → 最后才收纳</b>
+<ol>
+<li><span class="tech">分组</span><b>控件一个不少，只是有了边界和名字。</b><span>「杂」的主因是没秩序，不是数量。</span></li>
+<li><span class="tech">去重</span><b>同功能的多个入口收成一个。</b><span>减的是真冗余，可达性零损失——下载 5→1、放大预览 4→1、截图语义 3→1。</span></li>
+<li><span class="tech">归位</span><b>放错地方的搬回它该在的地方。</b><span>语言/外观/检查更新本来就该在设置里（设置的「关于」tab 现在还是空的）。</span></li>
+<li><span class="tech">就近</span><b>情境控件搬到它作用的那个对象旁边。</b><span>不是藏，是别让它挤在常驻条里导致布局抖动。</span></li>
+<li><span class="tech a">收纳</span><b>只有真长尾才进 ▾。</b><span>全 App 只剩一处：3D 的约 40 个逐骨骼姿势滑杆。</span></li>
+</ol>
+</div>
+
+<!-- 1 顶栏 -->
+<h2>一、顶栏：7 个平铺 → 6 个分 3 组，且没有新增任何菜单</h2>
+<p class="sub">现在右簇把「主流水线（模型接入·导出·任务）」「学习（上手）」「环境（语言·外观·浏览器·设置）」三类心智平铺成一条，没有分组、只靠 <code>gap-2</code> 排排坐。</p>
+<div class="pair stack">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 顶栏 · mac<span class="count">右簇 7 个 · 0 分组</span></div>
+    <div class="pane-bd" style="padding:0">
+      <div class="bar">
+        <div class="brand"><span class="dot"></span>Nomi</div>
+        <div class="crumb"><span class="lib">项目库</span><span class="arrow">›</span><span>星尘旅人</span></div>
+        <div class="spacer"></div>
+        <div class="stepper"><b>创作</b><b class="on">生成</b><b>预览</b></div>
+        <div class="spacer"></div>
+        <div class="hi" style="display:flex;gap:6px;align-items:center">
+          <span class="gbtn icon"><i class="ti ti-progress"></i></span>
+          <span class="gbtn icon">文/A</span>
+          <span class="gbtn"><i class="ti ti-checklist"></i>上手 2/4</span>
+          <span class="gbtn"><i class="ti ti-browser"></i>浏览器</span>
+          <span class="gbtn icon"><i class="ti ti-settings"></i></span>
+          <span class="gbtn"><i class="ti ti-plug-connected"></i>模型接入</span>
+          <span class="gbtn primary"><i class="ti ti-download"></i>导出</span>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 16px 16px">
+      <p class="note">另外「外观」和「检查更新」还藏在左上角品牌钮的弹窗里——那个弹窗现在同时管品牌信息、上手手册、明暗切换、版本更新<b>四件事</b>。</p>
+    </div>
+  </div>
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">v2</span> 顶栏 · mac<span class="count">6 个 · 3 组 · 无新菜单</span></div>
+    <div class="pane-bd" style="padding:0">
+      <div class="bar">
+        <div class="brand"><span class="dot"></span>Nomi</div>
+        <div class="crumb"><span class="lib">项目库</span><span class="arrow">›</span><span>星尘旅人</span></div>
+        <div class="spacer"></div>
+        <div class="stepper"><b>创作</b><b class="on">生成</b><b>预览</b></div>
+        <div class="spacer"></div>
+        <span class="gbtn icon" title="任务（入口常驻）"><i class="ti ti-list-details"></i></span>
+        <span class="vdiv"></span>
+        <span class="tgrp"><span class="gbtn"><i class="ti ti-checklist"></i>上手 2/4</span><span class="gbtn"><i class="ti ti-browser"></i>浏览器</span><span class="gbtn icon hi-ok"><i class="ti ti-settings"></i></span></span>
+        <span class="vdiv"></span>
+        <span class="tgrp"><span class="gbtn ghosted"><i class="ti ti-plug-connected"></i>模型接入</span><span class="gbtn primary"><i class="ti ti-arrow-right"></i>去出片</span></span>
+      </div>
+    </div>
+    <div style="padding:12px 16px 16px">
+      <p class="note">
+      <span class="tech">分组</span>两道分隔线切出「<b>在跑什么</b>｜<b>工具与环境</b>｜<b>主线</b>」，主行动永远在最右。控件顺序也跟着心智重排。<br>
+      <span class="tech">归位</span><b>语言 · 外观 · 检查更新 → 设置面板</b>（「通用」tab 现在只有一个截图热键，「关于」tab 是空的——它们本来就该在那儿）。顺带让品牌钮回归纯品牌，不再是个功能入口。<br>
+      <span class="tech">去重</span><b>「导出」拆成两个诚实的词</b>：不在预览页 → <b>「去出片」</b>（它本来就只是跳转，现在叫导出但什么也不导）；在预览页 → 顶栏这颗<b>隐藏</b>，控制条「导出 MP4」是唯一的家。<br>
+      <b>没有新增任何 ⋯ 菜单。</b>上手、浏览器、设置全部保持一次点击可达。
+      </p>
+    </div>
+  </div>
+</div>
+
+
+<h2>一之二、项目库：弱入口 6 个 → 3 个（其中 1 个是和主卡重复的）</h2>
+<p class="sub">真机截图坐实了一件事：顶栏的「看看 Nomi」和页面正中那张主卡「重看一遍引导」<b>是同一个功能的两个入口</b>，而且重要度信号自相矛盾——一个是大卡片，一个是顶栏小字。</p>
+<div class="pair stack">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 项目库首页<span class="count">弱入口 6 个</span></div>
+    <div class="pane-bd">
+      <div style="background:var(--nomi-bg);padding:14px 16px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:9px;font-size:20px;letter-spacing:-.02em"><span class="dot" style="width:22px;height:22px;border-radius:6px;background:var(--nomi-ink);display:inline-block"></span>Nomi 项目库</div>
+          <div class="hi" style="display:flex;align-items:center;gap:3px">
+            <span class="gbtn"><i class="ti ti-sparkles"></i>看看 Nomi</span>
+            <span class="gbtn"><i class="ti ti-plug-connected"></i>接入模型</span>
+            <span class="gbtn"><i class="ti ti-browser"></i>浏览器</span>
+            <span class="gbtn icon"><i class="ti ti-settings"></i></span>
+            <span class="gbtn icon">文A</span>
+            <span class="gbtn icon"><i class="ti ti-moon"></i></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:14px">
+          <div style="flex:1;background:var(--nomi-ink);color:var(--nomi-paper);border-radius:var(--r);padding:12px 14px"><div style="font-weight:500">新建空白项目</div><div style="opacity:.7;font-size:11px;margin-top:2px">从一段文字或想法开始</div></div>
+          <div style="flex:1;background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:var(--r);padding:12px 14px"><div style="font-weight:500">打开已有文件夹</div><div style="color:var(--nomi-ink-45);font-size:11px;margin-top:2px">把素材文件夹变成项目</div></div>
+          <div style="flex:1;background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:var(--r);padding:12px 14px" class="hi"><div style="font-weight:500">重看一遍引导</div><div style="color:var(--nomi-ink-45);font-size:11px;margin-top:2px">60 秒预览，从一句话到成片</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="color:var(--nomi-ink-60);font-size:12px">最近项目</span>
+          <span class="stepper"><b class="on">全部 2</b><b>本地新建 2</b><b>外部文件夹 0</b></span>
+          <span style="flex:1"></span>
+          <span class="chip" style="width:190px;justify-content:flex-start"><i class="ti ti-search"></i>搜索项目</span>
+        </div>
+      </div>
+    </div>
+    <div style="padding:10px 16px 16px"><p class="note">红框的两处<b>指向同一个引导动画</b>。另有「语言」「外观」两个纯偏好项挤在这排里。</p></div>
+  </div>
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">v2</span> 项目库首页<span class="count">弱入口 3 个</span></div>
+    <div class="pane-bd">
+      <div style="background:var(--nomi-bg);padding:14px 16px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:9px;font-size:20px;letter-spacing:-.02em"><span class="dot" style="width:22px;height:22px;border-radius:6px;background:var(--nomi-ink);display:inline-block"></span>Nomi 项目库</div>
+          <div class="tgrp hi-ok">
+            <span class="gbtn"><i class="ti ti-plug-connected"></i>接入模型</span>
+            <span class="gbtn"><i class="ti ti-browser"></i>浏览器</span>
+            <span class="gbtn icon"><i class="ti ti-settings"></i></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:14px">
+          <div style="flex:1;background:var(--nomi-ink);color:var(--nomi-paper);border-radius:var(--r);padding:12px 14px"><div style="font-weight:500">新建空白项目</div><div style="opacity:.7;font-size:11px;margin-top:2px">从一段文字或想法开始</div></div>
+          <div style="flex:1;background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:var(--r);padding:12px 14px"><div style="font-weight:500">打开已有文件夹</div><div style="color:var(--nomi-ink-45);font-size:11px;margin-top:2px">把素材文件夹变成项目</div></div>
+          <div style="flex:1;background:var(--nomi-paper);border:1px solid var(--nomi-line);border-radius:var(--r);padding:12px 14px" class="hi-ok"><div style="font-weight:500">重看一遍引导</div><div style="color:var(--nomi-ink-45);font-size:11px;margin-top:2px">60 秒预览，从一句话到成片</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="color:var(--nomi-ink-60);font-size:12px">最近项目</span>
+          <span class="stepper"><b class="on">全部 2</b><b>本地新建 2</b><b>外部文件夹 0</b></span>
+          <span style="flex:1"></span>
+          <span class="chip" style="width:190px;justify-content:flex-start"><i class="ti ti-search"></i>搜索项目</span>
+        </div>
+      </div>
+    </div>
+    <div style="padding:10px 16px 16px">
+      <p class="note">
+      <span class="tech">去重</span>顶栏「看看 Nomi」<b>删掉</b>——主卡那张更大更清楚，留一个就够（首次进来它写「看 Nomi 怎么出片」，看过后自动变「重看一遍引导」，这套 derive 已经在了）。<br>
+      <span class="tech">归位</span>语言 · 外观 → 设置面板（和 studio 顶栏同一处归位）。<br>
+      主卡三张、最近项目、搜索、筛选页签<b>全部原样不动</b>。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- 2 节点 -->
+<h2>二、画布节点：靠分组 + 合并，不靠往下藏</h2>
+<p class="sub">图片节点选中且 hover 时，上面 9 个编辑按钮、下面 7 个生成控件同时在场。v1 想把上面 9 个压成 3 个——那会把已经二级的切图/变换压成三级，作废。</p>
+<div class="pair">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 图片节点 · 成功态 · 选中 + hover<span class="count">浮条 9 · 底栏 7</span></div>
+    <div class="pane-bd">
+      <div class="node-stage"><div class="node">
+        <div class="floatbar hi">
+          <span class="fb acc"><i class="ti ti-sparkles"></i>定妆</span>
+          <span class="fb"><i class="ti ti-wand"></i>AI 编辑<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="fb"><i class="ti ti-crop"></i>裁剪</span>
+          <span class="fb"><i class="ti ti-scissors"></i>抠图</span>
+          <span class="fb"><i class="ti ti-grid-dots"></i>切图<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="fb"><i class="ti ti-transform"></i>变换<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="fb"><i class="ti ti-brush"></i>画板</span>
+          <span class="fbdiv"></span>
+          <span class="fb"><i class="ti ti-maximize"></i></span>
+          <span class="fb"><i class="ti ti-download"></i>下载</span>
+        </div>
+        <div class="card">
+          <div class="thumb"><span class="badge">已完成</span>
+            <div class="tr"><b><i class="ti ti-maximize"></i></b><b><i class="ti ti-info-circle"></i></b></div>
+          </div>
+          <div class="composer">
+            <div class="refrow"><span class="slot filled">1</span><span class="slot filled">2</span><span class="slot">+</span>
+              <span style="flex:1"></span><span class="chip plain"><i class="ti ti-file-text"></i>提示词</span></div>
+            <div style="height:1px;background:var(--nomi-line-soft)"></div>
+            <div class="prompt">黄昏的天台，少女背对镜头，风吹起校服衣角，逆光剪影……</div>
+            <div class="footrow hi">
+              <span class="chip plain"><i class="ti ti-lock-open"></i></span>
+              <span class="chip">Seedream 4<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+              <span class="chip">标准<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+              <span class="chip">16:9 · 2K<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+              <span class="chip">优化</span><span class="chip">×1</span>
+              <span class="go">↑</span>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+    <div style="padding:4px 16px 16px">
+      <p class="note">浮条上的「全屏」和卡片右上的「放大」<b>是两个入口、还是两套不同实现</b>；「下载」全 App 有 5 个入口。</p>
+    </div>
+  </div>
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">v2</span> 图片节点 · 成功态 · 选中 + hover<span class="count">浮条 7 · 底栏 5</span></div>
+    <div class="pane-bd">
+      <div class="node-stage"><div class="node">
+        <div class="floatbar">
+          <span class="fb acc"><i class="ti ti-sparkles"></i>定妆</span>
+          <span class="fbdiv"></span>
+          <span class="fb"><i class="ti ti-crop"></i>裁剪</span>
+          <span class="fb"><i class="ti ti-scissors"></i>抠图</span>
+          <span class="fb"><i class="ti ti-brush"></i>画板</span>
+          <span class="fbdiv"></span>
+          <span class="fb"><i class="ti ti-wand"></i>AI 编辑<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="fb"><i class="ti ti-grid-dots"></i>切图<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="fb"><i class="ti ti-transform"></i>变换<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        </div>
+        <div class="card">
+          <div class="thumb"><span class="badge">已完成</span>
+            <div class="tr"><b class="hi-ok"><i class="ti ti-maximize"></i></b><b><i class="ti ti-download"></i></b><b><i class="ti ti-info-circle"></i></b></div>
+          </div>
+          <div class="composer">
+            <div class="refrow"><span class="slot filled">1</span><span class="slot filled">2</span><span class="slot">+</span>
+              <span style="flex:1"></span><span class="chip plain"><i class="ti ti-file-text"></i>提示词</span></div>
+            <div style="height:1px;background:var(--nomi-line-soft)"></div>
+            <div class="prompt">黄昏的天台，少女背对镜头，风吹起校服衣角，逆光剪影……</div>
+            <div class="footrow">
+              <span class="chip plain"><i class="ti ti-lock-open"></i></span>
+              <span class="chip hi-ok">Seedream 4 · 标准 · 16:9 · 2K<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+              <span class="chip">优化</span><span class="chip">×1</span>
+              <span class="go">↑</span>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+    <div style="padding:4px 16px 16px">
+      <p class="note">
+      <span class="tech">分组</span>浮条切成「<b>定妆</b>｜<b>直接改这张图</b>（裁剪·抠图·画板）｜<b>换个东西出来</b>（AI 编辑·切图·变换，三个 ▾ 保持原样、仍是一次点击可达）」。<br>
+      <span class="tech">去重</span>浮条的「全屏」和「下载」<b>撤掉</b>——放大预览挪到卡片右上（那儿本来就有一个），下载并到它旁边。<b>全 App 的下载 5→1、放大预览 4→1，两套大图实现合并成一套。</b><br>
+      <span class="tech">分组</span>底栏「模型 + 变体 + 参数」三颗 pill <b>合并成一句话</b>，点开还是现在那个参数面板。<b>优化 和 ×N 原地不动</b>（v1 想把它俩收进「更多▾」，是错的，它们常用）。<br>
+      浮条 9→7、底栏 7→5，<b>全靠去重和合并，没有一个功能被藏到更深的地方。</b>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- 3 剪辑 -->
+<h2>三、剪辑控制条：15 件一个不减，但终于分得出「整片」和「这一段」</h2>
+<p class="sub">现在这条 toolbar 最大的坑不是长——是「画幅」改的是整片、「显示 / 取景缩放」改的是<b>当前这一段</b>，两类混排在同一条里，用户根本不知道自己在改什么。v1 想把它们全收进「画面▾」，那等于把问题藏起来。</p>
+<div class="pair stack">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 播放器控制条<span class="count">15 件 · 5 道无名分隔线</span></div>
+    <div class="pane-bd">
+      <div class="ctlbar hi">
+        <span class="cb play"><i class="ti ti-player-play"></i></span>
+        <span class="cb"><i class="ti ti-player-skip-back"></i></span><span class="cb"><i class="ti ti-player-skip-forward"></i></span>
+        <span class="cb" style="font-variant-numeric:tabular-nums">4.2s / 18.0s</span>
+        <span class="cb"><i class="ti ti-volume"></i></span><span class="range"></span>
+        <span class="cb"><i class="ti ti-maximize"></i></span>
+        <span class="cbsep"></span><span class="cb sel">画幅 16:9<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        <span class="cbsep"></span><span class="cb sel">显示 适应<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        <span class="cbsep"></span><span class="cb"><i class="ti ti-zoom-out"></i></span><span class="cb" style="font-size:11px">100%</span>
+        <span class="cb"><i class="ti ti-refresh"></i></span><span class="cb"><i class="ti ti-zoom-in"></i></span>
+        <span class="cbsep"></span><span class="cb sel"><i class="ti ti-letter-case"></i>文字<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        <span class="cbsep"></span><span class="cb exp"><i class="ti ti-download"></i>导出 MP4</span>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px"><p class="note">分隔线有 5 道，但分段没有名字，只能靠猜。</p></div>
+  </div>
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">v2</span> 播放器控制条<span class="count">15 件 · 一件没少 · 4 组有名</span></div>
+    <div class="pane-bd" style="padding:26px 16px 16px">
+      <div class="ctlbar">
+        <span class="grpbox">
+          <span class="cb play"><i class="ti ti-player-play"></i></span>
+          <span class="cb"><i class="ti ti-player-skip-back"></i></span><span class="cb"><i class="ti ti-player-skip-forward"></i></span>
+          <span class="cb" style="font-variant-numeric:tabular-nums">4.2s / 18.0s</span>
+          <span class="cb"><i class="ti ti-volume"></i></span><span class="range"></span>
+          <span class="cb"><i class="ti ti-maximize"></i></span>
+        </span>
+        <span class="grpbox hi-ok"><span class="grplab">整片</span>
+          <span class="cb sel">画幅 16:9<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        </span>
+        <span class="grpbox clip-scope hi-ok"><span class="grplab" style="background:var(--nomi-paper);color:var(--nomi-accent)">这一段 · 镜 3</span>
+          <span class="cb sel" style="background:var(--nomi-paper)">显示 适应<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+          <span class="cb"><i class="ti ti-zoom-out"></i></span><span class="cb" style="font-size:11px">100%</span>
+          <span class="cb"><i class="ti ti-refresh"></i></span><span class="cb"><i class="ti ti-zoom-in"></i></span>
+        </span>
+        <span class="grpbox"><span class="grplab">叠加</span>
+          <span class="cb sel"><i class="ti ti-letter-case"></i>文字<i class="ti ti-chevron-down" style="font-size:10px"></i></span>
+        </span>
+        <span class="cb exp"><i class="ti ti-download"></i>导出 MP4</span>
+      </div>
+      <div class="tl" style="margin-top:16px">
+        <div class="tlhd">
+          <span class="t acc"><i class="ti ti-wand"></i></span><span class="t"><i class="ti ti-cut"></i></span>
+          <span class="t"><i class="ti ti-arrow-back-up"></i></span><span class="t"><i class="ti ti-minus"></i></span>
+          <span class="t">100%</span><span class="t"><i class="ti ti-plus"></i></span>
+        </div>
+        <div class="ruler"></div>
+        <div class="track" style="margin-top:26px">
+          <span class="clip"></span>
+          <span class="clip on"><span class="cliptools hi-ok">
+            <b class="acc"><i class="ti ti-sparkles"></i></b><b><i class="ti ti-arrow-left"></i></b>
+            <b><i class="ti ti-copy"></i></b><b><i class="ti ti-arrow-right"></i></b><b><i class="ti ti-trash"></i></b>
+          </span></span>
+          <span class="clip"></span><span class="clip"></span>
+        </div>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px">
+      <p class="note">
+      <span class="tech">分组</span><b>控件一件没减</b>，只是套进 4 个有名字的组。关键是<b>「这一段 · 镜 3」这组用 accent 底色 + 写出当前片段名</b>——用户一眼知道自己改的是这一段、不是整片；没选中片段时这组自动灰掉（真机上「显示 适应」现在就是灰的，因为它本来就是 per-clip 的，却和整片的「画幅」并排长得一模一样）。<br>
+      <span class="tech">就近</span>时间轴头部那 4 颗<b>选中才冒出来</b>的工具（重生成 / 前移 / 复制 / 后移）搬到片段自己头上。它们现在挤在常驻 pill 里，一选中整条就变长、布局跟着抖——把情境控件塞进常驻条的典型症状。<br>
+      「文字」<b>留在原位</b>（v1 想撤掉它，错了，加字幕是常用动作）。<br>
+      <b>真机对账补充：</b>那 5 道分隔线在真机上淡到基本看不见，所以「有分隔」约等于没有——这也是为什么要改成有底色、有名字的分组。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- 4 3D -->
+<h2>四、3D 导演台：骨架一个不动，改动全在右栏和画布浮层</h2>
+<p class="sub">
+真机对账改掉了我原先画错的两处：<b>顶栏任务页签在右侧靠近 CTA</b>（不是紧贴左边标题）；更重要的是——
+<b>「姿势 40 个滑杆」和「13 个运镜预设」根本不会同屏</b>：前者要选中假人、后者要选中相机。v2 里拆成两个状态分别看。
+</p>
+
+<div class="pair stack">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag" style="background:var(--nomi-ink-05);color:var(--nomi-ink-60)">不动</span> 全屏骨架（顶栏任务优先三页签 + 左对象 / 右属性 / 底添加）<span class="count">v2 零改动</span></div>
+    <div class="pane-bd">
+      <div class="s3">
+        <div class="s3hd"><i class="ti ti-cube" style="color:var(--nomi-ink-45)"></i><span style="flex:1;min-width:0">3D 场景</span>
+          <span class="stepper"><b class="on">构图图</b><b>人物动作</b><b>运镜参考</b></span>
+          <span class="cb sel">精调</span><span class="cb"><i class="ti ti-help"></i></span>
+          <span class="cb exp">使用这张构图</span><span class="cb"><i class="ti ti-x"></i></span>
+        </div>
+        <div class="s3body" style="min-height:250px">
+          <div class="s3col l"><p class="s3ttl">场景节点</p>
+            <div class="s3row"><i class="ti ti-focus-centered"></i>假人<i class="ti ti-eye" style="margin-left:auto"></i><i class="ti ti-trash"></i></div>
+            <div class="s3row"><i class="ti ti-focus-centered"></i>相机1<i class="ti ti-eye" style="margin-left:auto"></i><i class="ti ti-trash"></i></div>
+          </div>
+          <div class="s3view">
+            <div class="s3ov"><b>移动</b><b>旋转</b><b>看全场</b><b>工作视图 · 不会出片</b></div>
+            <div class="s3btm"><b><i class="ti ti-plus"></i> 添加</b><b><i class="ti ti-maximize"></i></b></div>
+          </div>
+          <div class="s3col r"><p class="s3ttl">属性 · 未选中时 = 环境</p>
+            <div class="fld"><span class="k">场景暗色</span><span style="margin-left:auto;width:26px;height:15px;border-radius:99px;background:var(--nomi-ink-30)"></span></div>
+            <div class="fld"><span class="k">网格地面</span><span style="margin-left:auto;width:26px;height:15px;border-radius:99px;background:var(--nomi-ink)"></span></div>
+            <div class="fld"><span class="k">坐标轴</span><span style="margin-left:auto;width:26px;height:15px;border-radius:99px;background:var(--nomi-ink)"></span></div>
+            <div class="fld"><span class="k">天空背景</span><span style="margin-left:auto;width:26px;height:15px;border-radius:99px;background:var(--nomi-ink-30)"></span></div>
+            <p class="s3ttl" style="margin-top:10px">整运镜 · 常驻</p>
+            <span class="stepper" style="font-size:10px"><b class="on">预设</b><b>轨迹</b><b>录 take</b></span>
+            <div style="margin-top:6px;color:var(--nomi-ink-45);font-size:10px">运镜预设作用在相机上——先选中一个相机</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px"><p class="note">这就是真机进来的样子（未选中任何对象 → 右栏显示环境面板，整运镜区常驻在下方）。<b>顶栏、左栏、底栏、整运镜三页签 v2 全部不动。</b></p></div>
+  </div>
+</div>
+
+<h3 style="font-size:14px;font-weight:500;margin:26px 0 10px">右栏 · 选中假人时</h3>
+<div class="pair">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 姿势页签<span class="count">13 + 约 40</span></div>
+    <div class="pane-bd">
+      <div class="rp">
+        <div class="rphd">属性 ／ <b style="color:var(--nomi-ink)">姿势</b></div>
+        <div class="s3grid"><b>站立</b><b>T型</b><b>行走</b><b>跑步</b><b>坐姿</b><b>蹲下</b><b>半蹲</b><b>单膝跪</b><b>双膝跪</b><b>叉腰</b><b>指向</b><b>举手</b></div>
+        <div class="hi" style="margin-top:8px;padding:6px">
+          <div style="font-size:10px;color:var(--nomi-ink-45);margin-bottom:4px">身体前倾 / 转身 / 侧倾 · 躯干扭转 · 头部点头 · 肩肘腕 ×2 · 大腿膝盖脚踝 ×2 …… 约 40 个滑杆平铺</div>
+          <div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div>
+          <div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div><div class="s3sl"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">v2</span> 姿势页签<span class="count">13 + 一行折叠</span></div>
+    <div class="pane-bd">
+      <div class="rp">
+        <div class="rphd">属性 ／ <b style="color:var(--nomi-ink)">姿势</b></div>
+        <div class="s3grid"><b>站立</b><b>T型</b><b>行走</b><b>跑步</b><b>坐姿</b><b>蹲下</b><b>半蹲</b><b>单膝跪</b><b>双膝跪</b><b>叉腰</b><b>指向</b><b>举手</b></div>
+        <div class="s3fold hi-ok"><i class="ti ti-adjustments-horizontal"></i>逐关节微调（约 40 项）<i class="ti ti-chevron-down" style="margin-left:auto"></i></div>
+      </div>
+      <p class="note"><span class="tech a">收纳</span><b>全 App 唯一真收起来的一处。</b>普通用户只用上面 13 个姿势预设，逐关节拖是专业长尾。</p>
+    </div>
+  </div>
+</div>
+
+<h3 style="font-size:14px;font-weight:500;margin:26px 0 10px">右栏 · 选中相机时</h3>
+<div class="pair">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 相机属性 + 整运镜<span class="count">13 个三列平铺</span></div>
+    <div class="pane-bd">
+      <div class="rp">
+        <div class="rphd">属性 · 相机</div>
+        <div class="fld"><span class="k">名称</span><span class="v"></span></div>
+        <div class="fld"><span class="k">相机位置</span><span class="v"></span><span class="v"></span><span class="v"></span></div>
+        <div class="fld"><span class="k">拍摄目标</span><span class="v"></span><span class="v"></span><span class="v"></span></div>
+        <div class="fld"><span class="k">画幅比例</span><span class="v"></span></div>
+        <div class="fld"><span class="k">FOV / 近 / 远</span><span class="v"></span><span class="v"></span><span class="v"></span></div>
+        <p class="s3ttl" style="margin-top:10px">整运镜 · 预设</p>
+        <div class="s3grid hi"><b>左环绕</b><b>右环绕</b><b>推近</b><b>拉远</b><b>升镜</b><b>降镜</b><b>左跟拍</b><b>右跟拍</b><b>左弧线</b><b>右弧线</b><b>变焦推</b><b>变焦拉</b></div>
+      </div>
+    </div>
+  </div>
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">v2</span> 相机属性 + 整运镜<span class="count">13 个全留 · 分 3 族</span></div>
+    <div class="pane-bd">
+      <div class="rp">
+        <div class="rphd">属性 · 相机</div>
+        <div class="fld"><span class="k">名称</span><span class="v"></span></div>
+        <div class="fld"><span class="k">相机位置</span><span class="v"></span><span class="v"></span><span class="v"></span></div>
+        <div class="fld"><span class="k">拍摄目标</span><span class="v"></span><span class="v"></span><span class="v"></span></div>
+        <div class="fld"><span class="k">画幅比例</span><span class="v"></span></div>
+        <div class="fld"><span class="k">FOV / 近 / 远</span><span class="v"></span><span class="v"></span><span class="v"></span></div>
+        <p class="s3ttl" style="margin-top:10px">整运镜 · 预设</p>
+        <div style="font-size:10px;color:var(--nomi-ink-45);margin:0 0 3px">环绕</div>
+        <div class="s3grid"><b>左环绕</b><b>右环绕</b><b>左弧线</b><b>右弧线</b></div>
+        <div style="font-size:10px;color:var(--nomi-ink-45);margin:6px 0 3px">推拉升降</div>
+        <div class="s3grid"><b>推近</b><b>拉远</b><b>升镜</b><b>降镜</b></div>
+        <div style="font-size:10px;color:var(--nomi-ink-45);margin:6px 0 3px">横移 · 变焦</div>
+        <div class="s3grid"><b>左跟拍</b><b>右跟拍</b><b>变焦推</b><b>变焦拉</b><b style="grid-column:span 3">希区柯克变焦</b></div>
+      </div>
+      <p class="note"><span class="tech">分组</span><b>13 个一个不少、全部常驻</b>，只加了三个小标题。v1 想把后半收进「更多运镜▾」——运镜是这个台子的核心价值，收错了。相机的 FOV/近/远这些也<b>原样保留</b>。</p>
+    </div>
+  </div>
+</div>
+
+<h3 style="font-size:14px;font-weight:500;margin:26px 0 10px">画布浮层 · 三份截图语义收成一份</h3>
+<div class="pair">
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-now">现状</span> 出片有 3 个口<span class="count">用户分不清截的是哪张</span></div>
+    <div class="pane-bd">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="grpbox hi" style="align-self:flex-start"><span class="cb sel">工作视图</span><span class="cb sel"><i class="ti ti-camera"></i> 视口截图</span><span style="font-size:11px;color:var(--nomi-ink-45);padding-left:4px">画布左上</span></div>
+        <div class="grpbox hi" style="align-self:flex-start"><span class="cb sel">取景</span><span class="cb sel">摆正</span><span class="cb sel"><i class="ti ti-camera"></i> 相机截图</span><span style="font-size:11px;color:var(--nomi-ink-45);padding-left:4px">相机预览窗</span></div>
+        <div class="grpbox hi" style="align-self:flex-start"><span class="cb exp">使用这张构图</span><span style="font-size:11px;color:var(--nomi-ink-45);padding-left:4px">顶栏任务 CTA</span></div>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px"><p class="note">现在靠一个「工作视图 / 输出画面」chip 打补丁消歧——补丁本身就是症状。</p></div>
+  </div>
+  <div class="pane">
+    <div class="pane-hd"><span class="tag tag-new">v2</span> 出片只有 1 个口<span class="count">chip 负责说清「这不是成片」</span></div>
+    <div class="pane-bd">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="grpbox hi-ok" style="align-self:flex-start"><span class="cb sel">工作视图 · 不会出片</span><span style="font-size:11px;color:var(--nomi-ink-45);padding-left:4px">画布左上 · 只说身份，不出片</span></div>
+        <div class="grpbox" style="align-self:flex-start"><span class="cb sel">取景</span><span class="cb sel">摆正</span><span style="font-size:11px;color:var(--nomi-ink-45);padding-left:4px">相机预览窗 · 截图钮撤掉</span></div>
+        <div class="grpbox hi-ok" style="align-self:flex-start"><span class="cb exp">使用这张构图</span><span style="font-size:11px;color:var(--nomi-ink-45);padding-left:4px">顶栏 CTA · 出片唯一的口</span></div>
+      </div>
+    </div>
+    <div style="padding:8px 16px 16px"><p class="note"><span class="tech">去重</span>出片<b>只认顶栏任务 CTA</b>（构图图 / 人物动作 / 运镜参考 三个任务各自对应它该出的产物）。相机预览窗的焦段 / 景深 / 手持抖动<b>保持原样</b>——它们本来就只在选中相机时出现。</p></div>
+  </div>
+</div>
+
+
+</body>
+</html>

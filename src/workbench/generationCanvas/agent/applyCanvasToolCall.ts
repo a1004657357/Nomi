@@ -766,7 +766,7 @@ export async function applyCanvasToolCall(
     // 付费守卫：本分支只在用户批准 pending 卡后到达（人手势在上游）→ 铸令牌绑受理节点，
     // 随 plan 下到主进程 runTask 核验。删了 defaultExecuteToolCall 的自动放行旁路后此处不会被 AI 静默触发。
     void mintSpendGrant(accepted, 1, batchSpendGrantTtlMs(accepted.length))
-      .then((grantId) => runPlanWithToasts(forked.plan, grantId))
+      .then((grantId) => runPlanWithToasts(forked.plan, { grantId }))
       .catch(() => {}) // 进度/结果全走 toast+run 域事件,此处不再有未处理拒绝
     return {
       accepted: true,

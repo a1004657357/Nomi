@@ -31,12 +31,14 @@ import {
   selectedVendor,
   uniqueStrings,
 } from './catalogTaskResolve'
+import { promptRequiredForNode } from './promptRequirement'
 import { normalizeCatalogTaskResult } from './catalogTaskResultParse'
 import { resolveCatalogTaskPollingPolicy } from './catalogTaskPollingPolicy'
 import { localizeRemoteResultUrl } from './resultAssetLocalization'
 import {
   ComfyuiTaskCancelledError,
   isComfyuiCancelRequested,
+  isComfyuiVendorKey,
   unwatchComfyuiProgress,
   watchComfyuiProgress,
 } from './comfyuiTaskControl'
@@ -254,8 +256,13 @@ function buildReferenceExtras(
   const sentReferenceImagePurposes = referenceImages
     .map((url) => purposeByUrl.get(url) || '')
     .filter(Boolean)
+  // 连线进来的视频参考：档案分支喂进 video_ref 槽，**无档案分支此前整个丢掉** ——
+  // ComfyUI 导入的工作流正是无档案，于是「补帧 / 视频超分 / 视频去背景」这类图
+  // 连了视频也永远收不到（electron 侧 referenceInputParams 据此派生 source_video_url）。
+  const referenceVideoUrls = uniqueStrings(references.referenceVideos || [])
   return {
     ...(referenceImages.length ? { referenceImages } : {}),
+    ...(referenceVideoUrls.length ? { referenceVideoUrls } : {}),
     ...(firstFrameUrl ? { firstFrameUrl } : {}),
     ...(lastFrameUrl ? { lastFrameUrl } : {}),
     ...(sentReferenceImageRoles.length ? { referenceImageRoles: sentReferenceImageRoles } : {}),
@@ -292,7 +299,9 @@ export function buildCatalogTaskRequest(
   const modelKey = selectedModelKey(node)
   if (!modelKey) throw new Error('请先选择模型')
   const rawPrompt = asTrimmedString(node.prompt)
-  if (!rawPrompt) throw new Error('prompt is required')
+  // 需不需要提示词按模型派生（promptRequirement 单源）：处理类 ComfyUI 工作流（去背景/超分/补帧）
+  // 本就没有提示词槽，此前这里无条件抛一句英文 'prompt is required' 把整类工作流堵死。
+  if (!rawPrompt && promptRequiredForNode(node, vendor)) throw new Error('请先写点提示词再生成。')
 
   const references = options.references || {}
   const kind = resolveTaskKind(node, references)
@@ -583,28 +592,54 @@ export async function runCatalogGenerationTask(
 
   const runTask = options.runTask || runWorkbenchTaskByVendor
   report('requesting')
+  // ComfyUI 新协议允许客户端预生成 prompt UUID，先登记 WS 再提交，避免极快任务丢首个进度事件。
+  const requestedComfyPromptId = isComfyuiVendorKey(vendor) ? crypto.randomUUID() : ''
+  if (requestedComfyPromptId) {
+    request.extras = { ...(request.extras ?? {}), comfyPromptId: requestedComfyPromptId }
+  }
+  let watchedPromptId = ''
+  if (requestedComfyPromptId) {
+    const registered = await watchComfyuiProgress({
+      promptId: requestedComfyPromptId,
+      nodeId: asTrimmedString(request.extras?.nodeId),
+      projectId: asTrimmedString(request.extras?.projectId),
+      taskKind: request.kind,
+      modelKey: asTrimmedString(request.extras?.modelKey) || null,
+      vendorKey: vendor,
+    })
+    if (registered) watchedPromptId = requestedComfyPromptId
+  }
   throwIfAborted(options.signal)
   const submitStartedAt = Date.now()
-  const initialResult = await runTaskWithHeartbeat(() => runTask(vendor, request), options)
+  let initialResult: TaskResultDto
+  try {
+    initialResult = await runTaskWithHeartbeat(() => runTask(vendor, request), options)
+  } catch (error) {
+    if (watchedPromptId) unwatchComfyuiProgress(watchedPromptId)
+    throw error
+  }
   const submitMs = Date.now() - submitStartedAt
   report('waiting', initialResult.id)
-  // P 轨：本地 ComfyUI 提交成功即登记 ws 进度（prompt_id→节点）。桥不在/失败 = 没进度，轮询照常。
-  const comfyWatching = vendor === 'comfyui-local' && Boolean(initialResult.id)
-  if (comfyWatching) {
-    watchComfyuiProgress({
+  // 旧 ComfyUI 可能不接受客户端 prompt id：按服务端真实回执切 watcher。
+  const comfyWatching = isComfyuiVendorKey(vendor) && Boolean(initialResult.id)
+  if (comfyWatching && initialResult.id !== watchedPromptId) {
+    if (watchedPromptId) unwatchComfyuiProgress(watchedPromptId)
+    const registered = await watchComfyuiProgress({
       promptId: initialResult.id,
       nodeId: asTrimmedString(request.extras?.nodeId),
       projectId: asTrimmedString(request.extras?.projectId),
       taskKind: request.kind,
       modelKey: asTrimmedString(request.extras?.modelKey) || null,
+      vendorKey: vendor,
     })
+    watchedPromptId = registered ? initialResult.id : ''
   }
   const pollStartedAt = Date.now()
   let finalResult: TaskResultDto
   try {
     finalResult = await waitForCatalogTaskResult(vendor, request, initialResult, options)
   } finally {
-    if (comfyWatching) unwatchComfyuiProgress(initialResult.id)
+    if (watchedPromptId) unwatchComfyuiProgress(watchedPromptId)
   }
   const pollMs = Date.now() - pollStartedAt
   report('finalizing', initialResult.id)

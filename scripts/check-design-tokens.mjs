@@ -18,6 +18,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { HUE_DRIFT_THRESHOLD, analyzeHueDrift, collectTokenDefinitions } from "./lib/colorMixHue.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // 各类违规的正则 + 当前基线（棘轮上限）。把基线逐步降到 0 = token 债还清。
@@ -81,6 +83,47 @@ RULES.forEach((rule, i) => {
   }
 });
 
+// ---- 第 5 类：color-mix(in oklch) 色相漂移（非棘轮，零容忍）----
+//
+// oklch 是极坐标空间，插值时**色相走最短弧**。把「有色相的色」和「被钉了色相的中性色」混在一起，
+// 结果会落在两者之间某个跟谁都不像的色相上。2026-08-02 实锤：--nomi-accent-soft 期望淡蓝，
+// 浅色实际算出 h≈347（粉）、暗色 h≈124（橄榄绿），全 App 80+ 个选中态/chip 跟着跑色，
+// 而 --nomi-accent 本身一直是对的 —— 所以肉眼查 token 定义查不出来，必须靠算。
+// 混 transparent 不受影响（实测色相恒等，只改 alpha），故放行 —— tokenColor() 那一大类安全。
+// 修法：改 `in srgb`（无色相分量，仓库既有做法：--nomi-focus、滚动条色）。
+const MIX_SCAN_GLOBS = "src electron tailwind.config.ts";
+const mixFiles = execSync(`git ls-files ${MIX_SCAN_GLOBS}`, { cwd: ROOT, encoding: "utf8" })
+  .split("\n")
+  .map((l) => l.trim())
+  .filter(Boolean)
+  .filter((f) => /\.(tsx?|css|mjs)$/.test(f))
+  .filter((f) => fs.existsSync(path.join(ROOT, f)))
+  .map((f) => ({ path: f, content: fs.readFileSync(path.join(ROOT, f), "utf8") }));
+
+const tokenDefs = collectTokenDefinitions(mixFiles.map((f) => f.content));
+const hueFindings = analyzeHueDrift(mixFiles, tokenDefs);
+
+if (hueFindings.length > 0) {
+  errors.push(
+    `✗ color-mix(in oklch) 色相漂移：${hueFindings.length} 处（两个操作数色相相差 > ${HUE_DRIFT_THRESHOLD}°，` +
+      `oklch 会沿最短弧插值出一个跟谁都不像的色相）：\n` +
+      hueFindings
+        .map(
+          (f) =>
+            `    ${f.file}:${f.line}\n` +
+            f.pairs
+              .map(
+                (p) =>
+                  `      ${f.operandA}(h≈${p.hueA.toFixed(0)}) × ${f.operandB}(h≈${p.hueB.toFixed(0)})` +
+                  (p.resultHue != null ? ` → 混出 h≈${p.resultHue.toFixed(0)}` : ` → 相差 ${p.delta.toFixed(0)}°`),
+              )
+              .join("\n") +
+            `\n      修法：改成 color-mix(in srgb, …)（无色相分量，不会弧插值）`,
+        )
+        .join("\n"),
+  );
+}
+
 for (const w of warnings) console.warn(w);
 
 if (errors.length > 0) {
@@ -88,4 +131,7 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`✓ 设计 token 门岗通过：${RULES.length} 类棘轮（只减不增，目标清零）。当前 ${counts.join("/")}（${RULES.map((r) => r.baseline).join("/")}）。`);
+console.log(
+  `✓ 设计 token 门岗通过：${RULES.length} 类棘轮（只减不增，目标清零）。当前 ${counts.join("/")}（${RULES.map((r) => r.baseline).join("/")}）。` +
+    `\n✓ color-mix 色相漂移零容忍：扫 ${mixFiles.length} 文件 / ${tokenDefs.size} 个 token 定义，无 in oklch 跨色相混合。`,
+);

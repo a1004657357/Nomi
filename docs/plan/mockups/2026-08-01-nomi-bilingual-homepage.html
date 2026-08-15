@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Nomi — Bilingual growth homepage sample</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;600;900&display=swap" />
+  <style>
+    :root {
+      --paper: #f2efe8;
+      --paper-2: #ebe7dd;
+      --ink: #1a1816;
+      --ink-2: #3d3935;
+      --muted: #8a8278;
+      --rule: #d9d3c5;
+      --coral: #e8765a;
+      --coral-deep: #c7563d;
+      --display: "Instrument Serif", "Noto Serif SC", Georgia, serif;
+      --body: "Avenir Next", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+      --mono: "JetBrains Mono", ui-monospace, monospace;
+      --page: min(1280px, calc(100vw - 64px));
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; background: var(--paper); }
+    body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--body); }
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; }
+    img, video { display: block; max-width: 100%; }
+    :focus-visible { outline: 2px solid var(--coral); outline-offset: 4px; }
+    .shell { width: var(--page); margin-inline: auto; }
+    .mono { font-family: var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .display { font-family: var(--display); font-weight: 400; }
+    .site-head { position: relative; overflow: hidden; background: #222220; color: #f7f3ea; }
+    .site-head::after { content: ""; position: absolute; inset: 0; border: 1px solid rgba(255,255,255,.07); pointer-events: none; }
+    .nav { height: 82px; display: flex; align-items: center; gap: 30px; border-bottom: 1px solid rgba(255,255,255,.16); }
+    .brand { display: flex; align-items: center; gap: 12px; margin-right: auto; font-family: var(--display); font-size: 24px; }
+    .brand-logo { width: 28px; height: 28px; flex: none; }
+    .nav-link { color: rgba(255,255,255,.68); font-size: 13px; }
+    .nav-link:hover { color: #fff; }
+    .locale { display: flex; gap: 6px; align-items: center; color: rgba(255,255,255,.58); font: 11px var(--mono); }
+    .locale a[aria-current="page"] { color: #fff; border-bottom: 1px solid var(--coral); }
+    .button { min-height: 44px; padding: 0 18px; border: 1px solid currentColor; display: inline-flex; align-items: center; justify-content: center; gap: 18px; font-size: 13px; font-weight: 600; transition: transform .18s ease, background .18s ease, color .18s ease; }
+    .button:hover { transform: translateY(-2px); }
+    .button--coral { background: var(--coral); border-color: var(--coral); color: #211d1a; }
+    .button--ghost { color: #f7f3ea; border-color: rgba(255,255,255,.34); }
+    .button--ink { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .hero { min-height: 680px; padding: 68px 0 56px; display: grid; grid-template-columns: minmax(0, .86fr) minmax(520px, 1.14fr); gap: 68px; align-items: center; }
+    .hero-copy { align-self: stretch; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 7px; }
+    .eyebrow { margin: 0 0 74px; color: var(--coral); font: 10px var(--mono); letter-spacing: .14em; }
+    h1 { max-width: 650px; margin: 0; font: 400 clamp(64px, 6.8vw, 104px)/.86 var(--display); letter-spacing: -.035em; }
+    h1 em { display: block; color: var(--coral); font-style: italic; }
+    .lede { max-width: 520px; margin: 38px 0 32px; color: rgba(255,255,255,.66); font-size: 15px; line-height: 1.75; }
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+    .hero-note { margin-top: 66px; display: flex; justify-content: space-between; color: rgba(255,255,255,.38); font: 9px var(--mono); }
+    .monitor { position: relative; background: #0f0f10; border: 1px solid rgba(255,255,255,.18); padding: 40px 30px 48px; box-shadow: 26px 26px 0 rgba(0,0,0,.12); }
+    .monitor-top { display: flex; justify-content: space-between; margin-bottom: 26px; color: rgba(255,255,255,.46); font: 9px var(--mono); }
+    .monitor-frame { position: relative; overflow: hidden; aspect-ratio: 16/10; border: 1px solid rgba(255,255,255,.15); background: #161616; }
+    .monitor-frame img { width: 100%; height: 100%; object-fit: cover; object-position: center; filter: saturate(.86) contrast(1.03); }
+    .monitor-frame::after { content: ""; position: absolute; inset: 7%; border: 1px solid rgba(232,118,90,.68); pointer-events: none; }
+    .monitor-caption { display: grid; grid-template-columns: 1fr auto; gap: 16px; margin-top: 24px; color: rgba(255,255,255,.55); font: 9px/1.6 var(--mono); }
+    .ticker { background: var(--coral); color: #251f1b; border-top: 1px solid #251f1b; border-bottom: 1px solid #251f1b; }
+    .ticker-inner { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 20px; font: 9px var(--mono); }
+    .ticker-dot { width: 5px; height: 5px; background: #251f1b; transform: rotate(45deg); }
+    .intro { padding: 122px 0 88px; display: grid; grid-template-columns: 180px 1fr; gap: 80px; border-bottom: 1px solid var(--rule); }
+    .section-kicker { margin: 8px 0 0; color: var(--coral-deep); font: 9px var(--mono); }
+    h2 { max-width: 970px; margin: 0; font: 400 clamp(54px, 6vw, 90px)/.95 var(--display); letter-spacing: -.03em; }
+    .proof { padding: 96px 0; border-bottom: 1px solid var(--rule); display: grid; grid-template-columns: 90px minmax(0, 1.12fr) minmax(300px, .7fr); gap: 46px; align-items: center; }
+    .proof:nth-child(even) { grid-template-columns: 90px minmax(300px, .7fr) minmax(0, 1.12fr); }
+    .proof:nth-child(even) .proof-media { grid-column: 3; }
+    .proof:nth-child(even) .proof-copy { grid-column: 2; grid-row: 1; }
+    .chapter { align-self: stretch; display: flex; flex-direction: column; justify-content: space-between; color: var(--muted); font: 9px var(--mono); }
+    .chapter strong { color: var(--coral-deep); font-weight: 500; }
+    .proof-media { position: relative; border: 1px solid var(--ink); background: var(--paper-2); padding: 13px; box-shadow: 18px 18px 0 var(--paper-2); }
+    .proof-media img { aspect-ratio: 16/9; width: 100%; object-fit: cover; border: 1px solid var(--rule); }
+    .proof-media::before { content: "REC"; position: absolute; top: 24px; left: 25px; z-index: 1; padding: 5px 7px; background: var(--coral); color: var(--ink); font: 8px var(--mono); }
+    .proof-copy h3 { margin: 0 0 24px; font: 400 clamp(42px, 4.2vw, 68px)/.95 var(--display); letter-spacing: -.02em; }
+    .proof-copy p { max-width: 440px; margin: 0; color: var(--ink-2); font-size: 15px; line-height: 1.8; }
+    .proof-tags { display: flex; gap: 8px; margin-top: 38px; flex-wrap: wrap; }
+    .tag { border-top: 1px solid var(--rule); padding-top: 9px; min-width: 110px; color: var(--muted); font: 8px var(--mono); }
+    .paths-section { background: #222220; color: #f7f3ea; padding: 112px 0; }
+    .paths-head { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-bottom: 64px; align-items: end; }
+    .paths-head h2 { max-width: 720px; }
+    .paths-head p { justify-self: end; max-width: 430px; color: rgba(255,255,255,.56); font-size: 14px; line-height: 1.75; }
+    .paths { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid rgba(255,255,255,.2); }
+    .path { min-height: 480px; padding: 46px; display: flex; flex-direction: column; }
+    .path + .path { border-left: 1px solid rgba(255,255,255,.2); background: #f2efe8; color: var(--ink); }
+    .path-number { color: var(--coral); font: 9px var(--mono); }
+    .path h3 { margin: 42px 0 20px; font: 400 clamp(44px, 4.7vw, 70px)/.93 var(--display); }
+    .path-description { max-width: 470px; color: rgba(255,255,255,.54); font-size: 14px; line-height: 1.75; }
+    .path + .path .path-description { color: var(--muted); }
+    .service-list { margin: 38px 0 44px; border-top: 1px solid currentColor; }
+    .service { display: flex; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid currentColor; font-size: 12px; }
+    .service span:last-child { color: var(--coral-deep); font: 9px var(--mono); }
+    .path-actions { margin-top: auto; display: flex; gap: 14px; flex-wrap: wrap; }
+    .closing { padding: 108px 0 42px; }
+    .closing-grid { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 70px; align-items: end; }
+    .closing h2 { max-width: 900px; }
+    .closing h2 em { color: var(--coral-deep); font-style: italic; }
+    .mascot { width: 190px; margin-left: auto; filter: grayscale(.25); }
+    .closing-actions { margin-top: 50px; display: flex; gap: 12px; }
+    .footer { margin-top: 90px; padding: 26px 0; border-top: 1px solid var(--ink); display: flex; justify-content: space-between; gap: 20px; color: var(--muted); font: 8px var(--mono); }
+    dialog { width: min(980px, calc(100vw - 32px)); border: 0; padding: 0; background: #111; color: #fff; box-shadow: 0 30px 90px rgba(0,0,0,.45); }
+    dialog::backdrop { background: rgba(20,18,16,.78); }
+    .dialog-head { padding: 13px 16px; display: flex; justify-content: space-between; font: 9px var(--mono); }
+    .dialog-head button { border: 0; background: none; color: #fff; cursor: pointer; }
+    dialog video { width: 100%; }
+    [data-reveal] { animation: reveal .7s cubic-bezier(.2,.7,.3,1) both; animation-delay: var(--delay, 0s); }
+    @keyframes reveal { from { opacity: 0; transform: translateY(20px); } }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+    @media (max-width: 900px) {
+      :root { --page: min(100% - 34px, 680px); }
+      .nav { height: 68px; gap: 12px; }
+      .nav-link { display: none; }
+      .brand { font-size: 22px; }
+      .nav .button { min-height: 36px; padding: 0 12px; font-size: 11px; }
+      .hero { min-height: 0; padding: 58px 0 42px; grid-template-columns: 1fr; gap: 42px; }
+      .eyebrow { margin-bottom: 44px; }
+      h1 { font-size: clamp(58px, 17vw, 82px); }
+      .lede { margin-top: 28px; }
+      .hero-note { margin-top: 44px; }
+      .monitor { padding: 24px 18px 30px; box-shadow: 12px 12px 0 rgba(0,0,0,.12); }
+      .ticker-inner span:nth-of-type(2), .ticker-inner span:nth-of-type(3), .ticker-inner .ticker-dot:nth-of-type(2) { display: none; }
+      .intro { padding: 82px 0 58px; grid-template-columns: 1fr; gap: 26px; }
+      h2 { font-size: clamp(52px, 14vw, 74px); }
+      .proof, .proof:nth-child(even) { padding: 62px 0; grid-template-columns: 42px 1fr; gap: 18px; align-items: start; }
+      .proof-media, .proof:nth-child(even) .proof-media { grid-column: 1 / -1; grid-row: 2; }
+      .proof-copy, .proof:nth-child(even) .proof-copy { grid-column: 2; grid-row: 1; }
+      .chapter { grid-column: 1; grid-row: 1; min-height: 135px; }
+      .proof-copy h3 { font-size: clamp(42px, 12vw, 58px); }
+      .proof-copy p { font-size: 14px; }
+      .proof-tags { margin-top: 24px; }
+      .paths-section { padding: 76px 0; }
+      .paths-head { grid-template-columns: 1fr; gap: 24px; }
+      .paths-head p { justify-self: start; }
+      .paths { grid-template-columns: 1fr; }
+      .path { min-height: 420px; padding: 34px 25px; }
+      .path + .path { border-left: 0; border-top: 1px solid rgba(255,255,255,.2); }
+      .closing { padding-top: 80px; }
+      .closing-grid { grid-template-columns: 1fr; }
+      .mascot { width: 120px; margin: 0; }
+      .footer { margin-top: 64px; flex-direction: column; }
+    }
+    @media (max-width: 360px) {
+      :root { --page: calc(100% - 24px); }
+      .brand span:last-child { display: none; }
+      .actions, .closing-actions { flex-direction: column; }
+      .button { width: 100%; }
+      .proof, .proof:nth-child(even) { grid-template-columns: 34px 1fr; }
+      .path { padding-inline: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-head">
+    <nav class="nav shell" aria-label="Primary">
+      <a class="brand" href="#top" aria-label="Nomi"><img class="brand-logo" src="../../../marketing/assets/nomi-logo.svg" alt="" /><span>Nomi</span></a>
+      <a class="nav-link" href="#product" data-copy="navProduct">产品</a>
+      <a class="nav-link" href="#teams" data-copy="navTeams">团队服务</a>
+      <a class="nav-link" href="../../../marketing/quickstart.html" data-copy="navDocs">文档</a>
+      <a class="nav-link" href="https://github.com/aqm857886159/Nomi">GitHub</a>
+      <span class="locale"><a data-locale="zh-CN" href="?lang=zh-CN">中文</a>/<a data-locale="en" href="?lang=en">EN</a></span>
+      <a class="button button--coral" href="https://github.com/aqm857886159/Nomi/releases/latest"><span data-copy="download">下载</span><span>↘</span></a>
+    </nav>
+    <section id="top" class="hero shell">
+      <div class="hero-copy" data-reveal>
+        <div>
+          <p class="eyebrow">LOCAL-FIRST · OPEN SOURCE · AI VIDEO WORKBENCH</p>
+          <h1 data-copy-html="heroTitle">把镜头讲清楚，<em>不让模型猜。</em></h1>
+          <p class="lede" data-copy="heroLede">故事、分镜、视觉锚点、生成画布与时间线，保持在同一个上下文里。</p>
+          <div class="actions">
+            <a class="button button--coral" href="https://github.com/aqm857886159/Nomi/releases/latest"><span data-copy="downloadNomi">下载 Nomi</span><span>↘</span></a>
+            <a class="button button--ghost" href="../../../marketing/assets/demo.mp4" data-open-film><span data-copy="watch">看 60 秒宣传片</span><span>▶</span></a>
+          </div>
+        </div>
+        <div class="hero-note"><span>LOCAL-FIRST AI VIDEO WORKBENCH</span><span>01 / 06</span></div>
+      </div>
+      <figure class="monitor" style="--delay:.12s" data-reveal>
+        <div class="monitor-top"><span>NOMI / DIRECTOR MONITOR</span><span>REC · 00:00:14:22</span></div>
+        <div class="monitor-frame"><img src="../../../marketing/assets/screen-canvas.png" alt="Nomi real generation canvas" /></div>
+        <figcaption class="monitor-caption"><span data-copy="monitorCaption">同一个画布里看见整条序列，而不是重开另一个提示词。</span><span>16:09 · LIVE</span></figcaption>
+      </figure>
+    </section>
+  </header>
+  <div class="ticker">
+    <div class="ticker-inner shell"><span>STORY → STORYBOARD → CANVAS</span><i class="ticker-dot"></i><span>VISUAL ANCHORS → CONSISTENT WORLD</span><i class="ticker-dot"></i><span>TIMELINE → EXPORT</span></div>
+  </div>
+  <main>
+    <section id="product" class="intro shell">
+      <p class="section-kicker">02 / PRODUCT PROOF</p>
+      <h2 data-copy-html="introTitle">不是更多按钮。<br />是让每个镜头<em>继承同一个世界。</em></h2>
+    </section>
+    <div class="shell">
+      <article class="proof">
+        <div class="chapter"><strong>01</strong><span>CONTEXT<br />CONNECTED</span></div>
+        <figure class="proof-media"><img src="../../../marketing/assets/screen-script.png" alt="Nomi story and storyboard workspace" /></figure>
+        <div class="proof-copy"><h3 data-copy="proof1Title">上下文持续连接</h3><p data-copy="proof1Text">故事、角色、分镜和生成证据不再散落在不同工具里；每一步都知道前面发生过什么。</p><div class="proof-tags"><span class="tag">STORY</span><span class="tag">STORYBOARD</span><span class="tag">MEMORY</span></div></div>
+      </article>
+      <article class="proof">
+        <div class="chapter"><strong>02</strong><span>LOCK THE<br />WORLD FIRST</span></div>
+        <figure class="proof-media"><img src="../../../marketing/assets/screen-3d.png" alt="Nomi 3D director stage" /></figure>
+        <div class="proof-copy"><h3 data-copy="proof2Title">先锁定世界</h3><p data-copy="proof2Text">先固定人物、场景、道具、构图和风格，让后续镜头继承同一组视觉锚点，减少身份与空间漂移。</p><div class="proof-tags"><span class="tag">CHARACTER</span><span class="tag">LOCATION</span><span class="tag">CAMERA</span></div></div>
+      </article>
+      <article class="proof">
+        <div class="chapter"><strong>03</strong><span>DIRECT ON<br />CANVAS</span></div>
+        <figure class="proof-media"><img src="../../../marketing/assets/screen-canvas.png" alt="Nomi generation canvas with connected media" /></figure>
+        <div class="proof-copy"><h3 data-copy="proof3Title">在画布上导演</h3><p data-copy="proof3Text">在全局序列中摆素材、写提示词、调用生成，把参考、结果和下一镜头放在同一张导演桌上。</p><div class="proof-tags"><span class="tag">PROMPTS</span><span class="tag">MEDIA</span><span class="tag">GENERATE</span></div></div>
+      </article>
+      <article class="proof">
+        <div class="chapter"><strong>04</strong><span>BRING YOUR<br />OWN STACK</span></div>
+        <figure class="proof-media"><img src="../../../marketing/assets/screen-timeline.png" alt="Nomi preview and editing timeline" /></figure>
+        <div class="proof-copy"><h3 data-copy="proof4Title">一句话，推进到可编辑初稿</h3><p data-copy="proof4Text">让 Claude Code 等 AI 助手通过 Nomi MCP 调用 Skills：建立项目、生成分镜、连接参考并推进初稿；最终画面和成片仍由你决定。</p><div class="proof-tags"><span class="tag">CLAUDE CODE</span><span class="tag">NOMI MCP</span><span class="tag">SKILLS</span></div></div>
+      </article>
+    </div>
+    <section id="teams" class="paths-section">
+      <div class="shell">
+        <div class="paths-head"><h2 data-copy-html="pathsTitle">开放给创作者，<br /><em>也能为团队落地。</em></h2><p data-copy="pathsText">同一个产品，两条诚实路径：直接下载开源版；或者让我们把它接进你的真实业务。</p></div>
+        <div class="paths">
+          <article class="path">
+            <span class="path-number">01 / OPEN SOURCE</span>
+            <h3 data-copy="openTitle">面向创作者</h3>
+            <p class="path-description" data-copy="openText">本地优先、AGPL-3.0 开源。项目与素材在你的电脑上，工作流由你掌控。</p>
+            <div class="service-list"><div class="service"><span data-copy="open1">下载桌面版</span><span>RELEASES</span></div><div class="service"><span data-copy="open2">查看源代码</span><span>GITHUB</span></div><div class="service"><span data-copy="open3">阅读使用文档</span><span>DOCS</span></div></div>
+            <div class="path-actions"><a class="button button--coral" href="https://github.com/aqm857886159/Nomi/releases/latest"><span data-copy="downloadNomi">下载 Nomi</span><span>↘</span></a></div>
+          </article>
+          <article class="path">
+            <span class="path-number">02 / FOR TEAMS</span>
+            <h3 data-copy="teamsTitle">让 Nomi 适配你的业务</h3>
+            <p class="path-description" data-copy="teamsText">从验证到长期迭代，围绕真实项目交付，而不是卖一套没人维护的模板。</p>
+            <div class="service-list"><div class="service"><span data-copy="service1">定制开发</span><span>CUSTOM</span></div><div class="service"><span data-copy="service2">系统与模型集成</span><span>INTEGRATE</span></div><div class="service"><span data-copy="service3">贴牌交付与商业授权</span><span>WHITE-LABEL</span></div><div class="service"><span data-copy="service4">持续优化、维护与迭代</span><span>ONGOING</span></div></div>
+            <div class="path-actions"><a class="button button--ink" href="https://github.com/aqm857886159/Nomi/issues/new?template=business_inquiry.yml"><span data-copy="discuss">沟通项目</span><span>↗</span></a></div>
+          </article>
+        </div>
+      </div>
+    </section>
+    <section class="closing shell">
+      <div class="closing-grid"><div><p class="section-kicker">06 / BRING YOUR SHOT INTO FOCUS</p><h2 data-copy-html="closingTitle">你负责看见镜头。<br /><em>Nomi 负责让模型看懂。</em></h2><div class="closing-actions"><a class="button button--ink" href="https://github.com/aqm857886159/Nomi/releases/latest"><span data-copy="download">下载</span><span>↘</span></a><a class="button" href="https://github.com/aqm857886159/Nomi">GitHub <span>↗</span></a></div></div><img class="mascot" src="../../../marketing/assets/mascot.png" alt="Nomi origami mascot" /></div>
+      <footer class="footer"><span>© 2026 NOMI · AGPL-3.0-ONLY</span><span data-copy="privacy">无需网站账户 · Nomi 不把项目素材上传到自己的服务器</span><span><a href="?lang=zh-CN">中文</a> / <a href="?lang=en">EN</a></span></footer>
+    </section>
+  </main>
+  <dialog id="film"><div class="dialog-head"><span>NOMI · LAUNCH FILM · 60S</span><button type="button" data-close>ESC / CLOSE</button></div><video controls poster="../../../marketing/assets/demo-poster.jpg"><source src="../../../marketing/assets/demo.mp4" type="video/mp4" /></video></dialog>
+  <script>
+    const copy = {
+      'zh-CN': {
+        navProduct:'产品',navTeams:'团队服务',navDocs:'文档',download:'下载',downloadNomi:'下载 Nomi',watch:'看 60 秒宣传片',
+        heroTitle:'把镜头讲清楚，<em>不让模型猜。</em>',heroLede:'故事、分镜、视觉锚点、生成画布与时间线，保持在同一个上下文里。',monitorCaption:'同一个画布里看见整条序列，而不是重开另一个提示词。',
+        introTitle:'不是更多按钮。<br />是让每个镜头<em>继承同一个世界。</em>',proof1Title:'上下文持续连接',proof1Text:'故事、角色、分镜和生成证据不再散落在不同工具里；每一步都知道前面发生过什么。',proof2Title:'先锁定世界',proof2Text:'先固定人物、场景、道具、构图和风格，让后续镜头继承同一组视觉锚点，减少身份与空间漂移。',proof3Title:'在画布上导演',proof3Text:'在全局序列中摆素材、写提示词、调用生成，把参考、结果和下一镜头放在同一张导演桌上。',proof4Title:'一句话，推进到可编辑初稿',proof4Text:'让 Claude Code 等 AI 助手通过 Nomi MCP 调用 Skills：建立项目、生成分镜、连接参考并推进初稿；最终画面和成片仍由你决定。',
+        pathsTitle:'开放给创作者，<br /><em>也能为团队落地。</em>',pathsText:'同一个产品，两条诚实路径：直接下载开源版；或者让我们把它接进你的真实业务。',openTitle:'面向创作者',openText:'本地优先、AGPL-3.0 开源。项目与素材在你的电脑上，工作流由你掌控。',open1:'下载桌面版',open2:'查看源代码',open3:'阅读使用文档',teamsTitle:'让 Nomi 适配你的业务',teamsText:'从验证到长期迭代，围绕真实项目交付，而不是卖一套没人维护的模板。',service1:'定制开发',service2:'系统与模型集成',service3:'贴牌交付与商业授权',service4:'持续优化、维护与迭代',discuss:'沟通项目',closingTitle:'你负责看见镜头。<br /><em>Nomi 负责让模型看懂。</em>',privacy:'无需网站账户 · Nomi 不把项目素材上传到自己的服务器'
+      },
+      en: {
+        navProduct:'Product',navTeams:'For Teams',navDocs:'Docs',download:'Download',downloadNomi:'Download Nomi',watch:'Watch the 60s film',
+        heroTitle:'Direct the shot.<em>Not just the prompt.</em>',heroLede:'Keep the story, storyboard, visual anchors, generation canvas, and timeline in one connected context.',monitorCaption:'See the whole sequence on one canvas instead of restarting from another prompt.',
+        introTitle:'Not more buttons.<br />A way for every shot to<em>inherit the same world.</em>',proof1Title:'Connected context',proof1Text:'Story, characters, storyboard, and generation evidence stay together. Every step knows what came before.',proof2Title:'Lock the world first',proof2Text:'Fix characters, locations, props, composition, and style first, so later shots inherit the same visual anchors.',proof3Title:'Direct on canvas',proof3Text:'Place media, draft prompts, and call generation tools while the full sequence remains in view.',proof4Title:'One sentence to an editable first cut',proof4Text:'Let Claude Code or another AI assistant call Nomi over MCP and use Skills to build the project, storyboard the shot, connect references, and advance a first cut. You keep final control.',
+        pathsTitle:'Open for creators.<br /><em>Ready to fit a team.</em>',pathsText:'One product, two honest paths: download the open-source workbench, or bring us into a real delivery.',openTitle:'Open source for creators',openText:'Local-first and AGPL-3.0. Your projects and media stay on your computer; the workflow stays under your control.',open1:'Download the desktop app',open2:'View the source',open3:'Read the docs',teamsTitle:'Make Nomi fit your business',teamsText:'From first validation to long-term iteration, built around the workflow you actually need to ship.',service1:'Custom builds',service2:'System and model integrations',service3:'White-label and commercial license',service4:'Ongoing optimization and iteration',discuss:'Discuss a project',closingTitle:'You see the shot.<br /><em>Nomi helps the model see it.</em>',privacy:'No website account · Nomi does not upload project media to its own servers'
+      }
+    };
+    const params = new URLSearchParams(location.search);
+    const locale = params.get('lang') === 'en' ? 'en' : 'zh-CN';
+    document.documentElement.lang = locale;
+    document.body.dataset.locale = locale;
+    document.querySelectorAll('[data-locale]').forEach((link) => link.setAttribute('aria-current', link.dataset.locale === locale ? 'page' : 'false'));
+    document.querySelectorAll('[data-copy]').forEach((node) => { const value = copy[locale][node.dataset.copy]; if (value) node.textContent = value; });
+    document.querySelectorAll('[data-copy-html]').forEach((node) => { const value = copy[locale][node.dataset.copyHtml]; if (value) node.innerHTML = value; });
+    const dialog = document.querySelector('#film');
+    document.querySelector('[data-open-film]').addEventListener('click', (event) => { event.preventDefault(); dialog.showModal(); });
+    document.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+  </script>
+</body>
+</html>

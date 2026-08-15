@@ -14,6 +14,7 @@
 import crypto from 'node:crypto'
 import { listProjects, createProject, readProject } from '../projects/repository'
 import { isModelCatalogVendorExecutable, readCatalog } from '../catalog/catalogStore'
+import { desktopT } from '../i18n'
 import {
   addNodes,
   connectNodes,
@@ -68,6 +69,8 @@ type TaskResultLike = {
     text?: string | null
   }>
   raw?: unknown
+  /** 终态失败的真实原因（与 runtime.TaskResult.error 同义；轮询超时兜底也走这个字段）。 */
+  error?: string
 }
 
 /** runTask 的形状（注入式，便于单测构造请求体而不真打 vendor）。 */
@@ -166,7 +169,12 @@ function bindReferencesToNode(snapshot: CanvasSnapshot, nodeId: string, referenc
 function defaultKindForIntent(intent: GenerateIntent, hasReferences: boolean): string {
   switch (intent) {
     case 'image':
-      return 'text_to_image'
+      // 带了参考图 = 图生图（改图），与下面 video 那支对称。
+      // 曾经这里无条件回 text_to_image：外部助手（Claude Code / Codex / Cursor）经 MCP 带着参考图调
+      // nomi_generate，一律被当**纯文生图**跑 —— 参考图静默丢弃、出一张跟原图毫无关系的新图。
+      // 真生成实测抓到（火山 Seedream 与 apimart 两条路都中招）：喂一张「橘猫戴红围巾坐雪景窗台」的
+      // 照片说「把围巾改成蓝色」，出来的是另一只白猫的插画。
+      return hasReferences ? 'image_edit' : 'text_to_image'
     case 'video':
       return hasReferences ? 'image_to_video' : 'text_to_video'
     case 'audio':
@@ -269,7 +277,17 @@ export async function readProjectCanvas(gateway: ProjectGateway): Promise<Return
   return readCanvas(await gateway.readDoc())
 }
 
-export async function addProjectNodes(gateway: ProjectGateway, specs: NodeSpec[]): Promise<{ ids: string[] }> {
+export async function addProjectNodes(gateway: ProjectGateway, specs: NodeSpec[], projectId = ''): Promise<{ ids: string[]; cancelled?: boolean }> {
+  // 方案门（Phase B）：≥2 节点 = 一套「方案」→ 落画布前弹应用内确认卡（app 开着时；headless 直放行）。
+  // 让用户看到外部 agent 要在自己画布上建什么、可否决。单节点不弹（免费可撤、不加摩擦）。拒绝→不落、回 cancelled。
+  if (specs.length >= 2) {
+    const approved = await gateway.confirmPlan({
+      projectId,
+      nodeCount: specs.length,
+      titles: specs.map((spec) => (typeof spec.title === 'string' ? spec.title.trim() : '')).filter(Boolean).slice(0, 8),
+    })
+    if (!approved) return { ids: [], cancelled: true }
+  }
   const { snapshot, ids } = addNodes(await gateway.readDoc(), specs)
   await gateway.apply(snapshot)
   return { ids }
@@ -584,7 +602,18 @@ export async function generateOnProject(
       const startedAt = Date.now()
       let pollFailureCount = 0
       while (result.status && !TERMINAL_STATUSES.has(result.status)) {
-        if (Date.now() - startedAt > timeoutMs) break
+        if (Date.now() - startedAt > timeoutMs) {
+          // 查询超时不代表供应商取消了任务，但对 CLI/MCP 必须返回明确终态，避免永久转圈。
+          result = {
+            ...result,
+            status: 'failed',
+            error: desktopT('tasks.pollTimedOut', {
+              seconds: Math.round((Date.now() - startedAt) / 1000),
+              status: result.status || 'unknown',
+            }),
+          }
+          break
+        }
         const backoffMs = Math.min(pollIntervalMs * 2 ** pollFailureCount, 60_000)
         await delay(backoffMs)
         try {

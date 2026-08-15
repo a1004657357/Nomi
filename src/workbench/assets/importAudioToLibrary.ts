@@ -1,7 +1,7 @@
 // 音频文件 → 项目素材库的导入（纯落项目文件，不建画布节点）。
 //
 // 为什么独立成路：图片/视频导入走 importLocalMediaFilesToGenerationCanvas（建画布素材节点，
-// 可拖到画布）；音频没有画布节点 archetype（canvasNodeToAssetRef 本就排除 audio），它从「项目
+// 可拖到画布）；音频没有画布节点 archetype（canvasNodeToAssetRefs 本就排除 audio），它从「项目
 // 文件」这条源进素材池——生成的 TTS 音频就是这么进音频 tab 的。所以音频上传只需落项目文件，
 // 落盘后 uniqueAssetPath 保留原扩展名（.mp3/.wav/.m4a…），workspace 索引按扩展名归类成 audio。
 

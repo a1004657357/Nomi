@@ -75,13 +75,12 @@ export function canPlaceClip(track: TimelineTrack, clip: TimelineClip): boolean 
 }
 
 export function addClipAtFrame(timeline: TimelineState, clip: TimelineClip, trackType: TimelineTrackType, startFrame: number): TimelineState {
-  const placed = withClipStartFrame(clip, startFrame)
-  // v0.7.1: clip.type 是 'image' | 'video' | 'audio'，audio/video 都映射到 video 轨
-  if (getTrackTypeForClipType(placed.type) !== trackType) return timeline
+  if (getTrackTypeForClipType(clip.type) !== trackType) return timeline
   let inserted = false
   const tracks = timeline.tracks.map((track) => {
     if (track.type !== trackType) return track
-    if (!canPlaceClip(track, placed)) return track
+    // 与移动同一碰撞模型：期望位被占则滑入最近合法空位，插入永不静默失败
+    const placed = withClipStartFrame(clip, resolveLegalInsertStart(track, clip, startFrame))
     inserted = true
     return {
       ...track,
@@ -114,15 +113,9 @@ export function moveClipToFrame(timeline: TimelineState, clipId: string, startFr
  * 找不到 clip 返回 null；否则总能返回一个合法值（最差落到末尾空隙）——
  * 即"撞了滑入最近空位"，绝不弹回原位。用于拖动中的实时落位。
  */
-export function resolveLegalStartFrame(track: TimelineTrack, clipId: string, desiredStart: number): number | null {
-  const current = track.clips.find((clip) => clip.id === clipId)
-  if (!current) return null
-  const length = getVisibleFrameCount(current)
+/** 在 others（已按 startFrame 排序）间为 length 长度找"离期望起点最近的合法起点"。移动与新插入共用此核。 */
+function nearestLegalStart(others: readonly TimelineClip[], length: number, desiredStart: number): number {
   const desired = clampInteger(desiredStart, 0)
-  const others = track.clips
-    .filter((clip) => clip.id !== clipId)
-    .sort((left, right) => left.startFrame - right.startFrame)
-
   // 收集"起点合法区间" [lo, hi]：每个能放下 length 的空隙
   const ranges: Array<[number, number]> = []
   let cursor = 0
@@ -143,6 +136,21 @@ export function resolveLegalStartFrame(track: TimelineTrack, clipId: string, des
     }
   }
   return best
+}
+
+export function resolveLegalStartFrame(track: TimelineTrack, clipId: string, desiredStart: number): number | null {
+  const current = track.clips.find((clip) => clip.id === clipId)
+  if (!current) return null
+  const others = track.clips
+    .filter((clip) => clip.id !== clipId)
+    .sort((left, right) => left.startFrame - right.startFrame)
+  return nearestLegalStart(others, getVisibleFrameCount(current), desiredStart)
+}
+
+/** 新 clip（尚不在轨上）的合法落点：与移动同款"撞了滑入最近空位"，拖放不再拒收。 */
+export function resolveLegalInsertStart(track: TimelineTrack, clip: TimelineClip, desiredStart: number): number {
+  const others = [...track.clips].sort((left, right) => left.startFrame - right.startFrame)
+  return nearestLegalStart(others, Math.max(1, getVisibleFrameCount(clip)), desiredStart)
 }
 
 /**

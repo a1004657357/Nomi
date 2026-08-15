@@ -33,7 +33,7 @@ export const KLING_3_ARCHETYPE: ModelArchetype = {
   kind: "video",
   defaultModeId: "t2v",
   transportTaskKind: "text_to_video",
-  identifierPatterns: ["kling-3.0", "kling-3.0/video", "kling-3", "kling3"],
+  identifierPatterns: ["kling-3.0", "kling-3.0/video", "kling-3", "kling3", "kling-v3"],
   modes: [
     {
       id: "t2v",

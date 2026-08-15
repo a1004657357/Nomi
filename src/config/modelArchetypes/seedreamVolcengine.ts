@@ -25,7 +25,15 @@ export const SEEDREAM_VOLCENGINE_ARCHETYPE: ModelArchetype = {
   defaultModeId: "t2i",
   transportTaskKind: "text_to_image",
   // 显式 archetypeId 优先（seed 模型已带），patterns 仅给用户自接火山同名模型兜底。
-  identifierPatterns: ["doubao-seedream-5", "doubao-seedream-4"],
+  // ⚠️ 匹配是**严格相等**（archetypeIdentity.identifierMatchesPattern），不是前缀——早先这里只写了
+  // "doubao-seedream-5"/"-4" 两个前缀形，于是真实 key doubao-seedream-5-0-260128 一个都匹配不到：
+  // 经中转接入的 Seedream 完全认不出是 Seedream（没有正确尺寸/改图模式/原生报文）。故列**完整 key**，
+  // 与 Seedance 档案同做法。新增变体要在这里补一行（seededModelIdentity.test 会红）。
+  identifierPatterns: [
+    "doubao-seedream-5-0-260128",
+    "doubao-seedream-4-5-251128",
+    "doubao-seedream-4-0-250828",
+  ],
   modes: [
     {
       id: "t2i",

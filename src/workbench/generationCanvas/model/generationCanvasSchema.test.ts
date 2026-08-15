@@ -48,6 +48,26 @@ describe('generationCanvasSchema Phase E.2 groups', () => {
     expect(() => nodeGroupSchema.parse({ ...parsed, categoryId: 'legacy' })).toThrow()
   })
 
+  it('preserves optional group input/output declarations while old groups remain valid', () => {
+    const base = {
+      id: 'group-links',
+      name: '参考组',
+      categoryId: 'shots',
+      nodeIds: ['image-a', 'image-b'],
+      createdAt: 100,
+      updatedAt: 200,
+    }
+    expect(nodeGroupSchema.parse(base).outputLinks).toBeUndefined()
+    expect(nodeGroupSchema.parse({
+      ...base,
+      inputLinks: [{ sourceNodeId: 'style-source' }],
+      outputLinks: [{ targetNodeId: 'generation-target' }],
+    })).toMatchObject({
+      inputLinks: [{ sourceNodeId: 'style-source' }],
+      outputLinks: [{ targetNodeId: 'generation-target' }],
+    })
+  })
+
   it('preserves node groupId and derivedFrom while validating category ids', () => {
     const parsed = generationCanvasNodeSchema.parse({
       id: 'node-2',

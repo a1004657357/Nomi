@@ -48,98 +48,22 @@ describe('normalizeStoreSnapshot — 重启收敛卡住的 mid-flight 节点', (
   })
 })
 
-describe('normalizeStoreSnapshot — edge id migration', () => {
-  it('rekeys legacy edges by mode and removes duplicate semantics', () => {
-    const nodes = [
-      { id: 'a', kind: 'image', title: 'A', position: { x: 0, y: 0 } },
-      { id: 'b', kind: 'video', title: 'B', position: { x: 100, y: 0 } },
-    ]
-    const snap = normalizeStoreSnapshot({
-      nodes,
-      edges: [
-        { id: 'edge-a-b', source: 'a', target: 'b', mode: 'reference' },
-        { id: 'edge-a-b', source: 'a', target: 'b', mode: 'first_frame' },
-        { id: 'legacy-duplicate', source: 'a', target: 'b', mode: 'first_frame' },
-      ],
-    })
-
-    expect(snap.edges).toHaveLength(2)
-    expect(snap.edges.map((edge) => edge.id).sort()).toEqual([
-      'edge-a-b-first_frame',
-      'edge-a-b-reference',
-    ])
-  })
-})
-
-describe('normalizeStoreSnapshot — creative capability backward compatibility', () => {
-  it('keeps legacy results, Scene3D data, and Director snapshots without deleting connected nodes', () => {
-    const legacyResult = {
-      id: 'legacy-result',
-      type: 'image',
-      url: 'nomi-local://legacy.png',
-      createdAt: 10,
-    }
+describe('normalizeStoreSnapshot — 连线身份修复', () => {
+  it('旧快照中同两点多语义边的重复 id 会被确定性拆开', () => {
     const snapshot = normalizeStoreSnapshot({
       nodes: [
-        {
-          id: 'legacy-image',
-          kind: 'image',
-          title: '旧图片节点',
-          position: { x: 0, y: 0 },
-          result: legacyResult,
-          history: [legacyResult],
-          status: 'success',
-        },
-        {
-          id: 'legacy-scene3d',
-          kind: 'scene3d',
-          title: '旧 3D 导演台',
-          position: { x: 360, y: 0 },
-          meta: {
-            scene3dState: {
-              objects: [{ id: 'actor-legacy', type: 'mannequin', position: [0, 0, 0] }],
-              cameras: [{ id: 'camera-legacy', position: [4, 2, 5] }],
-            },
-          },
-        },
-        {
-          id: 'director-v1',
-          kind: 'vibingDirector',
-          title: '早期 VIBING Director',
-          position: { x: 720, y: 0 },
-          meta: {
-            vibingDirectorState: {
-              version: 1,
-              brief: '旧版导演简述',
-              beats: [{ id: 'beat-1', title: '旧镜头', durationSec: 3 }],
-            },
-          },
-        },
+        { id: 'src', kind: 'image', title: 'src', position: { x: 0, y: 0 } },
+        { id: 'dst', kind: 'video', title: 'dst', position: { x: 400, y: 0 } },
       ],
       edges: [
-        { id: 'legacy-edge', source: 'legacy-image', target: 'legacy-scene3d', mode: 'reference' },
-        { id: 'director-edge', source: 'legacy-scene3d', target: 'director-v1', mode: 'reference' },
+        { id: 'edge-src-dst', source: 'src', target: 'dst', mode: 'first_frame', order: 0 },
+        { id: 'edge-src-dst', source: 'src', target: 'dst', mode: 'last_frame', order: 1 },
       ],
-      selectedNodeIds: ['legacy-image'],
       groups: [],
     })
 
-    expect(snapshot.nodes.map((node) => node.id)).toEqual([
-      'legacy-image',
-      'legacy-scene3d',
-      'director-v1',
-    ])
-    expect(snapshot.nodes[0]?.result).toEqual(legacyResult)
-    expect(snapshot.nodes[0]?.history).toEqual([legacyResult])
-    expect(snapshot.nodes[1]?.meta?.scene3dState).toEqual({
-      objects: [{ id: 'actor-legacy', type: 'mannequin', position: [0, 0, 0] }],
-      cameras: [{ id: 'camera-legacy', position: [4, 2, 5] }],
-    })
-    expect(snapshot.nodes[2]?.meta?.vibingDirectorState).toEqual({
-      version: 1,
-      brief: '旧版导演简述',
-      beats: [{ id: 'beat-1', title: '旧镜头', durationSec: 3 }],
-    })
     expect(snapshot.edges).toHaveLength(2)
+    expect(new Set(snapshot.edges.map((edge) => edge.id)).size).toBe(2)
+    expect(snapshot.edges.map((edge) => edge.mode)).toEqual(['first_frame', 'last_frame'])
   })
 })

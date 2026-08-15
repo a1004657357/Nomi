@@ -9,12 +9,13 @@
  */
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconKey, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react'
+import { IconKey, IconPencil, IconTrash } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { confirmDialog } from '../../design'
-import { buildCustomTextModelUpsert } from './customVendorTextModel'
 import { confirmAndDeleteVendor } from './vendorDeleteAction'
+import { VendorConnectionNotice } from './VendorConnectionNotice'
+import type { VendorConnection } from './useVendorHealth'
 
 type CustomVendorManageProps = {
   vendorKey: string
@@ -22,7 +23,9 @@ type CustomVendorManageProps = {
   baseUrl: string
   hasApiKey: boolean
   modelCount: number
-  textModelCount: number
+  /** 连接健康（由 CustomVendorCard 持有，与卡片胶囊同一份，不各自探）。 */
+  connection: VendorConnection | null
+  onRecheck: () => void
   /** 变更后刷新外层目录。 */
   onChanged: () => void
 }
@@ -33,7 +36,8 @@ export function CustomVendorManage({
   baseUrl,
   hasApiKey,
   modelCount,
-  textModelCount,
+  connection,
+  onRecheck,
   onChanged,
 }: CustomVendorManageProps): JSX.Element {
   const { t } = useTranslation()
@@ -41,8 +45,6 @@ export function CustomVendorManage({
   const [keyDraft, setKeyDraft] = React.useState('')
   const [urlEditing, setUrlEditing] = React.useState(false)
   const [urlDraft, setUrlDraft] = React.useState('')
-  const [textModelDraft, setTextModelDraft] = React.useState('')
-  const [textModelSupportsImageInput, setTextModelSupportsImageInput] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
 
@@ -65,12 +67,14 @@ export function CustomVendorManage({
       setKeyDraft('')
       setKeyEditing(false)
       onChanged()
+      // 换 key 不改地址（健康检查的 fingerprint 不变），所以显式重探一次。
+      onRecheck()
     } catch (e) {
       setError(t('onboardingProviders.vendorCard.saveFailed', { message: e instanceof Error ? e.message : String(e) }))
     } finally {
       setBusy(false)
     }
-  }, [keyDraft, vendorKey, onChanged, t])
+  }, [keyDraft, vendorKey, onChanged, onRecheck, t])
 
   const handleDisconnect = React.useCallback(async () => {
     const bridge = getDesktopBridge()
@@ -124,24 +128,6 @@ export function CustomVendorManage({
     if (res.error) setError(res.error)
     setBusy(false)
   }, [vendorKey, vendorName, modelCount, onChanged])
-
-  const handleAddTextModel = React.useCallback(() => {
-    const payload = buildCustomTextModelUpsert(vendorKey, textModelDraft, {
-      supportsImageInput: textModelSupportsImageInput,
-    })
-    if (!payload) { setError('请先填写文本模型 ID。'); return }
-    const bridge = getDesktopBridge()
-    if (!bridge) return
-    setBusy(true); setError('')
-    try {
-      bridge.modelCatalog.upsertModel(payload)
-      setTextModelDraft('')
-      setTextModelSupportsImageInput(false)
-      onChanged()
-    } catch (e) {
-      setError(`添加失败：${e instanceof Error ? e.message : String(e)}`)
-    } finally { setBusy(false) }
-  }, [vendorKey, textModelDraft, textModelSupportsImageInput, onChanged])
 
   return (
     <div className="flex flex-col gap-2.5 border-t border-nomi-line-soft pt-3">
@@ -212,49 +198,8 @@ export function CustomVendorManage({
         </div>
       )}
 
-      <div className="flex flex-col gap-2 rounded-nomi-sm bg-nomi-ink-05 px-2.5 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-caption font-medium text-nomi-ink-70">助手文本模型</span>
-          <span className={cn('text-micro', textModelCount > 0 ? 'text-workbench-success' : 'text-nomi-ink-40')}>
-            {textModelCount > 0 ? `${textModelCount} 个已接入` : '未接入'}
-          </span>
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            aria-label={`${vendorName} 文本模型 ID`}
-            placeholder="如 glm-5.2 / deepseek-chat"
-            value={textModelDraft}
-            onChange={(e) => { setTextModelDraft(e.currentTarget.value); if (error) setError('') }}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleAddTextModel() }}
-            disabled={busy}
-            className={cn(
-              'flex-1 min-w-0 h-8 rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2.5',
-              'text-body-sm text-nomi-ink placeholder:text-nomi-ink-40 outline-none focus:border-nomi-accent',
-            )}
-          />
-          <button
-            type="button"
-            onClick={handleAddTextModel}
-            disabled={busy || !textModelDraft.trim()}
-            className={cn(
-              'shrink-0 h-8 px-3 rounded-nomi-sm bg-nomi-paper text-nomi-ink-80 text-body-sm font-semibold border border-nomi-line',
-              'inline-flex items-center gap-1.5 hover:border-nomi-accent hover:text-nomi-accent disabled:opacity-50 disabled:cursor-not-allowed',
-            )}
-          >
-            <IconPlus size={14} stroke={1.7} />添加
-          </button>
-        </div>
-        <label className="flex items-center gap-2 text-caption text-nomi-ink-60">
-          <input
-            type="checkbox"
-            checked={textModelSupportsImageInput}
-            onChange={(event) => setTextModelSupportsImageInput(event.currentTarget.checked)}
-            disabled={busy}
-          />
-          支持图片输入（用于视觉复核）
-        </label>
-      </div>
+      {/* 连接状态：紧挨地址行——填错 BaseURL 正是这类家最常见的失败原因（StepFun 反馈）。 */}
+      <VendorConnectionNotice connection={connection} onRecheck={onRecheck} disabled={busy} />
 
       {/* 接入地址（可就地改——StepFun 那类填错地址的根因入口）*/}
       {urlEditing ? (

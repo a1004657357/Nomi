@@ -5,7 +5,10 @@ import { useWorkbenchStore } from '../workbenchStore'
 import { cn } from '../../utils/cn'
 import { WorkbenchButton } from '../../design'
 import { ASSET_LIBRARY_DRAG_MIME } from '../assets/assetLibraryDrag'
-import { tryAddAudioAssetFromDragData } from './dropAudioAssetToTimeline'
+import { addAssetToTimeline, tryAddAssetFromDragData } from './addAssetToTimeline'
+import AssetPicker from '../assets/AssetPicker'
+import AssetPickerPopover from '../assets/AssetPickerPopover'
+import { getActiveWorkbenchProjectId } from '../project/workbenchProjectSession'
 
 /**
  * 叠加层收起条（方案 B 的空态 + 方案 A 的视觉，用户拍板）。
@@ -26,6 +29,7 @@ export function TimelineSecondaryAddRow({
   const selectTimelineTextClip = useWorkbenchStore((state) => state.selectTimelineTextClip)
   const fps = useWorkbenchStore((state) => state.timeline.fps)
   const [dropHover, setDropHover] = React.useState(false)
+  const [musicPickerOpen, setMusicPickerOpen] = React.useState(false)
   if (!showAudio && !showText) return null
 
   const addText = () => {
@@ -38,11 +42,46 @@ export function TimelineSecondaryAddRow({
     if (!showAudio) return
     const playhead = useWorkbenchStore.getState().timeline.playheadFrame
     if (
-      tryAddAudioAssetFromDragData(event.dataTransfer.getData(ASSET_LIBRARY_DRAG_MIME), { fps, startFrame: playhead })
+      tryAddAssetFromDragData(event.dataTransfer.getData(ASSET_LIBRARY_DRAG_MIME), {
+        fps,
+        startFrame: playhead,
+        targetTrackType: 'audio',
+      })
     )
       event.preventDefault()
   }
   const acceptsAudio = (types: readonly string[]) => showAudio && types.includes(ASSET_LIBRARY_DRAG_MIME)
+
+  // 「＋配乐」：与「＋字幕」对称的点击入口。此前配乐只有拖放一条路，而全 App 拖不出音频素材
+  // （素材库网格过滤掉了音频）→ 那行「拖音频到此」等于无源。落 clip 走与拖放同一条实现。
+  const musicBtn = showAudio ? (
+    <span className="relative inline-flex">
+      <WorkbenchButton
+        onClick={() => setMusicPickerOpen((open) => !open)}
+        className="h-6 px-2 text-micro [&>svg]:size-3 gap-1"
+        aria-label={t('timelineEditor.secondary.addMusic')}
+      >
+        <IconPlus stroke={2} />
+        {t('timelineEditor.secondary.music')}
+      </WorkbenchButton>
+      {musicPickerOpen ? (
+        <AssetPickerPopover onClose={() => setMusicPickerOpen(false)}>
+          <AssetPicker
+            projectId={getActiveWorkbenchProjectId()}
+            accept={['audio']}
+            onPick={(asset) => {
+              void addAssetToTimeline(asset, {
+                fps,
+                startFrame: useWorkbenchStore.getState().timeline.playheadFrame,
+              })
+              setMusicPickerOpen(false)
+            }}
+            onUpload={() => {}}
+          />
+        </AssetPickerPopover>
+      ) : null}
+    </span>
+  ) : null
 
   const subtitleBtn = showText ? (
     <WorkbenchButton
@@ -107,7 +146,10 @@ export function TimelineSecondaryAddRow({
             <IconMusic size={12} stroke={1.8} />
             {t('timelineEditor.secondary.dropAudio')}
           </span>
-          {subtitleBtn ? <span className="absolute right-1">{subtitleBtn}</span> : null}
+          <span className="absolute right-1 inline-flex items-center gap-1">
+            {musicBtn}
+            {subtitleBtn}
+          </span>
         </div>
       ) : (
         <div className="flex items-center">{subtitleBtn}</div>

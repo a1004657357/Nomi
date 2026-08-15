@@ -28,16 +28,24 @@ const ALLOWLIST = {
   // 2026-08-01 定制分支合并官方 45 提交时完成逐项人工复核：下列 10 个巨壳均已存在于合并前定制版，
   // 其中 bridge / generationCommon / onboardingProviders 吸收官方桥接与设置能力后增长，其余 7 个本轮零增长。
   // 先以合并后精确行数建立棘轮，避免把历史架构债伪装成此次 Seedance 2.5 回归；后续只能拆小，不能再增长。
-  'src/desktop/bridge.ts': 951,
-  'src/i18n/locales/generationCommon.ts': 1805,
-  'src/i18n/locales/onboardingProviders.ts': 1032,
-  'src/i18n/locales/scene3d.ts': 813,
-  'src/workbench/generationCanvas/agent/applyCanvasToolCall.ts': 815,
-  'src/workbench/generationCanvas/components/CanvasAssistantPanel.tsx': 754,
+  // 2026-08-15 合并 v0.19.0 后逐项复核：官方生产运行/模型接入与定制 Director/任务调度取并集。
+  // 这些值是合并后的精确棘轮；后续只能降低。generated 档案由生成器维护，不宜手工拆分。
+  'electron/ai/agentChatV2.ts': 809,
+  'electron/catalog/archetypeWireDefaults.generated.ts': 809,
+  'src/desktop/bridge.ts': 963,
+  'src/i18n/locales/generationCommon.ts': 2447,
+  'src/i18n/locales/onboardingProviders.ts': 1537,
+  'src/i18n/locales/scene3d.ts': 835,
+  'src/workbench/generationCanvas/agent/applyCanvasToolCall.ts': 816,
+  'src/workbench/generationCanvas/components/CanvasAssistantPanel.tsx': 756,
   'src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx': 801,
-  'src/workbench/generationCanvas/components/GenerationCanvas.tsx': 839,
-  'src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx': 803,
-  'src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx': 837,
+  'src/workbench/generationCanvas/components/GenerationCanvas.tsx': 800,
+  'src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx': 719,
+  'src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx': 848,
+  'src/workbench/generationCanvas/runner/generationRunController.ts': 832,
+  'src/workbench/workbenchStore.ts': 817,
+  "electron/runtime.ts": 531, // …→ 550（2026-07-27）→ 543（2026-08-01）→ 540（2026-08-11）→ 531（2026-08-15 v0.19.0 模块抽取）
+  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 734, // …→ 735（2026-08-02 rebase 后锁定）→ 734（2026-08-09 拖动态改画布级，死属性 data-expanded/data-dragging 一并清掉）
   // PR#21 白板节点引入（2026-06-25）：WhiteboardDrawingTool（1032）与 WhiteboardLeaferCanvas（3406）两巨壳
   // 已按 Rule 9 全部拆完、双双出白名单。LeaferCanvas → whiteboardCanvasTypes/Export/NodeOps/Geometry 四纯模块
   // + whiteboardSceneRender（渲染树）+ useWhiteboardDrawing/BoxSelection/SelectionActions/SceneSync 四交互 hook，

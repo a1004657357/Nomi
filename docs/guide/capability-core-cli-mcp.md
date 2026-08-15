@@ -1,6 +1,6 @@
-# 用户指南：用 Claude Code / Codex 在本地驱动 Nomi（CLI + MCP）
+# 用户指南：用 Claude Code / Codex / Cursor 在本地驱动 Nomi（CLI + MCP）
 
-> 让你电脑上的 AI 编程助手（Claude Code、Codex、Cursor…）直接操作你的 Nomi：建项目、往画布加镜头、改提示词、用你配好的模型**真生成图 / 视频 / 文本**，或把 3D 导演台交给本机 Blender 做预演；结果落进 Nomi 项目，打开就能看。
+> 让你电脑上的 AI 编程助手（Claude Code、Codex、Cursor…）直接操作你的 Nomi：建项目、往画布加镜头、改提示词、用你配好的模型**真生成图 / 视频 / 文本**，结果落进 Nomi 项目，打开就能看。
 >
 > 这份是「照着走得通」的完整使用指南。实现原理见 `docs/plan/2026-06-20-capability-core-headless-exposure.md`。
 
@@ -116,20 +116,22 @@ node scripts/nomi.mjs generate workspace-xxxx modelscope "Tongyi-MAI/Z-Image-Tur
 
 ## 3. 完整流程 B —— 用 Claude Code（MCP）对话式做
 
-**① 配置**（项目级 `.mcp.json` 或全局 `~/.claude.json`）：
+**① 一键接入（推荐）**
 
-```json
-{
-  "mcpServers": {
-    "nomi": {
-      "command": "node",
-      "args": ["/你的路径/Nomi/scripts/nomi-mcp.mjs"]
-    }
-  }
-}
-```
+打开 Nomi 的「模型接入」→「接入 AI 编程助手」，选择 Claude Code、Codex 或 Cursor，点击接入。Nomi 会只合并自己的 `nomi` 条目、保留其它 MCP server，并在改写前留下 `.nomi-backup`。接入卡会真正启动配置中的命令做握手，不会只凭“配置里有一行”显示成功。
 
-**② 重启 Claude Code**，确认 `nomi` 这组工具出现了（`nomi_list_models` / `nomi_create_project` / `nomi_render_director` / `nomi_generate` 等 10 个）。
+不要照文档手写一份只有 `NOMI_MCP_STDIO=1` 的配置。当前版本还会为 Claude Code、Codex、Cursor 分别生成本机签名的 `NOMI_MCP_CLIENT` 与 `NOMI_MCP_CLIENT_PROOF`；证明绑定当前电脑和具体客户端，不能写死在公开文档，也不能跨客户端复用。缺少证明的配置可以列工具，但正式 Production Run 会被安全地视为 `external`，无法越过 Nomi 的可信宿主门。
+
+需要手工接入时，先在卡片里选择目标客户端，再点「复制配置」，把 **Nomi 当机生成的完整片段** 合并到对应客户端。不要使用旧版 `scripts/nomi-mcp.mjs`，也不要从另一个客户端复制 proof。Codex 的生成片段已经包含 Electron 冷启动、长视频任务和写操作审批所需的超时与审批配置。
+
+从旧版升级后，即使卡片显示已有配置，也应点一次「重新接入」来补齐签名。
+
+**② 完成两侧权限并重启对应客户端**：
+
+- Claude Code / Codex：卡片真实握手成功后，确认 `nomi` 的 13 个工具出现。
+- Cursor：先在 Nomi「设置 → 自动化与权限」允许 Cursor 发起草稿；首次在 Cursor 调用 Nomi 时，Cursor 自己仍可能要求你批准本地 MCP。Nomi 不会代替你静默批准 Cursor。
+
+13 个工具包括 `nomi_list_models`、`nomi_create_project`、`nomi_generate` 和 `nomi_start_playbook`。
 
 **③ 直接说人话**，它自己挑工具完成：
 
@@ -139,11 +141,15 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 
 ---
 
-## 4. 开着 vs 关着 —— 一条要知道的限制
+## 4. 开着 vs 关着 —— Nomi 会自动选安全路径
 
-Nomi **开着且目标项目正打开**时，画布读写会经渲染层网关实时应用，结果立刻出现在当前画布；未打开的项目仍安全地写入项目文件。这样外部 Codex 不会覆盖正在编辑的内存状态。
+| 当前状态 | Nomi 的处理 | 你的体验 |
+|---|---|---|
+| 目标项目正在前台打开 | 通过渲染层应用改动 | 画布立即刷新，确认卡在当前界面出现 |
+| Nomi 开着，但目标项目不在前台 | 对该项目安全落盘，确认仍由 Nomi 全局展示 | 不会把后台项目灌进当前画布，也不会漏掉人工门 |
+| Nomi 关着 | 无窗口进程直接操作项目文件 | 结果落进项目，下次打开即可看到 |
 
-`director render` 是例外：它需要正在运行的 Nomi 桌面进程来导入 Blender 资产并回写画布。若 Nomi 未打开，CLI 会返回清晰错误；先启动 Nomi 再重试。
+你不需要为了让 MCP 工作而关闭项目。Nomi 会按项目是否在前台和渲染层是否可用选择路径，避免外部写盘与内存状态互相覆盖。
 
 ---
 
@@ -162,7 +168,6 @@ Nomi **开着且目标项目正打开**时，画布读写会经渲染层网关�
 | `canvas connect <projectId> <源id> <目标id> [mode]` | 连线（mode 缺省 reference） |
 | `canvas prompt <projectId> <节点id> "新提示词"` | 改提示词 |
 | `canvas delete <projectId> <节点id> [更多...]` | 删节点（连带删边） |
-| `director render <projectId> <scene3dNodeId> [stagePreset]` | 用本机 Blender 预演已有 3D 导演台，并回写预览图、BLEND、GLB 和连接边。`stagePreset` 可为 `empty` / `studio` / `coffee_shop` / `city_street` / `interior_room`。Nomi 必须保持打开。 |
 | `generate <projectId> <vendor> <modelKey> <intent> "提示词"` | 真生成（intent=image/video/text/audio） |
 
 ### MCP 工具
@@ -174,20 +179,10 @@ Nomi **开着且目标项目正打开**时，画布读写会经渲染层网关�
 | `nomi_read_canvas` | 读画布 |
 | `nomi_add_nodes` / `nomi_connect_nodes` | 加节点 / 连线 |
 | `nomi_set_node_prompt` / `nomi_delete_nodes` | 改提示词 / 删节点 |
-| `nomi_render_director` | 用已有 `scene3d` 节点启动本机 Blender 导演预演，并把产物自动接回画布（要求 Nomi 已打开） |
 | `nomi_generate` | 真生成（含参考图 references、指定 nodeId） |
-
-### Blender 导演预演
-
-外部 Codex 可以先创建一个 `scene3d` 节点，再调用导演预演。空的 `scene3d` 节点会自动使用标准灰模、相机和 5 秒时间线；如果你已经在 Nomi 的 3D 导演台里摆过角色、道具或相机，则优先使用那份状态。
-
-```bash
-node scripts/nomi.mjs canvas add workspace-xxxx scene3d "咖啡广告：桌面咖啡杯，推近运镜"
-# 记下返回的 node id，例如 node-aaaa
-node scripts/nomi.mjs director render workspace-xxxx node-aaaa coffee_shop
-```
-
-成功后，画布会保留源 3D 节点，并自动新增并连接：`Blender 导演预演`（图片）和 `Blender 导演场景`（GLB）。同次导出的 `.blend` 也会作为项目素材保留，可在 Blender 里继续编辑。
+| `nomi_start_playbook` | 创建不花钱、可恢复的制作草稿；当前完整流程为 `brand.promo` |
+| `nomi_get_run` / `nomi_subscribe_run` | 读取制作状态 / 按游标等待持久事件 |
+| `nomi_get_artifact` | 取得指定 Run 产物的安全投影、精确 Nomi 深链和限时预览 |
 
 ---
 
@@ -198,24 +193,26 @@ node scripts/nomi.mjs director render workspace-xxxx node-aaaa coffee_shop
 | `未找到 token` | 没生成过 token | 启动一次 Nomi（见 §1.2） |
 | `API key missing: <vendor>` | 该渠道没填 key，或 key 没解开 | 在 Nomi 里给该渠道填 API Key；确认用的是你平时启动的那个 Nomi（key 按 app 身份加密，换身份解不开） |
 | `Model is not enabled: <model>` | 模型没启用 | 先 `nomi models` 看可用列表，用列出来的 vendor/modelKey |
-| `Blender 导演预演需要在已打开的 Nomi 桌面应用中运行` | Nomi 未运行 | 启动 Nomi 后重新执行 `director render` 或 `nomi_render_director` |
 | `headless host 未构建` | dev 下没 build | 先 `pnpm run build:electron` |
 | `vendor and request are required` | 命令参数不全 | 对照 §5 补齐 vendor / modelKey / intent / 提示词 |
+| `旧配置缺少客户端身份凭据` | 升级前配置只有 stdio 开关，没有本机客户端签名 | 在 Nomi 接入卡对该客户端点「重新接入」 |
+| `untrusted-host` | 当前客户端没有有效签名，或尚未在 Nomi 设置中获准发起草稿 | 重新接入对应客户端，再到「自动化与权限」开启该客户端 |
 
 ---
 
 ## 7. 安全
 
 - 本地服务**只监听 `127.0.0.1`**（外网 / 局域网够不着）+ **token 校验**。
-- **生成会花你的额度**——目前只过 token 这道门，别把 `~/.nomi/capability-core/token` 交给不信任的程序。
+- Nomi 生成的 MCP 客户端证明按 Claude Code / Codex / Cursor 隔离；自报客户端名、伪造证明和跨客户端复用都只获得 `external` 权限。
+- **付费生成不能只凭 token 启动**——方向和制作合同必须在 Nomi 里由真人批准，支出上限、模型和任务集合会绑定到本次授权；外部 MCP 客户端不能伪造批准。
 - 外部调用只能做 Nomi 的领域操作（建工程 / 改画布 / 生成），**不是**任意文件读写。
+- 项目、素材、提示词、密钥和编排状态保存在本机。使用外部模型 API 时，完成任务所需的输入仍会发送给你配置的供应商；“本地优先”不等于“所有推理都离线”。
 
 ---
 
 ## 8. 已知边界（诚实标注）
 
-- **真实视频生成**：图、文已端到端验证；视频走同一条路、命令支持，但还没真跑过一次（更慢更贵）。
-- **打包安装版**：CLI 的「Nomi 关着自动拉后台」目前走 dev（仓库 + node_modules 里的 Electron）；打包版的等价入口是后续切片。
-- **app 开着时的实时反映**：目标项目打开时，画布操作经渲染层实时应用；未打开项目走磁盘网关。Blender 导演预演要求前者，因为它要由主进程导入本地产物。
-- **Blender 导演预演**：`director render` 只在 Nomi 已打开时可用；它依赖本机安装的 Blender 和 `python3`。目前验证的是 macOS Blender 4.0.1 的灰模预演，不是嵌入式 Blender 或实时双向同步。
-- **付费确认门**：外部生成只过 token，还没接 app 内「真人确认才花钱」的令牌机制。
+- **完整制作从 Nomi 收口**：MCP 可以创建和观察 Production Run，但方向、预算、粗剪、导出、发布、删除和覆盖文件不能在外部客户端自动批准。
+- **当前公开 playbook**：Production Run 的完整驱动先覆盖 `brand.promo`；没有公开“批量生成所有片段”的工具。
+- **供应商差异**：只有供应商返回真实进度时 Nomi 才显示百分比；超时或提交结果不明会安全暂停，不会自动重下单。
+- **媒体查看**：外部宿主拿到的是去路径、去 prompt、去供应商内部字段的安全投影；真文件通过 project / Run / artifact 绑定的限时 loopback 预览访问。

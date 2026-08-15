@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { IconPlayerPlayFilled, IconPlus } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { NomiImage } from '../../design/media'
+import { AssetVideoCover } from './AssetVideoCover'
 import type { AssetRef } from './assetTypes'
 
 // hover 放大浮层（#52 群反馈「鼠标放置参考图自动弹出放大图片」）：参考块太小（56px）看不清细节，
@@ -126,7 +127,7 @@ export function AssetThumb({ asset, playSize = 22 }: { asset: AssetRef; playSize
   if (asset.kind === 'video') {
     return (
       <>
-        {asset.thumbUrl ? <NomiImage className={cn('w-full h-full object-cover')} src={asset.thumbUrl} alt={asset.name} /> : null}
+        <AssetVideoCover asset={asset} />
         <span className={cn('absolute inset-0 bg-[oklch(0.2_0.01_80/0.28)]')} aria-hidden />
         <span className={cn('absolute inset-0 flex items-center justify-center z-[1]')} aria-hidden>
           <IconPlayerPlayFilled size={playSize} className={cn('text-nomi-paper drop-shadow-[0_1px_2px_oklch(0_0_0/0.5)]')} />

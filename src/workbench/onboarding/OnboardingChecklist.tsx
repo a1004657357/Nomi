@@ -22,6 +22,7 @@ import { useGenerationCanvasStore } from '../generationCanvas/store/generationCa
 import { useHasTextModel } from '../library/useHasTextModel'
 import { useJourneyTourActive } from './journeyTourActivity'
 import { DesignProgress } from '../../design'
+import { currentWorkbenchFloatingTopOffset } from '../../ui/app-shell/windowChrome'
 import {
   type ChecklistStep,
   type ChecklistState,
@@ -115,7 +116,10 @@ export function OnboardingChecklist(): JSX.Element | null {
     const el = triggerRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    setAnchor({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) })
+    setAnchor({
+      top: Math.max(r.bottom + 8, currentWorkbenchFloatingTopOffset()),
+      right: Math.max(8, window.innerWidth - r.right),
+    })
   }, [])
 
   React.useEffect(() => {
@@ -179,7 +183,7 @@ export function OnboardingChecklist(): JSX.Element | null {
         )}
       >
         <IconListCheck size={18} stroke={1.8} aria-hidden="true" />
-        <span className="max-[700px]:hidden">{t('onboarding.trigger')}</span>
+        <span className="max-[1600px]:hidden">{t('onboarding.trigger')}</span>
         <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-nomi-accent-soft text-nomi-accent text-micro font-semibold tabular-nums">
           {doneCount}/{ALL_KEYS.length}
         </span>
