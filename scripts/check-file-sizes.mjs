@@ -33,7 +33,8 @@ const ALLOWLIST = {
   'electron/ai/agentChatV2.ts': 809,
   'electron/catalog/archetypeWireDefaults.generated.ts': 809,
   'src/desktop/bridge.ts': 963,
-  'src/i18n/locales/generationCommon.ts': 2447,
+  // 官方 PR #82 增加剪辑节点连续预览与分段导出文案，精确吸收 18 行后重新锁定。
+  'src/i18n/locales/generationCommon.ts': 2465,
   'src/i18n/locales/onboardingProviders.ts': 1537,
   'src/i18n/locales/scene3d.ts': 835,
   'src/workbench/generationCanvas/agent/applyCanvasToolCall.ts': 816,
