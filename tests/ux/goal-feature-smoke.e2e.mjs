@@ -1,13 +1,10 @@
 // Goal feature smoke: isolated Electron, local files only, no provider requests.
-import { _electron as electron } from 'playwright'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
-import { isolatedElectronLaunchOptions } from './helpers/electronFixture.mjs'
+import { launchNomiApp } from './_launchApp.mjs'
 
-const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-goal-feature-smoke-'))
 const evidencePath = path.join(os.tmpdir(), 'nomi-goal-feature-smoke-evidence.png')
@@ -22,14 +19,13 @@ function assert(condition, label) {
   console.log(`  ✓ ${label}`)
 }
 
-const launch = isolatedElectronLaunchOptions(repoRoot, tempRoot)
-const app = await electron.launch({
-  executablePath: require('electron'),
-  args: launch.args,
-  cwd: launch.cwd,
+const { app } = await launchNomiApp({
+  name: 'nomi-goal-feature-smoke',
+  tempRoot,
   env: {
-    ...launch.env,
     NOMI_E2E_SMOKE: '1',
+    NOMI_SOURCE_RUN: '1',
+    NOMI_CAPABILITY_DIR: path.join(tempRoot, 'capability-core'),
   },
 })
 const electronProcess = app.process()

@@ -1,13 +1,8 @@
-import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { _electron as electron } from 'playwright'
-import { isolatedElectronLaunchOptions } from '../tests/ux/helpers/electronFixture.mjs'
+import { launchNomiApp } from '../tests/ux/_launchApp.mjs'
 
-const require = createRequire(import.meta.url)
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-jimeng-dom-inspect-'))
 const outputDir = path.resolve(
   process.cwd(),
@@ -22,7 +17,7 @@ const targetConversationTitle = process.argv
   .find((arg) => arg.startsWith('--conversation='))
   ?.slice('--conversation='.length)
   .trim() || ''
-const launch = isolatedElectronLaunchOptions(repoRoot, tempRoot)
+const userDataDir = path.join(tempRoot, 'user-data')
 const sourceSession = path.join(
   os.homedir(),
   'Library',
@@ -31,7 +26,7 @@ const sourceSession = path.join(
   'Partitions',
   'nomi-jimeng-runner',
 )
-const targetSession = path.join(launch.paths.userDataDir, 'Partitions', 'nomi-jimeng-runner')
+const targetSession = path.join(userDataDir, 'Partitions', 'nomi-jimeng-runner')
 
 function copySession() {
   fs.mkdirSync(targetSession, { recursive: true })
@@ -60,7 +55,12 @@ function safeNetworkUrl(value) {
 
 copySession()
 fs.mkdirSync(outputDir, { recursive: true })
-const app = await electron.launch({ executablePath: require('electron'), ...launch })
+const { app } = await launchNomiApp({
+  name: 'nomi-jimeng-dom-inspect',
+  tempRoot,
+  userDataDir,
+  env: { NOMI_SOURCE_RUN: '1', NOMI_CAPABILITY_DIR: path.join(tempRoot, 'capability-core') },
+})
 
 try {
   const mainWindow = await app.firstWindow()

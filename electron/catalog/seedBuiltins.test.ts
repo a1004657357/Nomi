@@ -45,6 +45,33 @@ describe("applyBuiltinSeeds", () => {
     expect(mapping?.create.path).toBe("/api/v1/jobs/createTask");
   });
 
+  it("空目录：补齐 Agnes Video 2.5 Flash 模型与专属轮询参数", () => {
+    const { state } = applyBuiltinSeeds(emptyCatalog(), NOW);
+    const model = state.models.find(
+      (item) => item.vendorKey === "agnes" && item.modelKey === "agnes-video-2.5-flash",
+    );
+    expect(model).toMatchObject({
+      kind: "video",
+      enabled: true,
+      meta: { archetypeId: "agnes-video-2.5-flash" },
+    });
+
+    const mappings = state.mappings.filter(
+      (mapping) => mapping.vendorKey === "agnes" && mapping.modelKey === "agnes-video-2.5-flash",
+    );
+    expect(mappings.map((mapping) => mapping.taskKind).sort()).toEqual(["image_to_video", "text_to_video"]);
+    for (const mapping of mappings) {
+      expect(mapping.create.path).toBe("/v1/videos");
+      expect(mapping.query?.path).toBe("https://apihub.agnes-ai.com/agnesapi");
+      expect(mapping.query?.query).toMatchObject({ model_name: "agnes-video-2.5-flash" });
+      expect(mapping.query?.response_mapping?.video_url).toEqual([
+        "metadata.url",
+        "url",
+        "remixed_from_video_id",
+      ]);
+    }
+  });
+
   it("幂等：再次应用不重复添加、changed=false", () => {
     const first = applyBuiltinSeeds(emptyCatalog(), NOW);
     const second = applyBuiltinSeeds(first.state, NOW);

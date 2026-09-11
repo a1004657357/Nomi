@@ -1,14 +1,11 @@
 // Gate 8 capability recipe UI verification. Isolated, deterministic, and zero-spend:
 // it marks a seeded provider as connected with a fake key but never clicks generation.
-import { _electron as electron } from 'playwright'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
-import { isolatedElectronLaunchOptions } from './helpers/electronFixture.mjs'
+import { launchNomiApp } from './_launchApp.mjs'
 
-const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-capability-recipes-e2e-'))
 const evidenceDir = path.resolve(
@@ -424,8 +421,11 @@ const projectPayload = {
   },
 }
 
-const launch = isolatedElectronLaunchOptions(repoRoot, tempRoot)
-const app = await electron.launch({ executablePath: require('electron'), ...launch })
+const { app, projectsDir } = await launchNomiApp({
+  name: 'nomi-capability-recipes-e2e',
+  tempRoot,
+  env: { NOMI_SOURCE_RUN: '1', NOMI_CAPABILITY_DIR: path.join(tempRoot, 'capability-core') },
+})
 const electronProcess = app.process()
 const pageErrors = []
 
@@ -1210,9 +1210,9 @@ try {
       if (exportRelative === '' || (!exportRelative.startsWith('..') && !path.isAbsolute(exportRelative))) {
         throw new Error('项目导出目录不能位于 E2E 临时目录内')
       }
-      const sourceProjectDir = fs.readdirSync(launch.paths.projectsDir, { withFileTypes: true })
+      const sourceProjectDir = fs.readdirSync(projectsDir, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
-        .map((entry) => path.join(launch.paths.projectsDir, entry.name))
+        .map((entry) => path.join(projectsDir, entry.name))
         .find((candidate) => {
           const manifestPath = path.join(candidate, '.nomi', 'project.json')
           if (!fs.existsSync(manifestPath)) return false

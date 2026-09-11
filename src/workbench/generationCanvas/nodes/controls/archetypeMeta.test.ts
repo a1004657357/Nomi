@@ -727,7 +727,7 @@ describe('火山方舟 Seedance — 档案投影', () => {
   it('首帧模式：ratio 字段 + 默认变体 model 使用火山官方 Model ID', () => {
     const meta = { archetype: { id: 'volcengine-seedance-2', modeId: 'first' }, firstFrameUrl: 'F.png' }
     expect(buildArchetypeInputParams(meta, VOLC)).toEqual({
-      volcengine_first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
+      first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
       model: 'doubao-seedance-2-0-260128',
     })
     // seed 在官方字段表里、同族 apimart 档案也有——参数由模型身份决定与渠道无关，
@@ -748,8 +748,8 @@ describe('火山方舟 Seedance — 档案投影', () => {
   it('首尾帧：图像 item 带 first_frame / last_frame role', () => {
     const meta = { archetype: { id: 'volcengine-seedance-2', modeId: 'firstlast' }, firstFrameUrl: 'F.png', lastFrameUrl: 'L.png' }
     expect(buildArchetypeInputParams(meta, VOLC)).toEqual({
-      volcengine_first_role_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
-      volcengine_last_role_image_content: { type: 'image_url', image_url: { url: 'L.png' }, role: 'last_frame' },
+      first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
+      last_image_content: { type: 'image_url', image_url: { url: 'L.png' }, role: 'last_frame' },
       model: 'doubao-seedance-2-0-260128',
     })
   })
@@ -764,10 +764,42 @@ describe('火山方舟 Seedance — 档案投影', () => {
       referenceAudioUrls: ['a1.mp3'],
     }
     expect(buildArchetypeInputParams(meta, VOLC)).toEqual({
-      volcengine_image_contents: [{ type: 'image_url', image_url: { url: 'c1.png' }, role: 'reference_image' }],
-      volcengine_video_contents: [{ type: 'video_url', video_url: { url: 'v1.mp4' }, role: 'reference_video' }],
-      volcengine_audio_contents: [{ type: 'audio_url', audio_url: { url: 'a1.mp3' }, role: 'reference_audio' }],
+      image_contents: [{ type: 'image_url', image_url: { url: 'c1.png' }, role: 'reference_image' }],
+      video_contents: [{ type: 'video_url', video_url: { url: 'v1.mp4' }, role: 'reference_video' }],
+      audio_contents: [{ type: 'audio_url', audio_url: { url: 'a1.mp3' }, role: 'reference_audio' }],
       model: 'doubao-seedance-2-0-260128',
+    })
+  })
+})
+
+describe('Pixstag MiniMax-H3 — 档案投影（asContentItem 同一构造层，2026-09-12）', () => {
+  const PIX = getArchetypeById('minimax-h3-pixstag')!
+
+  it('四模式：文生 / 首帧 / 首尾帧 / 多模态参考', () => {
+    expect(PIX.modes.map((m) => m.id)).toEqual(['t2v', 'first', 'firstlast', 'ref'])
+  })
+
+  it('首帧模式：首/尾帧转 MiniMax v2 content 项（type + 嵌套 url + role）', () => {
+    const meta = { archetype: { id: 'minimax-h3-pixstag', modeId: 'first' }, firstFrameUrl: 'F.png' }
+    expect(buildArchetypeInputParams(meta, PIX)).toEqual({
+      first_image_content: { type: 'image_url', image_url: { url: 'F.png' }, role: 'first_frame' },
+    })
+  })
+
+  it('多模态参考：图/视频/音频数组各转 content 项数组，role 全来自官方 content[].role 枚举', () => {
+    const meta = {
+      archetype: { id: 'minimax-h3-pixstag', modeId: 'ref' },
+      referenceImageUrls: ['c1.png', 'c2.png'],
+      referenceVideoUrls: ['v1.mp4'],
+      referenceAudioUrls: ['a1.mp3'],
+    }
+    expect(buildArchetypeInputParams(meta, PIX)).toEqual({
+      image_contents: [
+        { type: 'image_url', image_url: { url: 'c1.png' }, role: 'reference_image' },
+        { type: 'image_url', image_url: { url: 'c2.png' }, role: 'reference_image' },
+      ],
+      video_contents: [{ type: 'video_url', video_url: { url: 'v1.mp4' }, role: 'reference_video' }],
+      audio_contents: [{ type: 'audio_url', audio_url: { url: 'a1.mp3' }, role: 'reference_audio' }],
     })
   })
 })

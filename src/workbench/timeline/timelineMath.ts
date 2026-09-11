@@ -68,6 +68,8 @@ function normalizeClip(input: unknown, fallbackType: TimelineTrackType): Timelin
     ...(raw.framing && typeof raw.framing === 'object'
       ? { framing: resolveClipFraming({ framing: raw.framing as Partial<ClipFraming> }) }
       : {}),
+    ...(normalizeString(raw.shotId) ? { shotId: normalizeString(raw.shotId) } : {}),
+    ...(normalizeString(raw.revisionId) ? { revisionId: normalizeString(raw.revisionId) } : {}),
   }
 }
 

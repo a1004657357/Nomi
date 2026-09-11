@@ -30,12 +30,14 @@ const ALLOWLIST = {
   // 先以合并后精确行数建立棘轮，避免把历史架构债伪装成此次 Seedance 2.5 回归；后续只能拆小，不能再增长。
   // 2026-08-15 合并 v0.19.0 后逐项复核：官方生产运行/模型接入与定制 Director/任务调度取并集。
   // 这些值是合并后的精确棘轮；后续只能降低。generated 档案由生成器维护，不宜手工拆分。
+  // 2026-09-12 接入 Pixstag（MiniMax-H3）：generated 档案随生成器 +22 行、onboardingProviders
+  // 精确吸收 Pixstag 接入卡 zh/en 18 行，重新锁定。
   'electron/ai/agentChatV2.ts': 809,
-  'electron/catalog/archetypeWireDefaults.generated.ts': 809,
+  'electron/catalog/archetypeWireDefaults.generated.ts': 847,
   'src/desktop/bridge.ts': 963,
   // 官方 PR #82 增加剪辑节点连续预览与分段导出文案，精确吸收 18 行后重新锁定。
   'src/i18n/locales/generationCommon.ts': 2465,
-  'src/i18n/locales/onboardingProviders.ts': 1537,
+  'src/i18n/locales/onboardingProviders.ts': 1555,
   'src/i18n/locales/scene3d.ts': 835,
   'src/workbench/generationCanvas/agent/applyCanvasToolCall.ts': 816,
   'src/workbench/generationCanvas/components/CanvasAssistantPanel.tsx': 756,

@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest'
 import { KNOWN_VENDORS } from './knownVendors'
 import { APIMART_VENDOR_SEED } from '../../electron/catalog/apimartVendor'
 import { AGNES_VENDOR_SEED } from '../../electron/catalog/agnesVendor'
+import { PIXSTAG_VENDOR_SEED } from '../../electron/catalog/pixstagVendor'
 import { KIE_VENDOR_SEED } from '../../electron/catalog/kieSeedance'
 import { MODELSCOPE_VENDOR_SEED } from '../../electron/catalog/modelscopeVendor'
 import { VOLCENGINE_VENDOR_SEED, VOLCENGINE_SPEECH_VENDOR_SEED } from '../../electron/catalog/volcengineVendor'
@@ -22,6 +23,7 @@ import { JIMENG_WEB_VENDOR_SEED } from '../../electron/catalog/jimengWeb'
 const SEEDED_BUILTIN_KEYS = new Set<string>([
   APIMART_VENDOR_SEED.key,
   AGNES_VENDOR_SEED.key,
+  PIXSTAG_VENDOR_SEED.key,
   KIE_VENDOR_SEED.key,
   MODELSCOPE_VENDOR_SEED.key,
   VOLCENGINE_VENDOR_SEED.key,

@@ -52,6 +52,7 @@ export function eligibleGenerationNodeIds(
     .filter((node) => {
       if (scope.categoryId && (node.categoryId || 'shots') !== scope.categoryId) return false
       if (scopedIds && !scopedIds.has(node.id)) return false
+      if (node.meta?.excludedFromBatch === true) return false
       if (!getGenerationNodeExecutionKind(node.kind)) return false
       const status = node.status ?? 'idle'
       return status === 'idle' || status === 'error'

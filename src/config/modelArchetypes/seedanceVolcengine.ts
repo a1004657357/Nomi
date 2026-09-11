@@ -22,7 +22,7 @@ const MODES: ModelArchetype["modes"] = [
     hint: "单张首帧图驱动生成",
     promptRequired: true,
     transportTaskKind: "image_to_video",
-    slots: [{ kind: "first_frame", label: "首帧", min: 1, max: 1, inputKey: "volcengine_first_image_content" }],
+    slots: [{ kind: "first_frame", label: "首帧", min: 1, max: 1, inputKey: "first_image_content", asContentItem: true }],
     params: PARAMS,
   },
   {
@@ -33,8 +33,8 @@ const MODES: ModelArchetype["modes"] = [
     promptRequired: true,
     transportTaskKind: "image_to_video",
     slots: [
-      { kind: "first_frame", label: "首帧", min: 1, max: 1, inputKey: "volcengine_first_role_image_content" },
-      { kind: "last_frame", label: "尾帧", min: 0, max: 1, inputKey: "volcengine_last_role_image_content" },
+      { kind: "first_frame", label: "首帧", min: 1, max: 1, inputKey: "first_image_content", asContentItem: true },
+      { kind: "last_frame", label: "尾帧", min: 0, max: 1, inputKey: "last_image_content", asContentItem: true },
     ],
     params: PARAMS,
   },
@@ -46,9 +46,9 @@ const MODES: ModelArchetype["modes"] = [
     promptRequired: true,
     transportTaskKind: "image_to_video",
     slots: [
-      { kind: "image_ref", label: "角色参考", min: 0, max: 9, characterIndexed: true, inputKey: "volcengine_image_contents" },
-      { kind: "video_ref", label: "参考视频", min: 0, max: 3, inputKey: "volcengine_video_contents" },
-      { kind: "audio_ref", label: "参考音频", min: 0, max: 3, inputKey: "volcengine_audio_contents" },
+      { kind: "image_ref", label: "角色参考", min: 0, max: 9, characterIndexed: true, inputKey: "image_contents", asContentItem: true },
+      { kind: "video_ref", label: "参考视频", min: 0, max: 3, inputKey: "video_contents", asContentItem: true },
+      { kind: "audio_ref", label: "参考音频", min: 0, max: 3, inputKey: "audio_contents", asContentItem: true },
     ],
     params: PARAMS,
   },

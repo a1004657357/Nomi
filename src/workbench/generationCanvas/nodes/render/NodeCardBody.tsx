@@ -6,6 +6,7 @@ import PropCardNode from './PropCardNode'
 import AudioStripNode from './AudioStripNode'
 // 画板 body 懒加载：它链到 WhiteboardModal→Leafer 画布(重)，只在画布真有画板节点时才拉。
 const WhiteboardCardBody = React.lazy(() => import('../whiteboard/WhiteboardCardBody'))
+const StoryboardTableNode = React.lazy(() => import('./StoryboardTableNode'))
 
 /**
  * 卡片式 body 分发（从 BaseGenerationNode 抽出，R9 治巨壳 + 收口）。
@@ -21,6 +22,14 @@ export function NodeCardBody({
   node: GenerationCanvasNode
   readOnly: boolean
 }): JSX.Element {
+  if (renderKind === 'storyboard-table') {
+    return (
+      <React.Suspense fallback={<div className='h-full w-full rounded-nomi bg-nomi-paper' />}>
+        <StoryboardTableNode node={node} />
+      </React.Suspense>
+    )
+  }
+
   return (
     <div className='w-full h-full rounded-nomi shadow-nomi-md overflow-hidden ring-1 ring-inset ring-nomi-line'>
       {renderKind === 'character-card' && <CharacterCardNode node={node} />}

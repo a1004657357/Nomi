@@ -44,14 +44,14 @@ describe("nativeWireProfileForArchetype", () => {
     expect(p?.create.text_to_video?.pathFrom).toBe("host-root");
     expect(p?.create.image_to_video?.pathFrom).toBe("host-root");
     expect(p?.query?.pathFrom).toBe("host-root");
-    // 原生 i2v body 必须真的读得到五类参考（这才是走它的理由）。
+    // 原生 i2v body 必须真的读得到五类参考（这才是走它的理由）。键随档案声明走（asContentItem 中性键）。
     const body = JSON.stringify(p?.create.image_to_video?.body);
     for (const key of [
-      "volcengine_first_role_image_content",
-      "volcengine_last_role_image_content",
-      "volcengine_image_contents",
-      "volcengine_video_contents",
-      "volcengine_audio_contents",
+      "first_image_content",
+      "last_image_content",
+      "image_contents",
+      "video_contents",
+      "audio_contents",
     ]) {
       expect(body).toContain(key);
     }

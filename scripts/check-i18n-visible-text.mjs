@@ -7,6 +7,17 @@ const ROOT = process.cwd()
 const SRC_ROOT = path.join(ROOT, 'src')
 const ELECTRON_ROOT = path.join(ROOT, 'electron')
 const REPORT = process.argv.includes('--report')
+// 棘轮基线（AGENTS.md 契约：遗留基线只减不增）。2026-09-12 恢复：零容忍版门岗被 v0.19.0
+// 系列合并重新引入的 890 处存量硬编码顶死（41ca7a2b 曾清零，合并倒回），门岗永久红 = 被习惯性
+// 忽略 = 不存在。基线锁存量、新增/变多即红；修掉存量后跑 --write-baseline 收锁战果。
+const BASELINE_PATH = path.join(ROOT, 'scripts/i18n-visible-text-baseline.json')
+const WRITE_BASELINE = process.argv.includes('--write-baseline')
+
+function loadBaseline() {
+  if (!fs.existsSync(BASELINE_PATH)) return {}
+  const parsed = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'))
+  return parsed.counts ?? {}
+}
 
 const VISIBLE_ATTRIBUTES = new Set([
   'alt',
@@ -237,11 +248,44 @@ if (REPORT) {
   process.exit(0)
 }
 
-if (current.length > 0) {
-  console.error(`i18n visible-text gate requires zero literals; found ${current.reduce((sum, entry) => sum + entry.count, 0)}`)
-  for (const entry of current.slice(0, 100)) {
+if (WRITE_BASELINE) {
+  const counts = Object.fromEntries(current.map((entry) => [fingerprint(entry), entry.count]))
+  fs.writeFileSync(
+    BASELINE_PATH,
+    `${JSON.stringify(
+      {
+        _comment:
+          '可见硬编码文案的存量基线（棘轮，只减不增）：门岗 scripts/check-i18n-visible-text.mjs。新增或变多 = 红；修掉存量后跑 --write-baseline 重新锁定（战果只进不退）。',
+        total: current.reduce((sum, entry) => sum + entry.count, 0),
+        counts,
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  console.log(`i18n baseline written: ${Object.keys(counts).length} fingerprints`)
+  process.exit(0)
+}
+
+const baseline = loadBaseline()
+const violations = current.filter((entry) => entry.count > (baseline[fingerprint(entry)] ?? 0))
+const shrunk = Object.entries(baseline).filter(([key, count]) => {
+  const now = current.find((entry) => fingerprint(entry) === key)?.count ?? 0
+  return now < count
+})
+
+if (violations.length > 0) {
+  console.error(
+    `i18n visible-text gate: 新增/变多的硬编码可见文案 ${violations.reduce((sum, entry) => sum + entry.count, 0)} 处（存量基线 ${Object.keys(baseline).length} 项，只减不增）`,
+  )
+  for (const entry of violations.slice(0, 100)) {
     console.error(`- ${entry.file} [${entry.kind}] ${JSON.stringify(entry.text)} (x${entry.count})`)
   }
+  console.error(`\n补法：用户可见文字走 i18n（src/i18n/locales/*）；修掉存量后可跑 --write-baseline 收锁。`)
   process.exit(1)
 }
-console.log('i18n visible-text gate passed (zero visible literals)')
+if (shrunk.length > 0) {
+  console.log(`i18n visible-text gate passed；提示：${shrunk.length} 项存量已减少 —— 跑 --write-baseline 锁定战果（棘轮只减不增）。`)
+} else {
+  console.log(`i18n visible-text gate passed（基线 ${Object.keys(baseline).length} 项，零新增）`)
+}

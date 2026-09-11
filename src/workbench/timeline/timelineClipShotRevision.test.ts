@@ -7,6 +7,7 @@
  * - 字段 optional：不破坏既有构造器与消费者。
  */
 import { describe, expect, it } from 'vitest'
+import { normalizeTimeline } from './timelineMath'
 import type { TimelineClip } from './timelineTypes'
 
 describe('TimelineClip — shotId/revisionId (§19.1, Gate 1 Slice 7)', () => {
@@ -42,5 +43,30 @@ describe('TimelineClip — shotId/revisionId (§19.1, Gate 1 Slice 7)', () => {
     }
     expect(clip.shotId).toBe('shot-07')
     expect(clip.revisionId).toBe('rev-vid-1')
+  })
+
+  it('keeps shotId + revisionId when a persisted timeline is normalized', () => {
+    const normalized = normalizeTimeline({
+      tracks: [{
+        id: 'videoTrack',
+        type: 'video',
+        clips: [{
+          id: 'c2',
+          type: 'video',
+          sourceNodeId: 'node-7',
+          label: '天台对峙',
+          startFrame: 120,
+          endFrame: 300,
+          frameCount: 180,
+          offsetStartFrame: 0,
+          offsetEndFrame: 0,
+          shotId: 'shot-07',
+          revisionId: 'rev-vid-1',
+        }],
+      }],
+    })
+    const clip = normalized.tracks.find((track) => track.type === 'video')?.clips[0]
+    expect(clip?.shotId).toBe('shot-07')
+    expect(clip?.revisionId).toBe('rev-vid-1')
   })
 })

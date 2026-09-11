@@ -38,6 +38,13 @@ export type ArchetypeReferenceSlot = {
    *  仅角色槽为 true（Seedance 全能参考、HappyHorse 角色参考）；普通参考图（如 video-edit 的参考图）为 false。 */
   characterIndexed?: boolean;
   /**
+   * **MiniMax 系 content 项序列化**（声明驱动，不 if-vendor）：该槽的值不按裸 url/urls 发，
+   * 而是包成 `{type, <type>: {url}, role}` 内容项 —— MiniMax v2（H3 / Pixstag）与火山方舟
+   * content[].role 同形线缆。type 由 kind 派生（图→image_url、视频→video_url、音频→audio_url），
+   * role = roleName ?? 由 kind 派生（DEFAULT_ROLE_FOR_KIND，单源）。单值槽产单项对象，数组槽产对象数组。
+   */
+  asContentItem?: boolean;
+  /**
    * **角色数组合并用**（配合 mode.combineSlotsInto）：该槽在合并出的对象数组里的 `role` 字段值。
    * **缺省由 kind 派生**（first_frame→first_frame、last_frame→last_frame、image_ref→reference_image，
    * 见 archetypeMeta DEFAULT_ROLE_FOR_KIND）——故绝大多数情况不写，避免 role 与 kind 两条平行真相源（P1）。

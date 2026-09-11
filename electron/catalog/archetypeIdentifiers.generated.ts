@@ -136,6 +136,9 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   "minimax-h3-apimart": [
     "MiniMax-H3"
   ],
+  "minimax-h3-pixstag": [
+    "MiniMax-H3"
+  ],
   "minimax-h3-regeneration": [
     "MiniMax-H3-Regeneration"
   ],
@@ -313,5 +316,8 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "agnes-video",
     "agnes-video-v2.0",
     "agnes-video-v2"
+  ],
+  "agnes-video-2.5-flash": [
+    "agnes-video-2.5-flash"
   ]
 };

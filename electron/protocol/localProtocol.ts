@@ -1,7 +1,12 @@
-import { net, protocol } from "electron";
+import { nativeImage, net, protocol } from "electron";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { contentTypeFromPath } from "../assets/assetPaths";
+import {
+  cachedLocalAssetThumbnail,
+  LOCAL_ASSET_THUMBNAIL_PARAM,
+  parseLocalAssetThumbnailSize,
+} from "../assets/localAssetThumbnail";
 import { resolveProjectRelativePath } from "../projects/repository";
 import { getArtifactPreviewSecret, verifyArtifactPreviewHandle } from "../productionRun/artifactProjection";
 
@@ -51,7 +56,12 @@ export function parseLocalAssetUrl(rawUrl: string): { projectId: string; filePat
         expected: { projectId, runId, artifactId, relativePath: relativeParts.join("/") },
       });
     } else if (queryKeys.length > 0) {
-      return null;
+      const thumbnailSize = parseLocalAssetThumbnailSize(url);
+      if (
+        !thumbnailSize
+        || queryKeys.length !== 1
+        || queryKeys[0] !== LOCAL_ASSET_THUMBNAIL_PARAM
+      ) return null;
     }
     const filePath = resolveProjectRelativePath(projectId, relativeParts.join("/"));
     return filePath ? { projectId, filePath } : null;
@@ -103,12 +113,44 @@ function rangeNotSatisfiable(size: number): Response {
   });
 }
 
+async function localAssetThumbnailResponse(
+  filePath: string,
+  request: Request,
+): Promise<Response | null> {
+  const thumbnailSize = parseLocalAssetThumbnailSize(new URL(request.url));
+  if (!thumbnailSize) return null;
+  const stat = fs.statSync(filePath);
+  const cacheKey = `${filePath}:${stat.mtimeMs}:${thumbnailSize.width}x${thumbnailSize.height}`;
+  const bytes = await cachedLocalAssetThumbnail(cacheKey, async () => {
+    const source = nativeImage.createFromPath(filePath);
+    if (source.isEmpty()) return null;
+    const sourceSize = source.getSize();
+    if (!sourceSize.width || !sourceSize.height) return null;
+    const scale = Math.min(
+      thumbnailSize.width / sourceSize.width,
+      thumbnailSize.height / sourceSize.height,
+      1,
+    );
+    const width = Math.max(1, Math.round(sourceSize.width * scale));
+    const height = Math.max(1, Math.round(sourceSize.height * scale));
+    return source.resize({ width, height, quality: "good" }).toPNG();
+  });
+  if (!bytes) return null;
+  const headers = withLocalAssetHeaders({
+    "Content-Type": "image/png",
+    "Content-Length": String(bytes.byteLength),
+  });
+  return new Response(request.method === "HEAD" ? null : new Uint8Array(bytes), { status: 200, headers });
+}
+
 export async function handleNomiLocalRequest(request: Request): Promise<Response> {
   try {
     const filePath = assetPathFromUrl(request.url);
     if (!filePath) {
       return new Response("Unsupported nomi-local host", { status: 404 });
     }
+    const thumbnailResponse = await localAssetThumbnailResponse(filePath, request);
+    if (thumbnailResponse) return thumbnailResponse;
     const rangeHeader = request.headers.get("range") || "";
     if (rangeHeader) {
       const stat = fs.statSync(filePath);

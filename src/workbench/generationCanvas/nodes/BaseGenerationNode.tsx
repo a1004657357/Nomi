@@ -187,7 +187,7 @@ function BaseGenerationNodeImpl({
   const renderKind = resolveNodeRenderKind(node)
   const isCardKind = isCardRenderKind(renderKind)
   // C5: 文本节点走专属可编辑 body（TextDocumentNode），像 card 那样脱离图片预览。
-  const isTextKind = node.kind === 'text'
+  const isTextKind = node.kind === 'text' && !isCardKind
   const hasResult = Boolean(node.result?.url)
   const imagePreviewUrl = node.kind !== 'panorama' && node.result?.type === 'image'
     ? (node.result.url || '').trim()

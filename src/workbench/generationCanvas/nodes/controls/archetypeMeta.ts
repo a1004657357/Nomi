@@ -502,18 +502,24 @@ function slotAsArray(slot: { kind: ArchetypeReferenceSlotKind; asArray?: boolean
   return slot.asArray ?? DEFAULT_AS_ARRAY[slot.kind]
 }
 
-function volcengineImageContentItem(url: string, role: string): Record<string, unknown> {
-  return { type: 'image_url', image_url: { url }, role }
+/** asContentItem 槽的 type 字段值（由 kind 派生，单一真相源）。 */
+const CONTENT_TYPE_FOR_KIND: Partial<Record<ArchetypeReferenceSlotKind, string>> = {
+  first_frame: 'image_url',
+  last_frame: 'image_url',
+  image_ref: 'image_url',
+  video_ref: 'video_url',
+  audio_ref: 'audio_url',
 }
 
-function volcengineContentItem(inputKey: string, url: string): Record<string, unknown> | null {
-  if (inputKey === 'volcengine_first_image_content')
-    return volcengineImageContentItem(url, DEFAULT_ROLE_FOR_KIND.first_frame ?? 'first_frame')
-  if (inputKey === 'volcengine_first_role_image_content')
-    return volcengineImageContentItem(url, DEFAULT_ROLE_FOR_KIND.first_frame ?? 'first_frame')
-  if (inputKey === 'volcengine_last_role_image_content')
-    return volcengineImageContentItem(url, DEFAULT_ROLE_FOR_KIND.last_frame ?? 'last_frame')
-  return null
+/** MiniMax 系 content 项（type + 嵌套 {url} + 顶层 role）：MiniMax v2（H3/Pixstag）与火山方舟同形线缆。 */
+function contentItemForSlot(
+  slot: { kind: ArchetypeReferenceSlotKind; roleName?: string },
+  url: string,
+): Record<string, unknown> {
+  const type = CONTENT_TYPE_FOR_KIND[slot.kind]
+  const role = slot.roleName ?? DEFAULT_ROLE_FOR_KIND[slot.kind]
+  if (!type) throw new Error(`asContentItem 槽的 kind 不支持内容项序列化: ${slot.kind}`)
+  return { type, [type]: { url }, ...(role ? { role } : {}) }
 }
 
 /**
@@ -593,15 +599,9 @@ export function buildArchetypeInputParams(
               : []
       const capped = mergeOrderedReferenceImageUrls(edgeList, metaList, slot.max)
       if (capped.length) {
-        if (inputKey === 'volcengine_image_contents') {
-          const role = DEFAULT_ROLE_FOR_KIND.image_ref ?? 'reference_image'
-          out[inputKey] = capped.map((url) => volcengineImageContentItem(url, role))
-        } else if (inputKey === 'volcengine_video_contents') {
-          const role = DEFAULT_ROLE_FOR_KIND.video_ref ?? 'reference_video'
-          out[inputKey] = capped.map((url) => ({ type: 'video_url', video_url: { url }, role }))
-        } else if (inputKey === 'volcengine_audio_contents') {
-          const role = DEFAULT_ROLE_FOR_KIND.audio_ref ?? 'reference_audio'
-          out[inputKey] = capped.map((url) => ({ type: 'audio_url', audio_url: { url }, role }))
+        // asContentItem（声明驱动）：数组槽 → content 项数组（type/role 由 kind 派生，单源）。
+        if (slot.asContentItem) {
+          out[inputKey] = capped.map((url) => contentItemForSlot(slot, url))
         } else if (!slotAsArray(slot) && slot.max === 1) {
           // 声明 asArray:false 的单容量数组路由槽（Agnes i2v 的 image）→ 发**单图字符串**，声明说话算话。
           // 旧实现无视 asArray 恒发数组 → Agnes Go 后端 Alias.image(string) 解析失败，Windows 用户
@@ -623,7 +623,8 @@ export function buildArchetypeInputParams(
     const raw = (typeof fromRef === 'string' && fromRef.trim()) ? fromRef.trim()
       : (typeof meta[metaKey] === 'string' ? (meta[metaKey] as string).trim() : '')
     if (raw) {
-      out[inputKey] = volcengineContentItem(inputKey, raw) ?? (asArray ? [raw] : raw)
+      // asContentItem 单值槽 → 单个 content 项对象；否则按裸字符串 / 字符串数组发。
+      out[inputKey] = slot.asContentItem ? contentItemForSlot(slot, raw) : (asArray ? [raw] : raw)
     }
   }
   // 角色数组合并（通用原语）：把本模式有值的槽 → [{url, role}] 落在 combineSlotsInto.key，删被合并的

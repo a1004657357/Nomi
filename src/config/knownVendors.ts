@@ -100,6 +100,20 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
     },
   },
   {
+    // Pixstag：MiniMax v2 官方线缆聚合（当前仅 MiniMax-H3，文生/首尾帧/多模态参考，最长 30 秒）。
+    vendorKey: 'pixstag',
+    glyph: 'P',
+    tagline: '一个 key，用 MiniMax H3 生视频（最长 30 秒）',
+    credentialPlaceholder: '粘贴 Pixstag API Key',
+    credentialHint:
+      '去 pixstag.com 注册并在控制台创建 API Key（credit 按量计费）。目前提供 MiniMax H3：文生 / 首尾帧 / 多模态参考，4–30 秒、720P–2K。凭证本地加密存储。',
+    promo: {
+      text: 'Pixstag 提供 MiniMax H3 官方 v2 线缆：参考图/视频/音频进同一条 content 通道，比例自适应，最长 30 秒。credit 按量计费。',
+      ctaLabel: '去 Pixstag 注册',
+      url: 'https://pixstag.com',
+    },
+  },
+  {
     vendorKey: 'kie',
     logo: new URL('../assets/vendor-logos/kie.png', import.meta.url).href,
     glyph: 'K',

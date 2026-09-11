@@ -39,18 +39,30 @@ export const AGNES_STATUS_MAPPING: Record<string, string[]> = {
 };
 
 /**
- * 视频轮询 op（所有 AGNES 视频模型共用）。video_id 走 **query 参数**（appendQueryParams 渲染）；
- * 成品 URL 优先取官方顶层 url，并兼容旧版 live 的 remixed_from_video_id。
+ * 视频轮询 op 工厂。2.5 系列的 keyframe/reference 任务要求额外携带 model_name；
+ * 成品 URL 优先取 2.5 官方 metadata.url，并兼容 v2.0 顶层 url 与旧版 live 的
+ * remixed_from_video_id。
  */
-export const AGNES_VIDEO_QUERY_OP: HttpOperation = {
-  method: "GET",
-  path: "https://apihub.agnes-ai.com/agnesapi",
-  headers: { Authorization: "Bearer {{user_api_key}}" },
-  query: { video_id: "{{providerMeta.video_id}}" },
-  response_mapping: {
-    task_id: "video_id",
-    status: "status",
-    video_url: ["url", "remixed_from_video_id"],
-    error_message: "error",
-  },
-};
+export function agnesVideoQueryOp(modelName?: string): HttpOperation {
+  return {
+    method: "GET",
+    path: "https://apihub.agnes-ai.com/agnesapi",
+    headers: { Authorization: "Bearer {{user_api_key}}" },
+    query: {
+      video_id: "{{providerMeta.video_id}}",
+      ...(modelName ? { model_name: modelName } : {}),
+    },
+    response_mapping: {
+      task_id: "video_id",
+      status: "status",
+      video_url: ["metadata.url", "url", "remixed_from_video_id"],
+      error_message: ["error.message", "error"],
+    },
+  };
+}
+
+/** v2.0 兼容轮询；保留原导出供既有数据与测试使用。 */
+export const AGNES_VIDEO_QUERY_OP: HttpOperation = agnesVideoQueryOp();
+
+/** Video 2.5 Flash 所有模式都使用带 model_name 的推荐轮询形式。 */
+export const AGNES_VIDEO_25_FLASH_QUERY_OP: HttpOperation = agnesVideoQueryOp("agnes-video-2.5-flash");

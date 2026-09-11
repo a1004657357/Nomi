@@ -98,6 +98,21 @@ describe("resolveArchetypeForModel — 供应商无关的识别桥", () => {
     expect(arch.modes.find((m) => m.id === "i2v")?.params.map((p) => p.key)).toEqual(["quality", "duration"]);
   });
 
+  it("Agnes Video 2.5 Flash：独立档案锁定 720P 协议与四种生成模式", () => {
+    const arch = resolveArchetypeForModel({ modelKey: "agnes-video-2.5-flash", vendorKey: "agnes" });
+    expect(arch?.id).toBe("agnes-video-2.5-flash");
+    expect(arch?.modes.map((mode) => mode.id)).toEqual(["t2v", "reference", "firstlast", "keyframe"]);
+    expect(arch?.modes.find((mode) => mode.id === "reference")?.slots).toEqual([
+      { kind: "image_ref", label: "参考图", min: 1, max: 5, inputKey: "images" },
+      { kind: "audio_ref", label: "参考音频", min: 0, max: 5, inputKey: "audios" },
+    ]);
+    expect(arch?.modes.find((mode) => mode.id === "keyframe")?.fixedParams).toEqual({ mode: "keyframe" });
+    expect(arch?.modes[0].params.find((param) => param.key === "duration")?.options.map((option) => option.value)).toEqual([
+      "4", "5", "6", "7", "8", "9", "10", "11", "12",
+    ]);
+    expect(arch?.modes[0].params.some((param) => param.key === "resolution")).toBe(false);
+  });
+
   it("火山方舟 Seedance 2.0：标准/Fast/Mini 解析到火山专属档案", () => {
     expect(resolveArchetypeForModel({ modelKey: "doubao-seedance-2-0-260128" })?.id).toBe("volcengine-seedance-2");
     expect(resolveArchetypeForModel({ modelKey: "doubao-seedance-2-0-fast-260128" })?.id).toBe("volcengine-seedance-2");

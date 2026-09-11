@@ -160,6 +160,15 @@ export const zhOnboardingProviders = {
         'Agnes AI（新加坡 Sapiens AI）把文本/图片/视频三模态 API 无限期免费开放，OpenAI 兼容。邮箱注册不绑卡即可拿 Key。',
       promoCta: '去 Agnes 注册（免费）',
     },
+    pixstag: {
+      tagline: '一个 key，用 MiniMax H3 生视频（最长 30 秒）',
+      credentialPlaceholder: '粘贴 Pixstag API Key',
+      credentialHint:
+        '去 pixstag.com 注册并在控制台创建 API Key（credit 按量计费）。目前提供 MiniMax H3：文生 / 首尾帧 / 多模态参考，4–30 秒、720P–2K。凭证本地加密存储。',
+      promoText:
+        'Pixstag 提供 MiniMax H3 官方 v2 线缆：参考图/视频/音频进同一条 content 通道，比例自适应，最长 30 秒。credit 按量计费。',
+      promoCta: '去 Pixstag 注册',
+    },
     kie: {
       tagline: '一个 key，解锁内置模型',
       promoText: '如果你愿意，可以用我们的链接注册；不愿意也可以直接去官方注册。',
@@ -931,6 +940,15 @@ export const enOnboardingProviders = {
       promoText:
         'Agnes AI by Singapore-based Sapiens AI provides free OpenAI-compatible text, image, and video APIs. Sign up with email without a card to get a key.',
       promoCta: 'Register with Agnes for free',
+    },
+    pixstag: {
+      tagline: 'One key for MiniMax H3 video (up to 30 seconds)',
+      credentialPlaceholder: 'Paste your Pixstag API Key',
+      credentialHint:
+        'Register at pixstag.com and create an API Key in the console (pay-as-you-go credits). Currently offers MiniMax H3: text-to-video, first/last frame, and multimodal reference, 4–30 seconds at 720P–2K. Credentials are encrypted locally.',
+      promoText:
+        'Pixstag carries the official MiniMax H3 v2 wire: reference images, videos, and audio ride the same content channel, with adaptive ratio and up to 30 seconds. Pay-as-you-go credits.',
+      promoCta: 'Register with Pixstag',
     },
     kie: {
       tagline: 'One key unlocks built-in models',

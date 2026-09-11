@@ -333,6 +333,28 @@ export const ARCHETYPE_WIRE_DEFAULTS: Record<string, Record<string, Record<strin
       }
     }
   },
+  "minimax-h3-pixstag": {
+    "text_to_video": {
+      "*": {
+        "ratio": "adaptive",
+        "resolution": "2K",
+        "duration": 5,
+        "aigc_watermark": false,
+        "use_context_ir": false,
+        "return_last_frame": false
+      }
+    },
+    "image_to_video": {
+      "*": {
+        "ratio": "adaptive",
+        "resolution": "2K",
+        "duration": 5,
+        "aigc_watermark": false,
+        "use_context_ir": false,
+        "return_last_frame": false
+      }
+    }
+  },
   "vidu-q3": {
     "image_to_video": {
       "*": {
@@ -803,6 +825,22 @@ export const ARCHETYPE_WIRE_DEFAULTS: Record<string, Record<string, Record<strin
         "aspect_ratio": "16:9",
         "resolution": "720p",
         "duration": 5
+      }
+    }
+  },
+  "agnes-video-2.5-flash": {
+    "text_to_video": {
+      "*": {
+        "mode": "text",
+        "aspect_ratio": "16:9",
+        "duration": "5"
+      }
+    },
+    "image_to_video": {
+      "*": {
+        "mode": "keyframe",
+        "aspect_ratio": "16:9",
+        "duration": "5"
       }
     }
   }

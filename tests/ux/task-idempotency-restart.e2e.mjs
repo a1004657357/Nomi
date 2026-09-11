@@ -1,16 +1,11 @@
 // Production-wiring smoke: two real Electron processes, local invalid vendor only, no Provider request.
-import { _electron as electron } from 'playwright'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
-import { isolatedElectronLaunchOptions } from './helpers/electronFixture.mjs'
+import { launchNomiApp } from './_launchApp.mjs'
 
-const require = createRequire(import.meta.url)
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-idempotency-restart-'))
-const launch = isolatedElectronLaunchOptions(repoRoot, tempRoot)
+const settingsDir = path.join(tempRoot, 'settings')
 const payload = {
   vendor: 'nomi-local-invalid-vendor',
   request: {
@@ -26,15 +21,18 @@ function assert(condition, message) {
 }
 
 async function launchAndSubmit() {
-  const app = await electron.launch({
-    executablePath: require('electron'),
-    args: launch.args,
-    cwd: launch.cwd,
-    env: { ...launch.env, NOMI_E2E_SMOKE: '1', NOMI_DISABLE_CAPABILITY_CORE: '1' },
+  // 同一 tempRoot 复用（启动器只建目录不清空）：第二次启动必须读到上一会话的 ledger。
+  const { app, win } = await launchNomiApp({
+    name: 'nomi-idempotency-restart',
+    tempRoot,
+    env: {
+      NOMI_E2E_SMOKE: '1',
+      NOMI_DISABLE_CAPABILITY_CORE: '1',
+      NOMI_SOURCE_RUN: '1',
+      NOMI_CAPABILITY_DIR: path.join(tempRoot, 'capability-core'),
+    },
   })
   try {
-    const win = await app.firstWindow()
-    await win.waitForLoadState('domcontentloaded')
     return await win.evaluate(async (taskPayload) => {
       try {
         await window.nomiDesktop.tasks.run(taskPayload)
@@ -52,7 +50,7 @@ try {
   const firstError = await launchAndSubmit()
   assert(/invalid|vendor|模型|供应商/i.test(firstError), 'first process reaches local validation only')
 
-  const ledgerPath = path.join(launch.paths.settingsDir, 'tasks', 'ledger.jsonl')
+  const ledgerPath = path.join(settingsDir, 'tasks', 'ledger.jsonl')
   assert(fs.existsSync(ledgerPath), 'production main initializes and writes settings/tasks/ledger.jsonl')
   const firstLines = fs.readFileSync(ledgerPath, 'utf8').trim().split('\n').filter(Boolean)
   const firstRecords = firstLines.map((line) => JSON.parse(line))

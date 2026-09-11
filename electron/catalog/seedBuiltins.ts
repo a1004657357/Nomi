@@ -43,10 +43,12 @@ import { APIMART_IMAGE_MODELS, APIMART_IMAGE_QUERY, APIMART_IMAGE_STATUS } from 
 import { APIMART_VIDEO_MODELS, APIMART_VIDEO_QUERY, APIMART_VIDEO_STATUS } from "./apimartVideos";
 import { APIMART_AUDIO_MODELS } from "./apimartAudios";
 import { APIMART_TEXT_MAPPINGS, APIMART_TEXT_MODELS } from "./apimartTexts";
-import { AGNES_VENDOR_SEED, AGNES_VIDEO_QUERY_OP, AGNES_STATUS_MAPPING } from "./agnesVendor";
+import { AGNES_VENDOR_SEED, AGNES_STATUS_MAPPING } from "./agnesVendor";
 import { AGNES_IMAGE_MODELS } from "./agnesImages";
 import { AGNES_VIDEO_MODELS } from "./agnesVideos";
 import { AGNES_TEXT_MODELS } from "./agnesTexts";
+import { PIXSTAG_VENDOR_SEED, PIXSTAG_STATUS_MAPPING, PIXSTAG_VIDEO_QUERY_OP } from "./pixstagVendor";
+import { PIXSTAG_VIDEO_MODELS } from "./pixstagVideos";
 import { MODELSCOPE_VENDOR_SEED } from "./modelscopeVendor";
 import { MODELSCOPE_IMAGE_MODELS, MODELSCOPE_IMAGE_QUERY, MODELSCOPE_IMAGE_STATUS } from "./modelscopeImages";
 import { MODELSCOPE_TEXT_MODELS } from "./modelscopeTexts";
@@ -190,14 +192,25 @@ const AGNES_CURATED_MAPPINGS: CuratedMapping[] = [
   ...AGNES_IMAGE_MODELS.flatMap((m) =>
     m.mappings.map((mp) => ({ id: mp.id, taskKind: mp.taskKind, modelKey: m.modelKey, name: mp.name, create: mp.create })),
   ),
-  // 视频异步族：共用 AGNES_VIDEO_QUERY_OP 轮询 + AGNES_STATUS_MAPPING 状态归一。
+  // 视频异步族：每款模型携带自己的轮询参数（2.5 Flash 必须带 model_name）。
   ...AGNES_VIDEO_MODELS.flatMap((m) =>
     m.mappings.map((mp) => ({
       id: mp.id, taskKind: mp.taskKind, modelKey: m.modelKey, name: mp.name,
-      create: mp.create, query: AGNES_VIDEO_QUERY_OP, statusMapping: AGNES_STATUS_MAPPING,
+      create: mp.create, query: mp.query, statusMapping: AGNES_STATUS_MAPPING,
     })),
   ),
 ];
+
+/** Pixstag（MiniMax v2 线缆聚合）curated 模型 + mapping。视频异步族：共用 query op + status mapping。 */
+const PIXSTAG_CURATED_MODELS: CuratedModel[] = PIXSTAG_VIDEO_MODELS.map((m) => ({
+  modelKey: m.modelKey, labelZh: m.labelZh, kind: "video" as const, archetypeId: m.archetypeId,
+}));
+const PIXSTAG_CURATED_MAPPINGS: CuratedMapping[] = PIXSTAG_VIDEO_MODELS.flatMap((m) =>
+  m.mappings.map((mp) => ({
+    id: mp.id, taskKind: mp.taskKind, modelKey: m.modelKey, name: mp.name,
+    create: mp.create, query: PIXSTAG_VIDEO_QUERY_OP, statusMapping: PIXSTAG_STATUS_MAPPING,
+  })),
+);
 
 /** 魔搭社区（官方原生）curated 模型 + mapping。图片：async create→poll；文本：免费 LLM(无 mapping，直连 chat)。 */
 const MODELSCOPE_CURATED_MODELS: CuratedModel[] = [
@@ -509,6 +522,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (seedVendor(vendors, KIE_VENDOR_SEED, now)) changed = true;
   if (seedVendor(vendors, APIMART_VENDOR_SEED, now)) changed = true;
   if (seedVendor(vendors, AGNES_VENDOR_SEED, now)) changed = true; // Agnes AI（带免费/default 配额的全模态网关）
+  if (seedVendor(vendors, PIXSTAG_VENDOR_SEED, now)) changed = true; // Pixstag（MiniMax v2 线缆聚合，MiniMax-H3）
   if (seedVendor(vendors, MODELSCOPE_VENDOR_SEED, now)) changed = true;
   if (seedVendor(vendors, VOLCENGINE_VENDOR_SEED, now)) changed = true;
   if (seedVendor(vendors, VOLCENGINE_SPEECH_VENDOR_SEED, now)) changed = true;
@@ -535,6 +549,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (reconcileModels(models, KIE_VENDOR_SEED.key, KIE_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, APIMART_VENDOR_SEED.key, APIMART_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, AGNES_VENDOR_SEED.key, AGNES_CURATED_MODELS, now)) changed = true;
+  if (reconcileModels(models, PIXSTAG_VENDOR_SEED.key, PIXSTAG_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, MODELSCOPE_VENDOR_SEED.key, MODELSCOPE_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, VOLCENGINE_VENDOR_SEED.key, VOLCENGINE_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, VOLCENGINE_SPEECH_VENDOR_SEED.key, VOLCENGINE_SPEECH_CURATED_MODELS, now)) changed = true;
@@ -568,6 +583,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (reconcileMappings(mappings, KIE_VENDOR_SEED.key, KIE_CURATED_MAPPINGS, now)) changed = true;
   if (reconcileMappings(mappings, APIMART_VENDOR_SEED.key, APIMART_CURATED_MAPPINGS, now)) changed = true;
   if (reconcileMappings(mappings, AGNES_VENDOR_SEED.key, AGNES_CURATED_MAPPINGS, now)) changed = true;
+  if (reconcileMappings(mappings, PIXSTAG_VENDOR_SEED.key, PIXSTAG_CURATED_MAPPINGS, now)) changed = true;
   if (reconcileMappings(mappings, MODELSCOPE_VENDOR_SEED.key, MODELSCOPE_CURATED_MAPPINGS, now)) changed = true;
   if (reconcileMappings(mappings, VOLCENGINE_VENDOR_SEED.key, VOLCENGINE_CURATED_MAPPINGS, now)) changed = true;
   if (reconcileMappings(mappings, VOLCENGINE_SPEECH_VENDOR_SEED.key, VOLCENGINE_SPEECH_CURATED_MAPPINGS, now)) changed = true;

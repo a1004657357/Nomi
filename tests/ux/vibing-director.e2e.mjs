@@ -1,8 +1,6 @@
 // Gate 8 zero-spend VIBING Director UI smoke.
 // Seeds one Blender-return node, opens the fullscreen Director, verifies the
 // spatial-quality UI, and drags the real R3F model preview.
-import { _electron as electron } from 'playwright'
-import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
@@ -10,9 +8,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
-import { isolatedElectronLaunchOptions } from './helpers/electronFixture.mjs'
+import { launchNomiApp } from './_launchApp.mjs'
 
-const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-vibing-director-e2e-'))
 const evidenceDir = path.resolve(
@@ -173,16 +170,15 @@ const vite = spawn('node', ['node_modules/vite/bin/vite.js', '--host', '127.0.0.
 })
 await waitForUrl(devUrl, 60_000)
 
-const launch = isolatedElectronLaunchOptions(repoRoot, tempRoot)
-const app = await electron.launch({
-  executablePath: require('electron'),
-  args: launch.args,
-  cwd: launch.cwd,
+const { app } = await launchNomiApp({
+  name: 'nomi-vibing-director-e2e',
+  tempRoot,
   env: {
-    ...launch.env,
     NOMI_DESKTOP_DEV: '1',
     VITE_DEV_SERVER_URL: devUrl,
     NOMI_E2E_SMOKE: '1',
+    NOMI_SOURCE_RUN: '1',
+    NOMI_CAPABILITY_DIR: path.join(tempRoot, 'capability-core'),
   },
 })
 const electronProcess = app.process()

@@ -76,14 +76,14 @@ describe("火山 Seedance 接入（官方 Video Generation API 形状锁·异步
   it("图生 create：content 由文本 + 当前模式 content item 占位符组成", () => {
     const i2v = VOLCENGINE_VIDEO_MODELS[0].mappings.find((m) => m.id.endsWith("image_to_video"))!;
     const content = ((i2v.create.body as { content: unknown[] }).content) as Array<Record<string, unknown> | string>;
+    // 键随档案声明走（asContentItem 槽，2026-09-12 从 volcengine_* 特判泛化成中性键）。
     expect(content).toEqual([
       { type: "text", text: "{{request.prompt}}" },
-      "{{request.params.volcengine_first_image_content}}",
-      "{{request.params.volcengine_first_role_image_content}}",
-      "{{request.params.volcengine_last_role_image_content}}",
-      "{{request.params.volcengine_image_contents}}",
-      "{{request.params.volcengine_video_contents}}",
-      "{{request.params.volcengine_audio_contents}}",
+      "{{request.params.first_image_content}}",
+      "{{request.params.last_image_content}}",
+      "{{request.params.image_contents}}",
+      "{{request.params.video_contents}}",
+      "{{request.params.audio_contents}}",
     ]);
   });
 

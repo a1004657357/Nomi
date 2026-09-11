@@ -165,13 +165,20 @@ describe("executeProfileOperation AGNES preflight", () => {
       operationTimings: timings,
     });
 
+    // totalMs = 输入 totalMs + 真实测量的 assetPersistenceMs（0/1ms 抖动）——精确值断言必 flaky，
+    // 锁语义而非锁数字：其余字段原样透传，totalMs 恰好加上了分离记录的 assetPersistenceMs。
     expect(normalized.result.raw).toMatchObject({
       __nomi: {
         profileOperation: {
           ...timings,
+          totalMs: expect.any(Number),
           assetPersistenceMs: expect.any(Number),
         },
       },
     });
+    const recorded = (normalized.result.raw as {
+      __nomi?: { profileOperation?: { totalMs: number; assetPersistenceMs: number } };
+    }).__nomi?.profileOperation;
+    expect(recorded?.totalMs).toBe(timings.totalMs + (recorded?.assetPersistenceMs ?? 0));
   });
 });

@@ -5,6 +5,15 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({
   protocol: { handle: vi.fn() },
+  nativeImage: {
+    createFromPath: vi.fn(() => ({
+      isEmpty: () => false,
+      getSize: () => ({ width: 400, height: 200 }),
+      resize: ({ width, height }: { width: number; height: number }) => ({
+        toPNG: () => Buffer.from(`thumbnail:${width}x${height}`),
+      }),
+    })),
+  },
   net: {
     fetch: vi.fn(async (url: string) => {
       const filePath = new URL(url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
@@ -72,6 +81,17 @@ describe("handleNomiLocalRequest", () => {
     expect(response.headers.get("Accept-Ranges")).toBe("bytes");
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
     expect(await response.text()).toBe("0123456789");
+  });
+
+  it("serves bounded local image thumbnails without weakening query validation", async () => {
+    const response = await handleNomiLocalRequest(new Request(`${assetUrl()}?nomi-thumbnail=160x160`));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("image/png");
+    expect(await response.text()).toBe("thumbnail:160x80");
+
+    const unknownQuery = await handleNomiLocalRequest(new Request(`${assetUrl()}?download=1`));
+    expect(unknownQuery.status).toBe(404);
   });
 
   it("requires a valid scoped preview token when a preview query is present", async () => {

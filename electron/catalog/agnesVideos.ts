@@ -14,6 +14,7 @@
 
 import type { HttpOperation, ProfileKind } from "./types";
 import type { ParamMap } from "./paramTranslate";
+import { AGNES_VIDEO_25_FLASH_QUERY_OP, AGNES_VIDEO_QUERY_OP } from "./agnesVendor";
 
 const CREATE_HEADERS = { Authorization: "Bearer {{user_api_key}}", "Content-Type": "application/json" };
 
@@ -56,22 +57,77 @@ function videoCreateOp(i2v: boolean): HttpOperation {
   };
 }
 
+const AGNES_FLASH_PARAM_MAP: ParamMap = {
+  rules: [{ wire: "seconds", from: "duration" }],
+};
+
+/**
+ * Agnes Video 2.5 Flash 使用全新的 OpenAI Videos 兼容报文。
+ * mode 由档案模式固定注入；不存在的媒体字段会被模板引擎整键丢弃，避免模式互斥冲突。
+ */
+function flashVideoCreateOp(defaultMode: "text" | "keyframe"): HttpOperation {
+  return {
+    method: "POST",
+    path: "/v1/videos",
+    headers: CREATE_HEADERS,
+    body: {
+      model: "{{model.modelKey}}",
+      prompt: "{{request.prompt}}",
+      mode: "{{request.params.mode}}",
+      seconds: "{{request.params.seconds}}",
+      size: "720P",
+      aspect_ratio: "{{request.params.aspect_ratio}}",
+      seed: "{{request.params.seed}}",
+      n: 1,
+      first_frame: "{{request.params.image_url}}",
+      last_frame: "{{request.params.last_frame}}",
+      images: "{{request.params.images}}",
+      audios: "{{request.params.audios}}",
+    },
+    response_mapping: { task_id: "video_id" },
+    provider_meta_mapping: { video_id: "video_id" },
+    paramMap: AGNES_FLASH_PARAM_MAP,
+    defaultParams: { aspect_ratio: "16:9", duration: "5", mode: defaultMode },
+  };
+}
+
 export type AgnesVideoModel = {
   modelKey: string;
   labelZh: string;
   archetypeId: string;
-  mappings: { id: string; taskKind: ProfileKind; name: string; create: HttpOperation }[];
+  mappings: { id: string; taskKind: ProfileKind; name: string; create: HttpOperation; query: HttpOperation }[];
 };
 
-/** AGNES 视频模型（单款 v2.0；t2v + i2v 两条 mapping，共用轮询）。 */
+/** AGNES 视频模型。v2.0 与 2.5 Flash 的请求协议不同，分别维护传输映射。 */
 export const AGNES_VIDEO_MODELS: AgnesVideoModel[] = [
   {
     modelKey: "agnes-video-v2.0",
     labelZh: "Agnes Video V2.0",
     archetypeId: "agnes-video",
     mappings: [
-      { id: "seed-agnes-video-v2-text_to_video", taskKind: "text_to_video", name: "Agnes Video V2.0 · 文生视频", create: videoCreateOp(false) },
-      { id: "seed-agnes-video-v2-image_to_video", taskKind: "image_to_video", name: "Agnes Video V2.0 · 图生视频", create: videoCreateOp(true) },
+      { id: "seed-agnes-video-v2-text_to_video", taskKind: "text_to_video", name: "Agnes Video V2.0 · 文生视频", create: videoCreateOp(false), query: AGNES_VIDEO_QUERY_OP },
+      { id: "seed-agnes-video-v2-image_to_video", taskKind: "image_to_video", name: "Agnes Video V2.0 · 图生视频", create: videoCreateOp(true), query: AGNES_VIDEO_QUERY_OP },
+    ],
+  },
+  {
+    modelKey: "agnes-video-2.5-flash",
+    labelZh: "Agnes Video 2.5 Flash（限时免费）",
+    archetypeId: "agnes-video-2.5-flash",
+    mappings: [
+      {
+        id: "seed-agnes-video-2-5-flash-text_to_video",
+        taskKind: "text_to_video",
+        name: "Agnes Video 2.5 Flash · 文生视频",
+        create: flashVideoCreateOp("text"),
+        query: AGNES_VIDEO_25_FLASH_QUERY_OP,
+      },
+      {
+        id: "seed-agnes-video-2-5-flash-image_to_video",
+        taskKind: "image_to_video",
+        name: "Agnes Video 2.5 Flash · 关键帧/参考生成",
+        create: flashVideoCreateOp("keyframe"),
+        query: AGNES_VIDEO_25_FLASH_QUERY_OP,
+      },
     ],
   },
 ];

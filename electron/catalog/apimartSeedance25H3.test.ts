@@ -25,7 +25,9 @@ describe("APIMart Seedance 2.5 / MiniMax-H3 curated 接入", () => {
       return_last_frame: "{{request.params.return_last_frame}}",
     });
 
-    const h3 = state.mappings.filter((m) => m.modelKey === "MiniMax-H3");
+    // 按 vendorKey 收窄：MiniMax-H3 是跨家 modelKey（apimart 扁平线缆 / pixstag content 数组线缆），
+    // 只按 modelKey 过滤会把 pixstag 的同名 mapping 一并捞进来。
+    const h3 = state.mappings.filter((m) => m.vendorKey === "apimart" && m.modelKey === "MiniMax-H3");
     expect(h3.map((m) => m.taskKind)).toEqual(["text_to_video", "image_to_video"]);
     expect(h3[1].create.body).toMatchObject({
       first_frame_image: "{{request.params.first_frame_image}}",

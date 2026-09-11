@@ -2,13 +2,11 @@
 // Paid execution requires NOMI_ALLOW_PAID_EVAL=1 (or --allow-paid) and still
 // confirms every batch through Nomi's product spend dialog.
 import { execFileSync } from 'node:child_process'
-import { _electron as electron } from 'playwright'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
-import { isolatedElectronLaunchOptions } from '../tests/ux/helpers/electronFixture.mjs'
+import { launchNomiApp } from '../tests/ux/_launchApp.mjs'
 import {
   CAPABILITY_REAL_SMOKE_HELP,
   classifyProviderFailure,
@@ -34,7 +32,6 @@ if (smokeHelpRequested()) {
   process.exit(0)
 }
 
-const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const config = parseSmokeConfig()
 const stamp = new Date().toISOString().replaceAll(':', '-').replace(/\.\d{3}Z$/, 'Z')
@@ -747,14 +744,23 @@ state.policy = {
 }
 persistState(state)
 
-const launch = isolatedElectronLaunchOptions(repoRoot, tempRoot, {
-  ...process.env,
-  NOMI_CODEX_IMG2_TIMEOUT_MS: process.env.NOMI_CODEX_IMG2_TIMEOUT_MS || String(config.timeoutMs),
-})
-const userSettingsCopied = copyUserCatalogIfRequested(launch.paths.settingsDir)
-const userJimengSessionCopied = copyUserJimengSessionIfRequested(launch.paths.userDataDir)
+// 预拷贝用户 catalog/即梦会话到隔离目录后再启动（launchNomiApp 只建目录不清空，先种后起安全）。
+const settingsDir = path.join(tempRoot, 'settings')
+const userDataDir = path.join(tempRoot, 'user-data')
+const userSettingsCopied = copyUserCatalogIfRequested(settingsDir)
+const userJimengSessionCopied = copyUserJimengSessionIfRequested(userDataDir)
 const codexHomesBefore = tempEntries('nomi-codex-home-')
-const app = await electron.launch({ executablePath: require('electron'), ...launch })
+const { app } = await launchNomiApp({
+  name: 'nomi-capability-recipes-real-smoke',
+  tempRoot,
+  settingsDir,
+  userDataDir,
+  env: {
+    NOMI_CODEX_IMG2_TIMEOUT_MS: process.env.NOMI_CODEX_IMG2_TIMEOUT_MS || String(config.timeoutMs),
+    NOMI_SOURCE_RUN: '1',
+    NOMI_CAPABILITY_DIR: path.join(tempRoot, 'capability-core'),
+  },
+})
 const electronProcess = app.process()
 const pageErrors = []
 let appClosed = false

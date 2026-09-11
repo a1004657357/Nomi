@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveNodeRenderKind, isCardRenderKind } from "./resolveRenderKind";
 
-const node = (over: { kind: string; renderKind?: string; categoryId?: string }) =>
+const node = (over: { kind: string; renderKind?: string; categoryId?: string; meta?: Record<string, unknown> }) =>
   over as Parameters<typeof resolveNodeRenderKind>[0];
 
 describe("resolveNodeRenderKind — 渲染分发优先级（kind > categoryId）", () => {
@@ -25,6 +25,21 @@ describe("resolveNodeRenderKind — 渲染分发优先级（kind > categoryId）
 
   it("显式 node.renderKind 覆盖一切", () => {
     expect(resolveNodeRenderKind(node({ kind: "character", renderKind: "shot-frame" }))).toBe("shot-frame");
+  });
+
+  it("分镜表语义覆盖 shots 迁移写入的 shot-frame，并走专属卡片 body", () => {
+    const renderKind = resolveNodeRenderKind(node({
+      kind: "text",
+      renderKind: "shot-frame",
+      categoryId: "shots",
+      meta: { storyboardGroup: true },
+    }));
+    expect(renderKind).toBe("storyboard-table");
+    expect(isCardRenderKind(renderKind)).toBe(true);
+  });
+
+  it("普通文本节点仍保留原有文本编辑器分发", () => {
+    expect(resolveNodeRenderKind(node({ kind: "text", categoryId: "text" }))).toBeUndefined();
   });
 
   it("无 kind 信号时按 categoryId 兜底（prop 分类的 image → prop-card）", () => {
