@@ -161,12 +161,12 @@ export const zhOnboardingProviders = {
       promoCta: '去 Agnes 注册（免费）',
     },
     pixstag: {
-      tagline: '一个 key，用 MiniMax H3 生视频（最长 30 秒）',
+      tagline: '一个 key，用 MiniMax H3 生视频（最长 15 秒）',
       credentialPlaceholder: '粘贴 Pixstag API Key',
       credentialHint:
-        '去 pixstag.com 注册并在控制台创建 API Key（credit 按量计费）。目前提供 MiniMax H3：文生 / 首尾帧 / 多模态参考，4–30 秒、720P–2K。凭证本地加密存储。',
+        '去 pixstag.com 注册并在控制台创建 API Key（credit 按量计费）。目前提供 MiniMax H3：文生 / 首尾帧 / 多模态参考，4–15 秒、720P–2K。凭证本地加密存储。',
       promoText:
-        'Pixstag 提供 MiniMax H3 官方 v2 线缆：参考图/视频/音频进同一条 content 通道，比例自适应，最长 30 秒。credit 按量计费。',
+        'Pixstag 提供 MiniMax H3 官方 v2 线缆：参考图/视频/音频进同一条 content 通道，比例自适应，最长 15 秒。credit 按量计费。',
       promoCta: '去 Pixstag 注册',
     },
     kie: {
@@ -942,12 +942,12 @@ export const enOnboardingProviders = {
       promoCta: 'Register with Agnes for free',
     },
     pixstag: {
-      tagline: 'One key for MiniMax H3 video (up to 30 seconds)',
+      tagline: 'One key for MiniMax H3 video (up to 15 seconds)',
       credentialPlaceholder: 'Paste your Pixstag API Key',
       credentialHint:
-        'Register at pixstag.com and create an API Key in the console (pay-as-you-go credits). Currently offers MiniMax H3: text-to-video, first/last frame, and multimodal reference, 4–30 seconds at 720P–2K. Credentials are encrypted locally.',
+        'Register at pixstag.com and create an API Key in the console (pay-as-you-go credits). Currently offers MiniMax H3: text-to-video, first/last frame, and multimodal reference, 4–15 seconds at 720P–2K. Credentials are encrypted locally.',
       promoText:
-        'Pixstag carries the official MiniMax H3 v2 wire: reference images, videos, and audio ride the same content channel, with adaptive ratio and up to 30 seconds. Pay-as-you-go credits.',
+        'Pixstag carries the official MiniMax H3 v2 wire: reference images, videos, and audio ride the same content channel, with adaptive ratio and up to 15 seconds. Pay-as-you-go credits.',
       promoCta: 'Register with Pixstag',
     },
     kie: {

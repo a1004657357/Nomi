@@ -4,13 +4,13 @@ import type { ModelArchetype } from "./types";
 // Pixstag MiniMax-H3 能力档案。与 kie（image_url/reference_* 扁平键）/ apimart
 // （first_frame_image/image_urls 扁平键）不是同一条线缆——Pixstag 走 MiniMax v2 官方
 // content 数组（{type, <type>:{url}, role}，与火山方舟同形），故独立档案（同 kie/apimart 先例）。
-// 参数面与 apimart H3 的差异来自 Pixstag 官方文档：duration 4-30（apimart 4-15）、
+// 参数面与 apimart H3 的对齐来自 Pixstag 官方文档：duration 4-15、
 // resolution 多 720P/1080P 档、ratio 恒含 adaptive、多 use_context_ir / return_last_frame。
 
 const options = (values: string[]): ModelParameterControl["options"] => values.map((value) => ({ value, label: value }));
 const RATIO: ModelParameterControl = { key: "ratio", label: "比例", type: "select", options: options(["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]), defaultValue: "adaptive" };
 const RESOLUTION: ModelParameterControl = { key: "resolution", label: "清晰度", type: "select", options: options(["2K", "1080P", "768P", "720P"]), defaultValue: "2K" };
-const DURATION: ModelParameterControl = { key: "duration", label: "时长(秒)", type: "number", options: [], min: 4, max: 30, defaultValue: 5 };
+const DURATION: ModelParameterControl = { key: "duration", label: "时长(秒)", type: "number", options: [], min: 4, max: 15, defaultValue: 5 };
 const AIGC_WATERMARK: ModelParameterControl = { key: "aigc_watermark", label: "添加水印", type: "boolean", options: [], defaultValue: false };
 const CONTEXT_IR: ModelParameterControl = { key: "use_context_ir", label: "提示词优化(Context-IR)", type: "boolean", options: [], defaultValue: false };
 const RETURN_LAST_FRAME: ModelParameterControl = { key: "return_last_frame", label: "返回尾帧图", type: "boolean", options: [], defaultValue: false };
@@ -24,7 +24,7 @@ const MODES: ModelArchetype["modes"] = [
     id: "t2v",
     intent: "text",
     vendorTerm: "文生视频",
-    hint: "纯文字生成视频，720P–2K，4–30 秒",
+    hint: "纯文字生成视频，720P–2K，4–15 秒",
     promptRequired: true,
     transportTaskKind: "text_to_video",
     slots: [],
@@ -82,7 +82,7 @@ export const MINIMAX_H3_PIXSTAG_ARCHETYPE: ModelArchetype = {
       url: "https://pixstag.com/docs/api",
       checkedAt: "2026-09-12",
       vendorKey: "pixstag",
-      covers: "MiniMax-H3 文生/首尾帧/多模态参考的 POST /api/v2/video_generation 参数（duration 4-30、ratio 含 adaptive、resolution 720P-2K、aigc_watermark/use_context_ir/return_last_frame）、content[].role 契约与 query 轮询响应形状",
+      covers: "MiniMax-H3 文生/首尾帧/多模态参考的 POST /api/v2/video_generation 参数（duration 4-15、ratio 含 adaptive、resolution 720P-2K、aigc_watermark/use_context_ir/return_last_frame）、content[].role 契约与 query 轮询响应形状",
     },
   ],
   defaultModeId: "t2v",

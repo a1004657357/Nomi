@@ -1,5 +1,5 @@
 // Pixstag 视频模型的 curated 传输配方（单源）。契约逐项对账自 pixstag.com/docs/api（2026-09-12）：
-//   POST /api/v2/video_generation { model, content[], duration 4-30, ratio adaptive|21:9|16:9|4:3|1:1|3:4|9:16,
+//   POST /api/v2/video_generation { model, content[], duration 4-15, ratio adaptive|21:9|16:9|4:3|1:1|3:4|9:16,
 //                                   resolution 720P|768P|1080P|2K, aigc_watermark, use_context_ir,
 //                                   return_last_frame } → { task_id }
 //
