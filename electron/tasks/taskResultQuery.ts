@@ -2,7 +2,7 @@
 // 单一真相：缓存命中与无状态重建共用同一段 query。与 runtime 是调用时（函数体内）的循环依赖——
 // ESM/CJS 都按 live binding 在调用时取值，加载期不触碰，安全。
 import { trim, type JsonRecord } from "../jsonUtils";
-import type { Mapping, Model, ProfileKind } from "../catalog/types";
+import type { Model, ProfileKind } from "../catalog/types";
 import { readCatalog } from "../catalog/catalogStore";
 import { desktopT } from "../i18n";
 import { classifyTaskCacheMiss, wasTaskAdmitted } from "./taskAdmission";
@@ -126,6 +126,7 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
       apiKey,
       request: cached.request,
       operation: queryOperation,
+      stage: "query",
       providerMeta: {
         ...(cached.providerMeta || {}),
         query_id: cached.providerMeta?.query_id || taskId,

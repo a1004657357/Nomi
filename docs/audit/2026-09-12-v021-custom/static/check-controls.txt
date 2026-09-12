@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:controls /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-control-contract.mjs
+
+✓ 控件交互契约门岗通过：无「点了没反应」的控件（例外 1 条，均已写明理由）。

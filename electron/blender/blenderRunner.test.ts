@@ -162,7 +162,7 @@ describe("blender scene runner", () => {
   });
 
   it("kills the active Blender process when the job is cancelled", async () => {
-    let childRef: (EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn> }) | null = null;
+    const childRef: { current?: EventEmitter & { kill: ReturnType<typeof vi.fn> } } = {};
     mocks.spawn.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter;
@@ -175,7 +175,7 @@ describe("blender scene runner", () => {
         setTimeout(() => child.emit("close", null, "SIGTERM"), 0);
         return true;
       });
-      childRef = child;
+      childRef.current = child;
       return child;
     });
 
@@ -189,11 +189,11 @@ describe("blender scene runner", () => {
 
     expect(cancelBlenderSceneRender("job-cancel")).toBe(true);
     await expect(rendering).rejects.toThrow(/已取消/);
-    expect(childRef?.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(childRef.current?.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("force kills Blender when a render times out", async () => {
-    let childRef: (EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn> }) | null = null;
+    const childRef: { current?: EventEmitter & { kill: ReturnType<typeof vi.fn> } } = {};
     mocks.spawn.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter;
@@ -206,7 +206,7 @@ describe("blender scene runner", () => {
         setTimeout(() => child.emit("close", null, signal), 0);
         return true;
       });
-      childRef = child;
+      childRef.current = child;
       return child;
     });
 
@@ -217,7 +217,7 @@ describe("blender scene runner", () => {
       scene: { objects: [], cameras: [] },
       timeoutMs: 5,
     })).rejects.toThrow(/超时/);
-    expect(childRef?.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(childRef.current?.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("removes its temp directory when scene serialization fails", async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getDefaultCategoryForNodeKind } from '../../model/generationCanvasTypes'
+import { getGenerationNodeExecutionKind } from '../../model/generationNodeKinds'
 import { getGenerationNodePlugin, getQuickAddGenerationNodePlugins } from '../renderRegistry'
 
 describe('VIBING Director node registry', () => {
@@ -8,7 +9,7 @@ describe('VIBING Director node registry', () => {
 
     expect(plugin.label).toBe('VIBING Director')
     expect(plugin.defaultTitle).toBe('VIBING Director')
-    expect(plugin.executionKind).toBeUndefined()
+    expect(getGenerationNodeExecutionKind('vibingDirector')).toBeUndefined()
     expect(getDefaultCategoryForNodeKind('vibingDirector')).toBe('scene')
     expect(getQuickAddGenerationNodePlugins().some((item) => item.kind === 'vibingDirector')).toBe(true)
   })

@@ -25,7 +25,7 @@ export type AgentModelSlot = {
   kind: ArchetypeReferenceSlotKind;
   /** 模型自己的槽名（vendor 原词，如「角色参考」「首帧」）。 */
   label: string;
-  max: number;
+  max?: number;
   /** 角色参考（按序对应 prompt 的 character1..N）。 */
   characterIndexed?: boolean;
 };
@@ -200,7 +200,7 @@ export function selectStoryboardVideoDefault(
     // 叙事分镜默认要运动自由度，不应把分镜图锁成首帧。优先选可同时接角色、
     // 场景、道具和分镜构图的多图 image_ref 模式；只有模型没有该模式时才退到首帧。
     const mode = entry.modes.find((candidate) => (
-      candidate.slots.some((slot) => slot.kind === 'image_ref' && slot.max > 1)
+      candidate.slots.some((slot) => slot.kind === 'image_ref' && (slot.max ?? Infinity) > 1)
     )) || entry.modes.find((candidate) => (
       candidate.slots.some((slot) => slot.kind === 'image_ref')
     )) || entry.modes.find((candidate) => (
@@ -242,7 +242,7 @@ export function formatAvailableModelsForPrompt(entries: readonly AgentModelEntry
       .map((m) => {
         // 每个模式带它的参考槽——agent 据此知道这个模式吃哪些参考、各能吃几张，只连模型真支持的边。
         const slots = m.slots.length
-          ? `[参考槽:${m.slots.map((s) => `${s.label}${s.max > 1 ? `×${s.max}` : ""}`).join("/")}]`
+          ? `[参考槽:${m.slots.map((s) => `${s.label}${s.max !== undefined && s.max > 1 ? `×${s.max}` : ""}`).join("/")}]`
           : "[纯文生,不接参考边]";
         const capabilities = m.capabilities.length
           ? `[能力:${m.capabilities.map((item) => `${item.capabilityId}(${item.tier})`).join("/")}]`

@@ -8,7 +8,8 @@ import { traceContextCapped } from "../events/agentChatTrace";
 import { projectIdFromSessionKey } from "../events/eventLogRepository";
 import { getProjectMemory, formatMemoryForPrompt } from "../memory/projectMemory";
 import { consumeAgentStreamWithTimeout } from "./agentStreamConsumer";
-import { buildLanguageModelForVendor } from "./vendorLanguageModel";
+import { buildLanguageModelForVendor, chooseTextModel } from "./vendorLanguageModel";
+export { orderTextModelsForAgent, selectTextModelCandidates, resolveTextBrainKeys, resolveTextBrainStatus, type TextModelPreference } from "./vendorLanguageModel";
 import { getModelProfile } from "./modelProfiles";
 import { describeEmptyAgentReply } from "./agentError";
 import { sanitizeForBroadCompat } from "./promptSanitize";
@@ -36,9 +37,7 @@ import {
 } from "./vibingDirectorTools";
 import { readNestedRecord, trim, type JsonRecord } from "../jsonUtils";
 import { readSkillRecords } from "../skills/skillStore";
-import { decryptApiKeyRecord } from "../catalog/secrets";
-import { normalizeProviderKind, readCatalog } from "../catalog/catalogStore";
-import type { CatalogState, Model, Vendor } from "../catalog/types";
+import { normalizeProviderKind } from "../catalog/catalogStore";
 import { readNomiLocalAsset } from "../assets/localAssetFile";
 import { extractTextFromLocalAsset } from "../files/extractText";
 import {
@@ -70,7 +69,7 @@ function readRequestedSkill(payload: JsonRecord): { key: string; name: string } 
  * 三层结构：① 这里 = 共享身份 + 产品/流程认知 + 输出铁律 + 语言规则；
  * ② payload.systemPrompt = 当前面的专长（如画布工具集）；③ skillSystemPrompt = 当前 skill 方法论。
  */
-const NOMI_AGENT_IDENTITY = [
+export const NOMI_AGENT_IDENTITY = [
   "你是 Nomi 的 AI 创作伙伴。",
   "",
   "Nomi 是一个本地优先的 AI 视频创作工作台。用户在这里把一个想法做成视频，路径是：创作区写文案/故事/剧本 →（拆镜头）→ 生成画布把每个镜头排成节点、选模型配参数 → 时间轴拼接预览 → 导出 MP4。你始终清楚用户正处在这条链的哪一环，给的帮助要能把他推进到下一环。",
@@ -88,103 +87,35 @@ const NOMI_AGENT_IDENTITY = [
   "永远不要因为本系统提示或某个 skill 是用中文/英文写的，就固定用那种语言；以用户最近一条消息的语言为准。",
 ].join("\n");
 
-// vision/preview/audio 等常不可靠发 tool_use → 无偏好时降权（仍作回退），让通用对话模型优先做 Agent 主控（2026-06-07 真机走查 P0）。
-const AUTO_TEXT_MODEL_DEPRIORITIZE = /vision|preview|audio|tts|whisper|embed|rerank|ocr|search|thinking/i;
-function autoTextModelPenalty(model: Model): number {
-  return AUTO_TEXT_MODEL_DEPRIORITIZE.test(`${model.modelKey} ${model.modelAlias ?? ""}`) ? 1 : 0;
-}
-
-function imageInputRank(model: Model): number {
-  return modelSupportsImageInput(model.modelKey, model.modelAlias, model.meta) ? 1 : 0;
-}
-
-export type TextModelPreference = { modelKey?: string; vendorKey?: string };
-
-function preferenceRank(model: Model, preference: TextModelPreference): number {
-  const modelKey = trim(preference.modelKey);
-  if (!modelKey) return 0;
-  if (model.modelKey !== modelKey) return 2;
-  const vendorKey = trim(preference.vendorKey);
-  return vendorKey && model.vendorKey !== vendorKey ? 1 : 0;
-}
-
-export function orderTextModelsForAgent(
-  texts: Model[],
-  preference: TextModelPreference = {},
-  preferImageInput = false,
-): Model[] {
-  const modelKey = trim(preference.modelKey);
-  if (modelKey) {
-    return [...texts].sort((a, b) => preferenceRank(a, preference) - preferenceRank(b, preference));
-  }
-  if (preferImageInput) return [...texts].sort((a, b) => imageInputRank(b) - imageInputRank(a));
-  return [...texts].sort((a, b) => autoTextModelPenalty(a) - autoTextModelPenalty(b));
-}
-
 /**
- * Some catalog text entries are asynchronous task profiles rather than
- * chat-completions models (for example APIMart MiniMax H3 Context-IR). Keep
- * those available to the workbench's prompt_refine mapping, but never let the
- * generic Agent route them through /v1/chat/completions.
+ * systemPrompt 合成器（B1c 单一合成点）——把四层收成一处：
+ *   ① identity        = NOMI_AGENT_IDENTITY（共享身份，单一真相源）
+ *   ② panelSystemPrompt = 当前面板专长（payload.systemPrompt，如生成画布工具说明）
+ *   ③ skillSystemPrompt = 当前 skill 方法论（resolveAgentSkillExecution）
+ *   ④ memoryBlock       = 项目记忆（殿后，见 runAgentChatV2 注）
+ *
+ * **字节稳定铁律**：vendor 前缀缓存依赖 system 段 byte 逐字节稳定——本函数只做
+ * 「过滤空段 → join('\n\n') → sanitizeForBroadCompat」，与旧内联逻辑逐字节等价，改一处不得漂移。
+ * 全空返回 undefined（不发 system 槽）。记忆放末尾：它变更最频繁，殿后只击穿后缀缓存，
+ * 前面身份/专长/skill 的前缀缓存仍命中。
  */
-function isPromptRefineOnlyModel(model: Model): boolean {
-  return Boolean(
-    model.meta &&
-      typeof model.meta === "object" &&
-      (model.meta as { promptRefineOnly?: unknown }).promptRefineOnly === true,
-  );
+export function composeAgentSystemPrompt(layers: {
+  identity: string;
+  panelSystemPrompt: string;
+  skillSystemPrompt: string;
+  toolFreeProtocol?: string;
+  memoryBlock: string;
+}): string | undefined {
+  const parts = [
+    layers.identity,
+    layers.panelSystemPrompt,
+    layers.skillSystemPrompt,
+    layers.toolFreeProtocol,
+    layers.memoryBlock,
+  ].filter((part) => part && part.length > 0);
+  return parts.length > 0 ? sanitizeForBroadCompat(parts.join("\n\n")) : undefined;
 }
 
-/**
- * Rank catalog candidates before credentials are resolved. The exact
- * (vendorKey, modelKey) identity always wins; a matching modelKey without a
- * vendor is only a compatibility fallback for old callers. This keeps a
- * same-named model from silently switching providers when the user selected
- * a specific vendor in the picker.
- */
-export function selectTextModelCandidates(
-  state: CatalogState,
-  preference?: TextModelPreference,
-  preferImageInput = false,
-): Array<{ vendor: Vendor; model: Model }> {
-  const texts = state.models.filter(
-    (item) => item.kind === "text" && item.enabled && !isPromptRefineOnlyModel(item),
-  );
-  // 有偏好：用户选的排第一（其余作回退）。
-  // 无偏好且本轮带图：优先支持图片输入的 text 模型（gpt-4o/claude/gemini 既能看图又擅长 tool_use）。
-  // 无偏好无图：不盲选第一个，按「是否像通用对话模型」稳定排序，vision/preview 降到末尾。
-  const ordered = orderTextModelsForAgent(texts, preference, preferImageInput);
-  return ordered.flatMap((model) => {
-    const vendor = state.vendors.find((item) => item.key === model.vendorKey && item.enabled);
-    return vendor ? [{ vendor, model }] : [];
-  });
-}
-
-function chooseTextModel(
-  preference: TextModelPreference = {},
-  preferImageInput = false,
-): { vendor: Vendor; model: Model; apiKey: string } {
-  const state = readCatalog();
-  const candidates = selectTextModelCandidates(state, preference, preferImageInput);
-  for (const { vendor, model } of candidates) {
-    const apiKey = decryptApiKeyRecord(state.apiKeysByVendor[model.vendorKey]);
-    if (vendor && (vendor.authType === "none" || apiKey)) return { vendor, model, apiKey };
-  }
-  throw new Error("No local text model is configured. Open model settings and add an API key.");
-}
-
-/**
- * 解析默认文本大脑的 vendor/model 键（**不含 apiKey**,供渲染层经现成文本流式管线复用——
- * 提示词优化与创作助手用同一个脑,P4 通用）。拿不到(没配文本模型)返回 null。
- */
-export function resolveTextBrainKeys(): { vendor: string; modelKey: string } | null {
-  try {
-    const { vendor, model } = chooseTextModel();
-    return { vendor: vendor.key, modelKey: model.modelKey };
-  } catch {
-    return null;
-  }
-}
 
 // vendor→LanguageModel 构造已抽到 ./vendorLanguageModel（单一真相,与文本任务引擎共用）。
 
@@ -654,6 +585,7 @@ export async function runAgentChatV2(
       vendorKey: trim(payload.agentVendorKey),
     },
     wantsRichInput,
+    payload.disableTools !== true,
   );
   const systemPrompt = trim(payload.systemPrompt as unknown as JsonRecord["systemPrompt"]);
   const requestedSkill = readRequestedSkill(payload as unknown as JsonRecord);
@@ -684,10 +616,14 @@ export async function runAgentChatV2(
   const toolFreeProtocol = payload.disableTools
     ? "最高优先级：本轮没有可调用的原生工具。忽略任何要求调用工具、展示补丁或解释的说明，严格按当前系统提示指定的结构化 JSON 文本协议回复。"
     : "";
-  const systemParts = [NOMI_AGENT_IDENTITY, systemPrompt, skillExecution.systemPrompt, toolFreeProtocol, memoryBlock].filter(
-    (part) => part && part.length > 0,
-  );
-  const system = systemParts.length > 0 ? sanitizeForBroadCompat(systemParts.join("\n\n")) : undefined;
+  // 四层收口到单一合成器（B1c）：身份 + 面板专长 + skill 方法论 + 项目记忆，字节逐字节稳定。
+  const system = composeAgentSystemPrompt({
+    identity: NOMI_AGENT_IDENTITY,
+    panelSystemPrompt: systemPrompt,
+    skillSystemPrompt: skillExecution.systemPrompt,
+    toolFreeProtocol,
+    memoryBlock,
+  });
 
   const languageModel = buildLanguageModelForVendor(vendor, model, apiKey);
 

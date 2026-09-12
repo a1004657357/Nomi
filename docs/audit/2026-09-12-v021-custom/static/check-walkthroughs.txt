@@ -1,0 +1,7 @@
+
+> nomi@0.21.0 check:walkthroughs /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-walkthroughs.mjs
+
+✅ 走查质量门岗通过：absence-without-baseline=64 · whole-page-text=29 · sleep-as-done-signal=113 · dead-selector=0 · source-scan-without-strip=9
+   检出力：172 份走查，其中薄的 43 份在基线内（阈值 ≥ 2 条失败路径）
+   有改善：absence-without-baseline 69→64、assertion-density 有 1 份补上了断言：tests/ux/smoke.e2e.mjs —— 记得跑 --update-baseline 把棘轮拧紧

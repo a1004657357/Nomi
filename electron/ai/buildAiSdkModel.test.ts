@@ -1,8 +1,130 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { generateText } from "ai";
 import { adaptToolSchemasForProfile, buildAiSdkModel } from "./buildAiSdkModel";
 import { getModelProfile } from "./modelProfiles";
+import { buildLanguageModelForVendor, selectTextModelCandidates } from "./vendorLanguageModel";
+import { composeAgentSystemPrompt } from "./agentChatV2";
+import type { CatalogState, Model, Vendor } from "../catalog/types";
+
+let noAuthServer: http.Server;
+let noAuthBaseUrl = "";
+let observedAuthorization: string | undefined;
+let observedUrl: string | undefined;
+
+beforeAll(async () => {
+  noAuthServer = http.createServer((req, res) => {
+    observedAuthorization = req.headers.authorization;
+    observedUrl = req.url;
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      if (req.url?.endsWith("/messages")) {
+        res.end(JSON.stringify({
+          id: "message-1", type: "message", role: "assistant", model: "local-model",
+          content: [{ type: "text", text: "pong" }], stop_reason: "end_turn", stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }));
+        return;
+      }
+      if (req.url?.endsWith("/responses")) {
+        res.end(JSON.stringify({
+          id: "response-1", created_at: 1, model: "local-model", status: "completed", incomplete_details: null,
+          output: [{ id: "msg-1", type: "message", role: "assistant", status: "completed",
+            content: [{ type: "output_text", text: "pong", annotations: [] }] }],
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        }));
+        return;
+      }
+      res.end(JSON.stringify({
+        id: "local-response",
+        object: "chat.completion",
+        created: 1,
+        model: "local-model",
+        choices: [{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => noAuthServer.listen(0, "127.0.0.1", resolve));
+  noAuthBaseUrl = `http://127.0.0.1:${(noAuthServer.address() as AddressInfo).port}`;
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => noAuthServer.close(() => resolve()));
+});
 
 describe("buildAiSdkModel", () => {
+  it("preserves the vendor-specific missing base diagnostic before API-key validation", () => {
+    const vendor = { key: "missing-base", providerKind: "openai-compatible", baseUrlHint: "   " } as Vendor;
+    const model = { modelKey: "local-model" } as Model;
+    expect(() => buildLanguageModelForVendor(vendor, model, "")).toThrow("Base URL missing: missing-base");
+  });
+
+  it.each([
+    ["", "/v1/chat/completions"],
+    ["/", "/v1/chat/completions"],
+    ["/v1", "/v1/chat/completions"],
+    ["/v1/", "/v1/chat/completions"],
+    ["/v1beta/openai", "/v1beta/openai/chat/completions"],
+    ["/v1beta/openai/", "/v1beta/openai/chat/completions"],
+    ["/api/v3", "/api/v3/chat/completions"],
+    ["/api/paas/v4", "/api/paas/v4/chat/completions"],
+    ["/custom/gateway", "/custom/gateway/chat/completions"],
+  ])("keeps an explicit SDK API base %s without adding a version", async (suffix, expectedPath) => {
+    const vendor: Vendor = {
+      key: "endpoint-test", name: "Endpoint test", enabled: true, authType: "none",
+      providerKind: "openai-compatible", baseUrlHint: `${noAuthBaseUrl}${suffix}`,
+      createdAt: "2026-08-26T00:00:00Z", updatedAt: "2026-08-26T00:00:00Z",
+    };
+    const model: Model = {
+      vendorKey: vendor.key, modelKey: "local-model", labelZh: "Local", kind: "text",
+      enabled: true, createdAt: vendor.createdAt, updatedAt: vendor.updatedAt,
+    };
+    await generateText({ model: buildLanguageModelForVendor(vendor, model, ""), prompt: "ping", maxRetries: 0 });
+    expect(observedUrl).toBe(expectedPath);
+  });
+
+  it.each([
+    ["anthropic", "", "/messages"],
+    ["anthropic", "/v1/", "/v1/messages"],
+    ["openai-responses", "", "/v1/responses"],
+    ["openai-responses", "/custom/v3/", "/custom/v3/responses"],
+  ] as const)("preserves %s resource routing for %s", async (providerKind, suffix, expectedPath) => {
+    const vendor: Vendor = {
+      key: "endpoint-test", name: "Endpoint test", enabled: true, authType: "bearer",
+      providerKind, baseUrlHint: `${noAuthBaseUrl}${suffix}`,
+      createdAt: "2026-08-26T00:00:00Z", updatedAt: "2026-08-26T00:00:00Z",
+    };
+    const model: Model = {
+      vendorKey: vendor.key, modelKey: "local-model", labelZh: "Local", kind: "text",
+      enabled: true, createdAt: vendor.createdAt, updatedAt: vendor.updatedAt,
+    };
+    const result = await generateText({ model: buildLanguageModelForVendor(vendor, model, "test-key"), prompt: "ping", maxRetries: 0 });
+    expect(result.text).toBe("pong");
+    expect(observedUrl).toBe(expectedPath);
+  });
+
+  it.each([
+    ["", "", "/chat/completions"],
+    ["/api/coding/paas/v4", "", "/api/coding/paas/v4/chat/completions"],
+    ["/root", "/openai/v1", "/root/openai/v1/chat/completions"],
+  ])("keeps custom metadata base paths for %s + %s", async (suffix, basePath, expectedPath) => {
+    const vendor: Vendor = {
+      key: "custom-base", name: "Custom base", enabled: true, authType: "none",
+      providerKind: "openai-compatible", baseUrlHint: `${noAuthBaseUrl}${suffix}`,
+      meta: { openAiCompatibleBasePath: basePath }, createdAt: "", updatedAt: "",
+    };
+    const model: Model = {
+      vendorKey: vendor.key, modelKey: "local-model", labelZh: "Local", kind: "text",
+      enabled: true, createdAt: "", updatedAt: "",
+    };
+    await generateText({ model: buildLanguageModelForVendor(vendor, model, ""), prompt: "ping", maxRetries: 0 });
+    expect(observedUrl).toBe(expectedPath);
+    expect(observedAuthorization).toBeUndefined();
+  });
+
   it("returns an openai-compatible language model for kind=openai-compatible", () => {
     const model = buildAiSdkModel({
       kind: "openai-compatible",
@@ -61,6 +183,38 @@ describe("buildAiSdkModel", () => {
     ).toThrow(/apiKey/);
   });
 
+  it("runs an authType=none text gateway without sending Authorization", async () => {
+    observedAuthorization = "not-called";
+    const vendor: Vendor = {
+      key: "local-gateway",
+      name: "Local gateway",
+      enabled: true,
+      authType: "none",
+      providerKind: "openai-compatible",
+      baseUrlHint: noAuthBaseUrl,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    };
+    const model: Model = {
+      vendorKey: vendor.key,
+      modelKey: "local-model",
+      labelZh: "Local model",
+      kind: "text",
+      enabled: true,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    };
+
+    const result = await generateText({
+      model: buildLanguageModelForVendor(vendor, model, ""),
+      prompt: "ping",
+      maxRetries: 0,
+    });
+
+    expect(result.text).toBe("pong");
+    expect(observedAuthorization).toBeUndefined();
+  });
+
   it("requires baseURL for openai-compatible providers and accepts a custom one", () => {
     expect(() =>
       buildAiSdkModel({
@@ -107,5 +261,30 @@ describe("buildAiSdkModel", () => {
     expect((parameters.properties as Record<string, Record<string, unknown>>).nested.$schema).toBeUndefined();
     expect(parameters.additionalProperties).toBe(false);
     expect((body.tools[0].function.parameters as Record<string, unknown>).$schema).toContain("draft-07");
+  });
+});
+
+describe("merged agent model compatibility", () => {
+  it("allows explicit no-tool replies without weakening the default assistant tool gate", () => {
+    const vendor: Vendor = {
+      key: "local", name: "Local", enabled: true, authType: "none",
+      providerKind: "openai-compatible", createdAt: "", updatedAt: "",
+    };
+    const model: Model = {
+      vendorKey: vendor.key, modelKey: "plain-text", labelZh: "Plain", kind: "text",
+      enabled: true, meta: { supportsToolCalls: false }, createdAt: "", updatedAt: "",
+    };
+    const state: CatalogState = { version: 5, vendors: [vendor], models: [model], mappings: [], apiKeysByVendor: {} };
+    const preference = { vendorKey: vendor.key, modelKey: model.modelKey };
+    expect(() => selectTextModelCandidates(state, preference)).toThrow("tools");
+    expect(selectTextModelCandidates(state, preference, false, false)).toEqual([{ vendor, model }]);
+    expect(selectTextModelCandidates({ ...state, models: [{ ...model, meta: { promptRefineOnly: true } }] }, preference, false, false)).toEqual([]);
+  });
+
+  it("keeps the structured-text protocol after the skill and before changing project memory", () => {
+    expect(composeAgentSystemPrompt({
+      identity: "identity", panelSystemPrompt: "panel", skillSystemPrompt: "playbook",
+      toolFreeProtocol: "json-only", memoryBlock: "memory",
+    })).toBe("identity\n\npanel\n\nplaybook\n\njson-only\n\nmemory");
   });
 });

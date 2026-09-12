@@ -2,9 +2,9 @@ import type { ResolvedGenerationReferences } from './generationReferenceResolver
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
 
-function assignRelayFirstFrame(references: ResolvedGenerationReferences, url: string): void {
-  const previousImages = [...references.referenceImages]
-  const previousRoles = [...references.referenceImageRoles]
+function assignRelayFirstFrame(references: Partial<ResolvedGenerationReferences>, url: string): void {
+  const previousImages = [...(references.referenceImages || [])]
+  const previousRoles = [...(references.referenceImageRoles || [])]
   const previousPurposes = [...(references.referenceImagePurposes || [])]
   const retainedIndexes = previousImages
     .map((value, index) => ({ value, index }))
@@ -35,7 +35,7 @@ function assignRelayFirstFrame(references: ResolvedGenerationReferences, url: st
  *
  * 接力语义：用**源视频的尾帧**当本镜首帧（前一镜结束画面 → 后一镜开始画面，视觉连贯）。
  */
-export async function applyRelayFirstFrame(references: ResolvedGenerationReferences): Promise<void> {
+export async function applyRelayFirstFrame(references: Partial<ResolvedGenerationReferences>): Promise<void> {
   if (!references.relayFromVideoUrl || references.firstFrameUrl) return
   const relayVideoUrl = references.relayFromVideoUrl
 

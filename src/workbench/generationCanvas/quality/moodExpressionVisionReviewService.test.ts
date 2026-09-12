@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { GenerationResultCollection } from '../model/generationCanvasTypes'
 import { reviewMoodCollectionWithVisionModel } from './moodExpressionVisionReviewService'
 
+type SendVisionReview = NonNullable<NonNullable<Parameters<typeof reviewMoodCollectionWithVisionModel>[0]['deps']>['send']>
+
 function collection(local = true): GenerationResultCollection {
   const url = (id: string) => local
     ? `nomi-local://asset/project/${id}.png`
@@ -48,7 +50,7 @@ function collection(local = true): GenerationResultCollection {
 describe('reviewMoodCollectionWithVisionModel', () => {
   it('uses one isolated multimodal call and writes semantic evidence into quality', async () => {
     const clearSession = vi.fn(async () => {})
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendVisionReview>(async () => ({
       text: JSON.stringify({
         items: [{
           itemId: 'mood-e4-a0',

@@ -5,7 +5,6 @@ import { generateAudio } from './audioActions'
 import { generateImage } from './imageActions'
 import { generate3D } from './model3dActions'
 import { resolveGenerationReferences } from './generationReferenceResolver'
-import { applyRelayFirstFrame } from './relayFrameResolver'
 import { withConnectedTextPrompts } from './connectedTextPrompt'
 import { generateText } from './textActions'
 import { generateVideo } from './videoActions'
@@ -13,6 +12,8 @@ import { generateVideo } from './videoActions'
 export type GenerationNodeExecutorContext = {
   nodes?: GenerationCanvasNode[]
   edges?: GenerationCanvasEdge[]
+  /** One-shot correction appended to the provider prompt for a bounded QA retry. */
+  promptSuffix?: string
   /** S2 进度透传:catalog 任务各阶段 → 控制器 → setNodeProgress。 */
   onProgress?: CatalogTaskActionOptions['onProgress']
   /** 付费守卫令牌：透传到 build request 的 extras.grantId。 */
@@ -23,6 +24,8 @@ export type GenerationNodeExecutorContext = {
   onResolvedNode?: CatalogTaskActionOptions['onResolvedNode']
   /** 本地取消信号：停止排队、轮询和支持取消的子进程。 */
   signal?: AbortSignal
+  /** Renderer consent for a disclosed anonymous temporary-host fallback. */
+  anonymousAssetHostingConsent?: 'allow'
 }
 
 export type GenerationNodeExecutor = (
@@ -36,10 +39,13 @@ export const generationNodeExecutor: GenerationNodeExecutor = async (node, conte
   const grantId = context?.grantId
   // gate = 付费相关透传(令牌 + 幂等键)，随各付费 action 一路进 buildCatalogTaskRequest 的 extras。
   const gate = {
+    ...(context ? { referenceContext: { nodes: context.nodes, edges: context.edges } } : {}),
     ...(grantId ? { grantId } : {}),
     ...(context?.idempotencyKey ? { idempotencyKey: context.idempotencyKey } : {}),
     ...(context?.onResolvedNode ? { onResolvedNode: context.onResolvedNode } : {}),
     ...(context?.signal ? { signal: context.signal } : {}),
+    ...(context?.anonymousAssetHostingConsent ? { anonymousAssetHostingConsent: context.anonymousAssetHostingConsent } : {}),
+    ...(context?.promptSuffix ? { promptSuffix: context.promptSuffix } : {}),
   }
   if (executionKind === 'image') {
     const references = resolveGenerationReferences(node, context)
@@ -48,9 +54,6 @@ export const generationNodeExecutor: GenerationNodeExecutor = async (node, conte
   }
   if (executionKind === 'video') {
     const references = resolveGenerationReferences(node, context)
-    // 接力帧：源是视频时，抽其尾帧填本镜首帧（唯一消费 relayFromVideoUrl 的地方）。
-    // 抽帧失败会抛错 → 节点标人话错误、不裸跑（不冒充不变量）。
-    await applyRelayFirstFrame(references)
     const promptNode = withConnectedTextPrompts(node, context)
     return generateVideo(promptNode, { references, ...gate, ...(onProgress ? { onProgress } : {}) })
   }

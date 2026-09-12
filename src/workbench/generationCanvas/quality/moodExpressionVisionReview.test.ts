@@ -57,7 +57,7 @@ function collection(): GenerationResultCollection {
 
 describe('createMoodExpressionVisionComparator', () => {
   it('sends source first and parses target expression plus muscle evidence', async () => {
-    const judge = vi.fn(async () => JSON.stringify({
+    const judge = vi.fn<Parameters<typeof createMoodExpressionVisionComparator>[0]['judge']>(async () => JSON.stringify({
       items: [
         {
           itemId: 'mood-e0-a0',

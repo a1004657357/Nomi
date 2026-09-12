@@ -15,7 +15,7 @@ function seedImageShot() {
   // 模拟真实场景：这是第 3 号镜头（前面还有别的镜头占了 1/2）。
   useGenerationCanvasStore.getState().updateNode(node.id, {
     shotIndex: 3,
-    result: { id: 'r1', type: 'image', url: 'nomi-local://fake.png' },
+    result: { id: 'r1', type: 'image', url: 'nomi-local://fake.png', createdAt: 1 },
   })
   return useGenerationCanvasStore.getState().nodes.find((n) => n.id === node.id)!
 }

@@ -165,37 +165,31 @@ describe('VIBING Director Blender lifecycle', () => {
     const projectDir = tempDir('nomi-vibing-runner-project-')
     const blenderPath = fakeBlenderBinary()
     mocks.projectDirById.mockReturnValue(projectDir)
-    let child: FakeChild | null = null
-    mocks.spawn.mockImplementation(() => {
-      child = childProcess((process, signal) => {
-        setTimeout(() => process.emit('close', null, signal), 0)
-      })
-      return child
+    const child = childProcess((process, signal) => {
+      setTimeout(() => process.emit('close', null, signal), 0)
     })
+    mocks.spawn.mockReturnValue(child)
 
     await expect(runVibingDirectorBlenderPlan(
       request('job-timeout', 'project', blenderPath, 10),
     )).rejects.toThrow(/超时/)
 
-    expect(child?.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
 
   it('cancels an active plan and waits for process cleanup', async () => {
     const projectDir = tempDir('nomi-vibing-runner-project-')
     const blenderPath = fakeBlenderBinary()
     mocks.projectDirById.mockReturnValue(projectDir)
-    let child: FakeChild | null = null
-    mocks.spawn.mockImplementation(() => {
-      child = childProcess((process, signal) => {
-        setTimeout(() => process.emit('close', null, signal), 0)
-      })
-      return child
+    const child = childProcess((process, signal) => {
+      setTimeout(() => process.emit('close', null, signal), 0)
     })
+    mocks.spawn.mockReturnValue(child)
 
     const running = runVibingDirectorBlenderPlan(request('job-cancel', 'project', blenderPath))
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(cancelVibingDirectorBlenderPlan('job-cancel')).toBe(true)
     await expect(running).rejects.toThrow(/已取消/)
-    expect(child?.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
 })

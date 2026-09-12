@@ -31,6 +31,7 @@ const textToVideoWorkflow = (promptText: string) => JSON.stringify({
   "3": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "m.safetensors" } },
   "4": { class_type: "KSampler", inputs: { seed: 2, steps: 12, positive: ["2", 0], model: ["3", 0] } },
   "5": { class_type: "CreateVideo", inputs: { images: ["4", 0], fps: 16 } },
+  "6": { class_type: "SaveVideo", inputs: { video: ["5", 0], filename_prefix: "test" } },
 });
 
 beforeEach(() => {
@@ -97,9 +98,16 @@ describe("importComfyWorkflowToCatalog（S3 落库）", () => {
     const modelKey = (result as { modelKey: string }).modelKey;
     const model = (listModelCatalogModels({ vendorKey: "comfyui-local" }) as Array<{
       modelKey: string;
-      meta?: { parameters?: unknown[]; comfyWorkflowImport?: { binding?: { params?: unknown[]; numeric?: unknown } } };
+      meta?: {
+        parameters?: Array<{ key: string; type: string }>;
+        comfyWorkflowImport?: { binding?: { params?: unknown[]; numeric?: unknown } };
+      };
     }>).find((item) => item.modelKey === modelKey);
-    expect(model?.meta?.parameters).toEqual([]);
+    // 本例只管「numeric 不复活」：值参数必须为空。
+    // 图像输入是另一条声明（type:'image-url'，由 binding.images 派生），不在此断言范围内——
+    // 这里按 type 过滤而不是笼统 toEqual([])，免得把这条用例的原意稀释掉。
+    expect(model?.meta?.parameters?.filter((p) => p.type !== "image-url")).toEqual([]);
+    expect(model?.meta?.parameters?.map((p) => p.key)).toEqual(["first_frame_url"]);
     expect(model?.meta?.comfyWorkflowImport?.binding?.params).toEqual([]);
     expect(model?.meta?.comfyWorkflowImport?.binding).not.toHaveProperty("numeric");
   });

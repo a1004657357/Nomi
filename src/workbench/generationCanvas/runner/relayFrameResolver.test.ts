@@ -14,6 +14,8 @@ function refs(partial: Partial<ResolvedGenerationReferences>): ResolvedGeneratio
   return {
     referenceImages: [],
     referenceImageRoles: [],
+    referenceVideos: [],
+    referenceAudios: [],
     styleReferenceImages: [],
     characterReferenceImages: [],
     compositionReferenceImages: [],
@@ -57,6 +59,34 @@ describe('applyRelayFirstFrame — 视频接力帧（唯一消费 relayFromVideo
     expect(extractFrame).not.toHaveBeenCalled()
     expect(r.firstFrameUrl).toBe('tail.png')
     expect(r.relayFromVideoUrl).toBeUndefined()
+  })
+
+  it('fills partial keyed-reference inputs without requiring generic arrays', async () => {
+    const r: Partial<ResolvedGenerationReferences> = {
+      relayFromVideoUrl: 'nomi-local://asset/p/v.mp4',
+      lastFrameUrl: 'tail.png',
+      parameterReferenceUrls: { start_image: 'pending' },
+    }
+    await applyRelayFirstFrame(r)
+    expect(r.referenceImages).toEqual(['tail.png'])
+    expect(r.referenceImageRoles).toHaveLength(1)
+    expect(r.referenceImagePurposes).toEqual(['first_frame'])
+    expect(r.parameterReferenceUrls).toEqual({ start_image: 'pending' })
+    expect(mockedBridge).not.toHaveBeenCalled()
+  })
+
+  it('moves an existing relay image with its role and keeps the other reference purposes aligned', async () => {
+    const r = refs({
+      relayFromVideoUrl: 'source.mp4',
+      lastFrameUrl: 'tail.png',
+      referenceImages: ['character.png', 'tail.png', 'scene.png'],
+      referenceImageRoles: ['character', 'old-tail', 'scene'],
+      referenceImagePurposes: ['character', 'generic', 'scene'],
+    })
+    await applyRelayFirstFrame(r)
+    expect(r.referenceImages).toEqual(['tail.png', 'character.png', 'scene.png'])
+    expect(r.referenceImageRoles?.slice(1)).toEqual(['character', 'scene'])
+    expect(r.referenceImagePurposes).toEqual(['first_frame', 'character', 'scene'])
   })
 
   it('② 无现成尾帧 → 抽源视频尾帧填首帧，清掉 relay 标记', async () => {

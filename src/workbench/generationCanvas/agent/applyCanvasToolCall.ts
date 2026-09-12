@@ -6,6 +6,7 @@ import type {
 import { CATEGORY_IDS } from '../model/generationCanvasTypes'
 import { getDefaultCategoryForNodeKind, getGenerationNodeDefaultTitle } from '../model/generationNodeKinds'
 import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
+import { ANCHOR_META_KEYS } from '../model/anchorBibleKeys'
 import { generationCanvasTools, type CreateGenerationNodeToolInput } from './generationCanvasTools'
 import { listAvailableModelsForAgent, type AgentModelEntry } from './availableModels'
 import { buildPlannedNodeMeta } from './plannedNodeMeta'
@@ -15,18 +16,17 @@ import { formatCanvasForAgent } from './canvasPromptContext'
 import { buildDependencyWaves } from '../runner/dependencyWaves'
 import { expandNodeIdsWithUngeneratedReferenceAncestors } from '../runner/referenceAncestors'
 import { forkRegenerationNodesInPlan, runPlanWithToasts } from '../components/batchPlanPreview'
+import { resolveAutonomousUploadConsent } from '../runner/generationRunController'
+import { toast } from '../../../ui/toast'
 import { mintSpendGrant } from '../../api/taskApi'
 import { batchSpendGrantTtlMs } from '../spend/spendConfirm'
 import { arrangeStoryboardToTimeline } from './sendStoryboardToTimeline'
+import { parseStoryboardPlan, type PlanShot, type StoryboardPlan } from './storyboardPlan'
 import {
-  buildDetailedStoryboardShotVideoPrompt,
-  parseStoryboardPlan,
-  storyboardPlanToCreateNodesArgs,
-  storyboardShotVideoPrompt,
-  type PlanShot,
-  type StoryboardPlan,
-} from './storyboardPlan'
-import { buildStoryboardScriptRows } from '../../creation/storyboard/storyboardScriptViewModel'
+  applyDerivedStoryboardVideoPrompt,
+  collectStoryboardShotPatch,
+  syncStoryboardPlanToCanvas,
+} from './storyboardPlanMutations'
 import type { StagingSpec, StagingCharacterSpec } from '../nodes/scene3d/stagingBuilder'
 import type { CameraMoveSpec } from '../nodes/scene3d/cameraMoveBuilder'
 import type { ScenePropPlacement } from '../nodes/scene3d/scene3dPropSpecs'
@@ -57,142 +57,6 @@ const EDGE_MODES: ReadonlySet<string> = new Set([
   'character_ref',
   'composition_ref',
 ])
-
-const STORYBOARD_SHOT_TEXT_FIELDS = [
-  'scene',
-  'shotSize',
-  'cameraAngle',
-  'cameraMove',
-  'characters',
-  'performance',
-  'dialogue',
-  'props',
-  'sound',
-  'notes',
-] as const satisfies readonly (keyof PlanShot)[]
-
-type StoryboardShotPatchResult = {
-  patch: Partial<PlanShot>
-  updated: string[]
-}
-
-function hasStoryboardValue(value: unknown): boolean {
-  if (typeof value === 'string') return value.trim().length > 0
-  if (typeof value === 'number') return Number.isFinite(value) && value > 0
-  if (Array.isArray(value)) return value.length > 0
-  if (value && typeof value === 'object') return Object.keys(value).length > 0
-  return value !== undefined && value !== null
-}
-
-function shouldPatchStoryboardField(current: PlanShot, key: keyof PlanShot, overwriteExisting: boolean): boolean {
-  return overwriteExisting || !hasStoryboardValue(current[key])
-}
-
-function collectStoryboardShotPatch(
-  current: PlanShot,
-  record: Record<string, unknown>,
-  options: { overwriteExisting: boolean },
-): StoryboardShotPatchResult {
-  const nextKind = record.shotKind === 'image' || record.shotKind === 'video' ? record.shotKind : current.shotKind
-  const patch: Partial<PlanShot> = {}
-  const updated: string[] = []
-  const add = <K extends keyof PlanShot>(key: K, value: PlanShot[K]) => {
-    patch[key] = value
-    updated.push(key)
-  }
-  const addIfAllowed = <K extends keyof PlanShot>(key: K, value: PlanShot[K]) => {
-    if (shouldPatchStoryboardField(current, key, options.overwriteExisting)) add(key, value)
-  }
-
-  if (
-    nextKind &&
-    nextKind !== current.shotKind &&
-    shouldPatchStoryboardField(current, 'shotKind', options.overwriteExisting)
-  )
-    add('shotKind', nextKind)
-  if (typeof record.durationSec === 'number' && Number.isFinite(record.durationSec))
-    addIfAllowed('durationSec', record.durationSec)
-  if (typeof record.modelKey === 'string') addIfAllowed('modelKey', record.modelKey.trim() || undefined)
-  if (typeof record.variantId === 'string') addIfAllowed('variantId', record.variantId.trim() || undefined)
-  if (typeof record.modeId === 'string') addIfAllowed('modeId', record.modeId.trim() || undefined)
-  if (record.params && typeof record.params === 'object' && !Array.isArray(record.params)) {
-    addIfAllowed('params', { ...(record.params as Record<string, unknown>) })
-  }
-  for (const key of STORYBOARD_SHOT_TEXT_FIELDS) {
-    if (typeof record[key] === 'string') addIfAllowed(key, record[key])
-  }
-
-  const activeKind = nextKind ?? current.shotKind ?? 'video'
-  const hasPrompt = typeof record.prompt === 'string'
-  const hasImagePrompt = typeof record.imagePrompt === 'string'
-  const hasVideoPrompt = typeof record.videoPrompt === 'string'
-  if (hasImagePrompt && shouldPatchStoryboardField(current, 'imagePrompt', options.overwriteExisting)) {
-    add('imagePrompt', record.imagePrompt as string)
-    if (
-      activeKind === 'image' &&
-      !hasPrompt &&
-      shouldPatchStoryboardField(current, 'prompt', options.overwriteExisting)
-    ) {
-      add('prompt', record.imagePrompt as string)
-    }
-  }
-  if (hasVideoPrompt && shouldPatchStoryboardField(current, 'videoPrompt', options.overwriteExisting)) {
-    add('videoPrompt', record.videoPrompt as string)
-    if (
-      activeKind === 'video' &&
-      !hasPrompt &&
-      shouldPatchStoryboardField(current, 'prompt', options.overwriteExisting)
-    ) {
-      add('prompt', record.videoPrompt as string)
-    }
-  }
-  if (hasPrompt && shouldPatchStoryboardField(current, 'prompt', options.overwriteExisting)) {
-    const prompt = record.prompt as string
-    add('prompt', prompt)
-    if (activeKind === 'image' && shouldPatchStoryboardField(current, 'imagePrompt', options.overwriteExisting))
-      add('imagePrompt', prompt)
-    if (activeKind === 'video' && shouldPatchStoryboardField(current, 'videoPrompt', options.overwriteExisting))
-      add('videoPrompt', prompt)
-  }
-
-  return { patch, updated: Array.from(new Set(updated)) }
-}
-
-function applyDerivedStoryboardVideoPrompt(shot: PlanShot): PlanShot {
-  const prompt = buildDetailedStoryboardShotVideoPrompt(shot)
-  return {
-    ...shot,
-    videoPrompt: prompt,
-    ...((shot.shotKind ?? 'video') !== 'image' ? { prompt } : {}),
-  }
-}
-
-function syncStoryboardPlanToCanvas(nextPlan: StoryboardPlan, changedShotIndices: ReadonlySet<number>): void {
-  const canvasStore = useGenerationCanvasStore.getState()
-  const groupPrompt =
-    storyboardPlanToCreateNodesArgs(nextPlan).nodes.find((node) => node.clientId === 'storyboard-group')?.prompt || ''
-  for (const node of canvasStore.nodes) {
-    if (!node.meta?.storyboardGroup) continue
-    canvasStore.updateNode(
-      node.id,
-      {
-        ...(groupPrompt ? { prompt: groupPrompt } : {}),
-        meta: { ...(node.meta || {}), storyboardPlanSnapshot: nextPlan },
-      },
-      { persist: false },
-    )
-  }
-  if (changedShotIndices.size > 0) {
-    const state = useGenerationCanvasStore.getState()
-    const rows = buildStoryboardScriptRows(nextPlan, state.nodes, state.edges)
-    for (const row of rows) {
-      if (!changedShotIndices.has(row.shot.index) || !row.videoNode) continue
-      const prompt = storyboardShotVideoPrompt(row.shot)
-      if (prompt) useGenerationCanvasStore.getState().updateNodePrompt(row.videoNode.id, prompt)
-    }
-  }
-  useGenerationCanvasStore.getState().commitPersistedChange()
-}
 
 /** LLM 给的边 mode 只认白名单内的值，非法值按通用参考处理（不抛、不静默改语义）。 */
 function normalizeEdgeMode(raw: unknown): GenerationCanvasEdgeMode | undefined {
@@ -333,12 +197,15 @@ export function parseCameraMoveSpec(record: Record<string, unknown>): {
 } {
   const str = strValue
   const backdrop = parseSceneBackdrop(record)
+  const customMove = str(record.customMove)
   return {
-    move: str(record.move) as CameraMoveSpec['move'] | undefined,
+    // customMove is the explicit escape hatch for an out-of-vocab intent. Some models retain
+    // a stale enum from the previous turn; never let that stale value override the new intent.
+    move: customMove ? undefined : (str(record.move) as CameraMoveSpec['move'] | undefined),
     speed: str(record.speed) as CameraMoveSpec['speed'],
     shot: str(record.shot) as CameraMoveSpec['shot'],
     subjectPose: str(record.subjectPose),
-    customMove: str(record.customMove),
+    customMove,
     sceneTemplate: backdrop.sceneTemplate,
     props: backdrop.props,
   }
@@ -504,14 +371,32 @@ export async function applyCanvasToolCall(
       const positionRecord =
         node.position && typeof node.position === 'object' ? (node.position as Record<string, unknown>) : null
       const plannedMeta = buildPlannedNodeMeta(node, entryByKey)
-      // 分镜域标记透传：参考卡不占镜号；分镜组总控卡用于把一批镜头标成同一脚本入口。
-      const domainMeta: Record<string, unknown> = {}
-      if (node.referenceSheet === true) domainMeta.referenceSheet = true
-      if (node.storyboardGroup === true) domainMeta.storyboardGroup = true
-      if (node.storyboardPlanSnapshot && typeof node.storyboardPlanSnapshot === 'object') {
-        domainMeta.storyboardPlanSnapshot = node.storyboardPlanSnapshot
+      // 参考卡身份透传（分镜方案的角色/场景/道具锚）→ node.meta.referenceSheet，编号分配处据此跳过。
+      // 首帧图身份同机制 → node.meta.storyboardKeyframe：创建时不领号，随后共用所属视频的镜号（见下）。
+      // W2 圣经：static/dynamic 特征也透传进 meta（键名走 anchorBibleKeys 单一常量，防 GUI/headless 漂移）——
+      // 身份轴对照读 meta.staticFeatures、冻结门/交付可显示；passthrough schema 自动持久化，零 schema 改动。
+      const staticFeatures = typeof node.staticFeatures === 'string' && node.staticFeatures.trim() ? node.staticFeatures.trim() : ''
+      const dynamicFeatures = typeof node.dynamicFeatures === 'string' && node.dynamicFeatures.trim() ? node.dynamicFeatures.trim() : ''
+      const identityMarks = {
+        ...(node.storyboardGroup === true ? { storyboardGroup: true } : {}),
+        ...(node.storyboardPlanSnapshot && typeof node.storyboardPlanSnapshot === 'object'
+          ? { storyboardPlanSnapshot: node.storyboardPlanSnapshot } : {}),
+        ...(node.referenceSheet === true ? { referenceSheet: true } : {}),
+        ...(node.storyboardKeyframe === true ? { storyboardKeyframe: true } : {}),
+        ...(staticFeatures ? { [ANCHOR_META_KEYS.staticFeatures]: staticFeatures } : {}),
+        ...(dynamicFeatures ? { [ANCHOR_META_KEYS.dynamicFeatures]: dynamicFeatures } : {}),
       }
-      const meta = Object.keys(domainMeta).length > 0 ? { ...(plannedMeta ?? {}), ...domainMeta } : plannedMeta
+      // StoryboardPlan supplies structured provenance/shot-language under `metadata`.
+      // Keep this as a single generic passthrough so plan fields survive in the real
+      // canvas node (not only in the prompt); identity marks remain the authoritative
+      // values for their reserved keys.
+      const structuredMetadata =
+        node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
+          ? (node.metadata as Record<string, unknown>)
+          : undefined
+      const meta = structuredMetadata || Object.keys(identityMarks).length
+        ? { ...(plannedMeta ?? {}), ...(structuredMetadata ?? {}), ...identityMarks }
+        : plannedMeta
       const plannedCategoryId =
         typeof node.categoryId === 'string' && (CATEGORY_IDS as readonly string[]).includes(node.categoryId)
           ? (node.categoryId as BuiltinCanvasCategoryId)
@@ -583,6 +468,26 @@ export async function applyCanvasToolCall(
           canvasStore.updateNode(keyframeId, { shotIndex: videoShotIndex })
         }
       }
+    }
+    // 批量落节点后统一请求适应视图。AI 直接建卡、方案确认和示例引导都走这里，
+    // 避免调用方漏触发后只看到被视口裁断的一部分新节点。单节点保留用户当前视口。
+    if (created.length > 1) {
+      const workbench = useWorkbenchStore.getState()
+      const categoryCounts = new Map<string, { count: number; firstIndex: number }>()
+      created.forEach((node, index) => {
+        const categoryId = node.categoryId || 'shots'
+        const current = categoryCounts.get(categoryId)
+        categoryCounts.set(categoryId, { count: (current?.count ?? 0) + 1, firstIndex: current?.firstIndex ?? index })
+      })
+      const fitCategoryId = categoryCounts.has(workbench.activeCategoryId)
+        ? workbench.activeCategoryId
+        : [...categoryCounts.entries()].sort(
+            ([leftId, left], [rightId, right]) =>
+              right.count - left.count ||
+              Number(rightId === 'shots') - Number(leftId === 'shots') ||
+              left.firstIndex - right.firstIndex,
+          )[0]?.[0]
+      workbench.requestCanvasFit(fitCategoryId)
     }
     return {
       createdNodeIds: created.map((node) => node.id),
@@ -657,10 +562,6 @@ export async function applyCanvasToolCall(
     if (!parsed.move && !parsed.customMove) {
       throw new Error('create_camera_move 需要 move（词表内精确运镜）或 customMove（词表外自由描述）二选一')
     }
-    if (parsed.move && parsed.customMove) {
-      throw new Error('create_camera_move 的 move 与 customMove 互斥：词表内用 move，词表外只用 customMove')
-    }
-
     // 词表外逃生口：只有 customMove → 不渲运镜小片，把运镜意图当电影术语指令追加进
     // 目标「视频节点」prompt（i2v 文字通道，模型自己解；精度略低但不硬塞错的 enum）。
     if (!parsed.move && parsed.customMove) {
@@ -765,9 +666,20 @@ export async function applyCanvasToolCall(
     const accepted = forked.plan.waves.flat()
     // 付费守卫：本分支只在用户批准 pending 卡后到达（人手势在上游）→ 铸令牌绑受理节点，
     // 随 plan 下到主进程 runTask 核验。删了 defaultExecuteToolCall 的自动放行旁路后此处不会被 AI 静默触发。
+    // 托管同意：这条是**外部 agent 受理**路径，回合不阻塞、也没人在等着点第二张卡。
+    // 交给同一个策略真相源逐节点判定（resolveAutonomousUploadConsent）：策略允许 / KIE 已配
+    // / 本地 ComfyUI → 放行；还需要问一次 → 拒发并把人话原因走 toast 告诉用户，不偷偷上传。
     void mintSpendGrant(accepted, 1, batchSpendGrantTtlMs(accepted.length))
-      .then((grantId) => runPlanWithToasts(forked.plan, { grantId }))
-      .catch(() => {}) // 进度/结果全走 toast+run 域事件,此处不再有未处理拒绝
+      .then(async (grantId) => {
+        const decisions = await Promise.all(accepted.map((id) => resolveAutonomousUploadConsent(id)))
+        const consent = decisions.includes('allow') ? 'allow' as const : 'not-needed' as const
+        await runPlanWithToasts(forked.plan, { grantId, assetUploadConsent: consent })
+      })
+      .catch((error: unknown) => {
+        // 进度/结果本来全走 toast+run 域事件；托管被拒是唯一需要在此说人话的失败。
+        const message = error instanceof Error && error.message ? error.message : ''
+        if (message) toast(message, 'error')
+      })
     return {
       accepted: true,
       acceptedNodeIds: accepted,
@@ -783,7 +695,7 @@ export async function applyCanvasToolCall(
     const rawIds = Array.isArray(record.nodeIds)
       ? record.nodeIds.map((id) => resolveNodeId(String(id || '').trim())).filter(Boolean)
       : undefined
-    const result = arrangeStoryboardToTimeline(rawIds && rawIds.length ? { nodeIds: rawIds } : {})
+    const result = await arrangeStoryboardToTimeline(rawIds && rawIds.length ? { nodeIds: rawIds } : {})
     if (!result.ok && result.total === 0) {
       throw new Error('没有可排片的镜头:画布上还没有生成好的视频或可占位的关键帧')
     }

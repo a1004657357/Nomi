@@ -10,6 +10,28 @@ function emptyCatalog(): CatalogState {
 const NOW = "2026-06-05T00:00:00.000Z";
 
 describe("applyBuiltinSeeds", () => {
+  it("keeps custom local models and upstream additions in the same idempotent catalog", () => {
+    const { state } = applyBuiltinSeeds(emptyCatalog(), NOW);
+    const addresses = state.models.map((model) => `${model.vendorKey}:${model.modelKey}`);
+    expect(new Set(addresses).size).toBe(addresses.length);
+    expect(addresses).toEqual(expect.arrayContaining([
+      "codex:codex-img2", "codex-local:codex-imagegen",
+      "jimeng-web:jimeng-web-image", "jimeng-web:jimeng-web-seedance-2.0",
+      "dreamina:dreamina-seedance-2.0", "dreamina:dreamina-seedance-2.5",
+      "pixstag:MiniMax-H3", "agnes:agnes-video-2.5", "agnes:agnes-video-2.5-flash",
+      "kie:nano-banana-2", "kie:nano-banana-2-lite", "kie:wan/3-0-video",
+      "volcengine:doubao-seedream-5-0-pro-260628",
+    ]));
+  });
+
+  it("adds an opt-in local CLI text connection without granting Agent tools or replacing user state", () => {
+    const { state } = applyBuiltinSeeds(emptyCatalog(), NOW);
+    const vendor = state.vendors.find((v) => v.key === "antigravity-cli");
+    expect(vendor).toMatchObject({ authType: "none", enabled: false });
+    expect(state.models.filter((m) => m.vendorKey === "antigravity-cli")).toEqual([]);
+    vendor!.enabled = true;
+    expect(applyBuiltinSeeds(state, NOW).state.vendors.find((v) => v.key === "antigravity-cli")?.enabled).toBe(true);
+  });
   it("空目录：补齐 kie vendor + Seedance 模型 + 首帧 mapping", () => {
     const { state, changed } = applyBuiltinSeeds(emptyCatalog(), NOW);
     expect(changed).toBe(true);
@@ -62,7 +84,8 @@ describe("applyBuiltinSeeds", () => {
     expect(mappings.map((mapping) => mapping.taskKind).sort()).toEqual(["image_to_video", "text_to_video"]);
     for (const mapping of mappings) {
       expect(mapping.create.path).toBe("/v1/videos");
-      expect(mapping.query?.path).toBe("https://apihub.agnes-ai.com/agnesapi");
+      expect(mapping.query?.path).toBe("/agnesapi");
+      expect(mapping.query?.pathFrom).toBe("host-root");
       expect(mapping.query?.query).toMatchObject({ model_name: "agnes-video-2.5-flash" });
       expect(mapping.query?.response_mapping?.video_url).toEqual([
         "metadata.url",
@@ -265,14 +288,23 @@ describe("applyBuiltinSeeds", () => {
     expect(state.models.find((m) => m.modelKey === "my-custom-seedance-fast")).toBeTruthy();
   });
 
-  it("文本大脑：fresh seed 给 apimart 播一个 enabled 的 kind=text 模型（创作助手主控，Issue #9）", () => {
+  it("文本大脑：fresh seed 给 apimart 播一组 enabled 的 kind=text 模型（创作助手主控，Issue #9）", () => {
     const { state } = applyBuiltinSeeds(emptyCatalog(), NOW);
-    const brain = state.models.find((m) => m.vendorKey === "apimart" && m.modelKey === "deepseek-v3.1-250821");
-    expect(brain).toMatchObject({ kind: "text", enabled: true });
-    // 文本模型不挂 archetype（走 buildLanguageModelForVendor 直连 chat，不需 mapping）。
-    expect((brain?.meta as { archetypeId?: string } | undefined)?.archetypeId).toBeUndefined();
-    // 也不该为文本大脑造任何 mapping（避免 unused dead data）。
-    expect(state.mappings.find((mp) => mp.vendorKey === "apimart" && mp.modelKey === "deepseek-v3.1-250821")).toBeUndefined();
+    const brainKeys = [
+      "deepseek-v4-pro",
+      "deepseek-v4-flash",
+      "deepseek-v3.2",
+      "deepseek-v3.2-think",
+      "deepseek-v3.1-terminus",
+    ];
+    for (const modelKey of brainKeys) {
+      const brain = state.models.find((m) => m.vendorKey === "apimart" && m.modelKey === modelKey);
+      expect(brain).toMatchObject({ kind: "text", enabled: true });
+      // 文本模型不挂 archetype（走 buildLanguageModelForVendor 直连 chat，不需 mapping）。
+      expect((brain?.meta as { archetypeId?: string } | undefined)?.archetypeId).toBeUndefined();
+      // 也不该为文本大脑造任何 mapping（避免 unused dead data）。
+      expect(state.mappings.find((mp) => mp.vendorKey === "apimart" && mp.modelKey === modelKey)).toBeUndefined();
+    }
   });
 
   it("文本大脑：老装机（apimart 已接但无文本模型）→ reconcile 漂移自愈补上大脑", () => {
@@ -282,7 +314,7 @@ describe("applyBuiltinSeeds", () => {
     expect(stale.models.find((m) => m.vendorKey === "apimart" && m.kind === "text")).toBeUndefined();
     const { state, changed } = applyBuiltinSeeds(stale, "2026-06-19T00:00:00.000Z");
     expect(changed).toBe(true);
-    expect(state.models.find((m) => m.vendorKey === "apimart" && m.modelKey === "deepseek-v3.1-250821")).toMatchObject({ kind: "text", enabled: true });
+    expect(state.models.find((m) => m.vendorKey === "apimart" && m.modelKey === "deepseek-v4-pro")).toMatchObject({ kind: "text", enabled: true });
   });
 
   it("存在即跳过：不覆盖用户已有的同 key 记录", () => {
@@ -414,5 +446,34 @@ describe("Imagen 4 退役（2026-07-30：上游 Google 确定性 404，用户拍
     let state = applyBuiltinSeeds(emptyCatalog(), NOW).state;
     for (let i = 0; i < 3; i += 1) state = applyBuiltinSeeds(state, NOW).state;
     expect(state.models.filter((m) => m.modelKey === "imagen-4.0-apimart")).toHaveLength(0);
+  });
+});
+
+
+describe("Agnes complete catalog upgrade", () => {
+  it("adds ten public models, keeps user state, and preserves image attachments through explicit metadata", async () => {
+    const { modelSupportsImageInput, buildAgentUserContent } = await import("../ai/agentUserContent");
+    const stale = applyBuiltinSeeds(emptyCatalog(), NOW).state;
+    const old = stale.models.find((m) => m.vendorKey === "agnes" && m.modelKey === "agnes-2.0-flash")!;
+    old.enabled = false; old.labelZh = "My Agnes"; old.meta = { note: "keep" };
+    const mapping = stale.mappings.find((m) => m.id === "seed-agnes-video-v2-image_to_video")!;
+    mapping.enabled = false; mapping.name = "My video";
+    stale.apiKeysByVendor.agnes = { vendorKey: "agnes", apiKey: "synthetic-encrypted-fixture", enc: "safeStorage", enabled: false, createdAt: NOW, updatedAt: NOW };
+    const savedKeys = structuredClone(stale.apiKeysByVendor);
+    const { state } = applyBuiltinSeeds(stale, "2026-08-26T00:00:00.000Z");
+    expect(state.models.filter((m) => m.vendorKey === "agnes")).toHaveLength(10);
+    expect(state.models.find((m) => m === old) ?? state.models.find((m) => m.modelKey === old.modelKey)).toMatchObject({ enabled: false, labelZh: "My Agnes", meta: { note: "keep", supportsImageInput: true } });
+    expect(state.mappings.find((m) => m.id === mapping.id)).toMatchObject({ enabled: false, name: "My video" });
+    expect(state.apiKeysByVendor).toEqual(savedKeys);
+    for (const model of state.models.filter((m) => m.vendorKey === "agnes" && m.kind === "text")) {
+      const supportsImageInput = modelSupportsImageInput(model.modelKey, model.modelAlias, model.meta);
+      const content = await buildAgentUserContent({ prompt: "Describe it", supportsImageInput, supportsPdfInput: false, attachments: [{ url: "nomi-local://test.png", fileName: "test.png", contentType: "image/png", kind: "image" }], resolveBytes: () => new Uint8Array([1]), extractText: async () => null });
+      expect(content).toContainEqual({ type: "image", image: new Uint8Array([1]), mimeType: "image/png" });
+    }
+    expect(applyBuiltinSeeds(state, "2026-08-27T00:00:00.000Z").changed).toBe(false);
+    for (const modelKey of ["agnes-video-2.5", "agnes-video-2.5-flash"]) {
+      const query = state.mappings.find((m) => m.vendorKey === "agnes" && m.modelKey === modelKey)?.query;
+      expect(query?.query).toEqual({ video_id: "{{providerMeta.video_id}}", model_name: modelKey });
+    }
   });
 });

@@ -1,37 +1,38 @@
 import {
   localizeAssetsForVendor,
-  resolveAssetIngestionWithFallback,
   trustedLocalOutputOrigin,
   type LocalAssetReader,
 } from "../catalog/assetLocalization";
 import { readNomiLocalAsset, postJsonForAssetUpload, postMultipartForAssetUpload } from "../assets/localAssetFile";
 import { localizedTaskAssetFileName, probeLocalizedDurationSeconds } from "../assets/localizedAsset";
 import type { GlbValidationReport } from "../assets/glbValidation";
-import { importRemoteAsset, writeAsset } from "../assets/projectAssetStore";
+import { importRemoteAsset, writeAsset, writeDeterministicAsset } from "../assets/projectAssetStore";
 import { requestJson, requestMultipart } from "../vendor/vendorHttp";
 import { buildTaskProvenance } from "../vendor/provenance";
 import { scheduleTechnicalReview } from "../review/reviewTrace";
-import { type AuthType, buildHttpRequest, buildTemplateContext, extractTaskId } from "../ai/requestPipeline";
-import { executeProcessOperation } from "../catalog/processOperation";
+import { extractTaskId } from "../ai/requestPipeline";
+import { assertCanonicalAntigravityOperation, executeProcessOperation } from "../catalog/processOperation";
+import { buildProfileHttpRequest, templateContext } from "../catalog/profileHttpRequest";
+import { assetIngestionResolver, assetLocalizationOptions } from "../catalog/assetTransportRuntime";
+import { activeTaskProjectFallback, unlocalizedTaskAsset } from "./activeProjectFallback";
 import { firstString, isJsonRecord, trim, type JsonRecord } from "../jsonUtils";
 import {
   collectAssetUrls,
   firstMappedString,
   providerMetaFromResponse,
   resolveTaskStatus,
+  taskFailureMessageFromResponse,
   valuesFromMapping,
 } from "./responseParsing";
 import { extractAssetUrl } from "./assetUrlExtract";
 import { applyResponseTransform } from "./responseTransforms";
 import { applyRequestTransform } from "./requestTransforms";
 import { runMultipartProfileOperation } from "../catalog/multipartOperation";
-import { decryptApiKeyRecord } from "../catalog/secrets";
-import { extractVendorExtraHeaders, readCatalog } from "../catalog/catalogStore";
+import { readCatalog } from "../catalog/catalogStore";
 import { assertAgnesPublicImageReachable, isAgnesImageToVideoRequest } from "../catalog/agnesPublicAssetProbe";
 import type { BillingModelKind, HttpOperation, Mapping, Model, Vendor } from "../catalog/types";
 import { billingKindForTaskKind, selectTaskMapping } from "../catalog/types";
 import { firstReferenceImage, taskTemplateParams } from "../catalog/taskParams";
-import { applyParamMap, type ParamMap } from "../catalog/paramTranslate";
 import { waitForVendorSubmissionWindow } from "../vendorSubmissionRateLimiter";
 import type { TaskRequest, TaskResult } from "../runtime";
 
@@ -104,55 +105,7 @@ export function findTaskMapping(vendorKey: string, taskKind: TaskRequest["kind"]
   return selectTaskMapping(readCatalog().mappings, vendorKey, taskKind, modelKey);
 }
 
-function templateContext(
-  request: TaskRequest,
-  model: Model,
-  apiKey: string,
-  providerMeta: JsonRecord = {},
-  paramMap?: ParamMap,
-): JsonRecord {
-  return buildTemplateContext({
-    request: request as unknown as JsonRecord,
-    params: applyParamMap(paramMap, taskTemplateParams(request)),
-    model: model as unknown as JsonRecord,
-    modelKey: model.modelAlias || model.modelKey,
-    apiKey,
-    providerMeta,
-  });
-}
-
-export function buildProfileHttpRequest(input: {
-  vendor: Vendor;
-  model: Model;
-  apiKey: string;
-  request: TaskRequest;
-  operation: HttpOperation;
-  providerMeta?: JsonRecord;
-}): {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-  query: Record<string, unknown>;
-  body: unknown;
-  preview: unknown;
-} {
-  const extraHeaders = extractVendorExtraHeaders(input.vendor);
-  return buildHttpRequest({
-    baseUrl: String(input.vendor.baseUrlHint || ""),
-    authType: input.vendor.authType as AuthType,
-    authHeaderName: input.vendor.authHeader ?? undefined,
-    apiKey: input.apiKey,
-    context: templateContext(
-      input.request,
-      input.model,
-      input.apiKey,
-      input.providerMeta || {},
-      input.operation.paramMap,
-    ),
-    operation: input.operation,
-    ...(extraHeaders ? { extraHeaders } : {}),
-  });
-}
+export { buildProfileHttpRequest } from "../catalog/profileHttpRequest";
 
 export type ProfileOperationTimings = {
   assetLocalizationMs: number;
@@ -185,9 +138,22 @@ export async function executeProfileOperation(input: {
   providerMeta?: JsonRecord;
   enforceSubmissionRateLimit?: boolean;
   localAssetReader?: LocalAssetReader;
+  signal?: AbortSignal;
+  stage?: "create" | "query";
+  antigravityPreflight?: import("../ai/antigravityTask").PreparedAntigravityTask;
 }): Promise<{ response: unknown; request: unknown; timings: ProfileOperationTimings }> {
   const operationStartedAt = Date.now();
   if (input.operation.process) {
+    if (input.operation.process.parser === "antigravity-cli-image") {
+      if (!input.stage) throw new Error("ANTIGRAVITY_INVALID_CONFIG");
+      assertCanonicalAntigravityOperation({
+        vendorKey: input.vendor.key,
+        modelKey: input.model.modelKey,
+        taskKind: input.request.kind,
+        stage: input.stage,
+        operation: input.operation,
+      });
+    }
     const context = templateContext(
       input.request,
       input.model,
@@ -204,8 +170,13 @@ export async function executeProfileOperation(input: {
     const executed = await executeProcessOperation({
       process: input.operation.process,
       context,
-      projectId: trim(input.request.extras?.projectId),
+      projectId: trim(input.request.extras?.projectId) || activeTaskProjectFallback(),
       writeAsset,
+      writeDeterministicAsset,
+      signal: input.signal,
+      stage: input.stage,
+      identity: { vendorKey: input.vendor.key, modelKey: input.model.modelKey, taskKind: input.request.kind },
+      antigravityPreflight: input.antigravityPreflight,
     });
     return {
       ...executed,
@@ -228,7 +199,7 @@ export async function executeProfileOperation(input: {
     const submissionRateLimitMs = Date.now() - rateLimitStartedAt;
     const providerRequestStartedAt = Date.now();
     const executed = await runMultipartProfileOperation(input, (url, headers, query, form) =>
-      requestMultipart(input.vendor, input.apiKey, url, headers, query, form),
+      requestMultipart(input.vendor, input.apiKey, url, headers, query, form, input.signal),
     );
     return {
       ...executed,
@@ -247,16 +218,11 @@ export async function executeProfileOperation(input: {
   const uploadCatalog = readCatalog();
   const localized = await localizeAssetsForVendor(
     input.request.extras,
-    (mediaKind) =>
-      resolveAssetIngestionWithFallback(
-        input.vendor,
-        uploadCatalog.vendors,
-        (key) => decryptApiKeyRecord(uploadCatalog.apiKeysByVendor[key]),
-        mediaKind,
-      ),
+    assetIngestionResolver(input.vendor, uploadCatalog),
     input.localAssetReader ?? readNomiLocalAsset,
     postJsonForAssetUpload,
     postMultipartForAssetUpload,
+    assetLocalizationOptions(input.request.extras),
   );
   const assetLocalizationMs = Date.now() - assetLocalizationStartedAt;
   const effectiveInput =
@@ -279,6 +245,7 @@ export async function executeProfileOperation(input: {
   const body = await applyRequestTransform(effectiveInput.operation.request_transform, built.body, {
     baseUrl: String(effectiveInput.vendor.baseUrlHint || ""),
     promptId: firstString(effectiveInput.request.extras?.comfyPromptId),
+    request: effectiveInput.request,
   });
   const response = await requestJson(
     effectiveInput.vendor,
@@ -288,6 +255,7 @@ export async function executeProfileOperation(input: {
     built.headers,
     built.query,
     body,
+    input.signal,
   );
   return {
     response,
@@ -360,7 +328,7 @@ export async function buildProfileTaskResult(input: {
     ? await Promise.all(
         assetUrls.map((url) => localizeTaskAsset(input.projectId || "", url, type, input.nodeId, input.vendor, expectation)),
       )
-    : assetUrls.map((url) => ({ type, url, thumbnailUrl: type === "image" ? url : null }));
+    : assetUrls.map((url) => unlocalizedTaskAsset(type, url));
   const assetPersistenceMs = Date.now() - assetPersistenceStartedAt;
   const resultTimings = input.operationTimings
     ? {
@@ -378,6 +346,7 @@ export async function buildProfileTaskResult(input: {
       status: resolvedStatus,
       assets,
       raw: resultTimings ? attachProfileOperationTimingsToRaw(input.response, resultTimings) : input.response,
+      ...(resolvedStatus === "failed" ? { error: taskFailureMessageFromResponse(response, responseMapping) } : {}),
       ...(resolvedStatus === "succeeded" && input.vendor && input.model
         ? {
             provenance: buildTaskProvenance({

@@ -5,6 +5,11 @@ import { localizedTaskAssetFileName } from "./assets/localizedAsset";
 import { writeAsset } from "./assets/projectAssetStore";
 import { endpoint } from "./vendorEndpoint";
 import { requestJson } from "./vendor/vendorHttp";
+import { assertLocalAssetTransportReady } from "./catalog/assetLocalization";
+import { assetIngestionResolver, assetLocalizationOptions } from "./catalog/assetTransportRuntime";
+import { readNomiLocalAsset } from "./assets/localAssetFile";
+import { validateProfileRequestBeforeSpend } from "./catalog/profileHttpRequest";
+import { chatImageFallbackOperation } from "./catalog/imageRouteFallback";
 import { buildNormalizedRecipe, buildTaskProvenance } from "./vendor/provenance";
 import { traceVendorCompleted, traceVendorRequested } from "./events/vendorCallTrace";
 import { scheduleTechnicalReview } from "./review/reviewTrace";
@@ -13,6 +18,7 @@ import {
   authHeaders as buildAuthHeaders,
   extractTaskId as extractTaskIdShared,
 } from "./ai/requestPipeline";
+import { prepareAntigravityCreateOperation } from "./catalog/processOperation";
 import { executeTextTask } from "./textTaskRunner";
 import { runAudioTask } from "./audioTaskRunner";
 import { runCodexImageGeneration } from "./ai/codexImagegenRunner";
@@ -40,14 +46,17 @@ export { localizedTaskAssetFileName };
 
 // 任务执行复用 catalog 状态（extractVendorExtraHeaders 纯函数）；
 // catalogStore 反向复用本文件任务引擎 → 运行期循环引用（CommonJS 安全）。
-import { extractVendorExtraHeaders } from "./catalog/catalogStore";
+import { extractVendorExtraHeaders, readCatalog } from "./catalog/catalogStore";
 
 import type { BillingModelKind, Mapping, Model, ProfileKind, Vendor } from "./catalog/types";
 import { billingKindForTaskKind } from "./catalog/types";
 import { applyHeadlessParamDefaults, imageEditGuardError } from "./catalog/taskParams";
 import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
 import { JIMENG_WEB_VENDOR_SEED } from "./catalog/jimengWeb";
+import { activeTaskProjectFallback } from "./tasks/activeProjectFallback";
+import { modelModeBodies } from "./catalog/modelCatalogListing";
 import { runCustomCallTask } from "./catalog/customCallDispatch";
+import { resolveCustomCallExecution } from "./catalog/customCallMode";
 import { assertAndConsumeSpendGrant } from "./spendGrant";
 import { waitForVendorSubmissionWindow } from "./vendorSubmissionRateLimiter";
 import {
@@ -74,7 +83,6 @@ export type {
   ProfileKind,
   Vendor,
 } from "./catalog/types";
-
 // ── 巨壳拆分：子模块再导出，main.ts/测试仍从 "./runtime" 消费这些符号（API 不破） ──
 export {
   startExportJob,
@@ -121,7 +129,6 @@ export type {
   AgentChatV2Hooks,
   RunAgentChatV2Payload,
 } from "./ai/agentChatV2";
-
 export type TaskRequest = {
   kind: ProfileKind;
   prompt: string;
@@ -131,9 +138,8 @@ export type TaskRequest = {
   height?: number;
   steps?: number;
   cfgScale?: number;
-  extras?: Record<string, unknown>;
+  extras?: Record<string, unknown> & { executionBinding?: import("./productionRun/productionExecutionBinding").ProductionExecutionBinding };
 };
-
 export type TaskResult = {
   id: string;
   kind: ProfileKind;
@@ -209,8 +215,6 @@ function authHeaders(vendor: Vendor, apiKey: string): Record<string, string> {
   return buildAuthHeaders(vendor.authType as AuthType, apiKey, vendor.authHeader ?? undefined);
 }
 
-// endpoint() 已抽到 electron/vendorEndpoint.ts（纯函数，便于无 electron 的单测）
-
 // billingKindForTaskKind 下沉到 catalog/types（R12 净减）；re-export 保住既有消费方 import 面。
 export { billingKindForTaskKind } from "./catalog/types";
 export { extractAssetUrl } from "./tasks/assetUrlExtract";
@@ -223,8 +227,8 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   const kind = request.kind;
   const wantedKind = billingKindForTaskKind(kind);
   const modelKey = firstString(request.extras?.modelKey, request.extras?.modelAlias);
-  const { vendor, model, apiKey } = findExecutableModel(vendorKey, modelKey, wantedKind);
-  const projectId = trim(request.extras?.projectId);
+  const { vendor, model, apiKey, customConfig } = findExecutableModel(vendorKey, modelKey, wantedKind);
+  const projectId = trim(request.extras?.projectId) || activeTaskProjectFallback();
   const nodeId = trim(request.extras?.nodeId);
   const grantId = trim(request.extras?.grantId);
   const taskId = `task-${crypto.randomUUID()}`;
@@ -344,47 +348,32 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     return queued;
   }
   const mapping = findTaskMapping(vendorKey, kind, modelKey);
-  request.extras = applyHeadlessParamDefaults(
-    request.extras,
-    (model?.meta as { archetypeId?: string } | undefined)?.archetypeId,
-    kind,
-    vendorKey,
-    mapping?.create?.defaultParams,
-  ); // headless 缺参兜底(档案默认+mapping)
-  const customCallScript = trim(model.customCall?.script);
-  // L3 诚实护栏：图生图/图生视频缺参考或缺 mapping → 付费守卫之前拒发人话，绝不静默退化纯文生（判定在 taskParams.imageEditGuardError）。
-  const guardError = imageEditGuardError(
-    kind,
-    request,
-    Boolean(mapping) || Boolean(customCallScript),
-    model.labelZh || model.modelKey,
-    customCallScript ? undefined : mapping?.create?.body,
-  );
+  // headless/MCP extras 预备：缺参兜底 + W1d 参考键形态投影（末参 createBody，逻辑/文档住 taskParams.applyHeadlessParamDefaults）；自定义调用脚本存在即接管图/视频/3D（对 L3 护栏算「有 mapping」，参考缺失拒发仍生效，派发抽到 catalog/customCallDispatch，R12）。
+  request.extras = applyHeadlessParamDefaults(request.extras, (model?.meta as { archetypeId?: string } | undefined)?.archetypeId, kind, vendorKey, mapping?.create?.defaultParams, mapping?.create?.body, model.modelKey);
+  const customCall = resolveCustomCallExecution(model as Model, request, mapping);
+  const customCallScript = customCall?.script || "";
+  // L3 诚实护栏（判定在 taskParams.imageEditGuardError）：图生图/图生视频缺参考或缺 mapping → 付费守卫前拒发人话，绝不静默退化纯文生。末参 modelModeBodies（该模型所有模式 body）= 交付4：拒发时点名"哪个模式带得动你连的参考"（同套 mapping derive）。
+  const guardError = imageEditGuardError(kind, request, Boolean(mapping) || Boolean(customCallScript), model.labelZh || model.modelKey, customCallScript ? undefined : mapping?.create?.body, modelModeBodies(readCatalog().mappings, vendorKey, modelKey, (model as Model).modelAlias), { vendorKey, modelKey: model.modelKey });
   if (guardError) throw new Error(guardError);
-  // 第四路 audio：TTS/Whisper 同步收口（二进制/multipart）。付费守卫：必发 vendor，进来即校验消费令牌。
+  if (customCallScript) // 先于 mapping/fallback；注入避免循环依赖。文本也走这里（去掉 wantedKind!=="text" 排除：那等于「接不上的文本模型毫无出路」，而用户最初踩的正是文本模型）；文本脚本 return { text }
+    return runCustomCallTask({ vendor, model, apiKey, customConfig, script: customCallScript, taskKind: customCall!.taskKind, modeId: customCall!.modeId, request, kind, wantedKind, projectId, nodeId, grantId, taskId, localizeTaskAsset, writeAsset });
+  // 第四路 audio：没有脚本接管时才走 TTS/Whisper 同步收口（二进制/multipart）。
   if (wantedKind === "audio") {
     assertAndConsumeSpendGrant(grantId, nodeId);
     await waitForVendorSubmissionWindow(vendor.key, wantedKind);
     return runAudioTask({ vendor, model, apiKey, request, kind, taskId, projectId, nodeId, mapping });
   }
-  if (customCallScript) {
-    return runCustomCallTask({
-      vendor,
-      model,
-      apiKey,
-      script: customCallScript,
-      request,
-      kind,
-      wantedKind,
-      projectId,
-      nodeId,
-      grantId,
-      taskId,
-      localizeTaskAsset,
-      writeAsset,
-    });
-  }
   if (mapping) {
+    await validateProfileRequestBeforeSpend({ vendor, model, apiKey, request, operation: mapping.create });
+    const uploadCatalog = readCatalog();
+    if (!mapping.create.multipart && !mapping.create.process) {
+      assertLocalAssetTransportReady(
+        request.extras,
+        assetIngestionResolver(vendor, uploadCatalog),
+        readNomiLocalAsset,
+        assetLocalizationOptions(request.extras),
+      );
+    }
     // S8 指纹缓存:同配方(参数没动)秒回上次成功结果,零 vendor 调用;强制重跑经 extras.forceRerun 绕读。
     const recipe = buildNormalizedRecipe({
       vendor,
@@ -395,19 +384,24 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     const fingerprint = recipeFingerprint(recipe);
     const cachedHit = readCachedTaskResult({ projectId, fingerprint, nodeId, extras: request.extras });
     if (cachedHit) return cachedHit as TaskResult;
+    const antigravityPreflight = await prepareAntigravityCreateOperation({ vendorKey, modelKey: model.modelKey, taskKind: kind, operation: mapping.create, request });
     assertAndConsumeSpendGrant(grantId, nodeId); // 付费守卫：缓存未命中=真发 vendor，发前校验消费令牌
-    const executed = await executeProfileOperation({
-      vendor,
-      model,
-      apiKey,
-      request,
-      operation: mapping.create,
-      enforceSubmissionRateLimit: true,
-    });
+    // 中转生图路由回退（y7api 403 定案）：OpenAI images 端点被「分组未开通」类确定性拒绝（403 命中
+    // 窄短语 / 404/405，未创建任务未扣费）→ 换 chat/completions 多模态 op 重发一次；结果归一按
+    // 实际执行的 op 走（chat 同步返回，extractChatImageUrl 兜底解析）。详见 catalog/imageRouteFallback。
+    let createOperation = mapping.create; let executed;
+    try {
+      executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: createOperation, stage: "create", antigravityPreflight, enforceSubmissionRateLimit: true });
+    } catch (error) {
+      const fallbackOp = chatImageFallbackOperation(error, createOperation, kind);
+      if (!fallbackOp) throw error;
+      createOperation = fallbackOp;
+      executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: createOperation, stage: "create", antigravityPreflight, enforceSubmissionRateLimit: true });
+    }
     const normalized = await buildProfileTaskResult({
       response: executed.response,
       mapping,
-      operation: mapping.create,
+      operation: createOperation,
       request,
       taskIdFallback: taskId,
       wantedKind,

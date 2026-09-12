@@ -1,3 +1,4 @@
+import { getDesktopBridge } from '../../../desktop/bridge'
 import {
   type TaskKind,
   type TaskRequestDto,
@@ -8,16 +9,12 @@ import {
 } from '../../api/taskApi'
 import type { GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
 import type { ResolvedGenerationReferences } from './generationReferenceResolver'
-import {
-  narrateProgress,
-  type GenerationProgressPhase,
-  type ProgressNarrationContext,
-} from '../../observability/narrate'
-import {
-  buildArchetypeInputParams,
-  currentArchetypeMode,
-  orderedSentImageReferenceUrls,
-} from '../nodes/controls/archetypeMeta'
+import { resolveGenerationReferences } from './generationReferenceResolver'
+import { readParameterReferenceSlots } from '../model/parameterReferenceSlots'
+import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
+import { applyRelayFirstFrame } from './relayFrameResolver'
+import { narrateProgress, type GenerationProgressPhase, type ProgressNarrationContext } from '../../observability/narrate'
+import { buildArchetypeInputParams, currentArchetypeMode, orderedSentImageReferenceUrls } from '../nodes/controls/archetypeMeta'
 import { projectPromptForSend } from '../../assets/promptMentions'
 import {
   type CatalogTaskActionOptions,
@@ -36,12 +33,12 @@ import { normalizeCatalogTaskResult } from './catalogTaskResultParse'
 import { resolveCatalogTaskPollingPolicy } from './catalogTaskPollingPolicy'
 import { localizeRemoteResultUrl } from './resultAssetLocalization'
 import {
-  ComfyuiTaskCancelledError,
-  isComfyuiCancelRequested,
-  isComfyuiVendorKey,
+  LocalTaskCancelledError,
+  isTaskCancelRequested,
   unwatchComfyuiProgress,
   watchComfyuiProgress,
-} from './comfyuiTaskControl'
+} from './localTaskControl'
+import { isComfyuiVendorKey } from '../model/comfyuiVendor'
 import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
 import { RecoverableTimeoutError } from './recoverableTimeout'
 import { parseVendorErrorFromMessage } from './vendorErrorIpc'
@@ -49,6 +46,8 @@ import {
   compileVideoPromptForReferences,
   type VideoPromptReferenceStrategy,
 } from './videoPromptCompiler'
+import { collectLocalAssetUrls } from '../../../../electron/catalog/assetLocalization'
+import { readParameterReferenceContract } from '../../../../electron/catalog/parameterReferenceContract'
 
 // 重导出：实现已拆到 catalogTaskResolve（节点→vendor/model/kind 选择）与
 // catalogTaskResultParse（raw/asset/failure/provenance 解析），但 catalogTaskActions
@@ -64,22 +63,69 @@ const POLL_FAILURE_GRACE_MS = 45000
 // 走流式文本通道的 kind(与 catalogTaskResultParse 的 TEXT_TASK_KINDS 同语义)。
 const TEXT_STREAM_KINDS = new Set<TaskKind>(['chat', 'prompt_refine', 'image_to_prompt'])
 
+// Imported Comfy media inputs are exact keyed parameters. Unique-slot uploads
+// still persist these generic aliases for old projects/non-Comfy consumers, but
+// none of them may cross the Comfy request boundary and become a second wire.
+// A declared slot key always wins even if it happens to share a legacy name.
+const COMFY_PARAMETER_GENERIC_REFERENCE_KEYS = new Set([
+  'image', 'image_url', 'imageUrl',
+  'referenceImages', 'referenceImageUrl', 'referenceImageUrls', 'referenceImageRef', 'referenceImageRefs',
+  'reference_images', 'reference_image_urls',
+  'firstFrameUrl', 'firstFrameRef', 'firstFrameReference', 'first_frame_url',
+  'lastFrameUrl', 'lastFrameRef', 'lastFrameReference', 'last_frame_url',
+  'referenceVideoUrls', 'reference_video_urls', 'sourceVideoUrl', 'source_video_url', 'video_url',
+  'referenceAudioUrls', 'reference_audio_urls',
+  'styleReferenceImages', 'characterReferenceImages', 'compositionReferenceImages',
+  'upstreamResultUrls', 'archetypeInput', 'activeAssetUrls',
+])
+
+function comfyParameterContract(meta: Record<string, unknown>) {
+  const contract = readParameterReferenceContract(meta)
+  return contract && isComfyuiVendorKey(contract.vendorKey) ? contract : null
+}
+
+function parameterContractRequestMeta(meta: Record<string, unknown>): Record<string, unknown> {
+  const contract = comfyParameterContract(meta)
+  if (!contract) return meta
+  const declaredKeys = new Set(contract.slots.map((slot) => slot.key))
+  return Object.fromEntries(Object.entries(meta).filter(([key]) =>
+    declaredKeys.has(key) || !COMFY_PARAMETER_GENERIC_REFERENCE_KEYS.has(key)))
+}
+
+function parameterReferenceInputs(
+  meta: Record<string, unknown>,
+  references: Partial<ResolvedGenerationReferences>,
+): Record<string, string | null> {
+  return Object.fromEntries(readParameterReferenceSlots(meta)
+    .filter((slot) => Object.prototype.hasOwnProperty.call(references.parameterReferenceUrls ?? {}, slot.key))
+    .map((slot) => [slot.key, references.parameterReferenceUrls![slot.key]]))
+}
+
+function usesComfyParameterContract(meta: Record<string, unknown>): boolean {
+  return Boolean(comfyParameterContract(meta))
+}
+
 // 本地进程/队列后端：codex(`codex exec $imagegen`,官方 smoke 就 ~75s)、本地 ComfyUI 队列(可达数分钟)——
 // 都跑在用户机器上,时延本质是「秒级到分钟级」且方差大,不能和「秒级返回的云图像 API」共用 2min 硬超时:
 // 否则本地图还在生成就被判超时落「可找回」,用户体验成「Codex 生图拉取步骤超时」(群反馈 2026-07-30 的根因)。
 // 判据用 vendor key(稳定:codex-local/comfyui-local 都是 local:// 或本机 127.0.0.1 后端)。
-const SLOW_LOCAL_BACKENDS = new Set(['codex-local', 'comfyui-local'])
+// ComfyUI 单列走前缀判据:第 2+ 台实例的 key 是 `comfyui-local-{slug}`,放进定值集合只覆盖得了第一台,
+// 用户加第二台机器就会被云 API 的 2min 硬超时腰斩。
+const SLOW_LOCAL_BACKENDS = new Set(['codex-local', 'antigravity-cli'])
 
 // 轮询按「后端时延」而非「视频 vs 图像」分档:慢道 = 视频 ∪ 本地进程后端。这样本地生图(codex/comfyui)
 // 不再被云 API 的 2min 硬超时腰斩,而 codex 进程真跑完(成功/失败)时 query 立即返回终态、循环自然结束,
 // 故放宽硬超时纯为「等它跑完」、不会平白多等(查结果免费、不重发、不二次扣费)。
 export function isSlowLaneBackend(kind: TaskKind, vendor: string): boolean {
-  return kind === 'text_to_video' || kind === 'image_to_video' || SLOW_LOCAL_BACKENDS.has(vendor)
+  return kind === 'text_to_video' || kind === 'image_to_video'
+    || SLOW_LOCAL_BACKENDS.has(vendor) || isComfyuiVendorKey(vendor)
 }
 
 /** 轮询预算(ms):慢道(视频/本地进程后端)5min 软 / 20min 硬;快道云 API 2min 软=硬。 */
 export function resolvePollBudget(kind: TaskKind, vendor: string): { softMs: number; hardMs: number } {
-  if (SLOW_LOCAL_BACKENDS.has(vendor)) return { softMs: 300000, hardMs: 1200000 }
+  if (SLOW_LOCAL_BACKENDS.has(vendor) || isComfyuiVendorKey(vendor)) {
+    return { softMs: 300000, hardMs: 1200000 }
+  }
   const policy = resolveCatalogTaskPollingPolicy(kind, vendor)
   return { softMs: policy.softTimeoutMs, hardMs: policy.hardTimeoutMs }
 }
@@ -143,11 +189,12 @@ const SINGLE_VIDEO_REFERENCE_PRIORITY: Record<string, number> = {
 }
 
 function buildReferenceExtras(
-  node: GenerationCanvasNode,
+  meta: Record<string, unknown>,
   references: Partial<ResolvedGenerationReferences>,
   kind: TaskKind,
 ): Record<string, unknown> {
-  const meta = node.meta || {}
+  const parameterInputs = parameterReferenceInputs(meta, references)
+  const exactComfyParameters = usesComfyParameterContract(meta)
   const referenceImages = uniqueStrings([
     ...readStringArray(meta.referenceImages),
     ...(references.referenceImages || []),
@@ -235,7 +282,7 @@ function buildReferenceExtras(
     const sentReferenceImagePurposes = standardReferenceImages
       .map((url) => purposeByUrl.get(url) || '')
       .filter(Boolean)
-    return {
+    const derived = {
       ...(standardReferenceImages.length ? { referenceImages: standardReferenceImages } : {}),
       ...(firstFrameUrl ? { firstFrameUrl } : {}),
       ...(lastFrameUrl ? { lastFrameUrl } : {}),
@@ -246,6 +293,7 @@ function buildReferenceExtras(
       ...(characterReferenceImages.length ? { characterReferenceImages } : {}),
       ...(compositionReferenceImages.length ? { compositionReferenceImages } : {}),
     }
+    return exactComfyParameters ? { ...derived, ...parameterInputs } : { ...parameterInputs, ...derived }
   }
 
   const firstFrameUrl = asTrimmedString(references.firstFrameUrl) || asTrimmedString(meta.firstFrameUrl)
@@ -260,7 +308,7 @@ function buildReferenceExtras(
   // ComfyUI 导入的工作流正是无档案，于是「补帧 / 视频超分 / 视频去背景」这类图
   // 连了视频也永远收不到（electron 侧 referenceInputParams 据此派生 source_video_url）。
   const referenceVideoUrls = uniqueStrings(references.referenceVideos || [])
-  return {
+  const derived = {
     ...(referenceImages.length ? { referenceImages } : {}),
     ...(referenceVideoUrls.length ? { referenceVideoUrls } : {}),
     ...(firstFrameUrl ? { firstFrameUrl } : {}),
@@ -271,6 +319,7 @@ function buildReferenceExtras(
     ...(characterReferenceImages.length ? { characterReferenceImages } : {}),
     ...(compositionReferenceImages.length ? { compositionReferenceImages } : {}),
   }
+  return exactComfyParameters ? { ...derived, ...parameterInputs } : { ...parameterInputs, ...derived }
 }
 
 function videoReferenceStrategy(
@@ -284,7 +333,7 @@ function videoReferenceStrategy(
     const mode = currentArchetypeMode(archetype, node.meta || {})
     const imageSlot = mode.slots.find((slot) => slot.kind === 'image_ref')
     if (mode.slots.some((slot) => slot.kind === 'first_frame') || imageSlot?.max === 1) return 'first_frame'
-    if (imageSlot && imageSlot.max > 1) return 'full_reference'
+    if (imageSlot && (imageSlot.max === undefined || imageSlot.max > 1)) return 'full_reference'
   }
   if (asTrimmedString(referenceExtras.firstFrameUrl)) return 'first_frame'
   return readStringArray(referenceExtras.referenceImages).length ? 'reference' : 'text_only'
@@ -305,8 +354,8 @@ export function buildCatalogTaskRequest(
 
   const references = options.references || {}
   const kind = resolveTaskKind(node, references)
-  const meta = node.meta || {}
-  const referenceExtras = buildReferenceExtras(node, references, kind)
+  const meta = parameterContractRequestMeta(node.meta || {})
+  const referenceExtras = buildReferenceExtras(meta, references, kind)
   // @ 内联引用投影(R6 单源 · option 2):把 prompt 里的 @[asset:url] 标记转成 @imageN，
   // N = url 在「连线在前+上传」有序数组里的位置——**与实际发送的 reference_image 数组逐位一致**。此前只读
   // meta.referenceImageUrls，把连线进来的参考图当成「不在数组里」直接把 @ 标记删成空串（连线图 @ 不到/被
@@ -323,7 +372,7 @@ export function buildCatalogTaskRequest(
     references.stagingComposition && (kind === 'text_to_image' || kind === 'image_edit')
       ? `${prompt}\n\n（构图参考仅用于确定人物站位、各自姿势和镜头机位；请据此完全写实地重新渲染人物与场景——真实皮肤/衣物/光影，不要保留参考图里灰色人偶或 3D 渲染的外观。）`
       : prompt
-  const finalPrompt = kind === 'text_to_video' || kind === 'image_to_video'
+  const renderedPrompt = kind === 'text_to_video' || kind === 'image_to_video'
     ? compileVideoPromptForReferences({
         prompt: stagedPrompt,
         strategy: videoReferenceStrategy(kind, node, referenceExtras),
@@ -331,11 +380,37 @@ export function buildCatalogTaskRequest(
         referenceImageCount: sentReferenceImages.length || (asTrimmedString(referenceExtras.firstFrameUrl) ? 1 : 0),
       })
     : stagedPrompt
+  // Production QA targeted retries carry a short, machine-authored correction directive.
+  // Keep it out of the node's durable prompt (the original remains inspectable) and append it
+  // only to this submission so a retry fixes the flagged axis without rewriting the storyboard.
+  const promptSuffix = asTrimmedString(options.promptSuffix)
+  const finalPrompt = promptSuffix ? `${renderedPrompt}\n\n${promptSuffix}` : renderedPrompt
   const width = asFiniteNumber(meta.width)
   const height = asFiniteNumber(meta.height)
   const steps = asFiniteNumber(meta.steps)
   const cfgScale = asFiniteNumber(meta.cfgScale)
   const seed = asFiniteNumber(meta.seed)
+  const extras = {
+    ...meta,
+    modelKey,
+    modelAlias: asTrimmedString(meta.modelAlias) || modelKey,
+    nodeId: node.id,
+    nodeKind: node.kind,
+    // 付费守卫令牌：随 extras 下到主进程 runTask 核验消费（无则主进程拦截）。
+    ...(options.grantId ? { grantId: options.grantId } : {}),
+    ...(options.anonymousAssetHostingConsent ? { anonymousAssetHostingConsent: options.anonymousAssetHostingConsent } : {}),
+    // 提交幂等键：随 extras 下到主进程 runTask，同键提交内核 at-most-once（堵「丢回执→重试→二次下单」）。
+    ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+    // S8 缓存语义:节点血统里已出过图(result 或 history,含「基于此重生成」副本)→
+    // 再点生成=用户要重抽 → 强制重跑绕指纹缓存;首次生成/批量补跑同配方命中缓存
+    // 秒回零花费(防双击/重复受理重复扣费)。路由旗标,不进指纹。
+    ...(node.result || (node.history && node.history.length > 0) ? { forceRerun: true } : {}),
+    ...referenceExtras,
+  }
+  const activeAssetUrls = Array.from(collectLocalAssetUrls(extras))
+  const exactParameterInputs = usesComfyParameterContract(meta)
+    ? parameterReferenceInputs(meta, references)
+    : {}
 
   return {
     vendor,
@@ -347,21 +422,11 @@ export function buildCatalogTaskRequest(
       ...(typeof height === 'number' ? { height } : {}),
       ...(typeof steps === 'number' ? { steps } : {}),
       ...(typeof cfgScale === 'number' ? { cfgScale } : {}),
+      // 主进程根据这个 allowlist 只上传仍然活跃的本地素材；过期/残留引用不再把生成卡死。
       extras: {
-        ...meta,
-        modelKey,
-        modelAlias: asTrimmedString(meta.modelAlias) || modelKey,
-        nodeId: node.id,
-        nodeKind: node.kind,
-        // 付费守卫令牌：随 extras 下到主进程 runTask 核验消费（无则主进程拦截）。
-        ...(options.grantId ? { grantId: options.grantId } : {}),
-        // 提交幂等键：随 extras 下到主进程 runTask，同键提交内核 at-most-once（堵「丢回执→重试→二次下单」）。
-        ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
-        // S8 缓存语义:节点血统里已出过图(result 或 history,含「基于此重生成」副本)→
-        // 再点生成=用户要重抽 → 强制重跑绕指纹缓存;首次生成/批量补跑同配方命中缓存
-        // 秒回零花费(防双击/重复受理重复扣费)。路由旗标,不进指纹。
-        ...(node.result || (node.history && node.history.length > 0) ? { forceRerun: true } : {}),
-        ...referenceExtras,
+        ...extras,
+        ...(activeAssetUrls.length ? { activeAssetUrls } : {}),
+        ...exactParameterInputs,
       },
     },
   }
@@ -504,7 +569,7 @@ async function waitForCatalogTaskResult(
   while (!TERMINAL_STATUSES.has(current.status)) {
     throwIfAborted(options.signal)
     // P 轨遮罩取消：/interrupt 已发（免费幂等），这里把免费轮询也即刻停掉，不等 20min 硬超时。
-    if (cancelNodeId && isComfyuiCancelRequested(cancelNodeId)) throw new ComfyuiTaskCancelledError()
+    if (cancelNodeId && isTaskCancelRequested(cancelNodeId)) throw new LocalTaskCancelledError()
     const elapsedMs = Date.now() - startedAt
     if (elapsedMs > hardTimeoutMs) {
       // 超时≠失败：上游可能仍在跑/已出片 → 抛可找回错误，节点落 recoverable，给「重新拉取」入口。
@@ -529,11 +594,13 @@ async function waitForCatalogTaskResult(
         }),
         options.signal,
       )
+      if (cancelNodeId && isTaskCancelRequested(cancelNodeId)) throw new LocalTaskCancelledError()
       current = response.result
       pollFailureStreakStartedAt = null // 查成功 → 重置失败连击计数
       rateLimitStreak = 0
     } catch (error) {
       throwIfAborted(options.signal)
+      if (error instanceof LocalTaskCancelledError) throw error
       // 查结果失败：免费重试(下一轮再查)，绝不冒泡触发重发。持续失败超 grace 或已到硬超时 → 落可找回。
       // 被限流才累计退避；别的失败（网络抖动等）复位，否则一次抖动就把间隔滚上去、白拖出片。
       rateLimitStreak = isRateLimitedPollError(error) ? rateLimitStreak + 1 : 0
@@ -565,7 +632,22 @@ export async function runCatalogGenerationTask(
   const resolveStartedAt = Date.now()
   report('resolving')
   const executableNode = await resolveExecutableNodeFromCatalog(node, options)
-  const { vendor, request } = buildCatalogTaskRequest(executableNode, options)
+  const currentOptions = options.referenceContext
+    ? { ...options, references: resolveGenerationReferences(executableNode, options.referenceContext) }
+    : options
+  // Resolve video relay only after the final catalog projection; no later graph refresh may replace the extracted frame.
+  const references = currentOptions.references
+  if (getGenerationNodeExecutionKind(executableNode.kind) === 'video' && references?.relayFromVideoUrl) {
+    const videoUrl = references.relayFromVideoUrl
+    await applyRelayFirstFrame(references)
+    for (const slot of readParameterReferenceSlots(executableNode.meta)) {
+      // Generic image parameters can inherit explicit first_frame edges; video parameters keep the original clip.
+      if (slot.mediaKind !== 'video' && references.parameterReferenceUrls?.[slot.key] === videoUrl) {
+        references.parameterReferenceUrls[slot.key] = references.firstFrameUrl || null
+      }
+    }
+  }
+  const { vendor, request } = buildCatalogTaskRequest(executableNode, currentOptions)
   const resolveMs = Date.now() - resolveStartedAt
 
   // 文本任务 + 调用方要逐字 → 走流式通道:逐 token 回调 onTextDelta,终态直接返回
@@ -619,6 +701,11 @@ export async function runCatalogGenerationTask(
     throw error
   }
   const submitMs = Date.now() - submitStartedAt
+  if (isTaskCancelRequested(asTrimmedString(request.extras?.nodeId))) {
+    if (initialResult.id.startsWith('local-')) await getDesktopBridge()?.tasks.cancel?.(initialResult.id)
+    if (watchedPromptId) unwatchComfyuiProgress(watchedPromptId)
+    throw new LocalTaskCancelledError()
+  }
   report('waiting', initialResult.id)
   // 旧 ComfyUI 可能不接受客户端 prompt id：按服务端真实回执切 watcher。
   const comfyWatching = isComfyuiVendorKey(vendor) && Boolean(initialResult.id)

@@ -42,6 +42,7 @@ const operation: HttpOperation = {
 };
 
 const mapping: Mapping = {
+  id: "agnes-i2v-test",
   vendorKey: "agnes",
   taskKind: "image_to_video",
   modelKey: model.modelKey,

@@ -144,7 +144,7 @@ describe('VIBING Director Agent protocol policy', () => {
   })
 
   it('repairs one invalid structured response exactly once', async () => {
-    const repair = vi.fn(async () => JSON.stringify(validPlan))
+    const repair = vi.fn<(message: string) => Promise<string>>(async () => JSON.stringify(validPlan))
     const result = await resolveVibingDirectorStructuredPlanWithRepair({
       initialText: JSON.stringify({ answer: '这里只给出说明，没有计划。' }),
       directorNodeId: 'director-1',

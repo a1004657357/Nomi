@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import http from 'node:http'
+import { screenshotSettled } from './_assert.mjs'
 
 const repoRoot = process.cwd()
 const TOKEN = process.env.REPLICATE_API_TOKEN || ''
@@ -70,7 +71,7 @@ const failedUrls = []
 const onFail = (r) => { const u = r.url(); if (!URL_NOISE.test(u)) failedUrls.push(`${r.failure()?.errorText || '?'} ${u.slice(0, 80)}`) }
 app.on('window', (w) => w.on('requestfailed', onFail))
 win.on('requestfailed', onFail)
-async function snap(name) { n += 1; try { await getWin().screenshot({ path: path.join(shotsDir, `${String(n).padStart(2, '0')}-${name}.png`) }) } catch { /* */ } }
+async function snap(name) { n += 1; try { await screenshotSettled(getWin(), { path: path.join(shotsDir, `${String(n).padStart(2, '0')}-${name}.png`) }) } catch { /* */ } }
 async function dismiss() {
   for (let i = 0; i < 6; i++) {
     const skip = getWin().locator('button, [role="button"], a', { hasText: /跳过|完成|知道了|开始创作|稍后|关闭/ }).first()
@@ -116,7 +117,7 @@ try {
   await snap('node-injected')
   const hasToolbar = (await getWin().locator('[aria-label="AI 编辑"]').count()) > 0
   if (!hasToolbar) { // 节点可能未选中，点一下卡片图
-    await getWin().locator('.react-flow__node img').first().click({ timeout: 2000 }).catch(() => {})
+    await getWin().locator('[data-node-id] img').first().click({ timeout: 2000 }).catch(() => {})
     await getWin().waitForTimeout(500)
   }
   check('出现 AI 编辑工具条', (await getWin().locator('[aria-label="AI 编辑"]').count()) > 0)
@@ -143,7 +144,7 @@ try {
     await getWin().evaluate((key) => window.nomiDesktop.modelCatalog.upsertVendorApiKey('replicate', { apiKey: key, enabled: true }), TOKEN)
     await getWin().waitForTimeout(500)
     // 重新选中节点
-    await getWin().locator('.react-flow__node img').first().click({ timeout: 3000 }).catch(() => {})
+    await getWin().locator('[data-node-id] img').first().click({ timeout: 3000 }).catch(() => {})
     await getWin().waitForTimeout(400)
     await clickDecompose()
     const spendConfirm = getWin().locator('button', { hasText: /^拆解$/ }).first()

@@ -40,6 +40,7 @@ type GenerationNodePreviewBodyProps = {
   shotIndex: number | null
   localImagePreviewUrl?: string
   useLocalImagePreview: boolean
+  displayPrompt: string
   onPanoramaFullscreen: (trigger: (() => void) | null) => void
   onPanoramaScreenshot: (screenshot: PanoramaScreenshot) => void
   onPanoramaFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void
@@ -60,6 +61,7 @@ export function GenerationNodePreviewBody({
   shotIndex,
   localImagePreviewUrl,
   useLocalImagePreview,
+  displayPrompt,
   onPanoramaFullscreen,
   onPanoramaScreenshot,
   onPanoramaFileChange,
@@ -181,7 +183,7 @@ export function GenerationNodePreviewBody({
       waitingUpstream={hasFrameSourceEdge}
       shotIndex={shotIndex}
       title={node.title}
-      prompt={node.prompt}
+      prompt={displayPrompt}
     />
   )
 }

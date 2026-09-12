@@ -2,8 +2,14 @@
 // 从组件抽出为 hook：默认选模型 / vendor 同步 / 供应商断开自愈 / archetype meta 初始化。
 // 行为与原组件逐字节一致——仅把 effect 体平移进来，依赖数组原样保留。
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ModelOption } from '../../../config/models'
+import {
+  parseCustomCapabilityContract,
+  replaceCustomCapabilityContractMeta,
+} from '../../../config/modelArchetypes'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { projectParameterReferenceSlots } from '../model/parameterReferenceSlots'
 import { buildModelControls, defaultPatchForControls, readMeta } from './controls/parameterControlModel'
 import {
   ensureArchetypeNodeMeta,
@@ -13,6 +19,17 @@ import {
 import { remapArchetypeMode } from '../runner/usableVendorModel'
 import { showInfoToast } from '../../../utils/showInfoToast'
 import { chooseDefaultModelOption, resolveArchetypeForOption } from './nodeModelArchetype'
+import {
+  generationModelDefaultsLoaded,
+  getGenerationModelDefaults,
+  loadGenerationModelDefaults,
+  subscribeGenerationModelDefaults,
+} from '../model/generationModelDefaults'
+import {
+  deriveGenerationDefaultTaskKind,
+  nodeHasImageReference,
+  resolveDefaultModelOption,
+} from './defaultNodeModelSelection'
 
 type UseNodeModelAutoSelectArgs = {
   node: GenerationCanvasNode
@@ -44,16 +61,39 @@ export function useNodeModelAutoSelect({
   updateNode,
 }: UseNodeModelAutoSelectArgs): void {
   const autoSelectionAllowed = nodeAllowsModelAutoSelect(meta)
+  const { t } = useTranslation()
+  // 「新建卡片默认模型」偏好装好没有。装好前**不能**挑模型：此刻偏好是空的，
+  // 挑出来的是「自动选择」的结果并会写进节点 meta，偏好随后才到——
+  // 用户看到的就是「我明明设了默认模型，新建的卡还是别的」。装好后订阅会触发重跑。
+  const defaultsReady = React.useSyncExternalStore(
+    subscribeGenerationModelDefaults,
+    generationModelDefaultsLoaded,
+    generationModelDefaultsLoaded,
+  )
+  React.useEffect(() => {
+    void loadGenerationModelDefaults()
+  }, [])
+
   React.useEffect(() => {
     if (!isGenerationNode) return
     if (!autoSelectionAllowed) return
     if (selectedModelValue) return
-    const firstOption = chooseDefaultModelOption(modelOptions, isImageLike, isVideoLike)
+    if (!defaultsReady) return
+    const taskKind = deriveGenerationDefaultTaskKind({
+      isImageLike,
+      isVideoLike,
+      hasImageReference: nodeHasImageReference(node.meta as Record<string, unknown> | undefined),
+    })
+    // 用户设过就用他的；没设、或设的那个此刻不可用（供应商删了/模型禁用了），
+    // 就让位给原有的健康挑选策略——绝不把卡片钉在一个跑不了的模型上。
+    const preferred = resolveDefaultModelOption(modelOptions, getGenerationModelDefaults(), taskKind)
+    const firstOption = preferred ?? chooseDefaultModelOption(modelOptions, isImageLike, isVideoLike)
     if (!firstOption?.value) return
     const defaultPatch = defaultPatchForControls(buildModelControls(firstOption.meta, isImageLike, isVideoLike))
+    const modelMeta = replaceCustomCapabilityContractMeta(node.meta || {}, firstOption.meta)
     updateNode(node.id, {
-      meta: {
-        ...(node.meta || {}),
+      meta: projectParameterReferenceSlots({
+        ...modelMeta,
         modelKey: firstOption.modelKey || firstOption.value,
         modelAlias: firstOption.modelAlias || firstOption.value,
         modelVendor: firstOption.vendor || null,
@@ -63,19 +103,9 @@ export function useNodeModelAutoSelect({
         ...(isVideoLike
           ? { videoModel: firstOption.value, videoModelVendor: firstOption.vendor || null }
           : { imageModel: firstOption.value, imageModelVendor: firstOption.vendor || null }),
-      },
+      }, firstOption.meta),
     })
-  }, [
-    autoSelectionAllowed,
-    isGenerationNode,
-    isImageLike,
-    isVideoLike,
-    modelOptions,
-    node.id,
-    node.meta,
-    selectedModelValue,
-    updateNode,
-  ])
+  }, [autoSelectionAllowed, defaultsReady, isGenerationNode, isImageLike, isVideoLike, modelOptions, node.id, node.meta, selectedModelValue, updateNode])
 
   React.useEffect(() => {
     if (!autoSelectionAllowed || !isGenerationNode || !selectedModelOption) return
@@ -84,20 +114,24 @@ export function useNodeModelAutoSelect({
       readMeta(meta, 'modelVendor') ||
       readMeta(meta, 'vendor') ||
       readMeta(meta, isVideoLike ? 'videoModelVendor' : 'imageModelVendor')
-    if (!optionVendor || currentVendor === optionVendor) return
-    updateNode(node.id, {
-      meta: {
-        ...(node.meta || {}),
-        modelKey: selectedModelOption.modelKey || selectedModelOption.value,
-        modelAlias: selectedModelOption.modelAlias || selectedModelOption.value,
-        modelVendor: optionVendor,
-        vendor: optionVendor,
-        modelLabel: selectedModelOption.label,
-        ...(isVideoLike
-          ? { videoModel: selectedModelOption.value, videoModelVendor: optionVendor }
-          : { imageModel: selectedModelOption.value, imageModelVendor: optionVendor }),
-      },
-    })
+    if (!optionVendor) return
+    const contractChanged = JSON.stringify(parseCustomCapabilityContract(node.meta))
+      !== JSON.stringify(parseCustomCapabilityContract(selectedModelOption.meta))
+    const modelMeta = replaceCustomCapabilityContractMeta(node.meta || {}, selectedModelOption.meta)
+    const nextMeta = projectParameterReferenceSlots({
+      ...modelMeta,
+      modelKey: selectedModelOption.modelKey || selectedModelOption.value,
+      modelAlias: selectedModelOption.modelAlias || selectedModelOption.value,
+      modelVendor: optionVendor,
+      vendor: optionVendor,
+      modelLabel: selectedModelOption.label,
+      ...(isVideoLike
+        ? { videoModel: selectedModelOption.value, videoModelVendor: optionVendor }
+        : { imageModel: selectedModelOption.value, imageModelVendor: optionVendor }),
+    }, selectedModelOption.meta)
+    const declarationsChanged = JSON.stringify(node.meta?.parameterReferenceSlots) !== JSON.stringify(nextMeta.parameterReferenceSlots)
+    if (currentVendor === optionVendor && !contractChanged && !declarationsChanged) return
+    updateNode(node.id, { meta: nextMeta })
   }, [autoSelectionAllowed, isGenerationNode, isVideoLike, meta, node.id, node.meta, selectedModelOption, updateNode])
 
   // ★变体合并迁移（2026-06-16，最大风险点）：旧项目 node.meta.modelKey 钉的是具体变体串
@@ -153,8 +187,8 @@ export function useNodeModelAutoSelect({
         )
       : null
     updateNode(node.id, {
-      meta: {
-        ...(node.meta || {}),
+      meta: projectParameterReferenceSlots({
+        ...replaceCustomCapabilityContractMeta(node.meta || {}, target.meta),
         modelKey: target.modelKey || target.value,
         modelAlias: target.modelAlias || target.value,
         modelVendor: optionVendor,
@@ -164,9 +198,9 @@ export function useNodeModelAutoSelect({
         ...(isVideoLike
           ? { videoModel: target.value, videoModelVendor: optionVendor }
           : { imageModel: target.value, imageModelVendor: optionVendor }),
-      },
+      }, target.meta),
     })
-    showInfoToast(`原供应商已断开，已自动切换到「${target.label}」`)
+    showInfoToast(t('generationCommon.node.providerDisconnectedSwitched', { model: target.label }))
   }, [
     autoSelectionAllowed,
     isGenerationNode,
@@ -177,6 +211,7 @@ export function useNodeModelAutoSelect({
     node.meta,
     selectedModelOption,
     selectedModelValue,
+    t,
     updateNode,
   ])
 

@@ -24,12 +24,11 @@ function makeResult(id: string, overrides: Partial<GenerationNodeResult> = {}): 
 
 function makeNode(overrides: Partial<GenerationCanvasNode> & { id: string }): GenerationCanvasNode {
   return {
-    id: overrides.id,
     kind: 'video',
     title: 'shot',
     position: { x: 0, y: 0 },
     ...overrides,
-  } as GenerationCanvasNode
+  }
 }
 
 function nodeWithHistory(nodeId: string, history: GenerationNodeResult[], selectedId?: string): GenerationCanvasNode {

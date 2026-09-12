@@ -7,6 +7,7 @@ import { launchNomiApp } from './_launchApp.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { screenshotSettled } from './_assert.mjs'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const shotsDir = path.join(repoRoot, 'tests/ux/shots/pick-confirm')
 fs.mkdirSync(shotsDir, { recursive: true })
@@ -18,7 +19,7 @@ let n = 0
 async function snap(win, name) {
   n += 1
   const tag = `${String(n).padStart(2, '0')}-${name}`
-  await win.screenshot({ path: path.join(shotsDir, `${tag}.png`) })
+  await screenshotSettled(win, { path: path.join(shotsDir, `${tag}.png`) })
   console.log(`  · shot ${tag}`)
 }
 
@@ -84,7 +85,7 @@ await snap(win, 'picker-empty')
 
 // 手填四类 id，验证自动归类到 文本/图片/视频/配音
 const manual = win.getByPlaceholder(/没列出来的/).first()
-for (const id of ['gpt-5.5', 'flux-2-flex', 'kling-v3', 'doubao-tts-2.0', 'deepseek-v3.1-250821']) {
+for (const id of ['gpt-5.5', 'flux-2-flex', 'kling-v3', 'doubao-tts-2.0', 'deepseek-v4-pro']) {
   await manual.fill(id)
   await manual.press('Enter')
   await win.waitForTimeout(500)
@@ -94,7 +95,7 @@ console.log('— 第二屏：五个 id 自动按 文本·图片·视频·配音 
 await snap(win, 'picker-grouped')
 
 // 取消一个（点 gpt-5.5 行）测试勾选交互 + 计数
-const row = win.locator('button', { hasText: 'deepseek-v3.1-250821' }).first()
+const row = win.locator('button', { hasText: 'deepseek-v4-pro' }).first()
 if (await row.count()) await row.click().catch(() => {})
 await win.waitForTimeout(400)
 console.log('— 取消一个 → 计数 / 按钮数字应 -1 —')

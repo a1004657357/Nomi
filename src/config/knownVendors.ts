@@ -86,29 +86,29 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
     },
   },
   {
-    // Agnes AI（Sapiens AI，新加坡）：提供免费/default 配额的全模态 OpenAI 兼容网关。
-    // 公开限速会变化，按模态展示当前参考值并明确以控制台为准。
+    // Official default-account effective rates; paid plans have separate limits (checked 2026-09-12).
     vendorKey: 'agnes',
     glyph: 'Ag',
-    tagline: '全模态免费额度 · 一个 key 解锁文本/图片/视频',
+    tagline: '文本、图片与视频 · 可用模型以当前账户为准',
     credentialPlaceholder: '粘贴 Agnes API Key',
-    credentialHint: '去 platform.agnes-ai.com 创建 API Key。当前公开免费/default实际限速：文本 20 RPM；图片 1K 20 RPM、2K 10 RPM；视频 1 RPM。额度、价格与限速以控制台为准。凭证本地加密存储。',
+    credentialHint:
+      '在 Agnes 官方平台创建 API Key。默认账户公开有效限速：文本 20 RPM；图片 1K 20 RPM、2K 10 RPM、3K/4K 1 RPM；视频 1 RPM。部分模型需付费或单独开通；套餐、价格和实际限额以控制台为准。凭证本地加密存储。',
     promo: {
-      text: 'Agnes AI（新加坡 Sapiens AI）提供文本、图片和视频的免费/default配额，并兼容 OpenAI 风格接口；当前额度与价格以官方控制台为准。',
-      ctaLabel: '去 Agnes 注册（免费）',
+      text: 'Agnes AI 提供 OpenAI 兼容的文本、图片与视频 API。公开模型清单不代表当前套餐均可调用。',
+      ctaLabel: '打开 Agnes 平台',
       url: 'https://agnes-ai.com',
     },
   },
   {
-    // Pixstag：MiniMax v2 官方线缆聚合（当前仅 MiniMax-H3，文生/首尾帧/多模态参考，最长 30 秒）。
+    // Pixstag：MiniMax v2 官方线缆聚合（当前仅 MiniMax-H3，文生/首尾帧/多模态参考，最长 15 秒）。
     vendorKey: 'pixstag',
     glyph: 'P',
-    tagline: '一个 key，用 MiniMax H3 生视频（最长 30 秒）',
+    tagline: '一个 key，用 MiniMax H3 生视频（最长 15 秒）',
     credentialPlaceholder: '粘贴 Pixstag API Key',
     credentialHint:
-      '去 pixstag.com 注册并在控制台创建 API Key（credit 按量计费）。目前提供 MiniMax H3：文生 / 首尾帧 / 多模态参考，4–30 秒、720P–2K。凭证本地加密存储。',
+      '去 pixstag.com 注册并在控制台创建 API Key（credit 按量计费）。目前提供 MiniMax H3：文生 / 首尾帧 / 多模态参考，4–15 秒、720P–2K。凭证本地加密存储。',
     promo: {
-      text: 'Pixstag 提供 MiniMax H3 官方 v2 线缆：参考图/视频/音频进同一条 content 通道，比例自适应，最长 30 秒。credit 按量计费。',
+      text: 'Pixstag 提供 MiniMax H3 官方 v2 线缆：参考图/视频/音频进同一条 content 通道，比例自适应，最长 15 秒。credit 按量计费。',
       ctaLabel: '去 Pixstag 注册',
       url: 'https://pixstag.com',
     },

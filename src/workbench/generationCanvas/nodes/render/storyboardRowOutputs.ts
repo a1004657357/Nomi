@@ -224,7 +224,7 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot): Record<
       mode.slots.some((slot) => slot.kind === 'first_frame' || slot.kind === 'image_ref')
     )
     const supportsFullReference = (mode: (typeof resolved.modes)[number]): boolean => (
-      mode.slots.some((slot) => slot.kind === 'image_ref' && slot.max > 1)
+      mode.slots.some((slot) => slot.kind === 'image_ref' && (slot.max ?? Infinity) > 1)
     )
     const requestedModeId = String(shot.modeId || '').trim()
     const requestedMode = resolved.modes.find((mode) => mode.id === requestedModeId && supportsImageInput(mode))
@@ -278,7 +278,7 @@ function syncStoryboardReferenceEdges(imageNodeId: string, videoNodeId: string):
   const mode = selectedVideoMode(video)
   // image_ref 并不等于全能参考。AGNES 的 i2v 也是 image_ref，但 max=1，API 只接收
   // 一张首帧图；把它误判成全能参考会让角色卡先占掉唯一输入，真正的分镜图反而不发送。
-  const fullReference = Boolean(mode?.slots.some((slot) => slot.kind === 'image_ref' && slot.max > 1))
+  const fullReference = Boolean(mode?.slots.some((slot) => slot.kind === 'image_ref' && (slot.max ?? Infinity) > 1))
   const imageEdge = store.edges.find((edge) => (
     edge.source === imageNodeId
     && edge.target === videoNodeId

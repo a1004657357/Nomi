@@ -57,7 +57,8 @@ function isModelAiling(model: DedupedModel, isAiling: AilingProbe): boolean {
 export function buildModelSelectOptions(deduped: readonly DedupedModel[], isAiling: AilingProbe): NomiSelectOption[] {
   const toOption = (m: DedupedModel): NomiSelectOption => {
     // 厂商标注（用户 2026-07-17：模型来自哪家要看得见）：多家=「N 家」，单家=厂商短名。
-    const origin = m.providers.length > 1 ? `${m.providers.length} 家` : providerLabel(m.providers[0])
+    const providerCount = new Set(m.providers.map((p) => p.vendor || p.option.value)).size
+    const origin = providerCount > 1 ? `${providerCount} 家` : providerLabel(m.providers[0])
     if (!isModelAiling(m, isAiling)) return { value: m.canonicalId, label: m.label, trailing: origin }
     return {
       value: m.canonicalId,
@@ -71,6 +72,73 @@ export function buildModelSelectOptions(deduped: readonly DedupedModel[], isAili
   const healthy = deduped.filter((m) => !isModelAiling(m, isAiling))
   const ailing = deduped.filter((m) => isModelAiling(m, isAiling))
   return [...healthy, ...ailing].map(toOption)
+}
+
+/**
+ * 批量下拉专用：把去重模型**按供应商摊平**——一家一行，右侧标注永远是那一家的短名。
+ *
+ * 为什么不能复用 buildModelSelectOptions（用户 2026-08-18 报「框选没法选不同供应商 → 一直生成失败」）：
+ * 那份把多家折叠成一条标「N 家」，选中后由第二段供应商下拉锁家。但批量下拉是**一次性命令**
+ * （无常驻值、永远显占位「统一模型」），第二段结构上出不来 → pickHealthiestProvider 替用户定死一家；
+ * 那家在他账号上不通 = 每次都失败且无路可换。摊平后「哪家」直接在第一段选，不需要第二段。
+ *
+ * 病态判据与折叠版**不同口径**：折叠版问「是不是每家都病」（还有一家健康就不该误伤整条）；
+ * 这里一行 = 一家，直接按那一家判。病的仍可点（手动选择永不拦，2026-07-30 拍板），只沉底 + 灰化。
+ */
+export function buildVendorExplicitModelOptions(
+  deduped: readonly DedupedModel[],
+  isAiling: AilingProbe,
+): NomiSelectOption[] {
+  type Row = { option: NomiSelectOption; ailing: boolean }
+  const rows: Row[] = []
+  for (const model of deduped) {
+    // 一「模型 × 供应商」一行 —— 折叠维度必须是 vendor，不能是 (vendor, option.value)。
+    // 走查实测（2026-08-18）：同一家会把多个 modelKey 挂到同一个显示名
+    // （kie 的 nano-banana / nano-banana-kie；kie 的 gpt-image-2-text-to-image /
+    // gpt-image-2-image-to-image），按后者折叠会渲出**两行长得一模一样**的选项——
+    // 用户分不清只能瞎猜，比选不了供应商更糟。这里与既有 buildProviderSelectOptions 的
+    // byVendor 折叠同口径：用户锁的是「走哪家」，不是走这家的哪个内部 modelKey。
+    const byVendor = new Map<string, ModelProviderRef[]>()
+    for (const provider of model.providers) {
+      const key = provider.vendor || provider.option.value
+      const bucket = byVendor.get(key)
+      if (bucket) bucket.push(provider)
+      else byVendor.set(key, [provider])
+    }
+    const sickOf = (p: ModelProviderRef): boolean => isAiling(p.option.modelKey || p.option.value)
+    for (const bucket of byVendor.values()) {
+      // 这家有健康变体就走健康那个；全病才落回首个（整行标病）。
+      const representative = bucket.find((p) => !sickOf(p)) ?? bucket[0]
+      const sick = sickOf(representative)
+      const value = providerAddress(representative)
+      rows.push({
+        ailing: sick,
+        option: sick
+          ? {
+              value,
+              label: model.label,
+              trailing: i18n.t('generationCommon.parameters.recentlyFailing'),
+              trailingTone: 'danger',
+              dimmed: true,
+            }
+          : { value, label: model.label, trailing: providerLabel(representative) },
+      })
+    }
+  }
+  return [...rows.filter((r) => !r.ailing), ...rows.filter((r) => r.ailing)].map((r) => r.option)
+}
+
+/** buildVendorExplicitModelOptions 的反查：复合寻址串 → 那一家供应商（认不出 → null，调用方不写）。 */
+export function resolveProviderByAddress(
+  deduped: readonly DedupedModel[],
+  addressValue: string,
+): ModelProviderRef | null {
+  if (!addressValue) return null
+  for (const model of deduped) {
+    const hit = model.providers.find((p) => providerAddress(p) === addressValue)
+    if (hit) return hit
+  }
+  return null
 }
 
 /** 换家优先于换模型：先只在健康供应商里挑；全病（用户明知故选）才回退全集，绝不空选。 */
@@ -87,7 +155,7 @@ export function pickHealthiestProvider(model: DedupedModel, isAiling: AilingProb
 // ── 供应商锁定下拉的寻址 ──
 // 下拉项的 value 不能用裸 option.value：两个中转站可以提供同名模型（modelKey 相同），
 // 裸值会让两项撞值——选哪家都分不清、当前锁定哪家也显示不出。用 vendor+value 复合串寻址。
-const PROVIDER_ADDRESS_SEP = '\0'
+const PROVIDER_ADDRESS_SEP = '\u0000'
 
 export function providerAddress(p: ModelProviderRef): string {
   return `${p.vendor || ''}${PROVIDER_ADDRESS_SEP}${p.option.value}`
@@ -130,6 +198,10 @@ export interface DedupedModelSelectView {
   providerValue: string
   /** 锁定某家供应商：解析寻址串后回写该家 (option.value, vendor)。 */
   onProviderPick: (addressValue: string) => void
+  /** Exact enabled catalog variants for the selected supplier; no synthetic model IDs. */
+  variantOptions: NomiSelectOption[]
+  variantValue: string
+  onVariantPick: (addressValue: string) => void
   /** 当前选中的去重模型（供上层取档案/变体等）。 */
   selectedModel: DedupedModel | null
 }
@@ -149,8 +221,8 @@ export function useDedupedModelSelect(
   const deduped = React.useMemo(() => dedupeModelOptions([...modelOptions]), [modelOptions])
 
   const selectedModel = React.useMemo(
-    () => deduped.find((m) => m.providers.some((p) => p.option.value === value)) || null,
-    [deduped, value],
+    () => deduped.find((m) => m.providers.some((p) => p.option.value === value && (!vendor || p.vendor === vendor))) || null,
+    [deduped, value, vendor],
   )
 
   const modelOptionsView = React.useMemo<NomiSelectOption[]>(
@@ -163,10 +235,14 @@ export function useDedupedModelSelect(
     (canonicalId: string) => {
       const model = deduped.find((m) => m.canonicalId === canonicalId)
       if (!model) return
+      // Reopening/reselecting the family must not reset a saved reasoning tier.
+      const current = model.providers.find((p) => p.option.value === value && (!vendor || p.vendor === vendor))
+      if (current) { onChange(current.option.value, current.vendor); return }
       const best = pickHealthiestProvider(model, isModelRecentlyAiling)
-      if (best) onChange(best.option.value, best.vendor)
+      const preferred = model.providers.find((p) => p.vendor === best?.vendor && p.option.variant?.defaultVariant) || best
+      if (preferred) onChange(preferred.option.value, preferred.vendor)
     },
-    [deduped, onChange],
+    [deduped, onChange, value, vendor],
   )
 
   const providerOptionsView = React.useMemo<NomiSelectOption[]>(
@@ -178,18 +254,31 @@ export function useDedupedModelSelect(
     (addressValue: string) => {
       const picked = selectedModel?.providers.find((p) => providerAddress(p) === addressValue)
       if (picked) onChange(picked.option.value, picked.vendor)
-      else if (addressValue) onChange(addressValue)
     },
     [selectedModel, onChange],
   )
+
+  const providerValue = resolveProviderSelectValue(selectedModel, value, vendor)
+  const selectedProvider = selectedModel?.providers.find((p) => providerAddress(p) === providerValue)
+  const variantOptions = selectedProvider?.option.variant
+    ? (selectedModel?.providers || [])
+        .filter((p) => p.vendor === selectedProvider.vendor && p.option.variant)
+        .map((p) => ({ value: providerAddress(p), label: p.option.variant!.variantLabel }))
+    : []
+  const onVariantPick = (addressValue: string): void => {
+    if (variantOptions.some((option) => option.value === addressValue)) onProviderPick(addressValue)
+  }
 
   return {
     modelOptions: modelOptionsView,
     modelValue: selectedModel?.canonicalId || '',
     onModelPick,
     providerOptions: providerOptionsView,
-    providerValue: resolveProviderSelectValue(selectedModel, value, vendor),
+    providerValue,
     onProviderPick,
+    variantOptions,
+    variantValue: selectedProvider ? providerAddress(selectedProvider) : '',
+    onVariantPick,
     selectedModel,
   }
 }

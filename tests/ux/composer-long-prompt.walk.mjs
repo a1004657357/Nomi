@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import http from 'node:http'
+import { screenshotSettled } from './_assert.mjs'
 
 const repoRoot = process.cwd()
 const shotsDir = path.join(repoRoot, 'tests/ux/shots/composer-long-prompt')
@@ -130,14 +131,18 @@ try {
     await getWin().waitForTimeout(1400)
   }
   await addNode('图片')
-  const nodeCount = await getWin().evaluate(() => document.querySelectorAll('.react-flow__node').length)
+  // 锚点必须是 [data-node-id]（BaseGenerationNode.tsx:283 / ClipNode.tsx:475 / LightweightGenerationNode.tsx:41）。
+  // 原来写的 .react-flow__node 在 src/ 里**零命中**——计数恒为 0，只是被 console.log 掉了没人看，
+  // 于是「节点加上了没有」这件事从来没被验证过（2026-08-18 走查框架体检发现）。
+  const nodeCount = await getWin().locator('[data-node-id]').count()
   console.log('  画布节点数:', nodeCount, 'url:', getWin().url())
+  check('画布上真的加出了节点', nodeCount > 0, `[data-node-id] 命中 ${nodeCount} 个`)
   await getWin().screenshot({ path: path.join(shotsDir, 'after-add.png') }).catch(() => {})
 
   const composer = getWin().locator('.generation-canvas-v2-node__composer').last()
   // 若未自动选中→点节点卡选中，浮出 composer
   if (!(await composer.isVisible().catch(() => false))) {
-    await getWin().locator('.react-flow__node').last().click({ timeout: 3000 }).catch(() => {})
+    await getWin().locator('[data-node-id]').last().click({ timeout: 3000 }).catch(() => {})
     await getWin().waitForTimeout(600)
   }
   await composer.waitFor({ state: 'visible', timeout: 10000 })
@@ -156,7 +161,7 @@ try {
     const pm = card.querySelector('.ProseMirror'); const s = pm && pm.closest('.overflow-auto'); if (s) s.scrollTop = 0
   })
   const after = await measure()
-  await composer.screenshot({ path: path.join(shotsDir, 'after-fixed.png') })
+  await screenshotSettled(composer, { path: path.join(shotsDir, 'after-fixed.png') })
   await getWin().screenshot({ path: path.join(shotsDir, 'after-fixed-full.png') }).catch(() => {})
   check('卡高被 maxHeight 卡住(≤ 402)', after.cardHeight != null && after.cardHeight <= 402, `cardHeight=${after.cardHeight}`)
   check('prompt 内容确实超长(scrollHeight>clientHeight)', after.scrolls === true, `${after.scrollHeight}>${after.clientHeight}`)
@@ -237,7 +242,7 @@ try {
     if (scroller) scroller.style.overflow = 'visible'
   })
   await getWin().waitForTimeout(400)
-  await composer.screenshot({ path: path.join(shotsDir, 'before-broken.png') })
+  await screenshotSettled(composer, { path: path.join(shotsDir, 'before-broken.png') })
   await getWin().screenshot({ path: path.join(shotsDir, 'before-broken-full.png') }).catch(() => {})
   const brokenScrollable = await getWin().locator('.generation-canvas-v2-node__composer-card').last().evaluate((card) => {
     const pm = card.querySelector('.ProseMirror'); const scroller = pm && pm.closest('.overflow-y-auto')

@@ -1,3 +1,4 @@
+import { enAntigravity, zhAntigravity } from './locales/antigravity'
 import { enModelSetup, zhModelSetup } from './locales/modelSetup'
 import { enBrowserAssets, zhBrowserAssets } from './locales/browserAssets'
 import { enTimelinePreview, zhTimelinePreview } from './locales/timelinePreview'
@@ -31,6 +32,8 @@ export const zhCN = {
     rendering: '正在渲染...',
     back: '返回',
     select: '选择',
+    searchOptions: '搜索选项',
+    noMatchingOptions: '没有匹配的选项',
     undo: '撤销',
   },
   media: {
@@ -38,6 +41,7 @@ export const zhCN = {
     noImage: '无图片',
     imageLoadFailed: '图片加载失败',
     loadFailed: '加载失败',
+    loadTimedOut: '加载超时，请重试',
   },
   brand: {
     name: 'Nomi',
@@ -65,8 +69,9 @@ export const zhCN = {
     upToDate: '已是最新版本',
     available: '发现新版',
     downloadUpdate: '下载更新',
-    openDownload: '前往下载',
-    macManualUpdate: 'macOS 需手动下载安装包替换旧版（应用未签名，暂不支持就地自动更新）',
+    openDownload: '直接下载安装包',
+    macManualUpdate: '将打开官网并自动下载适合这台 Mac 的安装包；下载后打开 DMG 替换旧版。',
+    previewUpdatesDisabled: '这是独立的开发预览版，不接收正式版自动更新。',
     downloading: '正在下载更新…',
     downloadingHint: '后台下载，可继续创作 · {{percent}}%',
     downloaded: '下载完成',
@@ -113,7 +118,7 @@ export const zhCN = {
     productionRun: {
       title: 'Nomi 制作',
       statuses: {
-        draft: '等待开始', awaitingDirection: '等待确认方向', awaitingStoryboardReview: '等待审核分镜',
+        draft: '等待开始', awaitingDirection: '等待确认方向', awaitingScriptReview: '等待审核剧本', awaitingStoryboardReview: '等待审核分镜',
         awaitingContract: '等待确认制作与预算', ready: '准备生成', running: '正在生成', pausing: '正在暂停',
         paused: '已暂停', needsAttention: '需要处理', awaitingRoughCutReview: '等待审核粗剪',
         awaitingExport: '等待确认导出', exporting: '正在导出', completed: '制作完成', cancelled: '已取消',
@@ -217,12 +222,15 @@ export const zhCN = {
     startProject: '开始一个项目',
     watchHow: '看 Nomi 怎么出片',
     modelStatus: '模型状态',
-    textModelMissing: '文本模型未接入',
-    textModelMissingHint: '写故事、拆镜头都需要它；图片 / 视频模型可以等到生成前再接。',
-    connectTextModel: '接入文本模型',
+    textModelMissing: '创作助手尚未连接模型',
+    textModelMissingHint: '写故事、拆镜头的助手与画布生成模型分别配置。',
+    connectTextModel: '连接助手模型',
     sourceFilter: '筛选项目来源',
     noMatchNamed: '没有匹配「{{query}}」的项目',
-    noProjectsInCategory: '这个分类下还没有项目',
+    // 首次空库（无搜索、来源=全部、零项目）：给行动指引，别用系统腔（2026-08-25 走查 F1）。
+    firstEmpty: '还没有项目——从上方「新建空白项目」开始',
+    // 有项目、但当前来源筛选下为空：措辞跟「来源」走，不叫「分类」（首屏没有分类概念）。
+    noProjectsInSource: '这个来源下还没有项目',
     clearSearch: '清除搜索',
     deleteNamedProject: '删除项目 {{name}}',
     folderUnavailable: '文件夹暂不可用',
@@ -327,7 +335,16 @@ export const zhCN = {
   },
   canvas: {
     addNodeMenu: '添加节点菜单',
+    nodeMenu: '节点操作菜单',
+    nodeMenuCopy: '复制',
+    nodeMenuCut: '剪切',
+    nodeMenuPaste: '粘贴',
+    nodeMenuPasteEmpty: '剪贴板里还没有节点',
+    nodeMenuGroup: '建组',
+    nodeMenuGroupNeedsTwo: '选中两个以上节点才能建组',
+    nodeMenuDelete: '删除',
     toolbar: '生成画布工具栏',
+    smoothMode: '流畅模式',
     addNode: '添加{{type}}节点',
     nodeName: '{{type}}节点',
     nodeKinds: {
@@ -349,6 +366,7 @@ export const zhCN = {
   assetLibrary: zhAssetLibrary,
   settings: zhSettings,
   onboardingProviders: zhOnboardingProviders,
+  antigravity: zhAntigravity,
   comfyuiWorkflowPage: zhComfyuiWorkflowPage,
   libraries: zhLibraries,
   scene3d: {
@@ -362,6 +380,7 @@ export const zhCN = {
   timelineEditor: zhTimelineEditor,
   creationAi: zhCreationAi,
   storyboardEditor: zhStoryboardEditor,
+  videoKeyframeInspector: { inspect: '检查关键帧', inspectHint: '均匀抽取并选择关键帧节点' },
   generationCommon: zhGenerationCommon,
   runtime: zhRuntime,
 } as const
@@ -386,6 +405,8 @@ export const en = {
     rendering: 'Rendering...',
     back: 'Back',
     select: 'Select',
+    searchOptions: 'Search options',
+    noMatchingOptions: 'No matching options',
     undo: 'Undo',
   },
   media: {
@@ -393,6 +414,7 @@ export const en = {
     noImage: 'No image',
     imageLoadFailed: 'Image failed to load',
     loadFailed: 'Load failed',
+    loadTimedOut: 'Loading timed out. Try again.',
   },
   brand: {
     name: 'Nomi',
@@ -420,9 +442,10 @@ export const en = {
     upToDate: 'You are up to date',
     available: 'New version available',
     downloadUpdate: 'Download update',
-    openDownload: 'Open download page',
+    openDownload: 'Download installer',
     macManualUpdate:
-      'On macOS, download the package and replace the old app manually. In-place updates are unavailable for unsigned builds.',
+      'The website will download the installer for this Mac. Open the DMG and replace the old app manually.',
+    previewUpdatesDisabled: 'This is an isolated preview build and does not receive stable updates.',
     downloading: 'Downloading update…',
     downloadingHint: 'Downloading in the background · {{percent}}%',
     downloaded: 'Download complete',
@@ -469,7 +492,7 @@ export const en = {
     productionRun: {
       title: 'Nomi production',
       statuses: {
-        draft: 'Waiting to start', awaitingDirection: 'Direction approval required', awaitingStoryboardReview: 'Storyboard review required',
+        draft: 'Waiting to start', awaitingDirection: 'Direction approval required', awaitingScriptReview: 'Script review required', awaitingStoryboardReview: 'Storyboard review required',
         awaitingContract: 'Production and budget approval required', ready: 'Ready to generate', running: 'Generating', pausing: 'Pausing',
         paused: 'Paused', needsAttention: 'Needs attention', awaitingRoughCutReview: 'Rough-cut review required',
         awaitingExport: 'Export approval required', exporting: 'Exporting', completed: 'Production complete', cancelled: 'Cancelled',
@@ -573,13 +596,14 @@ export const en = {
     startProject: 'Start a project',
     watchHow: 'See how Nomi creates a video',
     modelStatus: 'Model status',
-    textModelMissing: 'No text model connected',
+    textModelMissing: 'No model connected to the creative assistant',
     textModelMissingHint:
-      'Writing stories and planning shots require one. Image and video models can be connected before generation.',
-    connectTextModel: 'Connect text model',
+      'The assistant for stories and shot planning is configured separately from canvas generation models.',
+    connectTextModel: 'Connect assistant model',
     sourceFilter: 'Filter project sources',
     noMatchNamed: 'No projects match “{{query}}”',
-    noProjectsInCategory: 'No projects in this category yet',
+    firstEmpty: 'No projects yet — start with “New blank project” above',
+    noProjectsInSource: 'No projects from this source yet',
     clearSearch: 'Clear search',
     deleteNamedProject: 'Delete project {{name}}',
     folderUnavailable: 'Folder unavailable',
@@ -689,7 +713,16 @@ export const en = {
   },
   canvas: {
     addNodeMenu: 'Add node menu',
+    nodeMenu: 'Node actions menu',
+    nodeMenuCopy: 'Copy',
+    nodeMenuCut: 'Cut',
+    nodeMenuPaste: 'Paste',
+    nodeMenuPasteEmpty: 'No nodes on the clipboard yet',
+    nodeMenuGroup: 'Group',
+    nodeMenuGroupNeedsTwo: 'Select two or more nodes to group them',
+    nodeMenuDelete: 'Delete',
     toolbar: 'Generation canvas toolbar',
+    smoothMode: 'Smooth mode',
     addNode: 'Add {{type}} node',
     nodeName: '{{type}} node',
     nodeKinds: {
@@ -711,6 +744,7 @@ export const en = {
   assetLibrary: enAssetLibrary,
   settings: enSettings,
   onboardingProviders: enOnboardingProviders,
+  antigravity: enAntigravity,
   comfyuiWorkflowPage: enComfyuiWorkflowPage,
   libraries: enLibraries,
   scene3d: {
@@ -724,6 +758,7 @@ export const en = {
   timelineEditor: enTimelineEditor,
   creationAi: enCreationAi,
   storyboardEditor: enStoryboardEditor,
+  videoKeyframeInspector: { inspect: 'Inspect keyframes', inspectHint: 'Extract evenly spaced frames and select which keyframe nodes to create' },
   generationCommon: enGenerationCommon,
   runtime: enRuntime,
 } satisfies TranslationShape<typeof zhCN>

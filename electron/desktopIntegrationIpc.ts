@@ -5,49 +5,60 @@ import { openWorkspaceFolder, selectWorkspaceFolder } from './workspace/workspac
 import { listWorkspaceFiles, resolveWorkspaceFilePath } from './workspace/workspaceFileIndex'
 import { registerWorkspaceFileDeleteIpc } from './workspace/workspaceFileDelete'
 import { getSettingsRoot } from './runtimePaths'
+import { assertTrustedSender } from './ipcSenderGuard'
 
 type RegisterDesktopIntegrationIpcOptions = {
   setCancelBlenderRendersOnQuit: (cancel: () => number) => void
 }
 
 function registerProviderLoginIpc(): void {
-  ipcMain.handle('nomi:dreamina:status', async () => {
+  ipcMain.handle('nomi:dreamina:status', async (event) => {
+    assertTrustedSender(event)
     const { dreaminaStatus } = await import('./catalog/dreaminaLoginIpc')
     return dreaminaStatus()
   })
-  ipcMain.handle('nomi:dreamina:login-start', async () => {
+  ipcMain.handle('nomi:dreamina:login-start', async (event) => {
+    assertTrustedSender(event)
     const { dreaminaLoginStart } = await import('./catalog/dreaminaLoginIpc')
     return dreaminaLoginStart()
   })
-  ipcMain.handle('nomi:dreamina:login-poll', async (_event, deviceCode: unknown) => {
+  ipcMain.handle('nomi:dreamina:login-poll', async (event, deviceCode: unknown) => {
+    assertTrustedSender(event)
     const { dreaminaLoginPoll } = await import('./catalog/dreaminaLoginIpc')
     return dreaminaLoginPoll(String(deviceCode || ''))
   })
-  ipcMain.handle('nomi:dreamina:logout', async () => {
+  ipcMain.handle('nomi:dreamina:logout', async (event) => {
+    assertTrustedSender(event)
     const { dreaminaLogout } = await import('./catalog/dreaminaLoginIpc')
     return dreaminaLogout()
   })
-  ipcMain.handle('nomi:dreamina:install', async () => {
+  ipcMain.handle('nomi:dreamina:install', async (event) => {
+    assertTrustedSender(event)
     const { dreaminaInstall } = await import('./catalog/dreaminaLoginIpc')
     return dreaminaInstall()
   })
-  ipcMain.handle('nomi:jimeng-web:status', async () => {
+  ipcMain.handle('nomi:jimeng-web:status', async (event) => {
+    assertTrustedSender(event)
     const { jimengWebStatus } = await import('./jimengWeb/ipc')
     return jimengWebStatus()
   })
-  ipcMain.handle('nomi:jimeng-web:open-login', async () => {
+  ipcMain.handle('nomi:jimeng-web:open-login', async (event) => {
+    assertTrustedSender(event)
     const { jimengWebOpenLogin } = await import('./jimengWeb/ipc')
     return jimengWebOpenLogin()
   })
-  ipcMain.handle('nomi:jimeng-web:open-admin', async (_event, baseUrl: unknown) => {
+  ipcMain.handle('nomi:jimeng-web:open-admin', async (event, baseUrl: unknown) => {
+    assertTrustedSender(event)
     const { jimengWebOpenAdmin } = await import('./jimengWeb/ipc')
     return jimengWebOpenAdmin(baseUrl)
   })
-  ipcMain.handle('nomi:jimeng-web:start-runner', async () => {
+  ipcMain.handle('nomi:jimeng-web:start-runner', async (event) => {
+    assertTrustedSender(event)
     const { jimengWebStartExtensionRunner } = await import('./jimengWeb/ipc')
     return jimengWebStartExtensionRunner()
   })
-  ipcMain.handle('nomi:jimeng-web:stop-runner', async () => {
+  ipcMain.handle('nomi:jimeng-web:stop-runner', async (event) => {
+    assertTrustedSender(event)
     const { jimengWebStopExtensionRunner } = await import('./jimengWeb/ipc')
     return jimengWebStopExtensionRunner()
   })
@@ -55,13 +66,15 @@ function registerProviderLoginIpc(): void {
 
 function registerWorkspaceIpc(): void {
   const selectedWorkspaceRoots = new Set<string>()
-  ipcMain.handle('nomi:workspace:select-folder', async () => {
+  ipcMain.handle('nomi:workspace:select-folder', async (event) => {
+    assertTrustedSender(event)
     const selection = await selectWorkspaceFolder({ showOpenDialog: (options) => dialog.showOpenDialog(options) })
     if (!selection.canceled) selectedWorkspaceRoots.add(selection.rootPath)
     return selection
   })
-  ipcMain.handle('nomi:workspace:open-folder', (_event, payload) =>
-    openWorkspaceFolder(payload, {
+  ipcMain.handle('nomi:workspace:open-folder', (event, payload) => {
+    assertTrustedSender(event)
+    return openWorkspaceFolder(payload, {
       createProject,
       selectedRootPaths: selectedWorkspaceRoots,
       confirmInitialize: async (rootPath) => {
@@ -75,9 +88,10 @@ function registerWorkspaceIpc(): void {
         })
         return result.response === 1
       },
-    }),
-  )
-  ipcMain.handle('nomi:workspace:list-files', (_event, payload) => {
+    })
+  })
+  ipcMain.handle('nomi:workspace:list-files', (event, payload) => {
+    assertTrustedSender(event)
     const projectId = String((payload as { projectId?: unknown } | null)?.projectId || '').trim()
     if (!projectId) throw new Error('projectId is required')
     const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null
@@ -86,7 +100,8 @@ function registerWorkspaceIpc(): void {
     const limit = (payload as { limit?: unknown } | null)?.limit
     return listWorkspaceFiles({ rootPath, maxFiles: typeof limit === 'number' ? limit : undefined })
   })
-  ipcMain.handle('nomi:workspace:reveal-file', (_event, payload) => {
+  ipcMain.handle('nomi:workspace:reveal-file', (event, payload) => {
+    assertTrustedSender(event)
     const projectId = String((payload as { projectId?: unknown } | null)?.projectId || '').trim()
     const relativePath = String((payload as { relativePath?: unknown } | null)?.relativePath || '').trim()
     if (!projectId) throw new Error('projectId is required')
@@ -97,7 +112,8 @@ function registerWorkspaceIpc(): void {
     return { ok: true }
   })
   registerWorkspaceFileDeleteIpc({ readProject })
-  ipcMain.handle('nomi:workspace:reveal-project-folder', (_event, payload) => {
+  ipcMain.handle('nomi:workspace:reveal-project-folder', (event, payload) => {
+    assertTrustedSender(event)
     const projectId = String((payload as { projectId?: unknown } | null)?.projectId || '').trim()
     if (!projectId) throw new Error('projectId is required')
     const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null
@@ -109,25 +125,29 @@ function registerWorkspaceIpc(): void {
 }
 
 function registerDirectorIpc(setCancelBlenderRendersOnQuit: (cancel: () => number) => void): void {
-  ipcMain.handle('nomi:scene3d:render-blender', async (_event, payload) => {
+  ipcMain.handle('nomi:scene3d:render-blender', async (event, payload) => {
+    assertTrustedSender(event)
     const blender = await import('./blender/blenderRunner')
     const director = await import('./blender/directorCli')
     setCancelBlenderRendersOnQuit(() => blender.cancelAllBlenderSceneRenders() + director.cancelAllDirectorBlenderRenders())
     return blender.runBlenderSceneRender(payload)
   })
-  ipcMain.handle('nomi:scene3d:render-director-blender', async (_event, payload) => {
+  ipcMain.handle('nomi:scene3d:render-director-blender', async (event, payload) => {
+    assertTrustedSender(event)
     const blender = await import('./blender/blenderRunner')
     const director = await import('./blender/directorCli')
     setCancelBlenderRendersOnQuit(() => blender.cancelAllBlenderSceneRenders() + director.cancelAllDirectorBlenderRenders())
     return director.runDirectorBlenderRender(payload)
   })
-  ipcMain.handle('nomi:scene3d:cancel-blender', async (_event, jobId) => {
+  ipcMain.handle('nomi:scene3d:cancel-blender', async (event, jobId) => {
+    assertTrustedSender(event)
     const blender = await import('./blender/blenderRunner')
     const director = await import('./blender/directorCli')
     const normalizedJobId = String(jobId || '')
     return { cancelled: blender.cancelBlenderSceneRender(normalizedJobId) || director.cancelDirectorBlenderRender(normalizedJobId) }
   })
-  ipcMain.handle('nomi:vibing-director:apply-blender-plan', async (_event, payload) => {
+  ipcMain.handle('nomi:vibing-director:apply-blender-plan', async (event, payload) => {
+    assertTrustedSender(event)
     const director = await import('./blender/vibingDirectorRunner')
     const blender = await import('./blender/blenderRunner')
     const legacyDirector = await import('./blender/directorCli')
@@ -138,11 +158,13 @@ function registerDirectorIpc(setCancelBlenderRendersOnQuit: (cancel: () => numbe
     ))
     return director.runVibingDirectorBlenderPlan(payload as Parameters<typeof director.runVibingDirectorBlenderPlan>[0])
   })
-  ipcMain.handle('nomi:vibing-director:cancel-blender-plan', async (_event, jobId) => {
+  ipcMain.handle('nomi:vibing-director:cancel-blender-plan', async (event, jobId) => {
+    assertTrustedSender(event)
     const director = await import('./blender/vibingDirectorRunner')
     return { cancelled: director.cancelVibingDirectorBlenderPlan(String(jobId || '').trim()) }
   })
-  ipcMain.handle('nomi:vibing-director:import-asset', async (_event, payload) => {
+  ipcMain.handle('nomi:vibing-director:import-asset', async (event, payload) => {
+    assertTrustedSender(event)
     const raw = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
     if (raw.source === 'kenney') throw new Error('Kenney 资产请使用 Director 内的开源资产目录导入')
     const selection = await dialog.showOpenDialog({
@@ -161,11 +183,13 @@ function registerDirectorIpc(setCancelBlenderRendersOnQuit: (cancel: () => numbe
       ...(typeof raw.license === 'string' ? { license: raw.license } : {}),
     })
   })
-  ipcMain.handle('nomi:vibing-director:import-existing-asset', async (_event, payload) => {
+  ipcMain.handle('nomi:vibing-director:import-existing-asset', async (event, payload) => {
+    assertTrustedSender(event)
     const assets = await import('./blender/vibingDirectorAssets')
     return assets.importVibingDirectorAssetFromUrl(payload as Parameters<typeof assets.importVibingDirectorAssetFromUrl>[0])
   })
-  ipcMain.handle('nomi:vibing-director:list-catalog-assets', async (_event, payload) => {
+  ipcMain.handle('nomi:vibing-director:list-catalog-assets', async (event, payload) => {
+    assertTrustedSender(event)
     const raw = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
     const catalog = await import('./blender/vibingDirectorCatalog')
     return catalog.listVibingDirectorCatalogAssets(
@@ -173,7 +197,8 @@ function registerDirectorIpc(setCancelBlenderRendersOnQuit: (cancel: () => numbe
       typeof raw.limit === 'number' ? raw.limit : 60,
     )
   })
-  ipcMain.handle('nomi:vibing-director:import-catalog-asset', async (_event, payload) => {
+  ipcMain.handle('nomi:vibing-director:import-catalog-asset', async (event, payload) => {
+    assertTrustedSender(event)
     const raw = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
     const catalog = await import('./blender/vibingDirectorCatalog')
     return catalog.importVibingDirectorCatalogAsset({
@@ -183,11 +208,13 @@ function registerDirectorIpc(setCancelBlenderRendersOnQuit: (cancel: () => numbe
       cacheDir: path.join(getSettingsRoot(), 'cache', 'vibing-director-catalog'),
     })
   })
-  ipcMain.handle('nomi:vibing-director:open-blender', async (_event, payload) => {
+  ipcMain.handle('nomi:vibing-director:open-blender', async (event, payload) => {
+    assertTrustedSender(event)
     const director = await import('./blender/vibingDirectorRunner')
     return director.openVibingDirectorBlend(payload as Parameters<typeof director.openVibingDirectorBlend>[0])
   })
-  ipcMain.handle('nomi:vibing-director:open-asset-source', async (_event, source) => {
+  ipcMain.handle('nomi:vibing-director:open-asset-source', async (event, source) => {
+    assertTrustedSender(event)
     const urls = {
       kenney: 'https://kenney.nl/assets/furniture-kit',
       polyhaven: 'https://polyhaven.com/models',

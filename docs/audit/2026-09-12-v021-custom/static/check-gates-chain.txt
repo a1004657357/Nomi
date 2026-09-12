@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:gates-chain /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-gates-chain.mjs
+
+✅ 门岗链完整：25 个 check:* 全部可达（蓄意豁免 2 个：check:third-party:release、check:audit）

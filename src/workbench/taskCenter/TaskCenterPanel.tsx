@@ -8,7 +8,7 @@ import { Portal } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconClock, IconProgress, IconLoader2, IconLock, IconX } from '@tabler/icons-react'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
 import { useGenerationQueueStore } from '../generationCanvas/runner/generationQueueStore'
-import { requestComfyuiCancel } from '../generationCanvas/runner/comfyuiTaskControl'
+import { requestTaskCancel } from '../generationCanvas/runner/localTaskControl'
 // 重试复用既有链路（单发 confirmAndRunNode / 批量 confirmAndRunPlan），不另起一套付费路径。
 import { confirmAndRunNode } from '../generationCanvas/runner/generationRunController'
 import { confirmAndRunPlan } from '../generationCanvas/components/batchPlanPreview'
@@ -90,6 +90,7 @@ export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProdu
     statuses: {
       draft: t('taskCenter.productionRun.statuses.draft'),
       awaiting_direction: t('taskCenter.productionRun.statuses.awaitingDirection'),
+      awaiting_script_review: t('taskCenter.productionRun.statuses.awaitingScriptReview'),
       awaiting_storyboard_review: t('taskCenter.productionRun.statuses.awaitingStoryboardReview'),
       awaiting_contract: t('taskCenter.productionRun.statuses.awaitingContract'),
       ready: t('taskCenter.productionRun.statuses.ready'),
@@ -124,7 +125,7 @@ export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProdu
   const cancelQueued = (row: TaskCenterRow) => useGenerationQueueStore.getState().cancelEntry(row.batchId, row.nodeId)
   const interruptRunning = (row: TaskCenterRow) => {
     const node = nodes.find((candidate) => candidate.id === row.nodeId)
-    if (node) requestComfyuiCancel(node)
+    if (node) requestTaskCancel(node)
   }
   const cancelAllQueued = () => {
     const batchIds = new Set(queued.filter((row): row is TaskCenterRow => row.kind === 'generation').map((row) => row.batchId))

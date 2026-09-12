@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:agents-sync /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/gen-agents-md.mjs --check
+
+✅ AGENTS.md 同步门岗通过：与 CLAUDE.md 逐字节一致（差异仅封闭替换集 2 条）

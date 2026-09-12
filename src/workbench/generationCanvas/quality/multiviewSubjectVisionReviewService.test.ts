@@ -5,6 +5,8 @@ import {
   reviewMultiviewCollectionWithVisionModel,
 } from './multiviewSubjectVisionReviewService'
 
+type SendVisionReview = NonNullable<NonNullable<Parameters<typeof reviewMultiviewCollectionWithVisionModel>[0]['deps']>['send']>
+
 function collection(local = true): GenerationResultCollection {
   const url = (id: string) => local
     ? `nomi-local://asset/project/${id}.png`
@@ -59,7 +61,7 @@ function collection(local = true): GenerationResultCollection {
 describe('reviewMultiviewCollectionWithVisionModel', () => {
   it('builds one reusable batch comparator for the generation pipeline', async () => {
     const clearSession = vi.fn(async () => {})
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendVisionReview>(async () => ({
       text: JSON.stringify({
         sourceSubjectDetected: true,
         items: [{ itemId: 'front', outputSubjectDetected: true, sameSubject: true }],
@@ -89,7 +91,7 @@ describe('reviewMultiviewCollectionWithVisionModel', () => {
 
   it('uses one isolated multimodal chat call and records usage in the report', async () => {
     const clearSession = vi.fn(async () => {})
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendVisionReview>(async () => ({
       text: JSON.stringify({
         sourceSubjectDetected: true,
         items: [{

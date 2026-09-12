@@ -46,7 +46,7 @@ const skillNode: GenerationCanvasNode = {
   id: 'skill-node',
   kind: 'skill',
   title: skill.label,
-  prompt: skill.description,
+  prompt: skill.description ?? '',
   position: { x: 0, y: 0 },
   categoryId: 'shots',
   meta: { canvasSkill: buildCanvasSkillNodeState(skill) },

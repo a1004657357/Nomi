@@ -11,10 +11,11 @@ import {
 } from './catalogTaskActions'
 import { resolveGenerationReferences } from './generationReferenceResolver'
 import { MODEL_ARCHETYPES } from '../../../config/modelArchetypes'
-import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
 import type { TaskRequestDto, TaskResultDto } from '../../api/taskApi'
 import type { ModelCatalogModelDto, ModelCatalogVendorDto } from '../../api/modelCatalogApi'
 import type { RecoverableTimeoutError } from './recoverableTimeout'
+import * as localTaskControl from './localTaskControl'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -783,6 +784,34 @@ describe('runCatalogGenerationTask — 轮询硬超时抛 RecoverableTimeoutErro
   })
 })
 
+describe('runCatalogGenerationTask — confirmed local cancellation wins over polling', () => {
+  const node: GenerationCanvasNode = {
+    id: 'local-image-node', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: 'a crane',
+    meta: { modelKey: 'generate_image', vendor: 'antigravity-cli' },
+  }
+  it.each(['before-query', 'during-query'])('does not publish a late success when cancelled %s', async (moment) => {
+    let cancelled = false
+    const cancelFlag = vi.spyOn(localTaskControl, 'isTaskCancelRequested').mockImplementation((id) => id === node.id && cancelled)
+    const runTask = vi.fn(async (_vendor: string, request: TaskRequestDto): Promise<TaskResultDto> => {
+      if (moment === 'before-query') cancelled = true
+      return { id: 'local-job', kind: request.kind, status: 'queued', assets: [], raw: {} }
+    })
+    const fetchTaskResult = vi.fn(async () => {
+      await Promise.resolve()
+      cancelled = true // Models a cancellation acknowledgement arriving while the query was in flight.
+      return { vendor: 'antigravity-cli', result: {
+        id: 'local-job', kind: 'text_to_image' as const, status: 'succeeded' as const,
+        assets: [{ type: 'image' as const, url: 'nomi-local://late-output.jpg' }], raw: {},
+      } }
+    })
+    try {
+      await expect(runCatalogGenerationTask(node, { runTask, fetchTaskResult, pollIntervalMs: 1 })).rejects.toMatchObject({ name: 'LocalTaskCancelledError' })
+      expect(runTask).toHaveBeenCalledOnce()
+      expect(fetchTaskResult).toHaveBeenCalledTimes(moment === 'before-query' ? 0 : 1)
+    } finally { cancelFlag.mockRestore() }
+  })
+})
+
 // ★钱安全铁律回归（2026-06-27 用户报「平台冒出很多视频、费用被扣」根因）：
 // 付费任务已提交(runTask 成功、拿到 taskId)后，轮询查结果失败【绝不】能冒泡出去触发外层
 // runGenerationNode 重试循环——那会重新 runTask 二次扣费(单确认最多 ×3/节点、批量再乘)。
@@ -942,6 +971,23 @@ describe('buildCatalogTaskRequest — idempotencyKey 穿透到 request.extras', 
     const built = buildCatalogTaskRequest(node, { idempotencyKey: 'run-abc-123' })
     expect((built.request.extras as Record<string, unknown>).idempotencyKey).toBe('run-abc-123')
   })
+
+  it('anonymous upload consent 穿透到 request.extras', () => {
+    const built = buildCatalogTaskRequest({ ...imageNode(), prompt: 'a cat', meta: { modelKey: 'sd', modelVendor: 'openai' } }, { anonymousAssetHostingConsent: 'allow' })
+    expect((built.request.extras as Record<string, unknown>).anonymousAssetHostingConsent).toBe('allow')
+  })
+
+  it('把当前请求实际引用的本地素材作为上传 allowlist 传给主进程', () => {
+    const built = buildCatalogTaskRequest(
+      {
+        ...imageNode(),
+        prompt: 'a cat',
+        meta: { modelKey: 'sd', modelVendor: 'openai', referenceImageUrls: ['nomi-local://asset/active.png'] },
+      },
+      { references: { referenceImages: ['nomi-local://asset/active.png'] } },
+    )
+    expect((built.request.extras as Record<string, unknown>).activeAssetUrls).toEqual(['nomi-local://asset/active.png'])
+  })
   it('未给 idempotencyKey → extras 不带该键（无键时 runTask 不介入，向后兼容）', () => {
     const node: GenerationCanvasNode = {
       id: 'n1',
@@ -958,6 +1004,13 @@ describe('buildCatalogTaskRequest — idempotencyKey 穿透到 request.extras', 
     }
     const built = buildCatalogTaskRequest(node, {})
     expect((built.request.extras as Record<string, unknown>).idempotencyKey).toBeUndefined()
+  })
+  it('production QA 的 promptSuffix 只追加到本次请求，不改写节点原始 prompt', () => {
+    const node: GenerationCanvasNode = { id: 'n1', kind: 'image', title: '', position: { x: 0, y: 0 }, prompt: '保持雨夜窗边构图', meta: { modelKey: 'gpt-image-2-image-to-image', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'gpt-image-2', modeId: 't2i' } } }
+    const built = buildCatalogTaskRequest(node, { promptSuffix: '只修正：主体身份，不改变背景。' })
+    expect(built.request.prompt).toContain('保持雨夜窗边构图')
+    expect(built.request.prompt).toContain('只修正：主体身份，不改变背景。')
+    expect(node.prompt).toBe('保持雨夜窗边构图')
   })
 })
 
@@ -1427,7 +1480,7 @@ describe('normalizeCatalogTaskResult — 终态失败抛出上游原因', () => 
 
 describe('resolvePollBudget / isSlowLaneBackend — 按后端时延分档', () => {
   it('本地进程图像后端使用慢道预算', () => {
-    for (const vendor of ['codex-local', 'comfyui-local']) {
+    for (const vendor of ['codex-local', 'antigravity-cli', 'comfyui-local', 'comfyui-local-render-2']) {
       for (const kind of ['text_to_image', 'image_edit'] as const) {
         expect(isSlowLaneBackend(kind, vendor)).toBe(true)
         expect(resolvePollBudget(kind, vendor)).toEqual({ softMs: 300000, hardMs: 1200000 })
@@ -1444,5 +1497,10 @@ describe('resolvePollBudget / isSlowLaneBackend — 按后端时延分档', () =
     expect(isSlowLaneBackend('text_to_image', 'apimart')).toBe(false)
     expect(resolvePollBudget('text_to_image', 'apimart')).toEqual({ softMs: 120000, hardMs: 120000 })
     expect(resolvePollBudget('image_edit', 'kie')).toEqual({ softMs: 120000, hardMs: 120000 })
+  })
+
+  it('保留定制轮询策略中的网页原图恢复与 3D 长任务窗口', () => {
+    expect(resolvePollBudget('image_edit', 'jimeng-web')).toEqual({ softMs: 300000, hardMs: 1800000 })
+    expect(resolvePollBudget('image_to_3d', 'tripo')).toEqual({ softMs: 300000, hardMs: 1200000 })
   })
 })

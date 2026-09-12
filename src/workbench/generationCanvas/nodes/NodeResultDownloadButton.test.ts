@@ -21,7 +21,9 @@ describe('NodeResultDownloadButton', () => {
     }
 
     const markup = renderToStaticMarkup(
-      React.createElement(NodeResultDownloadButton, { node, selected: true }),
+      React.createElement(NodeResultDownloadButton, {
+        node, selected: true, onPreview: () => {}, onOpenProvenance: () => {},
+      }),
     )
 
     expect(markup).toContain('送入 3D 导演台')

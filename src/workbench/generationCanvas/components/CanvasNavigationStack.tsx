@@ -7,6 +7,7 @@ import { TooltipProvider } from '../../../design'
 import { cn } from '../../../utils/cn'
 import { CanvasMinimap, MINIMAP_MIN_NODES } from './CanvasMinimap'
 import { CanvasControlsHelpPopover } from './CanvasControlsHelpPopover'
+import { CanvasPerformanceControl } from './CanvasPerformanceControl'
 import { CanvasNavigationTooltipButton } from './CanvasNavigationTooltipButton'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 
@@ -127,6 +128,7 @@ export function CanvasNavigationStack({
             <MinimapToggleIcon size={15} stroke={1.8} aria-hidden="true" />
           </CanvasNavigationTooltipButton>
           <CanvasControlsHelpPopover />
+          <CanvasPerformanceControl />
         </TooltipProvider>
       </div>
     </div>

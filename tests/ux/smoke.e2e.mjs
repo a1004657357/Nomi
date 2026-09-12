@@ -4,6 +4,7 @@
 //
 // 用法：pnpm run build && pnpm run test:e2e
 import { launchNomiApp } from "./_launchApp.mjs";
+import { expect, screenshotSettled } from "./_assert.mjs";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,8 @@ const tempRoot = mkdtempSync(path.join(os.tmpdir(), "nomi-smoke-e2e-"));
 const userDataDir = path.join(tempRoot, "user-data");
 const projectsDir = path.join(tempRoot, "projects");
 mkdirSync(projectsDir, { recursive: true });
+const screenshotDir = process.env.NOMI_SMOKE_SCREENSHOTS;
+if (screenshotDir) mkdirSync(screenshotDir, { recursive: true });
 
 let passed = 0;
 function assert(cond, label) {
@@ -30,6 +33,11 @@ const { app, win } = await launchNomiApp({
 const electronProcess = app.process();
 
 try {
+  const splashSkip = win.locator('[data-splash-skip="true"]');
+  if (await splashSkip.count()) {
+    await splashSkip.click();
+    await splashSkip.waitFor({ state: "detached", timeout: 8000 });
+  }
 
   // 1) 主进程启动 + 渲染层加载（runtime.ts 拆分后的回归底线）
   assert((await win.title()).toLowerCase().includes("nomi"), "窗口标题含 Nomi");
@@ -54,7 +62,9 @@ try {
   // 空库与有项目走同一套布局：主入口动作卡片「新建空白项目」恒在（hero 介绍首屏已删）。
   await win.getByText("项目库", { exact: false }).first().waitFor({ timeout: 8000 });
   const primaryCard = win.locator('[data-variant="primary"]', { hasText: "新建空白项目" });
-  assert((await primaryCard.count()) > 0, "项目库主入口动作卡片「新建空白项目」可见");
+  await expect(primaryCard).toBeVisible();
+  assert(await primaryCard.isVisible(), "项目库主入口动作卡片「新建空白项目」可见");
+  if (screenshotDir) await screenshotSettled(win, { path: path.join(screenshotDir, "library.png") });
 
   // 3) 开项目 → 工作台画布（开项目 → readProject/资产 → 画布挂载）
   // 优先打开已有项目卡（不污染库）；空库时走「新建空白项目」。
@@ -113,6 +123,11 @@ try {
   });
   assert(composerCheck.scrolls, "超长提示词在编辑区内部滚动（不撑爆卡片）");
   assert(composerCheck.btnClickable, "超长提示词下生成钮 hit-test 可点（底栏未被溢出文字盖住）");
+  const savedPrompt = await promptInput.evaluate((el) => 'value' in el ? el.value
+    : Array.from(el.children).map((paragraph) => paragraph.textContent || '').join('\n'));
+  expect(savedPrompt, '富文本段落按换行还原后须保留完整提示词').toBe(longPrompt);
+  assert(savedPrompt === longPrompt, "平移画布后长提示词完整保留");
+  if (screenshotDir) await screenshotSettled(win, { path: path.join(screenshotDir, "canvas.png") });
 
   // 5) 3D 导演台：右栏「整运镜→轨迹」点「新建」→ 轨迹属性面板必须即时激活
   //（回归 2026-08-04：createdId 从 setState updater 里往外带，依赖 React eager-eval 才同步执行；
@@ -154,8 +169,30 @@ try {
     "3D 轨迹「新建」后属性面板即时激活（「追加点」可见、无「请选择一条轨迹」占位，无需再点时间轴行）",
   );
 
+  const sceneCanvas = win.locator('[aria-label="3D 场景编辑器"] canvas').first();
+  await expect(sceneCanvas).toBeVisible({ timeout: 20_000 });
+  const viewportPng = await sceneCanvas.screenshot();
+  const viewportPixels = await win.evaluate(async (base64) => {
+    const source = new Image();
+    source.src = `data:image/png;base64,${base64}`;
+    await source.decode();
+    const sampled = document.createElement('canvas');
+    sampled.width = source.width;
+    sampled.height = source.height;
+    const context = sampled.getContext('2d');
+    context.drawImage(source, 0, 0);
+    const { data } = context.getImageData(0, 0, sampled.width, sampled.height);
+    const colors = new Set();
+    for (let i = 0; i < data.length; i += 64) {
+      colors.add(`${data[i] >> 4},${data[i + 1] >> 4},${data[i + 2] >> 4}`);
+    }
+    return { width: source.width, height: source.height, colors: colors.size };
+  }, viewportPng.toString('base64'));
+  assert(viewportPixels.width > 300 && viewportPixels.height > 200 && viewportPixels.colors > 8,
+    `3D 视口实际渲染而非空白占位（${viewportPixels.colors} 种采样色）`);
+  if (screenshotDir) await screenshotSettled(win, { path: path.join(screenshotDir, "director.png") });
   console.log(`\nSMOKE PASS: ${passed} assertions`);
-  await finishAndExit(0);
+  process.exitCode = 0;
 } catch (error) {
   console.error(`\n${error?.message || error}`);
   process.exitCode = 1;

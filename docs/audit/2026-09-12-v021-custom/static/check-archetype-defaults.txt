@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:archetype-defaults /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> tsx scripts/gen-archetype-wire-defaults.ts --check
+
+✓ 档案默认参数桥接已同步。

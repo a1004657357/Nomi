@@ -5,6 +5,8 @@ import { toast, useToastStore } from '../../../ui/toast'
 import { runGenerationNodesByPlan, spendCostKindForNodes } from '../runner/generationRunController'
 import { mintSpendGrant } from '../../api/taskApi'
 import { batchSpendGrantTtlMs, confirmGenerationSpend, describeGenerationCost } from '../spend/spendConfirm'
+import { hasLocalAssetReference, resolveAssetUploadConsent } from '../runner/assetUploadConsent'
+import { resolveGenerationReferences } from '../runner/generationReferenceResolver'
 import { buildDependencyWaves, type DependencyWavePlan } from '../runner/dependencyWaves'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { verifyShotsAndReport } from '../agent/shotVerifyStore'
@@ -61,9 +63,10 @@ export function forkRegenerationNodesInPlan(
       candidate.source === edge.source
       && candidate.target === variantTarget
       && (candidate.mode ?? 'reference') === (edge.mode ?? 'reference')
+      && candidate.targetParamKey === edge.targetParamKey
     ))
     for (const copiedEdge of copiedEdges) current.disconnectEdge(copiedEdge.id)
-    useGenerationCanvasStore.getState().connectNodes(variantSource, variantTarget, edge.mode)
+    useGenerationCanvasStore.getState().connectNodes(variantSource, variantTarget, edge.mode, edge.targetParamKey)
   }
 
   const nextIds = requestedIds.map((nodeId) => sourceToVariant.get(nodeId) ?? nodeId)
@@ -131,8 +134,13 @@ export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, ge
       )
       return
     }
+    const consent = await confirmPlanHostingConsent(executablePlan.waves.flat())
+    if (!consent) {
+      set({ running: false })
+      return
+    }
     set({ plan: null, regenerationSourceNodeId: null, running: false })
-    await runPlanWithToasts(executablePlan, { grantId })
+    await runPlanWithToasts(executablePlan, { grantId, assetUploadConsent: consent })
   },
 }))
 
@@ -143,13 +151,86 @@ export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, ge
 export function describeBlockedNotice(plan: DependencyWavePlan): string | null {
   if (plan.blocked.length === 0) return null
   const cycle = plan.blocked.filter((b) => b.reason === 'cycle').length
-  const waiting = plan.blocked.length - cycle
+  const unfrozen = plan.blocked.filter((b) => b.reason === 'unfrozen-anchor').length
+  // 「缺啥提示啥」：未冻结与「上游没生成」是不同原因（前者去卡上点「冻结」，后者要先生成上游），分开报。
+  const waiting = plan.blocked.length - cycle - unfrozen
   const parts: string[] = []
   if (waiting > 0) parts.push(i18n.t('generationCommon.batchPlan.waitingUpstream', { count: waiting }))
+  if (unfrozen > 0) parts.push(i18n.t('generationCommon.batchPlan.unfrozenAnchors', { count: unfrozen }))
   if (cycle > 0) parts.push(i18n.t('generationCommon.batchPlan.cyclicReferences', { count: cycle }))
   return i18n.t('generationCommon.batchPlan.blockedNotice', {
     details: parts.join(i18n.t('generationCommon.batchPlan.detailSeparator')),
   })
+}
+
+/**
+ * 一批节点的托管解析：整批只问一次（有一个节点需要披露，整批就带上披露块）。
+ * 返回 null = 策略 deny，这批直接不跑。
+ */
+async function resolveBatchHosting(ids: string[]): Promise<Awaited<ReturnType<typeof resolveAssetUploadConsent>> | null> {
+  const canvasState = useGenerationCanvasStore.getState()
+  const nodesById = new Map(canvasState.nodes.map((n) => [n.id, n]))
+  const consentNodes = ids
+    .map((id) => nodesById.get(id))
+    .filter((node): node is NonNullable<typeof node> => Boolean(node))
+    .map((node) => {
+      const resolved = resolveGenerationReferences(node, { nodes: canvasState.nodes, edges: canvasState.edges })
+      return {
+        ...node,
+        references: [
+          ...(node.references || []),
+          ...resolved.referenceImages,
+          ...resolved.referenceVideos,
+          ...resolved.referenceAudios,
+          ...(resolved.firstFrameUrl ? [resolved.firstFrameUrl] : []),
+          ...(resolved.lastFrameUrl ? [resolved.lastFrameUrl] : []),
+          ...(resolved.relayFromVideoUrl ? [resolved.relayFromVideoUrl] : []),
+        ],
+      }
+    })
+  let hosting: Awaited<ReturnType<typeof resolveAssetUploadConsent>> = { allowed: true, needsConfirmation: false, remember: async () => {} }
+  for (const node of consentNodes.filter((candidate) => hasLocalAssetReference(candidate))) {
+    const resolution = await resolveAssetUploadConsent(node)
+    if (!resolution.allowed) return null
+    if (resolution.needsConfirmation && !hosting.needsConfirmation) hosting = resolution
+  }
+  return hosting
+}
+
+/** 解析结果 → 花钱卡要不要带披露块。needsConfirmation 时才给，否则整块不渲染。 */
+function hostingDisclosureFor(
+  hosting: Awaited<ReturnType<typeof resolveAssetUploadConsent>>,
+): { hostingDisclosure: { message: string; rememberLabel: string; onRemember: () => Promise<void> } } | Record<string, never> {
+  if (!hosting.needsConfirmation) return {}
+  return {
+    hostingDisclosure: {
+      message: i18n.t('generationCommon.spendHostingDisclosure.message'),
+      rememberLabel: i18n.t('generationCommon.spendHostingDisclosure.remember'),
+      onRemember: hosting.remember,
+    },
+  }
+}
+
+/**
+ * 计划 overlay 的托管确认：这条路径的付费令牌在点「按计划生成」时就铸好了，
+ * 所以披露必须自己弹一次（同一张 SpendConfirmDialog，只是这次只承载托管披露）。
+ * 返回 null = 用户拒绝或策略 deny → 这批不跑。
+ */
+async function confirmPlanHostingConsent(ids: string[]): Promise<'allow' | 'not-needed' | null> {
+  const hosting = await resolveBatchHosting(ids)
+  if (!hosting) return null
+  if (!hosting.needsConfirmation) return 'not-needed'
+  const ok = await confirmGenerationSpend(
+    ids.map((id) => useGenerationCanvasStore.getState().nodes.find((n) => n.id === id)),
+    {
+      title: i18n.t('generationCommon.batchPlan.startTitle'),
+      message: describeGenerationCost(ids.length, spendCostKindForNodes(ids)),
+      confirmLabel: i18n.t('generationCommon.batchPlan.confirmGenerate'),
+      light: true,
+      ...hostingDisclosureFor(hosting),
+    },
+  )
+  return ok ? 'allow' : null
 }
 
 /**
@@ -166,7 +247,8 @@ export async function confirmAndRunPlan(
 ): Promise<void> {
   const ids = plan.waves.flat()
   if (ids.length === 0) {
-    await runPlanWithToasts(plan) // 无可跑 → 复用人话 toast 报「为什么不能跑」
+    // 无可跑 → 复用人话 toast 报「为什么不能跑」。零节点也就没有素材要上传。
+    await runPlanWithToasts(plan, { assetUploadConsent: 'not-needed' })
     return
   }
   const regenerationNodeIds = options.regenerationNodeIds
@@ -174,8 +256,11 @@ export async function confirmAndRunPlan(
     : ids.filter(hasUsableResult)
   const state = useGenerationCanvasStore.getState()
   const nodes = ids.map((id) => state.nodes.find((node) => node.id === id))
+  const hosting = await resolveBatchHosting(ids)
+  if (!hosting) return
   const ok = await confirmGenerationSpend(nodes, {
-    title: '开始生成',
+    title: i18n.t('generationCommon.batchPlan.startTitle'),
+    ...hostingDisclosureFor(hosting),
     message: describeGenerationCost(ids.length, spendCostKindForNodes(ids)),
     confirmLabel: i18n.t('generationCommon.batchPlan.confirmGenerate'),
     light: true,
@@ -205,14 +290,20 @@ export async function confirmAndRunPlan(
     toast(error instanceof Error && error.message ? error.message : '付费授权失败', 'error')
     return
   }
-  await runPlanWithToasts(forked.plan, { grantId, concurrency: options.concurrency })
+  await runPlanWithToasts(forked.plan, {
+    grantId,
+    concurrency: options.concurrency,
+    assetUploadConsent: hosting.needsConfirmation ? 'allow' : 'not-needed',
+  })
 }
 
 /** 按计划真实生成 + 进度人话 toast。「全部生成」与 S6b agent 受理路径共用(单一执行口)。
  * grantId：付费守卫令牌（确认后铸），随 plan 下到每个节点的 request.extras 供主进程核验。 */
 export async function runPlanWithToasts(
   plan: DependencyWavePlan,
-  options: { grantId?: string; concurrency?: number } = {},
+  // assetUploadConsent 必填：整批的托管同意在上面那张批量花钱卡里问过了，这里只是把答案带下去。
+  // 缺省会让 runner 无从判断「谁问的用户」，那正是 F16b 第二张卡的来源。
+  options: { grantId?: string; concurrency?: number; assetUploadConsent: 'allow' | 'not-needed' },
 ): Promise<void> {
   const waves = plan.waves
   const runnable = waves.flat().length
@@ -248,6 +339,7 @@ export async function runPlanWithToasts(
   })
   try {
     const result = await runGenerationNodesByPlan(plan, {
+      assetUploadConsent: options.assetUploadConsent,
       ...(options.grantId ? { grantId: options.grantId } : {}),
       ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
     })
