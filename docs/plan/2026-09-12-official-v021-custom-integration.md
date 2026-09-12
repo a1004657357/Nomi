@@ -27,8 +27,8 @@ Merge the latest official stable release into the existing custom branch. Preser
 3. [x] Fetch and verify the official tag, license and dependency changes.
 4. [x] Merge and resolve conflicts; audit custom provider, storyboard, and lifecycle contracts.
 5. [x] Run typechecks, unit tests, applicable static gates, build, and isolated Electron smoke.
-6. [ ] Commit the verified merge and fast-forward the unchanged user workspace.
-7. [ ] Report exact versions, verification results, limitations, and rollback instructions.
+6. [x] Commit the verified merge and fast-forward the unchanged user workspace.
+7. [x] Report exact versions, verification results, limitations, and rollback instructions.
 
 ## Acceptance
 
@@ -56,3 +56,6 @@ Before fast-forwarding the daily checkout, verify it still points to the inspect
 - Renderer and Electron builds passed. Isolated Electron 43.4.1 launch probe passed; macOS automated fixtures require a disposable test keychain to avoid first-launch OS prompts.
 - Goal feature Electron smoke passed 10/10 assertions, including real 8-frame extraction and keyframe node creation. Restart/idempotency smoke passed 6 assertions with zero Provider requests.
 - Full acceptance summary: `docs/audit/2026-09-12-v021-custom/summary.md`.
+- Verified merge commit: `82bbb2aa0e41cfd88ed59800b35e2f136615acf1`, with the custom baseline and official v0.21.0 tag as its two parents.
+- The daily workspace was fast-forwarded without modifying `.mimosa`, dependencies were reinstalled from the merged lockfile, and the daily production build passed.
+- Electron 43.4.1 launched from the daily workspace on 2026-09-13; macOS reported one visible window titled `Nomi`.
