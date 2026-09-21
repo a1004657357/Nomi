@@ -2,6 +2,7 @@ import React from 'react'
 import { useWorkbenchStore } from '../../workbenchStore'
 import { createInitialViewport, getNodeSize } from './generationCanvasGeometry'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { useCanvasPerformance } from './useCanvasPerformance'
 
 // 从 GenerationCanvas（顶死 800 行的 god-component）抽出的视口 + 虚拟化子系统：
 // pan/zoom 状态、按分类记忆/恢复视口、stage 尺寸观测、视口 AABB 裁剪可见节点/边。
@@ -38,7 +39,7 @@ export function getVisibleCanvasNodesForRender(params: {
   })
 }
 
-export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCanvasNode[]) {
+export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCanvasNode[], edgeCount = 0) {
   // Pan/zoom state
   const initialViewport = React.useMemo(() => createInitialViewport(), [])
   const rememberCategoryViewport = useWorkbenchStore((state) => state.rememberCategoryViewport)
@@ -65,6 +66,7 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategoryId])
   const stageRef = React.useRef<HTMLDivElement>(null)
+  const { profile, markViewportMoving } = useCanvasPerformance(nodes, edgeCount, zoom, stageRef)
   // 承载 translate+scale 的那一层（stage 的唯一子层）。单独给 ref 是为了让「视口」这件事
   // 有一个明确的 DOM 抓手：合成层提升挂在它身上，未来若要做惯性/吸附也只碰这一层。
   const canvasLayerRef = React.useRef<HTMLDivElement>(null)
@@ -94,8 +96,12 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
   const stageSizeRef = React.useRef(stageSize)
   stageSizeRef.current = stageSize
   const applyCanvasTransform = React.useCallback((nextZoom: number, nextOffset: { x: number; y: number }) => {
-    if (canvasLayerRef.current) canvasLayerRef.current.style.transform = canvasViewportTransformStyle(nextZoom, nextOffset)
-  }, [])
+    const layer = canvasLayerRef.current
+    const transform = canvasViewportTransformStyle(nextZoom, nextOffset)
+    if (!layer || layer.style.transform === transform) return
+    markViewportMoving()
+    layer.style.transform = transform
+  }, [markViewportMoving])
   React.useLayoutEffect(() => {
     offsetRef.current = offset
     zoomRef.current = zoom
@@ -116,5 +122,6 @@ export function useCanvasViewport(activeCategoryId: string, nodes: GenerationCan
     zoomRef,
     stageSizeRef,
     applyCanvasTransform,
+    lightweightNodeMode: profile.lightweightNodes,
   }
 }

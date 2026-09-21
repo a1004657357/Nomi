@@ -27,6 +27,31 @@ function node(overrides: Partial<GenerationCanvasNode>): GenerationCanvasNode {
 }
 
 describe('storyboardScriptViewModel', () => {
+  it('binds official keyframes and regenerated videos by stable shot id after reordering', () => {
+    const reordered: StoryboardPlan = {
+      ...plan,
+      shots: [
+        { ...plan.shots[1], index: 1, shotId: 'closeup' },
+        { ...plan.shots[0], index: 2, shotId: 'opening', shotKind: 'video', keyframe: { enabled: true } },
+      ],
+    }
+    const rows = buildStoryboardScriptRows(reordered, [
+      node({ id: 'frame', title: 'Shot 1 keyframe', shotIndex: 1, meta: { storyboardKeyframe: true, shotId: 'opening' } }),
+      node({ id: 'video', kind: 'video', title: 'Shot 1', shotIndex: 1, meta: { shotId: 'opening' } }),
+      node({
+        id: 'video-v2', kind: 'video', title: 'Shot 1 V2', shotIndex: 9,
+        meta: { shotId: 'opening' }, regeneratedFrom: 'video',
+        result: { id: 'v2', type: 'video', url: 'video.mp4', createdAt: 2 },
+      }),
+      node({ id: 'closeup', title: 'Shot 2', shotIndex: 2, meta: { shotId: 'closeup' } }),
+    ], [{ id: 'ff', source: 'frame', target: 'video', mode: 'first_frame' }])
+
+    expect(rows[0].imageNode?.id).toBe('closeup')
+    expect(rows[1].imageNode?.id).toBe('frame')
+    expect(rows[1].videoNode?.id).toBe('video-v2')
+    expect(rows[1].nodes.map((item) => item.id)).toEqual(['frame', 'video', 'video-v2'])
+  })
+
   it('按 shotIndex 把分镜方案行和画布生成图合并', () => {
     const rows = buildStoryboardScriptRows(
       plan,

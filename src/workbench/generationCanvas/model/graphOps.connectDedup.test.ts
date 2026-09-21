@@ -62,6 +62,22 @@ describe('connectNodes — order 字段（数组参考 character1..N 的真相�
 })
 
 describe('changeEdgeMode — store and event replay preserve edge identity', () => {
+  it('does not collapse two named parameters fed by the same source', () => {
+    const edges: GenerationCanvasEdge[] = [
+      { id: 'a', source: 'image', target: 'video', mode: 'reference', targetParamKey: 'start_image' },
+      { id: 'b', source: 'image', target: 'video', mode: 'first_frame', targetParamKey: 'end_image' },
+    ]
+    expect(changeEdgeMode(edges, 'a', 'first_frame')).toEqual([
+      { ...edges[0], mode: 'first_frame' },
+      edges[1],
+    ])
+    expect(changeEdgeMode(
+      [...edges, { ...edges[1], id: 'same-slot', targetParamKey: 'start_image' }],
+      'a',
+      'first_frame',
+    ).map((edge) => edge.id)).toEqual(['b', 'same-slot'])
+  })
+
   it('keeps the edge id stable and merges an already-existing semantic edge', () => {
     const reference: GenerationCanvasEdge = {
       id: 'edge-a-b-reference', source: 'a', target: 'b', mode: 'reference',

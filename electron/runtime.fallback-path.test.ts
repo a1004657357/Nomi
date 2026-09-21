@@ -68,7 +68,7 @@ function makeTempDir(prefix: string): string {
 }
 
 const stubFetch = (impl: () => Promise<Response> | Response) => {
-  const fn = vi.fn(async () => impl());
+  const fn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => impl());
   vi.stubGlobal("fetch", fn);
   return fn;
 };

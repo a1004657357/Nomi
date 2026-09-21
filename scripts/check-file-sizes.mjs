@@ -32,23 +32,24 @@ const ALLOWLIST = {
   // 这些值是合并后的精确棘轮；后续只能降低。generated 档案由生成器维护，不宜手工拆分。
   // 2026-09-12 接入 Pixstag（MiniMax-H3）：generated 档案随生成器 +22 行、onboardingProviders
   // 精确吸收 Pixstag 接入卡 zh/en 18 行，重新锁定。
-  'electron/ai/agentChatV2.ts': 809,
-  'electron/catalog/archetypeWireDefaults.generated.ts': 847,
-  'src/desktop/bridge.ts': 963,
+  // v0.21 integration split the affected modules; lock in the reduced sizes.
+  'electron/ai/agentChatV2.ts': 745,
+  'electron/catalog/archetypeWireDefaults.generated.ts': 76,
+  'src/desktop/bridge.ts': 888,
   // 官方 PR #82 增加剪辑节点连续预览与分段导出文案，精确吸收 18 行后重新锁定。
-  'src/i18n/locales/generationCommon.ts': 2465,
-  'src/i18n/locales/onboardingProviders.ts': 1555,
+  'src/i18n/locales/generationCommon.ts': 2216,
+  'src/i18n/locales/onboardingProviders.ts': 1379,
   'src/i18n/locales/scene3d.ts': 835,
-  'src/workbench/generationCanvas/agent/applyCanvasToolCall.ts': 816,
-  'src/workbench/generationCanvas/components/CanvasAssistantPanel.tsx': 756,
+  'src/workbench/generationCanvas/agent/applyCanvasToolCall.ts': 728,
+  'src/workbench/generationCanvas/components/CanvasAssistantPanel.tsx': 755,
   'src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx': 801,
-  'src/workbench/generationCanvas/components/GenerationCanvas.tsx': 800,
-  'src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx': 719,
+  'src/workbench/generationCanvas/components/GenerationCanvas.tsx': 798,
+  'src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx': 600,
   'src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx': 848,
-  'src/workbench/generationCanvas/runner/generationRunController.ts': 832,
-  'src/workbench/workbenchStore.ts': 817,
-  "electron/runtime.ts": 531, // …→ 550（2026-07-27）→ 543（2026-08-01）→ 540（2026-08-11）→ 531（2026-08-15 v0.19.0 模块抽取）
-  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 734, // …→ 735（2026-08-02 rebase 后锁定）→ 734（2026-08-09 拖动态改画布级，死属性 data-expanded/data-dragging 一并清掉）
+  'src/workbench/generationCanvas/runner/generationRunController.ts': 827,
+  'src/workbench/workbenchStore.ts': 813,
+  "electron/runtime.ts": 489, // Web bridge dispatch moved into its provider-neutral task module.
+  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 671, // Preview rendering is delegated to GenerationNodePreviewBody.
   // PR#21 白板节点引入（2026-06-25）：WhiteboardDrawingTool（1032）与 WhiteboardLeaferCanvas（3406）两巨壳
   // 已按 Rule 9 全部拆完、双双出白名单。LeaferCanvas → whiteboardCanvasTypes/Export/NodeOps/Geometry 四纯模块
   // + whiteboardSceneRender（渲染树）+ useWhiteboardDrawing/BoxSelection/SelectionActions/SceneSync 四交互 hook，

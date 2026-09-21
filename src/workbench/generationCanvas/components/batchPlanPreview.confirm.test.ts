@@ -92,7 +92,7 @@ describe('confirmAndRunPlan version protection', () => {
     expect(mintSpendGrant).toHaveBeenCalledWith([variant?.id], 1, expect.any(Number))
     expect(runGenerationNodesByPlan).toHaveBeenCalledWith(
       expect.objectContaining({ waves: [[variant?.id]] }),
-      { grantId: 'grant-batch-version' },
+      { grantId: 'grant-batch-version', assetUploadConsent: 'not-needed' },
     )
   })
 })

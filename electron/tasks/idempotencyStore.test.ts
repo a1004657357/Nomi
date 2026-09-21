@@ -14,6 +14,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { TaskResult } from '../runtime'
 import {
   IdempotencyStore,
   SubmissionReplayError,
@@ -198,17 +199,17 @@ describe('runTaskWithIdempotency — 跨重启钱安全（Slice 6 核心）', ()
 
     let createCalls = 0
     let queryCalls = 0
-    const recovered = await runTaskWithIdempotency(
+    const recovered = await runTaskWithIdempotency<TaskResult>(
       payloadWith('key-query-only'),
       async () => {
         createCalls++
-        return { id: 'should-not-exist', status: 'queued' as const, assets: [] }
+        return { id: 'should-not-exist', kind: 'text_to_video', status: 'queued', assets: [], raw: null }
       },
       {
         recoverPersisted: async (record) => {
           queryCalls++
           expect(record.providerTaskId).toBe('task-query-only')
-          return { id: 'task-query-only', status: 'running' as const, assets: [] }
+          return { id: 'task-query-only', kind: 'text_to_video', status: 'running', assets: [], raw: null }
         },
       },
     )

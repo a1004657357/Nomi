@@ -12,6 +12,7 @@
 //
 // 用法: pnpm build && node tests/ux/browser-overlay-interaction.walk.mjs
 import { launchNomiApp } from './_launchApp.mjs'
+import { expectAbsent, proveProbe } from './_assert.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -311,14 +312,15 @@ try {
   }
   const filter = overlay.locator('button[aria-label="筛选分类"]').first()
   if (await filter.count()) {
+    const folderProof = await proveProbe(overlay.getByText('走查文件夹', { exact: true }), '筛选前文件夹确实可见')
     await filter.click({ timeout: 2000 }).catch(() => {})
     await overlay.waitForTimeout(250)
     results.filterOpens = (await overlay.locator('[role="dialog"][aria-label="素材分类筛选"]').count()) > 0
     const imageOption = overlay.getByRole('option', { name: /图片/ }).first()
     if (await imageOption.count()) await imageOption.click({ timeout: 2000 }).catch(() => {})
     await overlay.waitForTimeout(250)
-    results.filterSelects = (await overlay.getByText('走查文件夹', { exact: true }).count()) === 0 &&
-      (await overlay.getByText('walk-upload.png', { exact: false }).count()) > 0
+    await expectAbsent(overlay.getByText('走查文件夹', { exact: true }), { provenBy: folderProof })
+    results.filterSelects = (await overlay.getByText('walk-upload.png', { exact: false }).count()) > 0
     if (await more.count()) await more.click({ timeout: 2000 }).catch(() => {})
     await overlay.locator('button[aria-label="筛选分类"]').first().click({ timeout: 2000 }).catch(() => {})
     const showAll = overlay.getByText('显示全部', { exact: true }).first()

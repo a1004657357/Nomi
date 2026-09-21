@@ -6,8 +6,7 @@ import {
   IconGridDots,
   IconRefresh,
 } from '@tabler/icons-react'
-import { NomiSelect } from '../../../../design'
-import { WorkbenchIconButton } from '../../../../design/workbenchActions'
+import { NomiSelect, WorkbenchIconButton } from '../../../../design'
 import { cn } from '../../../../utils/cn'
 import { toast } from '../../../../ui/toast'
 import { useWorkbenchStore } from '../../../workbenchStore'

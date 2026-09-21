@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:filesize /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-file-sizes.mjs
+
+✓ 文件体积门岗通过：扫描 1745 个源码文件，上限 800 行，巨壳白名单 16 个（棘轮只减不增）。

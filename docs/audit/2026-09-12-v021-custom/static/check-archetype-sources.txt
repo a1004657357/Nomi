@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:archetype-sources /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-archetype-sources.mjs
+
+✓ 档案出处门岗通过：扫 92 个档案文件，54 个已登记出处，38 个待补（棘轮基线 38）。

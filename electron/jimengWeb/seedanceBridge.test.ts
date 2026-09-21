@@ -209,7 +209,8 @@ describe("jimengWeb seedance bridge", () => {
   });
 
   it("查询到 completed + 文件后下载视频并写成 Nomi asset", async () => {
-    const fetchImpl = vi.fn(async (url: string, _options?: RequestInit) => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, _options?: RequestInit) => {
+      const url = String(input);
       if (url.endsWith("/api/tasks")) {
         return new Response(
           JSON.stringify({
@@ -241,7 +242,7 @@ describe("jimengWeb seedance bridge", () => {
         return new Response(Buffer.from("mp4"), { status: 200, headers: { "content-type": "video/mp4" } });
       }
       throw new Error(`unexpected fetch ${url}`);
-    }) as unknown as typeof fetch;
+    });
     const writeAsset = vi.fn(() => ({ id: "asset-1", name: "out.mp4", data: { url: "nomi-local://asset/p/out.mp4" } }));
 
     const result = await queryJimengWebTask({

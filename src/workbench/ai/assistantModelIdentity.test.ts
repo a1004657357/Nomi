@@ -55,6 +55,11 @@ describe('标签消歧', () => {
 })
 
 describe('助手可选模型必须来自真实可用 catalog', () => {
+  it('不把纯文字 CLI 显示成能执行工具的助手模型', () => {
+    expect(filterUsableAssistantTextModels([
+      { vendorKey: 'local', modelKey: 'auto', kind: 'text', enabled: true, meta: { supportsToolCalls: false } },
+    ], [{ key: 'local', enabled: true, authType: 'none' }])).toEqual([])
+  })
   const vendors = [
     { key: 'apimart', enabled: true, authType: 'bearer' as const, hasApiKey: true },
     { key: 'kie', enabled: true, authType: 'bearer' as const, hasApiKey: false },
@@ -63,7 +68,7 @@ describe('助手可选模型必须来自真实可用 catalog', () => {
 
   it('只保留 text、启用、身份完整且供应商真实可用的目录行', () => {
     const models = filterUsableAssistantTextModels([
-      { vendorKey: 'apimart', modelKey: 'deepseek-v3.1-250821', kind: 'text', enabled: true, labelZh: 'DeepSeek V3.1' },
+      { vendorKey: 'apimart', modelKey: 'deepseek-v4-pro', kind: 'text', enabled: true, labelZh: 'DeepSeek V4 Pro' },
       { vendorKey: 'apimart', modelKey: 'prompt-refiner', kind: 'text', enabled: true, meta: { promptRefineOnly: true }, labelZh: 'Prompt Refiner' },
       { vendorKey: 'kie', modelKey: 'fake-text', kind: 'text', enabled: true, labelZh: 'Fake' },
       { vendorKey: 'apimart', modelKey: 'disabled', kind: 'text', enabled: false, labelZh: 'Disabled' },
@@ -73,14 +78,14 @@ describe('助手可选模型必须来自真实可用 catalog', () => {
     ], vendors)
 
     expect(models.map((model) => `${model.vendorKey}:${model.modelKey}`)).toEqual([
-      'apimart:deepseek-v3.1-250821',
+      'apimart:deepseek-v4-pro',
       'local:local-text',
     ])
   })
 
   it('没有真实可用供应商时返回空，调用方必须显示配置入口而不是假下拉', () => {
     const models = filterUsableAssistantTextModels([
-      { vendorKey: 'apimart', modelKey: 'deepseek-v3.1-250821', kind: 'text', enabled: true, labelZh: 'DeepSeek V3.1' },
+      { vendorKey: 'apimart', modelKey: 'deepseek-v4-pro', kind: 'text', enabled: true, labelZh: 'DeepSeek V4 Pro' },
     ], [{ key: 'apimart', enabled: true, authType: 'bearer', hasApiKey: false }])
 
     expect(models).toEqual([])

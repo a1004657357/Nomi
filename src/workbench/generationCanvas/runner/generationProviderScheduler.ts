@@ -3,7 +3,8 @@ import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 export const GENERATION_GLOBAL_MAX_CONCURRENCY = 8
 export const GENERATION_DEFAULT_PROVIDER_CONCURRENCY = 4
 export const GENERATION_CODEX_PROVIDER_CONCURRENCY = 1
-export const GENERATION_JIMENG_PROVIDER_CONCURRENCY = 2
+export const GENERATION_JIMENG_PROVIDER_CONCURRENCY = 1
+export const GENERATION_PAVO_PROVIDER_CONCURRENCY = 1
 // AGNES enforces the rolling minute at the provider POST boundary. Keep 15s
 // headroom because local image publication/probing can shift POST timestamps.
 export const GENERATION_AGNES_VIDEO_MIN_START_INTERVAL_MS = 75_000
@@ -72,6 +73,7 @@ export function generationProviderLimit(
   const normalized = normalizedProviderKey(providerKey)
   if (normalized === 'codex' || normalized.startsWith('codex-')) return GENERATION_CODEX_PROVIDER_CONCURRENCY
   if (normalized === 'jimeng-web' || normalized.startsWith('jimeng-web-')) return GENERATION_JIMENG_PROVIDER_CONCURRENCY
+  if (normalized === 'pavo-web' || normalized.startsWith('pavo-web-')) return GENERATION_PAVO_PROVIDER_CONCURRENCY
   return fallback
 }
 
@@ -85,6 +87,7 @@ export function generationProviderKey(node: GenerationCanvasNode): string {
   if (modelKey.startsWith('codex-')) return 'codex'
   if (modelKey.startsWith('agnes-')) return 'agnes'
   if (modelKey.startsWith('jimeng-web-')) return 'jimeng-web'
+  if (modelKey.startsWith('pavo-')) return 'pavo-web'
   return 'unconfigured'
 }
 

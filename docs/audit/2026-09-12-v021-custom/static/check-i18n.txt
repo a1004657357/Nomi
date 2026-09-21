@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:i18n /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-i18n-visible-text.mjs
+
+i18n visible-text gate passed；提示：3 项存量已减少 —— 跑 --write-baseline 锁定战果（棘轮只减不增）。

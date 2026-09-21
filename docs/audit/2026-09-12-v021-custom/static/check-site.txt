@@ -1,0 +1,12 @@
+
+> nomi@0.21.0 check:site /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node scripts/build-marketing-site.mjs --check && node scripts/build-marketing-sitemap.mjs --check && pnpm run check:handbook && node tests/ux/marketing-home.static.mjs
+
+MARKETING SITE CHECK PASS
+MARKETING SITEMAP CHECK PASS
+
+> nomi@0.21.0 check:handbook /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> tsx scripts/build-handbook-html.mjs --check
+
+[handbook] CHECK PASS
+MARKETING HOME STATIC PASS

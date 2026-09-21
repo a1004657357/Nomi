@@ -1,0 +1,7 @@
+
+> nomi@0.21.0 check:tokens /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-design-tokens.mjs
+
+✓ 设计 token 门岗通过：4 类棘轮（只减不增，目标清零）。当前 0/0/0/0（0/0/0/0）。
+✓ color-mix 色相漂移零容忍：扫 2684 文件 / 175 个 token 定义，无 in oklch 跨色相混合。
+✓ 语义 token 作用域零容忍：--nomi-*/--workbench-* 定义全部在 :root 层（portal/浮层任意挂载点都解析得到）。

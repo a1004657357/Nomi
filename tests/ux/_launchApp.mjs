@@ -36,7 +36,7 @@ const DEFAULT_WINDOW_TIMEOUT_MS = 60_000
  * 拼一套「窗口一定能起来」的 env。抽成纯函数是为了让那条不变量能被单测钉住
  * （见 _launchApp.test.mjs）：**必需 env 排在 extraEnv 之后，调用方覆盖不掉**。
  */
-export function buildNomiLaunchEnv({ extraEnv = {}, userDataDir, settingsDir, projectsDir, baseEnv = process.env }) {
+export function buildNomiLaunchEnv({ extraEnv = {}, userDataDir, settingsDir, projectsDir, capabilityDir, baseEnv = process.env }) {
   const env = {
     ...baseEnv,
     ...extraEnv,
@@ -50,12 +50,37 @@ export function buildNomiLaunchEnv({ extraEnv = {}, userDataDir, settingsDir, pr
     ...(userDataDir ? { NOMI_ELECTRON_USER_DATA_DIR: userDataDir } : {}),
     ...(settingsDir ? { NOMI_SETTINGS_DIR: settingsDir } : {}),
     ...(projectsDir ? { NOMI_PROJECTS_DIR: projectsDir } : {}),
+    ...(capabilityDir ? { NOMI_CAPABILITY_DIR: capabilityDir } : {}),
   }
   // ELECTRON_RUN_AS_NODE=1 会让 electron 退化成纯 node：不开窗、不起渲染层，于是又是一次
   // 「干等到超时」。它常被别的工具链顺手塞进环境里（我们自己 spawn MCP 子进程时也会用），
   // 继承过来纯属误伤——统一摘掉，同一类死法不留第二个入口。
   delete env.ELECTRON_RUN_AS_NODE
   return env
+}
+
+/**
+ * Linux CI 没有可用的 setuid chrome-sandbox；所有测试进程统一显式关闭 Chromium sandbox。
+ * 另：Chromium ≥139 移除了 SwiftShader 软件 WebGL 自动回退（安全策略，
+ * https://chromestatus.com/feature/5166674414927872），xvfb 无 GPU 环境下 WebGL 上下文
+ * 直接创建失败 → scene3d/轨迹面板不挂载（Electron 43 升级时 smoke 在 CI 死于此，macOS 本地全绿）。
+ * headless 测试正是官方点名保留的 opt-in 场景 → Linux 测试进程统一带 --enable-unsafe-swiftshader。
+ * 只影响测试启动器；生产桌面端有真 GPU，不带此旗标。
+ */
+export function withLinuxNoSandbox(args, platform = process.platform) {
+  const normalized = [...args]
+  if (platform === 'linux' && !normalized.includes('--no-sandbox')) normalized.push('--no-sandbox')
+  if (platform === 'linux' && !normalized.includes('--enable-unsafe-swiftshader')) normalized.push('--enable-unsafe-swiftshader')
+  return normalized
+}
+
+// Only isolated macOS fixtures use a disposable keychain. Real profiles keep OS-backed credentials.
+export function withIsolatedKeychain(args, isolate, platform = process.platform) {
+  const normalized = [...args]
+  if (isolate && platform === 'darwin' && !normalized.includes('--use-mock-keychain')) {
+    normalized.push('--use-mock-keychain')
+  }
+  return normalized
 }
 
 /** 起飞前先确认构建产物在不在——没 build 就直接说，别让人等满超时才发现。 */
@@ -82,6 +107,7 @@ function assertBuilt() {
  * @param {string} [options.userDataDir]    单独指定（默认 <tempRoot>/user-data）
  * @param {string} [options.settingsDir]    单独指定（默认 <tempRoot>/settings）
  * @param {string} [options.projectsDir]    单独指定（默认 <tempRoot>/projects）
+ * @param {string} [options.capabilityDir]  单独指定（默认 <tempRoot>/capability）
  * @param {number} [options.timeout]        等窗口上限（ms）
  * @param {number} [options.settleMs=1500]  domcontentloaded 后再等一会儿（渲染层挂载）
  * @returns {Promise<{app: import('playwright').ElectronApplication, win: import('playwright').Page,
@@ -117,17 +143,22 @@ export async function launchNomiApp(options = {}) {
   const userDataDir = isolate ? (options.userDataDir ?? path.join(tempRoot, 'user-data')) : null
   const settingsDir = isolate ? (options.settingsDir ?? path.join(tempRoot, 'settings')) : null
   const projectsDir = isolate ? (options.projectsDir ?? path.join(tempRoot, 'projects')) : null
+  const capabilityDir = isolate ? (options.capabilityDir ?? path.join(tempRoot, 'capability')) : null
 
   // 只建目录，**绝不清空**：不少走查会在起飞前往 projectsDir/settingsDir 里预埋工程或 catalog
   //（如 toolbar-order.walk.mjs 先写好 project.json 再启动）。启动器擅自 rm 会把它们的前置条件擦掉。
   // 想要干净 profile 的脚本自己在调用前 rmSync——语义留在看得见的地方。
-  if (isolate) for (const dir of [userDataDir, settingsDir, projectsDir]) fs.mkdirSync(dir, { recursive: true })
+  if (isolate) for (const dir of [userDataDir, settingsDir, projectsDir, capabilityDir]) fs.mkdirSync(dir, { recursive: true })
 
   const launchOptions = {
     executablePath,
-    args: [...(isDevElectron ? ['.'] : []), ...(userDataDir ? [`--user-data-dir=${userDataDir}`] : []), ...extraArgs],
+    args: withLinuxNoSandbox(withIsolatedKeychain([
+      ...(isDevElectron ? ['.'] : []),
+      ...(userDataDir ? [`--user-data-dir=${userDataDir}`] : []),
+      ...extraArgs,
+    ], isolate)),
     cwd: repoRoot,
-    env: buildNomiLaunchEnv({ extraEnv, userDataDir, settingsDir, projectsDir }),
+    env: buildNomiLaunchEnv({ extraEnv, userDataDir, settingsDir, projectsDir, capabilityDir }),
     timeout,
   }
 
@@ -177,6 +208,7 @@ export async function launchNomiApp(options = {}) {
     userDataDir,
     settingsDir,
     projectsDir,
+    capabilityDir,
     close: () => closeNomiApp(app),
   }
 }

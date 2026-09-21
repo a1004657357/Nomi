@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { launchNomiApp } from './_launchApp.mjs'
+import { expect } from './_assert.mjs'
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-idempotency-restart-'))
 const settingsDir = path.join(tempRoot, 'settings')
@@ -16,7 +17,7 @@ const payload = {
 }
 
 function assert(condition, message) {
-  if (!condition) throw new Error(`IDEMPOTENCY RESTART FAIL: ${message}`)
+  expect(condition, `IDEMPOTENCY RESTART FAIL: ${message}`).toBe(true)
   console.log(`  ✓ ${message}`)
 }
 
@@ -55,7 +56,7 @@ try {
   const firstLines = fs.readFileSync(ledgerPath, 'utf8').trim().split('\n').filter(Boolean)
   const firstRecords = firstLines.map((line) => JSON.parse(line))
   assert(firstRecords.some((record) => record.status === 'submitting'), 'submitting is durable before execution settles')
-  assert(firstRecords.at(-1)?.status === 'unknown', 'ambiguous failure is durable as unknown')
+  expect(firstRecords.at(-1)?.status, 'ambiguous failure is durable as unknown').toBe('unknown')
 
   const secondError = await launchAndSubmit()
   assert(/上一会话|不会自动重发|新意图|人工核对/.test(secondError), 'second process rejects replay instead of create')

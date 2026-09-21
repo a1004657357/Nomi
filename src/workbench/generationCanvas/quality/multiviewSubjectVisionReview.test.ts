@@ -80,7 +80,7 @@ function collection(): GenerationResultCollection {
 
 describe('createMultiviewSubjectVisionComparator', () => {
   it('sends the source first and all output views in one auditable judge call', async () => {
-    const judge = vi.fn(async () => `\`\`\`json
+    const judge = vi.fn<Parameters<typeof createMultiviewSubjectVisionComparator>[0]['judge']>(async () => `\`\`\`json
 {
   "sourceSubjectDetected": true,
   "items": [

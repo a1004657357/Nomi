@@ -8,13 +8,27 @@ import type { McpInfo, McpVerifyResult } from './mcpBridgeTypes'
 import type { DesktopSettingsBridge } from './settingsBridge'
 import type { DesktopOnboardingBridge } from './onboardingBridgeTypes'
 import type { DesktopProductionRunBridge } from './productionRunBridgeTypes'
+import type { CustomCallBridge } from './modelCatalogBridgeTypes'
+import type { DesktopProxyMode, DesktopProxyStatus, DesktopProxyProbe } from './proxyBridgeTypes'
+import type { DesktopWebBridge } from './webBridgeTypes'
+export type { DesktopProxyMode, DesktopProxyStatus, DesktopProxyProbeAttempt, DesktopProxyProbe } from './proxyBridgeTypes'
 export type { ProviderKind }
-export type { DesktopAdapterModeResult, DesktopProviderAdapterRun } from './onboardingBridgeTypes'
+export type {
+  DesktopAdapterModeResult,
+  DesktopProviderAdapterRun,
+  DesktopProviderRegistration,
+} from './onboardingBridgeTypes'
 export type { ScreenshotHotkeyStatus } from './bridgeMedia'
 export type { DesktopModel3dValidation, DesktopVideoQualityInspection } from './assetInspectionBridgeTypes'
 
 /** 落盘的对话消息(conversation 域;draft/附件是 session 域不落盘)。 */
-export type PersistedAiMessage = { id: string; role: string; content: string }
+export type PersistedAiMessage = {
+  id: string
+  role: string
+  content: string
+  /** 分镜方案卡锚在这条消息上(方案随项目持久化,它的「家」也要一起落盘)。 */
+  storyboardPlan?: true
+}
 
 /** 一条会话线程(v2 会话历史)。messages=该线程气泡;title=一句话摘要(首句兜底)。 */
 export type PersistedThread = {
@@ -34,29 +48,19 @@ export type PersistedConversationsV2 = {
   committedProposal?: unknown
 }
 
-/** 代理三态：跟随系统探测 / 只对 Nomi 生效的自定义地址 / 强制直连。 */
-export type DesktopProxyMode = 'system' | 'custom' | 'off'
 
-/** 用户选了什么 × 实际生效什么。两者不一致时正是用户最需要看见的（如探到 SOCKS 但用不了）。 */
-export type DesktopProxyStatus = {
-  mode: DesktopProxyMode
-  customUrl: string
-  /** 实际生效的代理地址；直连时空串。 */
-  activeUrl: string
-  /** 探到但本版用不了（SOCKS 等）的人话详情；否则空串。 */
-  unsupported: string
-  source: 'env' | 'system' | 'custom' | ''
+/** 一种媒体类型现在实际走的上传通道（main 侧 describeAssetTransportChannels 的产物）。 */
+export type AssetTransportChannelView = {
+  kind: 'image' | 'video' | 'audio'
+  /** 走哪家；匿名公共托管为 null。 */
+  vendorKey: string | null
+  /** 真正收文件的主机名；无端点策略为 null。 */
+  host: string | null
+  visibility: 'provider-private' | 'public-anonymous'
+  ttlSeconds: number | null
 }
 
-export type DesktopProxyProbeAttempt = { target: string; ok: boolean; ms: number; error: string }
-/** ok = 上传链里**任一** host 可达（那就送得出图）；tried 逐项留痕，用来看「是不是已经断了一半」。 */
-export type DesktopProxyProbe = {
-  ok: boolean
-  ms: number
-  target: string
-  error: string
-  tried: DesktopProxyProbeAttempt[]
-}
+
 
 export type DesktopAssetDto = {
   id: string
@@ -116,7 +120,13 @@ export type DesktopExportTempInputWriteResult = {
 export type { ExportJobEvent, ExportJobSnapshot }
 
 /** 应用信息（功能需求1 查看版本号）。canAutoInstall：未签名 mac 无法就地装，走手动下载兜底（真相源在主进程）。 */
-export type DesktopAppInfo = { version: string; platform: string; arch: string; canAutoInstall: boolean }
+export type DesktopAppInfo = {
+  version: string
+  platform: string
+  arch: string
+  canAutoInstall: boolean
+  canCheckUpdates: boolean
+}
 
 export type DesktopBrowserViewBounds = {
   x: number
@@ -313,7 +323,12 @@ export type DesktopBridge = DesktopMediaBridge & {
   app?: {
     reopenLibraryWindow: () => void
     hardReloadWindow?: () => void
-    onProductionDeepLink?: (cb: (payload: { projectId: string; runId: string; artifactId?: string }) => void) => () => void
+    /** 深链三形状：工程级只有 projectId；节点级带 nodeId；Run 级带 runId(+artifactId)。 */
+    onProductionDeepLink?: (cb: (payload: { projectId: string; runId?: string; nodeId?: string; artifactId?: string }) => void) => () => void
+  }
+  clipboard?: {
+    readFilePaths: () => Promise<string[]>
+    getPathForFile?: (file: File) => string
   }
   settings?: DesktopSettingsBridge
   productionRuns?: DesktopProductionRunBridge
@@ -396,8 +411,13 @@ export type DesktopBridge = DesktopMediaBridge & {
       fileName: string
       contentType?: string
       kind?: string
-     }) => Promise<DesktopAssetDto | null>
-     /** 播放懒自愈：nomi-local 视频解不了（HEVC 存量/供应商 HEVC 产物）→ 转码出新 MP4 资产；不适用 → null。 */
+    }) => Promise<DesktopAssetDto | null>
+    copyFiles?: (payload: { projectId: string; paths: string[] }) => Promise<{
+      created: DesktopAssetDto[]
+      skippedUnsupportedCount: number
+      failedCount: number
+    }>
+    /** 播放懒自愈：nomi-local 视频解不了（HEVC 存量/供应商 HEVC 产物）→ 转码出新 MP4 资产；不适用 → null。 */
     ensurePlayable?: (payload: { url: string }) => Promise<DesktopAssetDto | null>
     inspectModel3d?: (payload: { url: string }) => Promise<DesktopModel3dValidation>
     inspectVideo?: (payload: { url: string }) => Promise<DesktopVideoQualityInspection>
@@ -589,12 +609,12 @@ export type DesktopBridge = DesktopMediaBridge & {
   tasks: {
     run: (payload: unknown) => Promise<unknown>
     result: (payload: unknown) => Promise<unknown>
-    cancel: (payload: {
-      runId: string
-      taskId?: string
-      nodeId?: string
-      vendor?: string
-    }) => Promise<{ cancelled: boolean; remoteCancelled: boolean }>
+    cancel: {
+      (taskId: string): Promise<{ ok: boolean }>
+      (payload: { runId: string; taskId?: string; nodeId?: string; vendor?: string }): Promise<{
+        cancelled: boolean; remoteCancelled: boolean
+      }>
+    }
     grantSpend: (payload: { nodeIds: string[]; maxAttemptsPerNode?: number; ttlMs?: number }) => Promise<{ grantId: string }>
     runTextStream: (payload: unknown) => Promise<{ streamId: string }>
     cancelTextStream: (streamId: string) => Promise<unknown>
@@ -650,7 +670,7 @@ export type DesktopBridge = DesktopMediaBridge & {
    *  textBrain=节点提示词优化用的文本大脑键(不含 apiKey,渲染层据此走现成文本流式)。 */
   promptLibrary?: {
     list: () => Promise<{ ok: boolean; prompts: unknown[]; error?: string }>
-    textBrain: () => Promise<{ ok: boolean; brain: { vendor: string; modelKey: string } | null }>
+    textBrain: () => Promise<{ ok: boolean; brain: { vendor: string; modelKey: string } | null; status: 'ok' | 'locked' | 'missing' }>
     /** 我的库(用户级·跨项目):手写攒的提示词 CRUD,返回全量供渲染层本地过滤。 */
     userList: () => Promise<{ ok: boolean; prompts: unknown[]; error?: string }>
     userAdd: (input: {
@@ -689,8 +709,8 @@ export type DesktopBridge = DesktopMediaBridge & {
     check: () => Promise<{ ok: boolean; reason?: string }>
     download: () => Promise<{ ok: boolean }>
     install: () => Promise<{ ok: boolean }>
-    /** 手动更新兜底：开浏览器到 GitHub 最新 release（未签名 mac 无法就地装时用）。 */
-    openRelease: () => Promise<{ ok: boolean }>
+    /** 手动更新兜底：开官网并按主进程提供的平台/架构直接下载安装包。 */
+    openDownload: () => Promise<{ ok: boolean }>
     onEvent: (callback: (event: DesktopUpdateEvent) => void) => () => void
   }
   /**
@@ -705,7 +725,12 @@ export type DesktopBridge = DesktopMediaBridge & {
     }) => Promise<{ ok: boolean; status: DesktopProxyStatus }>
     test: () => Promise<{ ok: boolean; result: DesktopProxyProbe; status: DesktopProxyStatus }>
   }
-  modelCatalog: {
+  /** 本机素材上传通道的现状描述。优先级规则只住 main（electron/catalog/assetTransportDescribe.ts），
+   *  渲染层只显示、不重算——否则状态卡会和真实行为漂移。 */
+  assetTransport?: {
+    describeChannels: () => AssetTransportChannelView[]
+  }
+  modelCatalog: CustomCallBridge & {
     listVendors: () => unknown[]
     listModels: (params?: unknown) => unknown[]
     listMappings: (params?: unknown) => unknown[]
@@ -721,36 +746,6 @@ export type DesktopBridge = DesktopMediaBridge & {
      * 可选（`?`）：旧 preload 没有这个方法，调用方须自己兜住 undefined。
      */
     retypeModel?: (payload: { vendorKey: string; modelKey: string; kind: string }) => unknown
-    /** 自定义调用（2026-08-04）：契约（编辑器变量表/模板）。旧 preload 可能没有 → 可选。 */
-    customCallContract?: () => {
-      variables: Array<{ name: string; type: string }>
-      templates: Array<{ id: string; script: string }>
-    }
-    /** AI 帮写指令（主进程契约单源拼好，渲染层喂给文本脑）。 */
-    customCallAiInstruction?: (payload: {
-      vendorKey: string
-      modelKey: string
-      material: string
-      currentScript?: string
-      lastError?: string
-    }) => string
-    /** 试跑：真调一次最小请求，返回产物 + 请求/响应 transcript（Authorization 已脱敏）。 */
-    customCallTestRun?: (payload: { vendorKey: string; modelKey: string; script: string }) => Promise<{
-      ok: boolean
-      assets: string[]
-      text?: string
-      errorMessage?: string
-      transcript: Array<{
-        method: string
-        url: string
-        status: 'ok' | 'error'
-        durationMs: number
-        requestPreview?: string
-        responsePreview?: string
-        errorMessage?: string
-      }>
-      durationMs: number
-    }>
     deleteModel: (vendorKey: string, modelKey: string) => void
     deleteModels: (targets: { vendorKey: string; modelKey: string }[]) => void
     upsertMapping: (payload: unknown) => unknown
@@ -855,79 +850,9 @@ export type DesktopBridge = DesktopMediaBridge & {
     logout: () => Promise<{ ok: boolean }>
     install: () => Promise<{ ok: boolean; message: string }>
   }
-  /** 即梦 Web（实验）：本机 Seedance 扩展桥 + Electron 持久网页登录窗口。 */
-  jimengWeb?: {
-    status: () => Promise<{
-      server: {
-        ok: boolean
-        serverUrl: string
-        error?: string
-        version?: string
-        sseClients?: number
-        taskTotal?: number
-      }
-      runner: {
-        available: boolean
-        running: boolean
-        browserOpen: boolean
-        serverManaged: boolean
-        clientOnline: boolean
-        engine: 'electron'
-        drawerReady: boolean
-        fallbackPanelOpen: boolean
-        extensionDir?: string
-        userDataDir?: string
-        serverPid?: number
-        extensionId?: string
-        panelUrl?: string
-        jimengUrl: string
-        error?: string
-        lastLog?: string
-      }
-      loginWindowOpen: boolean
-      cookieCount: number
-      likelyLoggedIn: boolean
-      loginUrl: string
-    }>
-    openLogin: () => Promise<{ ok: boolean; url: string }>
-    openAdmin: (baseUrl?: string) => Promise<{ ok: boolean; url: string }>
-    startRunner: () => Promise<{
-      available: boolean
-      running: boolean
-      browserOpen: boolean
-      serverManaged: boolean
-      clientOnline: boolean
-      engine: 'electron'
-      drawerReady: boolean
-      fallbackPanelOpen: boolean
-      extensionDir?: string
-      userDataDir?: string
-      serverPid?: number
-      extensionId?: string
-      panelUrl?: string
-      jimengUrl: string
-      error?: string
-      lastLog?: string
-    }>
-    stopRunner: () => Promise<{
-      available: boolean
-      running: boolean
-      browserOpen: boolean
-      serverManaged: boolean
-      clientOnline: boolean
-      engine: 'electron'
-      drawerReady: boolean
-      fallbackPanelOpen: boolean
-      extensionDir?: string
-      userDataDir?: string
-      serverPid?: number
-      extensionId?: string
-      panelUrl?: string
-      jimengUrl: string
-      error?: string
-      lastLog?: string
-    }>
-  }
+  /** 网页自动化桥：即梦与 Pavo 共用同一桌面契约，各自保留独立会话。 */
+  jimengWeb?: DesktopWebBridge
+  pavoWeb?: DesktopWebBridge
   /** 能力核：上报当前打开项目，供外部调用的 A/B 守卫（可选——老 preload 无此口）。 */
   capability?: {
     setActiveProject: (projectId: string) => void

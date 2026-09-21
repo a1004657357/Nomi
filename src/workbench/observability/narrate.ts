@@ -122,6 +122,7 @@ export type GenerationErrorKind =
   | 'web-bridge'
   | 'input-image-blocked'
   | 'asset-upload-failed'
+  | 'asset-too-large'
   | 'server'
   | 'input'
   | 'output-truncated'
@@ -147,6 +148,7 @@ const ERROR_KEY_BY_KIND: Record<GenerationErrorKind, string> = {
   'web-bridge': 'webBridge',
   'input-image-blocked': 'inputImageBlocked',
   'asset-upload-failed': 'assetUploadFailed',
+  'asset-too-large': 'assetTooLarge',
   server: 'server',
   input: 'input',
   'output-truncated': 'outputTruncated',
@@ -213,6 +215,10 @@ const ACTION_BY_KIND: Record<GenerationErrorKind, GenerationErrorAction> = {
   // 免费匿名图床挂掉通常是偶发（下一分钟可能就好了），所以主动作仍是重试；
   // 「一劳永逸」那条（接一个自带上传通道的服务商）写在 hint 里，不占按钮。
   'asset-upload-failed': 'retry',
+  // 素材超过所有通道的上限：**确定性**失败，同一个文件重试一万次都是同一堵墙（还每次都把整个
+  // 文件传上去再被拒）。用户真正的路是「换/压缩这个素材」——素材就在画布上连着，不需要按钮，
+  // 所以主动作给「换个模型」（换一家上限更高的通道也确实可能过），重试退到次动作。
+  'asset-too-large': 'switch-model',
   quota: 'retry',
   'codex-timeout': 'retry',
   'codex-network': 'retry',

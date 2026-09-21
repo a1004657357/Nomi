@@ -2,6 +2,7 @@ import type { RecipeOutputDescriptor, RecipeRunPlan } from '../../../config/capa
 import { dataUrlToFile, persistNodeImageFile } from '../adapters/persistNodeImage'
 import type { GenerationNodeResult, GenerationResultCollection } from '../model/generationCanvasTypes'
 import type { CapabilityRecipeTask } from './capabilityRecipeRunner'
+import { blobToDataUrl } from '../../../lib/removeBackground'
 
 export type CapabilityRecipeMediaProcessor = {
   splitGrid3x3: (
@@ -72,7 +73,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   })
 }
 
-function renderCrop(image: HTMLImageElement, crop: PixelCrop): string {
+async function renderCrop(image: HTMLImageElement, crop: PixelCrop): Promise<string> {
   if (typeof document === 'undefined') throw new Error('当前运行环境不支持图片后处理')
   const canvas = document.createElement('canvas')
   canvas.width = crop.width
@@ -90,7 +91,10 @@ function renderCrop(image: HTMLImageElement, crop: PixelCrop): string {
     crop.width,
     crop.height,
   )
-  return canvas.toDataURL('image/png')
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((value) => value ? resolve(value) : reject(new Error('canvas toBlob failed')), 'image/png')
+  })
+  return blobToDataUrl(blob)
 }
 
 function renderImageSample(image: HTMLImageElement): ImageData {
@@ -384,7 +388,7 @@ export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcess
     return Promise.all(outputs.slice(0, 9).map(async (output, index) => {
       const row = Math.floor(index / 3)
       const column = index % 3
-      const dataUrl = renderCrop(image, {
+      const dataUrl = await renderCrop(image, {
         x: originX + column * tileWidth,
         y: originY + row * tileHeight,
         width: tileWidth,
@@ -415,7 +419,7 @@ export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcess
         height: sourceHeight,
       }, { panoramaNormalization })
     }
-    const dataUrl = renderCrop(image, crop)
+    const dataUrl = await renderCrop(image, crop)
     const url = await persistProcessedImage(dataUrl, ownerNodeId, `recipe-panorama-${ownerNodeId}-${result.id}.png`)
     return withProcessedOutput(result, `${result.id}:2to1`, url, undefined, {
       width: crop.width,
@@ -432,7 +436,7 @@ export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcess
       return result
     }
 
-    const dataUrl = renderCrop(image, crop)
+    const dataUrl = await renderCrop(image, crop)
     const url = await persistProcessedImage(dataUrl, ownerNodeId, `recipe-style-${ownerNodeId}-${result.id}.png`)
     const normalized = withProcessedOutput(result, `${result.id}:source-aspect`, url, undefined, {
       width: crop.width,
@@ -469,7 +473,7 @@ export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcess
       width: targetWidth,
       height: targetHeight,
     }
-    const dataUrl = renderCrop(image, crop)
+    const dataUrl = await renderCrop(image, crop)
     const url = await persistProcessedImage(dataUrl, ownerNodeId, `recipe-multiview-${ownerNodeId}-${result.id}.png`)
     const normalized = withProcessedOutput(result, `${result.id}:batch-size`, url, undefined, {
       width: targetWidth,

@@ -24,9 +24,9 @@ describe("modelProfiles.getModelProfile", () => {
   it("matches Zhipu GLM long-output family", () => {
     const p = getModelProfile("zai/glm-5.2");
     expect(p.agentSuitability).toBe("good");
-    expect(p.defaultMaxTokens).toBeUndefined();
+    expect(applyProfileToRequestBody({ messages: [] }, p)).not.toHaveProperty("max_tokens");
     expect(p.stripToolSchemaDialect).toBe(true);
-    expect(getModelProfile("glm-4.6").defaultMaxTokens).toBeUndefined();
+    expect(applyProfileToRequestBody({ messages: [] }, getModelProfile("glm-4.6"))).not.toHaveProperty("max_tokens");
   });
 
   it("flags Kimi K2 as poor + sets quirks", () => {

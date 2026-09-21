@@ -2,7 +2,7 @@
 // 单一真相：缓存命中与无状态重建共用同一段 query。与 runtime 是调用时（函数体内）的循环依赖——
 // ESM/CJS 都按 live binding 在调用时取值，加载期不触碰，安全。
 import { trim, type JsonRecord } from "../jsonUtils";
-import type { Mapping, Model, ProfileKind } from "../catalog/types";
+import type { Model, ProfileKind } from "../catalog/types";
 import { readCatalog } from "../catalog/catalogStore";
 import { desktopT } from "../i18n";
 import { classifyTaskCacheMiss, wasTaskAdmitted } from "./taskAdmission";
@@ -10,6 +10,7 @@ import { taskFailureMessageFromResponse } from "./responseParsing";
 import { activeTaskProjectFallback, unlocalizedTaskAsset } from "./activeProjectFallback";
 import { traceVendorCompleted } from "../events/vendorCallTrace";
 import { rememberTaskResult } from "../vendor/fingerprintCache";
+import { isWebBridgeVendor, queryWebBridgeTask } from "../webBridge/registry";
 import {
   type CachedTask,
   type TaskResult,
@@ -22,6 +23,7 @@ import {
   findTaskMapping,
   localizeTaskAsset,
   taskCache,
+  writeAsset,
 } from "../runtime";
 
 // ── 未登记状态动词的有界容忍（根因修复，见 docs/plan/2026-08-11-unrecognized-task-status-root-fix.md）──
@@ -96,6 +98,19 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
   } catch {
     return null; // 模型已不可用/未配置 → 无法重建，落回诚实诊断
   }
+  if (isWebBridgeVendor(vendorKey)) {
+    const projectId = trim(raw.projectId) || activeTaskProjectFallback();
+    return {
+      vendor: vendorKey,
+      request: { kind: taskKind, prompt: trim(raw.prompt), extras: { modelKey } },
+      raw: {},
+      mapping: null,
+      model,
+      providerMeta: { task_id: taskId, taskCode: taskId },
+      ...(projectId ? { projectId } : {}),
+      wantedKind,
+    };
+  }
   const mapping = findTaskMapping(vendorKey, taskKind, modelKey);
   if (!mapping?.query) return null; // 同步模型无 query op，没法续查
   const projectId = trim(raw.projectId) || activeTaskProjectFallback();
@@ -116,6 +131,30 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
  * 资产；两条都不成立 → **诚实报失败**（这个任务根本查不了，不是「还没好」，见函数末尾）。
  */
 async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ vendor: string; result: TaskResult }> {
+  if (isWebBridgeVendor(cached.vendor)) {
+    const result = await queryWebBridgeTask({
+      vendor: cached.vendor,
+      taskCode: taskId,
+      request: cached.request,
+      projectId: cached.projectId,
+      nodeId: cached.nodeId,
+      serverUrl: cached.providerMeta?.serverUrl,
+      writeAsset,
+    });
+    if (result.status === "succeeded" || result.status === "failed") {
+      traceVendorCompleted(cached.projectId, {
+        runId: taskId,
+        nodeId: cached.nodeId,
+        status: result.status,
+        assetCount: result.assets.length,
+      });
+      rememberTaskResult(cached.projectId || "", cached.fingerprint, result);
+      taskCache.delete(taskId);
+    } else {
+      admitTask(taskId, { ...cached, raw: result.raw });
+    }
+    return { vendor: cached.vendor, result };
+  }
   const queryOperation = cached.mapping?.query;
   if (cached.mapping && queryOperation && cached.model) {
     // 不再用缓存的明文 key，轮询时按 vendor 重新派生（并重新校验 key 仍可用）。
@@ -126,6 +165,7 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
       apiKey,
       request: cached.request,
       operation: queryOperation,
+      stage: "query",
       providerMeta: {
         ...(cached.providerMeta || {}),
         query_id: cached.providerMeta?.query_id || taskId,

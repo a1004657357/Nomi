@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -46,7 +47,22 @@ function rememberDiagnosticDir(error: unknown): Error {
   return normalized;
 }
 
+async function expectRunFailure(run: ReturnType<typeof runCodexImageGeneration>): Promise<Error> {
+  const result = await run.catch(rememberDiagnosticDir);
+  if (result instanceof Error) return result;
+  tempDirs.push(result.tempDir);
+  throw new Error("Expected Codex generation to fail");
+}
+
 beforeEach(() => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-codex-runner-test-"));
+  const sourceHome = path.join(root, "source-home");
+  tempDirs.push(root);
+  fs.mkdirSync(sourceHome);
+  fs.writeFileSync(path.join(sourceHome, "auth.json"), "{}", { mode: 0o600 });
+  vi.spyOn(os, "tmpdir").mockReturnValue(root);
+  vi.stubEnv("TMPDIR", root);
+  vi.stubEnv("CODEX_HOME", sourceHome);
   spawnMock.mockReset();
   probeMediaMetadataMock.mockReset();
   probeMediaMetadataMock.mockResolvedValue({ width: 1024, height: 1024 });
@@ -54,6 +70,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   resetProxyStateForTests();
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -727,11 +745,11 @@ describe("codexImagegenRunner", () => {
       return child;
     });
 
-    const error = await runCodexImageGeneration({
+    const error = await expectRunFailure(runCodexImageGeneration({
       request: { kind: "text_to_image", prompt: "coffee cup" },
       timeoutMs: 5_000,
       networkRetryDelayMs: 0,
-    }).catch(rememberDiagnosticDir);
+    }));
 
     expect(error.message).toContain("codex exec 退出码 1");
     expect(spawnMock).toHaveBeenCalledOnce();
@@ -834,7 +852,7 @@ describe("codexImagegenRunner", () => {
   });
 
   it("terminates a child that produces no output before the hard timeout", async () => {
-    let childRef: (EventEmitter & { kill: ReturnType<typeof vi.fn> }) | null = null;
+    const childRef: { current?: EventEmitter & { kill: ReturnType<typeof vi.fn> } } = {};
     spawnMock.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
@@ -849,24 +867,24 @@ describe("codexImagegenRunner", () => {
         if (signal === "SIGTERM") setTimeout(() => child.emit("close", null), 0);
         return true;
       });
-      childRef = child;
+      childRef.current = child;
       return child;
     });
 
-    const error = await runCodexImageGeneration({
+    const error = await expectRunFailure(runCodexImageGeneration({
       request: { kind: "text_to_image", prompt: "idle" },
       timeoutMs: 5_000,
       idleTimeoutMs: 10,
       terminationGraceMs: 10,
       maxNetworkAttempts: 1,
-    }).catch(rememberDiagnosticDir);
+    }));
 
     expect(error.message).toMatch(/长时间无进展/);
-    expect(childRef?.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(childRef.current?.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("cancels the Codex child that belongs to a node run", async () => {
-    let childRef: (EventEmitter & { kill: ReturnType<typeof vi.fn> }) | null = null;
+    const childRef: { current?: EventEmitter & { kill: ReturnType<typeof vi.fn> } } = {};
     spawnMock.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
@@ -881,7 +899,7 @@ describe("codexImagegenRunner", () => {
         if (signal === "SIGTERM") setTimeout(() => child.emit("close", null), 0);
         return true;
       });
-      childRef = child;
+      childRef.current = child;
       return child;
     });
 
@@ -897,9 +915,9 @@ describe("codexImagegenRunner", () => {
     await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
 
     expect(cancelCodexImageGeneration("run-cancel-1")).toBe(true);
-    const error = await running.catch(rememberDiagnosticDir);
+    const error = await expectRunFailure(running);
     expect(error.message).toMatch(/取消/);
-    expect(childRef?.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(childRef.current?.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("globally serializes separate Codex Img2 child processes", async () => {
@@ -946,7 +964,7 @@ describe("codexImagegenRunner", () => {
   });
 
   it("escalates an unresponsive timed-out child from SIGTERM to SIGKILL", async () => {
-    let childRef: (EventEmitter & { kill: ReturnType<typeof vi.fn> }) | null = null;
+    const childRef: { current?: EventEmitter & { kill: ReturnType<typeof vi.fn> } } = {};
     spawnMock.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdin: EventEmitter & { end: ReturnType<typeof vi.fn> };
@@ -961,19 +979,19 @@ describe("codexImagegenRunner", () => {
         if (signal === "SIGKILL") setTimeout(() => child.emit("close", null), 0);
         return true;
       });
-      childRef = child;
+      childRef.current = child;
       return child;
     });
 
-    const error = await runCodexImageGeneration({
+    const error = await expectRunFailure(runCodexImageGeneration({
       request: { kind: "text_to_image", prompt: "timeout" },
       timeoutMs: 10,
       terminationGraceMs: 10,
-    }).catch(rememberDiagnosticDir);
+    }));
 
     expect(error.message).toMatch(/生成超时/);
-    expect(childRef?.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-    expect(childRef?.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    expect(childRef.current?.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(childRef.current?.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
   });
 
   it("removes only stale Codex Img2 diagnostic directories", () => {

@@ -12,8 +12,7 @@ describe('FloatingToolbarShell', () => {
     const markup = renderToStaticMarkup(
       React.createElement(
         FloatingToolbarShell,
-        { ariaLabel: '图片操作' },
-        React.createElement('button', { type: 'button' }, '裁剪'),
+        { ariaLabel: '图片操作', children: React.createElement('button', { type: 'button' }, '裁剪') },
       ),
     )
 

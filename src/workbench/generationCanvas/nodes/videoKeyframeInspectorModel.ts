@@ -28,7 +28,9 @@ export function buildEvenlySpacedFrameTimes(durationSeconds: number, count: numb
   const duration = readPositiveNumber(durationSeconds)
   if (!duration) return []
   const frameCount = Math.max(2, Math.min(24, Math.round(count)))
-  const end = Math.max(0, duration - Math.min(0.1, duration / 10))
+  // 容器时长常由音频流决定，可能比最后一帧视频多约 0.1 秒。留 0.25 秒余量，
+  // 避免最后一个采样点落在“还有音频、已经没有视频帧”的尾端。
+  const end = Math.max(0, duration - Math.min(0.25, duration / 10))
   return Array.from({ length: frameCount }, (_, index) => {
     const value = frameCount === 1 ? 0 : (end * index) / (frameCount - 1)
     return Math.round(value * 1000) / 1000

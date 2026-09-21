@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { buildProfileTaskResult } from '../tasks/profileTaskExecution'
 import { RUNNINGHUB_3D_CURATED_MAPPINGS } from './runninghub3d'
+import type { Mapping } from './types'
 
-const mapping = RUNNINGHUB_3D_CURATED_MAPPINGS.find(
-  (candidate) => candidate.modelKey === 'hunyuan3d-v3.1' && candidate.taskKind === 'image_to_3d',
-)!
+const mapping: Mapping = {
+  ...RUNNINGHUB_3D_CURATED_MAPPINGS.find(
+    (candidate) => candidate.modelKey === 'hunyuan3d-v3.1' && candidate.taskKind === 'image_to_3d',
+  )!,
+  enabled: true,
+  createdAt: '2026-09-12T00:00:00.000Z',
+  updatedAt: '2026-09-12T00:00:00.000Z',
+}
 const operation = mapping.query!
 
 describe('RunningHub 3D query result', () => {
@@ -33,6 +39,7 @@ describe('RunningHub 3D query result', () => {
       {
         type: 'model3d',
         url: 'https://cdn.example/model.glb',
+        providerUrl: 'https://cdn.example/model.glb',
         thumbnailUrl: null,
       },
     ])

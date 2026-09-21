@@ -29,7 +29,7 @@ import {
   updateTextClipTransform,
 } from './timeline/timelineTextEdit'
 import type { Vec2 } from './timeline/overlayTransform'
-import { createDefaultTimeline, normalizeTimeline } from './timeline/timelineMath'
+import { createDefaultTimeline, normalizeTimeline, pushTimelineUndo, TIMELINE_UNDO_LIMIT } from './timeline/timelineMath'
 import { readPreviewSourceCollapsed, writePreviewSourceCollapsed } from './preview/previewSourcePanelPreference'
 import type { TimelineClip, TimelineState, TimelineTextStyle, TimelineTrackType } from './timeline/timelineTypes'
 import { createDefaultWorkbenchDocument, normalizeWorkbenchDocument, type CreationDocumentTools, type PreviewAspectRatio, type WorkbenchDocument } from './workbenchTypes'
@@ -61,15 +61,6 @@ import { useGenerationCanvasStore } from './generationCanvas/store/generationCan
 
 /** 拖动中临时吸附辅助线（非持久化）。 */
 export type TimelineSnapGuide = { frame: number; label: string }
-
-// 时间轴撤销栈封顶（防无限增长）。
-const TIMELINE_UNDO_LIMIT = 30
-// 离散编辑生效时把旧 timeline 压栈：仅当真的变了。供 set 内联调用。
-function pushTimelineUndo(stack: TimelineState[], previous: TimelineState): TimelineState[] {
-  const next = [...stack, previous]
-  if (next.length > TIMELINE_UNDO_LIMIT) next.shift()
-  return next
-}
 
 export const WORKSPACE_MODES = ['creation', 'generation', 'preview'] as const
 
@@ -107,7 +98,7 @@ type WorkbenchState = {
   rememberCategoryViewport: (categoryId: string, viewport: GraphViewport) => void
   workbenchDocument: WorkbenchDocument
   creationDocumentTools: CreationDocumentTools | null
-  creationSelectionText: string
+  creationSelectionText: string; storyboardPlannerLauncher: ((displayPrompt?: string) => void) | null
   creationAiModeId: string
   /** 手动锁定的 active skill（覆盖 mode 推导的 skillKey）。null = 自动（用创作模式默认）。 */
   creationActiveSkill: { key: string; name: string } | null
@@ -132,6 +123,7 @@ type WorkbenchState = {
    * 非持久化、非用户动作残留：只在显式动作时 bump。
    */
   canvasFitNonce: number
+  canvasFitCategoryId: string | null
   timeline: TimelineState
   timelinePlaying: boolean
   previewAspectRatio: PreviewAspectRatio
@@ -165,7 +157,7 @@ type WorkbenchState = {
   setProjectSidebarWidth: (width: number) => void
   setWorkbenchDocument: (document: WorkbenchDocument) => void
   setCreationDocumentTools: (tools: CreationDocumentTools | null) => void
-  setCreationSelectionText: (text: string) => void
+  setCreationSelectionText: (text: string) => void; setStoryboardPlannerLauncher: (launcher: ((displayPrompt?: string) => void) | null) => void
   setCreationAiModeId: (modeId: string) => void
   setCreationActiveSkill: (skill: { key: string; name: string } | null) => void
   setCreationAiDraft: (draft: string) => void
@@ -180,8 +172,8 @@ type WorkbenchState = {
   setStoryboardScriptOpen: (open: boolean) => void
   /** 确认落画布后：方案保留、转「已落画布」、收起编辑器（卡片留痕）。 */
   commitStoryboardPlan: () => void
-  /** 请生成画布平滑 fit 一次（落画布后揭示新镜头）。bump canvasFitNonce。 */
-  requestCanvasFit: () => void
+  /** 请生成画布平滑 fit 一次；可显式切到并绑定目标分类。 */
+  requestCanvasFit: (categoryId?: string) => void
   /** 丢弃方案：清空 plan + 收起编辑器（卡片随之消失）。 */
   discardStoryboardPlan: () => void
   /** 项目载入专用：恢复 plan + committed，编辑器收起、不标脏（区别于用户动作 setStoryboardPlan）。 */
@@ -248,7 +240,6 @@ type WorkbenchState = {
   /** 文字 clip 换字体（id，见 textFonts.ts）。 */
   updateTimelineTextClipFont: (id: string, fontId: string) => void
 }
-
 export function isWorkspaceMode(value: unknown): value is WorkspaceMode {
   return typeof value === 'string' && WORKSPACE_MODES.includes(value as WorkspaceMode)
 }
@@ -325,7 +316,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   },
   workbenchDocument: createDefaultWorkbenchDocument(),
   creationDocumentTools: null,
-  creationSelectionText: '',
+  creationSelectionText: '', storyboardPlannerLauncher: null,
   creationAiModeId: 'general',
   creationActiveSkill: null,
   creationAiDraft: '',
@@ -338,6 +329,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   storyboardEditorOpen: false,
   storyboardScriptOpen: false,
   canvasFitNonce: 0,
+  canvasFitCategoryId: null,
   creationAssistantAutoOpen: false,
   creationAiCollapsed: false,
   timeline: createDefaultTimeline(),
@@ -374,6 +366,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
   setCreationSelectionText: (text) => {
     set({ creationSelectionText: typeof text === 'string' ? text.trim() : '' })
   },
+  setStoryboardPlannerLauncher: (storyboardPlannerLauncher) => set({ storyboardPlannerLauncher }),
   setCreationAiModeId: (creationAiModeId) => {
     set({ creationAiModeId })
   },
@@ -430,9 +423,12 @@ export const useWorkbenchStore = create<WorkbenchState>()(subscribeWithSelector(
       persistRevision: state.persistRevision + 1,
     }))
   },
-  requestCanvasFit: () => {
-    // 一次性信号：bump nonce，生成画布消费后平滑 fit。不 bump persistRevision（视口意图非持久化产物）。
-    set((state) => ({ canvasFitNonce: state.canvasFitNonce + 1 }))
+  requestCanvasFit: (categoryId) => {
+    // 一次性信号：目标分类与 nonce 原子更新。显式目标立即切过去，延迟消费时若用户又手动切走则跳过。
+    set((state) => {
+      const target = typeof categoryId === 'string' && categoryId.trim() ? categoryId.trim() : state.activeCategoryId
+      return { activeCategoryId: target, canvasFitCategoryId: target, canvasFitNonce: state.canvasFitNonce + 1 }
+    })
   },
   hydrateStoryboardPlan: (storyboardPlan, storyboardPlanCommitted) => {
     // 载入态:一次性设三字段、编辑器收起、不 bump persistRevision(restore 非用户编辑,别标脏触发回存)。

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import type { SkillRecord } from "../skills/skillStore";
 import {
   filterAgentTools,
@@ -8,6 +9,7 @@ import {
 function record(overrides: Partial<SkillRecord> = {}): SkillRecord {
   return {
     name: "brand.promo",
+    description: "Brand promo stage fixture",
     directoryName: "brand-promo",
     filePath: "/tmp/brand-promo/SKILL.md",
     body: "# Brand promo\nFollow the current stage.",
@@ -47,9 +49,9 @@ describe("agent skill runtime", () => {
     );
     const tools = filterAgentTools(
       {
-        read_canvas_state: { id: "read" },
-        create_canvas_nodes: { id: "create" },
-        run_generation_batch: { id: "generate" },
+        read_canvas_state: { parameters: z.object({}) },
+        create_canvas_nodes: { parameters: z.object({}) },
+        run_generation_batch: { parameters: z.object({}) },
       },
       execution.allowedTools,
     );

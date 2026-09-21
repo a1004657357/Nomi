@@ -40,12 +40,12 @@
 
 /* 高密度 SVG 连线是大画布平移时的主要合成瓶颈。视口移动期间不可操作连线，
    暂停绘制并在停止 120ms 后恢复；小图保持连线全程可见。 */
-.generation-canvas-v2__stage[data-dense-edges][data-viewport-moving] .generation-canvas-v2__edges {
+.generation-canvas-v2__stage[data-dense-edges]:is([data-viewport-moving], [data-dragging='true']) .generation-canvas-v2__edges {
   visibility: hidden;
 }
 
 /* 自动/流畅模式只在交互最重的一小段时间暂停媒体合成，松手后立即恢复。 */
-.generation-canvas-v2__stage[data-suspend-media-while-moving][data-viewport-moving]
+.generation-canvas-v2__stage[data-suspend-media-while-moving]:is([data-viewport-moving], [data-dragging='true'])
   .generation-canvas-v2-node :is(img, video, canvas) {
   visibility: hidden;
 }

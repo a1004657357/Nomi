@@ -17,8 +17,8 @@ import { createCanvasPlaybookRunTracker } from './canvasPlaybookRunTracker'
 
 const target = {
   skillNodeId: 'skill-node-1',
-  stage: { id: 'storyboard', title: '分镜', prompt: 'build shots', pauseAfter: true },
-}
+  stage: { id: 'storyboard', goal: 'build shots', tools: ['create_canvas_nodes'], pause: true, index: 1, total: 4 },
+} satisfies NonNullable<Parameters<typeof createCanvasPlaybookRunTracker>[0]>
 
 beforeEach(() => {
   mocks.complete.mockReset()

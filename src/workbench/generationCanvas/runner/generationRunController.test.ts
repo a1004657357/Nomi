@@ -2,14 +2,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { buildDependencyWaves } from './dependencyWaves'
+import { generationNodeExecutor, type GenerationNodeExecutor } from './generationNodeExecutor'
+import { mintSpendGrant } from '../../api/taskApi'
 import {
   cancelAllGenerationRuns,
   cancelGenerationNode,
-  rerunGenerationNodeAsNewNode,
+  confirmAndRunNode,
   runGenerationNode,
   runGenerationNodesBatch,
   runGenerationNodesByPlan,
 } from './generationRunController'
+
+vi.mock('./generationNodeExecutor', () => ({ generationNodeExecutor: vi.fn() }))
+vi.mock('../../api/taskApi', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../api/taskApi')>(),
+  mintSpendGrant: vi.fn(async () => 'variant-grant'),
+  cancelWorkbenchTask: vi.fn(async () => ({ cancelled: true, remoteCancelled: false })),
+}))
+vi.mock('../spend/spendConfirm', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../spend/spendConfirm')>(),
+  confirmGenerationSpend: vi.fn(async () => true),
+}))
 
 function node(id: string): GenerationCanvasNode {
   return {
@@ -31,6 +44,7 @@ function edge(source: string, target: string): GenerationCanvasEdge {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
   useGenerationCanvasStore.getState().restoreSnapshot({
     nodes: [],
     edges: [],
@@ -51,7 +65,7 @@ describe('generation cancellation', () => {
     const didStart = new Promise<void>((resolve) => {
       started = resolve
     })
-    const executor = vi.fn(
+    const executor = vi.fn<GenerationNodeExecutor>(
       async (_node, context) =>
         new Promise<GenerationNodeResult>((_resolve, reject) => {
           started()
@@ -61,7 +75,7 @@ describe('generation cancellation', () => {
         }),
     )
 
-    const running = runGenerationNode('image-1', { executor, retry: { maxAttempts: 1 } })
+    const running = runGenerationNode('image-1', { executor, retry: { maxAttempts: 1 }, assetUploadConsent: 'not-needed' })
     await didStart
     expect(cancelGenerationNode('image-1')).toBe(true)
     await expect(running).rejects.toMatchObject({ name: 'AbortError' })
@@ -83,7 +97,7 @@ describe('generation cancellation', () => {
     const didStart = new Promise<void>((resolve) => {
       started = resolve
     })
-    const executor = vi.fn(
+    const executor = vi.fn<GenerationNodeExecutor>(
       async (_node, context) =>
         new Promise<GenerationNodeResult>((_resolve, reject) => {
           started()
@@ -93,7 +107,7 @@ describe('generation cancellation', () => {
         }),
     )
 
-    const running = runGenerationNodesByPlan(plan, { executor, concurrency: 1, retry: { maxAttempts: 1 } })
+    const running = runGenerationNodesByPlan(plan, { executor, concurrency: 1, retry: { maxAttempts: 1 }, assetUploadConsent: 'not-needed' })
     await didStart
     expect(cancelAllGenerationRuns()).toBe(1)
     const outcome = await running
@@ -120,7 +134,7 @@ describe('dependency ready scheduling', () => {
       throw new Error('Codex Img2 长时间无进展（300 秒没有输出）')
     })
 
-    await expect(runGenerationNode(codexNode.id, { executor })).rejects.toThrow(/长时间无进展/)
+    await expect(runGenerationNode(codexNode.id, { executor, assetUploadConsent: 'not-needed' })).rejects.toThrow(/长时间无进展/)
 
     expect(executor).toHaveBeenCalledTimes(1)
     expect(useGenerationCanvasStore.getState().nodes[0]?.runs).toHaveLength(1)
@@ -149,6 +163,7 @@ describe('dependency ready scheduling', () => {
         executor,
         concurrency: 3,
         retry: { maxAttempts: 1 },
+        assetUploadConsent: 'not-needed',
       },
     )
     try {
@@ -188,7 +203,7 @@ describe('dependency ready scheduling', () => {
       return result(current.id)
     })
 
-    const running = runGenerationNodesByPlan(plan, { executor, concurrency: 3, retry: { maxAttempts: 1 } })
+    const running = runGenerationNodesByPlan(plan, { executor, concurrency: 3, retry: { maxAttempts: 1 }, assetUploadConsent: 'not-needed' })
     try {
       await vi.waitFor(() => expect(started).toContain('dependent'), { timeout: 250 })
       expect(started).toContain('slow-independent')
@@ -208,12 +223,8 @@ describe('non-destructive regeneration', () => {
       groups: [],
       selectedNodeIds: [],
     })
-    const executor = vi.fn(async (current: GenerationCanvasNode) => result(`new-${current.id}`))
-
-    const generated = await rerunGenerationNodeAsNewNode('image-1', {
-      executor,
-      retry: { maxAttempts: 1 },
-    })
+    vi.mocked(generationNodeExecutor).mockImplementation(async (current) => result(`new-${current.id}`))
+    await confirmAndRunNode('image-1', { rerun: true })
 
     const state = useGenerationCanvasStore.getState()
     const original = state.nodes.find((candidate) => candidate.id === 'image-1')
@@ -221,7 +232,9 @@ describe('non-destructive regeneration', () => {
     expect(state.nodes).toHaveLength(2)
     expect(original?.result).toEqual(originalResult)
     expect(original?.history).toEqual([originalResult])
-    expect(variant?.result).toEqual(generated)
-    expect(variant?.history).toEqual([generated])
+    expect(variant?.result?.id).toBe(`result-new-${variant?.id}`)
+    expect(variant?.history).toEqual([variant?.result])
+    expect(mintSpendGrant).toHaveBeenCalledWith([variant?.id])
+    expect(generationNodeExecutor).toHaveBeenCalledTimes(1)
   })
 })

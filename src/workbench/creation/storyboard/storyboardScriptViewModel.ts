@@ -106,7 +106,11 @@ function nodeShotIndexForPlan(
   node: GenerationCanvasNode,
   planShotByIndex: ReadonlyMap<number, PlanShot>,
   nodes: readonly GenerationCanvasNode[],
+  planIndexByShotId?: ReadonlyMap<string, number>,
 ): number | null {
+  const stableId = typeof node.meta?.shotId === 'string' ? node.meta.shotId.trim() : ''
+  const stableIndex = planIndexByShotId?.get(stableId)
+  if (stableIndex !== undefined) return stableIndex
   if (node.regeneratedFrom) {
     const source = nodes.find((candidate) => candidate.id === node.regeneratedFrom)
     const sourceTitleIndex = source ? nodeTitleShotIndex(source) : null
@@ -130,12 +134,13 @@ function nodeShotIndexForPlan(
 function sortedShotNodes(
   nodes: readonly GenerationCanvasNode[],
   planShotByIndex: ReadonlyMap<number, PlanShot> = new Map(),
+  planIndexByShotId?: ReadonlyMap<string, number>,
 ): GenerationCanvasNode[] {
   return nodes
-    .filter((node) => isShotNumberedNode(node))
+    .filter((node) => isShotNumberedNode(node) || (isImageNode(node) && node.meta?.storyboardKeyframe === true))
     .sort((a, b) => {
-      const ai = nodeShotIndexForPlan(a, planShotByIndex, nodes)
-      const bi = nodeShotIndexForPlan(b, planShotByIndex, nodes)
+      const ai = nodeShotIndexForPlan(a, planShotByIndex, nodes, planIndexByShotId)
+      const bi = nodeShotIndexForPlan(b, planShotByIndex, nodes, planIndexByShotId)
       if (ai !== null && bi !== null && ai !== bi) return ai - bi
       if (ai !== null && bi === null) return -1
       if (ai === null && bi !== null) return 1
@@ -179,13 +184,14 @@ export function buildStoryboardScriptRows(
 ): StoryboardScriptRow[] {
   const anchorById = new Map((plan?.anchors ?? []).map((anchor) => [anchor.id, anchor]))
   const planShotByIndex = new Map((plan?.shots ?? []).map((shot) => [shot.index, shot]))
+  const planIndexByShotId = new Map((plan?.shots ?? []).map((shot) => [shot.shotId?.trim() || `shot-${shot.index}`, shot.index]))
   const nodesById = new Map(nodes.map((node) => [node.id, node]))
   const shotNodesByIndex = new Map<number, GenerationCanvasNode[]>()
 
-  const orderedCanvasShotNodes = sortedShotNodes(nodes, planShotByIndex)
+  const orderedCanvasShotNodes = sortedShotNodes(nodes, planShotByIndex, planIndexByShotId)
   let fallbackIndex = 1
   for (const node of orderedCanvasShotNodes) {
-    const index = nodeShotIndexForPlan(node, planShotByIndex, nodes) ?? fallbackIndex++
+    const index = nodeShotIndexForPlan(node, planShotByIndex, nodes, planIndexByShotId) ?? fallbackIndex++
     const current = shotNodesByIndex.get(index) ?? []
     current.push(node)
     shotNodesByIndex.set(index, current)

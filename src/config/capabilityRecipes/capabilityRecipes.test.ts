@@ -234,7 +234,7 @@ describe('buildRecipeRunPlan', () => {
   it('defaults new nine-view runs to nine independent camera tasks with scene preservation', () => {
     const recipe = BUILTIN_CAPABILITY_RECIPES.find((entry) => entry.id === 'image.multiview.grid9')!
     const defaults = Object.fromEntries(
-      recipe.controls.map((control) => [control.key, control.defaultValue]),
+      recipe.controls.flatMap((control) => control.defaultValue === undefined ? [] : [[control.key, control.defaultValue] as const]),
     )
     const recipePlan = buildRecipeRunPlan({
       id: 'run-grid-accurate',

@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:adoption-bridge /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-adoption-bridge.mjs
+
+✅ adoption bridge 铁律通过：无绕过 Proposal 的直写（受控例外基线 2 处）

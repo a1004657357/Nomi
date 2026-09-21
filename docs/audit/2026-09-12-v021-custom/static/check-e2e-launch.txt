@@ -1,0 +1,5 @@
+
+> nomi@0.21.0 check:e2e-launch /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-e2e-launch.mjs
+
+✅ check:e2e-launch —— 无直接 electron.launch 调用（全部走 _launchApp.mjs）

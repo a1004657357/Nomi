@@ -8,6 +8,7 @@
 // 用法: pnpm build && node tests/ux/asset-surface-convergence.walk.mjs
 // 判据=断言 + 截图（tests/ux/shots/asset-surface-convergence/）人眼过。
 import { launchNomiApp } from './_launchApp.mjs'
+import { expectAbsent, proveProbe } from './_assert.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -96,7 +97,9 @@ try {
   }
 
   // —— ① 唯一门（库页）——
-  check('库页无素材盒按钮', (await win.locator('button[aria-label="打开素材盒"]').count()) === 0)
+  await expectAbsent(win.locator('button[aria-label="打开素材盒"]'), {
+    provenBy: await proveProbe(win.getByText('项目库', { exact: false }), '项目库已渲染'),
+  })
   await snap(win, '01-library-page-no-assetbox')
 
   // —— 进项目（studio 挂载触发迁移器）——
@@ -112,7 +115,9 @@ try {
   check('进入项目', /projectId=/.test(win.url()), win.url().slice(-32))
 
   // —— ① 唯一门（studio 顶栏）——
-  check('顶栏无素材盒按钮', (await win.locator('button[aria-label="打开素材盒"]').count()) === 0)
+  await expectAbsent(win.locator('button[aria-label="打开素材盒"]'), {
+    provenBy: await proveProbe(win.getByRole('button', { name: '创作', exact: true }), '工作台导航已渲染'),
+  })
   await snap(win, '02-studio-topbar-no-assetbox')
 
   // 迁移器启动即跑（IPC 往返），稍候
@@ -142,7 +147,15 @@ try {
   if (await allTab.count()) await allTab.click({ timeout: 2000 }).catch(() => {})
   await win.waitForTimeout(900)
   // compact 侧栏格子不渲染文件名（tooltip 才有）,数瓦片：3 张落盘图（含「曾被软删.png」）全在=软删层解散。
-  const allTileCount = await win.locator('section[aria-label="素材库"] [aria-selected]').count()
+  //
+  // 2026-08-18 修假绿：这里原本数的是 `[aria-selected]`——那个属性在**来源 tab**（role=tab）和
+  // **种类过滤项**（role=option）身上都有，而瓦片的 aria-selected 是 `selectable ? selected : undefined`，
+  // 侧栏里根本不渲染这个属性。也就是说它**从来没数到过素材**：以前恰好有 3 个来源 tab
+  // （全部/项目/智能分组）让 `>= 3` 蒙混通过，智能分组一删就只剩 2 个、当场露馅。
+  // 改数瓦片自己的图片元素（每张素材渲染一个带 alt 的 img），这才是「素材可见」的真判据。
+  const tiles = win.locator('section[aria-label="素材库"] img[alt]')
+  await tiles.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
+  const allTileCount = await tiles.count()
   check('三张落盘素材全部可见（含曾软删,软删层解散预期）', allTileCount >= 3, `tiles=${allTileCount}`)
   await snap(win, '05-asset-library-all-assets')
 
@@ -179,9 +192,10 @@ try {
   if (overlayWin) {
     await overlayWin.waitForLoadState('domcontentloaded').catch(() => {})
     await overlayWin.waitForTimeout(900)
-    check('托盘无「提示词库」tab', (await overlayWin.getByText('提示词库', { exact: true }).count()) === 0)
-    check('托盘无「上传」按钮', (await overlayWin.locator('button[aria-label*="上传"]').count()) === 0)
-    check('托盘无文件夹瓦片', (await overlayWin.getByText('主角参考', { exact: false }).count()) === 0)
+    const inboxProof = await proveProbe(overlayWin.getByText('捕捞收件箱', { exact: false }), '捕捞收件箱已挂载')
+    await expectAbsent(overlayWin.getByText('提示词库', { exact: true }), { provenBy: inboxProof })
+    await expectAbsent(overlayWin.locator('button[aria-label*="上传"]'), { provenBy: inboxProof })
+    await expectAbsent(overlayWin.getByText('主角参考', { exact: false }), { provenBy: inboxProof })
     check('托盘标注「捕捞收件箱」', (await overlayWin.getByText('捕捞收件箱', { exact: false }).count()) > 0)
     check('托盘可见捕捞素材', (await overlayWin.getByText('捕捞样例一', { exact: false }).count()) > 0)
     await snap(overlayWin, '07-tray-capture-inbox')

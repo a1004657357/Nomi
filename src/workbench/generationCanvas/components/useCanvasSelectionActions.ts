@@ -9,6 +9,8 @@ import { expandNodeIdsWithUngeneratedReferenceAncestors } from '../runner/refere
 import { confirmAndRunPlan } from './batchPlanPreview'
 import { convertImageShotsToVideos, isConvertibleImageShotNode } from '../agent/convertShotToVideo'
 import { sendStoryboardToTimeline } from '../agent/sendStoryboardToTimeline'
+import { reportAdoptionOutcome } from '../../adoption/adoptionReceipt'
+import i18n from '../../../i18n'
 import { defaultSelectedNodeProjectName } from '../../project/selectedNodeProjectPayload'
 import { createProjectFromSelectedNodes, type SelectedNodeProjectTransferMode } from '../../project/selectedNodeProjectTransfer'
 import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
@@ -95,13 +97,21 @@ export function useCanvasSelectionActions(options: UseCanvasSelectionActionsOpti
     }
   }, [selectedSet])
 
-  const handleSendSelectedToTimeline = React.useCallback(() => {
-    const result = sendStoryboardToTimeline([...selectedNodeIds])
-    if (result.sent.length > 0) {
-      toast(`已按镜序送入时间轴 ${result.sent.length} 段`, 'success')
-      return
+  const handleSendSelectedToTimeline = React.useCallback(async () => {
+    try {
+      const result = await sendStoryboardToTimeline([...selectedNodeIds])
+      if (result.sent.length > 0) {
+        toast(`已按镜序送入时间轴 ${result.sent.length} 段`, 'success')
+        return
+      }
+      if (result.outcome.status !== 'nothing_to_adopt') {
+        reportAdoptionOutcome(result.outcome)
+        return
+      }
+      toast(result.skipped.length > 0 ? '选中节点还没有可发送到时间轴的图片或视频结果' : '没有可发送到时间轴的节点', 'warning')
+    } catch (error) {
+      toast(error instanceof Error ? error.message : i18n.t('timelineEditor.adoption.failedRecovered'), 'error')
     }
-    toast(result.skipped.length > 0 ? '选中节点还没有可发送到时间轴的图片或视频结果' : '没有可发送到时间轴的节点', 'warning')
   }, [selectedNodeIds])
 
   const handleTransferSelectedNodes = React.useCallback(async (

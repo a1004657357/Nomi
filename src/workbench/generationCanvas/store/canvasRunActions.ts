@@ -65,6 +65,17 @@ export const createCanvasRunActions: CanvasSliceCreator<CanvasRunActions> = (set
       })
       emitRunUpdated(nodeId)
     },
+    // Only dismiss the error overlay; preserve the failed run and previous result.
+    dismissNodeError: (nodeId) => {
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId)
+        if (!node || node.status !== 'error') return
+        node.status = node.result ? 'success' : 'idle'
+        node.error = undefined
+        bumpPersistRevision(state)
+      })
+      emitRunUpdated(nodeId)
+    },
     setNodeProgress: (nodeId, progress) => {
       set((state) => {
         const node = state.nodes.find((candidate) => candidate.id === nodeId)

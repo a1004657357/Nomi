@@ -1,0 +1,6 @@
+
+> nomi@0.21.0 check:third-party /Users/huawuer/Projects/Nomi-upstream-v021-20260912
+> node ./scripts/check-third-party-assets.mjs
+
+third-party asset audit passed: 4 records, 2 bundled, 1 external, 1 remote-on-demand, 1 release blocker(s)
+release blocker: scene3d-ue-mannequin-retopology-spike: bundled redistribution is not cleared

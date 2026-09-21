@@ -10,11 +10,17 @@
 import React from 'react'
 import { clampNumber, getWheelZoomFactor } from './generationCanvasGeometry'
 import { findScrollableAncestor } from './canvasScroll'
-import { resolveWheelIntent, useCanvasGestureScheme } from './canvasGesturePreference'
+import { resolveWheelIntent, useCanvasGestureScheme } from '../../../utils/canvasGesturePreference'
 import { setCanvasDragging } from './canvasDraggingFlag'
+import {
+  createViewportAnimationCoordinator,
+  type ViewportAnimationCoordinator,
+} from './viewportAnimationCoordinator'
+import type { ViewportAnimationSettlementOutcome } from './viewportAnimationSettlement'
 import {
   canvasDragExceededThreshold,
   isCanvasCapturePanPointer,
+  isCanvasMenuTarget,
   isCanvasPanButtonHeld,
   resolveCanvasPanButtonFromMove,
   shouldPreventDefaultForCanvasPanStart,
@@ -56,7 +62,12 @@ type UseCanvasViewportGesturesArgs = {
 export type CanvasViewportGestures = {
   scheduleOffset: (offset: Offset) => void
   setViewportTransform: (zoom: number, offset: Offset) => void
-  animateViewportTo: (zoom: number, offset: Offset, duration?: number) => void
+  animateViewportTo: (
+    zoom: number,
+    offset: Offset,
+    duration?: number,
+    onSettled?: (outcome: ViewportAnimationSettlementOutcome) => void,
+  ) => void
   zoomAtStagePoint: (zoom: number, point: { x: number; y: number }) => void
   handlePointerDownCapture: (event: React.PointerEvent<HTMLDivElement>) => void
   /** bubble 阶段的空白左键平移入口：由上层仲裁确认「这是画布空白」后才调。 */
@@ -86,7 +97,7 @@ export function useCanvasViewportGestures({
   const offsetCommitTimerRef = React.useRef<number | null>(null)
   const lastCommittedOffsetRef = React.useRef<Offset>({ ...offsetRef.current })
   const lastOffsetCommitAtRef = React.useRef(0)
-  const animFrameRef = React.useRef<number | null>(null)
+  const animationCoordinatorRef = React.useRef<ViewportAnimationCoordinator | null>(null)
   const isPanningRef = React.useRef(false)
   const panStartRef = React.useRef<{
     pointerId: number
@@ -134,12 +145,51 @@ export function useCanvasViewportGestures({
     setStagePanFlag('data-space-pan', false)
   }, [setStagePanFlag])
 
-  const cancelAnim = React.useCallback(() => {
-    if (animFrameRef.current !== null) {
-      window.cancelAnimationFrame(animFrameRef.current)
-      animFrameRef.current = null
+  React.useEffect(() => {
+    const coordinator = createViewportAnimationCoordinator({
+      requestFrame: (callback) => window.requestAnimationFrame(callback),
+      cancelFrame: (frame) => window.cancelAnimationFrame(frame),
+      readViewport: () => ({ zoom: zoomRef.current || 1, offset: { ...offsetRef.current } }),
+      writeViewport: (next) => {
+        zoomRef.current = next.zoom
+        offsetRef.current = next.offset
+        lastCommittedOffsetRef.current = next.offset
+        lastOffsetCommitAtRef.current = performance.now()
+        applyCanvasTransform(next.zoom, next.offset)
+        setViewport(next)
+      },
+      prepareForAnimation: () => {
+        if (offsetCommitTimerRef.current !== null) {
+          window.clearTimeout(offsetCommitTimerRef.current)
+          offsetCommitTimerRef.current = null
+        }
+        if (offsetFrameRef.current !== null) {
+          window.cancelAnimationFrame(offsetFrameRef.current)
+          offsetFrameRef.current = null
+        }
+        pendingOffsetRef.current = null
+      },
+    })
+    animationCoordinatorRef.current = coordinator
+    return () => {
+      // StrictMode replays setup → cleanup → setup without another render. Only
+      // the generation being cleaned may clear shared scheduled-offset state;
+      // a late cleanup for an older generation must not tear down its successor.
+      if (animationCoordinatorRef.current === coordinator) {
+        animationCoordinatorRef.current = null
+        if (offsetCommitTimerRef.current !== null) {
+          window.clearTimeout(offsetCommitTimerRef.current)
+          offsetCommitTimerRef.current = null
+        }
+        if (offsetFrameRef.current !== null) {
+          window.cancelAnimationFrame(offsetFrameRef.current)
+          offsetFrameRef.current = null
+        }
+        pendingOffsetRef.current = null
+      }
+      coordinator.dispose()
     }
-  }, [])
+  }, [applyCanvasTransform, offsetRef, setViewport, zoomRef])
 
   const clearOffsetCommitTimer = React.useCallback(() => {
     if (offsetCommitTimerRef.current !== null) {
@@ -168,7 +218,10 @@ export function useCanvasViewportGestures({
   }, [applyCanvasTransform, clearOffsetCommitTimer, commitViewportOffset, offsetRef, zoomRef])
 
   const scheduleOffset = React.useCallback((nextOffset: Offset) => {
-    cancelAnim() // 任何手动平移立即接管，打断进行中的动画
+    // 任何手动平移先取得最新命令所有权。若旧动画的取消回调同步重入了更新动画，本次手动命令让路。
+    const animationCoordinator = animationCoordinatorRef.current
+    if (!animationCoordinator) return
+    if (!animationCoordinator.takeOwnershipAndCancel()) return
     offsetRef.current = nextOffset
     pendingOffsetRef.current = nextOffset
     if (offsetFrameRef.current !== null) return
@@ -189,10 +242,12 @@ export function useCanvasViewportGestures({
       }
       if (!isPanningRef.current) scheduleIdleOffsetCommit()
     })
-  }, [applyCanvasTransform, cancelAnim, commitViewportOffset, offsetRef, scheduleIdleOffsetCommit, zoomRef])
+  }, [applyCanvasTransform, commitViewportOffset, offsetRef, scheduleIdleOffsetCommit, zoomRef])
 
   const setViewportTransform = React.useCallback((nextZoom: number, nextOffset: Offset) => {
-    cancelAnim()
+    const animationCoordinator = animationCoordinatorRef.current
+    if (!animationCoordinator) return
+    if (!animationCoordinator.takeOwnershipAndCancel()) return
     clearOffsetCommitTimer()
     if (offsetFrameRef.current !== null) {
       window.cancelAnimationFrame(offsetFrameRef.current)
@@ -205,38 +260,18 @@ export function useCanvasViewportGestures({
     lastOffsetCommitAtRef.current = performance.now()
     applyCanvasTransform(nextZoom, nextOffset)
     setViewport({ zoom: nextZoom, offset: nextOffset })
-  }, [applyCanvasTransform, cancelAnim, clearOffsetCommitTimer, offsetRef, setViewport, zoomRef])
+  }, [applyCanvasTransform, clearOffsetCommitTimer, offsetRef, setViewport, zoomRef])
 
   // 离散跳转（适应视图 / 重置 / 聚焦节点）的平滑过渡：rAF 在 ~140ms（--nomi-transition-fast）
   // 内 easeOutCubic 插值 zoom+offset。连续控件（缩放条/捏合）不走这里，保持即时跟手。
-  const animateViewportTo = React.useCallback((targetZoom: number, targetOffset: Offset, duration = 140) => {
-    cancelAnim()
-    if (offsetFrameRef.current !== null) {
-      window.cancelAnimationFrame(offsetFrameRef.current)
-      offsetFrameRef.current = null
-    }
-    pendingOffsetRef.current = null
-    const startZoom = zoomRef.current || 1
-    const startOffset = { ...offsetRef.current }
-    let startTs: number | null = null
-    const ease = (t: number) => 1 - Math.pow(1 - t, 3)
-    const step = (ts: number) => {
-      if (startTs === null) startTs = ts
-      const progress = duration <= 0 ? 1 : Math.min(1, (ts - startTs) / duration)
-      const e = ease(progress)
-      const zoom = startZoom + (targetZoom - startZoom) * e
-      const offset = {
-        x: startOffset.x + (targetOffset.x - startOffset.x) * e,
-        y: startOffset.y + (targetOffset.y - startOffset.y) * e,
-      }
-      zoomRef.current = zoom
-      offsetRef.current = offset
-      applyCanvasTransform(zoom, offset)
-      setViewport({ zoom, offset })
-      animFrameRef.current = progress < 1 ? window.requestAnimationFrame(step) : null
-    }
-    animFrameRef.current = window.requestAnimationFrame(step)
-  }, [applyCanvasTransform, cancelAnim, offsetRef, setViewport, zoomRef])
+  const animateViewportTo = React.useCallback((
+    targetZoom: number,
+    targetOffset: Offset,
+    duration = 140,
+    onSettled?: (outcome: ViewportAnimationSettlementOutcome) => void,
+  ) => {
+    animationCoordinatorRef.current?.animateTo(targetZoom, targetOffset, duration, onSettled)
+  }, [])
 
   const zoomAtStagePoint = React.useCallback((nextZoom: number, point: { x: number; y: number }) => {
     const currentZoom = zoomRef.current || 1
@@ -272,18 +307,6 @@ export function useCanvasViewportGestures({
       stage.releasePointerCapture(pointerId)
     }
   }, [applyCanvasTransform, commitViewportOffset, offsetRef, resetPanState, stageRef, zoomRef])
-
-  React.useEffect(() => () => {
-    if (offsetFrameRef.current !== null) {
-      window.cancelAnimationFrame(offsetFrameRef.current)
-      offsetFrameRef.current = null
-    }
-    if (animFrameRef.current !== null) {
-      window.cancelAnimationFrame(animFrameRef.current)
-      animFrameRef.current = null
-    }
-    clearOffsetCommitTimer()
-  }, [clearOffsetCommitTimer])
 
   React.useEffect(() => {
     const handlePointerUp = (event: PointerEvent) => {
@@ -385,13 +408,14 @@ export function useCanvasViewportGestures({
       beginPan(event, event.button as 0 | 1 | 2)
       return
     }
-    if (event.button === 0) setContextNodeMenu(null)
-    // 只有真空白处才收起激活边。边菜单也在 stage 里，而这是 capture 阶段：
-    // 子按钮的 stopPropagation 来不及拦。若不在此豁免，pointerdown 会先卸载菜单，
-    // 后续 click 无目标，表现为“改标签 / 断开都没反应”。
-    if (!activeEdgeId) return
+    // 菜单（节点右键菜单 / 边菜单）都在 stage 里，而这是 capture 阶段：子项的 stopPropagation
+    // 来不及拦。**两处收起都必须先问这一句**——否则 pointerdown 先卸载菜单，后续 click 无目标，
+    // 表现为“改标签 / 断开 / 菜单项都没反应”。（曾只豁免了边菜单，节点菜单漏在上一行。）
+    const menuTarget = isCanvasMenuTarget(event.target)
+    if (event.button === 0 && !menuTarget) setContextNodeMenu(null)
+    if (!activeEdgeId || menuTarget) return
     const target = event.target instanceof Element ? event.target : null
-    if (target?.closest('.generation-canvas-v2__edge-hit, .generation-canvas-v2__edge-cut, .generation-canvas-v2__edge-control, [role="menu"], [role="menuitem"], [role="menuitemradio"]')) return
+    if (target?.closest('.generation-canvas-v2__edge-hit, .generation-canvas-v2__edge-cut, .generation-canvas-v2__edge-control')) return
     setActiveEdge(null)
   }, [activeEdgeId, beginPan, setActiveEdge, setContextNodeMenu])
 

@@ -4,6 +4,7 @@ import type { GenerationCanvasNode, GenerationNodeResult } from '../model/genera
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { runCapabilityRecipeOnNode } from './capabilityRecipeController'
 import type { CapabilityRecipeMediaProcessor } from './capabilityRecipePostprocess'
+import type { GenerationNodeExecutor } from './generationNodeExecutor'
 
 function imageResult(id: string): GenerationNodeResult {
   return { id, type: 'image', url: `nomi-local://${id}.png`, createdAt: 100 }
@@ -212,7 +213,7 @@ describe('runCapabilityRecipeOnNode', () => {
     }
     state.restoreSnapshot({ nodes: [source, resource], edges: [], groups: [], selectedNodeIds: [] })
     const recipePlan = { ...plan(), resourceIds: ['style-1'] }
-    const executor = vi.fn(async (node: GenerationCanvasNode, context) => {
+    const executor = vi.fn<GenerationNodeExecutor>(async (node, context) => {
       expect(node.prompt).toContain('35mm film')
       expect(context?.edges?.some((edge) => edge.source === 'style-1' && edge.target === node.id && edge.mode === 'style_ref')).toBe(true)
       return imageResult('styled')
@@ -391,7 +392,7 @@ describe('runCapabilityRecipeOnNode', () => {
     }
     const executor = vi.fn(async (node: GenerationCanvasNode) => {
       expect(node.kind).toBe('model3d')
-      return { id: 'model', type: 'model3d', url: 'nomi-local://model.glb', createdAt: 100 }
+      return { id: 'model', type: 'model3d' as const, url: 'nomi-local://model.glb', createdAt: 100 }
     })
 
     const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
@@ -562,7 +563,7 @@ describe('runCapabilityRecipeOnNode', () => {
       outputs,
     }
     const mediaProcessor: CapabilityRecipeMediaProcessor = {
-      splitGrid3x3: vi.fn(async (_result, descriptors) => descriptors.map((output) => imageResult(output.id))),
+      splitGrid3x3: vi.fn<CapabilityRecipeMediaProcessor['splitGrid3x3']>(async (_result, descriptors) => descriptors.map((output) => imageResult(output.id))),
       normalizePanorama2to1: async (result) => result,
       inspectImage: async (result) => {
         const index = outputs.findIndex((output) => output.id === result.id)
@@ -660,7 +661,7 @@ describe('runCapabilityRecipeOnNode', () => {
 
     const prompts: string[] = []
     const mediaProcessor: CapabilityRecipeMediaProcessor = {
-      splitGrid3x3: vi.fn(async (_result, descriptors) => descriptors.map((output) => imageResult(output.id))),
+      splitGrid3x3: vi.fn<CapabilityRecipeMediaProcessor['splitGrid3x3']>(async (_result, descriptors) => descriptors.map((output) => imageResult(output.id))),
       normalizePanorama2to1: async (result) => result,
       inspectImage: async (result) => {
         const index = outputs.findIndex((output) => output.id === result.id)

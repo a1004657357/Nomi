@@ -17,6 +17,8 @@ import { useWorkspaceEvents } from './useWorkspaceEvents'
 import { useWorkbenchStore, type WorkspaceMode } from './workbenchStore'
 import { swapGenerationAiProject } from './generationCanvas/store/generationAiConversation'
 import { useGenerationCanvasStore } from './generationCanvas/store/generationCanvasStore'
+import { FOCUS_GENERATION_NODE_EVENT } from './generationCanvas/nodes/nodeSizing'
+import { focusCanvasNodeWhenReady } from './deepLinkFocus'
 import {
   flushConversationsNow,
   initConversationPersistence,
@@ -26,7 +28,7 @@ import { initReviewEventBridge } from './generationCanvas/reviewEventBridge'
 import { initComfyuiProgressBridge } from './generationCanvas/comfyuiProgressBridge'
 import { initResultUrlRelocalizeBridge } from './generationCanvas/resultUrlRelocalizeBridge'
 import { setCanvasEventProjectIdProvider } from './generationCanvas/events/canvasEventEmitter'
-import { registerCapabilityApplyHandler } from './capability/capabilityApplyHandler'
+import { handleCapabilityApply, registerCapabilityApplyHandler } from './capability/capabilityApplyHandler'
 import { cn } from '../utils/cn'
 import { toast } from '../ui/toast'
 import { setDesktopActiveProjectId } from '../desktop/activeProject'
@@ -41,12 +43,11 @@ import { releaseWorkbenchProjectRuntimeState } from './project/releaseWorkbenchP
 import { useSpendConfirmStore } from './generationCanvas/spend/spendConfirm'
 import { runAssetSurfaceMigrations } from './assets/assetSurfaceMigration'
 import { useProductionRunStore } from './production/productionRunStore'
+import { ProductionCanvasLandingHost } from './production/ProductionCanvasLandingHost'
 
 type AppView = 'library' | 'studio'
 
-// 项目创建规格：所有创建入口拼装项目的单一真相源（P1）。
-// 各入口各自决定 workspaceMode / seedKey / 创建+刷新+hydrate 的编排时约定不统一——
-// 「落地视图不确定」「新建空白被当 legacy 迁移删默认节点」根子都在分头拼装。
+// All creation entries explicitly choose the landing view and seed identity.
 type ProjectCreationSpec = {
   /** 落地视图：必填，每个入口显式声明，杜绝继承上一个项目残留 mode（审计 A11）。*/
   workspaceMode: WorkspaceMode
@@ -94,7 +95,6 @@ function GenerationCanvasLoading(): JSX.Element {
       className={cn('w-full h-full bg-workbench-bg grid place-items-center')}
       aria-label={t('studio.generationCanvasLoading')}
     >
-      {/* pending 规范 #1:懒加载占位不再空白,给可见品牌 spinner */}
       <NomiLoadingMark size={28} label={t('studio.generationCanvasLoading')} />
     </div>
   )
@@ -233,6 +233,40 @@ export default function NomiStudioApp(): JSX.Element {
   // 能力核 A 模式实时桥:注册处理器,接主进程转发来的外部 MCP 画布读/写/付费确认(所见即所得)。
   React.useEffect(() => registerCapabilityApplyHandler(), [])
 
+  // E2E 专用桥（同 TaskCenterButton/CameraMoveCaptureHost 既有写法）：仅当 localStorage['__nomiE2E']==='1'
+  // 时把**真实**能力处理器挂到 window，供 R13 走查在页面上下文里以真 payload 驱动同一条渲染管线
+  // （generation.gate.confirm → confirmGenerationGateForAgent → buildMultiShotContractView → requestConfirm →
+  // SpendConfirmDialog）取证多镜确认卡。生产从不置该标志 → 永不暴露；不是并行实现，就是那一个真 handler。
+  React.useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage?.getItem('__nomiE2E') === '1') {
+        ;(window as unknown as { __nomiCapabilityApply?: unknown }).__nomiCapabilityApply = handleCapabilityApply
+        ;(window as unknown as { __nomiSpendConfirmE2E?: (request: Record<string, unknown>) => Promise<boolean> }).__nomiSpendConfirmE2E = async (request) => {
+          const rememberHosting = request.rememberHosting === true
+          const { rememberHosting: _rememberHosting, ...pendingRequest } = request
+          if (pendingRequest.hostingDisclosure && typeof pendingRequest.hostingDisclosure === 'object') {
+            const disclosure = pendingRequest.hostingDisclosure as Record<string, unknown>
+            pendingRequest.hostingDisclosure = {
+              ...disclosure,
+              onRemember: rememberHosting
+                ? async () => {
+                    const policy = getDesktopBridge()?.settings?.automationPolicy
+                    if (!policy) return
+                    const current = await policy.get()
+                    await policy.set({ ...current, anonymousAssetHosting: 'allow' })
+                    ;(window as unknown as { __nomiSpendRemembered?: boolean }).__nomiSpendRemembered = true
+                  }
+                : undefined,
+            }
+          }
+          return useSpendConfirmStore.getState().requestConfirm(pendingRequest as never)
+        }
+      }
+    } catch {
+      // localStorage 不可用 → 跳过
+    }
+  }, [])
+
   React.useEffect(() => {
     const handleHardReloadShortcut = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase()
@@ -359,17 +393,35 @@ export default function NomiStudioApp(): JSX.Element {
     return onDeepLink((payload) => {
       const projectId = typeof payload?.projectId === 'string' ? payload.projectId.trim() : ''
       const runId = typeof payload?.runId === 'string' ? payload.runId.trim() : ''
-      if (!projectId || !runId) return
+      const nodeId = typeof payload?.nodeId === 'string' ? payload.nodeId.trim() : ''
+      // 只要有 projectId 就该跳。**曾经这里要求必须有 runId**，于是工程级 `nomi://project/{id}`
+      // （每条生成结果都在给用户的那个链接）和节点级链接点了**毫无反应**——连窗口都不亮一下。
+      // 三种形状各自的归宿：run→任务中心、node→画布并选中那一镜、纯工程→打开项目即可。
+      if (!projectId) return
       void (async () => {
         useWorkbenchStore.getState().setWorkspaceMode('generation')
         if (activeProjectIdRef.current !== projectId) {
           const opened = await hydrateProject(projectId, { replaceUrl: true })
           if (!opened) return
         }
-        // 深链落到制作任务的新家：任务中心（不再展开画布助手面板——制作已从那儿搬走）。
-        window.dispatchEvent(new CustomEvent('nomi-open-task-center'))
-        await useProductionRunStore.getState().navigateTo(projectId, runId, payload.artifactId)
-      })().catch((error) => console.error('production deep link failed', error))
+        if (runId) {
+          // 深链落到制作任务的新家：任务中心（不再展开画布助手面板——制作已从那儿搬走）。
+          window.dispatchEvent(new CustomEvent('nomi-open-task-center'))
+          await useProductionRunStore.getState().navigateTo(projectId, runId, payload.artifactId)
+          return
+        }
+        if (nodeId) {
+          // 「指着看」：复用画布既有的聚焦通道（切到该节点所在分类页签 + 选中 + 平移到视野 + 闪一下），
+          // 不自造第二套选中逻辑（P1）。刚 hydrate 完节点可能还没进 store，等它出现再派。
+          await focusCanvasNodeWhenReady({
+            nodeId,
+            hasNode: () => useGenerationCanvasStore.getState().nodes.some((node) => node.id === nodeId),
+            dispatch: (id) =>
+              window.dispatchEvent(new CustomEvent(FOCUS_GENERATION_NODE_EVENT, { detail: { nodeId: id } })),
+            waitFrame: () => new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve())),
+          })
+        }
+      })().catch((error) => console.error('deep link navigation failed', error))
     })
   }, [hydrateProject])
 
@@ -684,6 +736,8 @@ export default function NomiStudioApp(): JSX.Element {
               {/* relative 包一层:S2b 计划 overlay 与画布同坐标系,且不喂巨壳 */}
               <div className={cn('relative w-full h-full')}>
                 <GenerationCanvas />
+                {/* P4 S5 画布落地 host（跟着画布常驻）：poll 活跃多镜 Run 喂占位三态 + 进度通知 + 删节点上报 detach。 */}
+                <ProductionCanvasLandingHost projectId={activeProject?.id ?? null} />
               </div>
             </React.Suspense>
           }

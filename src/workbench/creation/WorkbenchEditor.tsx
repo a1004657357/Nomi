@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { EditorContent, type Editor, type JSONContent } from '@tiptap/react'
 import { IconFileImport, IconSparkles } from '@tabler/icons-react'
 import SelectionGeneratePopover from './SelectionGeneratePopover'
-import { confirmDialog, WorkbenchButton, WorkbenchIconButton } from '../../design'
+import { confirmDialog } from '../../design'
+import { WorkbenchButton, WorkbenchIconButton } from '../../design/actions'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { toast } from '../../ui/toast'
 import { cn } from '../../utils/cn'
@@ -119,6 +120,7 @@ export default function WorkbenchEditor(): JSX.Element {
   const setCreationDocumentTools = useWorkbenchStore((state) => state.setCreationDocumentTools)
   const setCreationSelectionText = useWorkbenchStore((state) => state.setCreationSelectionText)
   const setWorkspaceMode = useWorkbenchStore((state) => state.setWorkspaceMode)
+  const storyboardPlannerLauncher = useWorkbenchStore((state) => state.storyboardPlannerLauncher)
   const [selectionState, setSelectionState] = React.useState({ text: '', version: 0 })
   const scrollRef = useTransientScrollingClass<HTMLDivElement>('workbench-scrollbar-visible')
   const workbenchDocumentRef = React.useRef(workbenchDocument)
@@ -276,6 +278,7 @@ export default function WorkbenchEditor(): JSX.Element {
         editor={editor}
         selectedText={selectionState.text}
         selectionVersion={selectionState.version}
+        onStoryboard={storyboardPlannerLauncher ? () => storyboardPlannerLauncher() : undefined}
         onCreated={clearSelectionText}
       />
       <div

@@ -25,7 +25,7 @@ describe('videoKeyframeInspectorModel', () => {
   })
 
   it('均匀取样避开精确 EOF，并限制数量', () => {
-    expect(buildEvenlySpacedFrameTimes(10, 3)).toEqual([0, 4.95, 9.9])
+    expect(buildEvenlySpacedFrameTimes(10, 3)).toEqual([0, 4.875, 9.75])
     expect(buildEvenlySpacedFrameTimes(0, 8)).toEqual([])
     expect(buildEvenlySpacedFrameTimes(5, 100)).toHaveLength(24)
   })

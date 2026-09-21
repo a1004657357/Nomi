@@ -1,13 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWindowActivator } from "./windowActivator";
 
-type FakeWindow = {
-  isMinimized: ReturnType<typeof vi.fn>;
-  restore: ReturnType<typeof vi.fn>;
-  focus: ReturnType<typeof vi.fn>;
-};
+type FakeWindow = ReturnType<typeof fakeWindow>;
 
-function fakeWindow(minimized = false): FakeWindow {
+function fakeWindow(minimized = false) {
   return {
     isMinimized: vi.fn(() => minimized),
     restore: vi.fn(),
@@ -29,7 +25,7 @@ describe("createWindowActivator", () => {
 
   it("creates and focuses a window when the app has no windows", async () => {
     const created = fakeWindow();
-    const activate = createWindowActivator({ getWindows: () => [], createWindow: vi.fn(async () => created) });
+    const activate = createWindowActivator<FakeWindow>({ getWindows: () => [], createWindow: vi.fn(async () => created) });
 
     await expect(activate()).resolves.toBe(created);
     expect(created.focus).toHaveBeenCalledOnce();
@@ -39,7 +35,7 @@ describe("createWindowActivator", () => {
     const created = fakeWindow();
     let resolveCreate: ((window: FakeWindow) => void) | undefined;
     const createWindow = vi.fn(() => new Promise<FakeWindow>((resolve) => { resolveCreate = resolve; }));
-    const activate = createWindowActivator({ getWindows: () => [], createWindow });
+    const activate = createWindowActivator<FakeWindow>({ getWindows: () => [], createWindow });
 
     const first = activate();
     const second = activate();
