@@ -3,6 +3,7 @@ import type { Mapping } from '../../../electron/catalog/types'
 import { notifyModelOptionsRefresh } from '../../config/useModelOptions'
 import { getDesktopBridge } from '../../desktop/bridge'
 import type { DreaminaStatus } from './DreaminaMemberCard'
+import type { WebBridgeStatus } from './WebBridgeConnectionCard'
 import type { ChipModel } from './ModelChipGroups'
 import { projectModelSettingsCatalog } from './modelSettingsCatalogProjection'
 
@@ -31,6 +32,8 @@ export function useOnboardingDrawerCatalog(): {
   vendorMeta: Map<string, OnboardingVendorMeta>
   customCallScripts: Map<string, string>
   dreaminaStatus: DreaminaStatus | null
+  jimengWebStatus: WebBridgeStatus | null
+  pavoWebStatus: WebBridgeStatus | null
   loaded: boolean
   bridgeMissing: boolean
   reloadFromError: () => void
@@ -41,6 +44,8 @@ export function useOnboardingDrawerCatalog(): {
   const [vendorMeta, setVendorMeta] = React.useState<Map<string, OnboardingVendorMeta>>(new Map())
   const [customCallScripts, setCustomCallScripts] = React.useState<Map<string, string>>(new Map())
   const [dreaminaStatus, setDreaminaStatus] = React.useState<DreaminaStatus | null>(null)
+  const [jimengWebStatus, setJimengWebStatus] = React.useState<WebBridgeStatus | null>(null)
+  const [pavoWebStatus, setPavoWebStatus] = React.useState<WebBridgeStatus | null>(null)
   const [loaded, setLoaded] = React.useState(false)
   const [bridgeMissing, setBridgeMissing] = React.useState(false)
   const bridgeRetries = React.useRef(0)
@@ -96,6 +101,20 @@ export function useOnboardingDrawerCatalog(): {
     } else {
       setDreaminaStatus(null)
     }
+    const loadWebBridgeStatus = (
+      bridgeApi: typeof bridge.jimengWeb | typeof bridge.pavoWeb | undefined,
+      apply: React.Dispatch<React.SetStateAction<WebBridgeStatus | null>>,
+    ) => {
+      if (!bridgeApi) {
+        apply(null)
+        return
+      }
+      bridgeApi.status()
+        .then((status) => { if (alive) apply(status as WebBridgeStatus) })
+        .catch(() => { if (alive) apply(null) })
+    }
+    loadWebBridgeStatus(bridge.jimengWeb, setJimengWebStatus)
+    loadWebBridgeStatus(bridge.pavoWeb, setPavoWebStatus)
     return () => { alive = false }
   }, [version])
 
@@ -118,6 +137,8 @@ export function useOnboardingDrawerCatalog(): {
     vendorMeta,
     customCallScripts,
     dreaminaStatus,
+    jimengWebStatus,
+    pavoWebStatus,
     loaded,
     bridgeMissing,
     reloadFromError,

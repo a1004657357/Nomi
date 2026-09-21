@@ -10,6 +10,7 @@ import type { DesktopOnboardingBridge } from './onboardingBridgeTypes'
 import type { DesktopProductionRunBridge } from './productionRunBridgeTypes'
 import type { CustomCallBridge } from './modelCatalogBridgeTypes'
 import type { DesktopProxyMode, DesktopProxyStatus, DesktopProxyProbe } from './proxyBridgeTypes'
+import type { DesktopWebBridge } from './webBridgeTypes'
 export type { DesktopProxyMode, DesktopProxyStatus, DesktopProxyProbeAttempt, DesktopProxyProbe } from './proxyBridgeTypes'
 export type { ProviderKind }
 export type {
@@ -849,79 +850,9 @@ export type DesktopBridge = DesktopMediaBridge & {
     logout: () => Promise<{ ok: boolean }>
     install: () => Promise<{ ok: boolean; message: string }>
   }
-  /** 即梦 Web（实验）：本机 Seedance 扩展桥 + Electron 持久网页登录窗口。 */
-  jimengWeb?: {
-    status: () => Promise<{
-      server: {
-        ok: boolean
-        serverUrl: string
-        error?: string
-        version?: string
-        sseClients?: number
-        taskTotal?: number
-      }
-      runner: {
-        available: boolean
-        running: boolean
-        browserOpen: boolean
-        serverManaged: boolean
-        clientOnline: boolean
-        engine: 'electron'
-        drawerReady: boolean
-        fallbackPanelOpen: boolean
-        extensionDir?: string
-        userDataDir?: string
-        serverPid?: number
-        extensionId?: string
-        panelUrl?: string
-        jimengUrl: string
-        error?: string
-        lastLog?: string
-      }
-      loginWindowOpen: boolean
-      cookieCount: number
-      likelyLoggedIn: boolean
-      loginUrl: string
-    }>
-    openLogin: () => Promise<{ ok: boolean; url: string }>
-    openAdmin: (baseUrl?: string) => Promise<{ ok: boolean; url: string }>
-    startRunner: () => Promise<{
-      available: boolean
-      running: boolean
-      browserOpen: boolean
-      serverManaged: boolean
-      clientOnline: boolean
-      engine: 'electron'
-      drawerReady: boolean
-      fallbackPanelOpen: boolean
-      extensionDir?: string
-      userDataDir?: string
-      serverPid?: number
-      extensionId?: string
-      panelUrl?: string
-      jimengUrl: string
-      error?: string
-      lastLog?: string
-    }>
-    stopRunner: () => Promise<{
-      available: boolean
-      running: boolean
-      browserOpen: boolean
-      serverManaged: boolean
-      clientOnline: boolean
-      engine: 'electron'
-      drawerReady: boolean
-      fallbackPanelOpen: boolean
-      extensionDir?: string
-      userDataDir?: string
-      serverPid?: number
-      extensionId?: string
-      panelUrl?: string
-      jimengUrl: string
-      error?: string
-      lastLog?: string
-    }>
-  }
+  /** 网页自动化桥：即梦与 Pavo 共用同一桌面契约，各自保留独立会话。 */
+  jimengWeb?: DesktopWebBridge
+  pavoWeb?: DesktopWebBridge
   /** 能力核：上报当前打开项目，供外部调用的 A/B 守卫（可选——老 preload 无此口）。 */
   capability?: {
     setActiveProject: (projectId: string) => void

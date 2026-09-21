@@ -98,6 +98,8 @@ export function canAddModelsToConnection(
     (meta?.hasApiKey || meta?.authType === 'none') &&
     !isComfyuiVendorKey(vendorKey) &&
     vendorKey !== CODEX_LOCAL_VENDOR_KEY &&
-    vendorKey !== ANTIGRAVITY_VENDOR_KEY,
+    vendorKey !== ANTIGRAVITY_VENDOR_KEY &&
+    vendorKey !== 'jimeng-web' &&
+    vendorKey !== 'pavo-web',
   )
 }

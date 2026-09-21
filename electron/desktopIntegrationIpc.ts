@@ -62,6 +62,31 @@ function registerProviderLoginIpc(): void {
     const { jimengWebStopExtensionRunner } = await import('./jimengWeb/ipc')
     return jimengWebStopExtensionRunner()
   })
+  ipcMain.handle('nomi:pavo-web:status', async (event) => {
+    assertTrustedSender(event)
+    const { pavoWebStatus } = await import('./pavoWeb/ipc')
+    return pavoWebStatus()
+  })
+  ipcMain.handle('nomi:pavo-web:open-login', async (event) => {
+    assertTrustedSender(event)
+    const { pavoWebOpenLogin } = await import('./pavoWeb/ipc')
+    return pavoWebOpenLogin()
+  })
+  ipcMain.handle('nomi:pavo-web:open-admin', async (event, baseUrl: unknown) => {
+    assertTrustedSender(event)
+    const { pavoWebOpenAdmin } = await import('./pavoWeb/ipc')
+    return pavoWebOpenAdmin(baseUrl)
+  })
+  ipcMain.handle('nomi:pavo-web:start-runner', async (event) => {
+    assertTrustedSender(event)
+    const { pavoWebStartExtensionRunner } = await import('./pavoWeb/ipc')
+    return pavoWebStartExtensionRunner()
+  })
+  ipcMain.handle('nomi:pavo-web:stop-runner', async (event) => {
+    assertTrustedSender(event)
+    const { pavoWebStopExtensionRunner } = await import('./pavoWeb/ipc')
+    return pavoWebStopExtensionRunner()
+  })
 }
 
 function registerWorkspaceIpc(): void {

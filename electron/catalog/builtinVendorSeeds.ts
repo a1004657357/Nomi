@@ -12,6 +12,7 @@ import { ANTIGRAVITY_VENDOR_SEED } from "./antigravityTexts";
 import { PIXSTAG_VENDOR_SEED } from "./pixstagVendor";
 import { CODEX_VENDOR_SEED } from "./codexImagegen";
 import { JIMENG_WEB_VENDOR_SEED } from "./jimengWeb";
+import { PAVO_WEB_VENDOR_SEED } from "./pavoWeb";
 import type { Vendor } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,7 @@ export const BUILTIN_VENDOR_SEEDS: readonly VendorSeed[] = [
   CODEX_LOCAL_VENDOR_SEED, // Codex 本地生图（实验，默认关）
   CODEX_VENDOR_SEED,
   JIMENG_WEB_VENDOR_SEED,
+  PAVO_WEB_VENDOR_SEED,
   ANTIGRAVITY_VENDOR_SEED, // 官方本机 CLI；完整能力验证前默认关闭
 ];
 

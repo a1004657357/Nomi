@@ -80,6 +80,7 @@ import {
   JIMENG_WEB_SEEDANCE_MODEL_SEED,
   JIMENG_WEB_VENDOR_SEED,
 } from "./jimengWeb";
+import { PAVO_WEB_AGNES_FLASH_MODEL_SEED, PAVO_WEB_VENDOR_SEED } from "./pavoWeb";
 
 /** curated 模型/mapping 的内部类型（reconcile 两函数的输入）。 */
 type CuratedModel = {
@@ -297,6 +298,16 @@ const JIMENG_WEB_CURATED_MODELS: CuratedModel[] = [
     labelZh: JIMENG_WEB_SEEDANCE_MODEL_SEED.labelZh,
     kind: JIMENG_WEB_SEEDANCE_MODEL_SEED.kind,
     archetypeId: JIMENG_WEB_SEEDANCE_MODEL_SEED.archetypeId,
+  },
+];
+
+/** Pavo 网页桥：只声明已在官网公共工作台核实的 Flash 视频模型。 */
+const PAVO_WEB_CURATED_MODELS: CuratedModel[] = [
+  {
+    modelKey: PAVO_WEB_AGNES_FLASH_MODEL_SEED.modelKey,
+    labelZh: PAVO_WEB_AGNES_FLASH_MODEL_SEED.labelZh,
+    kind: PAVO_WEB_AGNES_FLASH_MODEL_SEED.kind,
+    archetypeId: PAVO_WEB_AGNES_FLASH_MODEL_SEED.archetypeId,
   },
 ];
 
@@ -602,6 +613,7 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   if (reconcileModels(models, CODEX_LOCAL_VENDOR_SEED.key, CODEX_IMAGE_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, CODEX_VENDOR_SEED.key, CODEX_CURATED_MODELS, now)) changed = true;
   if (reconcileModels(models, JIMENG_WEB_VENDOR_SEED.key, JIMENG_WEB_CURATED_MODELS, now)) changed = true;
+  if (reconcileModels(models, PAVO_WEB_VENDOR_SEED.key, PAVO_WEB_CURATED_MODELS, now)) changed = true;
 
   // kie 历史包袱 repair：把视频形状的坏 (kie, text_to_image) 替换成正确的 GPT Image 2 文生图契约
   // （旧 onboarding 抽错留下的；契约见 kieGptImage2.ts 直连实测确认）。apimart 无此历史，不需要。

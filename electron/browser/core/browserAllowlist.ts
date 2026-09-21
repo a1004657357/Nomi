@@ -42,6 +42,9 @@ const DEFAULT_ALLOWLIST: AllowlistEntry[] = [
   // 本地扩展端口（Seedance2 Chrome 扩展 local server，jimengWeb.ts:16）
   { host: '127.0.0.1', port: 3457, purpose: 'Seedance2 Chrome 扩展 local server（127.0.0.1:3457）' },
   { host: 'localhost', port: 3457, purpose: 'Seedance2 Chrome 扩展 local server（localhost:3457）' },
+  { host: 'app.pavo-ai.cn', purpose: 'Pavo Web 创作台' },
+  { host: '127.0.0.1', port: 3458, purpose: 'Pavo Web Adapter local server（127.0.0.1:3458）' },
+  { host: 'localhost', port: 3458, purpose: 'Pavo Web Adapter local server（localhost:3458）' },
 ]
 
 /** 运行时可扩展的额外 allowlist（供配置加新 Provider web 桥）。 */

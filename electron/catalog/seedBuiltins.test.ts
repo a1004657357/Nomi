@@ -16,7 +16,7 @@ describe("applyBuiltinSeeds", () => {
     expect(new Set(addresses).size).toBe(addresses.length);
     expect(addresses).toEqual(expect.arrayContaining([
       "codex:codex-img2", "codex-local:codex-imagegen",
-      "jimeng-web:jimeng-web-image", "jimeng-web:jimeng-web-seedance-2.0",
+      "jimeng-web:jimeng-web-image", "jimeng-web:jimeng-web-seedance-2.0", "pavo-web:pavo-agnes-video-2.5-flash",
       "dreamina:dreamina-seedance-2.0", "dreamina:dreamina-seedance-2.5",
       "pixstag:MiniMax-H3", "agnes:agnes-video-2.5", "agnes:agnes-video-2.5-flash",
       "kie:nano-banana-2", "kie:nano-banana-2-lite", "kie:wan/3-0-video",

@@ -7,6 +7,7 @@ import { CustomVendorCard } from './CustomVendorCard'
 import { CustomCallEditor, type CustomCallTarget } from './CustomCallEditor'
 import { consumePendingCustomCallIntent } from './customCallIntent'
 import { DreaminaMemberCard } from './DreaminaMemberCard'
+import { WebBridgeConnectionCard } from './WebBridgeConnectionCard'
 import { ComfyuiLocalCard } from './ComfyuiLocalCard'
 import { AddComfyuiInstanceButton } from './AddComfyuiInstanceButton'
 import { isComfyuiVendorKey } from '../../workbench/generationCanvas/model/comfyuiVendor'
@@ -86,6 +87,8 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
     vendorMeta,
     customCallScripts,
     dreaminaStatus,
+    jimengWebStatus,
+    pavoWebStatus,
     loaded,
     bridgeMissing,
     reloadFromError,
@@ -264,6 +267,8 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
       dreamina: t('onboardingProviders.dreamina.name'),
       codex: t('onboardingProviders.codexImage.name'),
       antigravity: t('antigravity.name'),
+      jimengWeb: t('onboardingProviders.jimengWeb.name'),
+      pavoWeb: t('onboardingProviders.pavoWeb.name'),
     },
   })
   const kindGuessGap = resolveKindGuessGap(models, vendorMeta)
@@ -404,6 +409,16 @@ export function OnboardingDrawer({ pageRequest = null }: { pageRequest?: ModelPa
         models={models.filter((model) => model.vendorKey === ANTIGRAVITY_VENDOR_KEY)}
         selectedVariants={selectedVariants} session={antigravitySession} onChanged={refresh}
         onOpenModel={(model) => openPage({ type: 'model', vendorKey: model.vendorKey, modelKey: model.modelKey })} />
+    }
+    if (vendorKey === 'jimeng-web') {
+      return <WebBridgeConnectionCard bridgeKey="jimengWeb" name={t('onboardingProviders.jimengWeb.name')}
+        subtitle={t('onboardingProviders.jimengWeb.subtitle')} description={t('onboardingProviders.jimengWeb.description')}
+        status={jimengWebStatus} onChanged={refresh} />
+    }
+    if (vendorKey === 'pavo-web') {
+      return <WebBridgeConnectionCard bridgeKey="pavoWeb" name={t('onboardingProviders.pavoWeb.name')}
+        subtitle={t('onboardingProviders.pavoWeb.subtitle')} description={t('onboardingProviders.pavoWeb.description')}
+        status={pavoWebStatus} onChanged={refresh} />
     }
     return null
   }
