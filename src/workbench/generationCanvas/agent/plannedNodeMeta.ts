@@ -4,31 +4,73 @@
 // modelKey 空时跑）就不会再自动补 vendor/label/默认参数——所以这里必须**自铺全**：
 // modelVendor / modelLabel / archetype.{id,modeId} / 该 mode 的默认参数，再用 agent 的合法参数覆盖。
 import type { AgentModelEntry } from "./availableModels";
-import type { ModelParameterControl } from "../../../config/modelCatalogMeta";
+import { isParamValueAllowed } from "../../../../electron/shared/videoCapabilities/paramConstraints";
+import {
+  canonicalArchetypeVariantId,
+  resolveArchetypeForModel,
+  resolveArchetypeVariant,
+  specializeArchetypeForVariant,
+  type ModelArchetype,
+} from "../../../../electron/shared/modelArchetypes";
+import { pickImplicitVendorMatch } from "../../../config/modelIdentity";
 
 export type PlannedNodeModelInput = {
   modelKey?: unknown;
   variantId?: unknown;
+  /** Canonical catalog vendor identity selected alongside modelKey. */
+  vendor?: unknown;
+  /** Backward-compatible wire alias for vendor (normalised before persistence). */
+  modelVendor?: unknown;
   modeId?: unknown;
+  /** Model-archetype variant identity (for example `fast` or `mini`). */
   params?: unknown;
 };
 
-// 单字段校验（跨字段互斥/依赖留二期）：select 取值必须在 options；number 在 min-max；boolean 是布尔。
-function isValidParamValue(
-  control: ModelParameterControl,
-  value: string | number | boolean,
-): boolean {
-  if (control.options.length > 0) {
-    return control.options.some((option) => String(option.value) === String(value));
+function nonBlankString(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+/** Resolve the curated archetype again at the write boundary so variant
+ * parameter narrowing and the persisted `{ id, modeId, variantId }` namespace
+ * use the same source as the canvas composer. */
+function entryArchetype(entry: AgentModelEntry): ModelArchetype | null {
+  if (!entry.archetypeId) return null;
+  return resolveArchetypeForModel({
+    modelKey: entry.modelId,
+    modelAlias: entry.modelAlias,
+    vendorKey: entry.vendor,
+    meta: { archetypeId: entry.archetypeId },
+  });
+}
+
+// 单字段校验（跨字段互斥/依赖留二期）。**判据不在这里**：合法性的唯一 owner 是
+// `electron/shared/videoCapabilities/paramConstraints.isParamValueAllowed`（R14.1）。
+// 这里只保留本路径的**策略**：非法值丢弃、回落档案默认——落节点 meta 不能写进非法值。
+// （审阅面 planResolver 对同一判据的策略是「钳值 + 出结构化 issue」，故意不同，各自注释。）
+const isValidParamValue = isParamValueAllowed;
+
+/**
+ * 模型清单索引：**同时**含 `vendor::modelKey` 与裸 `modelKey` 两种键。
+ * 前者是身份唯一键（同名模型来自不同供应商是两个模型）；后者供旧计划/无 vendor 的目录行回落。
+ * 裸键由 `pickImplicitVendorMatch` 决定落哪家——与分镜/画布模型框回显旧数据用的是**同一个判定口**
+ * （用户顺序 > 官方 > 内置中转 > 自接 > 目录序），所以一条只记了模型名的旧镜头，界面上显示哪家，请求就发去哪家。
+ * 以前取「第一次出现」的条目，而目录是新接入的在前：用户一自定义同名模型，裸键就悄悄换成了它（2026-09-21）。
+ * 所有落地路径（applyCanvasToolCall / storyboardRowActions / multiShotCanvasLanding）共用本构造器（P1）。
+ */
+export function buildModelEntryIndex(entries: readonly AgentModelEntry[], orderedVendorKeys: readonly string[] = []): Map<string, AgentModelEntry> {
+  const index = new Map<string, AgentModelEntry>();
+  const byModelId = new Map<string, AgentModelEntry[]>();
+  for (const entry of entries) {
+    if (entry.vendor) index.set(`${entry.vendor}::${entry.modelId}`, entry);
+    const bucket = byModelId.get(entry.modelId);
+    if (bucket) bucket.push(entry);
+    else byModelId.set(entry.modelId, [entry]);
   }
-  if (control.type === "number") {
-    if (typeof value !== "number" || !Number.isFinite(value)) return false;
-    if (control.min !== undefined && value < control.min) return false;
-    if (control.max !== undefined && value > control.max) return false;
-    return true;
+  for (const [modelId, bucket] of byModelId) {
+    const implicit = pickImplicitVendorMatch(bucket, (row) => row.vendor, orderedVendorKeys);
+    if (implicit) index.set(modelId, implicit);
   }
-  if (control.type === "boolean") return typeof value === "boolean";
-  return true;
+  return index;
 }
 
 export function buildPlannedNodeMeta(
@@ -37,33 +79,82 @@ export function buildPlannedNodeMeta(
 ): Record<string, unknown> | undefined {
   const modelKey = typeof planned.modelKey === "string" ? planned.modelKey.trim() : "";
   if (!modelKey) return undefined;
-  const entry = entryByKey.get(modelKey);
+  // 身份唯一键是 (vendor, modelKey)——先按带 vendor 的键查，查不到才回落裸 key（旧计划/无 vendor 目录行）。
+  // 只按裸 key 查会在两家供应商提供同名模型时拿到「索引里最后写入的那家」，
+  // 与用户所选无关（2026-09-03 真实付费走查实测：选 APIMart 却发去 code-newcli-com）。
+  const declaredVendor = nonBlankString(planned.vendor) || nonBlankString(planned.modelVendor);
+  const entry = (declaredVendor ? entryByKey.get(`${declaredVendor}::${modelKey}`) : undefined)
+    ?? entryByKey.get(modelKey);
   // 模型不在可用清单 → 不写模型 meta，回退原自动选（避开 effect3 供应商断开自愈覆盖）。
   if (!entry) return undefined;
 
-  const wantVariantId = typeof planned.variantId === "string" ? planned.variantId.trim() : "";
-  const variants = entry.variants ?? [];
-  const variant =
-    variants.find((candidate) => candidate.variantId === wantVariantId) ??
-    variants.find((candidate) => candidate.variantId === entry.defaultVariantId) ??
-    variants[0];
-  const modes = variant?.modes.length ? variant.modes : entry.modes;
+  // A proposal may carry both the model key and an explicit vendor selected in
+  // the approval card. Never combine a catalog entry from one vendor with a
+  // caller-declared identity from another; that would make the visible choice
+  // differ from the request that reaches the provider. The model list is the
+  // authority, while a vendor-less entry may still accept an explicit vendor
+  // for legacy/custom catalog rows.
+  const vendor = nonBlankString(planned.vendor);
+  const modelVendor = nonBlankString(planned.modelVendor);
+  // The two spellings are aliases on the wire, not two independent routing
+  // choices. Reject a contradictory direct renderer call just as the shared
+  // capability schema does for the Host transport.
+  if (vendor && modelVendor && vendor !== modelVendor) return undefined;
+  const requestedVendor = vendor || modelVendor;
+  if (requestedVendor && entry.vendor && requestedVendor !== entry.vendor) return undefined;
+  const persistedVendor = requestedVendor || entry.vendor || "";
+
+  const archetype = entryArchetype(entry);
+  // Persist only an explicit, valid variant (an invalid one is ignored). The
+  // parameter surface, however, is always the surface of the variant this node
+  // will actually run on — the one owner (`resolveArchetypeVariant`) answers
+  // that for the canvas, the spend card and host dispatch alike. Before
+  // 2026-09-26 an omitted variant kept the unspecialized (standard) surface
+  // while the node ran on the default (fast) variant.
+  const variantId = archetype ? canonicalArchetypeVariantId(archetype, planned.variantId) : "";
+  const runningVariantId = archetype ? resolveArchetypeVariant(archetype, { variantId, modelId: modelKey })?.id : undefined;
+  const effectiveArchetype = archetype && runningVariantId
+    ? specializeArchetypeForVariant(archetype, runningVariantId)
+    : archetype;
+
   const wantModeId = typeof planned.modeId === "string" ? planned.modeId.trim() : "";
-  const mode =
-    modes.find((candidate) => candidate.modeId === wantModeId) ??
-    modes.find((candidate) => candidate.modeId === entry.defaultModeId) ??
-    modes[0];
+  // Normalize the renderer-facing and agent-facing mode shapes before the
+  // common parameter pass. This keeps the write boundary independent of which
+  // catalog projection supplied the entry.
+  const archetypeMode =
+    effectiveArchetype?.modes.find((candidate) => candidate.id === wantModeId) ??
+    effectiveArchetype?.modes.find((candidate) => candidate.id === entry.defaultModeId);
+  const entryMode =
+    entry.modes.find((candidate) => candidate.modeId === wantModeId) ??
+    entry.modes.find((candidate) => candidate.modeId === entry.defaultModeId) ??
+    entry.modes[0];
+  const mode = archetypeMode
+    ? { modeId: archetypeMode.id, params: archetypeMode.params }
+    : entryMode;
 
   const meta: Record<string, unknown> = {
     modelKey,
     modelLabel: entry.label,
-    archetype: {
-      id: entry.archetypeId,
-      modeId: mode?.modeId ?? entry.defaultModeId,
-      ...(variant ? { variantId: variant.variantId } : {}),
-    },
+    // Chat models are catalog-defined and intentionally have no media
+    // archetype. Do not invent one: the explicit model identity itself is the
+    // contract that keeps text generation from silently falling back.
+    ...(effectiveArchetype
+      ? {
+          archetype: {
+            id: effectiveArchetype.id,
+            modeId: mode?.modeId ?? effectiveArchetype.defaultModeId,
+            ...(variantId ? { variantId } : {}),
+          },
+        }
+      : {}),
   };
-  if (entry.vendor) meta.modelVendor = entry.vendor;
+  if (persistedVendor) {
+    // Canvas generation nodes have historically exposed both keys to the
+    // runner. They are aliases of one value, written together so the selected
+    // provider survives reloads and evidence capture.
+    meta.modelVendor = persistedVendor;
+    meta.vendor = persistedVendor;
+  }
   if (!mode) return meta;
 
   // 1) 铺 mode 默认参数
@@ -88,7 +179,7 @@ export function buildPlannedNodeMeta(
   return meta;
 }
 
-const RESERVED_META_KEYS = new Set(["modelKey", "modelLabel", "archetype", "modelVendor"]);
+const RESERVED_META_KEYS = new Set(["modelKey", "modelLabel", "archetype", "modelVendor", "vendor"]);
 
 /**
  * 把一个 planned node 的 modelKey/modeId/params 解析成「执行后会真正写入的值」——与
@@ -107,7 +198,15 @@ export function resolvePlannedNodeArgs(
   if (typeof node.modelKey !== "string" || !node.modelKey.trim()) return node;
   const meta = buildPlannedNodeMeta(node as PlannedNodeModelInput, entryByKey);
   if (!meta) {
-    const { modelKey: _mk, variantId: _variant, modeId: _md, params: _p, ...rest } = node;
+    const {
+      modelKey: _mk,
+      modeId: _md,
+      params: _p,
+      vendor: _vendor,
+      modelVendor: _modelVendor,
+      variantId: _variantId,
+      ...rest
+    } = node;
     return rest;
   }
   const params: Record<string, unknown> = {};

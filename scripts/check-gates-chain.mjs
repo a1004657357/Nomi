@@ -9,15 +9,28 @@
 // 规矩：package.json 里定义的每个 `check:*` 脚本，都必须能从 `gates` 链**传递可达**。
 //
 // 为什么必须传递解析、不能只做字面 substring 匹配：
-//   check:site 自己内部就跑了 `build-marketing-sitemap.mjs --check` 和 `pnpm run check:handbook`，
-//   所以 check:handbook / check:sitemap 事实上已被覆盖，只是**没有字面出现在 gates 那一行**。
+//   check:site 自己内部就跑了一串子项（自 2026-10-02 起由 scripts/check-site.mjs 依次执行），
+//   所以 sitemap 等子检查事实上已被覆盖，只是**没有字面出现在 gates 那一行**。
 //   一个朴素的字面检查会对着这两个精确地误报。而误报的下场是有人把门岗关掉——
 //   那就正好重演了本门岗要防的那件事。所以宁可多写几十行解析，也不留假红。
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { TIER_COMMANDS } from './run-gates-tests.mjs'
+import { SITE_STEPS } from './check-site.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+/** gates:contracts 的执行体；它的实参就是要跑的门岗清单（见 extractScriptRefs 的说明）。 */
+const GATES_RUNNER = 'scripts/run-gates-contracts.mjs'
+/**
+ * gates 的**选测调度点**（2026-09-12，R22 分档）。它按风险面在 TIER_COMMANDS 声明的两档之间选一档跑，
+ * 所以那两个脚本名都是「真的会被执行」的引用，必须算进可达集合——否则本门岗会以为默认档什么测试都不跑。
+ *
+ * 这不是假绿：调度点**必然**跑其中一档，且失败方向固定为升档（判不出来 → 全量）。两档的目标脚本
+ * 从 TIER_COMMANDS 现取，不在这里抄第二份字面量（抄一份就等于又开一个会漂移的真相源）。
+ */
+const TIER_RUNNER = 'scripts/run-gates-tests.mjs'
 
 /**
  * 蓄意不入链的 check:*——**每条都必须写清楚为什么**。
@@ -29,14 +42,27 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const INTENTIONALLY_OUT_OF_CHAIN = new Map([
   [
     'check:third-party:release',
-    '发布专用许可证阻断检查已挂在 dist/dist:mac:dir；日常 gates 运行 check:third-party 审核清单，未批准发布时不得混为发布验收',
+    'Release-only redistribution clearance; the release profile requires it while daily gates run check:third-party inventory checks',
   ],
   [
-    'check:audit',
-    // 这是**节奏提醒**不是正确性门岗：commit 攒够 25 个就提示该做周期审计（R14）。
-    // 它按时间/计数报红，和这次改动对不对无关。放进 gates 会让「今天该审计了」
-    // 变成「你不能 push」——门岗一旦开始拦无辜的人，人就会开始绕过门岗。
-    '节奏提醒（R14 审计/评测周期），按 commit 数报红，与本次改动正确性无关；入链会无差别拦 push',
+    'check:test-types',
+    // 2026-10-01 用户按门岗账本拍板「test-types 与 typecheck 合成一次」：typecheck 编排器（scripts/typecheck.mjs）并发拉起它，
+    // scripts/typecheck.node-test.mjs 钉死名单里有它。单独跑 `pnpm run check:test-types` 仍然可用。
+    '由 typecheck 编排器并发驱动（scripts/typecheck.mjs 的 TYPECHECK_JOBS），不再在 gates:contracts 里单列、重复跑一遍',
+  ],
+  [
+    'check:docs-index',
+    // 2026-10-01 用户按门岗账本拍板移出 PR 的 Contracts：49/49 次都红、永远不阻断。补齐与验收在 docs-autosync 工作流里。
+    '文档索引记账：由 docs-autosync 在 main 上补齐并验收，不进 PR 的 Contracts（门岗账本：advisory 49/49 次红、无读者）',
+  ],
+  [
+    'check:doc-status',
+    '文档状态记账：同 check:docs-index，由 docs-autosync 在 main 上补齐并验收',
+  ],
+  [
+    'check:ledger',
+    // 2026-10-02 用户按「能自动修的改成自动修」拍板移出 PR 的 Contracts：交付账本由 docs-autosync 在 main 上重生成并验收。
+    '交付账本记账：同 check:docs-index，由 docs-autosync 在 main 上重生成并验收，不进 PR 的 Contracts',
   ],
 ])
 
@@ -59,6 +85,26 @@ function extractScriptRefs(command, knownScripts) {
     const name = match[1]
     if (knownScripts.has(name)) refs.add(name)
   }
+  // gates:contracts 的门岗清单自 2026-09-05 起是 runner 的**实参**（`node scripts/run-gates-contracts.mjs
+  // --advisory=a,b check:x check:y …`），不再是 `pnpm run x && pnpm run y` 长链——理由见该文件头
+  // （`&&` 早退把「违反 3 个门岗」变成 3 轮 CI）。这些裸名字仍然是「真的会被执行」的引用，
+  // 必须算进可达集合，否则本门岗会把整条链判成「全都不跑」。
+  //
+  // 为什么只对这一个实现文件放开裸名匹配、不做成通用规则：通用地把任何命令里出现的 check:* 都
+  // 当作「跑过了」，会在「只是提到名字」的命令上给出**假绿**——而本门岗的失败方向必须是假红。
+  // 这里的判据很紧：命令必须真的调用 runner 的实现文件，而 runner 的语义就是「把实参逐个跑掉」。
+  if (command.includes(GATES_RUNNER)) {
+    for (const token of command.split(/[\s,]+/)) {
+      const name = token.replace(/^--advisory=/, '')
+      if (knownScripts.has(name)) refs.add(name)
+    }
+  }
+  if (command.includes(TIER_RUNNER)) {
+    for (const args of Object.values(TIER_COMMANDS)) {
+      const name = args[args.length - 1]
+      if (knownScripts.has(name)) refs.add(name)
+    }
+  }
   return refs
 }
 
@@ -79,8 +125,14 @@ function runsSameImplementation(command, targetCommand) {
   return flags.every((flag) => command.includes(flag))
 }
 
-/** 从 gates 出发做传递闭包：链里的脚本、它们引用的脚本、再往下……全部展开。 */
-function resolveReachable(scripts, entry) {
+/**
+ * 从某个入口做传递闭包：链里的脚本、它们引用的脚本、再往下……全部展开。
+ *
+ * **导出**（2026-09-05）：可达性判据只能有一份。原先 scripts/agent-runtime-wiring.test.mjs
+ * 里另抄了一份只认 `pnpm run x` 的正则闭包，gates:contracts 改成 runner 实参后它立刻
+ * 把「typecheck 不可达」这种假红报了出来——两份判据必然漂移，正是 R14.1 要拦的。
+ */
+export function resolveReachable(scripts, entry) {
   const reachable = new Set()
   const knownScripts = new Set(Object.keys(scripts))
   const queue = [entry]
@@ -92,6 +144,15 @@ function resolveReachable(scripts, entry) {
     if (!command) continue
     for (const ref of extractScriptRefs(command, knownScripts)) {
       if (!reachable.has(ref)) queue.push(ref)
+    }
+    // Inspect the runner's executable steps, not arbitrary strings in its source.
+    if (/^(?:node|nodejs)\s+(?:\.\/)?scripts\/check-site\.mjs(?:\s|$)/.test(command.trim())) {
+      for (const step of SITE_STEPS) {
+        const child = [step.command, ...step.args].join(' ')
+        for (const candidate of knownScripts) {
+          if (runsSameImplementation(child, scripts[candidate]) && !reachable.has(candidate)) queue.push(candidate)
+        }
+      }
     }
   }
   return reachable
@@ -157,4 +218,5 @@ function main() {
   console.log(`✅ 门岗链完整：${allChecks.length} 个 check:* 全部可达（蓄意豁免 ${excluded.length} 个：${excluded.join('、') || '无'}）`)
 }
 
-main()
+// 被别的脚本/测试 import 时不执行 CLI（它们要的是上面的可达性判据，不是退出码）。
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()

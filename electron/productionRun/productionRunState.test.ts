@@ -30,7 +30,6 @@ function run(status: ProductionRun["status"]): ProductionRun {
     playbook: { name: "brand.promo", version: "1.0.0" },
     origin: { host: "codex" },
     policy: {
-      mode: "balanced",
       trustedHosts: ["codex"],
       allowedProviders: [],
       allowedModels: [],
@@ -38,7 +37,7 @@ function run(status: ProductionRun["status"]): ProductionRun {
       maxAttemptsPerJob: 1,
       minimizeUploads: true,
     },
-    budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+    budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
     planVersion: 1,
     snapshotCursor: 0,
     stages: [],
@@ -78,6 +77,16 @@ describe("production job state", () => {
       "Illegal job transition planned -> submitting",
     );
   });
+
+  it.each(["authorized", "submit_intent_persisted"] as const)(
+    "marks an unsubmitted legacy job %s as needing attention during cutover",
+    (status) => {
+      expect(transitionJob(job(status), "needs_attention", NOW)).toMatchObject({
+        status: "needs_attention",
+        updatedAt: NOW,
+      });
+    },
+  );
 });
 
 describe("production run state", () => {
@@ -102,6 +111,10 @@ describe("production run state", () => {
     // edited/sealed, then the scheduler drives it. To reuse Run pause/cancel it must become `running`.
     // Single-shot runs never call the scheduler, so they never take this edge in practice.
     expect(transitionRun(run("draft"), "running", NOW).status).toBe("running");
+  });
+
+  it("lets a semantic single-shot settle directly after its durable artifact is ready", () => {
+    expect(transitionRun(run("running"), "completed", NOW).status).toBe("completed");
   });
 
   it("still rejects other illegal draft jumps (e.g. straight to paused or exporting)", () => {

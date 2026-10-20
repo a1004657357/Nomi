@@ -1,9 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import {
+  GENERATION_NODE_STATUSES,
+  generationNodeStatusSchema as sharedGenerationNodeStatusSchema,
+  type GenerationNodeStatus as SharedGenerationNodeStatus,
+} from '../../../../electron/shared/canvas/generationNodeStatus'
 import {
   generationCanvasNodeSchema,
   generationCanvasSnapshotSchema,
+  generationNodeRunStatusSchema,
+  generationNodeStatusSchema,
   nodeGroupSchema,
 } from './generationCanvasSchema'
+import type { GenerationNodeStatus } from './generationCanvasTypes'
 import { normalizeGenerationCanvasSnapshot } from '../../workbenchPersistence'
 
 const legacySnapshot = {
@@ -21,6 +29,21 @@ const legacySnapshot = {
 }
 
 describe('generationCanvasSchema Phase E.2 groups', () => {
+  it('projects the neutral shared generation status contract without copying its members', () => {
+    expect(generationNodeStatusSchema).toBe(sharedGenerationNodeStatusSchema)
+    expectTypeOf<GenerationNodeStatus>().toEqualTypeOf<SharedGenerationNodeStatus>()
+
+    for (const status of GENERATION_NODE_STATUSES) {
+      expect(generationCanvasNodeSchema.parse({ ...legacySnapshot.nodes[0], status }).status).toBe(status)
+    }
+
+    const runStatuses = GENERATION_NODE_STATUSES.filter((status) => status !== 'idle')
+    for (const status of [...runStatuses, 'cancelled'] as const) {
+      expect(generationNodeRunStatusSchema.parse(status)).toBe(status)
+    }
+    expect(generationNodeRunStatusSchema.safeParse('idle').success).toBe(false)
+  })
+
   it('defaults missing groups to an empty array for legacy snapshots', () => {
     expect(generationCanvasSnapshotSchema.parse(legacySnapshot).groups).toEqual([])
     expect(normalizeGenerationCanvasSnapshot(legacySnapshot).groups).toEqual([])
@@ -106,40 +129,15 @@ describe('generationCanvasSchema Phase E.2 groups', () => {
     expect(legacy.contentJson).toBeUndefined()
   })
 
-  it('accepts a first-class canvas skill node while preserving generic metadata', () => {
+  it('preserves director project data in node meta', () => {
     const parsed = generationCanvasNodeSchema.parse({
-      id: 'skill-1',
-      kind: 'skill',
-      title: '多视角与 3D 重建',
-      position: { x: 40, y: 40 },
-      categoryId: 'shots',
-      meta: {
-        canvasSkill: {
-          version: 1,
-          skillKey: 'creative.multiview',
-          label: '多视角与 3D 重建',
-          tools: ['apply_capability_recipe'],
-          recipeIds: ['image.multiview.grid9'],
-          outputNodeIds: [],
-        },
-      },
-    })
-    expect(parsed.kind).toBe('skill')
-    expect(parsed.meta?.canvasSkill).toMatchObject({
-      skillKey: 'creative.multiview',
-      recipeIds: ['image.multiview.grid9'],
-    })
-  })
-
-  it('preserves scene3d trajectory data in node meta', () => {
-    const parsed = generationCanvasNodeSchema.parse({
-      id: 'scene3d-1',
-      kind: 'scene3d',
-      title: '3D 场景',
+      id: 'director-1',
+      kind: 'director',
+      title: '导演台',
       position: { x: 0, y: 0 },
       categoryId: 'shots',
       meta: {
-        scene3dState: {
+        directorProject: {
           trajectories: [
             {
               id: 'trajectory-1',
@@ -161,7 +159,7 @@ describe('generationCanvasSchema Phase E.2 groups', () => {
       },
     })
 
-    expect(parsed.meta?.scene3dState).toMatchObject({
+    expect(parsed.meta?.directorProject).toMatchObject({
       trajectories: [expect.objectContaining({ id: 'trajectory-1' })],
       trajectoryGroups: [expect.objectContaining({ id: 'group-1' })],
       sceneTimeline: { totalDuration: 3 },

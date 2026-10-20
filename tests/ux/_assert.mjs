@@ -10,10 +10,14 @@
 // 官方断言能治竞态那一半。治不了的另一半是：**在一个根本不可能出现坏东西的现场，
 // 断言「没看到坏东西」**。这种空洞通过没有任何库能替你挡——只能由本文件的 API 在签名上逼出来，
 // 这就是 expectAbsent 强制要 provenBy 的全部理由。
-import { expect } from '@playwright/test'
+import { stationTimeout } from './_station-budget.mjs'
+import { expect as nativeExpect } from '@playwright/test'
+import { collectingExpect } from './_collect.mjs'
+export { createWalkSession } from './_collect.mjs'
+const expect = collectingExpect(nativeExpect)
 
 /** 走查里所有等待的统一上限。比 Playwright 默认 5s 宽：Electron 冷启动 + 真模型都慢。 */
-export const DEFAULT_TIMEOUT_MS = 15_000
+export const DEFAULT_TIMEOUT_MS = stationTimeout()
 
 export { expect }
 
@@ -78,7 +82,7 @@ export async function proveProbe(locator, label, timeout = DEFAULT_TIMEOUT_MS) {
   if (!label || typeof label !== 'string') {
     throw new Error('proveProbe(locator, label)：label 必填，失败信息要说人话，别让人对着 selector 猜')
   }
-  await expect(
+  await nativeExpect(
     locator,
     `基线不成立：「${label}」应当能被探针找到，但一个都没找到。`
       + '\n如果连它都找不到，说明面板没渲染 / 选择器写错了，'
@@ -202,13 +206,197 @@ export function stripCommentsAndStrings(source) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EN-DOM 断言网（2026-09-01）
+//
+// 抓的是 check:i18n-key-parity 抓不到的那一半漏译:parity 证的是「en 词典每个键都有值」,
+// 但证不了「这个键真的被用上了」——组件里一句硬编码中文、或走了错分支拿到中文串,parity 照样绿,
+// 只有真把界面切到 en、真走到那条 UI,才看得见一句中文。
+//
+// 于是在 en 局部走查跑完、界面确实是英文之后,直接断言**整页可见文本里没有 CJK**。
+// 这是运行时的兜底网:任何漏译的中文只要出现在 en 界面上就当场报红,不管它从哪条缝里漏的。
+//
+// 白名单 [data-user-content]:用户自己写的内容(项目名、提示词、素材文件名…)本就该是用户的语言,
+// 中文素材名出现在 en 界面上是对的,不是漏译。这类节点整棵子树豁免(innerText 会把子树文本并进来,
+// 所以必须在遍历时**整棵跳过**,不能只跳这一个节点)。参 _assert.mjs:184 scopedText 那条教训:
+// document.body.innerText 会把 seed 数据也算进来——这里用白名单把「用户内容」那一类系统性摘掉。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** CJK 统一表意文字(含扩展 A 起始)。够覆盖 UI 文案里的中文;不纠结日文假名(我们不支持日文)。 */
+const CJK_RE = /[㐀-鿿]/
+
+/**
+ * 断言 en 界面上没有漏译的中文。**只在界面确实已切到 en 之后调**(否则必然满屏中文报红)。
+ *
+ * 判据是「用户所见的可见文本」:隐藏元素、[data-user-content] 子树都排除。命中就把那几段中文
+ * 连同最近的可定位祖先一起报出来,让人一眼看到是哪块漏了。
+ *
+ * 为什么不直接 `document.body.innerText` 再 test CJK:innerText 会把 [data-user-content] 里的
+ * 用户中文(项目名/提示词)并进来,恒假红;必须在 DOM 遍历时整棵跳过白名单子树。
+ */
+export async function expectNoCjkInEnglishDom(win, { message, allowSelectors = [] } = {}) {
+  const offenders = await win.evaluate(
+    ({ cjkSource, allow }) => {
+      const cjk = new RegExp(cjkSource)
+      const skipSelectors = ['[data-user-content]', 'style', 'script', 'noscript', ...allow]
+      const isSkipped = (el) => skipSelectors.some((sel) => el.matches?.(sel))
+      // 剪枝只认「必然连累整棵子树」的属性:display:none / opacity≈0 / visibility:hidden。
+      // **元素自己盒子是 0 不算**——布局包装层(子元素绝对定位、overflow 可见、display:contents)
+      // 经常自身 0 高而内容满屏。2026-09-02 实测:设置→模型 的供应商列表外面套着一个 1440x0 的
+      // div,旧写法把它判成 hidden 直接 return,于是整份供应商列表(含肉眼可见的「火山方舟」)
+      // 从网里被摘掉——截图上明晃晃是中文,断言却报「无残留中文」全绿。假绿比不测更坏。
+      const isPrunedSubtree = (el) => {
+        const style = getComputedStyle(el)
+        return style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) <= 0.01
+      }
+      // 真正「这段字用户看不见」的判据,只对**承载中文的那个元素自己**用。
+      const isInvisibleSelf = (el) => {
+        const r = el.getBoundingClientRect()
+        return r.width < 1 || r.height < 1
+      }
+      const describe = (el) => {
+        const id = el.id ? `#${el.id}` : ''
+        const testid = el.getAttribute?.('data-testid')
+        const cls = typeof el.className === 'string' && el.className ? `.${el.className.split(/\s+/).slice(0, 2).join('.')}` : ''
+        return `${el.tagName.toLowerCase()}${id}${testid ? `[data-testid=${testid}]` : ''}${cls}`
+      }
+      const hits = []
+      const walk = (el) => {
+        if (isSkipped(el) || isPrunedSubtree(el)) return
+        // 只看**直接**文本子节点的中文(子元素各自递归判,避免把整棵子树的文本重复归到父节点)。
+        for (const node of el.childNodes) {
+          if (node.nodeType === Node.TEXT_NODE && cjk.test(node.nodeValue || '')) {
+            const text = (node.nodeValue || '').replace(/\s+/g, ' ').trim()
+            if (text && !isInvisibleSelf(el)) hits.push({ where: describe(el), text: text.slice(0, 60) })
+          }
+        }
+        for (const child of el.children) walk(child)
+      }
+      if (document.body) walk(document.body)
+      // 还要查 title/aria-label/placeholder 这类可见但不在文本节点里的字。
+      for (const el of document.querySelectorAll('[title],[aria-label],[placeholder]')) {
+        if (isSkipped(el) || isPrunedSubtree(el) || isInvisibleSelf(el)) continue
+        for (const attr of ['title', 'aria-label', 'placeholder']) {
+          const v = el.getAttribute(attr)
+          if (v && cjk.test(v)) hits.push({ where: `${describe(el)}@${attr}`, text: v.replace(/\s+/g, ' ').trim().slice(0, 60) })
+        }
+      }
+      // 去重(同一段中文可能被多个祖先命中)。
+      const seen = new Set()
+      return hits.filter((h) => { const k = `${h.where}\0${h.text}`; if (seen.has(k)) return false; seen.add(k); return true })
+    },
+    { cjkSource: CJK_RE.source, allow: allowSelectors },
+  )
+  if (offenders.length > 0) {
+    const lines = offenders.slice(0, 20).map((o) => `  · ${o.where}  “${o.text}”`).join('\n')
+    throw new Error(
+      `${message || 'en 界面上出现了未翻译的中文'}（EN-DOM 断言网）：找到 ${offenders.length} 处 CJK 文本。\n${lines}\n`
+        + '  → 界面已切到 en,这些中文就是漏译(硬编码中文 / 走错分支拿到中文串 / 键缺 en 值)。\n'
+        + '  用户自己写的内容(项目名/提示词/素材名)应包在 [data-user-content] 里豁免——如果上面是这类,给它加这个标记。',
+    )
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RAW-KEY 断言网（2026-09-01）—— 运行时抓「组件引用了不存在的键 → 界面渲染出原始 key」
+//
+// 这是今天那个 class bug 的**运行时兜底**:`t('sidebar.workflows')` 引用了两个词典都没有的键,
+// i18next 找不到就把 key 字符串本身('sidebar.workflows')原样渲染出来。它长得像英文、一个中文没有,
+// zh 界面里一眼看不出——EN-DOM 的 CJK 网也抓不到(它一个汉字都没有)。静态门岗 check:i18n-key-refs
+// 从源码这头拦;这道从**运行时界面**这头兜:任何 raw-key 形态的可见文本 = 报红。两头夹。
+//
+// raw-key 形态:`^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$` —— 小写字母起头的点分标识符(≥1 个点)。
+// 单独一段文本节点就是这形状,才算(整句话里带个点的正常文案不会命中:必须整段 ≡ 这个正则)。
+//
+// 误报排除用**清单**不靠猜(任务要求):合法的技术文案里确有这形状——版本号(0.21.0)、
+// 文件名(project.json)、代码/URL 示例、模型 id(gpt-4o.something)。这些多半住在
+// [data-user-content](用户内容)或就是我们自己要展示的技术串;白名单选择器整棵子树豁免,
+// 再加一个「已知合法 raw-key 文本」literal 清单兜掉剩下的。命中清单外的 = 真 raw key。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** raw-key 形态:小写起头的点分标识符,整段文本必须完全等于它。 */
+const RAW_KEY_RE = /^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$/
+
+/**
+ * 已知合法、会以「点分标识符」形态出现在界面上的技术文案(不是漏解析的键)。
+ * 用**字面清单**而非「猜哪些像键」——每加一条都得是真在界面上见过的合法串。
+ * 目前为空:现存界面里没有已知的合法裸点分标识符文本节点(版本号带数字段、文件名多在 user-content)。
+ * 将来若真有(如某处要显示 `foo.bar` 作为示例),把那个确切串加进来并注明它是什么。
+ */
+const ALLOWED_RAW_KEY_TEXTS = new Set([])
+
+/**
+ * 断言界面上没有 raw-key 形态的可见文本(未解析的 i18n 键被原样渲染)。
+ * zh / en 两种语言都该调——这个洞与语言无关(键在两边都缺时,两种语言都渲染 raw key)。
+ *
+ * 只看**直接文本子节点**且**整段 ≡ raw-key 正则**;[data-user-content]/隐藏元素/白名单子树排除;
+ * 命中 ALLOWED_RAW_KEY_TEXTS 的放过。同时扫 title/aria-label/placeholder。
+ */
+export async function expectNoRawI18nKeysInDom(win, { message, allowSelectors = [], allowTexts = [] } = {}) {
+  const offenders = await win.evaluate(
+    ({ rawKeySource, allow, allowedTexts }) => {
+      const rawKey = new RegExp(rawKeySource)
+      const allowedSet = new Set(allowedTexts)
+      const skipSelectors = ['[data-user-content]', 'style', 'script', 'noscript', 'code', 'pre', ...allow]
+      const isSkipped = (el) => skipSelectors.some((sel) => el.matches?.(sel))
+      const isHidden = (el) => {
+        const style = getComputedStyle(el)
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) <= 0.01) return true
+        const r = el.getBoundingClientRect()
+        return r.width < 1 || r.height < 1
+      }
+      const describe = (el) => {
+        const id = el.id ? `#${el.id}` : ''
+        const testid = el.getAttribute?.('data-testid')
+        const cls = typeof el.className === 'string' && el.className ? `.${el.className.split(/\s+/).slice(0, 2).join('.')}` : ''
+        return `${el.tagName.toLowerCase()}${id}${testid ? `[data-testid=${testid}]` : ''}${cls}`
+      }
+      const looksRaw = (text) => {
+        const t = (text || '').trim()
+        return t.length > 0 && !allowedSet.has(t) && rawKey.test(t)
+      }
+      const hits = []
+      const walk = (el) => {
+        if (isSkipped(el) || isHidden(el)) return
+        for (const node of el.childNodes) {
+          if (node.nodeType === Node.TEXT_NODE && looksRaw(node.nodeValue)) {
+            hits.push({ where: describe(el), text: (node.nodeValue || '').trim().slice(0, 80) })
+          }
+        }
+        for (const child of el.children) walk(child)
+      }
+      if (document.body) walk(document.body)
+      for (const el of document.querySelectorAll('[title],[aria-label],[placeholder]')) {
+        if (isSkipped(el) || isHidden(el)) continue
+        for (const attr of ['title', 'aria-label', 'placeholder']) {
+          const v = el.getAttribute(attr)
+          if (v && looksRaw(v)) hits.push({ where: `${describe(el)}@${attr}`, text: v.trim().slice(0, 80) })
+        }
+      }
+      const seen = new Set()
+      return hits.filter((h) => { const k = `${h.where} ${h.text}`; if (seen.has(k)) return false; seen.add(k); return true })
+    },
+    { rawKeySource: RAW_KEY_RE.source, allow: allowSelectors, allowedTexts: [...ALLOWED_RAW_KEY_TEXTS, ...allowTexts] },
+  )
+  if (offenders.length > 0) {
+    const lines = offenders.slice(0, 20).map((o) => `  · ${o.where}  “${o.text}”`).join('\n')
+    throw new Error(
+      `${message || '界面上出现了未解析的 i18n 键(原始 key 被渲染)'}（RAW-KEY 断言网）：找到 ${offenders.length} 处。\n${lines}\n`
+        + '  → 这些点分标识符是 t() 引用了不存在的键、i18next 兜底把 key 本身渲染出来的(今天 sidebar.workflows 那一类)。\n'
+        + '  修法:把键补进它真正该住的命名空间(zh+en),或改用已存在的键。静态门岗 check:i18n-key-refs 应已从源码这头拦到——\n'
+        + '  若这里报了它没报,可能是动态键(模板拼接);去看那个 t(`...${x}`) 的枚举来源缺了这一项。\n'
+        + '  确属合法技术文案(极少见)才加进 ALLOWED_RAW_KEY_TEXTS,并注明它是什么。',
+    )
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 截图证据的安定门（2026-08-26）
 //
 // 三起事故同一个根因：**在被测物安顿之前就把证据拍下来了**。截图这一族有三个变种：
 //   (a) 主题翻转——走查只写了 data-mantine-color-scheme 一个属性，而生产路径走的是
 //       applyNomiColorScheme（src/theme/colorScheme.ts:54），它要写**四个**：
 //       dataset.theme / dataset.nomiColorScheme / data-mantine-color-scheme / style.colorScheme。
-//       只写一个 = 半翻的主题，再叠上 ~140ms 的 --nomi-transition-fast 过渡；
+//       只写一个 = 半翻的主题，再叠上 ~140ms 的 --nomi-duration-fast 过渡；
 //   (b) 已关闭的弹窗还在画退场动画（Mantine 的常驻 Modal，见 src/design/confirmDialog.tsx:70）；
 //   (c) toast 被拍在滑入动画中途，让视口边缘切掉一半。
 //
@@ -376,7 +564,7 @@ export async function applyColorSchemeForShot(win, scheme) {
     root.setAttribute('data-mantine-color-scheme', value)
     root.style.colorScheme = value
   }, scheme)
-  // 翻完还有 ~140ms 的 --nomi-transition-fast 在跑，等它跑完再让调用方截图。
+  // 翻完还有 ~140ms 的 --nomi-duration-fast 在跑，等它跑完再让调用方截图。
   await waitForVisualQuiescence(win)
 }
 
@@ -392,3 +580,105 @@ export async function readComputedColorChannels(locator, property = 'color') {
   const channels = (raw.match(/-?\d*\.?\d+/g) ?? []).map(Number)
   return { raw, channels }
 }
+
+/**
+ * 浮层「够得着」判据：不是「在 DOM 里」，是**渲染出来的那一块，人真的看得见、点得到**。
+ *
+ * 为什么必须另立一条（2026-09-06 转场选择器真机撞上）：常用的三样证据在这一族上**全部失明**——
+ *   · `toBeVisible()` 绿：DOM 在、没有 display:none、rect 非零，被祖先 overflow 裁掉它一概不知；
+ *   · `getBoundingClientRect()` 绿：**裁切不改 rect**，被裁的浮层照样报完整尺寸、照样"在视口内"；
+ *   · `click()` 绿：Playwright 点击前会 scrollIntoViewIfNeeded，把那个 overflow 容器滚一下再点，
+ *     于是脚本点得动、用户一辈子点不到。上一轮走查就是这么把只露出一条边的选择器判成通过的。
+ *
+ * 所以只能问渲染结果：在浮层矩形上撒网格采样，每个点 `document.elementFromPoint` 必须命中
+ * 浮层自己或它的后代。这一条把「被祖先裁掉」和「被别的浮层盖住」一起挡了，
+ * 视口外的点 elementFromPoint 返回 null，也算漏。
+ *
+ * 用法（`expectOverlayReachable` 默认要求 100% 命中——浮层被切掉一角就是 bug，不设容差）：
+ *   await expectOverlayReachable(picker, '转场选择器')
+ * 漏点会把「那个位置上实际画的是谁」一起报出来，直接指认裁它的那个容器。
+ */
+export async function measureOverlayReach(locator, { grid = 7 } = {}) {
+  return locator.first().evaluate((el, cols) => {
+    const rect = el.getBoundingClientRect()
+    const owns = (node) => Boolean(node) && (node === el || el.contains(node))
+    const describe = (node) => {
+      if (!node) return 'null（点落在视口外）'
+      const className = typeof node.className === 'string' ? node.className : ''
+      return `${node.tagName.toLowerCase()}${className ? `.${className.split(/\s+/).filter(Boolean).slice(0, 3).join('.')}` : ''}`
+    }
+    let hit = 0
+    const misses = []
+    for (let i = 0; i < cols; i += 1) {
+      for (let j = 0; j < cols; j += 1) {
+        const x = rect.left + ((i + 0.5) / cols) * rect.width
+        const y = rect.top + ((j + 0.5) / cols) * rect.height
+        if (owns(document.elementFromPoint(x, y))) hit += 1
+        else if (misses.length < 4) misses.push(`(${Math.round(x)},${Math.round(y)}) 上画的是 ${describe(document.elementFromPoint(x, y))}`)
+      }
+    }
+    return {
+      rect: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
+      inViewport: rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
+      samples: cols * cols,
+      hits: hit,
+      misses,
+    }
+  }, grid)
+}
+
+export async function expectOverlayReachable(locator, label, { grid = 7 } = {}) {
+  if (!label || typeof label !== 'string') {
+    throw new Error('expectOverlayReachable(locator, label)：label 必填，报红要说人话')
+  }
+  await expect(locator.first(), `「${label}」根本没出现，谈不上够不够得着`).toBeVisible({ timeout: DEFAULT_TIMEOUT_MS })
+  const reach = await measureOverlayReach(locator, { grid })
+  if (reach.hits < reach.samples || !reach.inViewport) {
+    throw new Error(
+      `「${label}」在 DOM 里，但人点不到：${reach.hits}/${reach.samples} 个采样点命中它自己，`
+        + `inViewport=${reach.inViewport}，rect=${JSON.stringify(reach.rect)}。\n`
+        + `  漏点上实际画着谁：${reach.misses.join(' | ') || '（无）'}\n`
+        + '  这一族的根因通常是「浮层没出 Portal，被祖先的 overflow 裁了」。\n'
+        + '  别加 z-index、别把祖先改成 overflow-visible（都是症状修法）——\n'
+        + '  改用 src/design/AnchoredPopover.tsx（Portal 到 body + fixed 贴锚点）。',
+    )
+  }
+  return reach
+}
+
+/**
+ * 单个控件「点得到」：中心点的 elementFromPoint 必须命中它自己（不是被别的东西盖住）。
+ * 和上面那条的分工：上面量整块浮层露没露全，这条钉死「这一颗按钮真的能按」。
+ */
+export async function expectHittable(locator, label) {
+  if (!label || typeof label !== 'string') {
+    throw new Error('expectHittable(locator, label)：label 必填')
+  }
+  const target = locator.first()
+  await expect(target, `「${label}」没出现`).toBeVisible({ timeout: DEFAULT_TIMEOUT_MS })
+  const result = await target.evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    const at = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+    const className = at && typeof at.className === 'string' ? at.className : ''
+    return {
+      hit: Boolean(at) && (at === el || el.contains(at)),
+      at: at ? `${at.tagName.toLowerCase()}${className ? `.${className.split(/\s+/).filter(Boolean).slice(0, 3).join('.')}` : ''}` : 'null（视口外）',
+      rect: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
+    }
+  })
+  if (!result.hit) {
+    throw new Error(
+      `「${label}」点不到：它的中心点 ${JSON.stringify(result.rect)} 上画的是 ${result.at}，不是它自己。\n`
+        + '  要么被祖先 overflow 裁掉了，要么被别的浮层盖住了。\n'
+        + '  注意 Playwright 的 click 在这种情况下**仍会成功**（它会先把容器滚一下），所以点得动证明不了什么。',
+    )
+  }
+  return result
+}
+
+// ── 形态契约（2026-09-03）──
+// 意图层（拍板方手写的结构关系）与自动层（从样张导出的挂点/几何/token）**共用这一个入口**，
+// 实现在 `_contract.mjs`。走查里 `import { assertMockupContract } from './_assert.mjs'` 即可。
+export { assertMockupContract, TOKEN_STEP_PX, MAGNITUDE_RATIO } from './_contract.mjs'
+
+export { scanFeel, formatFeelFindings } from './_feel.mjs'

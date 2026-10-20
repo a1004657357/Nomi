@@ -1,6 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const receiptDeps = vi.hoisted(() => ({
+  read: vi.fn(),
+  transition: vi.fn(),
+  proposal: null as null | Record<string, unknown>,
+  state: {
+    binding: {
+      projectId: 'proposal-undo-test',
+      immutableProjectUuid: '11111111-1111-4111-8111-111111111111',
+      projectGeneration: 1,
+    },
+    subscriptionId: 'proposal-undo-subscription',
+  },
+}))
+
+import { laneClient } from '../../ai/lane/laneClient'
 import { applyProposalBatch } from './proposalTxn'
-import { detectLostUserEdits, runProposalUndo, type CommittedProposalRecord } from './proposalUndo'
+import {
+  detectLostUserEdits,
+  hydrateCommittedProposalReceipt,
+  parseCommittedProposalRecord,
+  runProposalUndo,
+  type CommittedProposalRecord,
+} from './proposalUndo'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { setCanvasEventSinkForTests, type CanvasShadowEvent } from '../events/canvasEventEmitter'
 import { __resetCanvasUndoJournalForTests } from '../events/canvasUndoJournal'
@@ -12,14 +34,46 @@ function projection() {
 
 let captured: CanvasShadowEvent[] = []
 
-beforeEach(() => {
+beforeEach(async () => {
   useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [], edges: [], selectedNodeIds: [], groups: [] })
   __resetCanvasUndoJournalForTests()
   captured = []
   setCanvasEventSinkForTests((events) => captured.push(...events))
+  receiptDeps.read.mockReset().mockResolvedValue(null)
+  receiptDeps.transition.mockReset().mockImplementation(async (_subscriptionId, input) => ({
+    binding: receiptDeps.state.binding,
+    revision: input.expectedRevision + 1,
+    lifecycle: input.lifecycle,
+    proposalId: input.proposalId,
+    operationId: input.operationId,
+    proposal: receiptDeps.proposal,
+  }))
+  laneClient.connect({
+    onProjection: () => () => undefined,
+    send: async command => {
+      if (command.kind === 'workspace-open') return { ok: true, workspaceId: receiptDeps.state.subscriptionId }
+      if (command.kind === 'receipt-read') return { ok: true, receipt: await receiptDeps.read(command.workspaceId) }
+      if (command.kind === 'receipt-transition') return { ok: true, receipt: await receiptDeps.transition(command.workspaceId, command.input) }
+      throw new Error(`Unexpected lane command: ${command.kind}`)
+    },
+  })
+  await laneClient.open(receiptDeps.state.binding)
 })
 
+function hydrate(record: CommittedProposalRecord, revision = 2): void {
+  receiptDeps.proposal = record as unknown as Record<string, unknown>
+  hydrateCommittedProposalReceipt({
+    binding: receiptDeps.state.binding,
+    revision,
+    lifecycle: 'committed',
+    proposalId: record.proposalId,
+    operationId: `commit-${record.proposalId}`,
+    proposal: record,
+  })
+}
+
 afterEach(() => {
+  laneClient.connect(undefined)
   setCanvasEventSinkForTests(null)
 })
 
@@ -55,7 +109,8 @@ describe('runProposalUndo — S6-5 整笔撤销(补偿事务,非前缀重放)', 
     const mine = useGenerationCanvasStore.getState().addNode({ kind: 'image', title: '我自己的', prompt: 'mine' })
     expect(useGenerationCanvasStore.getState().nodes).toHaveLength(3)
 
-    runProposalUndo(record)
+    hydrate(record)
+    await runProposalUndo(record)
 
     const state = useGenerationCanvasStore.getState()
     expect(state.nodes.map((node) => node.id)).toEqual([mine.id])
@@ -67,7 +122,8 @@ describe('runProposalUndo — S6-5 整笔撤销(补偿事务,非前缀重放)', 
 
   it('撤销「撤销」= 一次 Cmd+Z,AI 节点回来(补偿进栈一个 barrier)', async () => {
     const record = await commitCreateConnect()
-    runProposalUndo(record)
+    hydrate(record)
+    await runProposalUndo(record)
     expect(useGenerationCanvasStore.getState().nodes).toHaveLength(0)
     useGenerationCanvasStore.getState().undo()
     expect(useGenerationCanvasStore.getState().nodes).toHaveLength(2)
@@ -78,7 +134,8 @@ describe('runProposalUndo — S6-5 整笔撤销(补偿事务,非前缀重放)', 
     const record = await commitCreateConnect()
     const aiNode = useGenerationCanvasStore.getState().nodes[0]
     useGenerationCanvasStore.getState().deleteNode(aiNode.id)
-    runProposalUndo(record)
+    hydrate(record)
+    await runProposalUndo(record)
     expect(useGenerationCanvasStore.getState().nodes).toHaveLength(0)
   })
 
@@ -96,14 +153,16 @@ describe('runProposalUndo — S6-5 整笔撤销(补偿事务,非前缀重放)', 
     expect(useGenerationCanvasStore.getState().nodes).toHaveLength(1)
     if (outcome.status !== 'committed') return
 
-    runProposalUndo({
+    const record = {
       proposalId: outcome.proposalId,
       summary: 'del',
       stepLabels: ['删除 1 个节点'],
       compensation: outcome.compensation,
       watchNodes: outcome.watchNodes,
       reconciliationOk: true,
-    })
+    }
+    hydrate(record)
+    await runProposalUndo(record)
     // 复活节点按原 id/内容回归;数组顺序非语义(绝对定位渲染),排序后比对。
     const sortById = (snapshot: { nodes: { id: string }[]; edges: { id: string }[]; groups: unknown[] }) => ({
       ...snapshot,
@@ -121,14 +180,16 @@ describe('runProposalUndo — S6-5 整笔撤销(补偿事务,非前缀重放)', 
     expect(outcome.status).toBe('committed')
     if (outcome.status !== 'committed') return
     expect(useGenerationCanvasStore.getState().nodes[0].prompt).toBe('AI 改的')
-    runProposalUndo({
+    const record = {
       proposalId: outcome.proposalId,
       summary: 'sp',
       stepLabels: ['改写提示词'],
       compensation: outcome.compensation,
       watchNodes: outcome.watchNodes,
       reconciliationOk: true,
-    })
+    }
+    hydrate(record)
+    await runProposalUndo(record)
     expect(useGenerationCanvasStore.getState().nodes[0].prompt).toBe('原词')
   })
 })
@@ -142,5 +203,20 @@ describe('detectLostUserEdits — 选择性撤销列明(N13)', () => {
     const lost = detectLostUserEdits(record)
     expect(lost).toHaveLength(1)
     expect(lost[0]).toContain(aiNode.title)
+  })
+})
+
+describe('committed proposal persistence', () => {
+  it('restores the immutable timeline text anchor used by the undo-visible card', () => {
+    expect(parseCommittedProposalRecord({
+      proposalId: 'proposal-a',
+      summary: 'updated node',
+      stepLabels: ['updated node'],
+      compensation: [],
+      watchNodes: [],
+      reconciliationOk: true,
+      anchorMessageId: 'assistant-a',
+      anchorTextOffset: 12,
+    })).toMatchObject({ anchorMessageId: 'assistant-a', anchorTextOffset: 12 })
   })
 })

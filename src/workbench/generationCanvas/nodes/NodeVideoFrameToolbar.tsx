@@ -1,25 +1,37 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconCut, IconDownload, IconMaximize, IconPhotoScan, IconPlayerTrackNext, IconPlayerTrackPrev } from '@tabler/icons-react'
+import { IconCut, IconDownload, IconMaximize, IconPhoto, IconPhotoScan, IconPlayerTrackNext, IconPlayerTrackPrev, IconScissors } from '@tabler/icons-react'
 import {
   FloatingToolbarShell,
   TOOLBAR_ICON as I,
-  ToolbarButton,
   ToolbarDivider,
+  ToolbarButton,
+  ToolbarDuplicateVariantButton,
   ToolbarIconButton,
+  ToolbarMenu,
   ToolbarProvenanceButton,
+  ToolbarReshootButton,
 } from './NodeFloatingToolbar'
 import { extractVideoFrameToNode } from './extractVideoFrameToNode'
 import NodeShotCutPanel from './NodeShotCutPanel'
 import VideoKeyframeInspectorDialog from './VideoKeyframeInspectorDialog'
+import NodeDepthActionButton from '../videoDepth/NodeDepthActionButton'
+import { deconstructToShotTable } from './shotTable/factBridge'
+import { withProjectAction } from '../../project/projectCanvasReadSurface'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 
-// 视频节点浮条（按「创作优先级」排左→右，与图片工具栏一致）：左·创作：抽首帧 / 抽尾帧 ｜ 右·工具：全屏 · 下载。
+// 视频节点浮条（按「创作优先级」排左→右，与图片工具栏一致）：左·创作：抽帧▾（首/尾）· 拆解▾（按镜头拆/镜头表）｜ 右·工具：全屏 · 下载。
 // 全屏是「看」的工具，与下载同归右侧工具区，不占最左（此前全屏在最左，抢了创作动作的位）。
 // 抽帧 = 从这段视频取首/尾一帧 → 落独立图片节点（extractVideoFrameToNode），能拿去当 Seedance 首尾帧 /
 // 任何参考 / 接力源。抽首/尾用两个不同图标（⏮/⏭）一眼可分。容器/按钮走共享 NodeFloatingToolbar（token 合规）。
+//
+// 「提取深度」（2026-09-07）排在拆参考片右边，因为左半段这几个是同一族：**从这段片子里
+// 取出点什么，落成一张新卡**（一帧 / 一批帧 / 一张分镜表 / 一段深度视频）。§1.5 的「≤5」
+// 管的是 L1 常驻条，这条浮条整条都是 L2（选中才出），所以加的不是常驻预算；真正要守的是
+// 「一功能一个家」——深度提取从此只有这一个入口，独立节点与加号菜单里的那份同 commit 删掉。
 
 type Props = {
+  reportFeedback: (message: string) => void
   node: GenerationCanvasNode
   downloading: boolean
   onDownload: (event: React.MouseEvent) => void
@@ -28,7 +40,8 @@ type Props = {
   onOpenProvenance: () => void
 }
 
-export default function NodeVideoFrameToolbar({ node, downloading, onDownload, onPreview, onOpenProvenance }: Props): JSX.Element {
+export default function NodeVideoFrameToolbar({ reportFeedback, node, downloading, onDownload, onPreview, onOpenProvenance }: Props): JSX.Element {
+
   const { t } = useTranslation()
   const [busy, setBusy] = React.useState<'first' | 'last' | null>(null)
   const [shotCutOpen, setShotCutOpen] = React.useState(false)
@@ -36,41 +49,36 @@ export default function NodeVideoFrameToolbar({ node, downloading, onDownload, o
   const extract = (which: 'first' | 'last') => {
     if (busy) return
     setBusy(which)
-    void extractVideoFrameToNode(node, which).finally(() => setBusy(null))
+    void extractVideoFrameToNode(node, which, reportFeedback).finally(() => setBusy(null))
   }
   return (
     <>
-    {shotCutOpen ? <NodeShotCutPanel node={node} onClose={() => setShotCutOpen(false)} /> : null}
-    {keyframeInspectorOpen ? (
-      <VideoKeyframeInspectorDialog node={node} onClose={() => setKeyframeInspectorOpen(false)} />
-    ) : null}
-    <FloatingToolbarShell ariaLabel={t('generationCommon.videoToolbar.aria')}>
-      <ToolbarButton
-        icon={<IconPlayerTrackPrev size={I.size} stroke={I.stroke} />}
-        label={
-          busy === 'first'
-            ? t('generationCommon.videoToolbar.extracting')
-            : t('generationCommon.videoToolbar.firstFrame')
-        }
-        title={t('generationCommon.videoToolbar.firstFrameHint')}
+
+    {keyframeInspectorOpen ? <VideoKeyframeInspectorDialog node={node} onClose={() => setKeyframeInspectorOpen(false)} /> : null}
+    {shotCutOpen ? <NodeShotCutPanel onFeedback={reportFeedback} node={node} onClose={() => setShotCutOpen(false)} /> : null}
+    <FloatingToolbarShell ariaLabel={t('generationCommon.videoToolbar.aria')} lockNodeId={node.id}>
+      <ToolbarMenu
+        icon={<IconPhoto size={I.size} stroke={I.stroke} />}
+        label={busy ? t('generationCommon.videoToolbar.extracting') : t('generationCommon.videoToolbar.extractFrame')}
         disabled={busy !== null}
-        onClick={() => extract('first')}
+        items={[
+          { icon: <IconPlayerTrackPrev size={I.size} stroke={I.stroke} />, label: t('generationCommon.videoToolbar.firstFrame'), title: t('generationCommon.videoToolbar.firstFrameHint'), onClick: () => extract('first') },
+          { icon: <IconPlayerTrackNext size={I.size} stroke={I.stroke} />, label: t('generationCommon.videoToolbar.lastFrame'), title: t('generationCommon.videoToolbar.lastFrameHint'), onClick: () => extract('last') },
+        ]}
       />
-      <ToolbarButton
-        icon={<IconPlayerTrackNext size={I.size} stroke={I.stroke} />}
-        label={
-          busy === 'last' ? t('generationCommon.videoToolbar.extracting') : t('generationCommon.videoToolbar.lastFrame')
-        }
-        title={t('generationCommon.videoToolbar.lastFrameHint')}
+      <ToolbarMenu
+        icon={<IconScissors size={I.size} stroke={I.stroke} />}
+        label={t('generationCommon.videoToolbar.breakDown')}
         disabled={busy !== null}
-        onClick={() => extract('last')}
-      />
-      <ToolbarButton
-        icon={<IconCut size={I.size} stroke={I.stroke} />}
-        label={t('generationCommon.videoToolbar.shotCuts')}
-        title={t('generationCommon.videoToolbar.shotCutsHint')}
-        disabled={busy !== null}
-        onClick={() => setShotCutOpen(true)}
+        items={[
+          { icon: <IconCut size={I.size} stroke={I.stroke} />, label: t('generationCommon.videoToolbar.shotCuts'), title: t('generationCommon.videoToolbar.shotCutsHint'), onClick: () => setShotCutOpen(true) },
+          {
+            icon: <IconScissors size={I.size} stroke={I.stroke} />,
+            label: t('generationCommon.videoToolbar.shotTable'),
+            title: t('generationCommon.videoToolbar.deconstructHint'),
+            onClick: () => { withProjectAction((project) => { void deconstructToShotTable(node.id, project).catch((error: unknown) => reportFeedback(error instanceof Error ? error.message : String(error))) }) },
+          },
+        ]}
       />
       <ToolbarButton
         icon={<IconPhotoScan size={I.size} stroke={I.stroke} />}
@@ -79,6 +87,9 @@ export default function NodeVideoFrameToolbar({ node, downloading, onDownload, o
         disabled={busy !== null}
         onClick={() => setKeyframeInspectorOpen(true)}
       />
+      <NodeDepthActionButton reportFeedback={reportFeedback} node={node} disabled={busy !== null} />
+      <ToolbarDuplicateVariantButton nodeId={node.id} />
+      <ToolbarReshootButton nodeId={node.id} />
       <ToolbarDivider />
       <ToolbarIconButton
         icon={<IconMaximize size={I.size} stroke={I.stroke} />}
@@ -86,9 +97,9 @@ export default function NodeVideoFrameToolbar({ node, downloading, onDownload, o
         ariaLabel={t('generationCommon.videoToolbar.fullscreenAria')}
         onClick={onPreview}
       />
-      <ToolbarButton
+      <ToolbarIconButton
         icon={<IconDownload size={I.size} stroke={I.stroke} />}
-        label={t('generationCommon.imageToolbar.download')}
+        ariaLabel={t('generationCommon.imageToolbar.download')}
         title={t('generationCommon.imageToolbar.downloadHint')}
         disabled={downloading}
         onClick={onDownload}

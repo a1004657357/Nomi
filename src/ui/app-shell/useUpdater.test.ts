@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { reduceUpdaterState, UPDATER_INITIAL_STATE } from './useUpdater'
+import { reduceUpdaterState, shouldShowUpdaterDialog, UPDATER_INITIAL_STATE } from './useUpdater'
 
 describe('reduceUpdaterState', () => {
   it('checking 重置为干净检查态', () => {
@@ -39,5 +39,25 @@ describe('reduceUpdaterState', () => {
     const next = reduceUpdaterState(UPDATER_INITIAL_STATE, { type: 'error', message: '网络不可达' })
     expect(next.phase).toBe('error')
     expect(next.errorMessage).toBe('网络不可达')
+  })
+})
+
+describe('shouldShowUpdaterDialog', () => {
+  it('never opens from background phases or task completion alone', () => {
+    for (const phase of ['available', 'downloading', 'downloaded', 'error'] as const) {
+      expect(shouldShowUpdaterDialog({ phase, requested: false })).toBe(false)
+    }
+  })
+
+  it('opens pending update details only when requested', () => {
+    expect(shouldShowUpdaterDialog({ phase: 'available', requested: true })).toBe(true)
+    expect(shouldShowUpdaterDialog({ phase: 'downloaded', requested: true })).toBe(true)
+    expect(shouldShowUpdaterDialog({ phase: 'idle', requested: true })).toBe(false)
+  })
+
+  it('does not leave stale details open after a check completes', () => {
+    for (const phase of ['idle', 'checking', 'up-to-date'] as const) {
+      expect(shouldShowUpdaterDialog({ phase, requested: true })).toBe(false)
+    }
   })
 })

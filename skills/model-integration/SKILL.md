@@ -1,0 +1,117 @@
+---
+name: model-integration
+description: Connect HTTP models or a native ComfyUI workflow through Nomi's verified certification path.
+metadata:
+  nomi:
+    selectable-in-workbench: true
+    version: 1.0.0
+    tools:
+      - nomi_model_setup
+      - nomi_remove_provider
+      - nomi_read
+    required-providers:
+      - text
+      - image
+      - video
+    library:
+      kind: skill
+      title:
+        zh-CN: 模型接入
+        en: Model integration
+      summary:
+        zh-CN: 按已验证的接入流程连接 HTTP 模型或 ComfyUI 工作流。
+        en: Connect and verify HTTP models or ComfyUI workflows.
+      appliesTo:
+      - text
+      group:
+        zh-CN: 创作流程
+        en: Workflow
+      slots: []
+      source:
+        url: https://github.com/aqm857886159/Nomi/blob/7a072f12d4e35d1bf341403d942e5c0c702e6c7b/skills/model-integration/SKILL.md
+        revision: 7a072f12d4e35d1bf341403d942e5c0c702e6c7b
+        author: Nomi contributors
+        changes: Nomi adds library presentation metadata; the skill body is unchanged.
+        evidence:
+        - https://github.com/aqm857886159/Nomi/blob/7a072f12d4e35d1bf341403d942e5c0c702e6c7b/skills/model-integration/SKILL.md
+      preview:
+        path: assets/cover.png
+        type: image
+        provenance: illustration
+license: AGPL-3.0-only
+---
+
+# Nomi model integration
+
+Use Nomi's integration tools to turn a vendor endpoint or a native ComfyUI workflow into a capability that remains usable after restart. The tools are the contract; do not edit Nomi source, Catalog files, or MCP configuration by hand.
+
+## Order
+
+1. **Official contract first.** Start with `nomi_model_setup` (`action: "connect_provider"`) using only public material, and capture the official docs/OpenAPI URL for every `(vendor, model, mode)`. That one call opens Nomi's secure page with the address pre-filled for the user to confirm; never send a key through MCP, and never try to decide where a key is sent — `baseUrl`, `authType`, `authHeader`, `authQueryParam`, `authScheme` and `proxyUrl` are not arguments of any tool. Read the provider docs with web/Bash, probe its public contract, handle pagination and relay quirks yourself, then hand over one complete declaration card with `action: "submit_declaration"`. The card must declare `assetIngestion` explicitly — `{"strategy": "none"}` when the provider has no upload channel; leaving it out is a rejected card, not a fallback. There is no `expectedRevision` to carry: the session fingerprint is filled in for you. Never infer a field from a model name or a neighboring provider.
+2. **Use the existing identity graph.** Reuse the matching `modelArchetype`, `Catalog Mapping`, `HttpOperation`, `integrationCertification`, `GenerationRuntime`, `ProductionRun`, and managed assets. One logical model is one catalog row; use the mapping's generic `modeId` discriminator for same-kind modes instead of vendor-specific exceptions or duplicate rows.
+3. **Treat propose as the persistence gate.** Nomi validates the public proposal, candidate-to-selection references, workflow shape, owner and exact revision before it changes session state. If it returns `propose rejected: <field> ...`, fix that field in the Agent, keep the same session, and retry with the returned/new revision; do not invent an old discovery or input-resolution call. A rejected proposal does not mutate the session.
+4. **Build a canary matrix before network.** For each exact `(vendor, model, mode)` record the official endpoint, required fields, smallest valid parameters, expected output type, upper-bound cost, idempotency key, and one-attempt limit. A model without a complete row stays `documented` or `blocked`; do not infer a cheaper/default field from a neighboring model.
+5. **Static gate before network.** Run `pnpm run check:model-certification-coverage` and the root-cause contract checker. Every archetype you add or change must carry a `sources` field (official doc URL + checked date; there is no gate for it any more, so review it by hand). The static gate must prove mapping identity, generated archetype artifacts, and that no secret entered the ledger.
+6. **Generic mode discrimination is mandatory.** If one logical model exposes multiple same-task modes, each mapping must carry a generic `modeId` and the request must include it whenever selection is ambiguous. An omitted discriminator must fail closed; never add a provider-specific branch or duplicate model row to hide ambiguity.
+7. **Zero-cost loopback and failure matrix.** Exercise create → status/query → result against a local protocol simulator. Cover at least 401, 402/balance, 429, 5xx, timeout, malformed/truncated JSON, unknown status, missing request id, succeeded-without-output, oversized body, and media MIME/magic mismatch. A queued response without a provider request id must fail closed and never be resubmitted.
+8. **Provider-owned assets.** Prefer the provider's signed/ephemeral upload API for local references (for example Runway `POST /v1/uploads` → signed multipart → `runway://` URI). Small images may use an official data URI. Anonymous public image hosts are not a debugging strategy and must never be silently retried when the provider has its own upload path.
+9. **PR #221 MCP cost gate.** Run the MCP zero-cost journey through spend confirmation and verify `provider request count = 0` before any live canary. Confirmation is immutable and user-owned; an agent cannot invent a receipt or confirm spend.
+10. **Live is last and must use the production path.** Only with the user's provider key/credits and explicit canary scope, run one minimal request through Nomi's `GenerationRuntime`/`ProductionRun`, validate the bounded artifact, commit the managed-asset journal, and perform a fresh-process readback. A direct curl/SDK call, provider-only output URL, or loopback pass is not live certification. If managed localization, auth, credits, callback deployment, or network policy blocks the run, keep `status=blocked` with the exact evidence; never retry blindly.
+11. Poll `nomi_read` (`target: "setup"`) and report the real result. A secure key, accepted proposal, staged draft, or partial batch is not completion. Only modes with `live-certified` evidence are usable in a verified-live claim; `simulated` and `blocked` must remain visibly distinct.
+
+## Evidence and failures
+
+- Prefer official vendor documentation and evidence returned by Nomi. Do not guess endpoint paths, auth names, parameter types, or capability kinds.
+- Treat `partial` as partial. Report each unavailable model or mode with its stable reason and exactly one next action.
+- Do not silently truncate candidates. Continue pagination or tell the user why a page cannot be fetched.
+- Do not blindly retry auth, balance, quota, security, or unknown-submission failures. An unknown submission may only be reconciled by its remote task id.
+- A contract mismatch may be repaired only within Nomi's bounded attempt limit. If repair fails, preserve the previous active revision and start a new draft.
+- Common relay failures are context work: a model list may not be at `/models`, a non-image route may return a provider-specific 500, an upstream may return an empty/no-message body, and a custom gateway may require a different auth header, query parameter, payload field, or proxy route. Record the observed contract and propose only the normalized public candidate/workflow that Nomi can certify.
+- Repairing an existing connection: `nomi_model_setup` `action: "connect_provider"` with `vendorKey` changes only the display name, the proxy switch (`proxyEnabled`; the proxy URL itself is never an argument) and, with `reissueKey: true`, reopens the credential page. It cannot change the base URL or the auth placement of a connection that already holds a key — where a saved key is sent is bound when the user saves it on that page, and changing it means reopening it. To hide models from the pickers use `action: "show_models"` with `visible: false`; to delete them for good use `nomi_remove_provider` with the `fingerprint` that `nomi_read target=models` returned. Neither ever accepts a key.
+
+## ComfyUI boundary
+
+This skill covers the native ComfyUI Server routes (`/features`, `/models`, `/workflow_templates`, `/object_info`, `/upload/image`, `/prompt`, `/history`, `/view`, and `/ws`). A platform Cloud or Serverless API that does not implement those routes is an ordinary HTTP provider, not native ComfyUI.
+
+## Safe wording
+
+Say “securely saved, not yet verified” after credential storage. Say “configured, awaiting certification” for a draft. Say “verified and available” only after the final run state says so. Never include credentials, Authorization values, signed URLs, absolute paths, connection fingerprints, or raw provider error pages in a response.
+
+## Certification record template
+
+For each mapping, keep this compact record (the repository ledger is the source of truth):
+
+```json
+{
+  "vendorKey": "runway",
+  "modelKey": "seedance2_5",
+  "archetypeId": "seedance-2.5",
+  "modeId": "omni",
+  "mappingId": "seed-runway-seedance2-5-omni",
+  "official": [{"url": "https://…", "checkedAt": "YYYY-MM-DD"}],
+  "evidence": {"static": "passed", "loopback": "passed", "failureMatrix": "passed", "mcpDryRun": "passed"},
+  "live": {"status": "blocked", "blocker": "Provider key/credits unavailable"},
+  "status": "simulated"
+}
+```
+
+Evaluation must reject guessed fields, missing mode discriminators, anonymous-upload fallbacks when a provider upload exists, a paid call before confirmation, or a `live-certified` claim without a production receipt and fresh-process readback. See `evals/model-integration/unified-certification.eval.json`.
+
+## Required canary record
+
+Keep one evidence row per mapping in the ledger. The row must make the cost and the stopping rule auditable without exposing a credential:
+
+```json
+{
+  "mappingId": "seed-runway-gen4-5-t2v",
+  "canary": {"attempts": 1, "maxCost": "2s minimum", "providerTaskId": "redacted-in-report-only"},
+  "live": {"status": "blocked", "blocker": "Exact external reason"}
+}
+```
+
+Never promote a whole model from a neighboring mode's receipt. Each mode is independently `documented`, `simulated`, `live-certified`, or `blocked`.
+
+## 示例
+
+- **Connect a provider**：Bring an official API origin and choose verified text, image, or video models.
+- **Connect ComfyUI**：Normalize an API or ordinary UI-saved workflow, submit one proposal, and repair field-level rejections.

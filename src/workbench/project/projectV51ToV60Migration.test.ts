@@ -118,6 +118,19 @@ describe('migrateProjectV51ToV60', () => {
   })
 
   describe('shotIndex assignment', () => {
+    it.each(['shot_table', 'text'] as const)('does not give %s a shot number or renumber existing shots', (kind) => {
+      const record = makeRecord([
+        makeNode({ id: 'view', kind, categoryId: 'shots', position: { x: 0, y: 0 } }),
+        makeNode({ id: 'shot', kind: 'image', categoryId: 'shots', shotIndex: 7, renderKind: 'shot-frame', position: { x: 0, y: 100 } }),
+      ])
+      const first = migrateProjectV51ToV60(record)
+      expect(first.record.payload.generationCanvas.nodes[0].shotIndex).toBeUndefined()
+      expect(first.record.payload.generationCanvas.nodes[1].shotIndex).toBe(7)
+      const second = migrateProjectV51ToV60(first.record)
+      expect(second.record).toBe(first.record)
+      expect(second.diagnostic.shotIndicesAssigned).toBe(0)
+    })
+
     it('assigns shotIndex by position.y ascending', () => {
       const record = makeRecord([
         makeNode({ id: 's3', kind: 'image', categoryId: 'shots', position: { x: 0, y: 300 } }),
@@ -160,7 +173,7 @@ describe('migrateProjectV51ToV60', () => {
       expect(diagnostic.shotIndicesAssigned).toBe(1)
     })
 
-    it('repairs storyboard shotIndex values offset by legacy reference-card numbering', () => {
+    it('clears reference-card numbers without rewriting valid canonical shot identities', () => {
       const nodes = [
         makeNode({
           id: 'character-card',
@@ -217,10 +230,9 @@ describe('migrateProjectV51ToV60', () => {
 
       expect(byId.get('character-card')?.shotIndex).toBeUndefined()
       expect(byId.get('prop-card')?.shotIndex).toBeUndefined()
-      expect(byId.get('shot-1')?.shotIndex).toBe(1)
-      expect(byId.get('shot-2')?.shotIndex).toBe(2)
-      expect(diagnostic.shotIndicesCleared).toBe(2)
-      expect(diagnostic.shotIndicesRepaired).toBe(2)
+      expect(byId.get('shot-1')?.shotIndex).toBe(3)
+      expect(byId.get('shot-2')?.shotIndex).toBe(4)
+      expect(diagnostic.shotIndicesAssigned).toBe(2)
     })
   })
 
@@ -326,6 +338,24 @@ describe('migrateProjectV51ToV60', () => {
       const second = migrateProjectV51ToV60(first.record)
       expect(second.diagnostic.referenceEdgesCreated).toBe(0)
       expect(second.record).toBe(first.record)
+    })
+
+    it('其余字段全干净、只剩 meta.referenceImageUrls 待迁 → 闸必须放行（不因 renderKind/shotIndex 已齐而整段跳过）', () => {
+      // 回归：recordNeedsV51ToV60Migration 只查 renderKind/shotIndex/derivedFrom 时，
+      // 这份记录被误判 alreadyMigrated，referenceImageUrls 永不收敛成边。
+      const record = recordWithEdges([
+        { ...imgWithResult('a', 'https://cdn/a.png'), renderKind: 'character-card' },
+        {
+          ...omniShot('v1', ['https://cdn/a.png']),
+          renderKind: 'shot-frame',
+          shotIndex: 1,
+        },
+      ])
+      const { record: out, diagnostic } = migrateProjectV51ToV60(record)
+      expect(diagnostic.alreadyMigrated).toBe(false)
+      expect(diagnostic.referenceEdgesCreated).toBe(1)
+      const v1 = out.payload.generationCanvas.nodes.find((n) => n.id === 'v1')
+      expect((v1?.meta as Record<string, unknown>)?.referenceImageUrls).toBeUndefined()
     })
   })
 })

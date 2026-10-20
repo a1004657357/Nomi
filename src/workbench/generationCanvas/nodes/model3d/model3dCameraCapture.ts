@@ -1,4 +1,5 @@
 import { persistActiveWorkbenchProjectNow } from '../../../project/workbenchProjectSession'
+import type { ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
 import type { GenerationNodeResult } from '../../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import { mediaNodeSize } from '../nodeSizing'
@@ -21,6 +22,7 @@ export type Model3DCameraCaptureFrame = {
 }
 
 export type CreateModel3DCameraCaptureOptions = {
+  project: ProjectExecutionContext | null
   sourceNodeId: string
   camera: Model3DCameraState
   capture: Model3DCameraCaptureFrame
@@ -29,6 +31,7 @@ export type CreateModel3DCameraCaptureOptions = {
     dataUrl: string,
     ownerNodeId: string,
     title: string,
+    project: ProjectExecutionContext | null,
   ) => Promise<PersistedScene3DScreenshot>
   persistProject?: () => Promise<void>
   now?: () => number
@@ -44,6 +47,7 @@ export type Model3DGrid9CaptureFrame = Model3DGrid9CameraGuide & {
 }
 
 export type CreateModel3DGrid9CaptureCollectionOptions = {
+  project: ProjectExecutionContext | null
   sourceNodeId: string
   frames: Model3DGrid9CaptureFrame[]
   title?: string
@@ -71,6 +75,7 @@ function validCaptureFrame(capture: Model3DCameraCaptureFrame): boolean {
 export async function createModel3DCameraCapture(
   options: CreateModel3DCameraCaptureOptions,
 ): Promise<Model3DCameraCaptureOutcome> {
+  options.project?.assertCurrent()
   const initialStore = useGenerationCanvasStore.getState()
   const source = initialStore.nodes.find((node) => node.id === options.sourceNodeId)
   if (!source) throw new Error('3D 机位代理节点不存在')
@@ -93,7 +98,9 @@ export async function createModel3DCameraCapture(
     options.capture.dataUrl,
     source.id,
     title,
+    options.project,
   )
+  options.project?.assertCurrent()
   const createdAt = options.now?.() ?? Date.now()
   const store = useGenerationCanvasStore.getState()
   const output = store.addNode({
@@ -157,6 +164,7 @@ export async function createModel3DCameraCapture(
 export async function createModel3DGrid9CaptureCollection(
   options: CreateModel3DGrid9CaptureCollectionOptions,
 ): Promise<Model3DGrid9CaptureCollectionOutcome> {
+  options.project?.assertCurrent()
   const initialStore = useGenerationCanvasStore.getState()
   const source = initialStore.nodes.find((node) => node.id === options.sourceNodeId)
   if (!source) throw new Error('3D 机位代理节点不存在')
@@ -182,7 +190,9 @@ export async function createModel3DGrid9CaptureCollection(
       frame.capture.dataUrl,
       source.id,
       `${title}-${String(index + 1).padStart(2, '0')}-${frame.id}`,
+      options.project,
     )
+    options.project?.assertCurrent()
     persistedFrames.push({ ...frame, persisted })
   }
 

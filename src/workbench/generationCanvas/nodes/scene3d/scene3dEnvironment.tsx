@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { Environment, Sky } from '@react-three/drei'
 import { useLoader, useThree } from '@react-three/fiber'

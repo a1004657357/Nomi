@@ -37,7 +37,7 @@ const plan: StoryboardPlan = {
 
 beforeEach(() => {
   useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [], edges: [], selectedNodeIds: [], groups: [] })
-  useWorkbenchStore.setState({ storyboardPlan: plan })
+  useWorkbenchStore.getState().hydrateStoryboardDesigns({})
   __resetCanvasUndoJournalForTests()
 })
 

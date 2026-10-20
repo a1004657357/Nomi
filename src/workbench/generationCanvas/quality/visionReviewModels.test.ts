@@ -32,6 +32,9 @@ function model(
     labelZh: modelKey,
     kind: 'text',
     enabled: true,
+    published: true,
+    publishedModes: ['chat'],
+    availability: { usable: true },
     createdAt: '2026-07-17T00:00:00.000Z',
     updatedAt: '2026-07-17T00:00:00.000Z',
     ...patch,
@@ -46,10 +49,15 @@ describe('visionReviewModelOptions', () => {
         model('connected', 'gpt-4o'),
         model('connected', 'doubao-seed-2.0-lite'),
         model('connected', 'deepseek-chat'),
-        model('disconnected', 'gemini-2.5-pro'),
-        model('disabled-vendor', 'claude-3-5-sonnet'),
+        model('disconnected', 'gemini-2.5-pro', {
+          availability: { usable: false, reason: 'credential_missing' },
+        }),
+        model('disabled-vendor', 'claude-3-5-sonnet', {
+          availability: { usable: false, reason: 'vendor_disabled' },
+        }),
         model('connected', 'disabled-model', {
           enabled: false,
+          availability: { usable: false, reason: 'model_disabled' },
           meta: { supportsImageInput: true },
         }),
         model('local', 'qwen2.5-vl-7b'),

@@ -1,0 +1,311 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import test from 'node:test'
+import { repositoryBaselinePath, repositoryRoot } from './check-vocabularies-test-helpers.mjs'
+
+const VAGUE_REASON_REFERENCE = /(?:参见|见)\s*(?:设计文档|文档|方案)/
+const GENERIC_AUTHORITY_REASON = /is the intentional authoritative vocabulary for this local contract/i
+const VAGUE_DEBT_REASON = /(?:待收敛|说不清|疑似|ProjectAgentHost|Owner：)/i
+
+test('known projection vocabularies stay in debt with explicit canonical owners', () => {
+  const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
+  const registeredSites = new Set(baseline.registered.map((entry) => entry.site))
+  const debtBySite = new Map(baseline.debt.map((entry) => [entry.site, entry]))
+  const panoramaSite =
+    'src/workbench/generationCanvas/nodes/PanoramaViewer.tsx::type:PanoramaCaptureFeedback/property:tone/type-union'
+  // 2026-09-08：导出进度那条债**已收敛**（不是搬家）。UI 侧的 PreviewExportStatus 现在从
+  // `ExportProgressStatus` derive、只并上 idle/error 两个局部标志，所以它既不在 debt 里、
+  // 也不该以任何形式出现在基线中；canonical owner 升级成具名类型并留在 registered。
+  // 这里锁住「收敛后的形状」，免得下次有人把它当没登记的新债又加回去。
+  const previewOwnerSite = 'src/workbench/export/exportApi.ts::type:ExportProgressStatus/type-union'
+  const previewDebtSites = [
+    'src/workbench/preview/TimelinePreview.tsx::type:PreviewExportStatus/type-union',
+    'src/workbench/preview/previewExportRequest.ts::type:PreviewExportStatus/type-union',
+  ]
+
+  assert.equal(registeredSites.has(panoramaSite), false)
+  assert.match(debtBySite.get(panoramaSite)?.reason ?? '', /src\/ui\/toast\.tsx::type:ToastType\/type-union/)
+  assert.equal(registeredSites.has(previewOwnerSite), true, 'ExportProgressStatus 应是已登记的 canonical owner')
+  for (const site of previewDebtSites) {
+    assert.equal(debtBySite.has(site), false, `${site} 已收敛，不该再是 debt`)
+  }
+  assert.equal(baseline.debtCap, baseline.debt.length)
+})
+
+test('cross-process exact copies stay debt until a neutral runtime contract exists', () => {
+  const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
+  const registeredSites = new Set(baseline.registered.map((entry) => entry.site))
+  const debtBySite = new Map(baseline.debt.map((entry) => [entry.site, entry]))
+  const crossProcessGroups = [
+    [
+      'electron/ai/onboarding/vendorHealth.ts::type:VendorHealthState/type-union',
+      'electron/preload.ts::property:onboarding/property:vendorHealth/property:state/type-union',
+      'src/desktop/onboardingBridgeTypes.ts::type:VendorHealthState/type-union',
+    ],
+    [
+      'electron/browser/core/browserViewTypes.ts::type:BrowserPromptScreenshotSelectionResult/property:reason/type-union',
+      'src/desktop/bridge.ts::type:DesktopBrowserPromptScreenshotSelection/property:reason/type-union',
+    ],
+    [
+      'electron/catalog/customCallRunner.ts::type:CustomCallTranscriptEntry/property:status/type-union',
+      'src/desktop/modelCatalogBridgeTypes.ts::type:CustomCallTranscriptEntry/property:status/type-union',
+    ],
+    [
+      'electron/catalog/customCallTestRuns.ts::type:CustomCallTestRunState/type-union',
+      'src/desktop/modelCatalogBridgeTypes.ts::type:CustomCallTestRunSnapshot/property:state/type-union',
+    ],
+    [
+      'electron/catalog/dreaminaLoginIpc.ts::type:DreaminaLoginPoll/property:status/type-union',
+      'src/desktop/bridge.ts::type:DesktopBridge/property:dreamina/property:loginPoll/property:status/type-union',
+    ],
+    [
+      'electron/providerAdapter/types.ts::type:AdapterModeState/type-union',
+      'src/desktop/onboardingBridgeTypes.ts::type:DesktopAdapterModeResult/property:state/type-union',
+    ],
+    [
+      'electron/providerAdapter/types.ts::type:AdapterModelMeta/property:state/type-union',
+      'src/ui/onboarding/ModelChipGroups.tsx::type:ChipModel/property:adapterState/type-union',
+      'src/ui/onboarding/modelSettingsCatalogProjection.ts::variable:ADAPTER_STATES/set',
+    ],
+    [
+      'electron/workspace/workspaceRepository.ts::type:WorkspaceProjectDiagnosticStatus/type-union',
+      'src/desktop/bridge.ts::type:DesktopBridge/property:projects/property:diagnose/property:status/type-union',
+    ],
+    [
+      'electron/catalog/codexCli.ts::type:CodexImageJobStatus/type-union',
+      'electron/runtime.ts::type:TaskResult/property:status/type-union',
+      'electron/tasks/responseParsing.ts::function:resolveTaskStatus/as-const',
+    ],
+  ]
+
+  for (const group of crossProcessGroups) {
+    for (const site of group) {
+      const reason = debtBySite.get(site)?.reason ?? ''
+      assert.equal(registeredSites.has(site), false, site)
+      assert.match(reason, /neutral shared contract/i, site)
+      assert.match(reason, /as const tuple/i, site)
+      assert.match(reason, /runtime schema/i, site)
+      assert.match(reason, /main.*preload.*renderer/i, site)
+    }
+  }
+  // 任务状态：renderer 的 TaskStatus / TERMINAL_STATUSES 副本已收进中立模块 electron/shared/taskStatus.ts（唯一 owner）。
+  assert.equal(registeredSites.has('electron/shared/taskStatus.ts::variable:TASK_STATUS_PHASE/type-union'), true)
+  assert.equal(
+    registeredSites.has('electron/shared/providerAdapterContract.ts::variable:ADAPTER_RUN_STAGES/as-const'),
+    true,
+    'Provider Adapter run stages have converged on the neutral shared contract',
+  )
+  // 2026-09-14：MCP 接入状态 / 握手诊断两组跨进程副本已按各自 debt 写的收敛办法做掉——
+  // 中立模块 electron/shared/mcpConnectionContract.ts 是唯一 owner，main / renderer 都从它 derive。
+  for (const site of [
+    'electron/shared/mcpConnectionContract.ts::variable:MCP_CONFIG_STATES/as-const',
+    'electron/shared/mcpConnectionContract.ts::variable:MCP_VERIFY_REASONS/as-const',
+  ]) {
+    assert.equal(registeredSites.has(site), true, `${site} has converged on the neutral shared contract`)
+    assert.equal(debtBySite.has(site), false, site)
+  }
+  for (const retired of [
+    'electron/capabilityCore/mcpConfig.ts::type:McpConfigState/type-union',
+    'src/desktop/mcpBridgeTypes.ts::type:McpConfigState/type-union',
+    'electron/capabilityCore/mcpVerify.ts::type:McpVerifyReason/type-union',
+    'src/desktop/mcpBridgeTypes.ts::type:McpVerifyReason/type-union',
+  ]) {
+    assert.equal(debtBySite.has(retired), false, `${retired} must stay retired, not re-listed as debt`)
+  }
+})
+
+test('repository exact-set owners are upstream and every local projection stays in debt', () => {
+  const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
+  const registeredBySite = new Map(baseline.registered.map((entry) => [entry.site, entry]))
+  const debtBySite = new Map(baseline.debt.map((entry) => [entry.site, entry]))
+  const contextStore =
+    'electron/harness/context/contextStore.ts::interface:StoredAgentContext/property:state/type-union'
+  const contextService =
+    'electron/harness/context/contextService.ts::interface:AgentContextInfo/property:state/type-union'
+  const cardCanonical =
+    'src/ui/onboarding/FoldableModelCard.tsx::type:FoldableModelCardProps/property:status/type-union'
+  const cardProjections = [
+    'src/ui/onboarding/assistantActivationState.ts::function:resolveAssistantActivationState/property:headerStatus/type-union',
+    'src/ui/onboarding/ComfyuiLocalCard.tsx::function:ComfyuiLocalCard/variable:cardStatus/type-union',
+    'src/ui/onboarding/DreaminaMemberCard.tsx::function:DreaminaMemberCard/variable:cardStatus/type-union',
+  ]
+  const reconcileProjections = [
+    'electron/capabilityCore/mcpGenerationTools.ts::type:GenerationPlanningHandlerDependencies/property:reconcile/parameter:outcome/type-union',
+    'src/workbench/production/useProductionStatus.ts::function:useProductionStatus/variable:onPrimaryAction/variable:outcome/type-union',
+  ]
+  // Post-cutover dedup: the canvas node-status vocabulary collapsed into a single
+  // shared as-const owner (electron/shared/canvas/generationNodeStatus.ts). The renderer's
+  // generationNodeStatusSchema is now z.enum(GENERATION_NODE_STATUSES) and GenerationNodeStatus
+  // is a re-export alias — both former sites derive from the const and are no longer owners.
+  const generationStatusCanonical =
+    'electron/shared/canvas/generationNodeStatus.ts::variable:GENERATION_NODE_STATUSES/as-const'
+
+  assert.equal(registeredBySite.has(contextStore), false, 'retired context store has no live owner')
+  assert.equal(debtBySite.has(contextService), false, 'retired context service debt is removed')
+  assert.match(registeredBySite.get(cardCanonical)?.reason ?? '', /Assistant.*ComfyUI.*Dreamina/i)
+  for (const site of cardProjections) {
+    assert.equal(registeredBySite.has(site), false, site)
+    assert.match(
+      debtBySite.get(site)?.reason ?? '',
+      /Exclude<Parameters<typeof FoldableModelCard>\[0\]\['status'\], 'error'>/,
+      site,
+    )
+  }
+  for (const site of reconcileProjections) {
+    assert.equal(registeredBySite.has(site), false, site)
+    const reason = debtBySite.get(site)?.reason ?? ''
+    assert.match(reason, /ProductionRun\/shared.*GenerationReconcileOutcome/i, site)
+    assert.match(reason, /as const tuple.*runtime schema.*JSON Schema.*callback.*IPC validation.*UI/i, site)
+  }
+  assert.equal(registeredBySite.has(generationStatusCanonical), true, generationStatusCanonical)
+  assert.match(registeredBySite.get(generationStatusCanonical)?.reason ?? '', /单源.*z\.enum.*z\.infer/i)
+})
+
+test('repository text-brain reasons preserve metadata readiness without keychain probing', () => {
+  const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
+  const registeredBySite = new Map(baseline.registered.map((entry) => [entry.site, entry]))
+  const debtBySite = new Map(baseline.debt.map((entry) => [entry.site, entry]))
+  const readiness =
+    'src/desktop/bridge.ts::type:DesktopBridge/property:promptLibrary/property:textBrain/property:status/type-union'
+  const stalePreload = 'electron/preload.ts::property:promptLibrary/property:textBrain/property:status/type-union'
+
+  assert.match(registeredBySite.get(readiness)?.reason ?? '', /metadata readiness.*(?:零解密|不解密)/i)
+  assert.match(debtBySite.get(stalePreload)?.reason ?? '', /旧投影.*execution.*locked/i)
+  assert.doesNotMatch(debtBySite.get(stalePreload)?.reason ?? '', /应.*复用.*ApiKeyDecryptStatus/i)
+})
+
+test('repository credential and catalog health vocabularies preserve fail-closed migration states', () => {
+  const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
+  const registeredBySite = new Map(baseline.registered.map((entry) => [entry.site, entry]))
+  const credential = registeredBySite.get(
+    'electron/shared/contracts/apiKeyStatus.ts::variable:API_KEY_DECRYPT_STATUSES/as-const',
+  )
+  const health = registeredBySite.get(
+    'src/workbench/api/modelCatalogApi.ts::type:ModelCatalogHealthIssueCode/type-union',
+  )
+
+  assert.deepEqual(credential?.members, ['locked', 'missing', 'needs_resave', 'ok'])
+  assert.match(credential?.reason ?? '', /needs_resave.*legacy plaintext.*不可执行/i)
+  assert.deepEqual(health?.members, [
+    'catalog_empty',
+    'model_mapping_missing',
+    'vendor_api_key_locked',
+    'vendor_api_key_missing',
+    'vendor_api_key_needs_resave',
+    'vendor_disabled',
+  ])
+  assert.match(health?.reason ?? '', /safeStorage.*锁定.*legacy plaintext.*重存/i)
+})
+
+test('repository helper subsets and incomplete projections remain debt', () => {
+  const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
+  const registeredSites = new Set(baseline.registered.map((entry) => entry.site))
+  const debtBySite = new Map(baseline.debt.map((entry) => [entry.site, entry]))
+  // 2026-09-12：这三条债已经**收敛掉**（不是搬家）——finishTerminal / finishWithError /
+  // finishRunWithFailure 三个同义终态入口合成了唯一的 finishTerminal，参数类型直接用
+  // ProviderAdapterRun["stage"]，不再各写一份子集。所以它们必须**同时**不在 registered、
+  // 也不在 debt 里；再冒出来就是有人又开了第二个终态入口。
+  const convergedAdapterSubsets = [
+    'electron/providerAdapter/service.ts::class:ProviderAdapterService/method:finishTerminal/parameter:stage/type-union',
+    'electron/providerAdapter/service.ts::class:ProviderAdapterService/method:finishWithError/parameter:stage/type-union',
+    'electron/providerAdapter/service.ts::class:ProviderAdapterService/method:finishRunWithFailure/parameter:stage/type-union',
+  ]
+  // 2026-09-25：这三份手抄的 job 状态子集也**收敛掉**了——换成 productionShotPhase.productionJobPhase
+  // 这一个穷尽 mapper（新增 ProductionJobStatus 不给归属 = 编译不过）。它们必须同时不在 registered、也不在 debt 里。
+  const shotSubsets = [
+    'src/workbench/production/shotPlaceholderState.ts::variable:DONE_STATUSES/set',
+    'src/workbench/production/shotPlaceholderState.ts::variable:FAILED_STATUSES/set',
+    'src/workbench/production/shotPlaceholderState.ts::variable:GENERATING_STATUSES/set',
+  ]
+  const vendorProjection = 'src/ui/onboarding/useVendorHealth.ts::type:VendorConnection/property:state/type-union'
+  const incompleteAssetOutcome =
+    'src/workbench/generationCanvas/nodes/nodeAssetWrite.ts::type:AddAssetOutcome/property:status/type-union'
+  const shotPhase = 'electron/shared/productionShotPhase.ts::type:ProductionShotPhase/type-union'
+
+  for (const site of convergedAdapterSubsets) {
+    assert.equal(registeredSites.has(site), false, site)
+    assert.equal(debtBySite.has(site), false, site)
+  }
+  for (const site of shotSubsets) {
+    assert.equal(registeredSites.has(site), false, site)
+    assert.equal(debtBySite.has(site), false, site)
+  }
+  assert.equal(registeredSites.has(shotPhase), true)
+  assert.equal(debtBySite.has(shotPhase), false)
+  assert.match(
+    baseline.registered.find((entry) => entry.site === shotPhase)?.reason ?? '',
+    /合法.*view model.*ProductionJobStatus.*穷尽 mapper/i,
+  )
+  assert.equal(registeredSites.has(vendorProjection), false)
+  assert.match(debtBySite.get(vendorProjection)?.reason ?? '', /VendorHealthState.*checking/i)
+  assert.equal(registeredSites.has(incompleteAssetOutcome), false)
+  assert.match(debtBySite.get(incompleteAssetOutcome)?.reason ?? '', /AddAssetStatus.*full/i)
+  assert.equal(baseline.debtCap, baseline.debt.length)
+})
+
+test('repository-specific runtime and view-model vocabularies are not mislabeled as duplicate debt', () => {
+  const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
+  const registeredBySite = new Map(baseline.registered.map((entry) => [entry.site, entry]))
+  const debtSites = new Set(baseline.debt.map((entry) => entry.site))
+  const legitimateOwners = new Map([
+    [
+      'electron/capabilityCore/mcpAppWidget.ts::type:NomiDraftShot/property:status/type-union',
+      /MCP widget.*view model/i,
+    ],
+    [
+      'electron/capabilityCore/mcpAppWidget.ts::type:NomiDraftState/property:status/type-union',
+      /MCP widget.*view model/i,
+    ],
+    [
+      'electron/shared/agentCapabilities/transportContracts.ts::interface:RuntimeToolCallRecord/property:status/type-union',
+      /runtime port.*tool/i,
+    ],
+    // src/api/desktopAgentsChatStream.ts was deleted by the Host cutover (see
+    // projectAgentCutoverStructure.test.ts asserting the file no longer exists);
+    // its AgentsChatToolStreamPayload.stage owner is correctly gone from the baseline.
+    [
+      'src/workbench/ai/workbenchAiTypes.ts::type:WorkbenchAiMessage/property:status/type-union',
+      /assistant message.*view model/i,
+    ],
+    [
+      'src/workbench/generationCanvas/runner/generationQueueStore.ts::type:QueueEntryState/type-union',
+      /generation queue.*state machine/i,
+    ],
+    [
+      'src/workbench/taskCenter/taskCenterEntries.ts::function:resolveTaskButtonTone/type-union',
+      /TaskCenter.*visual.*view model/i,
+    ],
+    ['src/workbench/taskCenter/taskCenterProjection.ts::variable:TASK_CENTER_GROUPS/as-const', /TaskCenter.*view model/i],
+    ['src/workbench/taskCenter/taskCenterProjection.ts::type:TaskCenterOutcome/type-union', /TaskCenter.*view model/i],
+  ])
+
+  for (const [site, boundary] of legitimateOwners) {
+    assert.equal(debtSites.has(site), false, site)
+    assert.match(registeredBySite.get(site)?.reason ?? '', boundary, site)
+  }
+})
+
+test('baseline reasons are self-contained and only reference repository documents that exist', () => {
+  const baseline = JSON.parse(fs.readFileSync(repositoryBaselinePath, 'utf8'))
+  for (const entry of [...baseline.registered, ...baseline.debt]) {
+    assert.doesNotMatch(entry.reason, /同上/, entry.site)
+    assert.doesNotMatch(entry.reason, VAGUE_REASON_REFERENCE, `${entry.site}: vague document reference`)
+    assert.doesNotMatch(entry.reason, GENERIC_AUTHORITY_REASON, `${entry.site}: generic authority template`)
+    for (const match of entry.reason.matchAll(/docs\/[A-Za-z0-9_./-]+\.md/g)) {
+      assert.equal(fs.existsSync(path.join(repositoryRoot, match[0])), true, `${entry.site}: ${match[0]}`)
+    }
+  }
+  for (const entry of baseline.debt) {
+    assert.doesNotMatch(entry.reason, VAGUE_DEBT_REASON, `${entry.site}: vague convergence reason`)
+  }
+})
+
+test('vague document references are rejected without depending on trailing punctuation', () => {
+  const vagueReasons = ['见文档 §', '见设计文档 §2.2，后续删除 warn。', '见方案中的收敛说明']
+  for (const reason of vagueReasons) assert.match(reason, VAGUE_REASON_REFERENCE)
+
+  const concretePath = 'docs/engineering-rules.md'
+  assert.equal(fs.existsSync(path.join(repositoryRoot, concretePath)), true)
+  assert.doesNotMatch(`参见 ${concretePath} §R14.1`, VAGUE_REASON_REFERENCE)
+})

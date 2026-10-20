@@ -82,20 +82,45 @@ describe('assertAllowedBrowserTarget — 抛错形态', () => {
   })
 })
 
-describe('includeApiKeys IPC 剥离验证（§22.1）', () => {
-  // 直接测 catalogStore 的两个函数（避免 main.ts IPC 集成）
-  it('exportModelCatalogPackage never returns apiKey field even if requested', async () => {
+describe('catalog export credential isolation（§22.1）', () => {
+  it('exportModelCatalogPackage never returns an apiKey field, including for legacy includeApiKeys requests', async () => {
     const { exportModelCatalogPackage } = await import('../../catalog/catalogStore')
-    const pkg = exportModelCatalogPackage({ includeApiKeys: true }) as {
-      vendors: Array<{ vendor: unknown; apiKey?: unknown }>
-    }
-    for (const v of pkg.vendors) {
-      expect(v.apiKey).toBeUndefined()
+    const legacyRequestExport: ReturnType<typeof exportModelCatalogPackage> = Reflect.apply(
+      exportModelCatalogPackage, undefined, [{ includeApiKeys: true }],
+    )
+    for (const pkg of [exportModelCatalogPackage(), legacyRequestExport]) {
+      for (const v of pkg.vendors) {
+        expect(v.apiKey).toBeUndefined()
+      }
     }
   })
 
-  it('exportModelCatalogPackageWithKeys is a separate main-only function (renderer IPC must not call it)', async () => {
+  it('does not expose the deleted credential-bearing export function', async () => {
     const mod = await import('../../catalog/catalogStore')
-    expect(typeof mod.exportModelCatalogPackageWithKeys).toBe('function')
+    expect(mod).not.toHaveProperty('exportModelCatalogPackageWithKeys')
+  })
+
+  it('strips credential material from a nonempty export fixture', async () => {
+    const { buildCatalogPackage } = await import('../../catalog/catalogPackageFormat')
+    const pkg = buildCatalogPackage({
+      version: 13,
+      vendors: [{
+        key: 'fixture', name: 'Fixture', enabled: true,
+        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-20T00:00:00.000Z',
+        meta: { customConfig: { token: 'fixture-legacy-secret' }, extraHeaders: { Authorization: 'fixture-header-secret' } },
+      }],
+      models: [], mappings: [],
+      apiKeysByVendor: {
+        fixture: {
+          vendorKey: 'fixture', apiKey: 'fixture-encrypted-secret', enc: 'safeStorage', enabled: true,
+          createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-20T00:00:00.000Z',
+        },
+      },
+    })
+    expect(pkg.vendors).toHaveLength(1)
+    expect(pkg.vendors[0].apiKey).toBeUndefined()
+    expect(JSON.stringify(pkg)).not.toContain('fixture-legacy-secret')
+    expect(JSON.stringify(pkg)).not.toContain('fixture-header-secret')
+    expect(JSON.stringify(pkg)).not.toContain('fixture-encrypted-secret')
   })
 })

@@ -41,6 +41,7 @@ describe('createModel3DCameraCapture', () => {
   it('creates a connected image node without replacing the source model result', async () => {
     const persistProject = vi.fn(async () => {})
     const outcome = await createModel3DCameraCapture({
+      project: null,
       sourceNodeId: 'model-source',
       camera: { ...DEFAULT_MODEL3D_CAMERA_STATE, azimuth: 90, elevation: 15, distance: 6, fov: 50 },
       capture: {
@@ -102,6 +103,7 @@ describe('createModel3DCameraCapture', () => {
 
   it('does not mutate the canvas when screenshot persistence fails', async () => {
     await expect(createModel3DCameraCapture({
+      project: null,
       sourceNodeId: 'model-source',
       camera: DEFAULT_MODEL3D_CAMERA_STATE,
       capture: { dataUrl: 'data:image/png;base64,capture', width: 1024, height: 1024 },
@@ -126,6 +128,7 @@ describe('createModel3DCameraCapture', () => {
       target: [0, 1, 0],
     })
     const outcome = await createModel3DGrid9CaptureCollection({
+      project: null,
       sourceNodeId: 'model-source',
       frames: guides.map((guide, index) => ({
         ...guide,

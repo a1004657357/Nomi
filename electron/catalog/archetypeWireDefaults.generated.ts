@@ -16,6 +16,40 @@ export const ARCHETYPE_WIRE_DEFAULTS: Record<string, Record<string, Record<strin
 // size 键比例语义桥接（从档案 size 控件选项集 derive）：headless size 别名闸据此判「调用方比例能否落到 size」，
 // 不再只按默认值字面形状猜（修 seedance-2.5-apimart t2v 的 size 默认 "adaptive" 被误判像素语义、吞掉调用方比例）。
 export const ARCHETYPE_SIZE_RATIO_SEMANTIC: Record<string, Record<string, boolean>> = {
+  "happyhorse-1.1": {
+    "text_to_video": true,
+    "image_to_video": true
+  },
+  "grok-imagine-1.5-video": {
+    "text_to_video": true
+  },
+  "seedance-2-apimart": {
+    "text_to_video": true,
+    "image_to_video": true
+  },
+  "seedance-2.5-apimart": {
+    "text_to_video": true,
+    "image_to_video": true
+  },
+  "wan-2.7": {
+    "text_to_video": true,
+    "image_to_video": true
+  },
+  "wan-3.0-apimart": {
+    "text_to_video": true,
+    "image_to_video": true
+  },
+  "omni-flash-ext": {
+    "text_to_video": true,
+    "image_to_video": true
+  },
+  "grok-imagine-image-2": {
+    "text_to_image": true
+  },
+  "gemini-image-3-pro": {
+    "text_to_image": true,
+    "image_edit": true
+  },
   "seedream": {
     "text_to_image": true,
     "image_edit": true
@@ -42,35 +76,16 @@ export const ARCHETYPE_SIZE_RATIO_SEMANTIC: Record<string, Record<string, boolea
   "z-image-turbo": {
     "text_to_image": true
   },
-  "wan-2.7": {
-    "text_to_video": true,
-    "image_to_video": true
-  },
-  "wan-3.0-apimart": {
-    "text_to_video": true,
-    "image_to_video": true
-  },
-  "grok-imagine-1.5-video": {
-    "text_to_video": true
-  },
-  "seedance-2-apimart": {
-    "text_to_video": true,
-    "image_to_video": true
-  },
-  "seedance-2.5-apimart": {
-    "text_to_video": true,
-    "image_to_video": true
-  },
-  "happyhorse-1.1": {
-    "text_to_video": true,
-    "image_to_video": true
-  },
   "seedream-5-pro": {
     "text_to_image": true,
     "image_edit": true
   },
-  "omni-flash-ext": {
-    "text_to_video": true,
-    "image_to_video": true
+  "gpt-image-2.5-flare": {
+    "text_to_image": true,
+    "image_edit": true
+  },
+  "gpt-image-2.5-sunburst": {
+    "text_to_image": true,
+    "image_edit": true
   }
 };

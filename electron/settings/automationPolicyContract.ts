@@ -1,24 +1,22 @@
-import type { AutomationMode } from "../productionRun/productionRunTypes";
+import { DEFAULT_TRUSTED_MCP_CLIENTS } from "../shared/mcpClientRegistry";
 
-const TRUSTED_HOSTS = new Set(["nomi", "claude", "codex", "cursor"]);
-const SAFE_CATALOG_KEY = /^[A-Za-z0-9._:-]{1,160}$/;
+// 泛化（方案 A）：trustedHosts 不再限定为硬编码四值，任意形状合法的 MCP 客户端 key
+// （内置 + 自定义 profile）都可由用户显式勾选加入信任列表。
+const MCP_HOST_KEY = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/**
+ * 2026-09-14 设置页删冗余（审计 §⑥ 1/2/5/7）：
+ * - `mode`（引导/平衡/策略自动）删——档位唯一 owner 是 Agent 面板的 PermissionTier；
+ * - `allowedProviders` / `allowedModels` 删——不再有全局白名单，默认放行全部已接入供应商/模型，
+ *   每次提交在付费确认卡上定这次用哪家/哪个模型（run 级 policy 仍按草稿/计划圈定范围）；
+ * - `confirmFirstSpend` / `autoContinueWithinBudget` / `confirmIrreversible` 与三个 notifyOn* 删——零读者。
+ * 旧持久化文件里的这些键在归一化时直接丢弃（不保留兼容分支）。
+ */
 export type AutomationPolicySettings = {
   schemaVersion: 1;
-  mode: AutomationMode;
   trustedHosts: string[];
-  allowedProviders: string[];
-  allowedModels: string[];
-  maxSpend: number | null;
   maxAttemptsPerJob: number;
-  confirmFirstSpend: true;
-  autoContinueWithinBudget: boolean;
-  confirmIrreversible: true;
   systemNotifications: boolean;
-  notificationSound: boolean;
-  notifyOnGate: boolean;
-  notifyOnFailure: boolean;
-  notifyOnCompletion: boolean;
   minimizeUploads: boolean;
   /** Anonymous temporary hosting is available by default, but UI asks before first use. */
   anonymousAssetHosting: "ask" | "allow" | "deny";
@@ -26,20 +24,10 @@ export type AutomationPolicySettings = {
 
 export const DEFAULT_AUTOMATION_POLICY_SETTINGS: AutomationPolicySettings = {
   schemaVersion: 1,
-  mode: "balanced",
-  trustedHosts: ["nomi", "claude", "codex"],
-  allowedProviders: [],
-  allowedModels: [],
-  maxSpend: null,
+  // 默认信任哪些内置客户端由注册表的 defaultTrusted 决定（唯一 owner），这里不再手抄名单。
+  trustedHosts: ["nomi", ...DEFAULT_TRUSTED_MCP_CLIENTS],
   maxAttemptsPerJob: 3,
-  confirmFirstSpend: true,
-  autoContinueWithinBudget: true,
-  confirmIrreversible: true,
   systemNotifications: true,
-  notificationSound: true,
-  notifyOnGate: true,
-  notifyOnFailure: true,
-  notifyOnCompletion: true,
   minimizeUploads: true,
   anonymousAssetHosting: "ask",
 };
@@ -52,27 +40,15 @@ function boolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
-function catalogKeys(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter((item) => SAFE_CATALOG_KEY.test(item)))];
-}
-
 function trustedHosts(value: unknown): string[] {
   const requested = Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim())
     : DEFAULT_AUTOMATION_POLICY_SETTINGS.trustedHosts;
-  return ["nomi", ...new Set(requested.filter((item) => item !== "nomi" && TRUSTED_HOSTS.has(item)))];
+  return ["nomi", ...new Set(requested.filter((item) => item !== "nomi" && MCP_HOST_KEY.test(item)))];
 }
 
 export function normalizeAutomationPolicySettings(value: unknown): AutomationPolicySettings {
   const raw = record(value);
-  const mode = raw.mode === "guided" || raw.mode === "policy-auto" ? raw.mode : "balanced";
-  const maxSpend = typeof raw.maxSpend === "number" && Number.isFinite(raw.maxSpend) && raw.maxSpend >= 0
-    ? raw.maxSpend
-    : null;
   const attempts = typeof raw.maxAttemptsPerJob === "number" && Number.isFinite(raw.maxAttemptsPerJob)
     ? Math.min(10, Math.max(1, Math.floor(raw.maxAttemptsPerJob)))
     : DEFAULT_AUTOMATION_POLICY_SETTINGS.maxAttemptsPerJob;
@@ -81,20 +57,9 @@ export function normalizeAutomationPolicySettings(value: unknown): AutomationPol
     : DEFAULT_AUTOMATION_POLICY_SETTINGS.anonymousAssetHosting;
   return {
     schemaVersion: 1,
-    mode,
     trustedHosts: trustedHosts(raw.trustedHosts),
-    allowedProviders: catalogKeys(raw.allowedProviders),
-    allowedModels: catalogKeys(raw.allowedModels),
-    maxSpend,
     maxAttemptsPerJob: attempts,
-    confirmFirstSpend: true,
-    autoContinueWithinBudget: boolean(raw.autoContinueWithinBudget, true),
-    confirmIrreversible: true,
     systemNotifications: boolean(raw.systemNotifications, true),
-    notificationSound: boolean(raw.notificationSound, true),
-    notifyOnGate: boolean(raw.notifyOnGate, true),
-    notifyOnFailure: boolean(raw.notifyOnFailure, true),
-    notifyOnCompletion: boolean(raw.notifyOnCompletion, true),
     minimizeUploads: boolean(raw.minimizeUploads, true),
     anonymousAssetHosting,
   };

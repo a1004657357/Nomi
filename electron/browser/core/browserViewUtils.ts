@@ -3,6 +3,7 @@ import type { Rectangle, WebContents } from "electron";
 import { browserViews, browserViewsByWindow } from "./browserViewState";
 import type { BrowserViewIdPayload, BrowserViewRecord } from "./browserViewTypes";
 import { isAllowedBrowserTarget } from "./browserAllowlist";
+import { logWarn } from '../../logging/logger';
 
 export function clampNumber(value: number, min: number, max: number): number {
   if (max < min) return min;
@@ -67,9 +68,7 @@ export function normalizeBrowserUrl(url: unknown): string {
   if (!allowlistResult.allowed) {
     const enforce = process.env.NOMI_BROWSER_ALLOWLIST_ENFORCE === "1";
     // 记录违规（不论是否 enforce，供审计）；enforce 时抛错
-    console.warn(
-      `[nomi:browser-allowlist] ${enforce ? "BLOCKED" : "warn"}: ${allowlistResult.reason}`,
-    );
+    logWarn('browser', 'allowlist-target-unlisted', { enforced: enforce, reason: allowlistResult.reason });
     if (enforce) {
       throw new Error(`browser bridge 拒绝（§22.3）：${allowlistResult.reason}`);
     }

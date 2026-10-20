@@ -1,124 +1,63 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { EMPTY_LANE_PROJECTION } from './lane/laneClient'
 
-// runSingleShotAgent 把「单次任务=先清会话→发 mode:'chat' 消息→自动带模型偏好」收成一个显式入口（B1d）。
-// mock 三个协作方，验：① 循环模式声明为 single-shot；② 清会话在发消息之前；
-// ③ 请求字段逐项透传且 mode 恒 'chat'；④ 助手模型偏好自动附加。
-const clearOrder: string[] = []
-
-vi.mock('./workbenchAiClient', () => ({
-  sendWorkbenchAiMessage: vi.fn(async () => {
-    clearOrder.push('send')
-    return { text: 'ok', usage: undefined }
-  }),
+const deps = vi.hoisted(() => ({ singleShot: vi.fn(), abort: vi.fn() }))
+vi.mock('./lane/laneClient', async (load) => ({
+  ...await load<typeof import('./lane/laneClient')>(),
+  laneClient: { singleShot: deps.singleShot, abortSingleShot: deps.abort },
 }))
-vi.mock('./assistantModelPref', () => ({
-  getAssistantModelPref: vi.fn(() => null),
-}))
-vi.mock('./agentSessionKey', () => ({
-  safeClearAgentSession: vi.fn(async () => {
-    clearOrder.push('clear')
-  }),
-}))
+import { runSingleShotAgent } from './agentLoopMode'
 
-import { sendWorkbenchAiMessage } from './workbenchAiClient'
-import { getAssistantModelPref } from './assistantModelPref'
-import { safeClearAgentSession } from './agentSessionKey'
-import { runSingleShotAgent, AGENT_LOOP_MODE } from './agentLoopMode'
-
-const mockSend = sendWorkbenchAiMessage as unknown as ReturnType<typeof vi.fn>
-const mockPref = getAssistantModelPref as unknown as ReturnType<typeof vi.fn>
-const mockClear = safeClearAgentSession as unknown as ReturnType<typeof vi.fn>
-
-afterEach(() => {
+const request = { featureKey: 'directions:p1', prompt: 'hi', displayPrompt: 'plan', projectId: 'p1', skillKey: 'direction' }
+beforeEach(() => {
   vi.clearAllMocks()
-  clearOrder.length = 0
-  mockPref.mockImplementation(() => null)
+  deps.singleShot.mockResolvedValue({ ok: true, singleShot: { ...EMPTY_LANE_PROJECTION, parts: [
+    { kind: 'assistant-text', sequence: 1, entrySeq: 2, contentIndex: 0, text: 'result', streaming: false },
+  ] } })
 })
 
-describe('runSingleShotAgent —— 单次循环模式的显式入口（B1d）', () => {
-  it('循环模式常量声明齐全（single-shot / multi-turn）', () => {
-    expect(AGENT_LOOP_MODE.singleShot).toBe('single-shot')
-    expect(AGENT_LOOP_MODE.multiTurn).toBe('multi-turn')
+describe('single-shot requests', () => {
+  it('uses the isolated lane command without enqueuing on the user conversation', async () => {
+    const response = await runSingleShotAgent(request)
+    expect(deps.singleShot).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: 'hi', projectId: 'p1', featureKey: 'directions:p1',
+      context: expect.objectContaining({ skillKey: 'direction', approvalPolicy: { mode: 'step', spend: 'confirm' } }),
+    }))
+    expect(response).toMatchObject({ status: 'finished', text: 'result', toolCalls: [] })
   })
 
-  it('先清会话，再发消息（框架托管清会话时机）', async () => {
-    await runSingleShotAgent({
-      sessionKey: 'nomi:production-directions:p1',
-      prompt: 'hi',
-      displayPrompt: '构思创意方向',
-      skillKey: 'workbench.production.direction-planner',
-      skillName: '方向候选规划',
+  it('preserves asset claims instead of accepting display URLs as authority', async () => {
+    await runSingleShotAgent({ ...request,
+      attachments: [{ url: 'nomi-local://frame', contentType: 'image/png', fileName: 'frame.png', kind: 'image' }],
+      attachmentClaims: [{ assetId: 'frame', version: 1 }],
     })
-    expect(mockClear).toHaveBeenCalledWith('nomi:production-directions:p1')
-    expect(clearOrder).toEqual(['clear', 'send'])
+    expect(deps.singleShot.mock.calls[0][0].context.attachments).toEqual([{ assetId: 'frame', version: 1 }])
+    expect(deps.singleShot.mock.calls[0][0]).not.toHaveProperty('attachments')
   })
 
-  it('mode 恒为 chat；prompt/displayPrompt/sessionKey/skill 逐项透传；projectId 有则带无则省', async () => {
-    await runSingleShotAgent({
-      sessionKey: 'nomi:shot-verify:p2',
-      prompt: 'judge this',
-      displayPrompt: 'judge',
-      projectId: 'p2',
-      skillKey: 'workbench.shot-verify',
-      skillName: '镜级画面校验',
-    })
-    const [req, handlers] = mockSend.mock.calls[0]
-    expect(req).toMatchObject({
-      prompt: 'judge this',
-      displayPrompt: 'judge',
-      sessionKey: 'nomi:shot-verify:p2',
-      projectId: 'p2',
-      skillKey: 'workbench.shot-verify',
-      skillName: '镜级画面校验',
-      mode: 'chat',
-    })
-    // 空 handlers（单次流不订阅流事件，与现状一致）
-    expect(handlers).toEqual({})
+  it('does not turn a feature attribution into a requested installed skill', async () => {
+    const { skillKey: _skill, ...featureOnly } = request
+    await runSingleShotAgent(featureOnly)
+    expect(deps.singleShot.mock.calls[0][0].context).not.toHaveProperty('skillKey')
   })
 
-  it('projectId 缺省时不塞进请求（避免 canvasProjectId 落空串）', async () => {
-    await runSingleShotAgent({
-      sessionKey: 'k',
-      prompt: 'p',
-      displayPrompt: 'd',
-      skillKey: 'sk',
-      skillName: 'sn',
-    })
-    const [req] = mockSend.mock.calls[0]
-    expect('projectId' in req).toBe(false)
+  it('preserves the main rejection for an explicitly requested missing skill', async () => {
+    deps.singleShot.mockResolvedValue({ ok: false, code: 'agent_skill_unavailable', diagnostic: 'agent_skill_unavailable' })
+    await expect(runSingleShotAgent(request)).rejects.toThrow('agent_skill_unavailable')
+    expect(deps.singleShot).toHaveBeenCalledOnce()
   })
 
-  it('自动附加助手模型偏好（agentModelKey/agentVendorKey）', async () => {
-    mockPref.mockImplementation(() => ({ modelKey: 'm-x', vendorKey: 'v-y' }))
-    await runSingleShotAgent({
-      sessionKey: 'k',
-      prompt: 'p',
-      displayPrompt: 'd',
-      skillKey: 'sk',
-      skillName: 'sn',
-    })
-    const [req] = mockSend.mock.calls[0]
-    expect(req).toMatchObject({ agentModelKey: 'm-x', agentVendorKey: 'v-y' })
+  it('rejects an explicit attachment that has no main-resolvable asset claim', async () => {
+    await expect(runSingleShotAgent({ ...request, attachments: [
+      { url: 'nomi-local://frame', contentType: 'image/png', fileName: 'frame.png', kind: 'image' },
+    ] })).rejects.toThrow('agent_attachment_claim_required')
+    expect(deps.singleShot).not.toHaveBeenCalled()
   })
 
-  it('无偏好时不附加模型键', async () => {
-    mockPref.mockImplementation(() => null)
-    await runSingleShotAgent({ sessionKey: 'k', prompt: 'p', displayPrompt: 'd', skillKey: 'sk', skillName: 'sn' })
-    const [req] = mockSend.mock.calls[0]
-    expect('agentModelKey' in req).toBe(false)
-    expect('agentVendorKey' in req).toBe(false)
-  })
-
-  it('attachments 有则透传（shot-verify 喂首帧图）', async () => {
-    const attachments = [{ url: 'nomi-local://x.png', contentType: 'image/png', fileName: 'shot-frame.png', kind: 'image' as const }]
-    await runSingleShotAgent({ sessionKey: 'k', prompt: 'p', displayPrompt: 'd', skillKey: 'sk', skillName: 'sn', attachments })
-    const [req] = mockSend.mock.calls[0]
-    expect(req.attachments).toEqual(attachments)
-  })
-
-  it('返回底层响应原样', async () => {
-    mockSend.mockResolvedValueOnce({ text: 'candidate json', usage: { totalTokens: 5 } })
-    const res = await runSingleShotAgent({ sessionKey: 'k', prompt: 'p', displayPrompt: 'd', skillKey: 'sk', skillName: 'sn' })
-    expect(res.text).toBe('candidate json')
+  it('does not return a successful empty plan when the provider failed', async () => {
+    deps.singleShot.mockResolvedValue({ ok: true, singleShot: { ...EMPTY_LANE_PROJECTION, parts: [
+      { kind: 'error', sequence: 1, entrySeq: 2, contentIndex: 0, text: 'provider failed' },
+    ] } })
+    await expect(runSingleShotAgent(request)).rejects.toThrow('provider failed')
   })
 })

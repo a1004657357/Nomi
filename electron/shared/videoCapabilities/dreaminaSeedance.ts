@@ -5,9 +5,9 @@
 // 4 模式 = dreamina 的 4 个视频子命令（mode.fixedParams 注入 dreamina_cmd 选子命令，args 模板首元素取它）：
 //   t2v=text2video（text_to_video 桶）/ i2v=image2video / 首尾帧=frames2video / 全能参考=multimodal2video（后三个同 image_to_video 桶，
 //   靠一条 mapping + per-mode params 控制 flag，空值自动丢 → 避开「image2video 不认 --ratio」类子命令 flag 差异）。
-// multiframe2video（多帧/transition）未接——它无 model_version 且 transition 是按段数组，最特殊，留下一切片。
-import type { ModelParameterControl } from './types'
-import type { ModelArchetype } from './types'
+// multiframe2video（多帧/transition）在 dreaminaMultiframe.ts 单列（无 model_version）。
+import type { ModelParameterControl } from "./types";
+import type { ModelArchetype } from "./types";
 
 const opt = (values: Array<string | number>): ModelParameterControl['options'] =>
   values.map((value) => ({ value, label: String(value) }))
@@ -79,6 +79,7 @@ const MODES: ModelArchetype['modes'] = [
   },
   {
     id: 'multimodal',
+    maxTotalReferences: 12,
     intent: 'character',
     vendorTerm: '全能参考',
     hint: '多模态参考：最多 9 图 / 3 视频 / 3 音频',

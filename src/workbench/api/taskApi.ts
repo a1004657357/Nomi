@@ -1,5 +1,9 @@
-import { getDesktopActiveProjectId } from '../../desktop/activeProject'
 import { getDesktopBridge, type DesktopBridge } from '../../desktop/bridge'
+import { TELEMETRY_ERROR_TYPE_PATTERN, type CapabilitySlot, type DurationBucket, type TelemetryResult } from '../../../electron/shared/contracts/telemetry'
+import { isTerminalTaskStatus, type TaskStatus } from '../../../electron/shared/taskStatus'
+import { classifyGenerationError } from '../observability/classifyError'
+import { describeOpaqueFailure } from '../observability/opaqueFailure'
+import { trackNodeSubmit } from '../generationCanvas/runner/nodeSubmitInFlight'
 
 export type TaskKind =
   | 'chat'
@@ -14,7 +18,7 @@ export type TaskKind =
   | 'text_to_3d'
   | 'image_to_3d'
 
-export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type { TaskStatus }
 
 export type TaskAssetDto = {
   type: 'image' | 'video' | 'audio' | 'model3d'
@@ -24,6 +28,9 @@ export type TaskAssetDto = {
   assetRefId?: string | null
   assetName?: string | null
   durationSeconds?: number
+  /** Intrinsic source dimensions from the desktop asset localization boundary. */
+  width?: number | null
+  height?: number | null
   /** 原始 CDN URL（https://...）。供后续生成直接用，任何 vendor 都能接受，无需上传或转 base64。 */
   providerUrl?: string | null
   model3dValidation?: Model3dValidationSummary
@@ -99,20 +106,45 @@ export type TaskRequestDto = {
   extras?: Record<string, unknown>
 }
 
+/**
+ * 任务的项目身份：提交那一刻由调用方显式给出，随任务持久化，轮询/找回原样复述。
+ * `null` = 明确不属于任何项目（接入测试、提示词改写等）。这里从不读「当前项目」补它。
+ */
+export type TaskProjectIdentity = string | null
+
+function withTaskProjectIdentity(
+  request: TaskRequestDto,
+  projectId: TaskProjectIdentity,
+): TaskRequestDto & { extras: Record<string, unknown> } {
+  const declared = request.extras?.projectId
+  if (declared !== undefined && declared !== (projectId ?? undefined)) {
+    throw new Error('TASK_PROJECT_MISMATCH: request.extras.projectId disagrees with the task project identity')
+  }
+  const extras: Record<string, unknown> = { ...(request.extras || {}) }
+  delete extras.projectId
+  return { ...request, extras: { ...extras, ...(projectId ? { projectId } : {}) } }
+}
+
 export type FetchWorkbenchTaskResultRequestDto = {
   taskId: string
   vendor?: string
   taskKind?: TaskKind
   prompt?: string | null
   modelKey?: string | null
-  /** 续查所属项目：内存缓存 miss 后主进程无状态重建查询时，用它把找回的资产本地化进项目。 */
-  projectId?: string | null
+  /** Persisted archetype mode discriminator for mode-specific mappings. */
+  archetype?: { modeId?: string | null } | null
+  /** 任务提交时固定的项目身份（必填，null = 不属于任何项目）：主进程据此核对缓存任务、无状态重建时本地化资产。 */
+  projectId: TaskProjectIdentity
 }
 
 export type FetchWorkbenchTaskResultResponseDto = {
   vendor: string
   result: TaskResultDto
 }
+
+export type ComfyCandidateTestResultDto =
+  | { ok: true; revisionId: string; active: { vendorKey: string; modelKey: string }; remoteTaskId?: string }
+  | { ok: false; revisionId: string; reasonCode: string; params: Record<string, string | number | boolean> }
 
 function requireDesktopRuntime(feature: string): DesktopBridge {
   const desktop = getDesktopBridge()
@@ -121,46 +153,144 @@ function requireDesktopRuntime(feature: string): DesktopBridge {
 }
 
 /** 付费守卫：真人确认后铸一次性令牌（绑 nodeIds），返回 grantId。仅由确认事件链调用。 */
-export async function mintSpendGrant(
-  nodeIds: string[],
-  maxAttemptsPerNode?: number,
-  ttlMs?: number,
-): Promise<string> {
+export async function mintSpendGrant(nodeIds: string[], maxAttemptsPerNode?: number, quoteId?: string, ttlMs?: number): Promise<string> {
   const desktop = requireDesktopRuntime('spend authorization')
   const { grantId } = await desktop.tasks.grantSpend({
     nodeIds,
+    ...(quoteId ? { quoteId } : {}),
     ...(maxAttemptsPerNode ? { maxAttemptsPerNode } : {}),
     ...(ttlMs && ttlMs > 0 ? { ttlMs } : {}),
   })
   return grantId
 }
 
-export async function runWorkbenchTaskByVendor(vendor: string, request: TaskRequestDto): Promise<TaskResultDto> {
+function telemetryCapability(kind: TaskKind): CapabilitySlot | null {
+  if (kind === 'text_to_image') return 'image'
+  if (kind === 'image_edit') return 'image-edit'
+  if (kind === 'text_to_video' || kind === 'image_to_video') return 'video'
+  if (kind === 'text_to_audio') return 'audio'
+  if (kind === 'text_to_3d' || kind === 'image_to_3d') return '3d'
+  return null
+}
+
+/**
+ * 失败只上报「类别码」——`classifyGenerationError` 那一张分类表的 kind，原文、URL、提示词、
+ * 文件名、供应商返回体一个字都不出这个函数。分不出来就是 'unknown'。
+ */
+function failureTypeOf(message: string | undefined): string {
+  try {
+    const kind = classifyGenerationError(String(message ?? '')).kind
+    return TELEMETRY_ERROR_TYPE_PATTERN.test(kind) ? kind : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+function trackGenerationOutcome(desktop: DesktopBridge, capability: CapabilitySlot, startedAt: number, result: TelemetryResult, failureMessage?: string): void {
+  const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt
+  void desktop.telemetry?.track({
+    eventName: 'generation.completed',
+    props: {
+      capability,
+      durationBucket: durationBucketOf(elapsed),
+      result,
+      attemptCountBucket: '1',
+      ...(result === 'failure' ? { errorType: failureTypeOf(failureMessage) } : {}),
+    },
+  })
+}
+
+function durationBucketOf(ms: number): DurationBucket {
+  return ms < 1000 ? '<1s' : ms <= 5000 ? '1-5s' : '>5s'
+}
+
+/** 已提交、还没到终态的异步生成：任务 id → 开始时间与能力。到终态报一次就删；上限防泄漏。 */
+const inFlightGenerations = new Map<string, { capability: CapabilitySlot; startedAt: number }>()
+const IN_FLIGHT_LIMIT = 200
+function rememberInFlightGeneration(taskId: string, capability: CapabilitySlot, startedAt: number): void {
+  if (!taskId) return
+  if (inFlightGenerations.size >= IN_FLIGHT_LIMIT) {
+    const oldest = inFlightGenerations.keys().next().value
+    if (oldest !== undefined) inFlightGenerations.delete(oldest)
+  }
+  inFlightGenerations.set(taskId, { capability, startedAt })
+}
+
+export async function runWorkbenchTaskByVendor(
+  vendor: string,
+  request: TaskRequestDto,
+  projectId: TaskProjectIdentity,
+): Promise<TaskResultDto> {
   const normalizedVendor = String(vendor || '').trim()
   if (!normalizedVendor) throw new Error('vendor is required')
   const desktop = requireDesktopRuntime('task execution')
-  const projectId = getDesktopActiveProjectId()
-  return desktop.tasks.run({
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  const capability = telemetryCapability(request.kind)
+  // 这一笔在主进程回话之前都算「在途」——切项目重装画布时，装载收敛据此不把它当幽灵转圈收成空闲。
+  const settleSubmit = trackNodeSubmit(typeof request.extras?.nodeId === 'string' ? request.extras.nodeId : undefined)
+  try {
+    const response = await desktop.tasks.run({
+      vendor: normalizedVendor,
+      request: withTaskProjectIdentity(request, projectId),
+    }) as TaskResultDto
+    if (capability) {
+      if (isTerminalTaskStatus(response.status)) {
+        trackGenerationOutcome(desktop, capability, startedAt, response.status === 'succeeded' ? 'success' : 'failure', response.error)
+      } else {
+        // 还在跑（queued/running）：这不是一个结果。最终结果在轮询到终态时报（fetchWorkbenchTaskResultByVendor），
+        // 之前把它记成 cancel，视频这类异步任务的成败就全丢了。
+        rememberInFlightGeneration(response.id, capability, startedAt)
+      }
+    }
+    return response
+  } catch (error) {
+    if (capability) trackGenerationOutcome(desktop, capability, startedAt, 'failure', error instanceof Error ? error.message : String(error))
+    throw error
+  } finally {
+    settleSubmit()
+  }
+}
+
+export async function runComfyCandidateTestByVendor(
+  vendor: string,
+  payload: { candidate: { revisionId: string; modelKey: string; taskKind: TaskKind }; request: TaskRequestDto },
+  projectId: TaskProjectIdentity,
+): Promise<ComfyCandidateTestResultDto> {
+  const normalizedVendor = String(vendor || '').trim()
+  if (!normalizedVendor) throw new Error('vendor is required')
+  const desktop = requireDesktopRuntime('ComfyUI candidate certification')
+  if (!desktop.tasks.runComfyCandidateTest) throw new Error('ComfyUI candidate certification is unavailable')
+  return desktop.tasks.runComfyCandidateTest({
     vendor: normalizedVendor,
-    request: {
-      ...request,
-      extras: {
-        ...(request.extras || {}),
-        ...(projectId ? { projectId } : {}),
-      },
-    },
-  }) as Promise<TaskResultDto>
+    candidate: payload.candidate,
+    request: withTaskProjectIdentity(payload.request, projectId),
+  })
+}
+
+export async function cancelComfyCandidateTestRevision(candidate: {
+  revisionId: string; modelKey: string; taskKind: TaskKind
+}): Promise<{ ok: boolean }> {
+  const desktop = requireDesktopRuntime('ComfyUI candidate cancellation')
+  if (!desktop.tasks.cancelComfyCandidateTest) throw new Error('ComfyUI candidate cancellation is unavailable')
+  return desktop.tasks.cancelComfyCandidateTest(candidate)
 }
 
 export async function fetchWorkbenchTaskResultByVendor(
   payload: FetchWorkbenchTaskResultRequestDto,
 ): Promise<FetchWorkbenchTaskResultResponseDto> {
-  // 带上当前项目：内存缓存命中走 cached.projectId；miss 后无状态重建查询时主进程用 payload.projectId 本地化资产。
-  const projectId = payload.projectId ?? getDesktopActiveProjectId()
-  return requireDesktopRuntime('task result polling').tasks.result({
-    ...payload,
+  // 只复述任务自带的项目身份：缓存命中时主进程核对它与提交时一致，miss 后无状态重建用它本地化资产。
+  const { projectId, ...query } = payload
+  const desktop = requireDesktopRuntime('task result polling')
+  const response = await desktop.tasks.result({
+    ...query,
     ...(projectId ? { projectId } : {}),
-  }) as Promise<FetchWorkbenchTaskResultResponseDto>
+  }) as FetchWorkbenchTaskResultResponseDto
+  const pending = inFlightGenerations.get(payload.taskId)
+  if (pending && isTerminalTaskStatus(response.result.status)) {
+    inFlightGenerations.delete(payload.taskId)
+    trackGenerationOutcome(desktop, pending.capability, pending.startedAt, response.result.status === 'succeeded' ? 'success' : 'failure', response.result.error)
+  }
+  return response
 }
 
 export async function cancelWorkbenchTask(payload: {
@@ -180,21 +310,15 @@ export async function cancelWorkbenchTask(payload: {
 export async function runWorkbenchTextTaskStream(
   vendor: string,
   request: TaskRequestDto,
+  projectId: TaskProjectIdentity,
   opts: { onDelta?: (delta: string) => void; signal?: AbortSignal } = {},
 ): Promise<TaskResultDto> {
   const normalizedVendor = String(vendor || '').trim()
   if (!normalizedVendor) throw new Error('vendor is required')
   const desktop = requireDesktopRuntime('text streaming')
-  const projectId = getDesktopActiveProjectId()
   const payload = {
     vendor: normalizedVendor,
-    request: {
-      ...request,
-      extras: {
-        ...(request.extras || {}),
-        ...(projectId ? { projectId } : {}),
-      },
-    },
+    request: withTaskProjectIdentity(request, projectId),
   }
   const { streamId } = await desktop.tasks.runTextStream(payload)
   return new Promise<TaskResultDto>((resolve, reject) => {
@@ -212,7 +336,7 @@ export async function runWorkbenchTextTaskStream(
       } else if (evt?.type === 'done') {
         finish(() => resolve(evt.result as TaskResultDto))
       } else if (evt?.type === 'error') {
-        finish(() => reject(new Error(evt.message || '文本流式生成失败')))
+        finish(() => reject(new Error(evt.message || describeOpaqueFailure(null))))
       }
     })
     // 外部取消：通知主进程真中断流 + 兜底 reject。

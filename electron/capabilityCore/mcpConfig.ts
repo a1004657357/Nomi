@@ -5,24 +5,33 @@
 // 启动条目 = **包内 Helper 的 Node 模式 + mcpNodeLauncher.js**。Helper 本身就是 Nomi 随包携带的
 // Node runtime，不依赖用户装 node；它不注册第二个 NSApplication，而是连接已开的 Nomi RPC，必要时
 // 先启动唯一的 Nomi GUI。这样 GUI 已开时 Claude/Codex/Cursor 不会在 AppKit 注册阶段直接 SIGABRT。
-// 支持 Claude Code / Codex / Cursor 三个一键，其余助手走 UI 的「复制配置」。
-// 安全口径（三客户端一致）：**只写各自固定文件**（非任意路径写）；写前自动备份；**合并而非覆盖**
-// （保留用户已有的其它 MCP server）；原子写（tmp→rename）。
+// 内置客户端名单与各家配置路径的唯一 owner 是 electron/shared/mcpClientRegistry.ts，其余助手走 UI 的
+// 「其他客户端 · 复制通用配置」（不带客户端身份的条目）。
+// 安全口径（各客户端一致）：**只写各自固定文件**（非任意路径写）；写前自动备份；**合并而非覆盖**
+// （保留用户已有的其它 MCP server）；原子写（tmp→rename）；**读路径零写盘**——`readMcpInfo` /
+// `clientInfo` 只读不写，所有写盘只从 `installMcp` / `uninstallMcp` / `repairStaleMcpConfigs` 三个显式
+// 入口到达，且全部经同一扇门 `atomicWrite`，隔离实例（走查 / 评测）在那扇门上被拒（R28）。
 // Codex 是 TOML，用块级文本合并（按 [表头] 边界只换我们自己的 [mcp_servers.nomi] 块），不引 TOML 依赖（P1）。
 import { app } from 'electron'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { renameSyncWithRetry } from '../jsonFile'
+import { readJsonFile, renameSyncWithRetry, writeJsonFileAtomic } from '../jsonFile'
 import {
+  BUILTIN_MCP_CLIENTS,
   MCP_CLIENT_ENV,
   MCP_CLIENT_PROOF_ENV,
+  isValidMcpClientKey,
   readToken,
   signMcpClient,
   verifyMcpClient,
   type AuthenticatedMcpClient,
 } from './security'
+import { builtinMcpClientConfigPath, isMcpClientAppInstalled, profilesPath } from './mcpDetectedClients'
 import { readAutomationPolicySettings } from '../settings/automationPolicySettings'
+import { SETTINGS_ROOT_ENV, getSettingsRoot } from '../settings/settingsRoot'
+import { MCP_CLIENT_REGISTRY, isBuiltinMcpClient, type BuiltinMcpClient } from '../shared/mcpClientRegistry'
+import type { McpConfigState } from '../shared/mcpConnectionContract'
 
 const SERVER_NAME = 'nomi'
 export const MCP_CONFIG_VERSION_ENV = 'NOMI_MCP_CONFIG_VERSION'
@@ -30,15 +39,7 @@ export const MCP_CONFIG_KIND_ENV = 'NOMI_MCP_CONFIG_KIND'
 export const MCP_CONFIG_VERSION = '3'
 
 export type McpLauncherKind = 'packaged' | 'development'
-export type McpConfigState =
-  | 'absent'
-  | 'current'
-  | 'development'
-  | 'legacy-launcher'
-  | 'stale-development'
-  | 'auth-stale'
-  | 'launcher-stale'
-  | 'custom'
+export type { McpConfigState }
 
 export type McpClientKey = AuthenticatedMcpClient
 
@@ -49,14 +50,102 @@ type ClientSpec = {
   configPath: () => string
 }
 
-const CLIENTS: Record<McpClientKey, ClientSpec> = {
-  claude: { label: 'Claude Code', format: 'json', configPath: () => path.join(os.homedir(), '.claude.json') },
-  cursor: { label: 'Cursor', format: 'json', configPath: () => path.join(os.homedir(), '.cursor', 'mcp.json') },
-  codex: { label: 'Codex', format: 'toml', configPath: () => path.join(os.homedir(), '.codex', 'config.toml') },
+/** 内置客户端 spec：从注册表 derive；当前平台没有这个客户端（如 Linux 上的 Claude Desktop）则不出现。 */
+function builtinClientSpec(key: BuiltinMcpClient): ClientSpec | null {
+  const target = builtinMcpClientConfigPath(key)
+  if (!target) return null
+  const spec = MCP_CLIENT_REGISTRY[key]
+  return { label: spec.label, format: spec.format, configPath: () => target }
 }
 
-function resolveClient(client?: string): McpClientKey {
-  return client === 'codex' || client === 'cursor' ? client : 'claude'
+// ── 自定义 MCP 客户端 profile（方案 A：把客户端身份从三值泛化成可注册）──────────
+// 内置三客户端是注册表的种子；其余任意支持 MCP stdio 的工具按「名字 + 配置路径 + 格式」注册。
+// 持久化到 capabilityCoreDir()（~/.nomi/capability-core，见 mcpDetectedClients.ts）——app 侧与 bare-Node
+// CLI 端算同一处，检测（mcpNodeLauncher）与注册（GUI）共用单一真相源。
+// 安全口径与内置一致：只写用户显式指定的固定文件；写前备份；合并而非覆盖；原子写。
+
+export type McpClientProfile = {
+  key: string
+  label: string
+  format: 'json' | 'toml'
+  configPath: string
+  isBuiltin: boolean
+  /** true = 自动检测到的客户端（自报名字，尚未配置路径）；false = 用户手动注册（有 configPath）。 */
+  detected: boolean
+  /** 检测时的原始自报名字（detected 改名后保留，用于检测去重）。 */
+  sourceName?: string
+}
+
+const CUSTOM_PROFILE_KEY = /^[a-z0-9][a-z0-9-]{0,63}$/
+
+function normalizeCustomProfile(value: unknown): McpClientProfile | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  if (typeof raw.key !== 'string' || !CUSTOM_PROFILE_KEY.test(raw.key)) return null
+  if (typeof raw.label !== 'string' || !raw.label.trim()) return null
+  if (raw.format !== 'json' && raw.format !== 'toml') return null
+  if (typeof raw.configPath !== 'string') return null
+  const detected = raw.detected === true
+  // detected 客户端还没配路径（configPath 可为空）；手动注册必须有绝对路径。
+  if (!detected && !path.isAbsolute(raw.configPath)) return null
+  return {
+    key: raw.key,
+    label: raw.label.trim(),
+    format: raw.format,
+    configPath: raw.configPath,
+    isBuiltin: false,
+    detected,
+    sourceName: typeof raw.sourceName === 'string' ? raw.sourceName : undefined,
+  }
+}
+
+/** 读自定义 profile 列表（内置三客户端不在此，它们是 CLIENTS 种子）。 */
+export function listCustomMcpProfiles(): McpClientProfile[] {
+  try {
+    const raw = readJsonFile(profilesPath())
+    if (!Array.isArray(raw)) return []
+    return raw.map(normalizeCustomProfile).filter((p): p is McpClientProfile => p !== null)
+  } catch {
+    return []
+  }
+}
+
+/** 注册/更新一个自定义 profile；key 与内置三客户端冲突或非法则拒绝。 */
+export function registerCustomMcpProfile(profile: unknown): McpClientProfile | null {
+  const normalized = normalizeCustomProfile(profile)
+  if (!normalized) return null
+  if (isBuiltinMcpClient(normalized.key)) return null // 内置 key 不可覆盖
+  const next = listCustomMcpProfiles().filter((p) => p.key !== normalized.key)
+  next.push(normalized)
+  writeJsonFileAtomic(profilesPath(), next)
+  return normalized
+}
+
+/** 移除一个自定义 profile（内置不可删）。返回是否真的删了。 */
+export function removeCustomMcpProfile(key: string): boolean {
+  if (!CUSTOM_PROFILE_KEY.test(key) || isBuiltinMcpClient(key)) return false
+  const current = listCustomMcpProfiles()
+  const next = current.filter((p) => p.key !== key)
+  if (next.length === current.length) return false
+  writeJsonFileAtomic(profilesPath(), next)
+  return true
+}
+
+/** 内置 + 自定义的合并 spec。内置优先；查不到返回 null。 */
+function resolveClientSpec(key: string): ClientSpec | null {
+  if (isBuiltinMcpClient(key)) return builtinClientSpec(key)
+  const custom = listCustomMcpProfiles().find((p) => p.key === key)
+  if (!custom) return null
+  return { label: custom.label, format: custom.format, configPath: () => custom.configPath }
+}
+
+/**
+ * 不传 = Claude Code（老 preload 的默认）；传了但不认识 = null。此前任何不认识的 key 都静默回落成
+ * 'claude'，渲染层透传来的字符串写错一个字母就会把别人的身份写进 Claude 的文件。
+ */
+function resolveClient(client?: string): McpClientKey | null {
+  if (client === undefined || client === '') return 'claude'
+  return isValidMcpClientKey(client) && resolveClientSpec(client) ? client : null
 }
 
 /** MCP server 启动条目（command/args/env），三客户端共用。 */
@@ -70,6 +159,10 @@ type LauncherEntry = {
 }
 
 function packagedNodeLauncherPaths(appCommand: string): Pick<LauncherEntry, 'command' | 'args'> {
+  const joinPortable = (...parts: string[]): string => {
+    const first = String(parts[0] || '')
+    return (path.win32.isAbsolute(first) && !path.posix.isAbsolute(first) ? path.win32 : path.posix).join(...parts)
+  }
   if (process.platform === 'darwin') {
     const contentsDir = path.resolve(path.dirname(appCommand), '..')
     return {
@@ -79,7 +172,7 @@ function packagedNodeLauncherPaths(appCommand: string): Pick<LauncherEntry, 'com
   }
   return {
     command: appCommand,
-    args: [path.join(path.dirname(appCommand), 'resources', 'app.asar', 'dist-electron', 'capabilityCore', 'mcpNodeLauncher.js')],
+    args: [joinPortable(path.dirname(appCommand), 'resources', 'app.asar', 'dist-electron', 'capabilityCore', 'mcpNodeLauncher.js')],
   }
 }
 
@@ -99,8 +192,13 @@ function nodeLauncherEntry(appCommand: string, appArgs: string[], kind: McpLaunc
   const packaged = kind === 'packaged'
   const packagedLauncher = packaged ? packagedNodeLauncherPaths(appCommand) : null
   const command = packagedLauncher?.command ?? appCommand
+  const appPath = app.getAppPath()
+  const joinPortable = (...parts: string[]): string => {
+    const first = String(parts[0] || '')
+    return (path.win32.isAbsolute(first) && !path.posix.isAbsolute(first) ? path.win32 : path.posix).join(...parts)
+  }
   const launcherScript = packagedLauncher?.args[0]
-    ?? path.join(app.getAppPath(), 'dist-electron', 'capabilityCore', 'mcpNodeLauncher.js')
+    ?? joinPortable(appPath, 'dist-electron', 'capabilityCore', 'mcpNodeLauncher.js')
   return {
     command,
     args: [launcherScript],
@@ -109,6 +207,7 @@ function nodeLauncherEntry(appCommand: string, appArgs: string[], kind: McpLaunc
       ELECTRON_RUN_AS_NODE: '1',
       NOMI_MCP_APP_COMMAND: appCommand,
       NOMI_MCP_APP_ARGS: JSON.stringify(appArgs),
+      NOMI_SETTINGS_DIR: getSettingsRoot(),
     },
   }
 }
@@ -148,7 +247,53 @@ function ensureDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
 }
 
+/** 写盘被拒的原因（UI 按它走 i18n）。 */
+export type McpWriteRefusal = 'unknown-client' | 'client-not-installed' | 'isolated-instance' | 'config-unreadable'
+
+export class HostConfigWriteRefused extends Error {
+  constructor(readonly reason: McpWriteRefusal, detail: string) {
+    super(`host config write refused (${reason}): ${detail}`)
+  }
+}
+
+/** 隔离实例的判据（唯一一份；协议登记等也问它）：走查/评测启动器钉死的 NOMI_E2E，或设置根不是本机 Electron 的 userData。 */
+export function isolatedInstanceMarker(): string | null {
+  if (process.env.NOMI_E2E === '1') return 'NOMI_E2E=1'
+  const settingsRoot = String(process.env[SETTINGS_ROOT_ENV] || '').trim()
+  if (settingsRoot && path.resolve(settingsRoot) !== path.resolve(app.getPath('userData'))) return `${SETTINGS_ROOT_ENV}=${settingsRoot}`
+  return null
+}
+
+/** 真实用户主目录——取 passwd/profile 那份，不取 HOME 环境变量（走查会把 HOME 换成临时目录）。 */
+function realUserHome(): string | null {
+  try {
+    const home = os.userInfo().homedir
+    return home && path.isAbsolute(home) ? path.resolve(home) : null
+  } catch {
+    return null
+  }
+}
+
+function isInside(target: string, root: string): boolean {
+  const relative = path.relative(root, path.resolve(target))
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+/**
+ * 隔离实例（走查 / 评测 / 临时 profile）不得改写**真实用户主目录**下的宿主配置——那会把开发者本机的
+ * Claude Code / Codex / Cursor 全指到一个跑完就删的临时 profile（2026-09-13 本机 5 个文件全指向死掉的
+ * /tmp/nomi-real-agent-*，就是这么来的）。HOME 已换成临时目录的走查照常可写（目标不在真实主目录里）。
+ * 守卫住在唯一的写盘门上，而不是某个包装层：包装层可以被绕（此前 readMcpInfo 就绕过了 repair 的守卫）。
+ */
+function assertHostConfigWritable(target: string): void {
+  const marker = isolatedInstanceMarker()
+  if (!marker) return
+  const realHome = realUserHome()
+  if (realHome && isInside(target, realHome)) throw new HostConfigWriteRefused('isolated-instance', `${marker} → ${target}`)
+}
+
 function atomicWrite(target: string, content: string): string | null {
+  assertHostConfigWritable(target)
   ensureDir(target)
   let backupPath: string | null = null
   if (fs.existsSync(target)) {
@@ -164,17 +309,23 @@ function atomicWrite(target: string, content: string): string | null {
 
 // ── JSON 客户端（Claude Code / Cursor）：root.mcpServers.nomi ─────────────
 
-function readJsonConfig(target: string): Record<string, unknown> {
+/**
+ * 文件不存在 → `{}`（可以新建）；文件存在但不是一个 JSON 对象 → `null`（**不许写**）。
+ * 此前解析失败也回 `{}`，随后整份 `{mcpServers:{nomi}}` 被当作整个文件写回——`~/.claude.json` 里
+ * Claude Code 的登录会话和逐项目信任全没了（有 .nomi-backup，但用户不会知道）。
+ */
+function readJsonConfig(target: string): Record<string, unknown> | null {
+  if (!fs.existsSync(target)) return {}
   try {
     const parsed = JSON.parse(fs.readFileSync(target, 'utf8'))
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
   } catch {
-    return {}
+    return null
   }
 }
 
 function jsonInstalled(target: string): boolean {
-  const servers = readJsonConfig(target).mcpServers
+  const servers = readJsonConfig(target)?.mcpServers
   return Boolean(servers && typeof servers === 'object' && (servers as Record<string, unknown>)[SERVER_NAME])
 }
 
@@ -185,6 +336,7 @@ function jsonSnippet(server: McpServerEntry): string {
 function jsonInstall(target: string, client: McpClientKey): string | null {
   const backupPath = fs.existsSync(target) ? `${target}.nomi-backup` : null
   const config = readJsonConfig(target)
+  if (!config) throw new HostConfigWriteRefused('config-unreadable', target)
   const servers = (config.mcpServers && typeof config.mcpServers === 'object' && !Array.isArray(config.mcpServers)
     ? (config.mcpServers as Record<string, unknown>)
     : {}) as Record<string, unknown>
@@ -197,6 +349,7 @@ function jsonInstall(target: string, client: McpClientKey): string | null {
 function jsonUninstall(target: string): void {
   if (!fs.existsSync(target)) return
   const config = readJsonConfig(target)
+  if (!config) throw new HostConfigWriteRefused('config-unreadable', target)
   const servers = config.mcpServers as Record<string, unknown> | undefined
   if (servers && typeof servers === 'object' && servers[SERVER_NAME]) {
     delete servers[SERVER_NAME]
@@ -221,11 +374,11 @@ function tomlEscape(value: string): string {
  * ① startup_timeout_sec 默认 **10s**，而我们的 MCP server 是**整个 Electron app**（实测打包版 0.5s、
  *    dev 并发 6.5–7.6s，冷启更久）。超时 Codex 会**静默丢掉这个 server** → 工具直接不存在 = 用户看到的
  *    「Codex 说不能用」。对照：Codex 自家 node_repl（一个 node 二进制）写的是 120。
- * ② tool_timeout_sec 默认 **60s**，而 nomi_generate 是真出图/出视频，视频动辄几分钟 → 必然中途断
+ * ② tool_timeout_sec 默认 **60s**，而 ProductionRun 的创建/观察工具可能跨越较长的本地处理 → 可能中途断
  *    = 用户看到的「发消息之后没反应」。
  * ③ default_tools_approval_mode 不写 = 每个工具调用都要人点一次同意，连「列一下项目」都要点。
  *    设 "writes" = 只对**没标 readOnlyHint** 的工具弹确认（标注在 mcpProtocol 的 READ_ONLY_TOOLS）：
- *    查询类静默通过，**花钱的 nomi_generate 仍然每次问**——不拿用户的钱换顺滑。
+ *    查询类静默通过，写入与生成门仍由各自权限边界确认——不拿用户的钱换顺滑。
  */
 const CODEX_STARTUP_TIMEOUT_SEC = 60
 const CODEX_TOOL_TIMEOUT_SEC = 600
@@ -295,12 +448,14 @@ function codexUninstall(target: string): void {
 
 export type McpClientInfo = {
   installed: boolean
+  /** 宿主应用本机有安装痕迹（注册表 installMarkers）；与 Nomi 是否写入独立。未安装的不进一键列表。 */
+  appInstalled: boolean
   configPath: string
   snippet: string
   configState: McpConfigState
+  configuredCommand: string | null
+  configuredSettingsDir: string | null
   launcherKind: McpLauncherKind
-  migration: 'none' | 'upgraded'
-  backupPath: string | null
 }
 
 export type McpInfo = {
@@ -312,46 +467,97 @@ export type McpInfo = {
   clients: Record<McpClientKey, McpClientInfo>
 }
 
+/** 只读：读回该客户端配置里的现状。**不写盘**——修复只从 repairStaleMcpConfigs / installMcp 显式到达。 */
 function clientInfo(client: McpClientKey): McpClientInfo {
-  const spec = CLIENTS[client]
+  const spec = resolveClientSpec(client)
+  if (!spec) throw new Error(`Unknown MCP client: ${client}`)
   const target = spec.configPath()
   const server = mcpServerEntry(client)
   const launcherKind = server.env?.[MCP_CONFIG_KIND_ENV] === 'development' ? 'development' : 'packaged'
-  let configured = configuredMcpEntry(client)
-  let configState = classifyMcpEntry(client, configured, server)
-  let migration: McpClientInfo['migration'] = 'none'
-  let backupPath: string | null = null
-
-  // Only deterministic Nomi-owned historical shapes migrate without a click. Unknown/custom
-  // entries stay untouched. A dev launcher is not a durable migration target, so wait until a
-  // packaged launcher exists or the user explicitly chooses the development connection.
-  if (launcherKind === 'packaged' && shouldAutoMigrate(configState)) {
-    backupPath = spec.format === 'toml' ? codexInstall(target, client) : jsonInstall(target, client)
-    configured = configuredMcpEntry(client)
-    configState = classifyMcpEntry(client, configured, server)
-    migration = 'upgraded'
-  }
-
+  const configured = configuredMcpEntry(client)
+  const configState = classifyMcpEntry(client, configured, server)
   const installed = configured !== null || (spec.format === 'toml' ? codexInstalled(target) : jsonInstalled(target))
   const snippet = spec.format === 'toml' ? codexBlock(server) : jsonSnippet(server)
-  return { installed, configPath: target, snippet, configState, launcherKind, migration, backupPath }
+  return { installed, appInstalled: isMcpClientAppInstalled(client), configPath: target, snippet, configState, launcherKind,
+    configuredCommand: configured?.command ?? null, configuredSettingsDir: configured?.env?.[SETTINGS_ROOT_ENV] ?? null }
 }
 
-/** 读接入状态 + 各客户端配置片段。rpcPort 由调用方（appIntegration）传入。 */
+/** 读接入状态 + 各客户端配置片段。rpcPort 由调用方（appIntegration）传入。只读。 */
 export function readMcpInfo(rpcPort: number | null): McpInfo {
   const server = mcpServerEntry()
   const trustedHosts = readAutomationPolicySettings().trustedHosts
+  const clients: Record<McpClientKey, McpClientInfo> = {}
+  for (const key of BUILTIN_MCP_CLIENTS) {
+    if (builtinClientSpec(key)) clients[key] = clientInfo(key)
+  }
+  // 自定义 profile 与内置客户端同权：同样经 clientInfo 拿 installed / snippet（签名条目）。
+  for (const profile of listCustomMcpProfiles()) {
+    if (!profile.detected && profile.configPath) {
+      try { clients[profile.key] = clientInfo(profile.key) } catch { /* 路径非法时跳过 */ }
+    }
+  }
   return {
     tokenReady: readToken() !== null,
     rpcRunning: typeof rpcPort === 'number' && rpcPort > 0,
     server,
     trustedHosts,
-    clients: {
-      claude: clientInfo('claude'),
-      codex: clientInfo('codex'),
-      cursor: clientInfo('cursor'),
-    },
+    clients,
   }
+}
+
+/**
+ * 唯一的「写一条 nomi 条目」入口：installMcp（用户点连接/重连）与 repairStaleMcpConfigs（启动修复）
+ * 都走这里；这里再走 codexInstall / jsonInstall → atomicWrite。门表见根因合同 doors。
+ */
+function writeClientConfig(client: McpClientKey, spec: ClientSpec): { ok: true; backupPath: string | null } | { ok: false; reason: McpWriteRefusal } {
+  if (isBuiltinMcpClient(client) && !isMcpClientAppInstalled(client)) return { ok: false, reason: 'client-not-installed' }
+  const target = spec.configPath()
+  try {
+    const backupPath = spec.format === 'toml' ? codexInstall(target, client) : jsonInstall(target, client)
+    return { ok: true, backupPath }
+  } catch (error) {
+    if (error instanceof HostConfigWriteRefused) return { ok: false, reason: error.reason }
+    throw error
+  }
+}
+
+/**
+ * Re-point host configs Nomi itself wrote that have gone stale, at boot.
+ *
+ * Someone whose `~/.claude.json` still names the retired `scripts/nomi-mcp.mjs` entry, or a profile
+ * directory that no longer exists, just sees `CONNECTION_CLOSED` in their coding assistant, with nothing
+ * in the message mentioning Nomi. Running the repair when Nomi starts means the next restart of their
+ * client simply works (R28: put the guard at the earliest layer that can catch it).
+ *
+ * Scope stays deliberately narrow: only entries that classify as Nomi-owned historical shapes
+ * (`legacy-launcher` / `stale-development` / `auth-stale` / `launcher-broken`) are
+ * rewritten, only when a packaged launcher exists to point at, and every rewrite takes a `.nomi-backup`
+ * first. A `custom` entry — anything Nomi did not write — is never touched. An isolated instance is
+ * refused at `atomicWrite`, the one door every write goes through.
+ *
+ * A different viable launcher or profile belongs to that installation, even when its authentication
+ * differs. Only an explicit install may switch it; settings shows its recorded path.
+ */
+export type McpConfigRepairResult = {
+  changed: boolean
+  repaired: readonly { client: McpClientKey; label: string; from: McpConfigState }[]
+}
+
+export function repairStaleMcpConfigs(): McpConfigRepairResult {
+  const repaired: { client: McpClientKey; label: string; from: McpConfigState }[] = []
+  const keys: McpClientKey[] = [...BUILTIN_MCP_CLIENTS, ...listCustomMcpProfiles().map((profile) => profile.key)]
+  for (const client of keys) {
+    try {
+      const spec = resolveClientSpec(client)
+      if (!spec) continue
+      const expected = mcpServerEntry(client)
+      if (expected.env?.[MCP_CONFIG_KIND_ENV] === 'development') continue // dev launcher 不是可持久的迁移目标
+      const before = classifyMcpEntry(client, configuredMcpEntry(client), expected)
+      if (!shouldAutoMigrate(before)) continue
+      if (writeClientConfig(client, spec).ok) repaired.push({ client, label: spec.label, from: before })
+    } catch { /* an unreadable or non-existent client config is not a Nomi failure */ }
+  }
+  return { changed: repaired.length > 0, repaired }
 }
 
 function tomlUnescape(value: string): string {
@@ -390,10 +596,11 @@ function codexConfiguredEntry(target: string): McpServerEntry | null {
  */
 export function configuredMcpEntry(client?: string): McpServerEntry | null {
   const key = resolveClient(client)
-  const spec = CLIENTS[key]
+  const spec = key ? resolveClientSpec(key) : null
+  if (!spec) return null
   const target = spec.configPath()
   if (spec.format === 'toml') return codexConfiguredEntry(target)
-  const servers = readJsonConfig(target).mcpServers as Record<string, unknown> | undefined
+  const servers = readJsonConfig(target)?.mcpServers as Record<string, unknown> | undefined
   const entry = servers && typeof servers === 'object' ? servers[SERVER_NAME] : undefined
   if (!entry || typeof entry !== 'object') return null
   const record = entry as Record<string, unknown>
@@ -407,7 +614,8 @@ export function configuredMcpEntry(client?: string): McpServerEntry | null {
   return { command, args, env }
 }
 
-function sameLauncher(left: McpServerEntry, right: McpServerEntry): boolean {
+/** 同一条启动命令（command + args）。 */
+function sameCommand(left: McpServerEntry, right: McpServerEntry): boolean {
   return left.command === right.command && left.args.length === right.args.length
     && left.args.every((arg, index) => arg === right.args[index])
 }
@@ -443,6 +651,27 @@ function missingDevelopmentPath(entry: McpServerEntry): boolean {
   return entry.args.some((arg) => (path.isAbsolute(arg) || arg.startsWith('.')) && !fs.existsSync(arg))
 }
 
+function executableFile(file: string): boolean {
+  try {
+    fs.accessSync(file, fs.constants.X_OK)
+    return fs.statSync(file).isFile()
+  } catch {
+    return false
+  }
+}
+
+function brokenLauncher(entry: McpServerEntry): boolean {
+  if (!executableFile(entry.command)) return true
+  // Helper launchers also depend on a script and GUI executable.
+  if (isNodeLauncherEntry(entry)) {
+    if (!executableFile(entry.env!.NOMI_MCP_APP_COMMAND)) return true
+    if (entry.args.some((arg) => path.isAbsolute(arg) && !fs.existsSync(arg))) return true
+  }
+  const profile = entry.env?.[SETTINGS_ROOT_ENV]
+  if (!profile) return false
+  try { return !fs.statSync(profile).isDirectory() } catch { return true }
+}
+
 export function classifyMcpEntry(
   client: McpClientKey,
   entry: McpServerEntry | null,
@@ -452,37 +681,71 @@ export function classifyMcpEntry(
   // Exact equality with Nomi's current launcher is authoritative even in test/dev runtimes whose
   // executable basename is `node` rather than Nomi/Electron. Historical shapes still use the
   // narrower recognizers below so an unrelated custom proxy is never claimed or migrated.
-  if (!sameLauncher(entry, expected) && !looksLikeNomiLauncher(entry)) return 'custom'
+  if (!sameCommand(entry, expected) && !looksLikeNomiLauncher(entry)) return 'custom'
   if (isLegacyScriptEntry(entry)) return 'legacy-launcher'
   if (missingDevelopmentPath(entry)) return 'stale-development'
+  if (brokenLauncher(entry)) return 'launcher-broken'
+  // Ownership precedes authentication: a different installation may use a different token.
+  const profile = entry.env?.[SETTINGS_ROOT_ENV]
+  if (!sameCommand(entry, expected)
+      || (profile && !sameProfile(entry, expected))) return 'launcher-elsewhere'
   if (verifyMcpClient(entry.env?.[MCP_CLIENT_ENV], entry.env?.[MCP_CLIENT_PROOF_ENV]) !== client
       || entry.env?.[MCP_CONFIG_VERSION_ENV] !== MCP_CONFIG_VERSION) return 'auth-stale'
-  if (!sameLauncher(entry, expected)) return 'launcher-stale'
+  if (!sameProfile(entry, expected)) return 'launcher-broken'
   return entry.env?.[MCP_CONFIG_KIND_ENV] === 'development' ? 'development' : 'current'
+}
+
+/** 写进宿主配置的 `NOMI_SETTINGS_DIR` 读回来校验：等于本实例的设置根、且目录还在。 */
+export function sameProfile(entry: McpServerEntry, expected: McpServerEntry): boolean {
+  const configured = entry.env?.[SETTINGS_ROOT_ENV]
+  const current = expected.env?.[SETTINGS_ROOT_ENV]
+  if (!configured || !current) return false
+  if (path.resolve(configured) !== path.resolve(current)) return false
+  try {
+    return fs.statSync(configured).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 function shouldAutoMigrate(state: McpConfigState): boolean {
   return state === 'legacy-launcher'
     || state === 'stale-development'
     || state === 'auth-stale'
-    || state === 'launcher-stale'
+    || state === 'launcher-broken'
 }
+
+export type McpInstallResult =
+  | { ok: true; client: McpClientKey; configPath: string; backupPath: string | null }
+  | { ok: false; client: string; configPath: string; backupPath: null; reason: McpWriteRefusal }
 
 /** 一键写入指定客户端：备份 → 合并 nomi 条目（保留其它）→ 原子写回。默认 Claude Code。 */
-export function installMcp(client?: string): { ok: boolean; client: McpClientKey; configPath: string; backupPath: string | null } {
+export function installMcp(client?: string): McpInstallResult {
   const key = resolveClient(client)
-  const spec = CLIENTS[key]
+  const spec = key ? resolveClientSpec(key) : null
+  if (!key || !spec) return { ok: false, client: client ?? '', configPath: '', backupPath: null, reason: 'unknown-client' }
   const target = spec.configPath()
-  const backupPath = spec.format === 'toml' ? codexInstall(target, key) : jsonInstall(target, key)
-  return { ok: true, client: key, configPath: target, backupPath }
+  const written = writeClientConfig(key, spec)
+  if (!written.ok) return { ok: false, client: key, configPath: target, backupPath: null, reason: written.reason }
+  return { ok: true, client: key, configPath: target, backupPath: written.backupPath }
 }
 
+export type McpUninstallResult =
+  | { ok: true; client: McpClientKey }
+  | { ok: false; client: string; reason: McpWriteRefusal }
+
 /** 撤销接入指定客户端：删 nomi 条目（不碰其它）。文件不存在/没装就当成功。默认 Claude Code。 */
-export function uninstallMcp(client?: string): { ok: boolean; client: McpClientKey } {
+export function uninstallMcp(client?: string): McpUninstallResult {
   const key = resolveClient(client)
-  const spec = CLIENTS[key]
+  const spec = key ? resolveClientSpec(key) : null
+  if (!key || !spec) return { ok: false, client: client ?? '', reason: 'unknown-client' }
   const target = spec.configPath()
-  if (spec.format === 'toml') codexUninstall(target)
-  else jsonUninstall(target)
+  try {
+    if (spec.format === 'toml') codexUninstall(target)
+    else jsonUninstall(target)
+  } catch (error) {
+    if (error instanceof HostConfigWriteRefused) return { ok: false, client: key, reason: error.reason }
+    throw error
+  }
   return { ok: true, client: key }
 }

@@ -1,14 +1,16 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BUILTIN_CATEGORIES, getBuiltinCategoryById, type ProjectCategory } from '../project/projectCategories'
 import { showUndoToast } from '../../utils/showUndoToast'
 import { useWorkbenchStore } from '../workbenchStore'
 import { confirmDialog, promptDialog } from '../../design'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
+import { selectStableCanvasNodes } from '../generationCanvas/store/canvasNodeProjection'
 import { useCommittedProposal } from '../generationCanvas/agent/proposalUndo'
 import CategoryItem from './CategoryItem'
 import GroupItem from './GroupItem'
 import NodeItem from './NodeItem'
+import { FOCUS_GENERATION_NODE_EVENT } from '../generationCanvas/nodes/nodeSizing'
 
 type Props = {
   categories?: ProjectCategory[]
@@ -26,8 +28,6 @@ type SidebarMenuPayload =
   | { type: 'node'; nodeId: string }
   | { type: 'group'; groupId: string }
 
-const DEFAULT_GROUP_COLOR = '#d8c3a5'
-
 /**
  * 分类导航的完整内容（分类 → 节点/子组、右键菜单、跨分类拖拽、点节点定位画布）。
  * 不含 aside/折叠/标题外壳——外壳由承载它的 Tab 面板（ProjectExplorerSidebar）提供。
@@ -40,7 +40,9 @@ export default function CategoryTree({ categories, createCategoryNonce = 0 }: Pr
   const addCategory = useWorkbenchStore((s) => s.addCategory)
   const renameCategory = useWorkbenchStore((s) => s.renameCategory)
   const deleteCategory = useWorkbenchStore((s) => s.deleteCategory)
-  const nodes = useGenerationCanvasStore((s) => s.nodes)
+  // 位置稳定投影：分类树只读节点身份/分类/标题，从不读 position。订这个派生视图 →
+  // 拖动时 immer 换 nodes 数组引用不会打醒它（suspect #1，见 canvasNodeProjection.ts）。
+  const nodes = useGenerationCanvasStore(selectStableCanvasNodes)
   const groups = useGenerationCanvasStore((s) => s.groups)
   const selectedNodeIds = useGenerationCanvasStore((s) => s.selectedNodeIds)
   const selectNode = useGenerationCanvasStore((s) => s.selectNode)
@@ -50,7 +52,6 @@ export default function CategoryTree({ categories, createCategoryNonce = 0 }: Pr
   const deleteNode = useGenerationCanvasStore((s) => s.deleteNode)
   const createGroup = useGenerationCanvasStore((s) => s.createGroup)
   const renameGroup = useGenerationCanvasStore((s) => s.renameGroup)
-  const setGroupColor = useGenerationCanvasStore((s) => s.setGroupColor)
   const ungroup = useGenerationCanvasStore((s) => s.ungroup)
   const deleteGroup = useGenerationCanvasStore((s) => s.deleteGroup)
   const moveNodeToGroup = useGenerationCanvasStore((s) => s.moveNodeToGroup)
@@ -119,7 +120,7 @@ export default function CategoryTree({ categories, createCategoryNonce = 0 }: Pr
   const closeMenu = React.useCallback(() => setMenu(null), [])
 
   const nodesByCategory = React.useMemo(() => {
-    const map = new Map<string, typeof nodes>()
+    const map = new Map<string, (typeof nodes)[number][]>()
     for (const node of nodes) {
       const id = node.categoryId || 'shots'
       const list = map.get(id)
@@ -185,7 +186,7 @@ export default function CategoryTree({ categories, createCategoryNonce = 0 }: Pr
     selectNode(nodeId)
     // v0.7.3 fix: 派发 focus 事件，让 canvas 切换到目标分类 + pan/zoom 到该节点
     // 这跟"独立副本定位源节点"用的是同一个机制（GenerationCanvas 监听 nomi-focus-generation-node）
-    window.dispatchEvent(new CustomEvent('nomi-focus-generation-node', { detail: { nodeId } }))
+    window.dispatchEvent(new CustomEvent(FOCUS_GENERATION_NODE_EVENT, { detail: { nodeId } }))
   }, [selectNode])
 
   const handleDropNodeOnCategory = React.useCallback((nodeId: string, categoryId: string) => {
@@ -305,6 +306,7 @@ export default function CategoryTree({ categories, createCategoryNonce = 0 }: Pr
   }, [closeMenu, nodeById, updateNode, t])
 
   const handleRegenerateDerivedNode = React.useCallback((nodeId: string) => {
+    // 副本落在屏外时由画布边缘提示指路；不再替用户把画布挪过去（2026-09-25「程序不再主动平移画布」）。
     duplicateNodeForRegeneration(nodeId)
     closeMenu()
   }, [closeMenu, duplicateNodeForRegeneration])
@@ -326,14 +328,6 @@ export default function CategoryTree({ categories, createCategoryNonce = 0 }: Pr
     setEditingGroupId(groupId) // 与新建走同一行内改名，不再弹 window.prompt
     closeMenu()
   }, [closeMenu])
-
-  const handleSetGroupColor = React.useCallback(async (groupId: string) => {
-    const group = groups.find((candidate) => candidate.id === groupId)
-    if (!group) return
-    closeMenu()
-    const color = await promptDialog({ title: t('libraries.sidebar.groupColor'), message: t('libraries.sidebar.groupColorMessage'), initialValue: group.color || DEFAULT_GROUP_COLOR })
-    if (color !== null) setGroupColor(groupId, color)
-  }, [closeMenu, groups, setGroupColor, t])
 
   const handleUngroup = React.useCallback((groupId: string) => {
     ungroup(groupId)
@@ -393,7 +387,6 @@ export default function CategoryTree({ categories, createCategoryNonce = 0 }: Pr
         {menu.type === 'group' ? (
           <>
             <button type="button" role="menuitem" className={buttonClass} onClick={() => handleRenameGroup(menu.groupId)}>{t('libraries.sidebar.rename')}</button>
-            <button type="button" role="menuitem" className={buttonClass} onClick={() => handleSetGroupColor(menu.groupId)}>{t('libraries.sidebar.changeColor')}</button>
             <button type="button" role="menuitem" className={buttonClass} onClick={() => handleUngroup(menu.groupId)}>{t('libraries.sidebar.ungroup')}</button>
             <div className="my-0.5 h-px bg-nomi-line" />
             <button type="button" role="menuitem" className={dangerClass} onClick={() => handleDeleteGroup(menu.groupId)}>{t('libraries.sidebar.deleteWithNodes')}</button>

@@ -1,3 +1,6 @@
+import { withProjectAction } from '../../../project/projectCanvasReadSurface'
+import { selectActiveStoryboardDesign } from '../../../workbenchDocumentSlice'
+import type { JSX } from 'react'
 import React from 'react'
 import { Menu } from '@mantine/core'
 import { useShallow } from 'zustand/react/shallow'
@@ -106,7 +109,7 @@ function storyboardActionError(error: unknown, fallback: string): string {
 }
 
 function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
-  const workbenchPlan = useWorkbenchStore((state) => state.storyboardPlan)
+  const workbenchPlan = useWorkbenchStore((state) => (selectActiveStoryboardDesign(state)?.plan ?? null))
   const setStoryboardPlan = useWorkbenchStore((state) => state.setStoryboardPlan)
   const setWorkspaceMode = useWorkbenchStore((state) => state.setWorkspaceMode)
   const setActiveCategoryId = useWorkbenchStore((state) => state.setActiveCategoryId)
@@ -218,18 +221,21 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
   }, [commitPersistedChange, node.id, node.meta, plan, rows, setStoryboardPlan, updateNode, updateNodePrompt])
 
   const autofillWithAgent = React.useCallback(
-    async (overwriteExisting: boolean) => {
+    (overwriteExisting: boolean) => withProjectAction(async project => {
+      project.assertCurrent()
       if (!plan || agentFilling) return
       setAgentFilling(true)
       try {
-        const result = await runStoryboardTableAutofill({ plan, overwriteExisting })
+        const result = await runStoryboardTableAutofill({ project, plan, overwriteExisting })
+        project.assertCurrent()
         toast(`Agent 已填写 ${result.updatedShotCount} 个镜头`, 'success')
       } catch (error: unknown) {
+        if (project.signal.aborted) return
         toast(error instanceof Error ? error.message : 'Agent 填表失败', 'error')
       } finally {
-        setAgentFilling(false)
+        if (!project.signal.aborted) setAgentFilling(false)
       }
-    },
+    }),
     [agentFilling, plan],
   )
 
@@ -385,7 +391,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
             : `镜头 ${row.shot.index} 的 5+3 秒关键帧已存在，准备重新生成`,
           'success',
         )
-        await confirmAndRunPlan(dependencyPlan)
+        await confirmAndRunPlan(dependencyPlan, { initiator: 'user' })
       } catch (error: unknown) {
         toast(storyboardActionError(error, `镜头 ${row.shot.index} 关键帧生成失败`), 'error')
       } finally {

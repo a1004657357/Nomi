@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createLocalProject, readLocalProject } from './projectRepository'
+import { createLocalProject, readLocalProject, saveLocalProject } from './projectRepository'
 import { migrateProjectRecord } from './projectCategoryMigration'
 import { getDesktopBridge } from '../../desktop/bridge'
 import type { DesktopBridge } from '../../desktop/bridge'
@@ -15,12 +15,13 @@ const mockedGetDesktopBridge = vi.mocked(getDesktopBridge)
 function stubBridge(projectsOverride: Partial<DesktopBridge['projects']>): DesktopBridge {
   return {
     platform: 'darwin',
-    video: {} as DesktopBridge['video'],
-    screenshot: {} as DesktopBridge['screenshot'],
+    files: {} as DesktopBridge['files'],
     image: {} as DesktopBridge['image'],
     scene3d: {} as DesktopBridge['scene3d'],
     vibingDirector: {} as DesktopBridge['vibingDirector'],
-    files: {} as DesktopBridge['files'],
+    video: {} as DesktopBridge['video'],
+    screenshot: {} as DesktopBridge['screenshot'],
+    videoDepth: {} as DesktopBridge['videoDepth'],
     onboarding: {} as DesktopBridge['onboarding'],
     skill: {} as DesktopBridge['skill'],
     workspace: {} as DesktopBridge['workspace'],
@@ -28,8 +29,8 @@ function stubBridge(projectsOverride: Partial<DesktopBridge['projects']>): Deskt
     assets: {} as DesktopBridge['assets'],
     exports: {} as DesktopBridge['exports'],
     tasks: {} as DesktopBridge['tasks'],
-    agents: {} as DesktopBridge['agents'],
     modelCatalog: {} as DesktopBridge['modelCatalog'],
+    connector: {} as DesktopBridge['connector'],
   }
 }
 
@@ -54,6 +55,33 @@ describe('projectRepository workspace project creation', () => {
 
     expect(record).toMatchObject({ name: 'Browser Project', version: 1 })
     expect('rootPath' in record).toBe(false)
+  })
+
+  it('new blank projects expose an empty two-row storyboard starter', () => {
+    mockedGetDesktopBridge.mockReturnValue(null)
+
+    const record = createLocalProject('空白项目')
+    const payload = record.payload
+    const documentId = payload.activeDocumentId
+    expect(payload.workbenchDocuments?.[0]?.id).toBe(documentId)
+    const starter = documentId ? payload.storyboardDesignsByDocumentId?.[documentId]?.[0]?.plan : undefined
+
+    expect(starter).toMatchObject({ title: '', anchors: [] })
+    expect(starter?.shots).toHaveLength(2)
+    expect(starter?.shots.map((shot) => ({ index: shot.index, prompt: shot.prompt, anchorIds: shot.anchorIds }))).toEqual([
+      { index: 1, prompt: '', anchorIds: [] },
+      { index: 2, prompt: '', anchorIds: [] },
+    ])
+  })
+
+  it('same project title still creates independent project records', () => {
+    mockedGetDesktopBridge.mockReturnValue(null)
+
+    const first = createLocalProject('Storyboard')
+    const second = createLocalProject('Storyboard')
+
+    expect(second.id).not.toBe(first.id)
+    expect(second.name).toBe(first.name)
   })
 
   it('stamps seedKey onto programmatically seeded projects (idempotent example seeding, audit A8)', () => {
@@ -172,7 +200,7 @@ describe('projectRepository workspace project creation', () => {
     const record = readLocalProject('ws-1')
 
     expect(record).toMatchObject({ id: 'ws-1', name: 'Workspace Project', version: 1 })
-    expect(record?.payload.workbenchDocument.version).toBe(1)
+    expect(record?.payload.workbenchDocuments![0].version).toBe(1)
     // 三轨：旧 2 轨工程加载时 normalizeTimeline 自动补音频轨（migration，幂等）。
     expect(record?.payload.timeline.tracks).toHaveLength(3)
     expect(record?.payload.timeline.tracks.map((t) => t.type)).toEqual(['image', 'video', 'audio'])
@@ -200,8 +228,23 @@ describe('projectRepository workspace project creation', () => {
     const record = readLocalProject('ws-music')
 
     expect(record).toMatchObject({ id: 'ws-music', name: 'Music', version: 1 })
-    expect(record?.payload.workbenchDocument.version).toBe(1)
+    expect(record?.payload.workbenchDocuments![0].version).toBe(1)
     expect(record?.payload.timeline.tracks.length).toBeGreaterThan(0)
     expect(Array.isArray(record?.payload.generationCanvas.nodes)).toBe(true)
   })
+})
+
+
+it('passes the original background binding through the existing desktop save call', async () => {
+  const expectedBinding = { projectId: 'project-a', immutableProjectUuid: '11111111-1111-4111-8111-111111111111', projectGeneration: 3 }
+  mockedGetDesktopBridge.mockReturnValue(null)
+  const fixture = createLocalProject('Original')
+  const record = { ...fixture, id: expectedBinding.projectId, immutableProjectUuid: expectedBinding.immutableProjectUuid, projectGeneration: expectedBinding.projectGeneration }
+  const save = vi.fn(async (_id: string, value: unknown) => value)
+  mockedGetDesktopBridge.mockReturnValue(stubBridge({ read: () => record, save }))
+  await saveLocalProject(record.id, record.payload, record.name, expectedBinding)
+  expect(save).toHaveBeenCalledExactlyOnceWith(record.id, expect.objectContaining({ expectedBinding,
+    payload: expect.objectContaining({ generationCanvas: record.payload.generationCanvas,
+      storyboardDesignsByDocumentId: record.payload.storyboardDesignsByDocumentId }),
+  }))
 })

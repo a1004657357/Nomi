@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import * as THREE from 'three'
 import { useThree, type ThreeEvent } from '@react-three/fiber'

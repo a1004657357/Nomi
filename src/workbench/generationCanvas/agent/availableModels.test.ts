@@ -1,6 +1,6 @@
+import { formatAvailableModelsForPrompt } from "../../../../electron/shared/agentCapabilities/availableModels";
 import { describe, it, expect, vi } from "vitest";
-import { buildAgentModelEntries, formatAvailableModelsForPrompt, listAvailableModelsForAgent, selectStoryboardVideoDefault } from "./availableModels";
-import type { AgentModelEntry } from "./availableModels";
+import { buildAgentModelEntries, listAvailableModelsForAgent, pickSavedDefaultModel, pickStoryboardDefaultModel, selectStoryboardVideoDefault, type AgentModelEntry } from "./availableModels";
 import type { ModelOption } from "../../../config/models";
 import { preloadModelOptions } from "../../../config/modelCatalogCache";
 
@@ -14,13 +14,33 @@ function opt(over: Partial<ModelOption>): ModelOption {
 }
 
 describe("buildAgentModelEntries", () => {
+  // 2026-09-03 真实付费闭环走查的阻断根因回归：曾按 modelKey 去重（首家胜出），
+  // 两家供应商提供同名模型时身份坍缩——用户选 APIMart 却发去 code-newcli-com HTTP 400。
+  // 身份唯一键必须是 (vendor, modelKey)。
+  it("同名模型来自不同供应商 = 两个条目，不去重（身份唯一键含 vendor）", () => {
+    const entries = buildAgentModelEntries([
+      opt({ value: "nano-banana", label: "Nano Banana", vendor: "apimart", meta: { archetypeId: "nano-banana" } }),
+      opt({ value: "nano-banana", label: "Nano Banana", vendor: "code-newcli-com", meta: { archetypeId: "nano-banana" } }),
+    ]);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((e) => e.vendor).sort()).toEqual(["apimart", "code-newcli-com"]);
+  });
+
+  it("同一供应商的同名模型仍然去重（image/video 两边重复的既有语义不变）", () => {
+    const entries = buildAgentModelEntries([
+      opt({ value: "nano-banana", label: "Nano Banana", vendor: "apimart", meta: { archetypeId: "nano-banana" } }),
+      opt({ value: "nano-banana", label: "Nano Banana", vendor: "apimart", meta: { archetypeId: "nano-banana" } }),
+    ]);
+    expect(entries).toHaveLength(1);
+  });
+
   it("命中档案的模型 join 出 modes + params", () => {
     const entries = buildAgentModelEntries([
       opt({ value: "seedance-2", label: "即梦 Seedance", vendor: "kie", meta: { archetypeId: "seedance-2" } }),
     ]);
     expect(entries).toHaveLength(1);
     const e = entries[0];
-    expect(e.modelKey).toBe("seedance-2");
+    expect(e.modelId).toBe("seedance-2");
     expect(e.kind).toBe("video");
     expect(e.archetypeId).toBe("seedance-2");
     expect(e.modes.length).toBeGreaterThan(0);
@@ -43,31 +63,19 @@ describe("buildAgentModelEntries", () => {
     expect(entries[0].modes.every((m) => m.slots.length === 0)).toBe(true);
   });
 
-  it("Codex Img2 出现在 agent 可选图片模型里，并继承 GPT Image 2 双模式", () => {
+  it("保留目录中已发布的文本模型并声明 chat 模式（显式模型不能静默回退）", () => {
+    // 文本模型没有媒体 archetype；catalog kind 仍然是唯一足够的能力证据。
+    // 暂用结构扩展夹具，待实现把 kind 纳入 ModelOption 的正式类型。
     const entries = buildAgentModelEntries([
-      opt({ value: "codex-img2", modelKey: "codex-img2", label: "Codex Img2（GPT Image 2）", vendor: "codex", meta: { archetypeId: "gpt-image-2" } }),
+      { value: "agent-runtime-text", label: "Fixture 文本", vendor: "loopback", kind: "text" } as ModelOption & { kind: "text" },
     ]);
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      modelKey: "codex-img2",
-      vendor: "codex",
-      kind: "image",
-      archetypeId: "gpt-image-2",
-    });
-    expect(entries[0].modes.map((m) => m.modeId)).toEqual(["t2i", "i2i"]);
-  });
-
-  it("图生 3D 模式暴露原生能力标签", () => {
-    const entries = buildAgentModelEntries([
-      opt({ value: "hunyuan3d-v3.1", label: "混元3D", vendor: "runninghub", meta: { archetypeId: "hunyuan3d" } }),
+    expect(entries[0]).toMatchObject({ modelId: "agent-runtime-text", kind: "text", vendor: "loopback" });
+    expect(entries[0].archetypeId).toBeUndefined();
+    expect(entries[0].defaultModeId).toBe("chat");
+    expect(entries[0].modes).toEqual([
+      expect.objectContaining({ modeId: "chat", slots: [] }),
     ]);
-    const imageMode = entries[0].modes.find((mode) => mode.modeId === "image");
-    expect(entries[0].kind).toBe("model3d");
-    expect(imageMode?.capabilities).toContainEqual({
-      capabilityId: "image.multiview.reconstruct3d",
-      tier: "native",
-      maxOutputs: 1,
-    });
   });
 
   it("无档案的模型被跳过", () => {
@@ -97,7 +105,7 @@ describe("buildAgentModelEntries", () => {
     ]);
 
     expect(entry.defaultVariantId).toBe("v5_0_pro");
-    expect(entry.variants.map((variant) => [variant.variantId, variant.label])).toEqual([
+    expect(entry.variants?.map((variant) => [variant.id, variant.label])).toEqual([
       ["v5_0_pro", "图片 5.0 Pro"],
       ["v5_0_lite", "图片 5.0 Lite"],
       ["v4_7", "图片 4.7"],
@@ -109,16 +117,16 @@ describe("buildAgentModelEntries", () => {
       ["v3_0", "图片 3.0"],
     ]);
 
-    const lite = entry.variants.find((variant) => variant.variantId === "v5_0_lite");
-    expect(lite?.modes.map((mode) => mode.modeId)).toEqual(["t2i", "edit"]);
+    const lite = entry.variants?.find((variant) => variant.id === "v5_0_lite");
+    expect(lite?.modes?.map((mode) => mode.modeId)).toEqual(["t2i", "edit"]);
     expect(
-      lite?.modes[0].params.find((param) => param.key === "resolution_type")?.options.map((option) => option.value),
+      lite?.modes?.[0].params.find((param) => param.key === "resolution_type")?.options.map((option) => option.value),
     ).toEqual(["2K", "4K"]);
 
-    const legacy = entry.variants.find((variant) => variant.variantId === "v3_0");
-    expect(legacy?.modes.map((mode) => mode.modeId)).toEqual(["t2i"]);
+    const legacy = entry.variants?.find((variant) => variant.id === "v3_0");
+    expect(legacy?.modes?.map((mode) => mode.modeId)).toEqual(["t2i"]);
     expect(
-      legacy?.modes[0].params.find((param) => param.key === "ratio")?.options.map((option) => option.value),
+      legacy?.modes?.[0].params.find((param) => param.key === "ratio")?.options.map((option) => option.value),
     ).not.toContain("智能");
   });
 
@@ -134,18 +142,18 @@ describe("buildAgentModelEntries", () => {
     ]);
 
     expect(entry.defaultVariantId).toBe("mini");
-    expect(entry.variants.map((variant) => variant.variantId)).toEqual([
+    expect(entry.variants?.map((variant) => variant.id)).toEqual([
       "mini",
       "fast_vip",
       "vip",
       "fast",
       "standard",
     ]);
-    const vip = entry.variants.find((variant) => variant.variantId === "vip");
+    const vip = entry.variants?.find((variant) => variant.id === "vip");
     expect(
-      vip?.modes[0].params.find((param) => param.key === "video_resolution")?.options.map((option) => option.value),
+      vip?.modes?.[0].params.find((param) => param.key === "video_resolution")?.options.map((option) => option.value),
     ).toEqual(["720P", "1080P", "4K"]);
-    expect(vip?.modes[0].params.map((param) => param.key)).toContain("generation_count");
+    expect(vip?.modes?.[0].params.map((param) => param.key)).toContain("generation_count");
   });
 
   it("空输入返回空", () => {
@@ -164,16 +172,35 @@ describe("listAvailableModelsForAgent", () => {
 });
 
 describe("formatAvailableModelsForPrompt", () => {
+  it("preserves derived anchor capability and current guidance through the shared prompt owner", () => {
+    const entries = buildAgentModelEntries([opt({ value: 'imagen-4', meta: { archetypeId: 'imagen-4' } })]);
+    expect(entries[0]?.modes.every(mode => mode.consumesAnchors?.includes('none'))).toBe(true);
+    const prompt = formatAvailableModelsForPrompt(entries);
+    expect(prompt).toContain('[consumesAnchors:none]');
+    expect(prompt).toContain('modelId/modeId 不能留空');
+    expect(prompt).toContain('用户点名 t2v 就听用户');
+  });
+  it("排序稳定且标题不绑定旧工具名", () => {
+    const entries = buildAgentModelEntries([
+      opt({ value: "seedance-2", meta: { archetypeId: "seedance-2" } }),
+      opt({ value: "imagen-4", meta: { archetypeId: "imagen-4" } }),
+    ]);
+    const original = [...entries];
+    expect(formatAvailableModelsForPrompt(entries)).toBe(formatAvailableModelsForPrompt([...entries].reverse()));
+    expect(entries).toEqual(original);
+    expect(formatAvailableModelsForPrompt(entries)).not.toContain("create_canvas_nodes");
+  });
+
   it("空清单返回空串（不注入）", () => {
     expect(formatAvailableModelsForPrompt([])).toBe("");
   });
 
-  it("列出 modelKey + 模式 + 参数选项", () => {
+  it("列出 modelId + 模式 + 参数选项", () => {
     const entries = buildAgentModelEntries([
       opt({ value: "seedance-2", label: "即梦 Seedance", meta: { archetypeId: "seedance-2" } }),
     ]);
     const text = formatAvailableModelsForPrompt(entries);
-    expect(text).toContain("modelKey=seedance-2");
+    expect(text).toContain("modelId=seedance-2");
     expect(text).toContain("aspect_ratio[");
     expect(text).toContain("9:16");
     // T8：提示词里带每个模式的参考槽，让 agent 按模型真实能力连边
@@ -210,7 +237,7 @@ describe("formatAvailableModelsForPrompt", () => {
 describe("selectStoryboardVideoDefault", () => {
   it("skips an earlier text-only video model in favor of a later reference-capable model", () => {
     const entry = (modelKey: string, modes: AgentModelEntry["modes"]): AgentModelEntry => ({
-      modelKey,
+      modelId: modelKey,
       modelAlias: null,
       vendor: "test",
       label: modelKey,
@@ -221,15 +248,14 @@ describe("selectStoryboardVideoDefault", () => {
       variants: [],
     });
     const textOnly = entry("text-only", [{
-      modeId: "t2v", vendorTerm: "文生视频", intent: "text", hint: "", params: [], slots: [], capabilities: [],
+      modeId: "t2v", vendorTerm: "文生视频", intent: "text", hint: "", params: [], slots: [],
     }]);
     const imageVideo = entry("image-video", [{
       modeId: "i2v", vendorTerm: "图生视频", intent: "single", hint: "", params: [],
       slots: [{ kind: "first_frame", label: "首帧", max: 1 }],
-      capabilities: [],
     }]);
 
-    expect(selectStoryboardVideoDefault([textOnly, imageVideo])).toEqual({
+    expect(selectStoryboardVideoDefault([textOnly, imageVideo])).toMatchObject({
       modelKey: "image-video",
       modeId: "i2v",
     });
@@ -237,7 +263,7 @@ describe("selectStoryboardVideoDefault", () => {
 
   it("prefers a multi-image full-reference mode over first-frame mode for narrative shots", () => {
     const seedance: AgentModelEntry = {
-      modelKey: "jimeng-web-seedance-2.0",
+      modelId: "jimeng-web-seedance-2.0",
       modelAlias: null,
       vendor: "jimeng-web",
       label: "即梦 Web Seedance 2.0",
@@ -252,8 +278,7 @@ describe("selectStoryboardVideoDefault", () => {
           hint: "",
           params: [],
           slots: [{ kind: "first_frame", label: "首帧", max: 1 }],
-          capabilities: [],
-        },
+            },
         {
           modeId: "multimodal",
           vendorTerm: "全能参考",
@@ -261,15 +286,49 @@ describe("selectStoryboardVideoDefault", () => {
           hint: "",
           params: [],
           slots: [{ kind: "image_ref", label: "角色参考", max: 9 }],
-          capabilities: [],
-        },
+            },
       ],
       variants: [],
     };
 
-    expect(selectStoryboardVideoDefault([seedance])).toEqual({
+    expect(selectStoryboardVideoDefault([seedance])).toMatchObject({
       modelKey: "jimeng-web-seedance-2.0",
       modeId: "multimodal",
     });
+  });
+});
+
+// 2026-09-10：给 agent 建的卡挑模型的**权威**是用户保存的默认，正则阶梯只是兜底。
+// 此前正则阶梯是唯一判据（gpt image → nano banana → 第一个），用户在设置里设的默认被完全无视。
+describe("默认模型解析：用户保存的偏好优先，正则阶梯只兜底", () => {
+  const entries = buildAgentModelEntries([
+    opt({ value: "gpt-image-2", label: "GPT Image 2", vendor: "apimart", meta: { archetypeId: "gpt-image-2" } }),
+    opt({ value: "nano-banana", label: "Nano Banana", vendor: "apimart", meta: { archetypeId: "nano-banana" } }),
+    opt({ value: "nano-banana", label: "Nano Banana", vendor: "my-relay", meta: { archetypeId: "nano-banana" } }),
+  ]);
+
+  it("用户设了默认 → 用他的（哪怕正则阶梯会挑另一个）", () => {
+    expect(pickStoryboardDefaultModel(entries, "image")?.modelId).toBe("gpt-image-2");
+    const picked = pickSavedDefaultModel(entries, "image", {
+      text_to_image: { vendorKey: "my-relay", modelKey: "nano-banana" },
+    });
+    expect(picked?.modelId).toBe("nano-banana");
+    expect(picked?.vendor).toBe("my-relay");
+  });
+
+  it("身份两段都要对：只有模型段命中不算（同名模型来自另一家会串台）", () => {
+    expect(pickSavedDefaultModel(entries, "image", {
+      text_to_image: { vendorKey: "vendor-that-is-gone", modelKey: "nano-banana" },
+    })).toBeUndefined();
+  });
+
+  it("文生图没设 → 退到图生图那条偏好（一份偏好覆盖同一媒介两个模式）", () => {
+    expect(pickSavedDefaultModel(entries, "image", {
+      image_edit: { vendorKey: "apimart", modelKey: "nano-banana" },
+    })?.vendor).toBe("apimart");
+  });
+
+  it("一个默认都没设 → undefined，由调用方回落兜底阶梯", () => {
+    expect(pickSavedDefaultModel(entries, "image", {})).toBeUndefined();
   });
 });

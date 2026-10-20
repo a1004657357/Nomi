@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { registerAppWindow } from '../appWindowRegistry';
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { app, BrowserWindow, session, type Extension, type Session } from "electron";
@@ -155,6 +156,7 @@ async function configureExtension(serverUrl: string): Promise<void> {
     fallbackPanelWindow = new BrowserWindow(windowOptions(false, "Pavo Adapter 后台面板", 420, 820));
     fallbackPanelWindow.on("closed", () => { fallbackPanelWindow = null; });
     const configUrl = new URL("config.html", extension?.url || panelUrl).toString();
+    registerAppWindow(fallbackPanelWindow, 'untrusted', configUrl);
     await fallbackPanelWindow.loadURL(configUrl);
   }
   await fallbackPanelWindow.webContents.executeJavaScript(
@@ -174,6 +176,7 @@ async function ensurePavoWindow(): Promise<void> {
     return;
   }
   pavoWindow = new BrowserWindow(windowOptions(true, "Pavo Web - Nomi"));
+  registerAppWindow(pavoWindow, 'untrusted', PAVO_URL);
   pavoWindow.webContents.on("console-message", (details) => {
     const message = details.message;
     if (/Pavo|Bridge|error|failed/i.test(message)) remember(`[pavo] ${message}`);
@@ -207,6 +210,7 @@ async function ensurePavoWindow(): Promise<void> {
 async function ensureFallbackPanel(): Promise<void> {
   if (fallbackPanelWindow && !fallbackPanelWindow.isDestroyed()) return;
   fallbackPanelWindow = new BrowserWindow(windowOptions(false, "Pavo Adapter 后台面板", 420, 820));
+  registerAppWindow(fallbackPanelWindow, 'untrusted', panelUrl);
   fallbackPanelWindow.on("closed", () => { fallbackPanelWindow = null; });
   await fallbackPanelWindow.loadURL(panelUrl);
 }

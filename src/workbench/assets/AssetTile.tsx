@@ -1,7 +1,7 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { IconPlayerPlayFilled, IconPlus } from '@tabler/icons-react'
+import { Icon3dCubeSphere, IconPlayerPlayFilled, IconPlus } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { NomiImage } from '../../design/media'
 import { AssetVideoCover } from './AssetVideoCover'
@@ -130,10 +130,15 @@ export function AssetThumb({ asset, playSize = 22 }: { asset: AssetRef; playSize
         <AssetVideoCover asset={asset} />
         <span className={cn('absolute inset-0 bg-[oklch(0.2_0.01_80/0.28)]')} aria-hidden />
         <span className={cn('absolute inset-0 flex items-center justify-center z-[1]')} aria-hidden>
-          <IconPlayerPlayFilled size={playSize} className={cn('text-nomi-paper drop-shadow-[0_1px_2px_oklch(0_0_0/0.5)]')} />
+          {/* 不加 drop-shadow：底下已有暗色遮罩托住对比度；CSS 滤镜在 Windows（ANGLE/D3D11）上每次启动首次绘制都要现编译着色器，
+              实测 @ 列表首次打开那一帧因此多约 70 ms（2026-09-25，trace 见 docs/research/2026-09-25-canvas-follow-hand）。 */}
+          <IconPlayerPlayFilled size={playSize} className={cn('text-nomi-paper')} />
         </span>
       </>
     )
+  }
+  if (asset.kind === 'model3d') {
+    return <Icon3dCubeSphere size={playSize + 4} stroke={1.5} className="text-nomi-ink-40" aria-hidden="true" />
   }
   return (
     <NomiImage
@@ -152,7 +157,7 @@ export function AssetThumb({ asset, playSize = 22 }: { asset: AssetRef; playSize
 export default function AssetTile({ asset, index, onRemove, onClick, dragProps, className }: AssetTileProps): JSX.Element {
   const clickable = Boolean(onClick)
   // 图用原图、视频用首帧缩略图放大；音频无缩略图不弹。
-  const zoomSrc = asset.kind === 'audio' ? undefined : asset.kind === 'video' ? asset.thumbUrl : asset.renderUrl
+  const zoomSrc = asset.kind === 'audio' || asset.kind === 'model3d' ? undefined : asset.kind === 'video' ? asset.thumbUrl : asset.renderUrl
   const zoom = useHoverZoom(zoomSrc)
   return (
     <>
@@ -163,6 +168,8 @@ export default function AssetTile({ asset, index, onRemove, onClick, dragProps, 
           dragProps?.draggable && 'data-[dragover=true]:outline data-[dragover=true]:outline-2 data-[dragover=true]:outline-nomi-accent',
           className,
         )}
+        // 稳定走查锚点（同 AssetAddTile 的理由）：按 kind 数 tile 才能验「视频进视频桶、没污染图片桶」。
+        data-asset-tile={asset.kind}
         role={clickable ? 'button' : undefined}
         tabIndex={clickable ? 0 : undefined}
         aria-label={clickable ? asset.name : undefined}
@@ -187,6 +194,9 @@ export function AssetAddTile({ onClick, selected, label, className }: { onClick:
   return (
     <button
       type="button"
+      // 稳定走查锚点：两处空槽入口的 aria-label 不同（具名槽是「添加{label}」、合并数组槽是「加参考」），
+      // 靠文案选元素会在改文案时静默失效（死选择器既造假红也造假绿）。
+      data-asset-add-tile="true"
       aria-label={label ?? t('assetLibrary.addReference')}
       onClick={onClick}
       className={cn(

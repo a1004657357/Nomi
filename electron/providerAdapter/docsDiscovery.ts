@@ -1,4 +1,5 @@
 import { hardenedFetchText } from "../hardenedFetch";
+import { createExplicitProxyDispatcher } from "../systemProxy";
 
 export type DocsFetchText = typeof hardenedFetchText;
 
@@ -84,7 +85,7 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&#39;/gi, "'");
 }
 
-function readableText(raw: string, contentType: string): string {
+export function readableText(raw: string, contentType: string): string {
   if (!contentType.toLowerCase().includes("html") && !/<(?:html|body|p|h\d|a)\b/i.test(raw)) {
     return raw.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   }
@@ -101,7 +102,7 @@ function readableText(raw: string, contentType: string): string {
   );
 }
 
-function pageTitle(raw: string): string | undefined {
+export function pageTitle(raw: string): string | undefined {
   const match = raw.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i) || raw.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
   return match ? readableText(match[1], "text/html").slice(0, 300) : undefined;
 }
@@ -133,7 +134,7 @@ function appendWithinBytes(current: string, next: string, maxBytes: number): str
   return `${current}${separator}${bytes.subarray(0, remaining).toString("utf8")}`;
 }
 
-function truncateUtf8(text: string, maxBytes: number): string {
+export function truncateUtf8(text: string, maxBytes: number): string {
   const bytes = Buffer.from(text, "utf8");
   if (bytes.length <= maxBytes) return text;
   return bytes.subarray(0, Math.max(0, maxBytes)).toString("utf8").replace(/\uFFFD$/, "");
@@ -143,6 +144,7 @@ export async function discoverProviderDocs(options: {
   baseUrl: string;
   modelKeys: readonly string[];
   signal?: AbortSignal;
+  proxyUrl?: string;
   fetchText?: DocsFetchText;
   maxPages?: number;
   maxCorpusBytes?: number;
@@ -153,6 +155,7 @@ export async function discoverProviderDocs(options: {
   if (!canHostPublicDocs(baseUrl.hostname)) return { sources: [], corpus: "" };
   const domain = registrableDomain(baseUrl.hostname);
   const fetchText = options.fetchText || hardenedFetchText;
+  const dispatcher = options.proxyUrl ? createExplicitProxyDispatcher(options.proxyUrl) : undefined;
   const maxPages = options.maxPages ?? 16;
   const maxCorpusBytes = options.maxCorpusBytes ?? 160_000;
   const queue = seedUrls(baseUrl, domain, options.modelKeys);
@@ -163,6 +166,7 @@ export async function discoverProviderDocs(options: {
   let attempts = 0;
   const maxAttempts = Math.max(maxPages * 4, maxPages + 8);
 
+  try {
   while (queue.length > 0 && sources.length < maxPages && attempts < maxAttempts && Buffer.byteLength(corpus) < maxCorpusBytes) {
     if (options.signal?.aborted) {
       throw options.signal.reason instanceof Error ? options.signal.reason : new Error("Document discovery cancelled");
@@ -179,6 +183,7 @@ export async function discoverProviderDocs(options: {
         timeoutMs: 8_000,
         signal: options.signal,
         allowContentTypes: ["text/", "application/json", "application/xml", "application/yaml"],
+        ...(dispatcher ? { dispatcher } : {}),
       });
       const finalUrl = normalizedUrl(result.finalUrl || current);
       if (!isProviderSite(new URL(finalUrl), domain)) continue;
@@ -205,4 +210,7 @@ export async function discoverProviderDocs(options: {
   }
 
   return { sources, corpus };
+  } finally {
+    if (dispatcher) await dispatcher.close().catch(() => undefined);
+  }
 }

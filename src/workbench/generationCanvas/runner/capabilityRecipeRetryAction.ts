@@ -19,7 +19,6 @@ export async function confirmAndRetryCapabilityRecipeNode(nodeId: string): Promi
     title: '重试配方失败结果',
     message: describeGenerationCost(info.taskCount, info.recipeId.startsWith('video.') ? 'video' : 'image'),
     confirmLabel: '重试失败结果',
-    light: true,
     source: 'user',
     details: [
       { label: '配方', value: info.recipeId },

@@ -1,34 +1,36 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   IconArrowBackUp,
-  IconArrowLeft,
-  IconArrowRight,
   IconArrowForwardUp,
-  IconChevronDown,
   IconCopy,
-  IconCut,
-  IconMinus,
-  IconPlus,
-  IconRefresh,
-  IconSparkles,
   IconTrash,
   IconWand,
+  IconMagnet,
+  IconZoomOut,
+  IconViewportWide,
+  IconZoomIn,
+  IconScissors,
+  IconChevronDown,
 } from '@tabler/icons-react'
 import { useWorkbenchStore } from '../workbenchStore'
-import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
-import { planStoryboardTimeline } from '../generationCanvas/agent/storyboardTimelinePlan'
-import { WorkbenchButton, WorkbenchIconButton } from '../../design'
+import { WorkbenchIconButton } from '../../design'
 import { cn } from '../../utils/cn'
-import { computeTimelineDuration, timelineHasVisualClips } from './timelineMath'
+import { computeTimelineDuration, resolveTimelineFitScale } from './timelineMath'
 import TimelineTrack from './TimelineTrack'
 import TimelineTextTrack from './TimelineTextTrack'
 import { TimelineSecondaryAddRow } from './TimelineSecondaryAddRow'
 import { frameToPixel, pixelToFrame, TIMELINE_MIN_SCALE, TIMELINE_MAX_SCALE } from './timelineEdit'
 import { buildSnapPoints, resolveSnap, pixelThresholdToFrames } from './snapping'
-import { toast } from '../../ui/toast'
+import { notify } from '../../ui/notificationPolicy'
 import { reportAdoptionOutcome } from '../adoption/adoptionReceipt'
 import { dispatchTimelineShortcut } from './timelineShortcuts'
+import { installShortcutSurfaceTracker } from '../shortcutSurface'
+import { groupTimelineTransitionFeedbackByTrack } from './timelineVisualFeedback'
+import { TimelineContextMenu, type TimelineContextTarget } from './TimelineContextMenu'
+import { TimelineShortcutsDialog } from './TimelineShortcutsDialog'
+import { openTimelineTransitionPicker } from './openTransitionPicker'
+import { ControlGroup } from '../preview/PreviewControlBar'
 
 const WHEEL_ZOOM_FACTOR = 1.24
 
@@ -53,13 +55,7 @@ function resolveTimelineRulerEndFrame(params: {
   fps: number
 }): number {
   const fps = Math.max(1, params.fps)
-  const minEditableFrame = fps * 120
-  const trailingFrame = fps * 60
-  return Math.max(
-    minEditableFrame,
-    params.durationFrame + trailingFrame,
-    params.playheadFrame + trailingFrame,
-  )
+  return Math.max(fps * 10, params.durationFrame, params.playheadFrame)
 }
 
 function buildTimelineRulerTicks(endFrame: number, fps: number, scale: number): Array<{ frame: number; label: string }> {
@@ -78,6 +74,12 @@ type TimelinePanelProps = {
   actionLabelPrefix: string
   /** 是否显示文字轨（字幕/标题卡）。仅预览标签传 true；生成画布底部不传。 */
   showTextTrack?: boolean
+  /**
+   * 传了就在工具条行尾渲染「收起时间轴」钮（生成画布传；预览面的时间轴是
+   * react-resizable-panels 的一格，没有折叠态，故不传）。
+   * 2026-09-10 之前这个 prop 被接进一个下划线形参从不使用 —— 面板内没有任何收起入口，
+   * 只能靠画布底部把手，用户真机反馈「时间轴无法向下缩」。
+   */
   onCollapse?: () => void
 }
 
@@ -104,43 +106,49 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
   // 单片工具（分割/复制/微调）作用于"最后选中"的 primary
   const primaryClipId = selectedClipIds.length > 0 ? selectedClipIds[selectedClipIds.length - 1] : ''
   const hasSelection = selectedClipIds.length > 0
-  // 选中单个媒体 clip（有源节点）→ 可「就地重生成」。文字 clip 在 textClips、不在 tracks，天然不命中。
-  const primaryMediaClip = React.useMemo(() => {
-    if (selectedClipIds.length !== 1 || !primaryClipId) return null
-    for (const track of timeline.tracks) {
-      const found = track.clips.find((clip) => clip.id === primaryClipId)
-      if (found) return found.sourceNodeId ? found : null
-    }
-    return null
-  }, [selectedClipIds, primaryClipId, timeline.tracks])
+  const activeStoryboardId = useWorkbenchStore((state) => state.activeStoryboardId)
+  // 吸附归 store（见 editingPanelLayoutSlice 里的说明）：两个 TimelinePanel 同时挂载，
+  // 局部 state 会让键盘和工具条各翻各的。
+  const snapEnabled = useWorkbenchStore((state) => state.timelineSnapEnabled)
+  const setSnapEnabled = useWorkbenchStore((state) => state.setTimelineSnapEnabled)
+  const [contextMenu, setContextMenu] = React.useState<{ target: TimelineContextTarget; x: number; y: number } | null>(null)
+  const [shortcutsOpen, setShortcutsOpen] = React.useState(false)
+  const [feedback, setFeedback] = React.useState('')
+  const presentFeedback = React.useCallback((message: string) => {
+    notify({ identity: `timeline-panel:${density}`, reason: 'editing-action', level: 'inline', type: 'error', message, present: setFeedback })
+  }, [density])
 
-  // C2 一键拼片：把画布镜头按镜序追加排进时间轴（复用 arrangeStoryboardToTimeline，幂等去重）。
-  // 用户测的主线诉求——点一下出初剪，手动重排/trim 是之后的微调。
+  // AI 拼片仍保留在时间轴工具栏；移除空态里的大号「一键拼成初稿」促销条，
+  // 避免在用户尚未准备好时抢占工作区。Agent 后续可在对话中按状态给出建议。
   const handleAiArrange = React.useCallback(() => {
+    setFeedback('')
     void import('../generationCanvas/agent/sendStoryboardToTimeline').then(({ arrangeStoryboardToTimeline }) => {
-      void arrangeStoryboardToTimeline().then((result) => {
+      return arrangeStoryboardToTimeline(activeStoryboardId ? { storyboardDesignId: activeStoryboardId } : {}).then((result) => {
+        if (result.scopeError) {
+          presentFeedback(t('timelineEditor.storyboardScopeRequired'))
+          return
+        }
         if (result.total === 0) {
-          toast(t('timelineEditor.noShots'), 'info')
+          presentFeedback(t('timelineEditor.noShots'))
           return
         }
         reportAdoptionOutcome(result.outcome, {
+          level: 'inline', present: setFeedback,
           successMessage: result.sent.length > 0
             ? t('timelineEditor.arranged', { count: result.sent.length })
             : undefined,
         })
       })
-    })
-  }, [t])
-  // 空态「一键拼成初稿」入口的镜头数：取自与拼片同源的纯规划器（planStoryboardTimeline），
-  // 与 handleAiArrange 实际会排的单位一致；选择器只返回数字 → 数字不变不触发重渲。
-  const arrangeableShotCount = useGenerationCanvasStore(
-    (state) => planStoryboardTimeline(state.nodes, state.edges).units.length,
-  )
+    }).catch((error: unknown) => presentFeedback(error instanceof Error ? error.message : t('timelineEditor.adoption.failedRecovered')))
+  }, [activeStoryboardId, presentFeedback, t])
+
   const setTimelinePlayhead = useWorkbenchStore((state) => state.setTimelinePlayhead)
   const splitTimelineClip = useWorkbenchStore((state) => state.splitTimelineClip)
   const durationFrame = computeTimelineDuration(timeline)
-  // 画面轨还空着 + 画布已有可拼镜头 → 显示空态提示行（纯增益，有画面片段后自动隐去）。
-  const showArrangeCta = !timelineHasVisualClips(timeline) && arrangeableShotCount > 0
+  const transitionFeedbackByTrack = React.useMemo(
+    () => groupTimelineTransitionFeedbackByTrack(timeline.tracks, timeline.transitions),
+    [timeline.tracks, timeline.transitions],
+  )
   const rulerEndFrame = React.useMemo(
     () => resolveTimelineRulerEndFrame({
       durationFrame,
@@ -153,8 +161,31 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
     () => buildTimelineRulerTicks(rulerEndFrame, timeline.fps, timeline.scale),
     [rulerEndFrame, timeline.fps, timeline.scale],
   )
-  const minScrollableWidth = 2400
-  const rulerWidth = Math.max(frameToPixel(rulerEndFrame, timeline.scale), minScrollableWidth)
+  const tracksRef = React.useRef<HTMLDivElement | null>(null)
+  const panelRef = React.useRef<HTMLElement | null>(null)
+  const [tracksViewportWidth, setTracksViewportWidth] = React.useState(0)
+  const contentViewportWidth = tracksViewportWidth
+  const rulerWidth = Math.max(frameToPixel(rulerEndFrame, timeline.scale), contentViewportWidth)
+  React.useEffect(() => {
+    const element = tracksRef.current
+    if (!element) return
+    const update = () => {
+      const labelWidth = Number.parseFloat(getComputedStyle(element).getPropertyValue('--workbench-timeline-label-width')) || 0
+      setTracksViewportWidth(Math.max(0, element.clientWidth - labelWidth))
+    }
+    update()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  // 自动 fit 只在内容时长/视口宽度变化时执行——**不订阅 timeline.scale**。旧版把 scale
+  // 放进依赖，用户手动缩放（⌘±/滚轮）改 scale 即重跑本 effect、立即弹回 fittedScale，
+  // 手动缩放形同虚设。去掉 scale 依赖后：缩放不被回退；加片/删片/窗口 resize 仍自动 refit。
+  React.useEffect(() => {
+    if (durationFrame <= 0 || contentViewportWidth <= 0) return
+    setTimelineZoom(resolveTimelineFitScale(durationFrame, contentViewportWidth))
+  }, [contentViewportWidth, durationFrame, setTimelineZoom])
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       // 预览(full)与生成(compact)两个 TimelinePanel 因 keep-alive 同时挂载，各注册一个 window keydown。
@@ -176,9 +207,27 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
           case 'split-primary': if (primaryClipId) splitTimelineClip(primaryClipId, timeline.playheadFrame); break
           case 'duplicate-primary': if (primaryClipId) duplicateTimelineClip(primaryClipId); break
           case 'nudge-primary': if (primaryClipId) nudgeTimelineClip(primaryClipId, action.delta); break
+          case 'toggle-snap': setSnapEnabled((enabled) => !enabled); break
+          case 'zoom':
+            setTimelineZoom(action.direction === 'fit'
+              ? resolveTimelineFitScale(durationFrame, contentViewportWidth)
+              : action.direction === 'in' ? timeline.scale * 1.25 : timeline.scale / 1.25)
+            break
+          case 'ripple-remove': if (primaryClipId) useWorkbenchStore.getState().removeTimelineClips([primaryClipId], true); break
+          case 'remove-left': {
+            const track = timeline.tracks.find((item) => item.clips.some((clip) => clip.id === primaryClipId))
+            useWorkbenchStore.getState().removeTimelineClips((track?.clips ?? []).filter((clip) => clip.endFrame <= timeline.playheadFrame).map((clip) => clip.id), true)
+            break
+          }
+          case 'remove-right': {
+            const track = timeline.tracks.find((item) => item.clips.some((clip) => clip.id === primaryClipId))
+            useWorkbenchStore.getState().removeTimelineClips((track?.clips ?? []).filter((clip) => clip.startFrame >= timeline.playheadFrame).map((clip) => clip.id), true)
+            break
+          }
         }
-      })
+      }, panelRef.current)
     }
+    installShortcutSurfaceTracker()
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
@@ -193,6 +242,12 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
     setTimelinePlayhead,
     splitMode,
     splitTimelineClip,
+    setSnapEnabled,
+    setTimelineZoom,
+    contentViewportWidth,
+    durationFrame,
+    timeline.scale,
+    timeline.tracks,
     timeline.playheadFrame,
   ])
 
@@ -217,7 +272,7 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
     const applyAt = (clientX: number, shiftKey: boolean) => {
       const store = useWorkbenchStore.getState()
       let frame = frameFromClientX(clientX)
-      if (!shiftKey) {
+      if (!shiftKey && snapEnabled) {
         const points = buildSnapPoints(store.timeline, { includePlayhead: false })
         const snap = resolveSnap(frame, points, pixelThresholdToFrames(store.timeline.scale))
         if (snap) {
@@ -234,114 +289,181 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
 
     applyAt(event.clientX, event.shiftKey)
     const handlePointerMove = (moveEvent: PointerEvent) => applyAt(moveEvent.clientX, moveEvent.shiftKey)
-    const handlePointerUp = () => {
+    const stopScrubListeners = () => {
       target.releasePointerCapture?.(pointerId)
       window.removeEventListener('pointermove', handlePointerMove)
-      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointerup', stopScrubListeners)
+      // 系统打断（触控手势/alt-tab）发 pointercancel 而非 pointerup——只摘 up 会泄漏
+      // 两个 window 监听并让 snap guide 残留。
+      window.removeEventListener('pointercancel', stopScrubListeners)
       useWorkbenchStore.getState().setTimelineSnapGuide(null)
     }
     window.addEventListener('pointermove', handlePointerMove)
-    window.addEventListener('pointerup', handlePointerUp)
-  }, [frameFromClientX])
+    window.addEventListener('pointerup', stopScrubListeners)
+    window.addEventListener('pointercancel', stopScrubListeners)
+  }, [frameFromClientX, snapEnabled])
+
+  React.useEffect(() => {
+    const onHelp = (event: KeyboardEvent) => {
+      // 与上面的 dispatchTimelineShortcut 同款去重：预览/生成两个 TimelinePanel 因
+      // keep-alive 同时挂载、各注册一个 window keydown。`?` 是 toggle——不去重会在
+      // 两个面板各翻转一次（开了又关，快捷键表按了像没反应）；Escape 幂等（各关各的
+      // 菜单/弹层，执行两次无副作用），不参与去重，否则第二面板的菜单就关不掉了。
+      if (event.key === '?' || (event.key === '/' && event.shiftKey)) {
+        if (event.defaultPrevented) return
+        event.preventDefault()
+        setShortcutsOpen((open) => !open)
+      }
+      if (event.key === 'Escape') { setContextMenu(null); setShortcutsOpen(false) }
+    }
+    window.addEventListener('keydown', onHelp)
+    return () => window.removeEventListener('keydown', onHelp)
+  }, [])
+
+  const handleContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault()
+    setFeedback('')
+    const element = event.target as HTMLElement
+    const clip = element.closest<HTMLElement>('[data-clip-id]')
+    const text = element.closest<HTMLElement>('[data-text-clip-id]')
+    const transition = element.closest<HTMLElement>('[data-timeline-transition]')
+    const track = element.closest<HTMLElement>('[data-track-id]')
+    const target: TimelineContextTarget | null = clip && track
+      ? { kind: 'clip', clipId: clip.dataset.clipId ?? '', trackId: track.dataset.trackId ?? '' }
+      : text
+        ? { kind: 'text', textClipId: text.dataset.textClipId ?? '' }
+        : transition
+          ? { kind: 'transition', fromClipId: transition.dataset.transitionFrom ?? '', toClipId: transition.dataset.transitionTo ?? '' }
+          : track
+            ? { kind: 'track', trackId: track.dataset.trackId ?? '' }
+            : null
+    if (target) setContextMenu({ target, x: event.clientX, y: event.clientY })
+  }, [])
+  const handleRegenerate = React.useCallback((clipId: string) => {
+    const clip = useWorkbenchStore.getState().timeline.tracks.flatMap((track) => track.clips).find((item) => item.id === clipId)
+    if (!clip?.sourceNodeId) return
+    void import('../generationCanvas/runner/generationRunController').then(({ regenerateNodeInPlace }) => regenerateNodeInPlace(clip.sourceNodeId, { initiator: 'user' }))
+  }, [])
+  const handleChangeTransition = React.useCallback((fromClipId: string, toClipId: string) => {
+    openTimelineTransitionPicker(fromClipId, toClipId)
+  }, [])
 
   return (
     <section
+      ref={panelRef}
+      data-shortcut-surface="timeline"
       className={cn(
         'workbench-timeline',
-        'relative min-w-0 min-h-0 grid grid-rows-[minmax(0,1fr)]',
+        'relative min-w-0 min-h-0 h-full grid grid-rows-[auto_minmax(0,1fr)]',
         'bg-[var(--workbench-surface-solid)] border-t border-[var(--workbench-border)]',
-        'shadow-[0_-1px_0_var(--workbench-bevel)]',
+        'shadow-[0_-1px_0_var(--workbench-bevel)] overflow-hidden',
         density === 'full' ? 'px-[18px] pt-[10px] pb-5' : 'px-4 pt-3 pb-4',
       )}
       data-density={density}
       aria-label={regionLabel}
       style={{ '--workbench-timeline-content-width': `${rulerWidth}px` } as React.CSSProperties}
     >
+      {/*
+        工具条是**独立头部行**，不是浮层。2026-09-10 真机反馈「右上角的功能栏和下面有遮挡」：
+        原写法 `absolute top right z-[8]`，标尺与首轨从没给它留过行，面板一窄就压在内容上。
+        近邻做法同形：OpenCut `apps/web/src/timeline/components/timeline-toolbar.tsx:71-72`
+        也是「可横向滚动的容器 + 一行 flex」，由 `index.tsx:439` 当兄弟节点排在轨道区之上。
+        簇内不换行（ControlGroup 自带 flex-none），整行放不下时横向滚动。
+      */}
+      {/*
+        行尾那一槽（帮助 + 收起）**钉住**，只有三簇工具在滚。
+        2026-09-13 真机反馈「不小心点了下面的时间轴收不回去了」：收起钮自 09-10 起就在，
+        但它排在十几颗同款 icon 钮之后、住在这条 `overflow-x-auto` 里——面板一窄它第一个
+        被滚出视口，用户能看见的就只有「收不回去」。属「说坏了其实是找不到」那一族
+        （docs/lessons/group-says-broken-usually-means-undiscoverable.md）。
+        修在这一层而不是「把行做宽」：滚动是三簇工具的正当行为，**面板级动作不该跟着滚**。
+      */}
+      <div className={cn(
+        'workbench-timeline__controls-row',
+        'flex min-w-0 items-stretch gap-2',
+      )}>
       <div className={cn(
         'workbench-timeline__controls',
-        'absolute top-[10px] right-4 z-[8] inline-flex items-center gap-0.5',
-        'bg-[color-mix(in_oklch,var(--nomi-paper)_84%,transparent)]',
-        'rounded-full backdrop-blur-[10px]',
-      )}>
-        <div className={cn(
-          'workbench-timeline__right',
-          'inline-flex items-center gap-0.5 min-w-0 p-0',
-        )}>
-          {/* 单片工具（重新生成 / 前后微调 / 复制）：**恒常渲染**，没选中片段时禁用并说明原因。
-              改之前是 `hasSelection ? … : null`——一选中整条 pill 就变长、右侧按钮全体位移，布局抖一下
-              （设计系统 §1.5 硬规则③：情境控件不许挤常驻条）。
-              想过搬到片段自己头上做浮条，实测走不通：轨道为了横向滚动用了 overflow-x:auto，
-              按 CSS 规范这会把 overflow-y 也算成 auto，浮在片段上方的东西会被整条裁掉、点不到；
-              而塞进片段内部又违反「动作不许压在内容上」。恒常渲染 + 禁用带原因同样消掉抖动，
-              还顺带满足 §1.6 契约 C1/C4，且和旁边那颗「删除选中」的既有做法一致。 */}
-          <span title={hasSelection ? undefined : t('timelineEditor.clipToolsHint')} style={{ display: 'contents' }}>
-            <div className={cn('workbench-timeline__clip-tools', 'inline-flex items-center gap-0.5')} aria-label={t('timelineEditor.selectedClipActions')}>
-              <WorkbenchIconButton
-                className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-accent)] shadow-none cursor-pointer enabled:hover:bg-[var(--workbench-accent-soft)] disabled:opacity-40')}
-                label={t('timelineEditor.regenerate')}
-                icon={<IconSparkles size={14} />}
-                disabled={!primaryMediaClip}
-                onClick={() => {
-                  if (!primaryMediaClip) return
-                  void import('../generationCanvas/runner/generationRunController')
-                    .then(({ regenerateNodeInPlace }) => regenerateNodeInPlace(primaryMediaClip.sourceNodeId))
-                }}
-              />
-              <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.nudgeEarlier')} icon={<IconArrowLeft size={14} />} disabled={!primaryClipId} onClick={() => nudgeTimelineClip(primaryClipId, -1)} />
-              <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.duplicateClip')} icon={<IconCopy size={14} />} disabled={!primaryClipId} onClick={() => duplicateTimelineClip(primaryClipId)} />
-              <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.nudgeLater')} icon={<IconArrowRight size={14} />} disabled={!primaryClipId} onClick={() => nudgeTimelineClip(primaryClipId, 1)} />
-            </div>
-          </span>
-          {/* C2 一键拼片：把画布镜头按镜序排进时间轴（accent，主操作权重）。 */}
-          <WorkbenchIconButton
-            className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-accent)] shadow-none cursor-pointer hover:bg-[var(--workbench-accent-soft)]')}
-            label={t('timelineEditor.aiArrange')}
-            title={t('timelineEditor.aiArrangeHint')}
-            icon={<IconWand size={14} />}
-            onClick={handleAiArrange}
-          />
-          {/* 剪刀模式：常驻切换。进入后悬停片段出切点线、点击在光标处分割（TimelineClip 处理）；再点 / Esc 退出。 */}
-          <WorkbenchIconButton
-            className={cn(
-              'workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] shadow-none cursor-pointer',
-              splitMode
-                ? 'bg-[var(--workbench-accent-soft)] text-[var(--workbench-accent)] hover:bg-[var(--workbench-accent-soft)]'
-                : 'bg-transparent text-[var(--workbench-muted)] hover:bg-[var(--workbench-hover)]',
-            )}
-            label={splitMode ? t('timelineEditor.exitSplitMode') : t('timelineEditor.splitMode')}
-            title={splitMode ? t('timelineEditor.splitModeActiveHint') : t('timelineEditor.splitModeHint')}
-            icon={<IconCut size={14} />}
-            onClick={() => setTimelineSplitMode(!splitMode)}
-          />
-          {canRedo ? (
-            <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.redo')} title={t('timelineEditor.redoShortcut')} icon={<IconArrowForwardUp size={14} />} onClick={() => redoTimeline()} />
-          ) : null}
-          {canUndo ? (
-            <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.undo')} title={t('timelineEditor.undoShortcut')} icon={<IconArrowBackUp size={14} />} onClick={() => undoTimeline()} />
-          ) : null}
-          <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.zoomOut', { prefix: actionLabelPrefix })} icon={<IconMinus size={14} />} onClick={() => setTimelineZoom(timeline.scale / 1.25)} />
-          <span className="text-micro opacity-60 min-w-[32px] text-center">{Math.round(timeline.scale * 100)}%</span>
-          <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.resetZoom')} icon={<IconRefresh size={14} />} onClick={() => setTimelineZoom(1)} />
-          <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.zoomIn', { prefix: actionLabelPrefix })} icon={<IconPlus size={14} />} onClick={() => setTimelineZoom(timeline.scale * 1.25)} />
-          <WorkbenchIconButton className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')} label={t('timelineEditor.deleteSelected', { prefix: actionLabelPrefix })} icon={<IconTrash size={14} />} disabled={!hasSelection} onClick={() => removeSelectedTimelineClips()} />
-          {onCollapse ? (
-            <WorkbenchIconButton
-              className={cn('workbench-timeline__tool', 'w-auto min-w-[30px] h-[var(--workbench-control-size)] px-2 inline-grid place-items-center border-0 rounded-[var(--workbench-control-radius)] bg-transparent text-[var(--workbench-muted)] shadow-none cursor-pointer hover:bg-[var(--workbench-hover)]')}
-              label={t('timelineEditor.collapse', { prefix: actionLabelPrefix })}
-              icon={<IconChevronDown size={14} />}
-              onClick={onCollapse}
-            />
-          ) : null}
+        'flex min-w-0 flex-1 items-center gap-2 pt-2 pb-2',
+        'overflow-x-auto overflow-y-hidden',
+        'scrollbar-thin scrollbar-color-transparent',
+        'hover:scrollbar-color-[color-mix(in_srgb,var(--nomi-ink)_22%,transparent)]',
+      )} role="toolbar" aria-label={t('timelineEditor.toolbarLabel')} data-timeline-toolbar-row="true">
+        <div className="workbench-timeline__clip-tools flex-none">
+        <ControlGroup label={t('timelineEditor.toolbar.thisSegment')} tone="clip" disabled={!hasSelection} disabledReason={t('timelineEditor.clipToolsHint')}>
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.context.split')} title={t('timelineEditor.context.splitShortcut')} icon={<IconScissors size={14} />} disabled={!primaryClipId} onClick={() => primaryClipId && splitTimelineClip(primaryClipId, timeline.playheadFrame)} />
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.context.duplicate')} title={t('timelineEditor.context.duplicateShortcut')} icon={<IconCopy size={14} />} disabled={!primaryClipId} onClick={() => duplicateTimelineClip(primaryClipId)} />
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.context.delete')} title={t('timelineEditor.context.deleteShortcut')} icon={<IconTrash size={14} />} disabled={!hasSelection} onClick={() => removeSelectedTimelineClips()} />
+        </ControlGroup>
         </div>
+        <ControlGroup label={t('timelineEditor.toolbar.wholeFilm')}>
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.aiArrange')} title={t('timelineEditor.aiArrangeShortcut')} icon={<IconWand size={14} />} onClick={handleAiArrange} />
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.undo')} title={t('timelineEditor.undoShortcut')} icon={<IconArrowBackUp size={14} />} disabled={!canUndo} onClick={() => undoTimeline()} />
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.redo')} title={t('timelineEditor.redoShortcut')} icon={<IconArrowForwardUp size={14} />} disabled={!canRedo} onClick={() => redoTimeline()} />
+        </ControlGroup>
+        <ControlGroup label={t('timelineEditor.toolbar.view')}>
+          <WorkbenchIconButton className={cn(CLIP_TOOL_CLASS, snapEnabled && 'bg-[var(--workbench-accent-soft)] text-[var(--workbench-accent)]')} label={t('timelineEditor.snapToggle')} title={t('timelineEditor.snapShortcut')} icon={<IconMagnet size={14} />} onClick={() => setSnapEnabled((value) => !value)} />
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.zoomOut', { prefix: actionLabelPrefix })} title={t('timelineEditor.zoomOutShortcut')} icon={<IconZoomOut size={14} />} onClick={() => setTimelineZoom(timeline.scale / 1.25)} />
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.resetZoom')} title={t('timelineEditor.fitShortcut')} icon={<IconViewportWide size={14} />} onClick={() => setTimelineZoom(resolveTimelineFitScale(durationFrame, contentViewportWidth))} />
+          <WorkbenchIconButton className={CLIP_TOOL_CLASS} label={t('timelineEditor.zoomIn', { prefix: actionLabelPrefix })} title={t('timelineEditor.zoomInShortcut')} icon={<IconZoomIn size={14} />} onClick={() => setTimelineZoom(timeline.scale * 1.25)} />
+          <span className="min-w-8 text-center text-micro tabular-nums opacity-60">{Math.round(timeline.scale * 100)}%</span>
+        </ControlGroup>
+      </div>
+      <div className={cn(
+        'workbench-timeline__controls-tail',
+        'flex flex-none items-center gap-1 pt-2 pb-2 pl-2',
+        'border-l border-[var(--nomi-line-soft)]',
+      )} data-timeline-toolbar-tail="true">
+        <button type="button" className="grid h-7 w-7 flex-none place-items-center rounded-[var(--nomi-radius-sm)] text-micro text-[var(--workbench-muted)] hover:bg-[var(--workbench-hover)]" aria-label={t('timelineEditor.shortcuts.open')} title={t('timelineEditor.shortcuts.open')} onClick={() => setShortcutsOpen(true)}>?</button>
+        {/* 面板内的收起入口。只有真有折叠态的宿主才传 onCollapse，所以预览面不会长出
+            一个按了没反应的钮。09-13 之前它是**无文字的 chevron**，排在一排同款 icon 钮
+            之后——截图里它就在那儿、用户仍然报「收不回去」（公认图形≠这一颗在说什么）。
+            所以补上现役动作词「收起」：一颗带文字的动作钮，不再是一个像「更多」的尖角。 */}
+        {onCollapse ? (
+          <button
+            type="button"
+            className={cn(
+              'inline-flex h-7 flex-none items-center gap-1 rounded-[var(--nomi-radius-sm)] px-2',
+              'border-0 bg-transparent cursor-pointer font-inherit text-micro',
+              'text-[var(--workbench-muted)] transition-colors',
+              'hover:bg-[var(--workbench-hover)] hover:text-[var(--workbench-ink)]',
+            )}
+            data-timeline-collapse="true"
+            aria-label={t('timelineEditor.collapsePanel')}
+            title={t('timelineEditor.collapsePanel')}
+            onClick={onCollapse}
+          >
+            <IconChevronDown size={16} aria-hidden="true" />
+            <span>{t('timelineEditor.collapse')}</span>
+          </button>
+        ) : null}
+      </div>
       </div>
       <div
         className={cn(
           'workbench-timeline__tracks',
           'relative min-w-0 min-h-0 block bg-transparent',
-          'overflow-x-auto overflow-y-hidden pb-2',
+          // 不给这层加 padding：轨道区高度归零（面板缩到只剩头部行）时，padding 会让它的
+          // padding-box 仍有几层像素，标尺就从下边缘露出半行被切掉的刻度字。
+          // 底部留白由外层 section 的 pb 负责，不必在滚动容器里再留一次。
+          'overflow-x-auto overflow-y-auto',
           'scrollbar-thin scrollbar-color-transparent',
           'hover:scrollbar-color-[color-mix(in_srgb,var(--nomi-ink)_22%,transparent)]',
         )}
+        ref={tracksRef}
+        onContextMenu={handleContextMenu}
+        /*
+         * 点轨道区空白处取消选中 —— 全站唯一一条「回到整片属性」的路。
+         * 在这之前，一旦选中过任何片段，属性面板就永远停在那一段上：画幅、导出分辨率、
+         * 配乐音量（合同 §2.3 的整片态）再也回不去了，除非把片段删掉或重开项目。
+         * 这是所有 NLE 的通用手势，不需要额外的「取消选中」按钮。
+         */
+        onPointerDown={(event) => {
+          const target = event.target as HTMLElement
+          if (target.closest('[data-clip-id], [data-text-clip-id], [data-timeline-transition], button, [role="menuitem"], [role="dialog"], .workbench-timeline__ruler-content')) return
+          useWorkbenchStore.getState().setTimelineSelection([])
+          useWorkbenchStore.getState().selectTimelineTextClip('')
+        }}
         onWheel={(e) => {
           if (!e.ctrlKey && !e.metaKey) return
           e.preventDefault()
@@ -399,37 +521,6 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
             ))}
           </div>
         </div>
-        {/* 空态「一键拼成初稿」提示行：整条「剧本→初稿」旅程的收尾动作——逐镜出完图后一键成初剪。
-            只在「画面轨空 + 画布已有可拼镜头」时出现，点击复用 handleAiArrange（幂等追加、单测已覆盖），
-            有画面片段 / 无可拼镜头后自动隐去 = 纯增益空态，不改任何拼片逻辑。右上角魔杖图标仍保留。 */}
-        {showArrangeCta ? (
-          <div
-            className={cn(
-              'workbench-timeline__arrange-cta',
-              'w-full grid grid-cols-[var(--workbench-timeline-label-width)_minmax(0,1fr)] mb-2',
-            )}
-            data-testid="timeline-arrange-cta"
-          >
-            <span aria-hidden="true" />
-            <div className={cn(
-              'flex items-center justify-between gap-2.5 min-w-0',
-              'px-2.5 py-1.5 rounded-[var(--nomi-radius-sm)]',
-              'bg-[var(--workbench-accent-soft)]',
-              'border border-[color-mix(in_oklch,var(--workbench-accent)_26%,transparent)]',
-            )}>
-              <span className="inline-flex items-center gap-2 min-w-0">
-                <IconSparkles size={15} className="flex-none text-[var(--workbench-accent)]" />
-                <span className="min-w-0 truncate text-xs text-[var(--workbench-ink)]">
-                  {t('timelineEditor.arrangeCta.message', { count: arrangeableShotCount })}
-                </span>
-              </span>
-              <WorkbenchButton variant="primary" size="sm" className="flex-none" onClick={handleAiArrange}>
-                <IconWand size={16} />
-                {t('timelineEditor.arrangeCta.action')}
-              </WorkbenchButton>
-            </div>
-          </div>
-        ) : null}
         {/* 吸附辅助线（暖橙虚线 + 标签），仅拖动中临时出现 */}
         {snapGuide ? (
           <div
@@ -485,22 +576,24 @@ export default function TimelinePanel({ density = 'compact', regionLabel, action
         </div>
         {/* 主次分层(方案 B)：画面(图/视频)主轨;配乐/字幕降副轨,空时收成「+配乐/+字幕」窄条。 */}
         {timeline.tracks.filter((t) => t.type !== 'audio').map((track) => (
-          <TimelineTrack key={track.id} track={track} variant="primary" />
+          <TimelineTrack key={track.id} track={track} transitionFeedback={transitionFeedbackByTrack.get(track.id)} variant="primary" />
         ))}
         {(() => {
           const audioTrack = timeline.tracks.find((t) => t.type === 'audio')
           const audioHasClips = (audioTrack?.clips.length ?? 0) > 0
-          const textHasClips = (timeline.textClips?.length ?? 0) > 0
           const showAudioChip = Boolean(audioTrack) && !audioHasClips
-          const showTextChip = showTextTrack && !textHasClips
+          const showTextChip = showTextTrack
           return (
             <>
-              {audioTrack && audioHasClips ? <TimelineTrack key={audioTrack.id} track={audioTrack} variant="secondary" /> : null}
-              {showTextTrack && textHasClips ? <TimelineTextTrack /> : null}
+              {audioTrack && audioHasClips ? <TimelineTrack key={audioTrack.id} track={audioTrack} transitionFeedback={transitionFeedbackByTrack.get(audioTrack.id)} variant="secondary" /> : null}
+              {showTextTrack ? <TimelineTextTrack /> : null}
               {showAudioChip || showTextChip ? <TimelineSecondaryAddRow showAudio={showAudioChip} showText={showTextChip} /> : null}
             </>
           )
         })()}
+        {feedback ? <p role="status" data-timeline-action-feedback className="py-1 text-caption text-workbench-danger">{feedback}</p> : null}
+        {contextMenu ? <TimelineContextMenu target={contextMenu.target} x={contextMenu.x} y={contextMenu.y} onClose={() => setContextMenu(null)} onRegenerate={handleRegenerate} onChangeTransition={handleChangeTransition} onArrange={handleAiArrange} onFeedback={presentFeedback} /> : null}
+        {shortcutsOpen ? <TimelineShortcutsDialog onClose={() => setShortcutsOpen(false)} /> : null}
       </div>
     </section>
   )

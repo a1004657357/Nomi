@@ -46,6 +46,19 @@ type State = UpdaterReducerState
 
 export const UPDATER_INITIAL_STATE: State = { phase: 'idle', latestVersion: null, notes: '', percent: 0, errorMessage: '' }
 
+
+export type UpdaterVisibilityInput = {
+  phase: UpdaterPhase
+  requested: boolean
+}
+
+/** Background update events never claim focus; only an explicit request opens details. */
+export function shouldShowUpdaterDialog({ phase, requested }: UpdaterVisibilityInput): boolean {
+  if (!requested) return false
+  return phase === 'available' || phase === 'downloading' || phase === 'downloaded' || phase === 'error'
+}
+
+
 const INITIAL = UPDATER_INITIAL_STATE
 
 export function reduceUpdaterState(state: State, event: DesktopUpdateEvent): State {

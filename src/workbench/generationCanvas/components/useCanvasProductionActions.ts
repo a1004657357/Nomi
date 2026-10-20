@@ -1,9 +1,10 @@
+import { useProductionCanvasLandingStore } from '../../production/productionCanvasLandingStore'
 import React from 'react'
 import type { ModelOption } from '../../../config/models'
 import i18n from '../../../i18n'
-import { showInfoToast } from '../../../utils/showInfoToast'
+import { reportCanvasFeedback } from './canvasFeedback'
 import { showUndoToast } from '../../../utils/showUndoToast'
-import { findModelOptionByIdentifier } from '../adapters/modelOptionsAdapter'
+import { findModelOptionByIdentifier, requiredModeForGenerationNode } from '../adapters/modelOptionsAdapter'
 import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import { buildNodeModelChangePatch } from '../nodes/buildNodeModelChangePatch'
 import { buildDependencyWaves } from '../runner/dependencyWaves'
@@ -16,11 +17,14 @@ import {
   readCanvasBatchConcurrency,
   resolveCanvasGenerationScope,
   writeCanvasBatchConcurrency,
+  type CanvasGenerationExecutionGroup,
 } from './canvasProductionScope'
+import { withProjectAction } from '../../project/projectCanvasReadSurface'
 
 export function useCanvasProductionActions(params: { activeCategoryId: string; selectedNodeIds: readonly string[] }) {
   const { activeCategoryId, selectedNodeIds } = params
   const nodes = useGenerationCanvasStore((state) => state.nodes)
+  const edges = useGenerationCanvasStore((state) => state.edges)
   const updateNodes = useGenerationCanvasStore((state) => state.updateNodes)
   const undo = useGenerationCanvasStore((state) => state.undo)
   const [concurrency, setConcurrencyState] = React.useState(readCanvasBatchConcurrency)
@@ -32,10 +36,14 @@ export function useCanvasProductionActions(params: { activeCategoryId: string; s
     () => nodesInCanvasProductionScope(nodes, productionScope),
     [nodes, productionScope],
   )
-  const eligibleIds = React.useMemo(() => eligibleGenerationNodeIds(nodes, productionScope), [nodes, productionScope])
+  const productionRuns = useProductionCanvasLandingStore((store) => store.runs)
+  const eligibleIds = React.useMemo(
+    () => eligibleGenerationNodeIds(nodes, productionScope, productionRuns),
+    [nodes, productionScope, productionRuns],
+  )
   const executionGroups = React.useMemo(
-    () => groupGenerationNodesByExecutionKind(scopedNodes.filter((node) => !node.locked)),
-    [scopedNodes],
+    () => groupGenerationNodesByExecutionKind(scopedNodes.filter((node) => !node.locked), edges, nodes),
+    [edges, nodes, scopedNodes],
   )
 
   const setConcurrency = React.useCallback((value: number) => {
@@ -47,17 +55,20 @@ export function useCanvasProductionActions(params: { activeCategoryId: string; s
     const state = useGenerationCanvasStore.getState()
     void confirmAndRunPlan(buildDependencyWaves(eligibleIds, { nodes: state.nodes, edges: state.edges }), {
       concurrency,
+      initiator: 'user',
     })
   }, [concurrency, eligibleIds])
 
   const applyModel = React.useCallback(
-    (input: { executionKind: string; value: string; vendor?: string; modelOptions: readonly ModelOption[] }) => {
+    (input: { executionKind: string; requiredMode: CanvasGenerationExecutionGroup['requiredMode']; value: string; vendor?: string; modelOptions: readonly ModelOption[] }) => {
       const state = useGenerationCanvasStore.getState()
       const targets = nodesInCanvasProductionScope(state.nodes, productionScope).filter(
-        (node) => !node.locked && getGenerationNodeExecutionKind(node.kind) === input.executionKind,
+        (node) => !node.locked &&
+          getGenerationNodeExecutionKind(node.kind) === input.executionKind &&
+          requiredModeForGenerationNode(node, { nodes: state.nodes, edges: state.edges }) === input.requiredMode,
       )
       if (targets.length === 0) {
-        showInfoToast(i18n.t('generationCommon.production.lockedModelChange'))
+        reportCanvasFeedback(i18n.t('generationCommon.production.lockedModelChange'), 'warning', { projectId: withProjectAction((project) => project.binding.projectId) ?? '', identity: `model-change:${activeCategoryId}`, reason: 'locked', nodeIds: [...selectedNodeIds] })
         return
       }
       const updates = targets.map((node) => ({
@@ -81,7 +92,7 @@ export function useCanvasProductionActions(params: { activeCategoryId: string; s
         onUndo: undo,
       })
     },
-    [productionScope, undo, updateNodes],
+    [activeCategoryId, selectedNodeIds, productionScope, undo, updateNodes],
   )
 
   return {

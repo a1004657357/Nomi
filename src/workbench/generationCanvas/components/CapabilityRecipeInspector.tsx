@@ -1,3 +1,5 @@
+import { Drawer } from '@mantine/core'
+import type { JSX } from 'react'
 import React from 'react'
 import {
   IconAlertTriangle,
@@ -8,7 +10,7 @@ import {
   IconRotate,
   IconSparkles,
 } from '@tabler/icons-react'
-import { DesignDrawer, NomiSelect, WorkbenchButton } from '../../../design'
+import { NomiSelect, WorkbenchButton } from '../../../design'
 import { recipeTaskCount } from '../../../config/capabilityRecipes'
 import type { ModelParameterControl } from '../../../config/modelCatalogMeta'
 import { isCapabilityRecipesEnabled } from '../../../config/featureFlags'
@@ -121,7 +123,6 @@ export function CapabilityRecipeInspector({
   const [originSkillNodeId, setOriginSkillNodeId] = React.useState<string | null>(null)
   const [visionReview, setVisionReview] = React.useState<CapabilityVisionReviewSelection>({ enabled: false })
   const catalogRequestId = React.useRef(0)
-
   const nodes = useGenerationCanvasStore((state) => state.nodes)
   const source = nodes.find((node) => node.id === selectedNodeId) ?? null
   const availableResources = nodes.filter((node) => Boolean(node.creativeResource))
@@ -170,7 +171,6 @@ export function CapabilityRecipeInspector({
     window.addEventListener(OPEN_CAPABILITY_RECIPE_EVENT, handleOpenRequest)
     return () => window.removeEventListener(OPEN_CAPABILITY_RECIPE_EVENT, handleOpenRequest)
   }, [enabled])
-
   const refreshRecipes = React.useCallback(async () => {
     const requestId = catalogRequestId.current + 1
     catalogRequestId.current = requestId
@@ -237,7 +237,6 @@ export function CapabilityRecipeInspector({
       setCameraOutputs((current) => makeCameraOutputs(nextCount, current))
     }
   }, [isMoodRecipe, moodOutputCount, outputCount, selectedRecipe, selectedTarget?.maxOutputs])
-
   const resourceCandidates = selectedRecipe
     ? availableResources.filter((node) => isCreativeResourceCandidate(selectedRecipe, node))
     : []
@@ -252,7 +251,6 @@ export function CapabilityRecipeInspector({
     : null
 
   if (!enabled) return null
-
   const recipeOptions = recipes.map((recipe) => ({
     value: recipe.id,
     label: recipe.label,
@@ -275,12 +273,10 @@ export function CapabilityRecipeInspector({
   const visibleControls = controls.filter(
     (control) => !(isMoodRecipe && moodGenerationMode !== 'single' && ['energy', 'affinity'].includes(control.key)),
   )
-
   const patchParam = (control: ModelParameterControl, raw: string | boolean) => {
     const value = control.type === 'number' ? Number(raw) : control.type === 'boolean' ? Boolean(raw) : String(raw)
     setParams((current) => ({ ...current, [control.key]: value }))
   }
-
   const startRecipe = async () => {
     if (!source || !selectedRecipe || !selectedTarget || running) return
     if (!inputReadiness.ready) {
@@ -309,7 +305,6 @@ export function CapabilityRecipeInspector({
         ? `${generationCost}；生成完成后额外执行 1 次批量视觉复核。`
         : generationCost,
       confirmLabel: '生成新结果',
-      light: true,
       source: 'user',
       details: [
         { label: '源节点', value: source.title },
@@ -362,7 +357,6 @@ export function CapabilityRecipeInspector({
       setRunning(false)
     }
   }
-
   const saveResource = async () => {
     if (!source) return
     try {
@@ -415,7 +409,7 @@ export function CapabilityRecipeInspector({
         <IconSparkles size={16} stroke={1.7} aria-hidden />
         <span className={triggerVariant === 'toolbar' ? 'sr-only' : undefined}>创作能力</span>
       </button>
-      <DesignDrawer
+      <Drawer
         opened={open}
         onClose={() => setOpen(false)}
         position="right"
@@ -793,7 +787,7 @@ export function CapabilityRecipeInspector({
             </div>
           )}
         </div>
-      </DesignDrawer>
+      </Drawer>
     </>
   )
 }

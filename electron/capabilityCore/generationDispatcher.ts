@@ -1,29 +1,27 @@
-import type { CapabilityOriginHost } from './security'
 import { hasGenerationBinding } from './generationBindingGuard'
-import {
-  createMcpGenerationPolicy,
-  type McpGenerationCapability,
-  type McpGenerationPolicy,
-} from './mcpGenerationPolicy'
+import { type McpGenerationCapability } from './mcpGenerationPolicy'
+
+/**
+ * 这一族错误的下一步动作。
+ *
+ * 2026-09-21 之前它是 `nomi://settings/automation?section=mcp-generation`——指向一个用来打开
+ * 生成面的设置开关，而**那个开关在界面上从来不存在**（面是由 env flag 关着的）。模型照着它去点，
+ * 点不到任何东西。flag 删掉之后剩下的每一个码说的都是同一类事：这次调用缺一张有效的项目租约
+ * 或人证。所以下一步动作换成真正能照做的那一句。
+ */
+const OPEN_PROJECT_SESSION_NEXT_ACTION = 'Open a new project session and retry'
 import type { HumanApprovalReceiptV1 } from './approvalReceipt'
-import type { ProjectLeaseV1 } from './projectLease'
+import type { ProjectLeaseV2 } from './projectLease'
+import { spendDecidedByPolicy } from '../shared/agentCapabilities/capabilityApprovalPolicy'
 import type { DispatchContext } from './dispatcher'
 import { RpcError, type RpcPolicyErrorCode, type RpcPolicyErrorDetails } from './rpcError'
-
-type RegisteredMcpClient = Extract<CapabilityOriginHost, 'claude' | 'codex' | 'cursor'>
-
-function isRegisteredMcpClient(value: CapabilityOriginHost | undefined): value is RegisteredMcpClient {
-  return value === 'claude' || value === 'codex' || value === 'cursor'
-}
 
 const SEMANTIC_GENERATION_ROUTES: Readonly<Record<string, Readonly<{
   capability: McpGenerationCapability
   contextRead?: boolean
   requiresLease?: boolean
   requiresReceipt?: boolean
-  sessionOpen?: boolean
 }>>> = Object.freeze({
-  nomi_session_open: { capability: 'context', requiresLease: false, sessionOpen: true },
   nomi_get_generation_context: { capability: 'context', contextRead: true },
   nomi_operation_create: { capability: 'create' },
   nomi_submit_generation_plan: { capability: 'plan' },
@@ -54,7 +52,6 @@ const LEGACY_ROUTE_CAPABILITY: Readonly<Record<string, McpGenerationCapability>>
   'production.storyboard.materialize': 'create',
   'production.control': 'cancel',
   'production.decide-gate': 'gate_decide',
-  'production.generate-node': 'start',
   nomi_start_playbook: 'create',
 })
 
@@ -65,35 +62,32 @@ function policyError(
   return new RpcError(message, 403, details)
 }
 
-function unavailableSemanticRoute(policy: McpGenerationPolicy, capability: McpGenerationCapability): RpcError {
-  const snapshot = policy.snapshot()
+function unavailableSemanticRoute(capability: McpGenerationCapability): RpcError {
   return policyError({
     code: 'not_ready',
-    nextAction: snapshot.nextAction,
-    phase: snapshot.phase,
+    nextAction: OPEN_PROJECT_SESSION_NEXT_ACTION,
     capability,
   }, `generation.single-shot ${capability} is not ready`)
 }
 
-export function guardLegacyGenerationRoute(policy: McpGenerationPolicy, route: string, params: Record<string, unknown>): void {
+export function guardLegacyGenerationRoute(route: string, params: Record<string, unknown>): void {
   if (!hasGenerationBinding(params)) return
-  const snapshot = policy.snapshot()
   const capability = LEGACY_ROUTE_CAPABILITY[route] ?? 'create'
   throw policyError({
     code: 'legacy_path_forbidden',
-    nextAction: snapshot.nextAction,
-    phase: snapshot.phase,
+    nextAction: OPEN_PROJECT_SESSION_NEXT_ACTION,
     capability,
   }, `Legacy route ${route} cannot carry generation.single-shot bindings`)
 }
 
-function leaseFailureCode(error: unknown): Extract<RpcPolicyErrorCode, 'lease_invalid' | 'project_scope_changed' | 'lease_expired' | 'lease_revoked'> {
+function leaseFailureCode(error: unknown): Extract<RpcPolicyErrorCode, 'lease_invalid' | 'project_scope_changed' | 'project_binding_stale' | 'lease_expired' | 'lease_revoked'> {
   const code = error && typeof error === 'object' && 'code' in error
     ? (error as { code?: unknown }).code
     : undefined
   const message = error instanceof Error ? error.message : ''
+  if (code === 'project_binding_stale') return code
   if (code === 'project_scope_changed'
-    && (/does not match current scope|scope is insufficient/i.test(message))) return code
+    && (/does not match (?:the )?current scope|scope is insufficient/i.test(message))) return code
   if (code === 'lease_expired' || code === 'lease_revoked') return code
   return 'lease_invalid'
 }
@@ -115,70 +109,47 @@ function leaseScopeForCapability(capability: McpGenerationCapability): string {
   }
 }
 
-/**
- * A trusted current-project bootstrap may silently grant the non-submit scopes
- * that the active rollout exposes.  This keeps the first user journey to one
- * session-open call instead of making the client obtain a second opaque handle.
- * The submit scope is intentionally omitted: gate_decide upgrades the lease
- * only after a verified human receipt exists.
- */
-function bootstrapLeaseScopes(policy: McpGenerationPolicy): string[] {
-  const scopes = new Set<string>()
-  for (const capability of policy.snapshot().effectiveScope) {
-    if (capability === 'start') continue
-    scopes.add(leaseScopeForCapability(capability))
-  }
-  return [...scopes]
+function policyDetails(capability: McpGenerationCapability, code: RpcPolicyErrorCode, nextAction = OPEN_PROJECT_SESSION_NEXT_ACTION): RpcPolicyErrorDetails {
+  return { code, nextAction, capability }
 }
 
-function assertOnlyFields(params: Record<string, unknown>, allowed: Set<string>): void {
-  const unexpected = Object.keys(params).find((key) => !allowed.has(key))
-  if (unexpected) throw new RpcError(`Production field is not allowed: ${unexpected}`, 400)
-}
-
-function policyDetails(policy: McpGenerationPolicy, capability: McpGenerationCapability, code: RpcPolicyErrorCode, nextAction = policy.snapshot().nextAction): RpcPolicyErrorDetails {
-  const snapshot = policy.snapshot()
-  return { code, nextAction, phase: snapshot.phase, capability }
-}
-
-function requireProjectLease(
+async function requireProjectLease(
   params: Record<string, unknown>,
   capability: McpGenerationCapability,
   ctx: DispatchContext,
-  policy: McpGenerationPolicy,
-): { params: Record<string, unknown>; lease: ProjectLeaseV1 } {
+): Promise<{ params: Record<string, unknown>; lease: ProjectLeaseV2 }> {
   const token = typeof params.leaseHandle === 'string' ? params.leaseHandle.trim() : ''
-  if (!token) throw policyError(policyDetails(policy, capability, 'lease_required'), 'A verified project lease is required')
-  if (!ctx.projectLeaseAuthority) throw policyError(policyDetails(policy, capability, 'lease_required'), 'Project lease authority is unavailable')
+  if (!token) throw policyError(policyDetails(capability, 'lease_required'), 'A verified project lease is required')
+  if (!ctx.projectSession) throw policyError(policyDetails(capability, 'lease_required'), 'Project session authority is unavailable')
   const expectedProjectId = typeof params.projectId === 'string' && params.projectId.trim()
     ? params.projectId.trim()
     : undefined
   try {
-    const lease = ctx.projectLeaseAuthority.verifyLease(token, {
-      projectId: expectedProjectId,
+    const lease = await ctx.projectSession.authority.verifyLease(token, {
+      connection: ctx.projectSession.connection,
+      projectHint: expectedProjectId,
       scope: leaseScopeForCapability(capability),
     })
     return { params: { ...params, projectId: lease.projectId }, lease }
   } catch (error) {
     const code = leaseFailureCode(error)
-    throw policyError(policyDetails(policy, capability, code), error instanceof Error ? error.message : 'Project lease is invalid')
+    throw policyError(policyDetails(capability, code), error instanceof Error ? error.message : 'Project lease is invalid')
   }
 }
 
 function requireApprovalReceipt(
   params: Record<string, unknown>,
-  lease: ProjectLeaseV1,
+  lease: ProjectLeaseV2,
   capability: McpGenerationCapability,
   ctx: DispatchContext,
-  policy: McpGenerationPolicy,
 ): HumanApprovalReceiptV1 {
   const reject = (code: Extract<RpcPolicyErrorCode, 'human_approval_required' | 'receipt_invalid' | 'receipt_expired'>, message: string): never => {
-    throw policyError(policyDetails(policy, capability, code), message)
+    throw policyError(policyDetails(capability, code), message)
   }
   const authority = ctx.approvalReceiptAuthority
   if (!authority) {
     throw policyError(
-      policyDetails(policy, capability, 'human_approval_required'),
+      policyDetails(capability, 'human_approval_required'),
       'A main-process human approval receipt is required',
     )
   }
@@ -225,155 +196,23 @@ function requireApprovalReceipt(
   }
 }
 
-function openProjectLease(
-  params: Record<string, unknown>,
-  ctx: DispatchContext,
-  policy: McpGenerationPolicy,
-): Record<string, unknown> {
-  const snapshot = policy.snapshot()
-  const missing = (message: string): never => {
-    throw policyError({
-      code: 'lease_required',
-      nextAction: snapshot.nextAction,
-      phase: snapshot.phase,
-      capability: 'context',
-    }, message)
-  }
-  assertOnlyFields(params, new Set(['projectSelectionHandle', 'bootstrap']))
-  const selectionToken = typeof params.projectSelectionHandle === 'string' ? params.projectSelectionHandle.trim() : ''
-  const bootstrap = params.bootstrap
-  if (selectionToken && bootstrap !== undefined) missing('Choose a signed project selection handle or current-project bootstrap, not both')
-  const authority = ctx.projectLeaseAuthority
-  const resolveProjectSelection = ctx.resolveProjectSelection
-  const resolveCurrentProject = ctx.resolveCurrentProject
-  if (!authority || (!resolveProjectSelection && !resolveCurrentProject)) {
-    throw policyError({
-      code: 'lease_required',
-      nextAction: snapshot.nextAction,
-      phase: snapshot.phase,
-      capability: 'context',
-    }, 'Project lease authority is unavailable')
-  }
-  try {
-    let handleToken = selectionToken
-    let session: ReturnType<NonNullable<DispatchContext['resolveProjectSelection']>>
-    if (bootstrap !== undefined) {
-      if (!bootstrap || typeof bootstrap !== 'object' || Array.isArray(bootstrap)) throw new RpcError('Invalid current-project bootstrap', 400)
-      assertOnlyFields(bootstrap as Record<string, unknown>, new Set(['mode', 'clientSessionNonce']))
-      const mode = (bootstrap as Record<string, unknown>).mode
-      const clientSessionNonce = (bootstrap as Record<string, unknown>).clientSessionNonce
-      const client = ctx.origin?.host
-      if (mode !== 'current_project' || typeof clientSessionNonce !== 'string' || !clientSessionNonce.trim() || clientSessionNonce.length > 200) {
-        throw new RpcError('Invalid current-project bootstrap', 400)
-      }
-      if (!isRegisteredMcpClient(client)) {
-        throw policyError({
-          code: 'lease_required',
-          nextAction: snapshot.nextAction,
-          phase: snapshot.phase,
-          capability: 'context',
-        }, 'A registered MCP client is required for current-project bootstrap')
-      }
-      const currentProjectResolver = resolveCurrentProject
-      if (typeof currentProjectResolver !== 'function') {
-        throw policyError({
-          code: 'lease_required',
-          nextAction: snapshot.nextAction,
-          phase: snapshot.phase,
-          capability: 'context',
-        }, 'Current-project bootstrap is unavailable')
-      }
-      const current = currentProjectResolver({ client, clientSessionNonce: clientSessionNonce.trim() })
-      if (!current.projectId || !current.immutableProjectUuid || !Number.isInteger(current.projectGeneration)
-        || !current.canonicalRootDigest || !current.manifestDigest || !current.leasePrincipal
-        || !current.sessionId || !current.connectionNonce || !current.serverNonce) {
-        missing('Current-project identity is incomplete')
-      }
-      const issuedHandle = authority.issueSelectionHandle({
-        immutableProjectUuid: current.immutableProjectUuid,
-        projectGeneration: current.projectGeneration,
-        canonicalRootDigest: current.canonicalRootDigest,
-        manifestDigest: current.manifestDigest,
-        revocationEpoch: current.revocationEpoch,
-        scopeSet: bootstrapLeaseScopes(policy),
-      })
-      handleToken = issuedHandle.token
-      session = current
-    } else {
-      if (!selectionToken) missing('A signed project selection handle or current-project bootstrap is required')
-      const projectSelectionResolver = resolveProjectSelection
-      if (typeof projectSelectionResolver !== 'function') {
-        throw policyError({
-          code: 'lease_required',
-          nextAction: snapshot.nextAction,
-          phase: snapshot.phase,
-          capability: 'context',
-        }, 'Project selection resolver is unavailable')
-      }
-      const handle = authority.verifySelectionHandle(selectionToken)
-      session = projectSelectionResolver(handle)
-    }
-    if (!session.projectId || !session.leasePrincipal || !session.sessionId || !session.connectionNonce || !session.serverNonce) {
-      missing('Project lease session binding is incomplete')
-    }
-    const issued = authority.issueLease(handleToken, {
-      projectId: session.projectId,
-      leasePrincipal: session.leasePrincipal,
-      sessionId: session.sessionId,
-      connectionNonce: session.connectionNonce,
-    })
-    return {
-      protocolVersion: 1,
-      sessionId: issued.lease.sessionId,
-      leaseHandle: issued.token,
-      immutableProjectUuid: issued.lease.immutableProjectUuid,
-      projectGeneration: issued.lease.projectGeneration,
-      projectId: issued.lease.projectId,
-      expiresAt: issued.lease.expiresAt,
-      audience: issued.lease.audience,
-      phase: snapshot.phase,
-      effectiveScope: [...snapshot.effectiveScope],
-      serverNonce: session.serverNonce,
-    }
-  } catch (error) {
-    if (error instanceof RpcError) throw error
-    const code = leaseFailureCode(error)
-    throw policyError({
-      code,
-      nextAction: snapshot.nextAction,
-      phase: snapshot.phase,
-      capability: 'context',
-    }, error instanceof Error ? error.message : 'Project selection handle is invalid')
-  }
-}
-
 async function dispatchSemanticStub(
-  route: Readonly<{ capability: McpGenerationCapability; contextRead?: boolean; requiresLease?: boolean; requiresReceipt?: boolean; sessionOpen?: boolean }>,
+  route: Readonly<{ capability: McpGenerationCapability; contextRead?: boolean; requiresLease?: boolean; requiresReceipt?: boolean }>,
   params: Record<string, unknown>,
   ctx: DispatchContext,
-  policy: McpGenerationPolicy,
 ): Promise<unknown> {
-  const decision = policy.decide(route.capability)
-  if (decision.kind === 'blocked') {
-    throw policyError({
-      code: decision.code,
-      nextAction: decision.nextAction,
-      phase: decision.phase,
-      capability: decision.capability,
-    })
-  }
-  if (route.sessionOpen) return openProjectLease(params, ctx, policy)
+  // 这里曾经先问一句「这个面开了吗」（env flag + 三段式 rollout）。2026-09-21 整条删除：
+  // 工具挂在 tools/list 上广告着、调用却被一个没有界面能开的环境变量打回去，那不是闸，是墙。
   if (route.contextRead && typeof ctx.generationContext !== 'function' && typeof ctx.generationPlanning !== 'function') {
-    throw unavailableSemanticRoute(policy, route.capability)
+    throw unavailableSemanticRoute(route.capability)
   }
   const leased = route.requiresLease === false
     ? { params, lease: undefined }
-    : requireProjectLease(params, route.capability, ctx, policy)
+    : await requireProjectLease(params, route.capability, ctx)
   if (route.capability === 'gate_request') {
     if (!leased.lease) throw policyError({
       code: 'lease_required',
-      nextAction: policy.snapshot().nextAction,
-      phase: policy.snapshot().phase,
+      nextAction: OPEN_PROJECT_SESSION_NEXT_ACTION,
       capability: route.capability,
     })
     if (typeof ctx.requestGenerationGate === 'function') {
@@ -392,7 +231,11 @@ async function dispatchSemanticStub(
       }
       const verifiedProjectRevision = projectRevision as number
       const model = typeof value?.model === 'string' ? value.model : '当前模型'
+      // 「算不出价」不是 0 元：已知那部分记下来，未知的镜数单独带走（2026-09-21 开闸）。
       const maximumCost = typeof value?.maximumCost === 'number' && Number.isFinite(value.maximumCost) ? value.maximumCost : 0
+      const unknownShotCount = typeof value?.unknownShotCount === 'number' && Number.isSafeInteger(value.unknownShotCount) && value.unknownShotCount > 0
+        ? value.unknownShotCount
+        : 0
       const challenge = authority.requestChallenge({
         challengeKey: `generation.single-shot:${leased.lease.projectId}:${String(value?.operationId || '')}:${contractHash}`,
         immutableProjectUuid: leased.lease.immutableProjectUuid,
@@ -409,6 +252,7 @@ async function dispatchSemanticStub(
         reservationPreview: {
           currency: typeof value?.currency === 'string' ? value.currency : 'CNY',
           maximum: maximumCost,
+          ...(unknownShotCount > 0 ? { unknownJobCount: unknownShotCount } : {}),
         },
         display: {
           model,
@@ -419,6 +263,22 @@ async function dispatchSemanticStub(
           ...(value?.shots && typeof value.shots === 'object' && !Array.isArray(value.shots) ? { shots: value.shots as never } : {}),
         },
       })
+      // ── 「全自动」档：宿主当场替用户决门（2026-09-12 拍板的那一档，外部 MCP 这一侧 2026-09-21 补上）──
+      //
+      // 闸一步都没少，也没有第二条链：同一张挑战、同一个收据铸造口，只是那张 attestation 来自
+      // **用户此前选的档位**而不是他这一刻的手势（`generationSpendDecision.ts` 文档里的两种来源）。
+      // 判据仍只有一个 owner：`spendDecidedByPolicy`。宿主没递档位 → 读到 undefined → 按默认走，
+      // 绝不替用户花钱（下面那条 `policyDecided` 为 false 的路与改动前逐字相同）。
+      const policyDecided = spendDecidedByPolicy(ctx.approvalPolicy?.())
+      const policyReceipt = policyDecided
+        ? authority.mintReceipt(
+            challenge.token,
+            authority.createPolicyDecisionAttestation(challenge.token, {
+              policyMode: 'project',
+              policySurface: ctx.origin?.host ? `mcp:${ctx.origin.host}` : 'mcp',
+            }),
+          )
+        : undefined
       return {
         ...value,
         challengeId: challenge.challenge.challengeId,
@@ -426,47 +286,65 @@ async function dispatchSemanticStub(
         expiresAt: challenge.challenge.expiresAt,
         model,
         costScope: challenge.challenge.costScope,
-        maximumCost: challenge.challenge.reservationPreview.maximum,
+        maximumCost: unknownShotCount > 0 && maximumCost === 0 ? null : challenge.challenge.reservationPreview.maximum,
+        ...(unknownShotCount > 0 ? { unknownShotCount } : {}),
         currency: challenge.challenge.reservationPreview.currency,
-        handoff: { challengeToken: challenge.token, clientAttestation: true, contractHash, operationId: value?.operationId },
+        handoff: {
+          challengeToken: challenge.token,
+          clientAttestation: true,
+          contractHash,
+          operationId: value?.operationId,
+          ...(policyReceipt
+            ? {
+              receiptId: policyReceipt.receipt.receiptId,
+              receiptToken: policyReceipt.token,
+              decidedBy: policyReceipt.receipt.decidedBy,
+            }
+            : {}),
+        },
       }
     }
   }
   if (route.requiresReceipt) {
     if (!leased.lease) throw policyError({
       code: 'lease_required',
-      nextAction: policy.snapshot().nextAction,
-      phase: policy.snapshot().phase,
+      nextAction: OPEN_PROJECT_SESSION_NEXT_ACTION,
       capability: route.capability,
     })
-    const receipt = requireApprovalReceipt(leased.params, leased.lease, route.capability, ctx, policy)
+    const receipt = requireApprovalReceipt(leased.params, leased.lease, route.capability, ctx)
     if (ctx.authorizeGeneration) {
       const leaseToken = typeof leased.params.leaseHandle === 'string' ? leased.params.leaseHandle : ''
-      if (!leaseToken || !ctx.projectLeaseAuthority) throw policyError({
+      if (!leaseToken || !ctx.projectSession) throw policyError({
         code: 'lease_required',
-        nextAction: policy.snapshot().nextAction,
-        phase: policy.snapshot().phase,
+        nextAction: OPEN_PROJECT_SESSION_NEXT_ACTION,
         capability: route.capability,
       })
-      const upgraded = ctx.projectLeaseAuthority.upgradeLeaseScope(leaseToken, [
-        ...leased.lease.scopeSet,
-        'generation:submit',
-      ])
-      return ctx.authorizeGeneration({
+      const upgraded = await ctx.projectSession.authority.authorizeGenerationSubmit(
+        leaseToken,
+        ctx.projectSession.connection,
+      )
+      const result = await ctx.authorizeGeneration({
         params: { ...leased.params, leaseHandle: upgraded.token },
         lease: upgraded.lease,
         receipt,
       })
+      const receiptToken = typeof leased.params.receiptToken === 'string' && leased.params.receiptToken.trim()
+        ? leased.params.receiptToken.trim()
+        : ctx.approvalReceiptAuthority?.resolveReceiptToken(receipt.receiptId)
+      if (receiptToken) ctx.approvalReceiptAuthority?.consumeReceipt(receiptToken)
+      return result && typeof result === 'object' && !Array.isArray(result)
+        ? { ...(result as Record<string, unknown>), leaseHandle: upgraded.token }
+        : { result, leaseHandle: upgraded.token }
     }
     if (typeof ctx.generationPlanning === 'function' && route.capability === 'gate_decide') {
       const leaseToken = typeof leased.params.leaseHandle === 'string' ? leased.params.leaseHandle : ''
-      if (!leaseToken || !ctx.projectLeaseAuthority) {
-        throw policyError(policyDetails(policy, route.capability, 'lease_required'), 'A verified project lease is required')
+      if (!leaseToken || !ctx.projectSession) {
+        throw policyError(policyDetails(route.capability, 'lease_required'), 'A verified project lease is required')
       }
-      const upgraded = ctx.projectLeaseAuthority.upgradeLeaseScope(leaseToken, [
-        ...leased.lease.scopeSet,
-        'generation:submit',
-      ])
+      const upgraded = await ctx.projectSession.authority.authorizeGenerationSubmit(
+        leaseToken,
+        ctx.projectSession.connection,
+      )
       const receiptToken = typeof leased.params.receiptToken === 'string' && leased.params.receiptToken.trim()
         ? leased.params.receiptToken.trim()
         : ctx.approvalReceiptAuthority?.resolveReceiptToken(receipt.receiptId)
@@ -488,7 +366,7 @@ async function dispatchSemanticStub(
     && route.capability !== 'gate_decide') {
     return ctx.generationPlanning({ capability: route.capability, params: leased.params, lease: leased.lease, origin: ctx.origin })
   }
-  throw unavailableSemanticRoute(policy, route.capability)
+  throw unavailableSemanticRoute(route.capability)
 }
 
 export async function dispatchSemanticGeneration(
@@ -496,10 +374,9 @@ export async function dispatchSemanticGeneration(
   params: Record<string, unknown>,
   ctx: DispatchContext,
 ): Promise<unknown> {
-  const policy = ctx.generationPolicy ?? createMcpGenerationPolicy()
   const route = SEMANTIC_GENERATION_ROUTES[method]
   if (!route) return undefined
-  return dispatchSemanticStub(route, params, ctx, policy)
+  return dispatchSemanticStub(route, params, ctx)
 }
 
 export function isSemanticGenerationRoute(method: string): boolean {

@@ -4,9 +4,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compileExecutionContract, type PlanCandidate } from "../capabilityCore/executionContract";
+import type { GenerationProvider } from "../capabilityCore/generationRuntimeAdapter";
 import { createModuleRegistry } from "../capabilityCore/moduleRegistry";
+import { prepareProductionGenerationAuthorization, prepareProductionGenerationReauthorization } from "./prepareProductionGenerationAuthorization";
+import { authorizationGateForJob } from "../shared/productionSpendAuthority";
 import { applyProductionCommand } from "./productionRunReducer";
 import { createProductionGenerationSubmission } from "./productionGenerationSubmission";
+import { sealAndApproveProductionGeneration } from "./productionGenerationAuthorizationTestUtils";
 import { createProductionRunRepository } from "./productionRunRepository";
 import type { ProductionGenerationShot, ProductionRun } from "./productionRunTypes";
 
@@ -16,6 +20,7 @@ import type { ProductionGenerationShot, ProductionRun } from "./productionRunTyp
 // attempt monotonicity is scoped to one shot's lineage.
 
 const roots: string[] = [];
+const NOW = "2026-08-24T00:00:00.000Z";
 
 const registry = createModuleRegistry([{
   moduleId: "generation.single-shot",
@@ -50,13 +55,22 @@ function candidate(candidateId: string, prompt: string): PlanCandidate {
   };
 }
 
+function provider(submit: GenerationProvider["submit"] = async () => ({ providerTaskId: "unused" })): GenerationProvider {
+  return {
+    providerId: "fixture-provider",
+    capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true },
+    buildRequest: (input) => input,
+    submit,
+  };
+}
+
 /** A single-shot draft, sealed + approved, exactly like today's chain. */
 function setupSingleShot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-multishot-single-"));
   roots.push(root);
   const repository = createProductionRunRepository({
     projectDirResolver: (projectId) => (projectId === "project-1" ? root : null),
-    now: () => "2026-08-24T00:00:00.000Z",
+    now: () => NOW,
     randomId: (() => { let n = 0; return () => `id-${++n}`; })(),
   });
   const planCandidate = candidate("candidate-1", "A paper boat on a quiet lake");
@@ -74,19 +88,18 @@ function setupSingleShot() {
       maxAttemptsPerJob: 2,
     },
   });
-  repository.execute("project-1", "op-1", {
-    commandId: "generation.seal:op-1",
-    expectedRevision: 0,
-    type: "generation.seal",
-    payload: { contract },
-    issuedAt: "2026-08-24T00:00:00.000Z",
-  });
-  repository.execute("project-1", "op-1", {
-    commandId: "generation.approve:op-1:receipt-fixture",
-    expectedRevision: 1,
-    type: "generation.approve",
-    payload: { receiptId: "receipt-fixture", contractHash: contract.contractHash },
-    issuedAt: "2026-08-24T00:00:00.000Z",
+  sealAndApproveProductionGeneration({
+    repository,
+    projectId: "project-1",
+    operationId: "op-1",
+    immutableProjectUuid: "project-uuid-1",
+    projectGeneration: 1,
+    projectRevision: 0,
+    candidate: planCandidate,
+    contract,
+    providers: [provider()],
+    receiptId: "receipt-fixture",
+    now: NOW,
   });
   return { root, repository, contract };
 }
@@ -94,15 +107,13 @@ function setupSingleShot() {
 function submission(root: string, repository: ReturnType<typeof createProductionRunRepository>, submit: ReturnType<typeof vi.fn>, now = "2026-08-24T00:00:00.000Z") {
   return createProductionGenerationSubmission({
     repository,
+    beforeDispatch: () => undefined,
     projectRoot: root,
     immutableProjectUuid: "project-uuid-1",
     projectGeneration: 1,
     intentMacKey: "test-intent-key",
     provider: {
-      providerId: "fixture-provider",
-      capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true },
-      buildRequest: (input) => input,
-      submit,
+      ...provider(submit as GenerationProvider["submit"]),
     },
     now: () => now,
   });
@@ -159,6 +170,7 @@ describe("P4 S1 multi-shot generation plan schema", () => {
       projectId: "project-1",
       origin: { host: "semantic-mcp" },
       candidate: shotACandidate,
+      shots: [{ shotId: "shot-a", candidate: shotACandidate }, { shotId: "shot-b", candidate: shotBCandidate }],
       policy: {
         trustedHosts: ["semantic-mcp"],
         allowedProviders: ["fixture-provider"],
@@ -172,19 +184,19 @@ describe("P4 S1 multi-shot generation plan schema", () => {
       { shotId: "shot-a", candidate: { ...shotACandidate, sealedContractHash: shotAContract.contractHash }, contract: shotAContract, updatedAt: "2026-08-24T00:00:00.000Z" },
       { shotId: "shot-b", candidate: { ...shotBCandidate, sealedContractHash: shotBContract.contractHash }, contract: shotBContract, updatedAt: "2026-08-24T00:00:00.000Z" },
     ];
-    repository.execute("project-1", "op-multi", {
-      commandId: "generation.seal:op-multi",
-      expectedRevision: 0,
-      type: "generation.seal",
-      payload: { contract: shotAContract, shots, planHash: "plan-hash-multi" },
-      issuedAt: "2026-08-24T00:00:00.000Z",
-    });
-    repository.execute("project-1", "op-multi", {
-      commandId: "generation.approve:op-multi:receipt-multi",
-      expectedRevision: 1,
-      type: "generation.approve",
-      payload: { receiptId: "receipt-multi", contractHash: "plan-hash-multi" },
-      issuedAt: "2026-08-24T00:00:00.000Z",
+    sealAndApproveProductionGeneration({
+      repository,
+      projectId: "project-1",
+      operationId: "op-multi",
+      immutableProjectUuid: "project-uuid-1",
+      projectGeneration: 1,
+      projectRevision: 0,
+      candidate: shotACandidate,
+      contract: shotAContract,
+      providers: [provider()],
+      multiShot: { shots, scope: shots.filter((shot) => shot.included !== false).map((shot) => shot.shotId), planHash: "plan-hash-multi" },
+      receiptId: "receipt-multi",
+      now: NOW,
     });
 
     const submit = vi.fn(async () => ({ providerTaskId: `task-${submit.mock.calls.length}` }));
@@ -214,101 +226,152 @@ describe("P4 S1 multi-shot generation plan schema", () => {
 describe("P4 S1 reducer shot addressing", () => {
   const now = "2026-08-24T00:00:00.000Z";
 
-  function sealedTwoShotRun(): ProductionRun {
+  function sealedTwoShotRun(approve = true): ProductionRun {
     const shotACandidate = candidate("cand-a", "shot a");
     const shotBCandidate = candidate("cand-b", "shot b differs");
     const shotAContract = compileExecutionContract(shotACandidate, registry);
     const shotBContract = compileExecutionContract(shotBCandidate, registry);
-    return {
+    const sealedShots: ProductionGenerationShot[] = [
+      { shotId: "shot-a", candidate: { ...shotACandidate, sealedContractHash: shotAContract.contractHash }, contract: shotAContract, updatedAt: now },
+      { shotId: "shot-b", candidate: { ...shotBCandidate, sealedContractHash: shotBContract.contractHash }, contract: shotBContract, updatedAt: now },
+    ];
+    const draft: ProductionRun = {
       schemaVersion: 1, runId: "op-x", projectId: "project-1", revision: 5,
       status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: { host: "semantic-mcp" },
-      policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1, snapshotCursor: 5, stages: [], gates: [], jobs: [], artifacts: [],
       generationPlan: {
         operationId: "op-x",
-        state: "sealed",
-        candidate: { ...shotACandidate, sealedContractHash: shotAContract.contractHash },
-        contract: shotAContract,
-        planHash: "plan-hash-x",
-        approvedReceiptId: "receipt-x",
+        state: "draft",
+        candidate: shotACandidate,
         shots: [
-          { shotId: "shot-a", candidate: { ...shotACandidate, sealedContractHash: shotAContract.contractHash }, contract: shotAContract, approvedReceiptId: "receipt-x", attemptCount: 1, updatedAt: now },
-          { shotId: "shot-b", candidate: { ...shotBCandidate, sealedContractHash: shotBContract.contractHash }, contract: shotBContract, approvedReceiptId: "receipt-x", attemptCount: 1, updatedAt: now },
+          { shotId: "shot-a", candidate: shotACandidate, updatedAt: now },
+          { shotId: "shot-b", candidate: shotBCandidate, updatedAt: now },
         ],
         updatedAt: now,
       },
       createdAt: now, updatedAt: now,
     };
+    const authorization = prepareProductionGenerationAuthorization({
+      lease: { projectId: "project-1", immutableProjectUuid: "project-uuid-1", projectGeneration: 1, revocationEpoch: 0 },
+      projectRevision: 0,
+      operation: { operationId: "op-x", projectId: "project-1", candidate: shotACandidate, planVersion: 1 },
+      contract: shotAContract,
+      multiShot: { shots: sealedShots, scope: sealedShots.filter((shot) => shot.included !== false).map((shot) => shot.shotId), planHash: "plan-hash-x" },
+      run: draft,
+      providers: [provider()],
+      resolveShotPrice: () => ({ known: true, amount: 0 }),
+      now,
+    });
+    let run = applyProductionCommand(draft, {
+      commandId: "seal-op-x", expectedRevision: 5, type: "generation.seal",
+      payload: { contract: shotAContract, shots: sealedShots, planHash: "plan-hash-x", authorization }, issuedAt: now,
+    }, now).run;
+    if (!approve) return run;
+    run = applyProductionCommand(run, {
+      commandId: "approve-op-x", expectedRevision: 5, type: "gate.decide",
+      payload: { gateId: authorization.envelope.gateId, status: "approved", receiptId: "receipt-x", authorizationDigest: authorization.authorizationDigest }, issuedAt: now,
+    }, now).run;
+    return { ...run, jobs: run.jobs.map((job) => ({ ...job, status: "ready" as const })) };
   }
 
-  it("a per-shot new attempt keeps the plan-level receipt and the sibling shot untouched", () => {
-    const run = sealedTwoShotRun();
-    const shotAContract = run.generationPlan!.shots![0].contract!;
-    const job = {
-      jobId: "generation-op-x-shot-a-a-attempt-2", stageId: "generate", status: "authorized" as const, attempt: 2,
-      provider: "fixture-provider", model: "fixture-model", idempotencyKey: "generation:op-x:shot-a:some:attempt-2",
-      taskKind: "text-to-image", createdAt: now, updatedAt: now,
-    };
+  function reauthorize(run: ProductionRun, shotId: string) {
+    const authorization = prepareProductionGenerationReauthorization({
+      lease: { projectId: "project-1", immutableProjectUuid: "project-uuid-1", projectGeneration: 1, revocationEpoch: 0 },
+      projectRevision: 0,
+      run,
+      shotId,
+      providers: [provider()],
+      resolveShotPrice: () => ({ known: true, amount: 0 }),
+      now,
+    });
     const effect = applyProductionCommand(run, {
-      commandId: "new-attempt-shot-a", expectedRevision: 5, type: "generation.new_attempt",
-      payload: { job, shotId: "shot-a" }, issuedAt: now,
+      commandId: `reauthorize-${shotId}`, expectedRevision: run.revision, type: "generation.reauthorize",
+      payload: { shotId, authorization }, issuedAt: now,
     }, now);
+    return { authorization, effect };
+  }
 
-    // Plan-level receipt approval is preserved (not cleared by a per-shot attempt).
-    expect(effect.run.generationPlan?.approvedReceiptId).toBe("receipt-x");
-    // Only shot-a's per-shot approval is reset; shot-b keeps its receipt.
+  it("a per-shot reauthorization creates a waiting attempt and leaves the sibling untouched", () => {
+    const run = sealedTwoShotRun();
+    const { authorization, effect } = reauthorize(run, "shot-a");
+    expect(effect.run.generationPlan).not.toHaveProperty("approvedReceiptId");
     const shotA = effect.run.generationPlan?.shots?.find((s) => s.shotId === "shot-a");
     const shotB = effect.run.generationPlan?.shots?.find((s) => s.shotId === "shot-b");
     expect(shotA?.approvedReceiptId).toBeUndefined();
     expect(shotA?.attemptCount).toBe(2);
     expect(shotB?.approvedReceiptId).toBe("receipt-x");
-    expect(shotB?.attemptCount).toBe(1);
-    expect(effect.run.jobs.map((j) => j.jobId)).toContain(job.jobId);
-    void shotAContract;
+    expect(effect.run.jobs).toContainEqual(expect.objectContaining({
+      jobId: authorization.envelope.jobs[0].jobId,
+      status: "authorization_required",
+      attempt: 2,
+      parentJobId: authorization.parentJobId,
+    }));
+    expect(effect.run.gates).toContainEqual(expect.objectContaining({ gateId: authorization.envelope.gateId, status: "waiting" }));
+
+    const approved = applyProductionCommand(effect.run, {
+      commandId: "approve-shot-a-rework", expectedRevision: effect.run.revision, type: "gate.decide",
+      payload: { gateId: authorization.envelope.gateId, status: "approved", receiptId: "receipt-rework-a", authorizationDigest: authorization.authorizationDigest }, issuedAt: now,
+    }, now).run;
+    expect(approved.jobs.find((job) => job.jobId === authorization.envelope.jobs[0].jobId)?.status).toBe("authorized");
+    expect(approved.generationPlan?.shots?.find((shot) => shot.shotId === "shot-a")?.approvedReceiptId).toBe("receipt-rework-a");
+    expect(approved.generationPlan?.shots?.find((shot) => shot.shotId === "shot-b")?.approvedReceiptId).toBe("receipt-x");
+  });
+
+  // 2026-09-30：授权按门存（每点一次一份）。重做一镜是「又一份」，不替掉别的镜那一份，所以旁边还在排队的镜
+  // 不再挡住重做，而且它照样由批它的那道门盖着（以前这里钉的是「有兄弟镜排队就拒」）。
+  it("reworks one shot while a sibling job is still queued; the sibling keeps its own authorization", () => {
+    const settled = sealedTwoShotRun();
+    const withAuthorizedSibling = {
+      ...settled,
+      jobs: settled.jobs.map((job) => job.metadata?.shotId === "shot-b"
+        ? { ...job, status: "authorized" as const }
+        : job),
+    };
+    const sibling = withAuthorizedSibling.jobs.find((job) => job.metadata?.shotId === "shot-b")!;
+    const siblingGate = authorizationGateForJob(withAuthorizedSibling, sibling);
+    expect(siblingGate?.status, "兄弟镜由它那一份批准盖着").toBe("approved");
+    const authorization = prepareProductionGenerationReauthorization({
+      lease: { projectId: "project-1", immutableProjectUuid: "project-uuid-1", projectGeneration: 1, revocationEpoch: 0 },
+      projectRevision: 0,
+      run: withAuthorizedSibling,
+      shotId: "shot-a",
+      providers: [provider()],
+      resolveShotPrice: () => ({ known: true, amount: 0 }),
+      now,
+    });
+    const reworked = applyProductionCommand(withAuthorizedSibling, {
+      commandId: "reauthorize-with-authorized-sibling",
+      expectedRevision: withAuthorizedSibling.revision,
+      type: "generation.reauthorize",
+      payload: { shotId: "shot-a", authorization },
+      issuedAt: now,
+    }, now).run;
+    const siblingAfter = reworked.jobs.find((job) => job.jobId === sibling.jobId)!;
+    expect(siblingAfter.status, "兄弟镜还在排队").toBe("authorized");
+    expect(authorizationGateForJob(reworked, siblingAfter)?.gateId, "还是批它的那道门").toBe(siblingGate?.gateId);
+    expect(authorizationGateForJob(reworked, siblingAfter)?.status).toBe("approved");
+    expect(reworked.gates.find((gate) => gate.gateId === authorization.envelope.gateId)?.authorizationEnvelope, "重做那一份住在它自己的门上")
+      .toEqual(authorization.envelope);
   });
 
   it("scopes attempt monotonicity to the shot lineage: shot A attempt 2 does not block shot B attempt 2", () => {
-    // shot A already has an attempt-2 job for the same provider/model/stage.
     const run = sealedTwoShotRun();
-    const withShotAAttempt2: ProductionRun = {
-      ...run,
-      jobs: [
-        { jobId: "generation-op-x-shot-a-a-attempt-2", stageId: "generate", status: "provider_accepted", attempt: 2, provider: "fixture-provider", model: "fixture-model", idempotencyKey: "k-a-2", createdAt: now, updatedAt: now },
-      ],
-    };
-    const shotBJob = {
-      jobId: "generation-op-x-shot-b-b-attempt-2", stageId: "generate", status: "authorized" as const, attempt: 2,
-      provider: "fixture-provider", model: "fixture-model", idempotencyKey: "generation:op-x:shot-b:x:attempt-2",
-      taskKind: "text-to-image", createdAt: now, updatedAt: now,
-    };
-    // Same provider/model/stage AND same attempt number as shot A's job — but a DIFFERENT shot.
-    // The global comparison would reject this; the shot-scoped check must allow it.
-    expect(() => applyProductionCommand(withShotAAttempt2, {
-      commandId: "new-attempt-shot-b", expectedRevision: 5, type: "generation.new_attempt",
-      payload: { job: shotBJob, shotId: "shot-b" }, issuedAt: now,
-    }, now)).not.toThrow();
+    const shotA = reauthorize(run, "shot-a");
+    let afterA = applyProductionCommand(shotA.effect.run, {
+      commandId: "approve-shot-a", expectedRevision: run.revision, type: "gate.decide",
+      payload: { gateId: shotA.authorization.envelope.gateId, status: "approved", receiptId: "receipt-a-2", authorizationDigest: shotA.authorization.authorizationDigest }, issuedAt: now,
+    }, now).run;
+    afterA = { ...afterA, jobs: afterA.jobs.map((job) => job.jobId === shotA.authorization.envelope.jobs[0].jobId ? { ...job, status: "ready" as const } : job) };
+    expect(() => reauthorize(afterA, "shot-b")).not.toThrow();
   });
 
   it("still rejects a stale attempt within the SAME shot lineage", () => {
     const run = sealedTwoShotRun();
-    const withShotAAttempt2: ProductionRun = {
-      ...run,
-      jobs: [
-        { jobId: "generation-op-x-shot-a-a-attempt-2", stageId: "generate", status: "provider_accepted", attempt: 2, provider: "fixture-provider", model: "fixture-model", idempotencyKey: "k-a-2", metadata: { shotId: "shot-a" }, createdAt: now, updatedAt: now },
-      ],
-    };
-    // A second attempt-2 job for the SAME shot must still be rejected (monotonicity within lineage).
-    const dupShotAJob = {
-      jobId: "generation-op-x-shot-a-a-attempt-2-dup", stageId: "generate", status: "authorized" as const, attempt: 2,
-      provider: "fixture-provider", model: "fixture-model", idempotencyKey: "generation:op-x:shot-a:y:attempt-2",
-      metadata: { shotId: "shot-a" }, taskKind: "text-to-image", createdAt: now, updatedAt: now,
-    };
-    expect(() => applyProductionCommand(withShotAAttempt2, {
-      commandId: "new-attempt-shot-a-dup", expectedRevision: 5, type: "generation.new_attempt",
-      payload: { job: dupShotAJob, shotId: "shot-a" }, issuedAt: now,
-    }, now)).toThrow(/attempt/);
+    const first = reauthorize(run, "shot-a").effect.run;
+    expect(() => reauthorize(first, "shot-a")).toThrow("previous generation attempt is not safely reworkable");
   });
 
   it("patches one shot's candidate + included flag without touching sibling shots (draft)", () => {
@@ -318,8 +381,8 @@ describe("P4 S1 reducer shot addressing", () => {
       schemaVersion: 1, runId: "op-patch", projectId: "project-1", revision: 3,
       status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: { host: "semantic-mcp" },
-      policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1, snapshotCursor: 3, stages: [], gates: [], jobs: [], artifacts: [],
       generationPlan: {
         operationId: "op-patch", state: "draft", candidate: shotACandidate,
@@ -355,8 +418,8 @@ describe("P4 S1 reducer shot addressing", () => {
       schemaVersion: 1, runId: "op-inc", projectId: "project-1", revision: 2,
       status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: { host: "semantic-mcp" },
-      policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1, snapshotCursor: 2, stages: [], gates: [], jobs: [], artifacts: [],
       generationPlan: {
         operationId: "op-inc", state: "draft", candidate: shotACandidate,
@@ -391,21 +454,24 @@ describe("P4 S1 reducer shot addressing", () => {
   });
 
   it("P4 S4 trial_narrow: shrinks a sealed multi-shot plan to only the first included video shot", () => {
-    // A sealed 2-video-shot plan (shot-a, shot-b) + a plan-level receipt. Trial-first narrows to shot-a.
-    const run = sealedTwoShotRun();
+    // Trial-first revokes the still-waiting authority because changing the included set changes payload
+    // and spend. The narrowed plan must go through prepare -> seal -> gate again.
+    const run = sealedTwoShotRun(false);
     const effect = applyProductionCommand(run, {
       commandId: "trial", expectedRevision: 5, type: "generation.trial_narrow",
       payload: { planHash: "plan-hash-trial" }, issuedAt: now,
     }, now);
 
     const narrowed = effect.run.generationPlan!;
-    expect(narrowed.state).toBe("sealed");
-    expect(narrowed.planHash).toBe("plan-hash-trial");
+    expect(narrowed.state).toBe("draft");
+    expect(effect.run.planVersion).toBe(2);
+    expect(effect.run.gates).toEqual([expect.objectContaining({ status: "revoked" })]);
+    expect(effect.run.jobs).toEqual([]);
     // Only shot-a stays included; shot-b is excluded.
     expect(narrowed.shots?.find((s) => s.shotId === "shot-a")?.included).toBe(true);
     expect(narrowed.shots?.find((s) => s.shotId === "shot-b")?.included).toBe(false);
-    // The plan-level receipt is cleared — a trial re-gate must re-confirm the smaller scope.
-    expect(narrowed.approvedReceiptId).toBeUndefined();
+    // The old authority is cleared; a trial re-gate must re-confirm the smaller scope.
+    expect(narrowed).not.toHaveProperty("approvedReceiptId");
     expect(narrowed.shots?.find((s) => s.shotId === "shot-a")?.approvedReceiptId).toBeUndefined();
   });
 
@@ -414,25 +480,46 @@ describe("P4 S1 reducer shot addressing", () => {
     const shotACandidate = candidate("cand-a", "shot a");
     const anchorContract = compileExecutionContract(anchorCandidate, registry);
     const shotAContract = compileExecutionContract(shotACandidate, registry);
-    const run: ProductionRun = {
+    const draft: ProductionRun = {
       schemaVersion: 1, runId: "op-anchor", projectId: "project-1", revision: 4,
       status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
       origin: { host: "semantic-mcp" },
-      policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
-      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 2, minimizeUploads: true },
+      budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       planVersion: 1, snapshotCursor: 4, stages: [], gates: [], jobs: [], artifacts: [],
       generationPlan: {
-        operationId: "op-anchor", state: "sealed", candidate: { ...anchorCandidate, sealedContractHash: anchorContract.contractHash }, contract: anchorContract,
-        planHash: "plan-hash-anchor", approvedReceiptId: "receipt-x",
+        operationId: "op-anchor", state: "draft", candidate: anchorCandidate,
         shots: [
-          { shotId: "anchor-1", role: "anchor", candidate: { ...anchorCandidate, sealedContractHash: anchorContract.contractHash }, contract: anchorContract, approvedReceiptId: "receipt-x", updatedAt: now },
-          { shotId: "shot-a", candidate: { ...shotACandidate, sealedContractHash: shotAContract.contractHash }, contract: shotAContract, approvedReceiptId: "receipt-x", updatedAt: now },
-          { shotId: "shot-b", candidate: { ...candidate("cand-b", "shot b"), sealedContractHash: "h-b" }, contract: { ...shotAContract, contractHash: "h-b" }, approvedReceiptId: "receipt-x", updatedAt: now },
+          { shotId: "anchor-1", role: "anchor", candidate: anchorCandidate, updatedAt: now },
+          { shotId: "shot-a", candidate: shotACandidate, updatedAt: now },
+          { shotId: "shot-b", candidate: candidate("cand-b", "shot b"), updatedAt: now },
         ],
         updatedAt: now,
       },
       createdAt: now, updatedAt: now,
     };
+    const shotBCandidate = draft.generationPlan!.shots![2].candidate;
+    const shotBContract = compileExecutionContract(shotBCandidate, registry);
+    const shots: ProductionGenerationShot[] = [
+      { shotId: "anchor-1", role: "anchor", candidate: { ...anchorCandidate, sealedContractHash: anchorContract.contractHash }, contract: anchorContract, updatedAt: now },
+      { shotId: "shot-a", candidate: { ...shotACandidate, sealedContractHash: shotAContract.contractHash }, contract: shotAContract, updatedAt: now },
+      { shotId: "shot-b", candidate: { ...shotBCandidate, sealedContractHash: shotBContract.contractHash }, contract: shotBContract, updatedAt: now },
+    ];
+    const authorization = prepareProductionGenerationAuthorization({
+      lease: { projectId: "project-1", immutableProjectUuid: "project-uuid-1", projectGeneration: 1, revocationEpoch: 0 },
+      projectRevision: 0,
+      operation: { operationId: "op-anchor", projectId: "project-1", candidate: anchorCandidate, planVersion: 1 },
+      contract: anchorContract,
+      multiShot: { shots, scope: shots.filter((shot) => shot.included !== false).map((shot) => shot.shotId), planHash: "plan-hash-anchor" },
+      run: draft,
+      providers: [provider()],
+      resolveShotPrice: () => ({ known: true, amount: 0 }),
+      now,
+    });
+    const run = applyProductionCommand(draft, {
+      commandId: "seal-anchor", expectedRevision: 4, type: "generation.seal",
+      payload: { contract: anchorContract, shots, planHash: "plan-hash-anchor", authorization }, issuedAt: now,
+    }, now).run;
     const effect = applyProductionCommand(run, {
       commandId: "trial-anchor", expectedRevision: 4, type: "generation.trial_narrow",
       payload: { planHash: "plan-hash-trial-anchor" }, issuedAt: now,

@@ -1,11 +1,11 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { IconChevronRight, IconDeviceFloppy, IconPlus, IconRefresh } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import {
   parseCustomCapabilityContract,
   replaceCustomCapabilityContractMeta,
   resolveArchetypeForModel,
-} from '../../config/modelArchetypes'
+} from '../../../electron/shared/modelArchetypes'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { confirmDialog, DesignButton } from '../../design'
 import type { ChipModel } from './ModelChipGroups'

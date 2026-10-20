@@ -1,4 +1,6 @@
+import type { CanvasPlacementAnchor } from '../model/canvasPlacement'
 import type { StateCreator } from 'zustand'
+import type { CanvasFrameRect } from '../model/canvasFrameBounds'
 import type {
   GenerationCanvasEdge,
   GenerationCanvasNode,
@@ -10,12 +12,16 @@ import type {
   GenerationNodeStatus,
   NodeGroup,
 } from '../model/generationCanvasTypes'
+import type { CanvasPluginNodeState } from '../plugins/canvasPluginTypes'
+import type { CanvasWorkflowTemplate } from '../plugins/canvasWorkflowTemplates'
 import type { WorkbenchAiMessage } from '../../ai/workbenchAiTypes'
 import type { EdgeCapabilityResult } from '../agent/referenceEdgeCapability'
 import type { CanvasMutationOptions } from './canvasGuards'
+import type { MediaDimensions } from '../nodes/nodeSizing'
 import type { NodeProgressInput, NodeRunRecordInput, NodeRunRecordPatch } from './runRecordHelpers'
 
 export type ConnectionAnchorSide = 'left' | 'right'
+export type ConnectionEndpointKind = 'node' | 'group'
 
 /** 「连到组」的结果：给 UI 出人话用（跳过多少个必须说清，不许静默丢）。 */
 export type GroupConnectResult = {
@@ -39,6 +45,9 @@ export type CreateNodeInput = {
   // 调用方已算好「成组紧凑布局」(如切图九宫格瓦片)时置 true：信任 position 原值、跳过逐卡碰撞避让。
   // 缺省 false = 走避让总闸。没有它，成组布局会被避让逐张推散（用户报「切完散落」的根因）。
   exactPosition?: boolean
+  /** Only host-registered plugin node types may be created through this path. */
+  typeId?: string
+  pluginState?: CanvasPluginNodeState
 }
 
 export type CanvasNodeActions = {
@@ -47,7 +56,7 @@ export type CanvasNodeActions = {
   updateNode: (nodeId: string, patch: Partial<GenerationCanvasNode>, options?: CanvasMutationOptions) => void
   /** Apply many user edits with one undo barrier and one persist revision. */
   updateNodes: (updates: readonly { nodeId: string; patch: Partial<GenerationCanvasNode> }[]) => void
-  updateNodePrompt: (nodeId: string, prompt: string) => void
+  updateNodePrompt: (nodeId: string, prompt: string, promptOverridden?: boolean) => void
   /** S6-4 节点锁(N11):用户一键锁/解锁;AI 改它由 gate deny,事件 source 恒 user。 */
   setNodeLocked: (nodeId: string, locked: boolean) => void
   moveNode: (nodeId: string, position: { x: number; y: number }, options?: CanvasMutationOptions) => void
@@ -66,14 +75,18 @@ export type CanvasNodeActions = {
   reassignNodeCategory: (nodeId: string, categoryId: string) => void
   copyNodeToCategory: (nodeId: string, categoryId: string) => GenerationCanvasNode | null
   deleteNode: (nodeId: string) => void
+  saveSelectedAsWorkflowTemplate: (name?: string) => CanvasWorkflowTemplate | null
+  instantiateWorkflowTemplate: (templateId: string, position: { x: number; y: number }) => GenerationCanvasNode[]
+  instantiateWorkflowTemplateSnapshot: (template: CanvasWorkflowTemplate, position: { x: number; y: number }) => GenerationCanvasNode[]
 }
 
 export type CanvasGraphActions = {
   startConnection: (nodeId: string, side?: ConnectionAnchorSide) => void
+  startGroupConnection: (groupId: string, side?: ConnectionAnchorSide) => void
   cancelConnection: () => void
   // 返回连边能力校验结果:ok=已连;否则带 reason(手动连线总闸,UI 据此提示)。
-  connectToNode: (targetNodeId: string) => EdgeCapabilityResult
-  connectNodes: (sourceNodeId: string, targetNodeId: string, mode?: GenerationCanvasEdge['mode'], targetParamKey?: string) => void
+  connectToNode: (targetNodeId: string) => EdgeCapabilityResult | GroupConnectResult
+  connectNodes: (sourceNodeId: string, targetNodeId: string, mode?: GenerationCanvasEdge['mode'], targetParamKey?: string, order?: number) => void
   /**
    * 把待连的线落到**一个组**上：给组内每个成员各连一根真边，并记下组入参
    * （以后新进组的成员自动补一根）。图结构不变——组只是输入手势的语法糖，见 model/groupInputLinks.ts。
@@ -83,10 +96,23 @@ export type CanvasGraphActions = {
   /** 单槽编辑解除该编组输入关系、保留其它槽；缺省仍按线菜单语义整组断开。 */
   disconnectEdge: (edgeId: string, options?: { scope: 'parameter' }) => void
   moveGroupNodes: (groupId: string, delta: { x: number; y: number }, options?: CanvasMutationOptions) => void
-  createGroup: (categoryId: string, name?: string, options?: { materializationOperationId?: string; nodeIds?: string[] }) => NodeGroup | null
+  /**
+   * Alt/⌥ 拖框：在原地复制一个框（成员 + 成员之间的连线 + 框自己的矩形），返回新框 id。
+   * 一次撤销点；随后的拖动只搬新框（useCanvasSelectionDrag）。空框也能复制。
+   */
+  duplicateGroupForDrag: (groupId: string) => string | null
+  createGroup: (categoryId: string, name?: string, options?: { materializationOperationId?: string; nodeIds?: string[]; frameBounds?: CanvasFrameRect }) => NodeGroup | null
+  /**
+   * 画一个**空框**（框工具第一档）：边界就是用户拖出来的那个矩形，成员为空。
+   * 与 `createGroup` 的差别只有「有没有成员」，走的是同一条建组路径——框只有一种。
+   */
+  createFrame: (categoryId: string, bounds: CanvasFrameRect, name?: string, nodeIds?: readonly string[]) => NodeGroup | null
   groupSelectedNodes: (categoryId: string, name?: string) => NodeGroup | null
   renameGroup: (groupId: string, name: string) => void
+  /** 框头部那一句灰字说明。传空串 = 清空（与改名不同：说明本来就可以没有）。 */
+  setGroupDescription: (groupId: string, description: string) => void
   setGroupColor: (groupId: string, color: string) => void
+  setGroupCollapsed: (groupId: string, collapsed: boolean) => void
   ungroup: (groupId: string) => void
   ungroupGroups: (groupIds: string[]) => void
   deleteGroup: (groupId: string, deleteNodes?: boolean) => void
@@ -104,39 +130,48 @@ export type CanvasRunActions = {
   setNodeProgress: (nodeId: string, progress?: NodeProgressInput) => void
   appendNodeRun: (nodeId: string, run: NodeRunRecordInput) => GenerationNodeRunRecord
   trackNodeRun: (nodeId: string, runId: string, patch: NodeRunRecordPatch) => void
-  addNodeResult: (nodeId: string, result: GenerationNodeResult) => void
+  addNodeResult: (nodeId: string, result: GenerationNodeResult, mediaDimensions?: MediaDimensions) => void
   addNodeResultCollection: (nodeId: string, collection: GenerationResultCollection) => void
   rollbackHistory: (nodeId: string, resultId: string) => void
 }
 
 export type GenerationCanvasState = {
+  /**
+   * 这个项目的画布内容已经载入。唯一置 true 的是 restoreSnapshot（打开项目时 restoreWorkbenchProjectPayload 调它），
+   * releaseProject 复位。「打开时适应一次」判的就是它——画布组件挂载不是「载入完」，不许在挂载时写它
+   * （挂载若先于内容，适应会看到「ready 了、画布是空的」而放弃；2026-09-26 删掉了挂载时那一处写入）。
+   */
   isReady: boolean
   persistRevision: number
   nodes: GenerationCanvasNode[]
   edges: GenerationCanvasEdge[]
   groups: NodeGroup[]
+  workflowTemplates: CanvasWorkflowTemplate[]
   selectedNodeIds: string[]
   pendingConnectionSourceId: string
   pendingConnectionSourceSide: ConnectionAnchorSide
-  canvasZoom: number
-  canvasOffset: { x: number; y: number }
+  pendingConnectionSourceKind: ConnectionEndpointKind
   generationAiDraft: string
   generationAiMessages: WorkbenchAiMessage[]
   generationAiCollapsed: boolean
   canUndo: boolean
   canRedo: boolean
   hasClipboard: boolean
-  markReady: () => void
   captureHistory: () => void
-  setCanvasTransform: (zoom: number, offset: { x: number; y: number }) => void
-  setCanvasZoom: (zoom: number) => void
   setGenerationAiDraft: (draft: string) => void
   setGenerationAiMessages: (messages: WorkbenchAiMessage[] | ((messages: WorkbenchAiMessage[]) => WorkbenchAiMessage[])) => void
   setGenerationAiCollapsed: (collapsed: boolean) => void
   resetGenerationAiConversation: () => void
+  duplicateNodesForDrag: (nodeIds: string[]) => Map<string, string>
+  /** Cmd/Ctrl+D：所选节点及其之间的边原地偏移复制，一个撤销点，不动用户剪贴板。 */
+  duplicateSelectedNodes: () => void
   copySelectedNodes: () => void
   cutSelectedNodes: () => void
-  pasteNodes: (basePosition?: { x: number; y: number }) => void
+  /**
+   * 粘贴剪贴板里的节点。`basePosition` = 画布坐标点；`anchor` = 这一点压在粘贴簇外接盒的哪一处（比例），
+   * 不传 = 左上角（旧约定，右键菜单之外的调用方都应传 anchor，见 model/canvasPlacement.ts）。
+   */
+  pasteNodes: (basePosition?: { x: number; y: number }, anchor?: CanvasPlacementAnchor) => void
   undo: () => void
   redo: () => void
   readSnapshot: () => GenerationCanvasSnapshot

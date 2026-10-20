@@ -1,3 +1,5 @@
+import { resolveIndexedReferencePreview } from './pendingSpendReferences'
+import { spendReferenceKey } from "../shared/contracts/pendingSpendConfirm";
 // 能力核 · MCP stdio server（app 自身二进制以 NOMI_MCP_STDIO 模式跑；见 docs/plan/2026-06-24-packaged-mcp-stdio-server.md）。
 //
 // Claude Code / Codex / Cursor 用 `<Nomi 二进制> + env NOMI_MCP_STDIO=1` 把 Nomi 拉起当 MCP server。
@@ -7,56 +9,120 @@
 //   · 没开 → 进程内 dispatch（磁盘网关，本进程是唯一写者，安全）。付费经 elicitation 真人确认后铸令牌放行。
 // 取代旧 scripts/nomi-mcp.mjs + scripts/lib/nomiClient.mjs 的 MCP 路径：无 node 依赖、入口在包内永远存在（P1）。
 import readline from 'node:readline'
-import { app, session } from 'electron'
+import { app, safeStorage, session } from 'electron'
 import { createMcpProtocol, MCP_REQUEST_SIGNAL, type McpInvokeOptions } from './mcpProtocol'
 import { MAX_MCP_LINE_BYTES, parseMcpStdioLine } from './mcpStdioLine'
+import { MCP_CANCELLED_IN_FLIGHT_EVENT, MCP_OVERSIZED_LINE_EVENT } from './mcpStdioDiagnostics'
 import { getDesktopLocale, setDesktopLocale } from '../i18n'
-import { createDiskGateway, withPreApprovedSpend, type ProjectGateway } from './gateway'
+import { createDiskGateway } from './gateway'
 import { readLiveInstance, type InstanceAdvertisement } from './lockfile'
 import { runTask, fetchTaskResult } from '../runtime'
 import { applySystemProxy } from '../systemProxy'
+import { appFetch } from '../appFetch'
+import { readProxyPrefs } from '../proxySettings'
 import { getProductionRunService } from '../productionRun/productionRunRuntime'
 import { startArtifactPreviewHttpServer, withAssetPreview } from '../productionRun/artifactPreviewHttpServer'
-import { resolveWorkspaceProjectDir } from '../workspace/workspaceRepository'
+import { resolveProjectAssetReferenceIdentity } from '../assets/projectAssetStore'
+import { startCredentialElicitationServer } from '../integrationCertification/credentialElicitationServer'
+import { installIntegrationSessionRuntime } from '../integrationCertification/integrationSessionRuntimeInstall'
+import { readWorkspaceProject, resolveWorkspaceProjectDir } from '../workspace/workspaceRepository'
+import { ensureWorkspaceProjectIdentity } from '../workspace/workspaceProjectIdentity'
 import { getProjectLocationState, getWorkspaceRepositoryDeps } from '../runtimePaths'
 import { dispatchAndEnrich } from './mcpResultEnrichLive'
 import { makeShotVerifyDeps } from './shotVerifyDeps'
 import { rpcErrorFromPayload } from './mcpRpcError'
 import {
-  MCP_CLIENT_ENV,
   MCP_CLIENT_PROOF_ENV,
   ensureCapabilitySigningKey,
-  resolveMcpOrigin,
-  type CapabilityOriginHost,
 } from './security'
-import type { ProjectLeaseAuthority } from './projectLease'
 import type { ApprovalReceiptAuthority } from './approvalReceipt'
-import { createRuntimeMcpGenerationPolicy, type McpGenerationPolicy } from './mcpGenerationPolicy'
 import type { DispatchContext } from './dispatcher'
 import { createGenerationPlanningHandler } from './mcpGenerationTools'
+import { planStoryboardFromScript } from './mcpStoryboardPlanner'
 import { createProductionGenerationOperationStore } from '../productionRun/productionGenerationOperationStore'
 import { createProductionGenerationSubmission } from '../productionRun/productionGenerationSubmission'
+import { createProductionShotDispatchGuard } from '../productionRun/productionShotDispatchGuard'
+import { createMultiShotBatchScheduler } from '../productionRun/multiShotBatchScheduler'
+import { prepareProductionGenerationAuthorizationWithReferences } from '../productionRun/prepareProductionGenerationAuthorization'
 import { createCatalogModelPricingResolver, createCatalogShotPriceResolver } from '../productionRun/catalogPricingResolver'
 import type { ModuleRegistry } from './moduleRegistry'
-import { createCatalogModuleRegistry } from './moduleCatalogBootstrap'
+import { createLiveGenerationRuntime } from './liveGenerationRuntime'
 import { createGenerationProviderBootstrap } from './generationProviderBootstrap'
+import { markSingleShotAttention, markSingleShotCompleted, markSingleShotRunning } from '../productionRun/singleShotRunLifecycle'
 import { createGenerationOutputMaterializer } from './generationOutputMaterializer'
+import { readAgentApprovalPolicy } from '../settings/agentApprovalPolicySettings'
 import { readCatalog } from '../catalog/catalogStore'
-import { buildVideoModelCandidates, recommendVideoGeneration, videoArchetypeIdFromMeta } from '../shared/videoCapabilities'
+import { recommendVideoGeneration } from '../shared/videoCapabilities'
+import { deriveUsableVideoModelCandidates } from './usableVideoModelCandidates'
+import { installCatalogRowLookup } from './modelSpecRead'
+import type { McpConnectionContext } from './mcpConnectionContext'
+import { createMcpStdioProjectSessionRouter } from './mcpStdioProjectSessionRouter'
+import { createProductionMcpStdioProjectSessionBinding } from './mcpStdioProjectSessionBinding'
+import { createMcpLoopbackRpcRequest } from './mcpLoopbackRpcRequest'
+import { createHeadlessCanvasReadExecutionRuntime, type CanvasReadExecutionRuntime } from './canvasReadExecutionRuntime'
+import { createMcpCanvasReadTransportAdapter } from './canvasReadTransportAdapters'
+import type { VerifiedProjectSessionBinding } from './projectSessionRuntime'
+import { createRunOwnedGenerationGateAuthority } from './runOwnedGenerationGateAuthority'
+import { readGenerationDefaultModelResolver } from './generationDefaultModelResolver'
+import { startSemanticMultiShotBatch } from './mcpSemanticBatchStart'
+import { hasGenerationOperationProviderReadiness } from './generationOperationProviderReadiness'
+import { recordDetectedMcpClient } from './mcpDetectedClients'
+import { createDefaultAuthorities } from './appIntegrationAuthorities'
+import { createProjectAgentProposalReceiptService } from './projectAgentProposalReceiptStore'
+import { executeMcpDocumentWriteWithReceipt } from './mcpDocumentWriteReceipt'
+import { logWarn } from '../logging/logger'
 
 const productionRuns = getProductionRunService()
+const assertProductionShotCanDispatch = createProductionShotDispatchGuard({
+  readRun: (projectId, runId) => productionRuns.repository.read(projectId, runId) ?? undefined,
+})
+
+// 档案解析要目录行里的 meta（fal/* 这类键靠 meta.archetypeId 钉档案）。装配期接一次。
+installCatalogRowLookup()
 
 export type McpStdioServerOptions = {
-  projectLeaseAuthority?: ProjectLeaseAuthority
-  resolveCurrentProject?: DispatchContext['resolveCurrentProject']
   approvalReceiptAuthority?: ApprovalReceiptAuthority
   requestGenerationGate?: DispatchContext['requestGenerationGate']
   authorizeGeneration?: DispatchContext['authorizeGeneration']
-  generationPolicy?: McpGenerationPolicy
   generationContext?: (params: Record<string, unknown>) => unknown | Promise<unknown>
   generationPlanning?: DispatchContext['generationPlanning']
   generationModuleRegistry?: Pick<ModuleRegistry, 'resolve'>
   projectRevisionResolver?: (projectId: string) => number | undefined
+  /** Main-owned receipt resolver for the headless stdio process. */
+  proposalReceiptFor?: (projectId: string) => ReturnType<typeof createProjectAgentProposalReceiptService> | undefined | Promise<ReturnType<typeof createProjectAgentProposalReceiptService> | undefined>
+}
+
+type DefaultProposalReceiptResolverDeps = Readonly<{
+  resolveProjectRoot: (projectId: string) => string | null
+  ensureProjectIdentity: typeof ensureWorkspaceProjectIdentity
+  createReceiptService: typeof createProjectAgentProposalReceiptService
+}>
+
+/**
+ * Resolve the main-owned receipt service for a headless stdio request. The
+ * project root and identity remain the trusted boundary; the caller never
+ * supplies a receipt or binding directly.
+ */
+export function createDefaultMcpProposalReceiptResolver(
+  deps: DefaultProposalReceiptResolverDeps = {
+    resolveProjectRoot: (projectId) => resolveWorkspaceProjectDir(projectId, getWorkspaceRepositoryDeps()),
+    ensureProjectIdentity: ensureWorkspaceProjectIdentity,
+    createReceiptService: createProjectAgentProposalReceiptService,
+  },
+) {
+  return async (projectId: string) => {
+    const root = deps.resolveProjectRoot(projectId)
+    if (!root) return undefined
+    const identity = await deps.ensureProjectIdentity(root)
+    return deps.createReceiptService({
+      projectRoot: root,
+      binding: {
+        projectId: identity.projectId,
+        immutableProjectUuid: identity.immutableProjectUuid,
+        projectGeneration: identity.projectGeneration,
+      },
+    })
+  }
 }
 
 /**
@@ -75,20 +141,11 @@ function transportTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : 360_000
 }
 
-/**
- * 付费已确认（elicitation 真人点了）→ 直铸令牌放行本次生成。仅在 elicit confirmed 后用，不碰全局 env。
- * 「预批付费」这层只此一份定义（gateway.withPreApprovedSpend），App 开着走 RPC 的那条路复用同一份
- * ——两条路的钱路语义不会各写各的、漂移开（rpcServer.ts 读 body.spendConfirmed 处）。
- */
-function makeConfirmedGateway(projectId: string): ProjectGateway {
-  return withPreApprovedSpend(createDiskGateway(projectId))
-}
-
 async function callViaRpc(
   instance: InstanceAdvertisement,
   method: string,
   params: Record<string, unknown>,
-  origin: CapabilityOriginHost,
+  connection: McpConnectionContext,
   options?: McpInvokeOptions,
 ): Promise<unknown> {
   const timeoutMs = transportTimeoutMs()
@@ -99,34 +156,23 @@ async function callViaRpc(
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res: Response
   try {
-    res = await fetch(`http://127.0.0.1:${instance.port}/rpc`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${instance.token}`,
-        ...(origin !== 'external' && origin !== 'nomi'
-          ? {
-              'x-nomi-mcp-client': origin,
-              'x-nomi-mcp-client-proof': String(process.env[MCP_CLIENT_PROOF_ENV] || ''),
-            }
-          : {}),
-      },
-      // planConfirmed / spendConfirmed 跨 RPC 到渲染层网关：已在调用方客户端经 elicitation 被真人确认过
-      // → App 不再弹第二次卡（免双问）。**没有这一行，App 开着时用户会在 Claude 点一次、再被叫去 Nomi 点一次。**
-      // 钱路为何敢过线、代价是什么：见 gateway.withPreApprovedSpend 与 rpcServer 读 body.spendConfirmed 处。
-      body: JSON.stringify({
+    res = await appFetch(`http://127.0.0.1:${instance.port}/rpc`, {
+      ...createMcpLoopbackRpcRequest({
+        token: instance.token,
+        clientProof: String(process.env[MCP_CLIENT_PROOF_ENV] || ''),
+        connection,
         method,
         params,
-        ...(options?.planConfirmed ? { planConfirmed: true } : {}),
-        ...(options?.spendConfirmed ? { spendConfirmed: true } : {}),
+        planConfirmed: options?.planConfirmed,
+        documentConfirmed: options?.documentConfirmed,
+        signal: controller.signal,
       }),
-      signal: controller.signal,
     })
   } catch (error) {
     if (options?.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new Error('MCP request cancelled')
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(
-        `Nomi 无响应（${Math.round(timeoutMs / 1000)}s 超时）——生成可能仍在后台跑，可稍后用 nomi_read_canvas 查结果。`,
+        `Nomi 无响应（${Math.round(timeoutMs / 1000)}s 超时）——生成可能仍在后台跑，可稍后用 nomi_read（target=canvas）查结果。`,
         { cause: error },
       )
     }
@@ -140,44 +186,103 @@ async function callViaRpc(
   return body.result
 }
 
+/**
+ * Build the no-GUI direct invoker separately from the stdio bootstrap so the
+ * real headless receipt boundary can be exercised without starting a second
+ * stdin/stdout server in a unit test. The production default is still the
+ * same dispatchAndEnrich function used by the Electron process.
+ */
+export function createMcpStdioDirectInvoker(
+  authorities: McpStdioServerOptions,
+  canvasReadExecutionRuntime: CanvasReadExecutionRuntime,
+  dispatchFn: typeof dispatchAndEnrich = dispatchAndEnrich,
+) {
+  return async (
+    routedMethod: string,
+    routedParams: Record<string, unknown>,
+    routedProjectSession: VerifiedProjectSessionBinding,
+    routedOptions: McpInvokeOptions | undefined,
+  ): Promise<unknown> => {
+    const canvasRead = await createMcpCanvasReadTransportAdapter({
+      projectSession: routedProjectSession,
+      executor: canvasReadExecutionRuntime.executor,
+    }).tryExecute(routedMethod, routedParams, { signal: routedOptions?.signal })
+    if (canvasRead.handled) return canvasRead.result
+    const makeGateway = createDiskGateway
+    // 交付②④：GUI 没开的进程内路——本进程就是 Electron（NOMI_MCP_STDIO 模式），有 nativeImage → dispatchAndEnrich
+    // 里就地富化生成结果（缩略图/签名链）。收口在包装器（0a），此路与 GUI-开着的 RPC 路一样忘不了富化。
+    const dispatch = () => dispatchFn(routedMethod, routedParams, {
+      runTask,
+      fetchTaskResult,
+      makeGateway,
+      productionRuns,
+      origin: { host: routedProjectSession.connection.authenticatedClient },
+      ...authorities,
+      projectSession: routedProjectSession,
+      ...(routedOptions?.planConfirmed ? { planConfirmed: true } : {}),
+      // 审片环（W1）：headless 路的真实 deps——judge 走 runTask 文本路（不花生成额度）、抽帧走主进程 ffmpeg、
+      // 重试复用首发 grantId+同 nodeId 直发。judge 模型无可用 text 模型时 visionAvailable=false → 整体跳过。
+      makeVerifyDeps: (verifyCtx) => makeShotVerifyDeps(verifyCtx),
+    })
+    if (routedMethod !== 'document.write') return dispatch()
+    if (routedOptions?.documentConfirmed !== true) throw new Error('human_approval_required')
+    const projectId = typeof routedParams.projectId === 'string' ? routedParams.projectId : ''
+    const service = await authorities.proposalReceiptFor?.(projectId)
+    if (!service) throw new Error('durable_document_receipt_unavailable')
+    return executeMcpDocumentWriteWithReceipt({
+      service,
+      operation: typeof routedParams.operation === 'string' ? routedParams.operation : 'write',
+      execute: dispatch,
+    })
+  }
+}
+
 /** 进程内调能力核：GUI 开着→转发 RPC（实时 + 应用内确认卡）；关着→进程内 dispatch（磁盘网关）。 */
 async function invoke(
   method: string,
   params: Record<string, unknown>,
   options: McpInvokeOptions | undefined,
   authorities: McpStdioServerOptions,
+  projectSession: VerifiedProjectSessionBinding,
+  canvasReadExecutionRuntime: CanvasReadExecutionRuntime,
 ): Promise<unknown> {
   const requestSignal = (params as Record<PropertyKey, unknown>)[MCP_REQUEST_SIGNAL] as AbortSignal | undefined
   const effectiveOptions = requestSignal ? { ...options, signal: requestSignal } : options
-  const origin = resolveMcpOrigin(process.env[MCP_CLIENT_ENV], process.env[MCP_CLIENT_PROOF_ENV])
-  const instance = readLiveInstance(currentLibrary())
-  // GUI 开着 → RPC 转发，rpcServer 侧已做生成结果富化（缩略图/签名链），此处不再重复富化。
-  if (instance) return callViaRpc(instance, method, params, origin, effectiveOptions)
-  const makeGateway = effectiveOptions?.spendConfirmed ? makeConfirmedGateway : createDiskGateway
-  // 交付②④：GUI 没开的进程内路——本进程就是 Electron（NOMI_MCP_STDIO 模式），有 nativeImage → dispatchAndEnrich
-  // 里就地富化生成结果（缩略图/签名链）。收口在包装器（0a），此路与 GUI-开着的 RPC 路一样忘不了富化。
-  return dispatchAndEnrich(method, params, {
-    runTask,
-    fetchTaskResult,
-    makeGateway,
-    productionRuns,
-    origin: { host: origin },
-    ...authorities,
-    ...(effectiveOptions?.planConfirmed ? { planConfirmed: true } : {}),
-    // 审片环（W1）：headless 路的真实 deps——judge 走 runTask 文本路（不花生成额度）、抽帧走主进程 ffmpeg、
-    // 重试复用首发 grantId+同 nodeId 直发。judge 模型无可用 text 模型时 visionAvailable=false → 整体跳过。
-    makeVerifyDeps: (verifyCtx) => makeShotVerifyDeps(verifyCtx),
-  })
+  return createMcpStdioProjectSessionRouter<InstanceAdvertisement, McpInvokeOptions>({
+    projectSession,
+    readLiveInstance: () => readLiveInstance(currentLibrary()),
+    // GUI 开着 → RPC 转发，rpcServer 侧已做生成结果富化（缩略图/签名链），此处不再重复富化。
+    invokeViaRpc: (instance, routedMethod, routedParams, connection, routedOptions) =>
+      callViaRpc(instance, routedMethod, routedParams, connection, routedOptions),
+    invokeDirect: createMcpStdioDirectInvoker(authorities, canvasReadExecutionRuntime),
+  })(method, params, effectiveOptions)
 }
 
 /** 启动 stdio JSON-RPC server。main.ts 在 NOMI_MCP_STDIO 模式的 app.whenReady 后调；不开窗、不抢单实例锁。 */
 export async function startMcpStdioServer(authorities: McpStdioServerOptions = {}): Promise<void> {
+  if (process.env.NOMI_E2E_SYNTHETIC_CREDENTIAL_STORAGE === '1' && process.platform === 'linux') {
+    safeStorage.setUsePlainTextEncryption(true)
+  }
+  const defaultAuthorities = createDefaultAuthorities()
+  const projectRevisionResolver = authorities.projectRevisionResolver ?? defaultAuthorities.projectRevisionResolver!
+  const approvalReceiptAuthority = authorities.approvalReceiptAuthority ?? defaultAuthorities.approvalReceiptAuthority
+  let verifiedSession: VerifiedProjectSessionBinding | undefined
+  const projectSession = () => verifiedSession ??= createProductionMcpStdioProjectSessionBinding()
+  const proposalReceiptFor = authorities.proposalReceiptFor ?? createDefaultMcpProposalReceiptResolver()
+  const canvasReadExecutionRuntime = createHeadlessCanvasReadExecutionRuntime()
   // 无窗口进程：mac 别在 dock 弹图标。
   app.dock?.hide?.()
   const previewServer = await startArtifactPreviewHttpServer(
     withAssetPreview(productionRuns, (projectId) => resolveWorkspaceProjectDir(projectId, getWorkspaceRepositoryDeps())),
   )
-  // 关键：stdout 是 JSON-RPC 通道，任何杂质都会毁帧。把我们自己的非错误 console.* 改写到 stderr
+  // 接入会话服务：headless 进程也必须自己装（GUI 那条 registerIpc 根本不跑）。下面的凭据页与
+  // dispatcher 的 integration.* 都取它，不装就是整条接模型链在 stdio 下不可用。
+  installIntegrationSessionRuntime()
+  // MCP URL 模式 elicitation 的一次性凭据页（headless 时这就是密钥的唯一入口）。自成一个严格 CSP 的
+  // 回环 listener，不蹭预览服务器那套跨源放行的头（见 credentialElicitationServer.ts）。
+  await startCredentialElicitationServer()
+  // 关键：stdout 是 JSON-RPC 通道，任何杂质都会毁帧。我们自己的日志已经统一走 logging/logger
+  //（落盘 + stderr 镜像，不碰 stdout）；这里改写 console.* 是给**第三方依赖**留的闸——
   //（Chromium 自身日志本就走 stderr），stdout 只出 JSON-RPC。
   const toErr = (...parts: unknown[]) => process.stderr.write(parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ') + '\n')
   console.log = toErr
@@ -185,11 +290,11 @@ export async function startMcpStdioServer(authorities: McpStdioServerOptions = {
   console.warn = toErr
   console.debug = toErr
 
-  // 和主 app 一致设代理（vendor fetch 在代理环境才通）；失败直连兜底，不崩。
+  // 与 GUI 共用持久化偏好；失败不退出 stdio，本机 RPC 仍按明确私网规则直连。
   try {
-    await applySystemProxy(session.defaultSession)
+    await applySystemProxy(session.defaultSession, readProxyPrefs())
   } catch {
-    /* 代理设失败 → 直连兜底 */
+    /* appFetch 会阻止未经确认的公共请求，不能把初始化失败当成允许直连。 */
   }
 
   // 交付5：结果/进度文案 locale 跟随系统/App 语言。stdio 进程走的是 main.ts 的 isMcpStdio 分支，**不经** GUI
@@ -202,73 +307,167 @@ export async function startMcpStdioServer(authorities: McpStdioServerOptions = {
     /* 取不到系统 locale → 保持 zh-CN 缺省 */
   }
 
-  const providerBootstrap = createGenerationProviderBootstrap()
+  const fixtureBaseUrlOverride = process.env.NOMI_E2E_PRODUCTION_FIXTURE === '1'
+    ? process.env.NOMI_E2E_FIXTURE_BASE_URL
+    : undefined
+  const fixtureReferenceUrl = fixtureBaseUrlOverride && process.env.NOMI_E2E_FIXTURE_REFERENCE_URL
+    ? process.env.NOMI_E2E_FIXTURE_REFERENCE_URL
+    : undefined
+  const liveGenerationRuntime = createLiveGenerationRuntime({
+    bootstrap: (state, options) => createGenerationProviderBootstrap(state, {
+      ...options,
+      ...(fixtureBaseUrlOverride ? { fixtureBaseUrlOverride } : {}),
+    }),
+  })
+  const readProviderBootstrap = liveGenerationRuntime.readBootstrap
   const outputMaterializer = createGenerationOutputMaterializer()
-  const generationRegistry = authorities.generationModuleRegistry ?? createCatalogModuleRegistry(undefined, { readinessByProvider: providerBootstrap.readinessByProvider })
-  const videoModelCandidates = buildVideoModelCandidates(readCatalog().models
-    .filter((model) => model.enabled && model.kind === 'video')
-    .map((model) => ({
-      provider: model.vendorKey,
-      modelKey: model.modelKey,
-      label: model.labelZh,
-      archetypeId: videoArchetypeIdFromMeta(model.meta),
-      parameterControls: model.onboarding?.fields?.map((field) => ({
-        key: field.key,
-        label: field.displayName,
-        type: field.type,
-        options: (field.options ?? []).map((option) => ({ value: option.value, label: option.label })),
-        ...(field.default === undefined ? {} : { defaultValue: field.default }),
-      })),
-    })))
+  const generationRegistry = authorities.generationModuleRegistry ?? liveGenerationRuntime.registry
   // P4 S2: derive real per-shot prices from the live catalog pricing (readCatalog reflects user edits;
   // resolve lazily so a mid-session pricing change is picked up). Preview/gate use the model-pricing
   // resolver; the submission seam uses the contract→ShotPrice resolver for its ledger amounts.
   const resolveModelPricing = (providerId: string, modelId: string) => createCatalogModelPricingResolver(readCatalog().models)(providerId, modelId)
   const resolveShotPrice = (contract: Parameters<ReturnType<typeof createCatalogShotPriceResolver>>[0]) => createCatalogShotPriceResolver(readCatalog().models)(contract)
+  const operationStore = createProductionGenerationOperationStore(productionRuns)
   const generationPlanning = authorities.generationPlanning
     ?? createGenerationPlanningHandler({
       registry: generationRegistry,
-      operations: createProductionGenerationOperationStore(productionRuns),
-      videoModelCandidates,
+      operations: operationStore,
+      get videoModelCandidates() { return deriveUsableVideoModelCandidates() },
+      defaultModelForTaskKind: (taskKind) => readGenerationDefaultModelResolver()(taskKind),
+      // 参考素材的身份（内容哈希 + 版本）归项目素材库管，模型只给 assetId。接线前 `draft_shots`
+      // 只要带一张参考图就 100% 被判 `generation_input_invalid`，而那两个字段模型根本拿不到。
+      resolveAssetReferenceIdentity: (projectId, assetId) => resolveProjectAssetReferenceIdentity(projectId, assetId),
+      // 今天走不到：stdio 的 origin 只有 `{ host: authenticatedClient }`，没有 `sourceDocument`，
+      // 而分镜正本那两条路都以它为闸。留着是因为它是一个**参数**不是第二份实现——外部 MCP 哪天带上
+      // 文稿来源，缺了它就是悄悄少一份预览 URL。核实日期 2026-09-21。
+      resolveStoryboardReferenceUrl: resolveIndexedReferencePreview,
+      planStoryboard: planStoryboardFromScript,
       recommendVideoGeneration,
       resolveModelPricing,
-      providerReadiness: ({ providerId }) => providerBootstrap.readinessByProvider[providerId] ?? { providerReady: false, missingForSubmit: ['configured_provider'] },
+      providerReadiness: ({ providerId }) => {
+        const providerBootstrap = readProviderBootstrap()
+        return providerBootstrap.readinessByProvider[providerId] ?? { providerReady: false, missingForSubmit: ['configured_provider'] }
+      },
+      prepareAuthorization: ({ lease, operation, contract, multiShot }) => {
+        const providerBootstrap = readProviderBootstrap()
+        const projectRecord = readWorkspaceProject(lease.projectId, getWorkspaceRepositoryDeps())
+        if (!projectRecord || !Number.isInteger(projectRecord.revision)) throw new Error('Generation authorization requires the current project revision')
+        const authorizationRun = productionRuns.repository.read(lease.projectId, operation.operationId)
+        if (!authorizationRun) throw new Error('Generation authorization requires the current Run snapshot')
+        return prepareProductionGenerationAuthorizationWithReferences({
+          lease,
+            assertCurrent: () => {
+              const currentProject = readWorkspaceProject(lease.projectId, getWorkspaceRepositoryDeps())
+              const currentRun = productionRuns.repository.read(lease.projectId, operation.operationId)
+              if (!currentProject || currentProject.revision !== projectRecord.revision
+                || currentProject.immutableProjectUuid !== lease.immutableProjectUuid
+                || currentProject.projectGeneration !== lease.projectGeneration
+                || currentRun?.revision !== authorizationRun?.revision) throw new Error('generation_reference_scope_changed')
+            },
+          projectRevision: projectRecord.revision,
+          operation,
+          contract,
+          ...(multiShot ? { multiShot } : {}),
+          providers: providerBootstrap.providers,
+          resolveShotPrice,
+            run: authorizationRun,
+          now: new Date().toISOString(),
+        }, fixtureReferenceUrl ? async ({ references }) => Object.fromEntries(references.map(reference => [spendReferenceKey(reference), fixtureReferenceUrl])) : undefined)
+      },
       start: async (operation, lease) => {
-        const provider = providerBootstrap.providers.find((candidate) => candidate.providerId === operation.contract?.providerId)
+        const providerBootstrap = readProviderBootstrap()
         const projectRoot = resolveWorkspaceProjectDir(lease.projectId, getWorkspaceRepositoryDeps())
-        if (!provider || !projectRoot || !operation.contract) return { operationId: operation.operationId, state: operation.state, nextAction: 'provider_not_configured' }
-        return createProductionGenerationSubmission({
+        const projectRecord = readWorkspaceProject(lease.projectId, getWorkspaceRepositoryDeps())
+        // The first shot can be an image anchor while the actual video shots
+        // use a different provider.  Check the complete included plan before
+        // starting the scheduler so a missing video provider is never hidden
+        // by operation.contract.providerId.
+        if (!hasGenerationOperationProviderReadiness(operation, providerBootstrap.providers)
+          || !projectRoot || !operation.contract || !projectRecord || !Number.isInteger(projectRecord.revision)) {
+          return { operationId: operation.operationId, state: operation.state, nextAction: 'provider_not_configured' }
+        }
+        const submission = createProductionGenerationSubmission({
           repository: productionRuns.repository,
+          beforeDispatch: assertProductionShotCanDispatch,
           projectRoot,
           immutableProjectUuid: lease.immutableProjectUuid,
           projectGeneration: lease.projectGeneration,
           intentMacKey: ensureCapabilitySigningKey('generation-intent'),
-          provider,
-          resolveShotPrice,
-          materializeOutput: ({ projectId, providerTaskId, output }) => outputMaterializer.materialize({ projectId, providerTaskId, output }),
-        }).start({ projectId: lease.projectId, operationId: operation.operationId })
+          providers: providerBootstrap.providers,
+          materializeOutput: ({ projectId, providerTaskId, output, job }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider }),
+        })
+        // A semantic multi-shot operation must enter the durable batch
+        // scheduler. Calling submission.start() without shotId would submit
+        // only the top-level contract while falsely reporting the whole plan
+        // as running (the old stdio-only gap). The helper persists the
+        // sealed→submitted transition before any per-shot provider call.
+        if (operation.shots && operation.shots.length > 0) {
+          return startSemanticMultiShotBatch(operation, {
+            readRun: (projectId, runId) => productionRuns.repository.read(projectId, runId),
+            submitPlan: (run) => productionRuns.command(lease.projectId, operation.operationId, {
+              commandId: `generation.submit:${operation.operationId}:v${run.planVersion}`,
+              expectedRevision: run.revision,
+              type: 'generation.submit',
+              payload: {},
+              issuedAt: new Date().toISOString(),
+            }),
+            createScheduler: (run) => {
+              void run
+              return createMultiShotBatchScheduler({
+                repository: productionRuns.repository,
+                submission,
+                projectId: lease.projectId,
+                runId: operation.operationId,
+                onBatchComplete: () => productionRuns.advanceSemanticProduction(lease.projectId, operation.operationId),
+              })
+            },
+            driveScheduler: (scheduler) => {
+              void scheduler.runToQuiescence().catch((error) => {
+                logWarn('production-run', 'stdio-semantic-batch-scheduler-failed', undefined, error)
+              })
+            },
+          })
+        }
+        const started = await submission.start({ projectId: lease.projectId, operationId: operation.operationId })
+        // Keep the stdio transport on the same durable lifecycle as the GUI:
+        // accepting a provider task is an active Run, not a still-ready draft.
+        if (!operation.shots || operation.shots.length === 0) {
+          markSingleShotRunning(productionRuns.repository, lease.projectId, operation.operationId)
+        }
+        return started
       },
       reconcile: async (operation, outcome, lease) => {
+        const providerBootstrap = readProviderBootstrap()
         if (outcome === 'not_found') return { operationId: operation.operationId, outcome, nextAction: 'manual_review' }
         const provider = providerBootstrap.providers.find((candidate) => candidate.providerId === operation.contract?.providerId)
         const projectRoot = resolveWorkspaceProjectDir(lease.projectId, getWorkspaceRepositoryDeps())
-        if (!provider || !projectRoot || !operation.contract) return { operationId: operation.operationId, outcome, nextAction: 'manual_review' }
+        const projectRecord = readWorkspaceProject(lease.projectId, getWorkspaceRepositoryDeps())
+        if (!provider || !projectRoot || !operation.contract || !projectRecord || !Number.isInteger(projectRecord.revision)) return { operationId: operation.operationId, outcome, nextAction: 'manual_review' }
         if (!provider.query || !provider.capabilities.query) return { operationId: operation.operationId, outcome, nextAction: 'manual_review', recoveryNotice: '该供应商没有可用的任务查询；请到供应商核对。' }
         const submission = createProductionGenerationSubmission({
           repository: productionRuns.repository,
+          beforeDispatch: assertProductionShotCanDispatch,
           projectRoot,
           immutableProjectUuid: lease.immutableProjectUuid,
           projectGeneration: lease.projectGeneration,
           intentMacKey: ensureCapabilitySigningKey('generation-intent'),
-          provider,
-          resolveShotPrice,
-          materializeOutput: ({ projectId, providerTaskId, output }) => outputMaterializer.materialize({ projectId, providerTaskId, output }),
+          providers: providerBootstrap.providers,
+          materializeOutput: ({ projectId, providerTaskId, output, job }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider }),
         })
         try {
           const polled = await submission.poll({ projectId: lease.projectId, operationId: operation.operationId })
-          return polled.nextAction === 'materialize'
-            ? await submission.materialize({ projectId: lease.projectId, operationId: operation.operationId })
-            : polled
+          if (polled.nextAction === 'materialize') {
+            const materialized = await submission.materialize({ projectId: lease.projectId, operationId: operation.operationId })
+            markSingleShotCompleted(productionRuns.repository, lease.projectId, operation.operationId, {
+              jobId: materialized.jobId,
+              artifactId: materialized.artifactId,
+            })
+            return materialized
+          }
+          if (polled.nextAction === 'attention') {
+            markSingleShotAttention(productionRuns.repository, lease.projectId, operation.operationId, polled.jobId)
+          }
+          return polled
         } catch (error) {
           const code = (error as { code?: unknown })?.code
           if (code === 'provider_materialization_unsupported' || code === 'materialization_failed') return { operationId: operation.operationId, outcome, nextAction: 'manual_review', recoveryNotice: '供应商任务已完成，但结果还没有安全落到 Nomi 项目；请到供应商核对或稍后重试。' }
@@ -276,23 +475,68 @@ export async function startMcpStdioServer(authorities: McpStdioServerOptions = {
         }
       },
     })
-  const generationPolicy = authorities.generationPolicy ?? createRuntimeMcpGenerationPolicy()
+  const runOwnedGenerationAuthority = approvalReceiptAuthority
+    ? createRunOwnedGenerationGateAuthority({
+        owner: productionRuns,
+        operations: operationStore,
+        planning: generationPlanning,
+        receipts: approvalReceiptAuthority,
+      })
+    : undefined
+  const generationAuthorities = {
+    ...authorities,
+    approvalReceiptAuthority,
+    projectRevisionResolver,
+    generationPlanning,
+    // 用户此刻选的审批档位——**持久化的那一份**（设置里的单一 owner）。
+    // 不递下去的后果不是崩溃，是「全自动」在这个宿主上完全不存在：接入试跑与付费门
+    // 读到 undefined，一律把用户叫回 Nomi 窗口点一次——而他刚刚才授权过「不用再问」。
+    approvalPolicy: readAgentApprovalPolicy,
+    proposalReceiptFor,
+    ...(authorities.requestGenerationGate ?? runOwnedGenerationAuthority?.requestGenerationGate
+      ? { requestGenerationGate: authorities.requestGenerationGate ?? runOwnedGenerationAuthority!.requestGenerationGate }
+      : {}),
+    ...(authorities.authorizeGeneration ?? runOwnedGenerationAuthority?.authorizeGeneration
+      ? { authorizeGeneration: authorities.authorizeGeneration ?? runOwnedGenerationAuthority!.authorizeGeneration }
+      : {}),
+  }
+  const invokeRequest = (method: string, params: Record<string, unknown>, options?: McpInvokeOptions) => invoke(
+    method,
+    params,
+    options,
+    generationAuthorities,
+    projectSession(),
+    canvasReadExecutionRuntime,
+  )
   const protocol = createMcpProtocol({
     send: (message) => process.stdout.write(JSON.stringify(message) + '\n'),
-    invoke: (method, params, options) => invoke(method, params, options, { ...authorities, generationPlanning, generationPolicy }),
+    invoke: invokeRequest,
+    // This protocol instance is itself a live Nomi host. Its direct route does
+    // not cold-start another desktop process, so discovery may use it.
+    invokeIfOpen: invokeRequest,
     isAppOpen: () => Boolean(readLiveInstance(currentLibrary())),
-    getAuthenticatedClient: () => {
-      const origin = resolveMcpOrigin(process.env[MCP_CLIENT_ENV], process.env[MCP_CLIENT_PROOF_ENV])
-      return origin === 'external' || origin === 'nomi' ? null : origin
-    },
+    getAuthenticatedClient: () => projectSession().connection.authenticatedClient,
+    onClientDetected: (name) => { recordDetectedMcpClient(name) },
     confirmGenerationInNomi: async (challenge) => {
       const challengeToken = challenge.handoff && typeof challenge.handoff.challengeToken === 'string'
         ? challenge.handoff.challengeToken
         : ''
       const instance = readLiveInstance(currentLibrary())
       if (!challengeToken || !instance) return { confirmed: false }
-      const origin = resolveMcpOrigin(process.env[MCP_CLIENT_ENV], process.env[MCP_CLIENT_PROOF_ENV])
-      const result = await callViaRpc(instance, 'nomi_confirm_generation_gate', { challengeToken }, origin)
+      const result = await callViaRpc(instance, 'nomi_confirm_generation_gate', { challengeToken }, projectSession().connection)
+      const typed = result as { confirmed?: boolean; receiptId?: string; receiptToken?: string }
+      return { confirmed: typed.confirmed === true, ...(typed.receiptId ? { receiptId: typed.receiptId } : {}), ...(typed.receiptToken ? { receiptToken: typed.receiptToken } : {}) }
+    },
+    // Electron stdio 态：client_elicitation 路径——客户端在调用方 accept 后，通过 loopback RPC 让主进程铸收据。
+    // 此函数是 mcpGateConfirmation.ts 中 verifyClientGenerationConfirmation 的装配点。
+    verifyClientGenerationConfirmation: async (challenge) => {
+      const challengeToken = challenge.handoff && typeof challenge.handoff.challengeToken === 'string'
+        ? challenge.handoff.challengeToken
+        : ''
+      const instance = readLiveInstance(currentLibrary())
+      const authenticatedClient = projectSession().connection.authenticatedClient
+      if (!challengeToken || !instance || !authenticatedClient) return { confirmed: false }
+      const result = await callViaRpc(instance, 'nomi_verify_client_generation_gate', { challengeToken, authenticatedClient }, projectSession().connection)
       const typed = result as { confirmed?: boolean; receiptId?: string; receiptToken?: string }
       return { confirmed: typed.confirmed === true, ...(typed.receiptId ? { receiptId: typed.receiptId } : {}), ...(typed.receiptToken ? { receiptToken: typed.receiptToken } : {}) }
     },
@@ -309,7 +553,7 @@ export async function startMcpStdioServer(authorities: McpStdioServerOptions = {
     if (parsed.kind === 'blank') return
     if (parsed.kind === 'oversized') {
       // 超长行整条丢弃。无从可靠取 id（正是因为它可能根本不是一条完整 JSON）→ 按规范只记日志。
-      console.warn(`[nomi-mcp] dropped an oversized stdin line (> ${MAX_MCP_LINE_BYTES} bytes)`)
+      logWarn('mcp', MCP_OVERSIZED_LINE_EVENT, { limitBytes: MAX_MCP_LINE_BYTES })
       return
     }
     if (parsed.kind === 'parse-error') {
@@ -329,7 +573,8 @@ export async function startMcpStdioServer(authorities: McpStdioServerOptions = {
     if (closing) return
     closing = true
     const cancelled = protocol.cancelAllInFlight('stdio disconnected')
-    if (cancelled > 0) console.warn(`[nomi-mcp] cancelled ${cancelled} in-flight request(s) on disconnect`)
+    if (cancelled > 0) logWarn('mcp', MCP_CANCELLED_IN_FLIGHT_EVENT, { count: cancelled })
+    protocol.dispose()
     void previewServer.close().finally(() => app.exit(0))
   }
   rl.on('close', close)

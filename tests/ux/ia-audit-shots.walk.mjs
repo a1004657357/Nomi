@@ -10,8 +10,10 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
-import { screenshotSettled } from './_assert.mjs'
+import { expectCount, screenshotSettled } from './_assert.mjs'
+import { addCanvasNodeFromRail } from './_canvasRail.mjs'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const outDir = path.join(repoRoot, 'docs/design/mockups/2026-08-02-real-ui')
 fs.mkdirSync(outDir, { recursive: true })
@@ -29,7 +31,9 @@ const results = []
 const note = (name, detail = '') => { results.push({ name, detail }); console.log(`  · ${name}${detail ? ` — ${detail}` : ''}`) }
 
 // —— 夹具：一张真 png + 一段真 mp4，喂给「最近项目 / 画布 / 时间轴」，全程零额度 ——
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path
+// ESM 里没有 require：Node 24 见到 `require` + top-level await 会以 ERR_AMBIGUOUS_MODULE_SYNTAX
+// 直接拒绝加载整个文件（这条走查因此在本机一行都跑不起来）。createRequire 是 .mjs 里的正解。
+const ffmpegPath = createRequire(import.meta.url)('@ffmpeg-installer/ffmpeg').path
 function ff(args, label) {
   const run = spawnSync(ffmpegPath, ['-v', 'error', '-y', ...args], { timeout: 120_000 })
   if (run.status !== 0) throw new Error(`${label} 夹具编码失败: ${run.stderr?.toString().slice(-400)}`)
@@ -73,9 +77,9 @@ const mkNode = (id, title, url, type, x, y) => ({
   meta: { source: 'local-drop', fileName: title, uploadStatus: 'uploaded', ...(type === 'video' ? { videoDuration: 2 } : {}) },
   result: { id: `${id}-result`, type, url, createdAt: 1 },
 })
-// 一个空的 3D 场景节点（无 scene3dState → 卡上显示「进入 3D 编辑器」启动器，供进全屏导演台）。
-const scene3dNode = {
-  id: 'n-scene3d', kind: 'scene3d', categoryId: 'assets', title: '3D 场景',
+// 一个空的导演台节点（卡上有「进入导演台」按钮，供进全屏导演台）。
+const directorNode = {
+  id: 'n-director', kind: 'director', categoryId: 'assets', title: '导演台',
   position: { x: 920, y: 120 }, exactPosition: true, size: { width: 360, height: 280 }, status: 'idle',
   meta: {},
   result: null,
@@ -87,7 +91,7 @@ seedProject({
     mkNode('n-still-1', 'still-1.png', stills[1], 'image', 520, 120),
     mkNode('n-still-2', 'still-2.png', stills[2], 'image', 120, 420),
     mkNode('n-clip', 'clip.mp4', CLIP_URL, 'video', 520, 420),
-    scene3dNode,
+    directorNode,
   ],
   timeline: {
     fps: 24,
@@ -182,7 +186,7 @@ async function clickRole(name, ms = 1400) {
 }
 
 // 诊断：抓 3D 全屏相关的控制台报错（chunk 加载失败 / r3f / WebGL）
-win.on('console', (m) => { const t = m.text(); if (/error|fail|chunk|Scene3D|WebGL|context lost|import/i.test(t)) console.log(`  [console.${m.type()}] ${t.slice(0, 200)}`) })
+win.on('console', (m) => { const t = m.text(); if (/error|fail|chunk|Director|WebGL|context lost|import/i.test(t)) console.log(`  [console.${m.type()}] ${t.slice(0, 200)}`) })
 win.on('pageerror', (e) => console.log(`  [pageerror] ${String(e).slice(0, 200)}`))
 
 try {
@@ -192,7 +196,6 @@ try {
     localStorage.setItem('nomi-color-scheme', 'light')
     for (const k of ['nomi:splash:v1', 'nomi:journey-tour:v1', 'nomi:canvas-gesture-hint:v1']) localStorage.setItem(k, 'seen')
     // 3D 导演台的 coach marks（新用户蒙层）——预置成 seen，否则会盖住 04 全屏截图
-    localStorage.setItem('nomi.onboarding.scene3dCoach.v1', 'seen')
   })
   await win.reload()
   await win.waitForLoadState('domcontentloaded')
@@ -276,8 +279,11 @@ try {
   note('画布真节点数', String(nodeCount))
 
   // 打开右侧助手栏（launcher 用原生 DOM click，避免 actionability 抖动）
+  // Host cutover：画布内旧助手已退役，Agent 现居 ResidentShell dock（默认常驻，2026-09-05 起无发布闸）；
+  // 2026-09-06 v4：收起态是一根 32px 图标条（[data-agent-collapsed] 里的 [data-v4-block="dock"]），
+  // 第一颗钮就是「对话」。
   await getWin().evaluate(() => {
-    const btn = document.querySelector('.generation-canvas-v2-assistant__launcher')
+    const btn = document.querySelector('[data-agent-resident="true"][data-agent-collapsed="true"] [data-v4-block="dock"] button')
     if (btn) btn.click()
   }).catch(() => {})
   await getWin().waitForTimeout(1200)
@@ -310,27 +316,29 @@ try {
   await snap('03-preview.png')
 
   // ========== ④ 3D 导演台全屏态 ==========
-  // 回生成区 → 用工具栏加一个 3D 场景节点（aria-label「添加3D 场景节点」）→ 点卡上「进入 3D 编辑器」
-  // 启动器 → 等全屏导演台的任务页签 tablist 出现。（播种不到画布 store，故运行时建。）
+  // 回生成区 → 用左缘工具条加一个导演台节点 → 点卡上「进入导演台」→ 等全屏导演台出现。（播种不到画布 store，故运行时建。）
   ;(await clickRole('生成', 1500)) || (await clickText('button, [role="button"], [role="tab"]', '生成', 1500))
   await getWin().waitForTimeout(1200)
   await dismissTour() // ← 先在进全屏前把引导清掉（dismissTour 会点「关闭」，进全屏后再跑会关掉导演台）
-  // 工具栏加 3D 场景节点：一律走 DOM click（proven，见 diag：Playwright 定位器偶发 count=0/点不实）
-  const addedScene3d = await getWin().evaluate(() => {
-    const b = Array.from(document.querySelectorAll('button')).find((x) => /添加.*3D ?场景.*节点/.test(x.getAttribute('aria-label') || ''))
-    if (b) { b.click(); return true }
-    return false
-  }).catch(() => false)
-  note('加 3D 场景节点', addedScene3d ? '已加' : '未找到添加按钮')
+  // 点法收口在 _canvasRail：导演台自 2026-09-06「第三档」起住在左缘的「更多」里，按 aria-label 直点左缘已点不到。
+  // 真断言：节点必须真的多出来一个（docs/lessons/dead-selector-lies-both-ways）。
+  const nodeCountBefore = await getWin().locator('.generation-canvas-v2-node[data-node-id]').count()
+  await addCanvasNodeFromRail(getWin(), 'director')
+  await expectCount(
+    getWin().locator('.generation-canvas-v2-node[data-node-id]'),
+    nodeCountBefore + 1,
+    `左缘「更多」→ 导演台后画布节点 +1（${nodeCountBefore} → ${nodeCountBefore + 1}）`,
+  )
+  note('加导演台节点', `已加（_canvasRail，节点 ${nodeCountBefore} → ${nodeCountBefore + 1}）`)
   await getWin().waitForTimeout(3000)
-  // 全屏导演台**唯一真标志**：Scene3DFullscreen 经 createPortal 挂到 body 的 `.workbench-shell.fixed.inset-0`
-  // 满屏壳（Scene3DFullscreen.tsx:489）。role="tablist" 会误命中顶栏创作/生成/预览页签，不能用它判定。
+  // 全屏导演台**唯一真标志**：DirectorEditor 经 createPortal 挂到 body 的 `[data-testid="director-editor"]`
+  // 满屏壳（DirectorEditor.tsx）。role="tablist" 会误命中顶栏创作/生成/预览页签，不能用它判定。
   const isFullscreenOpen = async () =>
-    await getWin().evaluate(() => !!document.querySelector('.workbench-shell.fixed.inset-0')).catch(() => false)
-  // 空 3D 场景节点卡上的启动器：EmptyStateLauncher 的 aria-label = 「进入 3D 编辑器」（enterEditorAria）。
+    await getWin().evaluate(() => !!document.querySelector('[data-testid="director-editor"]')).catch(() => false)
+  // 导演台节点卡上的按钮：aria-label = 「进入导演台」（director.node.open）。
   // 先枚举 3D 相关按钮（诊断：确认启动器/角标钮到底在不在、可不可见）
   const btnDump = await getWin().evaluate(() => Array.from(document.querySelectorAll('button'))
-    .filter((b) => /进入 3D 编辑器|打开 3D 编辑器/.test(b.getAttribute('aria-label') || b.textContent || ''))
+    .filter((b) => /进入导演台/.test(b.getAttribute('aria-label') || b.textContent || ''))
     .map((b) => ({ al: b.getAttribute('aria-label'), vis: b.offsetParent !== null }))).catch(() => [])
   note('3D 相关按钮', JSON.stringify(btnDump))
   let opened3d = false
@@ -338,9 +346,9 @@ try {
   for (let attempt = 0; attempt < 4 && !opened3d; attempt++) {
     clickedLauncherLabel = await getWin().evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button'))
-      // 角标钮「打开 3D 编辑器」在空/满态都在且不被 preview popover 遮，优先它；退而空态启动器「进入 3D 编辑器」
-      const corner = btns.find((x) => (x.getAttribute('aria-label') || '') === '打开 3D 编辑器')
-      const enter = btns.find((x) => (x.getAttribute('aria-label') || '') === '进入 3D 编辑器')
+      // 卡片右上角与空态都渲染同一 aria-label 的「进入导演台」按钮，取第一个可见的
+      const corner = btns.find((x) => (x.getAttribute('aria-label') || '') === '进入导演台')
+      const enter = btns.find((x) => (x.getAttribute('aria-label') || '') === '进入导演台')
       const b = corner || enter
       if (b) { b.scrollIntoView(); b.click(); return b.getAttribute('aria-label') || 'clicked' }
       return null
@@ -349,7 +357,7 @@ try {
     await getWin().waitForTimeout(300)
     const immediate = await isFullscreenOpen()
     if (attempt === 0) note('点后即时全屏态', `点了「${clickedLauncherLabel}」→ 立刻 ${immediate ? '已开' : '未开'}`)
-    // 全屏 chunk 懒加载（Scene3DFullscreen ~224KB）→ 轮询等满屏壳真挂载
+    // 全屏 chunk 懒加载（DirectorEditor chunk）→ 轮询等满屏壳真挂载
     const deadline = Date.now() + 12000
     while (Date.now() < deadline) {
       if (await isFullscreenOpen()) { opened3d = true; break }
@@ -365,7 +373,7 @@ try {
     const deadline = Date.now() + 15000
     while (Date.now() < deadline) {
       const ready = await getWin().evaluate(() => {
-        const shell = document.querySelector('.workbench-shell.fixed.inset-0')
+        const shell = document.querySelector('[data-testid="director-editor"]')
         if (!shell) return false
         const c = shell.querySelector('canvas')
         // 视口初始化文案消失 + canvas 有尺寸 = 已渲染
@@ -380,11 +388,11 @@ try {
   // 拍前再确认满屏壳仍在（且顶栏任务页签 role=tab 也在这个壳里）
   const finalFs = await isFullscreenOpen()
   const fsTabs = await getWin().evaluate(() => {
-    const shell = document.querySelector('.workbench-shell.fixed.inset-0')
+    const shell = document.querySelector('[data-testid="director-editor"]')
     return shell ? shell.querySelectorAll('[role="tab"]').length : 0
   }).catch(() => 0)
   note('3D 全屏态判定', finalFs ? `已进入全屏导演台（满屏壳在，顶栏任务页签 ${fsTabs} 个）` : '未确认进入（拍当前态存证）')
-  await snap('04-scene3d.png')
+  await snap('04-director.png')
 
   console.log('\n=== 取证完成 ===')
   console.log(`输出目录: ${outDir}`)

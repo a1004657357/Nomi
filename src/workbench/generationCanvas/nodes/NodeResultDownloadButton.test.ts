@@ -23,6 +23,7 @@ describe('NodeResultDownloadButton', () => {
     const markup = renderToStaticMarkup(
       React.createElement(NodeResultDownloadButton, {
         node, selected: true, onPreview: () => {}, onOpenProvenance: () => {},
+        reportFeedback: () => {},
       }),
     )
 

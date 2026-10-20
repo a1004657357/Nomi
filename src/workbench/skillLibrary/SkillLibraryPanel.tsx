@@ -1,33 +1,40 @@
+import { LibraryGroup } from '../library/LibraryGroup'
+import { groupLibraryItems } from '../library/libraryGroups'
 /**
  * 技能库面板。技能在 App 里唯一的「家」：浏览（我的技能 / Nomi 内置）、搜索、导入文件、用 AI 新建、
  * 导出、删除、一键在创作区使用。设计对齐提示词库（PromptLibraryPanel）：居中模态 + 来源标签 + 卡片网格。
  * 导入/导出纯走渲染层（FileReader 读包 / Blob 下载），不加系统对话框桥；创建只走 AI（复用创作区
  * 「让 AI 帮我写技能」），不做手填 manifest 表单（docs/plan/2026-06-23-skill-library-hub.md）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconBooks, IconUpload, IconWand, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
-import { DesignEmptyState, DesignSearchInput, NomiWordmark, TooltipProvider } from '../../design'
-import { showInfoToast } from '../../utils/showInfoToast'
+import { DesignEmptyState, NomiSegmented, NomiWordmark, TooltipProvider } from '../../design'
+import { notify } from '../../ui/notificationPolicy'
 import { showUndoToast } from '../../utils/showUndoToast'
 import { useWorkbenchStore } from '../workbenchStore'
 import type { SkillListItemDto } from '../api/skillApi'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
+import { parseSkillImportFile, type SkillImportParse } from './parseSkillImport'
+import { parseSkillDrop } from './skillDropIntake'
 import { SkillCard } from './SkillCard'
-import {
-  addCanvasSkillNode,
-  focusCanvasSkillNode,
-  isCanvasSkill,
-} from '../generationCanvas/skills/canvasSkillModel'
-import {
-  buildBuiltinCanvasComponentItems,
-  defaultSkillLibrarySource,
-  skillLibrarySourceOptions,
-  type SkillLibrarySource,
-} from './skillComponentPresentation'
+import { markLibraryUsed, sortByLibraryUsage, useLibraryUsageVersion } from '../library/libraryDiscovery'
+import { galleryEntries, matchesGalleryQuery, type SkillGalleryEntry } from './skillGallery'
+import { SkillDetail } from './SkillDetail'
+import { usePromptLibrary } from '../promptLibrary/usePromptLibrary'
+import { useUserPrompts } from '../promptLibrary/useUserPrompts'
+import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
+import { LibraryDiscoveryToolbar } from '../library/LibraryDiscoveryToolbar'
 
-const SKILL_AUTHOR_KEY = 'workbench.creation.skill-author'
+type Source = 'mine' | 'builtin'
+
+const SOURCE_OPTIONS: { value: Source; labelKey: 'libraries.skill.source.mine' | 'libraries.skill.source.builtin' }[] = [
+  { value: 'mine', labelKey: 'libraries.skill.source.mine' },
+  { value: 'builtin', labelKey: 'libraries.skill.source.builtin' },
+]
+
+const SKILL_AUTHOR_KEY = 'skill-author'
 
 type SkillLibraryContentProps = {
   active: boolean
@@ -46,53 +53,51 @@ export function SkillLibraryContent({
   className,
   componentFirst = false,
 }: SkillLibraryContentProps): JSX.Element {
-  const { t } = useTranslation()
-  const [source, setSource] = React.useState<SkillLibrarySource>(
-    () => defaultSkillLibrarySource({ componentFirst }),
-  )
+  const { t, i18n } = useTranslation()
+  const [source, setSource] = React.useState<Source>('builtin')
+  const [category, setCategory] = React.useState<'all' | SkillGalleryEntry['kind']>('all')
+  const [selected, setSelected] = React.useState<SkillGalleryEntry | null>(null)
+  const prompts = usePromptLibrary(active)
+  const userPrompts = useUserPrompts(active)
   const [query, setQuery] = React.useState('')
+  const [feedback, setFeedback] = React.useState<Record<string, string>>({})
+  const report = React.useCallback((identity: string, message: string) => notify({ identity: `skill-library:${identity}`, reason: 'operation', level: 'inline', message, present: (value) => setFeedback((old) => ({ ...old, [identity]: value })) }), [])
   const fileInputRef = React.useRef<HTMLInputElement>(null)
-  const sourceOptions = React.useMemo(
-    () => skillLibrarySourceOptions({ componentFirst }),
-    [componentFirst],
-  )
+  const [dragActive, setDragActive] = React.useState(false)
+  const usageVersion = useLibraryUsageVersion()
 
-  const { items, available, remove, importPackage, exportPackage } = useWorkbenchSkills(active)
+  const { items, remove, importPackage, exportPackage } = useWorkbenchSkills(active)
   const setWorkspaceMode = useWorkbenchStore((s) => s.setWorkspaceMode)
   const setActiveCategoryId = useWorkbenchStore((s) => s.setActiveCategoryId)
   const setCreationActiveSkill = useWorkbenchStore((s) => s.setCreationActiveSkill)
 
-  const visible = React.useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const sourceSkills = items.filter((skill) => (
-      source === 'mine' ? skill.origin === 'user' : skill.origin === 'builtin'
-    ))
-    const entries = componentFirst && source === 'builtin'
-      ? buildBuiltinCanvasComponentItems(sourceSkills)
-      : sourceSkills.map((skill) => ({
-          id: `${skill.origin}::${skill.directoryName}`,
-          recipeId: null,
-          skill,
-        }))
-    return entries.filter(({ skill }) => (
-      !q
-      || skill.label.toLowerCase().includes(q)
-      || (skill.description ?? '').toLowerCase().includes(q)
-    ))
-  }, [componentFirst, items, source, query])
+  const sortedItems = React.useMemo(
+    () => {
+      // The usage hook is the same-window invalidation signal for recency.
+      void usageVersion
+      return sortByLibraryUsage(items, 'skill', (skill) => skill.directoryName)
+    },
+    [items, usageVersion],
+  )
+  const visible = React.useMemo(() => galleryEntries(
+    sortedItems.filter(s => source === 'mine' ? s.origin === 'user' : s.origin === 'builtin'),
+    source === 'mine' ? userPrompts.items : prompts.items, i18n.language,
+  ).filter(entry => (category === 'all' || entry.kind === category)
+    && matchesGalleryQuery(entry, query)),
+  [sortedItems, source, userPrompts.items, prompts.items, i18n.language, category, query])
 
   React.useEffect(() => {
     if (!active || !onClose) return
     const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape' && !selected) onClose()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [active, onClose])
+  }, [active, onClose, selected])
 
   // 在创作区锁定一个技能并切到创作区（与 ActiveSkillChip 的 onSelect 同口径）。
   const gotoCreationWith = React.useCallback(
-    (skill: { key: string; name: string } | null) => {
+    (skill: { key: string } | null) => {
       setCreationActiveSkill(skill)
       setWorkspaceMode('creation')
       onClose?.()
@@ -102,33 +107,21 @@ export function SkillLibraryContent({
 
   const handleUse = React.useCallback(
     (skill: SkillListItemDto) => {
-      if (!isCanvasSkill(skill)) {
-        gotoCreationWith({ key: skill.name, name: skill.label })
-        return
-      }
-      setWorkspaceMode('generation')
-      setActiveCategoryId('shots')
-      const node = addCanvasSkillNode(skill)
-      onClose?.()
-      if (!node) {
-        showInfoToast('这个技能没有可用的画布组件')
-        return
-      }
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => focusCanvasSkillNode(node.id))
-      })
+      gotoCreationWith({ key: skill.name })
+      markLibraryUsed('skill', skill.directoryName)
     },
-    [gotoCreationWith, onClose, setActiveCategoryId, setWorkspaceMode],
+    [gotoCreationWith],
   )
 
-  const handleNewWithAi = React.useCallback(() => gotoCreationWith({ key: SKILL_AUTHOR_KEY, name: t('libraries.skill.authorName') }), [gotoCreationWith, t])
+  const handleNewWithAi = React.useCallback(() => gotoCreationWith({ key: SKILL_AUTHOR_KEY }), [gotoCreationWith])
 
   // 导出：技能包对象 → JSON Blob → 浏览器下载，不弹系统对话框。
   const handleExport = React.useCallback(
-    (skill: SkillListItemDto) => {
-      const pkg = exportPackage(skill.directoryName)
+    async (skill: SkillListItemDto) => {
+      setFeedback({})
+      const pkg = await exportPackage(skill.directoryName)
       if (!pkg) {
-        showInfoToast(t('libraries.skill.exportNotFound'))
+        report(skill.directoryName, t('libraries.skill.exportNotFound'))
         return
       }
       const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' })
@@ -139,16 +132,18 @@ export function SkillLibraryContent({
       a.click()
       URL.revokeObjectURL(url)
     },
-    [exportPackage, t],
+    [exportPackage, report, t],
   )
 
   // 删除可撤销：删前先把包抓在手里，撤销 = 重新导入（落回用户目录，目录名冲突会自动避让）。
   const handleDelete = React.useCallback(
-    (skill: SkillListItemDto) => {
-      const snapshot = exportPackage(skill.directoryName)
+    async (skill: SkillListItemDto) => {
+      setFeedback({})
+      // 撤销要的包必须在删之前抓到手（导出走 async 目录，等它落定再删）。
+      const snapshot = await exportPackage(skill.directoryName)
       const res = remove(skill.directoryName)
       if (!res.ok) {
-        showInfoToast(res.error ?? t('libraries.skill.deleteFailed'))
+        report(skill.directoryName, res.error ?? t('libraries.skill.deleteFailed'))
         return
       }
       showUndoToast({
@@ -158,34 +153,76 @@ export function SkillLibraryContent({
         },
       })
     },
-    [exportPackage, remove, importPackage, t],
+    [exportPackage, remove, importPackage, report, t],
   )
 
-  // 导入：渲染层读文件 → 解析 JSON → 落用户目录（后端校验版本/形状/路径安全）。
-  const handleImportFile = React.useCallback(
-    (file: File) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(String(reader.result || ''))
-        } catch {
-          showInfoToast(t('libraries.skill.invalidPackage'))
-          return
-        }
-        const res = importPackage(parsed)
-        showInfoToast(res.ok
-          ? t('libraries.skill.imported', { name: res.skillName ?? t('libraries.skill.newSkill') })
-          : t('libraries.skill.importFailed', { message: res.error ?? t('libraries.skill.unknownError') }))
+  // 导入：渲染层把 SKILL.md / zip / .nomiskill.json 归一成 {dirName, files} → 落用户目录
+  // （版本戳与真正的安全校验都在主进程 skillPackage.ts，渲染层的判断一律不可信）。
+  // 一次导入尝试的落地：解析结果 → 落用户目录 → 给回执。选文件与拖进来共用它，
+  // 两条路只是「怎么把包递过来」不同，落地与回执必须是同一份（否则两条路的行为会各自漂移）。
+  const landImport = React.useCallback(
+    (parsed: SkillImportParse) => {
+      // Import errors and skipped files stay beside the intake controls; newly imported cards show success.
+      if (!parsed.ok) {
+        report(`import:${parsed.reason}`, t(`libraries.skill.importReason.${parsed.reason}`))
+        return
       }
-      reader.onerror = () => showInfoToast(t('libraries.skill.readFailed'))
-      reader.readAsText(file)
+      const res = importPackage(parsed.payload)
+      if (!res.ok) {
+        report(`import:${parsed.payload.dirName}`, t('libraries.skill.importFailed', { message: res.error ?? t('libraries.skill.unknownError') }))
+        return
+      }
+      const name = res.skillName ?? t('libraries.skill.newSkill')
+      // 跳过的文件如实报数，不静默丢（二进制/超深路径进不了知识层包）。
+      setSource('mine')
+      setCategory('all')
+      setQuery('')
+      if (parsed.skipped.length) report(`import:${name}`, t('libraries.skill.importedWithSkips', { name, count: parsed.skipped.length }))
     },
-    [importPackage, t],
+    [importPackage, report, t],
   )
 
-  const showNewTile = source === 'mine' && !query.trim()
-  const showAuthoringControls = !componentFirst || source === 'mine'
+  const handleImportFile = React.useCallback(
+    async (file: File) => {
+      setFeedback({})
+      try { landImport(await parseSkillImportFile(file)) } catch (error) { report(file.name, error instanceof Error ? error.message : String(error)) }
+    },
+    [landImport, report],
+  )
+
+  // 拖拽是加速器不是新入口（设计系统 §1.5.2）：不加按钮，只让面板认得「松手」。
+  // 它同时补上了系统对话框根本选不中的那一类输入——**技能文件夹**（pi / bigpowers 生态就是文件夹发的）。
+  const dragCarriesFiles = (event: React.DragEvent): boolean =>
+    Array.from(event.dataTransfer?.types ?? []).includes('Files')
+
+  const handleDragOver = React.useCallback((event: React.DragEvent) => {
+    if (!dragCarriesFiles(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setDragActive(true)
+  }, [])
+
+  const handleDragLeave = React.useCallback((event: React.DragEvent) => {
+    // 只有真的离开了整块面板才熄灭：子元素之间移动也会冒 dragleave，不判会闪。
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+    setDragActive(false)
+  }, [])
+
+  const handleDrop = React.useCallback(
+    async (event: React.DragEvent) => {
+      if (!dragCarriesFiles(event)) return
+      event.preventDefault()
+      setDragActive(false)
+      // 一次拖多个各自成败：一个坏包不该把同批的好包一起否掉。
+      setFeedback({})
+      try {
+        for (const parsed of await parseSkillDrop(event.dataTransfer)) landImport(parsed)
+      } catch (error) { report('drop', error instanceof Error ? error.message : String(error)) }
+    },
+    [landImport, report],
+  )
+
+  const showNewTile = source === 'mine' && category === 'all' && !query.trim()
 
   const sourceTabs = (
     <div
@@ -193,7 +230,7 @@ export function SkillLibraryContent({
       role="tablist"
       aria-label={componentFirst ? '组件来源' : '技能来源'}
     >
-      {sourceOptions.map((option) => {
+      {SOURCE_OPTIONS.map((option) => {
         const activeOption = source === option.value
         return (
           <button
@@ -203,7 +240,7 @@ export function SkillLibraryContent({
             aria-selected={activeOption}
             className={cn(
               'rounded-full text-caption cursor-pointer border-0 bg-transparent whitespace-nowrap',
-              'transition-[background,color] duration-[var(--nomi-transition-fast)]',
+              'transition-[background,color] duration-nomi-fast ease-nomi-fast',
               compact ? 'min-w-0 flex-1 px-2 py-1' : 'px-3 py-1',
               activeOption
                 ? 'bg-nomi-paper text-nomi-ink font-semibold shadow-nomi-sm'
@@ -211,11 +248,27 @@ export function SkillLibraryContent({
             )}
             onClick={() => setSource(option.value)}
           >
-            {option.label}
+            {t(option.labelKey)}
           </button>
         )
       })}
     </div>
+  )
+
+  const categoryTabs = (
+    <NomiSegmented
+      value={category}
+      onChange={(value) => setCategory(value as typeof category)}
+      ariaLabel={t('libraries.skill.categoryAria')}
+      density="compact"
+      className={cn(compact ? 'w-full' : 'shrink-0')}
+      options={[
+        { value: 'all', label: t('libraries.gallery.all') },
+        { value: 'skill', label: t('libraries.gallery.skill') },
+        { value: 'prompt', label: t('libraries.gallery.prompt') },
+        { value: 'effect', label: t('libraries.gallery.effect') },
+      ]}
+    />
   )
 
   const importButton = (
@@ -250,14 +303,21 @@ export function SkillLibraryContent({
 
   return (
     <TooltipProvider delayDuration={180} skipDelayDuration={80}>
-      <div className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', className)}>
+      <div
+        className={cn('relative flex min-h-0 flex-1 flex-col overflow-hidden', className)}
+        onDragEnter={handleDragOver}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        data-skill-drop-zone={dragActive ? 'active' : 'idle'}
+      >
         {/* 头部 */}
         {showHeader ? (
           <div className={cn('flex items-center gap-2 px-5 pt-4 pb-3 border-b border-nomi-line')}>
             <IconBooks size={18} stroke={1.6} className={cn('text-nomi-accent')} />
             <b className={cn('text-title font-bold text-nomi-ink')}>{t('libraries.skill.title')}</b>
             <NomiWordmark fontSize={13} className={cn('text-nomi-ink-40')} />
-            <span className={cn('text-caption text-nomi-ink-40')}>· {items.length}</span>
+            <span className={cn('text-caption text-nomi-ink-40')}>· {visible.length}</span>
             <span className={cn('flex-1')} />
             {onClose ? (
               <button
@@ -272,53 +332,43 @@ export function SkillLibraryContent({
           </div>
         ) : null}
 
-        {/* 工具行 */}
-        <div className={cn('flex gap-2', compact ? 'flex-col px-3 py-3' : 'items-center px-5 py-2.5')}>
-          {sourceTabs}
-          <DesignSearchInput
-            className={compact ? 'w-full' : 'flex-1'}
-            placeholder={componentFirst ? '搜组件…' : '搜技能…'}
-            ariaLabel={componentFirst ? '搜索组件' : '搜索技能'}
-            value={query}
-            onChange={setQuery}
-          />
-          {showAuthoringControls && compact ? (
-            <div className={cn('grid grid-cols-2 gap-2')}>
+        {/* 工具行：来源/类型留在技能库自己的上下文，搜索与低频动作共用发现条布局。 */}
+        <LibraryDiscoveryToolbar
+          className={compact ? 'px-3 py-3' : 'px-5 py-2.5'}
+          compact={compact}
+          query={query}
+          onQueryChange={setQuery}
+          placeholder={t('libraries.skill.searchPlaceholder')}
+          ariaLabel={t('libraries.skill.searchAria')}
+          leading={<>{sourceTabs}{categoryTabs}</>}
+          trailing={compact ? (
+            <div className={cn('grid w-full grid-cols-2 gap-2')}>
               {importButton}
               {newWithAiButton}
             </div>
-          ) : showAuthoringControls ? (
-            <>
-              {importButton}
-              {newWithAiButton}
-            </>
-          ) : null}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,.nomiskill,application/json"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) handleImportFile(file)
-              e.target.value = ''
-            }}
-          />
-        </div>
+          ) : <>{importButton}{newWithAiButton}</>}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".md,.markdown,.zip,.json,.nomiskill"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) handleImportFile(file)
+            e.target.value = ''
+          }}
+        />
+
+        {Object.entries(feedback).map(([key, message]) => message ? <p key={key} role="status" className="m-0 px-5 py-1 text-caption text-nomi-ink-60">{message}</p> : null)}
 
         {/* 网格 */}
         <div className={cn('flex-1 overflow-y-auto', compact ? 'px-3 pb-3' : 'px-5 pb-5')}>
           {!visible.length && !showNewTile ? (
             <DesignEmptyState
-              title={
-                query.trim()
-                  ? componentFirst ? '没有匹配的组件' : '没有匹配的技能'
-                  : source === 'mine'
-                    ? '你还没有自己的技能'
-                    : componentFirst ? '没有内置组件' : '没有内置技能'
-              }
+              title={query.trim() || category !== 'all' ? t('libraries.skill.noMatch') : source === 'mine' ? t('libraries.skill.noMine') : t('libraries.skill.noBuiltin')}
               description={
-                query.trim()
+                query.trim() || category !== 'all'
                   ? t('libraries.skill.tryAnotherSearch')
                   : source === 'mine'
                     ? t('libraries.skill.mineEmptyHint')
@@ -328,7 +378,7 @@ export function SkillLibraryContent({
           ) : (
             <div
               className={cn('grid gap-3')}
-              style={{ gridTemplateColumns: compact ? 'minmax(0, 1fr)' : 'repeat(auto-fill, minmax(220px, 1fr))' }}
+              style={{ gridTemplateColumns: compact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fill, minmax(220px, 1fr))' }}
             >
               {showNewTile ? (
                 <button
@@ -340,20 +390,64 @@ export function SkillLibraryContent({
                   <span className={cn('text-caption')}>{t('libraries.skill.createOne')}</span>
                 </button>
               ) : null}
-              {visible.map((entry) => (
-                <SkillCard
-                  key={entry.id}
-                  skill={entry.skill}
-                  available={available}
-                  onUse={handleUse}
-                  onExport={handleExport}
-                  onDelete={handleDelete}
-                  showManagementActions={!(componentFirst && source === 'builtin')}
-                />
-              ))}
+              {groupLibraryItems(visible, entry => entry.group).map(group => !group.label ? group.items.map(entry => <SkillCard key={entry.id} entry={entry} onOpen={setSelected} />) : <LibraryGroup key={group.id} group={group} className="col-span-full">
+                <div className="grid gap-3" style={{ gridTemplateColumns: compact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+                  {group.items.map(entry => <SkillCard key={entry.id} entry={entry} onOpen={setSelected} />)}
+                </div>
+              </LibraryGroup>)}
             </div>
           )}
+          {source === 'mine' && !query.trim() ? (
+            <p className={cn('mt-3 mb-0 px-0.5 text-micro leading-relaxed text-nomi-ink-40')}>
+              {t('libraries.skill.importHint')}
+            </p>
+          ) : null}
         </div>
+
+        {selected && <SkillDetail entry={selected} onClose={() => setSelected(null)}
+          onReference={() => {
+            if (selected.skill) handleUse(selected.skill)
+            else {
+              useWorkbenchStore.getState().setSelectedLibraryPrompt(selected.prompt!)
+              setWorkspaceMode('creation')
+              onClose?.()
+            }
+            setSelected(null)
+          }}
+          onApply={() => {
+            const state = useGenerationCanvasStore.getState()
+            const target = state.nodes.find(n => state.selectedNodeIds.includes(n.id) && !n.locked && (n.kind === 'image' || n.kind === 'video'))
+            const body = selected.body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim()
+            if (target) {
+              const before = target.prompt || ''
+              state.updateNode(target.id, { prompt: [before, body].filter(Boolean).join('\n') })
+              showUndoToast({ message: t('libraries.gallery.appended'), onUndo: () => useGenerationCanvasStore.getState().updateNode(target.id, { prompt: before }) })
+            } else {
+              const node = state.addNode({ kind: selected.prompt?.promptType ?? 'image', prompt: body, select: true })
+              showUndoToast({ message: t('libraries.gallery.appended'), onUndo: () => useGenerationCanvasStore.getState().deleteNode(node.id) })
+            }
+            setSelected(null)
+          }}
+          onExport={selected.skill ? () => handleExport(selected.skill!) : undefined}
+          onDelete={selected.skill?.origin === 'user' ? () => { handleDelete(selected.skill!); setSelected(null) } : undefined}
+        />}
+
+        {/* 松手区提示：只在真的拖着文件时出现，盖住整块面板，让「能不能松手」没有歧义。 */}
+        {dragActive ? (
+          <div
+            className={cn(
+              'pointer-events-none absolute inset-2 z-20 grid place-items-center gap-1 rounded-nomi',
+              'border-2 border-dashed border-nomi-accent bg-nomi-paper/90 text-center',
+            )}
+            aria-hidden="true"
+          >
+            <span className={cn('flex flex-col items-center gap-1.5')}>
+              <IconUpload size={22} stroke={1.6} className={cn('text-nomi-accent')} />
+              <span className={cn('text-body-sm font-semibold text-nomi-ink')}>{t('libraries.skill.dropHint')}</span>
+              <span className={cn('text-micro text-nomi-ink-60')}>{t('libraries.skill.dropFormats')}</span>
+            </span>
+          </div>
+        ) : null}
       </div>
     </TooltipProvider>
   )

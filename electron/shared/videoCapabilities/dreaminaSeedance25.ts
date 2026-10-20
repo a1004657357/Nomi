@@ -1,4 +1,4 @@
-// 即梦官方 dreamina CLI 1.4.15 的 Seedance 2.5 视频档案。
+// 即梦官方 dreamina CLI 1.4.17 的 Seedance 2.5 视频档案。
 // 2.5 与 2.0 的时长、清晰度及全能参考输入上限不同，因此保留为独立 catalog 模型，避免能力误报。
 import type { ModelParameterControl } from './types'
 import type { ModelArchetype } from './types'
@@ -17,7 +17,7 @@ const RESOLUTION: ModelParameterControl = {
   key: 'video_resolution',
   label: '清晰度',
   type: 'select',
-  options: opt(['480p', '720p']),
+  options: opt(['480p', '720p', '1080p']),
   defaultValue: '720p',
 }
 const DURATION: ModelParameterControl = {
@@ -38,9 +38,10 @@ export const DREAMINA_SEEDANCE_25_ARCHETYPE: ModelArchetype = {
   family: 'seedance',
   label: '即梦 Seedance 2.5',
   kind: 'video',
+  sources: [{ url: 'docs/research/2026-09-01-dreamina-cli-v1417-matrix.md', checkedAt: '2026-09-01', vendorKey: 'dreamina', covers: 'CLI 1.4.17: Seedance 2.5, 4-30 seconds, 480p/720p/1080p, audio-only multimodal, 30 images/10 videos/10 audio files' }],
   defaultModeId: 't2v',
   transportTaskKind: 'text_to_video',
-  identifierPatterns: ['dreamina-seedance-2.5', 'seedance2.5'],
+  identifierPatterns: ['dreamina-seedance-2.5', 'dreamina/seedance2.5'],
   modes: [
     {
       id: 't2v',
@@ -83,6 +84,7 @@ export const DREAMINA_SEEDANCE_25_ARCHETYPE: ModelArchetype = {
     },
     {
       id: 'multimodal',
+      maxTotalReferences: 50,
       intent: 'character',
       vendorTerm: '全能参考',
       hint: '最多 30 图 / 10 视频 / 10 音频；支持纯音频输入，单项及总参考音视频需为 2–30 秒',

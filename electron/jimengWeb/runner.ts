@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { registerAppWindow } from '../appWindowRegistry';
 import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -253,6 +254,7 @@ async function setExtensionApiBaseUrl(serverUrl: string): Promise<void> {
       show: false,
     }),
   );
+  registerAppWindow(setupWindow, 'untrusted', currentPanelUrl);
   attachWindowLogs(setupWindow, "extension-setup");
   try {
     await setupWindow.loadURL(currentPanelUrl);
@@ -282,6 +284,7 @@ async function ensureJimengWindow(): Promise<BrowserWindow> {
       show: true,
     }),
   );
+  registerAppWindow(jimengWindow, 'untrusted', pageUrl);
   attachWindowLogs(jimengWindow, "jimeng");
   jimengWindow.on("closed", () => {
     jimengWindow = null;
@@ -329,6 +332,7 @@ async function ensureFallbackPanelWindow(): Promise<void> {
       show: false,
     }),
   );
+  registerAppWindow(fallbackPanelWindow, 'untrusted', currentPanelUrl);
   attachWindowLogs(fallbackPanelWindow, "panel-fallback");
   fallbackPanelWindow.on("closed", () => {
     fallbackPanelWindow = null;

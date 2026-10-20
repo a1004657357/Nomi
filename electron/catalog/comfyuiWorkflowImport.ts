@@ -10,7 +10,8 @@
 // 每节点 { inputs:{…}, class_type, _meta:{title} }；inputs 值要么是直接 widget 值（可参数化），
 // 要么是连线 [源节点ID, 输出槽] （不可参数化，保持不动）。
 import { COMFYUI_VENDOR_KEY, type HttpOperation } from "./types";
-import type { ComfyObjectInfoIndex } from "../comfyuiObjectInfo";
+import { desktopT } from "../i18n";
+import type { ComfyComboValue, ComfyObjectInfoIndex } from "../comfyuiObjectInfo";
 import { normalizeWorkflowBinding } from "./comfyuiWorkflowBindingNormalize";
 import { comfyOutputCandidates, resolveComfyWorkflowOutput, suggestedComfyOutput } from "./comfyuiWorkflowOutput";
 import { resolveComfyWorkflowTaskKind } from "./comfyuiWorkflowTaskContract";
@@ -28,8 +29,9 @@ export type ComfyGraph = Record<string, ComfyNode>;
 /** 一个可绑定的节点输入（widget 值，非连线）。 */
 export type NodeInputCandidate = {
   nodeId: string; inputKey: string; classType: string; title?: string; value: string | number | boolean;
-  /** 媒体输入才有：这个槽收图还是收视频（LoadVideo.file 收视频，绝不能当首帧图发）。 */
-  mediaKind?: "image" | "video";
+  /** 媒体输入才有：这个槽收图、收视频还是收音频（LoadVideo.file 收视频/LoadAudio.audio 收音频，
+   *  绝不能当首帧图发）。 */
+  mediaKind?: "image" | "video" | "audio";
 };
 /** kind="unsupported"：识别得出是输出节点，但产物类型（3D/音频/矢量）Nomi 存不下 → 明着标缺口（D4），不硬塞成图。 */
 export type OutputNodeCandidate = { nodeId: string; classType: string; kind: "image" | "video" | "model3d" | "unsupported" };
@@ -60,8 +62,8 @@ export type WorkflowImageBinding = {
   paramKey: string;
   /** 画布插槽上显示的名字，默认取节点标题 / 输入名。 */
   label: string;
-  /** 收图还是收视频（LoadVideo.file 收视频，绝不能当首帧图发）。 */
-  mediaKind: "image" | "video";
+  /** 收图、收视频还是收音频（LoadVideo.file 收视频/LoadAudio.audio 收音频，绝不能当首帧图发）。 */
+  mediaKind: "image" | "video" | "audio";
 };
 
 /** 绑定选择（自动建议或用户在 UI 里改）。 */
@@ -98,11 +100,12 @@ export type WorkflowAnalysis = {
 
 /** `image-url`：媒体输入槽。画布侧 looksLikeImageUrlControl 认这个 type，
  *  于是通用出槽器 buildImageUrlSlots 会**按条出槽**——声明几个就长几个，不再靠 key 名瞎猜。 */
-export type ParamControl = { key: string; label: string; type: WorkflowParamType | "select" | "image-url"; mediaKind?: "image" | "video"; default: number | string | boolean; options?: string[] };
+export type ParamControl = { key: string; label: string; type: WorkflowParamType | "select" | "image-url"; mediaKind?: "image" | "video" | "audio"; default: number | string | boolean; options?: ComfyComboValue[] };
 export type ImportedWorkflow = { templatedGraph: ComfyGraph; parameters: ParamControl[]; kind: "image" | "video" | "model3d"; taskKind: "text_to_image" | "image_edit" | "text_to_video" | "image_to_video" | "text_to_3d" | "image_to_3d" };
 export type ComfyWorkflowImportDraft = { text: string; binding: WorkflowBinding; uiWorkflowText?: string };
-/** (classType, inputKey) → 本机 combo 可选值（reconcile 顺手带出；导入/保存时烤进参数控件）。 */
-export type WorkflowEnumOption = { classType: string; inputKey: string; options: string[] };
+/** (classType, inputKey) → 本机 combo 可选值（reconcile 顺手带出；导入/保存时烤进参数控件）。
+ *  选项按 wire 原类型存（数字就是数字），画布下拉按选中项的声明类型发回 ComfyUI——见 ComfyComboValue。 */
+export type WorkflowEnumOption = { classType: string; inputKey: string; options: ComfyComboValue[] };
 
 // 节点类型识别（R5：class_type 命名——CLIPTextEncode/LoadImage/VHS_VideoCombine/SaveVideo/SaveImage/
 // WanVideoWrapper 系；宽松正则容社区变体）。
@@ -110,6 +113,14 @@ const TEXT_ENCODE_RE = /textencode|encode.*text|cliptext/i;
 const LOAD_IMAGE_RE = /loadimage/i;
 /** 视频输入节点（视频编辑/视频转视频工作流的入口）。语料实测 52 处，此前完全绑不上。 */
 const LOAD_VIDEO_RE = /loadvideo|vhs_loadvideo/i;
+/**
+ * 音频输入节点（用户报的根因「ComfyUI 音频输入用不了」）。官方核心节点 class_type 就叫 `LoadAudio`，
+ * 输入键叫 `audio`（ComfyUI 源码 comfy_extras/nodes_audio.py，`node_id="LoadAudio"` /
+ * `IO.Combo.Input("audio", upload=IO.UploadType.audio, ...)`，2026-09-11 核实）——与
+ * MEDIA_INPUT_KEYS 早就收着的 "audio" 键名完全对得上；只是一直没有配套的 class_type 识别正则，
+ * 于是 isMediaInput 永远判 false，音频输入退化成裸文本 widget（用户得手填 ComfyUI 内部文件名）。
+ */
+const LOAD_AUDIO_RE = /loadaudio/i;
 /**
  * 载入节点「装文件名的那个输入键」。
  *
@@ -237,19 +248,19 @@ export function parseComfyApiWorkflow(text: string): ComfyGraph {
   try {
     json = JSON.parse(text);
   } catch {
-    throw new Error("不是合法 JSON —— 请粘贴完整的 ComfyUI workflow.json 或 workflow_api.json。");
+    throw new Error(desktopT("comfyWorkflow.invalidJson"));
   }
-  if (!json || typeof json !== "object" || Array.isArray(json)) throw new Error("workflow 格式不对（应是节点对象）。");
+  if (!json || typeof json !== "object" || Array.isArray(json)) throw new Error(desktopT("comfyWorkflow.invalidShape"));
   const obj = json as Record<string, unknown>;
   // UI 保存格式（nodes[]+links[]）≠ API 格式 → 明确提示（治「导错格式」最常见坑）。
   if (Array.isArray(obj.nodes) || Array.isArray(obj.links)) {
-    throw new Error("这是 ComfyUI 保存的界面工作流，需要连接当前 ComfyUI 才能自动转换；启动后重试，也可以改用 Workflow → Export (API) 导出。");
+    throw new Error(desktopT("comfyWorkflow.uiFormat"));
   }
   const entries = Object.entries(obj);
-  if (entries.length === 0) throw new Error("workflow 是空的。");
+  if (entries.length === 0) throw new Error(desktopT("comfyWorkflow.empty"));
   for (const [id, node] of entries) {
     if (!node || typeof node !== "object" || Array.isArray(node) || typeof (node as ComfyNode).class_type !== "string") {
-      throw new Error(`节点 ${id} 缺 class_type —— 确认导出的是 API 格式（每个节点带 class_type + inputs）。`);
+      throw new Error(desktopT("comfyWorkflow.missingClassType", { id }));
     }
   }
   return obj as ComfyGraph;
@@ -356,7 +367,7 @@ export function analyzeComfyWorkflow(graph: ComfyGraph): WorkflowAnalysis {
       const isMediaInput =
         typeof value === "string" &&
         MEDIA_INPUT_KEYS.has(inputKey) &&
-        (LOAD_IMAGE_RE.test(classType) || LOAD_VIDEO_RE.test(classType));
+        (LOAD_IMAGE_RE.test(classType) || LOAD_VIDEO_RE.test(classType) || LOAD_AUDIO_RE.test(classType));
       if (!isMediaInput) {
         pushScalarWidgetCandidate(widgetInputs, nodeId, node, inputKey, value);
       }
@@ -370,7 +381,8 @@ export function analyzeComfyWorkflow(graph: ComfyGraph): WorkflowAnalysis {
         // 云端 API 节点形态：prompt 直接是节点自己的 widget（没有独立 CLIPTextEncode 可追）。
         textInputs.push({ nodeId, inputKey, classType, title: node._meta?.title, value });
       } else if (isMediaInput) {
-        const mediaKind = LOAD_VIDEO_RE.test(classType) ? ("video" as const) : ("image" as const);
+        const mediaKind = LOAD_VIDEO_RE.test(classType) ? ("video" as const)
+          : LOAD_AUDIO_RE.test(classType) ? ("audio" as const) : ("image" as const);
         imageInputs.push({ nodeId, inputKey, classType, title: node._meta?.title, value: value as string, mediaKind });
       } else if (typeof value === "number" && NUMERIC_PRIORITY.includes(inputKey)) {
         numericInputs.push({ nodeId, inputKey, classType, title: node._meta?.title, value });
@@ -393,8 +405,11 @@ export function analyzeComfyWorkflow(graph: ComfyGraph): WorkflowAnalysis {
   const endImageId = findLinkedInputTargetId(graph, ["end_image", "last_image", "last_frame"]);
   // 视频输入（LoadVideo.file）另立一槽 —— 它收的是**视频**，绝不能当首帧图发出去
   //（补帧/视频超分/视频去背景这类「视频进视频出」的工作流入口，语料 29 张）。
+  // 音频输入（LoadAudio.audio）同理排除出 stillInputs：否则唯一的一个音频输入会被下面
+  // 「stillInputs.length<=2 时把第一个当首帧」的启发式误判成首帧图（用户报的根因之一
+  // 「ComfyUI 音频输入用不了」的另一种表现：识别对了却又被当图片首帧发出去）。
   const videoInputs = imageInputs.filter((i) => i.mediaKind === "video");
-  const stillInputs = imageInputs.filter((i) => i.mediaKind !== "video");
+  const stillInputs = imageInputs.filter((i) => i.mediaKind !== "video" && i.mediaKind !== "audio");
   const suggestedSourceVideo = videoInputs[0];
   // 只有图里明确声明了 start/end，或确实只有一个/两个静态输入时才给首尾语义。
   // 三张以上的 LoadImage 通常是角色/风格/构图等多参引用；把第一张擅自叫「首帧」会让
@@ -487,6 +502,7 @@ export function reconcileComfyWorkflow(graph: ComfyGraph, index: ComfyObjectInfo
     for (const [inputKey, value] of Object.entries(inputs)) {
       if (typeof value !== "string" || !value.trim() || value.includes("{{")) continue; // 连线/空值/模板占位不核
       const options = enums.get(inputKey);
+      // 严格按类型比对，与 ComfyUI 的 `val in combo_options` 同口径：字符串 "8" 对不上数字选项 8。
       if (!options || options.includes(value)) continue;
       missingEnumValues.push({ nodeId, classType, title: node._meta?.title, inputKey, value });
     }
@@ -510,7 +526,9 @@ export function collectGraphEnumOptions(graph: ComfyGraph, index: ComfyObjectInf
     if (!enums) continue;
     const inputs = node.inputs && typeof node.inputs === "object" ? node.inputs : {};
     for (const [inputKey, value] of Object.entries(inputs)) {
-      if (typeof value !== "string") continue; // combo widget 值必为字符串；连线/数值不核
+      // 只给字符串值的 widget 烤下拉：数值/布尔值的 combo（bit_depth=8、rescale_after_model=true）
+      // 导入面板按值推成数字框/开关，本身就按原类型发回，不用下拉；连线也不核。
+      if (typeof value !== "string") continue;
       const options = enums.get(inputKey);
       if (!options || options.length === 0) continue;
       const key = `${node.class_type} ${inputKey}`;
@@ -562,10 +580,10 @@ export function buildImportedWorkflow(graph: ComfyGraph, binding: WorkflowBindin
     const options = resolvedType === "text" ? enumFor.get(`${graph[np.nodeId]?.class_type ?? ""} ${np.inputKey}`) : undefined;
     if (options && options.length > 0) {
       // default 不在本机选项里（离线导入的作者值）→ 前置保留，绝不静默丢用户值。
-      const defaultText = String(defaultValue);
+      // 按 wire 类型比对、不转字符串：选项的声明类型就是画布发回 ComfyUI 的类型。
       parameters.push({
         key: paramKey, label: np.label || np.inputKey, type: "select", default: defaultValue,
-        options: options.includes(defaultText) ? options : [defaultText, ...options],
+        options: options.includes(defaultValue) ? options : [defaultValue, ...options],
       });
       continue;
     }
@@ -648,13 +666,15 @@ export function buildComfyImportModelMapping(
       vendorKey,
       labelZh: opts.labelZh,
       kind: imported.kind,
-      enabled: true,
+      // Import is staging, not verification. Task 5 may promote it after a real output passes
+      // the shared media certification boundary; a downloaded/status=success artifact alone is insufficient.
+      enabled: false,
       meta: {
         parameters: imported.parameters,
         ...(normalizedDraft ? { comfyWorkflowImport: normalizedDraft } : {}),
       },
     },
-    mapping: { vendorKey, taskKind: imported.taskKind, modelKey: opts.modelKey, name: opts.labelZh, create, query },
+    mapping: { vendorKey, taskKind: imported.taskKind, modelKey: opts.modelKey, name: opts.labelZh, enabled: false, create, query },
   };
 }
 

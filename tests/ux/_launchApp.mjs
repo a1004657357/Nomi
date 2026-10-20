@@ -18,19 +18,197 @@
 //   const { app, win, projectsDir } = await launchNomiApp({ name: 'my-walk' })
 import { _electron as electron } from 'playwright'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { ensureElectronSignature } from '../../scripts/ensure-electron-signature.mjs'
+import { installFeelObserver } from './_feel-observer.mjs'
+import { assertElectronBuildArtifacts } from '../../scripts/electron-build-artifacts.mjs'
 
 const require = createRequire(import.meta.url)
+const catalogVersionManifest = require('../../electron/catalog/catalogVersion.json')
+
+export function withIsolatedKeychain(args, isolate, platform = process.platform) {
+  const normalized = [...args]
+  if (isolate && platform === 'darwin' && !normalized.includes('--use-mock-keychain')) normalized.push('--use-mock-keychain')
+  return normalized
+}
+
+export function currentCatalogVersion() {
+  const version = Number(catalogVersionManifest.current)
+  if (!Number.isInteger(version) || version < 1) throw new Error('catalog version manifest is invalid')
+  return version
+}
+
+/**
+ * 检查隔离 settings 里调用方预埋的 catalog seed。
+ *
+ * 旧版走查会把真实用户 catalog 原样复制进隔离 profile；真实 catalog 可能来自更新的
+ * Nomi，随后旧版被测 app 的正确只读保护会让 UI 写入静默失效。future seed 不能被改写
+ * 成当前版本（那会丢字段），所以留在隔离目录里 quarantine，app 无盘首启自建。
+ */
+export function prepareIsolatedCatalog(settingsDir, { testedCatalogVersion = currentCatalogVersion() } = {}) {
+  if (!Number.isInteger(testedCatalogVersion) || testedCatalogVersion < 1) {
+    throw new Error(`tested catalog version is invalid: ${testedCatalogVersion}`)
+  }
+  const catalogPath = path.join(settingsDir, 'model-catalog.json')
+  if (!fs.existsSync(catalogPath)) return { status: 'missing', catalogPath }
+
+  let parsed
+  try {
+    parsed = JSON.parse(fs.readFileSync(catalogPath, 'utf8'))
+  } catch {
+    return { status: 'unreadable', catalogPath }
+  }
+  const diskVersion = parsed?.version
+  if (!Number.isInteger(diskVersion) || diskVersion <= testedCatalogVersion) {
+    return { status: 'compatible', catalogPath, diskVersion }
+  }
+
+  const prefix = path.join(settingsDir, `model-catalog.future-v${diskVersion}`)
+  let quarantinePath = `${prefix}.json`
+  let suffix = 1
+  while (fs.existsSync(quarantinePath)) quarantinePath = `${prefix}.${suffix++}.json`
+  fs.renameSync(catalogPath, quarantinePath)
+  console.warn(`[walkthrough] quarantined catalog seed v${diskVersion} > tested app v${testedCatalogVersion}: ${quarantinePath}`)
+  return { status: 'quarantined', catalogPath, quarantinePath, diskVersion, testedCatalogVersion }
+}
 
 /** 仓库根：本文件在 <repo>/tests/ux/ 下。 */
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 /** 默认等窗口的上限。取 60s：明显短于 Playwright 默认的 180s，让**我们的**错误信息先落地。 */
 const DEFAULT_WINDOW_TIMEOUT_MS = 60_000
+
+/** Content pixels, not native-window bounds: Canvas Acceptance's measured Linux baseline. */
+export const ACCEPTANCE_VIEWPORT = Object.freeze({ width: 1280, height: 933 })
+export const ACCEPTANCE_WIDE_VIEWPORT = Object.freeze({ width: 1680, height: 1050 })
+
+
+/** Seed ordinary persisted preferences before the renderer's first script.
+ * Electron's -r module runs before the application's main entry; the session
+ * preload leaves the product preload and existing profile values intact. */
+export function prepareLocalStorageSeed(tempRoot, entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries) || Object.values(entries).some((value) => typeof value !== 'string')) {
+    throw new TypeError('initialLocalStorage must contain string values')
+  }
+  const framePath = path.join(tempRoot, 'initial-local-storage.cjs')
+  const registerPath = path.join(tempRoot, 'register-local-storage.cjs')
+  fs.writeFileSync(framePath, `if (process.isMainFrame) {
+  for (const [key, value] of ${JSON.stringify(Object.entries(entries))}) {
+    if (window.localStorage.getItem(key) === null) window.localStorage.setItem(key, value)
+  }
+}\n`)
+  fs.writeFileSync(registerPath, `const { app } = require('electron')
+app.once('session-created', (session) => {
+  session.registerPreloadScript({ type: 'frame', filePath: ${JSON.stringify(framePath)} })
+})\n`)
+  return ['-r', registerPath]
+}
+
+/**
+ * 在 App 主入口之前加载的主进程模块（Node 的 `-r`），给走查装仪表用——例如
+ * `scripts/walkthrough-network-guard.cjs` 那道「只放行本机」的网络闸。
+ *
+ * 为什么不走 `NODE_OPTIONS=--require`：Playwright 的 Electron 启动器会 `delete env.NODE_OPTIONS`
+ *（它自己也是用 `-r loader.js` 注入的），经 env 传进去的 --require 会被静默丢掉——走查以为装了闸，
+ * 其实没装。`-r` 必须排在 App 入口（`.`）之前才对主进程生效，所以由启动器来拼。
+ * 只收**绝对路径且文件存在**：相对路径会被 Node 当成包名去 node_modules 里找（MODULE_NOT_FOUND）。
+ */
+export function mainRequireArgs(modules) {
+  if (!Array.isArray(modules) || modules.length === 0) return []
+  return modules.flatMap((file) => {
+    if (typeof file !== 'string' || !path.isAbsolute(file)) throw new TypeError(`mainRequire needs absolute module paths: ${file}`)
+    if (!fs.existsSync(file)) throw new Error(`mainRequire module does not exist: ${file}`)
+    return ['-r', file]
+  })
+}
+
+/** 打包形态的主入口：app.asar 里的 dist-electron/main.js（与 package.json 的 main 一致）。 */
+export const PACKAGED_MAIN_ENTRY = /app\.asar[\\/]dist-electron[\\/]main\.js$/
+
+/**
+ * mainRequire / initialLocalStorage 的**打包形态**：在打包好的 App 主入口第一行之前 require 这些模块。
+ *
+ * 为什么不能照开发版拼 `-r`：`-r` 是 Electron 开发版 default_app 自己解析的参数；打包好的 App 直接跑
+ * app.asar 里的 main.js，`-r` 被**静默忽略**——走查以为装了网络模拟，请求其实全发到了真网上。
+ * 所以打包形态走 Node 调试口：App 带 `--inspect-brk=127.0.0.1:<port>` 起（启动器负责拼），这里另开一路
+ * 调试会话，在主入口第一行下断点，从那一帧 require 这些模块，再放行。Playwright 自己那一路会话不受影响。
+ * 调用方先调它、再起 App：它会等调试口出现。
+ */
+export async function requireBeforePackagedMain({ port, modules, timeout = DEFAULT_WINDOW_TIMEOUT_MS, entry = PACKAGED_MAIN_ENTRY }) {
+  const deadline = Date.now() + timeout
+  let socketUrl
+  while (!socketUrl) {
+    if (Date.now() > deadline) throw new Error(`inspector on 127.0.0.1:${port} never came up`)
+    try {
+      socketUrl = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json())[0]?.webSocketDebuggerUrl
+    } catch { /* 调试口还没起来 */ }
+    if (!socketUrl) await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  const socket = new WebSocket(socketUrl)
+  await new Promise((resolve, reject) => {
+    socket.onopen = resolve
+    socket.onerror = () => reject(new Error('inspector socket failed'))
+  })
+  let nextId = 0
+  const pending = new Map()
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const id = ++nextId
+    pending.set(id, { resolve, reject })
+    socket.send(JSON.stringify({ id, method, params }))
+  })
+  let breakpointId
+  let settle
+  const injected = new Promise((resolve, reject) => { settle = { resolve, reject } })
+  socket.onmessage = async (event) => {
+    const message = JSON.parse(String(event.data))
+    const waiter = message.id ? pending.get(message.id) : undefined
+    if (waiter) {
+      pending.delete(message.id)
+      if (message.error) waiter.reject(new Error(message.error.message)); else waiter.resolve(message.result)
+      return
+    }
+    if (message.method !== 'Debugger.paused') return
+    try {
+      // 只认自己那个断点（`--inspect-brk` 自带的「开头停一下」也会停在这里，原因报成 ambiguous）。
+      if ((message.params.hitBreakpoints ?? []).includes(breakpointId)) {
+        const expression = `${modules.map((file) => `require(${JSON.stringify(file)})`).join(';')};'loaded'`
+        const result = await send('Debugger.evaluateOnCallFrame', { callFrameId: message.params.callFrames[0].callFrameId, expression })
+        if (result.exceptionDetails) throw new Error(`require before main failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text}`)
+        await send('Debugger.resume')
+        settle.resolve()
+        return
+      }
+      await send('Debugger.resume')
+    } catch (error) {
+      settle.reject(error)
+    }
+  }
+  const timer = setTimeout(() => settle.reject(new Error(`main entry never paused (${entry})`)), Math.max(0, deadline - Date.now()))
+  try {
+    await send('Debugger.enable')
+    ;({ breakpointId } = await send('Debugger.setBreakpointByUrl', { urlRegex: entry.source, lineNumber: 0 }))
+    await send('Runtime.runIfWaitingForDebugger')
+    await injected
+  } finally {
+    clearTimeout(timer)
+    socket.close()
+  }
+}
+
+async function freeLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.on('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address()
+      server.close(() => resolve(port))
+    })
+  })
+}
 
 /**
  * 拼一套「窗口一定能起来」的 env。抽成纯函数是为了让那条不变量能被单测钉住
@@ -44,6 +222,10 @@ export function buildNomiLaunchEnv({ extraEnv = {}, userDataDir, settingsDir, pr
     //   不变量靠代码成立，不靠每个脚本作者自觉抄全（抄漏就是静默超时）。
     NOMI_E2E: '1',
     NOMI_E2E_ALLOW_MULTI_INSTANCE: '1',
+    // 主进程日志镜像到 stderr。走查跑的是**打包形态也可能命中**的那条判据（`mirrorToStderr`
+    // 在 isPackaged 时默认只落盘），于是 CI 的 job 日志里一条 WARN 都没有——
+    // 2026-09-18 C9 那条间歇红的唯一诊断就是这么丢的。走查环境里日志必须看得见。
+    NOMI_LOG_STDERR: '1',
     // ↓ 三隔离：不碰用户真实的 userData/设置/项目库。
     //   传 null（isolate:false）时整条不设——写进 env 的 undefined 会变成字符串 "undefined"，
     //   主进程当成真路径去建目录，比不设更糟。
@@ -63,7 +245,7 @@ export function buildNomiLaunchEnv({ extraEnv = {}, userDataDir, settingsDir, pr
  * Linux CI 没有可用的 setuid chrome-sandbox；所有测试进程统一显式关闭 Chromium sandbox。
  * 另：Chromium ≥139 移除了 SwiftShader 软件 WebGL 自动回退（安全策略，
  * https://chromestatus.com/feature/5166674414927872），xvfb 无 GPU 环境下 WebGL 上下文
- * 直接创建失败 → scene3d/轨迹面板不挂载（Electron 43 升级时 smoke 在 CI 死于此，macOS 本地全绿）。
+ * 直接创建失败 → 导演台/轨迹面板不挂载（Electron 43 升级时 smoke 在 CI 死于此，macOS 本地全绿）。
  * headless 测试正是官方点名保留的 opt-in 场景 → Linux 测试进程统一带 --enable-unsafe-swiftshader。
  * 只影响测试启动器；生产桌面端有真 GPU，不带此旗标。
  */
@@ -74,26 +256,45 @@ export function withLinuxNoSandbox(args, platform = process.platform) {
   return normalized
 }
 
-// Only isolated macOS fixtures use a disposable keychain. Real profiles keep OS-backed credentials.
-export function withIsolatedKeychain(args, isolate, platform = process.platform) {
+/**
+ * Synthetic credentials used by isolated UI fixtures are deliberately not
+ * secrets. Linux CI has no desktop keyring, so Electron's normal safeStorage
+ * backend is unavailable there. Opted-in fixtures use Chromium's basic test
+ * backend; real-profile and real-provider journeys never receive this flag.
+ */
+export function withLinuxSyntheticCredentialStorage(args, enabled, platform = process.platform) {
   const normalized = [...args]
-  if (isolate && platform === 'darwin' && !normalized.includes('--use-mock-keychain')) {
-    normalized.push('--use-mock-keychain')
+  if (!enabled || platform !== 'linux') return normalized
+
+  const configuredBackend = normalized.find((arg) => arg.startsWith('--password-store='))
+  if (configuredBackend && configuredBackend !== '--password-store=basic') {
+    throw new Error(`synthetic credential storage conflicts with ${configuredBackend}`)
   }
+  if (!configuredBackend) normalized.push('--password-store=basic')
   return normalized
 }
 
-/** 起飞前先确认构建产物在不在——没 build 就直接说，别让人等满超时才发现。 */
-function assertBuilt() {
-  // 入口从 package.json 的 main 派生，不 hardcode 路径（改打包布局时这里自动跟着走）。
-  const mainEntry = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).main
-  const entryPath = path.join(repoRoot, mainEntry)
-  if (!fs.existsSync(entryPath)) {
-    throw new Error(
-      `Electron 主进程入口不存在：${mainEntry}\n` +
-        `→ 走查脚本跑的是构建产物，先执行：pnpm run build`,
-    )
+export async function configureSyntheticCredentialStorage(app, enabled, platform = process.platform) {
+  if (!enabled || platform !== 'linux') return false
+  const available = await app.evaluate(({ safeStorage }) => {
+    safeStorage.setUsePlainTextEncryption(true)
+    return safeStorage.isEncryptionAvailable()
+  })
+  if (!available) {
+    throw new Error('Linux synthetic credential storage could not initialize an in-memory safeStorage key')
   }
+  return true
+}
+
+/** Electron 43's packaged Chromium rejects Playwright's DevTools WebSocket
+ * Origin unless it is explicitly allowed. This flag exists only in this E2E
+ * launcher (which already forces NOMI_E2E=1); normal product launches never
+ * receive a remote-debugging port or this allow-list. */
+export function withPackagedPlaywrightOrigin(args, isPackaged) {
+  const normalized = [...args]
+  const allowOrigin = '--remote-allow-origins=*'
+  if (isPackaged && !normalized.includes(allowOrigin)) normalized.push(allowOrigin)
+  return normalized
 }
 
 /**
@@ -107,9 +308,15 @@ function assertBuilt() {
  * @param {string} [options.userDataDir]    单独指定（默认 <tempRoot>/user-data）
  * @param {string} [options.settingsDir]    单独指定（默认 <tempRoot>/settings）
  * @param {string} [options.projectsDir]    单独指定（默认 <tempRoot>/projects）
- * @param {string} [options.capabilityDir]  单独指定（默认 <tempRoot>/capability）
+ * @param {string} [options.capabilityDir]  优先于 env.NOMI_CAPABILITY_DIR；均未设时隔离实例派生 <tempRoot>/capability
+ * @param {number} [options.testedCatalogVersion]  被测构建的 catalog 版本；默认读取仓库 canonical manifest
+ * @param {{width: number, height: number}} [options.viewportSize] Content viewport; defaults to ACCEPTANCE_VIEWPORT.
  * @param {number} [options.timeout]        等窗口上限（ms）
  * @param {number} [options.settleMs=1500]  domcontentloaded 后再等一会儿（渲染层挂载）
+ * @param {Record<string,string>} [options.initialLocalStorage] Existing product preferences for an isolated fixture (dev or packaged); omitted for first-run tests.
+ * @param {string[]} [options.mainRequire] 主进程入口前加载的模块（绝对路径，走查仪表专用；见 mainRequireArgs；打包形态见 requireBeforePackagedMain）
+ * @param {(win: import('playwright').Page) => Promise<void>} [options.observeWindow] Optional measurement observer
+ * @param {boolean} [options.syntheticCredentialStorage=false]  仅供隔离目录里的非秘密测试凭据；Linux CI 使用 basic 后端
  * @returns {Promise<{app: import('playwright').ElectronApplication, win: import('playwright').Page,
  *   tempRoot: string, userDataDir: string, settingsDir: string, projectsDir: string, close: () => Promise<void>}>}
  */
@@ -123,13 +330,25 @@ export async function launchNomiApp(options = {}) {
     // 默认起开发构建；打包产物走查（如 mcp-client-activation）传装好的 .app 二进制。
     executablePath = require('electron'),
     waitForWindow = true,
+    syntheticCredentialStorage = false,
   } = options
+
+  const isolate = options.isolate !== false
+  if (options.initialLocalStorage && !isolate) {
+    throw new Error('initialLocalStorage requires an isolated Nomi profile')
+  }
+  if (syntheticCredentialStorage && !isolate) {
+    throw new Error('syntheticCredentialStorage requires an isolated Nomi profile')
+  }
+  if (options.mainRequire?.length && !isolate) {
+    throw new Error('mainRequire requires an isolated Nomi profile')
+  }
 
   // 开发 electron 二进制要靠 `.` 指到仓库根去加载 dist-electron；**打包好的 .app 自带产物**，
   // 再塞个 `.` 反而会被当成「要打开的路径」参数。所以这两件事都跟着「是不是开发构建」走。
   const isDevElectron = executablePath === require('electron')
   if (isDevElectron) {
-    assertBuilt()
+    assertElectronBuildArtifacts(repoRoot)
     // Apple 会在首次启动时直接删除已吊销公证的 Electron.app。走查必须在 spawn 前复用
     // dev 启动器的静态探测与重签，否则表现为 60s 超时且一张截图也产不出来。
     ensureElectronSignature(executablePath)
@@ -138,25 +357,43 @@ export async function launchNomiApp(options = {}) {
   // isolate:false = 用用户**真实** profile 起（交互式 dev driver ui-driver.mjs 才这么用：
   // 它要能打开已有/示例项目，这是它注释里写明的既定设计，不是漏配）。此时不传 --user-data-dir、
   // 不覆盖三个目录 env，等价于「裸起一个 Nomi」；NOMI_E2E 那两条仍然强制。
-  const isolate = options.isolate !== false
   const tempRoot = isolate ? (options.tempRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`))) : null
   const userDataDir = isolate ? (options.userDataDir ?? path.join(tempRoot, 'user-data')) : null
   const settingsDir = isolate ? (options.settingsDir ?? path.join(tempRoot, 'settings')) : null
   const projectsDir = isolate ? (options.projectsDir ?? path.join(tempRoot, 'projects')) : null
-  const capabilityDir = isolate ? (options.capabilityDir ?? path.join(tempRoot, 'capability')) : null
+  // GUI advert/token 与 helper 发现目录必须同源；显式配置优先，最后才派生隔离默认值。
+  const capabilityDir = options.capabilityDir
+    ?? extraEnv.NOMI_CAPABILITY_DIR
+    ?? process.env.NOMI_CAPABILITY_DIR
+    ?? (isolate ? path.join(tempRoot, 'capability') : null)
 
   // 只建目录，**绝不清空**：不少走查会在起飞前往 projectsDir/settingsDir 里预埋工程或 catalog
   //（如 toolbar-order.walk.mjs 先写好 project.json 再启动）。启动器擅自 rm 会把它们的前置条件擦掉。
   // 想要干净 profile 的脚本自己在调用前 rmSync——语义留在看得见的地方。
   if (isolate) for (const dir of [userDataDir, settingsDir, projectsDir, capabilityDir]) fs.mkdirSync(dir, { recursive: true })
+  if (isolate) prepareIsolatedCatalog(settingsDir, { testedCatalogVersion: options.testedCatalogVersion })
+
+  // 主入口之前要加载的模块：开发版拼成 `-r` 对；打包版不认 `-r`，改走调试口（见 requireBeforePackagedMain）。
+  const preMainArgs = [
+    ...(options.initialLocalStorage ? prepareLocalStorageSeed(tempRoot, options.initialLocalStorage) : []),
+    ...mainRequireArgs(options.mainRequire),
+  ]
+  const packagedPreMain = !isDevElectron && preMainArgs.length
+    ? { port: await freeLoopbackPort(), modules: preMainArgs.filter((_, index) => index % 2 === 1) }
+    : null
 
   const launchOptions = {
     executablePath,
-    args: withLinuxNoSandbox(withIsolatedKeychain([
-      ...(isDevElectron ? ['.'] : []),
-      ...(userDataDir ? [`--user-data-dir=${userDataDir}`] : []),
-      ...extraArgs,
-    ], isolate)),
+    args: withIsolatedKeychain(withLinuxNoSandbox(withLinuxSyntheticCredentialStorage(
+      withPackagedPlaywrightOrigin([
+        ...(isDevElectron ? preMainArgs : []),
+        ...(packagedPreMain ? [`--inspect-brk=127.0.0.1:${packagedPreMain.port}`] : []),
+        ...(isDevElectron ? ['.'] : []),
+        ...(userDataDir ? [`--user-data-dir=${userDataDir}`] : []),
+        ...extraArgs,
+      ], !isDevElectron),
+      syntheticCredentialStorage,
+    )), isolate),
     cwd: repoRoot,
     env: buildNomiLaunchEnv({ extraEnv, userDataDir, settingsDir, projectsDir, capabilityDir }),
     timeout,
@@ -168,14 +405,27 @@ export async function launchNomiApp(options = {}) {
     for (const line of String(chunk).split('\n')) {
       if (line.trim()) logTail.push(line)
     }
-    if (logTail.length > 40) logTail.splice(0, logTail.length - 40)
+    // 400 行而不是 40：40 行只够回答「窗口为什么没起来」（失败就在最后几行）。
+    // 一条**跑到半路才断言红**的旅程，线索在几十秒前的主进程日志里，40 行根本追不到。
+    if (logTail.length > 400) logTail.splice(0, logTail.length - 400)
   }
+
+  const preMainInjection = packagedPreMain ? requireBeforePackagedMain({ ...packagedPreMain, timeout }) : null
+  preMainInjection?.catch(() => undefined) // 下面等它；先挂上，免得 App 先起不来时报成未处理的拒绝
 
   let app
   try {
     app = await electron.launch(launchOptions)
   } catch (error) {
-    throw new Error(diagnose(`Electron 起不来（electron.launch 失败/超时，${timeout}ms）`, name, error, logTail))
+    throw new Error(diagnoseLaunchFailure(`Electron 起不来（electron.launch 失败/超时，${timeout}ms）`, name, error, logTail))
+  }
+  if (preMainInjection) {
+    try {
+      await preMainInjection
+    } catch (error) {
+      await app.close().catch(() => undefined)
+      throw new Error(`[${name}] 打包形态没能在主入口之前装上 ${packagedPreMain.modules.join(', ')}：${error.message}`)
+    }
   }
 
   try {
@@ -195,10 +445,58 @@ export async function launchNomiApp(options = {}) {
       // 两种失败形状都落这儿：等超时，以及 app 提前退出导致的 TargetClosedError
       //（单实例锁没抢到就是后者——主进程自己 quit 了）。诊断是同一套。
       await app.close().catch(() => undefined)
-      throw new Error(diagnose(`等了 ${timeout}ms 没等到窗口`, name, error, logTail))
+      throw new Error(diagnoseLaunchFailure(`等了 ${timeout}ms 没等到窗口`, name, error, logTail))
     }
     await win.waitForLoadState('domcontentloaded')
+    // 等启动期那次路由改写落地（`index.html` → `index.html#/studio`）再碰几何。
+    // 为什么非等不可：下面 `app.browserWindow(win)` 拿到的句柄绑在页面当前的执行上下文上，
+    // 而那次改写恰好发生在 domcontentloaded 之后的一两百毫秒里——热启动（profile 已有内容、
+    // 缓存已热）时它正好落在两行之间，句柄当场失效，报成
+    // 「jsHandle.evaluate: Execution context was destroyed」。表现是**只有重启那一次**起不来，
+    // 首启永远好好的（2026-09-12 model-availability-agreement 冷重启阶段复现）。
+    // 等的是 app 自己的契约：渲染层启动后一定落在某个 hash 路由上（#/studio、#/studio?projectId=…）。
+    // Most launches rewrite to a hash route, but a blank-context acceptance can
+    // legitimately remain on the entry document.  Wait for the rewrite when it
+    // happens, then fall back to a settled document instead of failing startup.
+    await win.waitForURL(/#\//, { timeout: Math.min(timeout, 5000) }).catch(async () => {
+      await win.waitForLoadState('networkidle', { timeout: Math.min(timeout, 5000) }).catch(() => undefined)
+    })
+    const viewportSize = options.viewportSize ?? ACCEPTANCE_VIEWPORT
+    // Native resize alone may be clamped by CI's display; bind Chromium content geometry too.
+    const browserWindow = await app.browserWindow(win)
+    await browserWindow.evaluate((window, size) => window.setContentSize(size.width, size.height), viewportSize)
+    await win.setViewportSize(viewportSize)
+    const actualViewport = await win.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+    if (actualViewport.width !== viewportSize.width || actualViewport.height !== viewportSize.height) {
+      await closeNomiApp(app)
+      throw new Error(`Acceptance viewport mismatch: expected ${JSON.stringify(viewportSize)}, got ${JSON.stringify(actualViewport)}`)
+    }
+    console.log('[walkthrough] content viewport', JSON.stringify(actualViewport))
+    // Optional test observer owns measurement; installed before caller setup/actions.
+    try {
+      if (options.observeWindow) await options.observeWindow(win)
+    } catch (error) {
+      await closeNomiApp(app)
+      throw error
+    }
+    if (options.initialLocalStorage) {
+      const missing = await win.evaluate((keys) => keys.filter((key) => localStorage.getItem(key) === null), Object.keys(options.initialLocalStorage))
+      if (missing.length) {
+        await app.close().catch(() => undefined)
+        throw new Error(`initialLocalStorage was not seeded before the first document: ${missing.join(', ')}`)
+      }
+    }
     if (settleMs > 0) await win.waitForTimeout(settleMs)
+    installFeelObserver(win, { name })
+    let nextWindow = 1
+    app.on('window', (page) => installFeelObserver(page, { name: `${name}-window-${++nextWindow}` }))
+  }
+
+  try {
+    await configureSyntheticCredentialStorage(app, syntheticCredentialStorage)
+  } catch (error) {
+    await app.close().catch(() => undefined)
+    throw error
   }
 
   return {
@@ -209,6 +507,8 @@ export async function launchNomiApp(options = {}) {
     settingsDir,
     projectsDir,
     capabilityDir,
+    /** 主进程 stdout+stderr 的尾巴（最多 400 行）。断言红时给调用方看，不必只在启动失败时才有。 */
+    mainLogTail: () => logTail.slice(),
     close: () => closeNomiApp(app),
   }
 }
@@ -219,20 +519,28 @@ export async function launchNomiApp(options = {}) {
  * 注意排序：单实例锁那条**已经被启动器强制解掉了**，所以它不再是首要嫌疑——
  * 把它排第一会把人往错方向带。真实剩下的头号原因是构建产物过期。
  */
-function diagnose(headline, name, error, logTail) {
-  // Playwright 的 "Call log:" 段与其上的 "Browser logs:" 完全重复；先切掉，
-  // 否则下面捞 stderr 会把每行捞两遍。
-  const raw = String(error?.message || error || '').split(/\nCall log:/)[0].trim()
+export function diagnoseLaunchFailure(headline, name, error, logTail) {
+  const fullError = String(error?.message || error || '')
+  // 用 Call log 作子进程输出的真源：electron.launch resolve 之前我们还拿不到
+  // app.process()，此时 Playwright 只会把 stderr 收在这一段。原始错误摘要仍去掉
+  // Call log，避免与下面已清洗的主进程尾巴重复。
+  const callLogMarker = '\nCall log:'
+  const callLogIndex = fullError.indexOf(callLogMarker)
+  const raw = (callLogIndex >= 0 ? fullError.slice(0, callLogIndex) : fullError).trim()
+  const playwrightProcessOutput = callLogIndex >= 0
+    ? fullError.slice(callLogIndex + callLogMarker.length)
+    : fullError
   // launch 本身就失败时我们还没拿到子进程句柄，logTail 是空的；但 Playwright 自己把主进程
   // stderr 收进了错误文本（`[pid=123][err] ...`）——从那儿捞出来，别对着空手说「没有输出」。
-  const tail = logTail.length
+  const observedOutput = logTail.length
     ? logTail
-    : raw
+    : playwrightProcessOutput
         .split('\n')
         .filter((line) => /^\s*-?\s*\[pid=\d+\]\[err\]/.test(line))
         .map((line) => line.replace(/^\s*-?\s*\[pid=\d+\]\[err\]\s?/, ''))
-        .filter((line) => line.trim() && !/Debugger (listening|attached)|inspector|DevTools listening|Waiting for the debugger/.test(line))
-        .slice(-20)
+  const tail = observedOutput
+    .filter((line) => line.trim() && !/Debugger (listening|attached)|inspector|DevTools listening|Waiting for the debugger/i.test(line))
+    .slice(-20)
 
   const lines = [
     '',
@@ -249,7 +557,7 @@ function diagnose(headline, name, error, logTail) {
   if (tail.length) {
     lines.push('主进程最后几行输出：', ...tail.map((l) => `  │ ${l}`), '')
   } else {
-    lines.push('（没抓到任何主进程输出——通常意味着它压根没起来。)', '')
+    lines.push('（启动器未捕获到主进程输出；这不能证明进程未启动，仍需结合系统进程或采样确认。）', '')
   }
   lines.push(`原始错误：${raw}`)
   return lines.join('\n')
@@ -261,8 +569,18 @@ function diagnose(headline, name, error, logTail) {
  */
 export async function closeNomiApp(app) {
   if (!app) return
+  let closed = false
   await Promise.race([
-    app.close().catch(() => undefined),
+    app.close().then(() => { closed = true }).catch(() => undefined),
     new Promise((resolve) => setTimeout(resolve, 3000)),
   ])
+  if (closed) return
+  // Electron can leave its helper tree alive when the renderer has already
+  // exited (observed in failed canvas benchmarks). Do not let a timed-out
+  // graceful close leak into the next scenario.
+  const processHandle = app.process()
+  if (processHandle && !processHandle.killed) {
+    try { processHandle.kill('SIGKILL') } catch { /* already exited */ }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100))
 }

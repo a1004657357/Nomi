@@ -1,67 +1,58 @@
-import { sendGenerationCanvasAgentMessage } from './generationCanvasAgentClient'
-import { generationCanvasTools } from './generationCanvasTools'
-import { applyCanvasToolCall } from './applyCanvasToolCall'
-import { evaluateGate } from './gate'
-import { buildLockGateContext } from './lockGateContext'
+import { normalizeStoryboardAnchorDefaults } from './storyboardAnchorPolicy'
+import { formatAvailableModelsForPrompt } from "../../../../electron/shared/agentCapabilities/availableModels";
+import type { CapturedCanvasReadSnapshotHandleWire } from '../../../../electron/shared/surfacePortBinding'
+import type { CanvasReadResult } from '../../../../electron/shared/agentCapabilities/canvasRead'
+import { toPublishedJsonSchema } from '../../../../electron/shared/agentCapabilities/modelVisibleJsonSchema'
+import { assertTurnCanWrite } from '../../ai/agentTurnLifecycle'
+import { runSingleShotAgent } from '../../ai/agentLoopMode'
 import { STORYBOARD_PLANNER_SKILL, buildStoryboardPlanningMessage, type StoryboardShotMode } from './storyboardLauncher'
 import type { StoryboardPlan } from './storyboardPlan'
+import { parseStoryboardPlan, storyboardPlanSchema } from './storyboardPlanSchema'
+import { assertIssuedCanvasReadResult } from './canvasReadResultSeal'
+import { formatCanvasForAgent } from './canvasPromptContext'
+import { listAvailableModelsForAgent } from './availableModels'
+import { getVendorPreference } from '../../api/vendorPreferenceApi'
 
-/**
- * 在**创作区**就地跑分镜规划师（流程 A：不切到生成区，无弹区闪屏）。
- *
- * 规划阶段只该产出方案对象（propose_storyboard_plan，gate=allow→落创作 store）或读画布
- * （read_canvas_state）；写画布的工具一律 deny——创作区没有画布审批卡，且方案没确认前不该碰画布、
- * 不该花钱（规划免费铁律）。propose_storyboard_plan 落库时会把工作区切到 creation（本就在），编辑器随即展开。
- */
-export async function runStoryboardPlanner(input: {
-  /** 首次拆镜头：剧本正文。*/
+type StoryboardPlannerInput = {
+  target: 'production'
+  projectId?: string
+  featureKey?: string
+  canWrite: () => boolean
   storyText?: string
-  /** 首拆的分镜模式（image=图片分镜默认 / video=视频分镜）；改方案不传（保留现方案每镜 shotKind）。*/
   shotMode?: StoryboardShotMode
-  /** 修改现方案（P0-9 Slice 3）：当前方案 + 修改要求。*/
   currentPlan?: StoryboardPlan | null
   revisionRequest?: string
+  displayPrompt?: string
   skill?: { key: string; name: string }
-  onContent?: (text: string) => void
-  onCancelReady?: (cancel: () => void) => void
-}): Promise<{ text: string }> {
-  const response = await sendGenerationCanvasAgentMessage({
-    message: buildStoryboardPlanningMessage({
-      storyText: input.storyText,
-      currentPlan: input.currentPlan,
-      revisionRequest: input.revisionRequest,
-      ...(input.shotMode ? { shotMode: input.shotMode } : {}),
-    }),
-    snapshot: generationCanvasTools.read_canvas(),
-    selectedNodes: [],
-    mode: 'agent',
-    skill: input.skill || STORYBOARD_PLANNER_SKILL,
-    onContent: (_delta, text) => input.onContent?.(text),
-    ...(input.onCancelReady ? { onCancelReady: input.onCancelReady } : {}),
-    onToolCall: (event) => {
-      const decision = evaluateGate(
-        { kind: 'tool-call', toolName: event.toolName, args: event.args },
-        buildLockGateContext(),
-      )
-      if (decision.outcome === 'allow') {
-        // 只读 / 产出方案：经单一真相源 applyCanvasToolCall 执行（propose_storyboard_plan 落 store）。
-        void (async () => {
-          try {
-            const result = await applyCanvasToolCall(event.toolName, event.args)
-            await event.confirm({ ok: true, result, silent: true })
-          } catch (error: unknown) {
-            await event.confirm({ ok: false, message: error instanceof Error ? error.message : String(error) })
-          }
-        })()
-        return
-      }
-      // 写/破坏性/花钱工具：规划阶段拒绝，人话回喂让模型改用 propose_storyboard_plan（不静默写画布）。
-      void event.confirm({
-        ok: false,
-        message: '现在是分镜规划阶段，请用 propose_storyboard_plan 产出方案给用户审阅，不要直接创建或修改画布节点。',
-        denied: true,
-      })
-    },
+  snapshot: CanvasReadResult
+  capturedCanvasReadSnapshot: CapturedCanvasReadSnapshotHandleWire
+}
+
+/** Production planning returns an IR. The approved materialization operation owns every write. */
+export async function runStoryboardPlanner(input: StoryboardPlannerInput) {
+  assertTurnCanWrite(input.canWrite)
+  assertIssuedCanvasReadResult(input.snapshot)
+  const canvas = formatCanvasForAgent(input.snapshot)
+  const entries = await listAvailableModelsForAgent()
+  const models = formatAvailableModelsForPrompt(entries)
+  assertTurnCanWrite(input.canWrite)
+  const prompt = [
+    '只输出 JSON 对象，不调用工具，不写入画布。',
+    '输出 JSON Schema：', JSON.stringify(toPublishedJsonSchema(storyboardPlanSchema)),
+    '当前画布：', canvas, models,
+    buildStoryboardPlanningMessage(input),
+  ].filter(Boolean).join('\n\n')
+  const skill = input.skill ?? STORYBOARD_PLANNER_SKILL
+  const response = await runSingleShotAgent({
+    projectId: input.projectId,
+    featureKey: input.featureKey ?? 'production.plan-storyboard',
+    prompt, displayPrompt: input.displayPrompt ?? input.storyText ?? '',
+    skillKey: skill.key,
   })
-  return { text: response.response.text?.trim() ?? '' }
+  assertTurnCanWrite(input.canWrite)
+  if (response.status !== 'finished') return { text: response.text, status: response.status }
+  const text = response.text.trim()
+  const candidate = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1] ?? text
+  const plan = normalizeStoryboardAnchorDefaults(parseStoryboardPlan(JSON.parse(candidate)), entries, (await getVendorPreference()).orderedVendorKeys)
+  return { text, status: response.status, plan }
 }

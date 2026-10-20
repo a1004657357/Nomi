@@ -8,12 +8,13 @@
  * 接入地址可就地编辑 → upsertVendor 只改 baseUrlHint（seed 存在即跳过，用户改动不被启动刷回）。
  * 样张：docs/design/mockups/onboarding-panel-A.html
  */
-import React from 'react'
+import React, { type JSX } from 'react'
+import { MODEL_ACCESS_ENTRY } from '../../../electron/shared/contracts/modelAccessCapabilities'
 import { useTranslation } from 'react-i18next'
 import { IconKey, IconExternalLink } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
-import { confirmDialog } from '../../design'
+import { confirmDialog, VendorLogoImage } from '../../design'
 import type { KnownVendor } from '../../config/knownVendors'
 import { FoldableModelCard } from './FoldableModelCard'
 import { ModelChipGroups, type ChipModel } from './ModelChipGroups'
@@ -40,6 +41,7 @@ type VendorOnboardCardProps = {
   onOpenDetails?: () => void
   detailMode?: boolean
   onOpenModel?: (model: ChipModel) => void
+  onDeleteModel?: (model: ChipModel) => void
   focus?: ModelSettingsConnectionFocus
 }
 
@@ -54,6 +56,7 @@ export function VendorOnboardCard({
   onOpenDetails,
   detailMode = false,
   onOpenModel,
+  onDeleteModel,
   focus,
 }: VendorOnboardCardProps): JSX.Element {
   const { t } = useTranslation()
@@ -86,7 +89,7 @@ export function VendorOnboardCard({
     })
   }, [focus])
 
-  const total = models.length
+  const total = models.filter((model) => model.enabled).length
 
   // 凭证字段：档案声明了 credentialFields 就按声明渲染多框；否则退化成单框（沿用 credentialPlaceholder）。
   const fields = React.useMemo(
@@ -107,7 +110,7 @@ export function VendorOnboardCard({
     setDrafts((prev) => ({ ...prev, [key]: value }))
   }, [])
 
-  const handleUnlock = React.useCallback(() => {
+  const handleUnlock = React.useCallback(async () => {
     const parts = fields.map((field) => (drafts[field.key] ?? '').trim())
     if (parts.some((part) => !part)) {
       setError(
@@ -124,11 +127,10 @@ export function VendorOnboardCard({
     setBusy(true)
     setError('')
     try {
-      bridge.modelCatalog.upsertVendorApiKey(directory.vendorKey, { apiKey, enabled: true })
+      await bridge.modelCatalog.upsertVendorApiKey(directory.vendorKey, { apiKey, enabled: false })
       setDrafts({})
       setEditing(false)
       onChanged()
-      // 保存是本地同步写入，永不被网络阻塞。连通性交给旁路的 useVendorHealth——
       // 换 key 不改地址（fingerprint 不变），所以这里显式重探一次。
       recheck()
     } catch (e) {
@@ -172,8 +174,9 @@ export function VendorOnboardCard({
 
   return (
     <FoldableModelCard
+      dataAccessEntry={isMulti ? MODEL_ACCESS_ENTRY.knownMultiCredential : MODEL_ACCESS_ENTRY.knownSingleKey}
       glyph={
-        directory.logo ? <img src={directory.logo} alt="" className="w-full h-full object-contain" /> : directory.glyph
+        directory.logo ? <VendorLogoImage src={directory.logo} className="w-full h-full" /> : directory.glyph
       }
       glyphTone={directory.logo ? 'logo' : 'ink'}
       name={vendorName}
@@ -351,6 +354,7 @@ export function VendorOnboardCard({
         connected={hasApiKey}
         onToggle={hasApiKey ? onToggleModel : undefined}
         onOpenModel={onOpenModel}
+        onDelete={onDeleteModel}
       />
 
       {/* 推广位：移到 body 末尾，折叠态不显（减噪）；软话术、不营销 */}

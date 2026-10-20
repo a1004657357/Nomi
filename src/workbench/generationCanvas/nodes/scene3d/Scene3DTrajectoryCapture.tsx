@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // 离屏「沿相机轨迹采 N 帧」捕获器：不开全屏编辑器，用隐藏 Canvas 渲染完整场景
 // （物体 + 群众 + 灯光 + 环境，同 Scene3DAutoCapture），等 GLB 落地后**逐 useFrame tick 走一帧**
 // （确定性步进，不靠 wall-clock 动画 / useTrajectoryAnimation），每步：

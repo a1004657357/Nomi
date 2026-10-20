@@ -1,6 +1,7 @@
 import {
   TIMELINE_TRACK_DEFINITIONS,
   type TimelineClip,
+  type TimelineClipAudio,
   type TimelineState,
   type TimelineTextClip,
   type TimelineTextStyle,
@@ -9,6 +10,8 @@ import {
   type TimelineTransition,
 } from './timelineTypes'
 import { resolveClipFraming, type ClipFraming } from './clipFraming'
+import { resolveClipAudio } from './clipAudio'
+import { nearestLegalStart } from './timelinePlacement'
 
 const DEFAULT_TIMELINE_SCALE = 1
 const DEFAULT_TIMELINE_FPS = 30
@@ -20,6 +23,7 @@ export function pushTimelineUndo(stack: TimelineState[], previous: TimelineState
   if (next.length > TIMELINE_UNDO_LIMIT) next.shift()
   return next
 }
+export const TIMELINE_FIT_MARGIN = 0.08
 
 /**
  * 帧率 derive：接受持久化/导入携带的 fps，非正/非有限值回退默认 30。
@@ -73,6 +77,9 @@ function normalizeClip(input: unknown, fallbackType: TimelineTrackType): Timelin
     offsetEndFrame: toFiniteNonNegativeInteger(raw.offsetEndFrame, 0),
     ...(normalizeString(raw.url) ? { url: normalizeString(raw.url) } : {}),
     ...(normalizeString(raw.thumbnailUrl) ? { thumbnailUrl: normalizeString(raw.thumbnailUrl) } : {}),
+    ...(type !== 'image' && raw.audio && typeof raw.audio === 'object' && !Array.isArray(raw.audio)
+      ? { audio: resolveClipAudio(raw.audio as TimelineClipAudio, endFrame - startFrame) }
+      : {}),
     // 取景随时间轴落盘：present 才挂（清洗成合法 framing），缺省则不挂 → 切项目/重载不蒸发。
     ...(raw.framing && typeof raw.framing === 'object'
       ? { framing: resolveClipFraming({ framing: raw.framing as Partial<ClipFraming> }) }
@@ -135,6 +142,14 @@ export function createDefaultTimeline(): TimelineState {
   }
 }
 
+export function resolveTimelineFitScale(durationFrame: number, availableWidth: number, margin = TIMELINE_FIT_MARGIN): number {
+  const duration = Number(durationFrame)
+  const width = Number(availableWidth)
+  if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(width) || width <= 0) return DEFAULT_TIMELINE_SCALE
+  const usableWidth = width * Math.max(0.5, Math.min(0.99, 1 - Math.max(0, Number(margin))))
+  return Math.max(0.35, usableWidth / duration)
+}
+
 export function normalizeTimeline(input: unknown): TimelineState {
   if (!input || typeof input !== 'object') return createDefaultTimeline()
   const raw = input as Record<string, unknown>
@@ -164,7 +179,7 @@ export function normalizeTimeline(input: unknown): TimelineState {
   //（详见 timelineTextEdit.createTextClipId 注释）。已损坏工程里可能存着重复 id，
   // 重复 id 会让编辑一条串改另一条 + React key 重复。这里加载时把重复 id 重新铸成唯一 id。
   const seenTextIds = new Set<string>()
-  const textClips = (Array.isArray(raw.textClips) ? raw.textClips : [])
+  const normalizedTextClips = (Array.isArray(raw.textClips) ? raw.textClips : [])
     .map(normalizeTextClip)
     .filter((clip): clip is TimelineTextClip => Boolean(clip))
     .map((clip) => {
@@ -175,6 +190,12 @@ export function normalizeTimeline(input: unknown): TimelineState {
       return { ...clip, id: `text-${crypto.randomUUID()}` }
     })
     .sort((left, right) => left.startFrame - right.startFrame)
+  const textClips = normalizedTextClips.reduce<TimelineTextClip[]>((placed, clip) => {
+    const duration = Math.max(1, clip.endFrame - clip.startFrame)
+    const startFrame = nearestLegalStart(placed, duration, clip.startFrame)
+    placed.push({ ...clip, startFrame, endFrame: startFrame + duration })
+    return placed
+  }, [])
 
   const transitions = (Array.isArray(raw.transitions) ? raw.transitions : [])
     .map((value): TimelineTransition | null => {

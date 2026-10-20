@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconX, IconDeviceFloppy } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -51,7 +51,7 @@ export function UserPromptComposer({ initial, onSubmit, onCancel }: Props): JSX.
   )
 
   return (
-    <div className={cn('mb-3 p-3.5 rounded-nomi-lg border border-nomi-line bg-nomi-ink-02')}>
+    <div className={cn('mb-3 p-3.5 rounded-nomi-lg border border-nomi-line bg-nomi-ink-05')}>
       <div className={cn('flex items-center gap-2 mb-2.5')}>
         <b className={cn('text-caption font-semibold text-nomi-ink')}>
           {initial ? t('libraries.prompt.composer.edit') : t('libraries.prompt.composer.create')}

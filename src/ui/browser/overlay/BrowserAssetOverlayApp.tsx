@@ -1,7 +1,6 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 import {
   getDesktopBridge,
   type DesktopBrowserAssetOverlayCaptureRequest,
@@ -363,18 +362,16 @@ export function BrowserAssetOverlayApp(): JSX.Element {
 
   const importBrowserAssetToLibrary = React.useCallback(
     async (input: BrowserAssetRemoteImportInput): Promise<NomiBrowserAsset> => {
-      const projectId = getDesktopActiveProjectId()
-      if (!projectId) throw new Error('projectId is required')
       const viewId = config.viewId
-      const fallbackTitle = input.title || input.fileName || (input.mediaType === 'video' ? '网页视频' : '网页图片')
+      const fallbackTitle = input.title || input.fileName || (input.mediaType === 'video' ? t('browserAssets.webVideo') : t('browserAssets.webImage'))
       // 原生素材盒只接受当前内置网页产生的拖拽；没有来源 WebContents 时不准换成另一套
       // 无 Cookie/Referer 的网络栈重抓 URL，否则既破坏防盗链，也会把真实错误掩盖掉。
       if (!viewId || !browserBridge?.importMedia || !canDownloadFromBrowserView(input.url)) {
-        throw new Error('来源页面会话已失效，请回到原网页重新拖入')
+        throw new Error(t('browserAssets.sourceSessionExpired'))
       }
       const asset = await browserBridge.importMedia({
+        // 项目由主进程按父窗口已提交的项目面签发；浮层不报 projectId。
         viewId,
-        projectId,
         url: input.url,
         fileName: input.fileName,
         title: input.title,
@@ -384,7 +381,7 @@ export function BrowserAssetOverlayApp(): JSX.Element {
       if (!mapped) throw new Error('导入的素材无法识别为图片或视频')
       return mapped
     },
-    [browserBridge, config.viewId],
+    [browserBridge, config.viewId, t],
   )
 
   const handleOpenChange = React.useCallback(
@@ -422,6 +419,7 @@ export function BrowserAssetOverlayApp(): JSX.Element {
   return (
     <div className="fixed inset-0 overflow-hidden bg-transparent font-nomi-sans text-nomi-ink">
       <NomiBrowserAssetPopover
+        projectId={config.projectBinding?.projectId ?? null}
         surface="contained"
         placement="absolute"
         opened={config.opened}

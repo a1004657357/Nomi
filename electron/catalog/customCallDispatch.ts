@@ -5,17 +5,17 @@
 import crypto from "node:crypto";
 import { buildNormalizedRecipe, buildTaskProvenance } from "../vendor/provenance";
 import { readCachedTaskResult, recipeFingerprint, rememberTaskResult } from "../vendor/fingerprintCache";
-import { assertAndConsumeSpendGrant } from "../spendGrant";
+import { consumeTaskSpend } from "../tasks/taskSpend";
 import { traceVendorCompleted, traceVendorRequested } from "../events/vendorCallTrace";
 import { assertLocalAssetTransportReady, localizeAssetsForVendor, resolveAssetIngestionWithFallback } from "./assetLocalization";
-import { anonymousConsentFromUnknown } from "./assetTransportPolicy";
 import { decryptApiKeyRecord } from "./secrets";
-import { readNomiLocalAsset, postJsonForAssetUpload, postMultipartForAssetUpload } from "../assets/localAssetFile";
-import { unlocalizedTaskAsset } from "../tasks/activeProjectFallback";
+import { readNomiLocalAsset, postJsonForAssetUpload, postMultipartForAssetUpload, putBinaryForAssetUpload } from "../assets/localAssetFile";
+import { unlocalizedTaskAsset } from "../tasks/unlocalizedTaskAsset";
 import { taskTemplateParams } from "./taskParams";
 import { CustomCallScriptError, runCustomCallScript } from "./customCallRunner";
 import { readCatalog } from "./catalogStore";
 import { readAutomationPolicySettings } from "../settings/automationPolicySettings";
+import { assetLocalizationOptions } from "./assetTransportRuntime";
 import { trim } from "../jsonUtils";
 import type { BillingModelKind, Model, Vendor } from "./types";
 import type { TaskRequest, TaskResult } from "../runtime";
@@ -59,9 +59,7 @@ export async function runCustomCallTask(input: CustomCallDispatchInput): Promise
   // 参考素材本地 URL → vendor 可达（与 mapping 路径同一套 localize，脚本拿到的 references 即成品 URL）。
   const uploadCatalog = readCatalog();
   const automationSettings = readAutomationPolicySettings();
-  const anonymousConsent = anonymousConsentFromUnknown(
-    request.extras?.anonymousAssetHostingConsent ?? automationSettings.anonymousAssetHosting,
-  );
+  const localizationOptions = assetLocalizationOptions(request.extras, automationSettings);
   assertLocalAssetTransportReady(
     request.extras,
     (mediaKind) => resolveAssetIngestionWithFallback(
@@ -71,15 +69,9 @@ export async function runCustomCallTask(input: CustomCallDispatchInput): Promise
       mediaKind,
     ),
     readNomiLocalAsset,
-    {
-      anonymousConsent,
-      minimizeUploads: automationSettings.minimizeUploads,
-      activeAssetUrls: Array.isArray(request.extras?.activeAssetUrls)
-        ? request.extras.activeAssetUrls.filter((value): value is string => typeof value === "string")
-        : undefined,
-    },
+    localizationOptions,
   );
-  assertAndConsumeSpendGrant(grantId, nodeId); // 付费守卫：本地资产/上传策略预检通过后才消费
+  await consumeTaskSpend({ grantId, nodeId, projectId, vendorKey: vendor.key, modelKey: model.modelKey, parameters: request.extras }); // 付费守卫：本地资产/上传策略预检通过后才消费
   traceVendorRequested(projectId, { runId: taskId, nodeId, recipe });
   const localized = await localizeAssetsForVendor(
     request.extras,
@@ -93,13 +85,8 @@ export async function runCustomCallTask(input: CustomCallDispatchInput): Promise
     readNomiLocalAsset,
     postJsonForAssetUpload,
     postMultipartForAssetUpload,
-    {
-      anonymousConsent,
-      minimizeUploads: automationSettings.minimizeUploads,
-      activeAssetUrls: Array.isArray(request.extras?.activeAssetUrls)
-        ? request.extras.activeAssetUrls.filter((value): value is string => typeof value === "string")
-        : undefined,
-    },
+    localizationOptions,
+    putBinaryForAssetUpload,
   );
   const effectiveRequest =
     localized.uploaded > 0 ? { ...request, extras: localized.value as TaskRequest["extras"] } : request;
@@ -112,7 +99,7 @@ export async function runCustomCallTask(input: CustomCallDispatchInput): Promise
       customConfig,
       script,
       prompt: trim(effectiveRequest.prompt),
-      params: taskTemplateParams(effectiveRequest, { vendorKey: vendor.key, modelKey: model.modelKey }),
+      params: taskTemplateParams(effectiveRequest, { vendorKey: vendor.key, modelKey: model.modelKey, wireModelKey: model.modelAlias || model.modelKey }),
       taskKind,
       modeId,
       timeoutMs: wantedKind === "video" ? 15 * 60 * 1000 : 5 * 60 * 1000,

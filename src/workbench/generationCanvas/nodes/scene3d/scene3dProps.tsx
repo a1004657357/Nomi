@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // 语义道具渲染器（灰模 blockout）：spec 数据在 scene3dPropSpecs.ts（纯模块），
 // 这里只有组件——一个通用 PropObject 吃所有 kind，新增道具零组件分支。
 import React from 'react'

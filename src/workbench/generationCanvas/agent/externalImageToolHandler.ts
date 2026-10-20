@@ -1,10 +1,11 @@
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
+import { unwrapAssetImportResult } from '../../../../electron/shared/contracts/assetImportResult'
+import type { ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import { getDesktopBridge, type DesktopAssetDto } from '../../../desktop/bridge'
 import { isImageLikeGenerationNodeKind } from '../model/generationNodeKinds'
 import type { GenerationNodeResult } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { resolveCanvasToolNodeId } from './clientIdRegistry'
-import { generationCanvasTools } from './generationCanvasTools'
+import { readGenerationCanvasSnapshot } from './generationCanvasTools'
 
 type ExternalImageSourceType = 'local_path' | 'url' | 'data_url'
 
@@ -36,7 +37,7 @@ function assertSource(sourceType: ExternalImageSourceType, source: string): void
 }
 
 async function importAsset(input: {
-  projectId: string
+  project: ProjectExecutionContext
   nodeId: string
   sourceType: ExternalImageSourceType
   source: string
@@ -45,16 +46,18 @@ async function importAsset(input: {
   const desktop = getDesktopBridge()
   if (!desktop?.assets) throw new Error('外部图片导入需要 Electron 桌面运行时')
   const base = {
-    projectId: input.projectId,
+    projectId: input.project.binding.projectId,
+    projectBinding: input.project.binding,
     kind: 'generated',
     fileName: input.fileName,
     ownerNodeId: input.nodeId,
   }
+  input.project.assertCurrent()
   if (input.sourceType === 'local_path') {
     if (!desktop.assets.importLocalPath) throw new Error('当前桌面桥不支持从本地路径导入图片，请重启 Nomi 后再试')
     return desktop.assets.importLocalPath({ ...base, path: input.source })
   }
-  return desktop.assets.importRemoteUrl({ ...base, url: input.source })
+  return unwrapAssetImportResult(await desktop.assets.importRemoteUrl({ ...base, url: input.source, expectedKind: 'image' }))
 }
 
 function importedUrl(asset: DesktopAssetDto): string {
@@ -68,27 +71,28 @@ function importedUrl(asset: DesktopAssetDto): string {
 }
 
 export async function tryAttachExternalImage(input: {
+  project: ProjectExecutionContext
   toolName: string
   record: Record<string, unknown>
   mutate: <T>(fn: () => T) => T
 }): Promise<{ handled: false } | { handled: true; value: unknown }> {
   if (input.toolName !== 'attach_external_image_to_node') return { handled: false }
 
-  const { record, mutate } = input
+  const { record, mutate, project } = input
+  project.assertCurrent()
   const nodeId = resolveCanvasToolNodeId(trimmed(record.nodeId))
   if (!nodeId) throw new Error('nodeId is required')
-  const node = generationCanvasTools.read_canvas().nodes.find((candidate) => candidate.id === nodeId)
+  const node = readGenerationCanvasSnapshot().nodes.find((candidate) => candidate.id === nodeId)
   if (!node) throw new Error('node_not_found')
   if (!isImageLikeGenerationNodeKind(node.kind)) {
     throw new Error('target_node_not_image_like:只能把外部图片绑定到图片类节点')
   }
-  const projectId = getDesktopActiveProjectId().trim()
-  if (!projectId) throw new Error('projectId is required for external image import')
   const sourceType = normalizeSourceType(record.sourceType)
   const source = trimmed(record.source)
   assertSource(sourceType, source)
   const fileName = trimmed(record.fileName) || undefined
-  const imported = await importAsset({ projectId, nodeId, sourceType, source, fileName })
+  const imported = await importAsset({ project, nodeId, sourceType, source, fileName })
+  project.assertCurrent()
   const url = importedUrl(imported)
   const now = Date.now()
   const prompt = trimmed(record.prompt)

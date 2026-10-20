@@ -5,6 +5,7 @@ import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/genera
 import { createEdgeId } from '../model/graphOps'
 import { CLIPBOARD_OFFSET, createClipboardNodeId } from './canvasIds'
 import i18n from '../../../i18n'
+import { remapShotNodeReferences } from '../../../../electron/shared/canvas/shotNumbering'
 
 export type GenerationCanvasClipboard = {
   nodes: GenerationCanvasNode[]
@@ -75,7 +76,7 @@ export function cloneClipboardPayload(payload: GenerationCanvasClipboard): Clipb
     }]
   })
   return {
-    nodes,
+    nodes: nodes.map(node => remapShotNodeReferences(node, idMap)),
     edges,
     selectedNodeIds: nodes.map((node) => node.id),
   }

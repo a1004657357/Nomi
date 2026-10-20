@@ -2,51 +2,50 @@
 // 复用 M-A 的抽帧 IPC（window.nomiDesktop.video.extractFrame，which:'first'|'last'）——纯基建，
 // 抽出的是真实图片 URL（nomi-local://），建一个**已带结果**的图片节点，用户可直接拿去当任何参考/首尾帧。
 // 失败一律人话 toast、不冒充（resolver/IPC 已封死"视频/封面当首帧"）。
-import { getNodeSize } from '../model/generationNodeKinds'
+import { resolveNodeVisualSize } from './nodeSizing'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
-import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
+import { isProjectImportCancellation, withProjectAction } from '../../project/projectCanvasReadSurface'
 import { getDesktopBridge } from '../../../desktop/bridge'
-import { toast } from '../../../ui/toast'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import i18n from '../../../i18n'
 
-export async function extractVideoFrameToNode(node: GenerationCanvasNode, which: 'first' | 'last'): Promise<void> {
+export async function extractVideoFrameToNode(node: GenerationCanvasNode, which: 'first' | 'last', reportFeedback: (message: string) => void): Promise<void> {
   const videoUrl = node.result?.url
   if (node.result?.type !== 'video' || !videoUrl) return
   const label = i18n.t(`generationCommon.node.extractFrame.${which}`)
 
-  const projectId = getActiveWorkbenchProjectId()
-  if (!projectId) {
-    toast(i18n.t('generationCommon.node.extractFrame.missingProject'), 'error')
+  // 动作起点签发原项目：抽帧落盘、落节点都只认这一份，换项目即取消（不在新项目落节点、不报迟到的错）。
+  const project = withProjectAction((issued) => issued)
+  if (!project) {
+    reportFeedback(i18n.t('generationCommon.node.extractFrame.missingProject'))
     return
   }
   const extractFrame = getDesktopBridge()?.video?.extractFrame
   if (!extractFrame) {
-    toast(i18n.t('generationCommon.node.extractFrame.desktopOnly'), 'error')
+    reportFeedback(i18n.t('generationCommon.node.extractFrame.desktopOnly'))
     return
   }
 
   let url: string
   try {
-    const result = await extractFrame({ videoUrl, which, projectId })
+    const result = await extractFrame({ videoUrl, which, projectId: project.binding.projectId, projectBinding: project.binding })
+    project.assertCurrent()
     url = result?.url || ''
   } catch (error) {
-    toast(
-      i18n.t('generationCommon.node.extractFrame.failed', {
+    if (project.signal.aborted || isProjectImportCancellation(error)) return
+    reportFeedback(i18n.t('generationCommon.node.extractFrame.failed', {
         frame: label,
         message: error instanceof Error ? error.message : String(error),
-      }),
-      'error',
-    )
+      }))
     return
   }
   if (!url) {
-    toast(i18n.t('generationCommon.node.extractFrame.empty', { frame: label }), 'error')
+    reportFeedback(i18n.t('generationCommon.node.extractFrame.empty', { frame: label }))
     return
   }
 
   const store = useGenerationCanvasStore.getState()
-  const size = getNodeSize(node)
+  const size = resolveNodeVisualSize(node)
   const created = store.addNode({
     kind: 'image',
     title: i18n.t('generationCommon.node.extractFrame.nodeTitle', {

@@ -1,5 +1,7 @@
+import type { RecipeRunPlan } from '../../../config/capabilityRecipes'
+import type { ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
+import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
 import { buildRecipeRunPlan, type RecipeOutputDescriptor } from '../../../config/capabilityRecipes'
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 import { isCapabilityRecipesEnabled } from '../../../config/featureFlags'
 import { mintSpendGrant } from '../../api/taskApi'
 import type { CanvasGestureContext } from '../events/canvasGestureContext'
@@ -16,7 +18,7 @@ import {
   saveNodeAsCreativeResource,
   validateRecipeResourceSelection,
 } from './creativeResourceActions'
-import { generationCanvasTools } from './generationCanvasTools'
+import { readGenerationCanvasSnapshot } from './generationCanvasTools'
 import { handoffModel3dNode } from './model3dHandoff'
 import { listAvailableModelsForAgent } from './availableModels'
 import { createWorkbenchMultiviewSubjectComparator } from '../quality/multiviewSubjectVisionReviewService'
@@ -30,6 +32,9 @@ type CapabilityToolContext = {
   record: Record<string, unknown>
   gesture?: CanvasGestureContext
   mutate: <T>(fn: () => T) => T
+  project: ProjectExecutionContext
+  planOnly?: boolean
+  confirmRecipe?: (plan: RecipeRunPlan) => Promise<boolean>
 }
 
 export type CapabilityToolResult =
@@ -91,7 +96,7 @@ function runId(): string {
 }
 
 function assertRecipeSource(recipe: ReturnType<typeof findCapabilityRecipe>, sourceNodeId: string): void {
-  const source = generationCanvasTools.read_canvas().nodes.find((node) => node.id === sourceNodeId)
+  const source = readGenerationCanvasSnapshot().nodes.find((node) => node.id === sourceNodeId)
   if (!source) throw new Error('node_not_found:配方源节点不存在')
   if (recipe.inputSlots.some((slot) => slot.kind === 'source_image' && slot.min > 0) && source.result?.type !== 'image') {
     throw new Error(`配方「${recipe.label}」需要源节点先生成一张图片`)
@@ -109,11 +114,13 @@ function assertRecipeSource(recipe: ReturnType<typeof findCapabilityRecipe>, sou
 
 async function applyRecipe(
   record: Record<string, unknown>,
+  context: Pick<CapabilityToolContext, 'project' | 'confirmRecipe' | 'planOnly'>,
   gesture?: CanvasGestureContext,
 ): Promise<unknown> {
+  context.project.assertCurrent()
   const sourceNodeId = resolveCanvasToolNodeId(trimmed(record.sourceNodeId))
   if (!sourceNodeId) throw new Error('sourceNodeId is required')
-  const canvas = generationCanvasTools.read_canvas()
+  const canvas = readGenerationCanvasSnapshot()
   const source = canvas.nodes.find((node) => node.id === sourceNodeId)
   if (!source) throw new Error('node_not_found:配方源节点不存在')
 
@@ -125,6 +132,7 @@ async function applyRecipe(
   assertRecipeSource(recipe, sourceNodeId)
 
   const models = await listAvailableModelsForAgent()
+  context.project.assertCurrent()
   const sourceMeta = source.meta ?? {}
   const sourceArchetype = sourceMeta.archetype && typeof sourceMeta.archetype === 'object'
     ? sourceMeta.archetype as Record<string, unknown>
@@ -162,23 +170,35 @@ async function applyRecipe(
     createdAt: Date.now(),
     ...(gesture?.proposalId || gesture?.txnId ? { agentRunId: gesture?.proposalId ?? gesture?.txnId } : {}),
   })
+  if (context.planOnly) return { planned: true, plan }
   const visionReview = await requestedVisionReview(record.visionReview, plan.recipeId)
+  context.project.assertCurrent()
+  if (context.confirmRecipe) {
+    const confirmed = await context.confirmRecipe(plan)
+    context.project.assertCurrent()
+    if (!confirmed) return { accepted: false, declined: true }
+  }
 
   let targetNodeId = ''
   const run = runCapabilityRecipeOnNode(sourceNodeId, plan, {
-    grantFactory: (nodeId, maxAttemptsPerNode) => mintSpendGrant([nodeId], maxAttemptsPerNode),
+    grantFactory: (nodeId, maxAttemptsPerNode) => {
+      context.project.assertCurrent()
+      return mintSpendGrant([nodeId], maxAttemptsPerNode)
+    },
+    signal: context.project.signal,
     concurrency: Math.min(2, plan.taskCount),
     onTargetCreated: (nodeId) => { targetNodeId = nodeId },
     ...(visionReview ? {
       compareMultiviewSubjects: createWorkbenchMultiviewSubjectComparator({
         model: visionReview,
         sessionId: plan.id,
-        projectId: getDesktopActiveProjectId() || undefined,
+        projectId: context.project.binding.projectId,
       }),
     } : {}),
   })
   void run.catch((error) => {
-    if (!targetNodeId) return
+    if (!targetNodeId || context.project.signal.aborted) return
+    context.project.assertCurrent()
     const message = error instanceof Error ? error.message : String(error)
     const store = useGenerationCanvasStore.getState()
     if (store.nodes.some((node) => node.id === targetNodeId)) store.setNodeStatus(targetNodeId, 'error', message)
@@ -206,18 +226,23 @@ export async function tryApplyCapabilityToolCall({
   record,
   gesture,
   mutate,
+  project,
+  planOnly,
+  confirmRecipe,
 }: CapabilityToolContext): Promise<CapabilityToolResult> {
   if (!['list_capability_recipes', 'apply_capability_recipe', 'save_creative_resource', 'handoff_model3d'].includes(toolName)) {
     return { handled: false }
   }
   if (!isCapabilityRecipesEnabled()) throw new Error('创作能力配方实验功能尚未在本机启用')
+  project.assertCurrent()
 
   if (toolName === 'list_capability_recipes') {
     const [models, visionReviewModels] = await Promise.all([
       listAvailableModelsForAgent(),
       listVisionReviewModelOptions(),
     ])
-    const nodes = generationCanvasTools.read_canvas().nodes
+    project.assertCurrent()
+    const nodes = readGenerationCanvasSnapshot().nodes
     return {
       handled: true,
       value: {
@@ -228,7 +253,7 @@ export async function tryApplyCapabilityToolCall({
     }
   }
   if (toolName === 'apply_capability_recipe') {
-    return { handled: true, value: await applyRecipe(record, gesture) }
+    return { handled: true, value: await applyRecipe(record, { project, planOnly, confirmRecipe }, gesture) }
   }
   if (toolName === 'save_creative_resource') {
     const sourceNodeId = resolveCanvasToolNodeId(trimmed(record.sourceNodeId))
@@ -265,11 +290,17 @@ export async function tryApplyCapabilityToolCall({
   return {
     handled: true,
     value: handoffModel3dNode({
+      project,
       sourceNodeId,
       target: record.target === 'vibingDirector' ? 'vibingDirector' : 'scene3d',
       ...(targetNodeId ? { targetNodeId } : {}),
       ...(trimmed(record.license) ? { license: trimmed(record.license) } : {}),
       mutate,
+      persist: async () => {
+        project.assertCurrent()
+        await persistActiveWorkbenchProjectNow()
+        project.assertCurrent()
+      },
     }),
   }
 }

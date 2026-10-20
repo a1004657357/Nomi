@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { createMcpProtocol, type GenerationGateChallengeProjection, type McpTransport } from './mcpProtocol'
+import { spendConfirmationMessage } from './mcpGateConfirmation'
 
 const challenge: GenerationGateChallengeProjection = {
   challengeId: 'challenge-1',
@@ -176,13 +177,20 @@ describe('one generation challenge, two confirmation surfaces', () => {
     expect(verifyClientGenerationConfirmation).toHaveBeenCalledTimes(1)
   })
 
-  it('routes a bare semantic client accept to the same GUI challenge', async () => {
+  // 【2026-09-03 两次来回，把过程留在这儿防再犯】
+  //
+  // 第一次：「语义挑战 + 客户端只给光秃秃的同意 → 回落 Nomi 卡」被判成「规则前提生产里永远无法满足 = 半成品
+  // 开关」而推翻，改成就地算数；当天被真机走查推回——推翻版让用户点完同意后 gate 回 human_approval_required，
+  // 比多点一次更糟。结论：那面旗是对的要求，缺的是铸收据那一环。
+  //
+  // 第二次（本 PR）：verifyClientGenerationConfirmation 在两个生产装配点接通，主进程铸 client_elicitation 收据。
+  // 结果：光秃秃的同意（无 attestation 字段）→ verifyClientGenerationConfirmation 仍然被调（只要它存在）→
+  // 主进程照样铸出 client_elicitation 收据 → gate 真的进入 decide/start，生成真的开始。
+  // 断言恢复为正确行为：surface:'client'，带收据，不再回落 Nomi。
+  it('语义生成挑战：接通 verifyClientGenerationConfirmation 后，客户端光秃秃的同意也能铸收据', async () => {
     const frames: unknown[] = []
-    const verifyClientGenerationConfirmation = vi.fn(async () => ({ confirmed: true, receiptId: 'should-not-be-used' }))
-    const confirmGenerationInNomi = vi.fn(async (received: GenerationGateChallengeProjection) => {
-      expect(received.handoff).toMatchObject({ clientAttestation: true, challengeToken: 'challenge-token' })
-      return { confirmed: true, receiptId: 'receipt-gui' }
-    })
+    const verifyClientGenerationConfirmation = vi.fn(async () => ({ confirmed: true, receiptId: 'receipt-client-elicitation', receiptToken: 'token-client-elicitation' }))
+    const confirmGenerationInNomi = vi.fn(async () => ({ confirmed: true, receiptId: 'receipt-gui' }))
     const protocol = await initialized({
       send: (frame) => frames.push(frame),
       invoke: vi.fn(async () => ({})),
@@ -194,10 +202,12 @@ describe('one generation challenge, two confirmation surfaces', () => {
     const resultPromise = protocol.requestGenerationConfirmation({ ...challenge, handoff: { clientAttestation: true, challengeToken: 'challenge-token' } })
     await tick()
     const request = frames.find((frame) => (frame as { method?: string }).method === 'elicitation/create') as { id: string }
+    // 光秃秃的同意：没有 attestation 字段
     protocol.handleIncoming({ id: request.id, result: { action: 'accept', content: { confirm: true } } })
-    await expect(resultPromise).resolves.toMatchObject({ surface: 'nomi', receiptId: 'receipt-gui' })
-    expect(confirmGenerationInNomi).toHaveBeenCalledTimes(1)
-    expect(verifyClientGenerationConfirmation).not.toHaveBeenCalled()
+    await expect(resultPromise).resolves.toMatchObject({ surface: 'client', receiptId: 'receipt-client-elicitation', receiptToken: 'token-client-elicitation' })
+    // verifyClientGenerationConfirmation 被调（无论 attestation 字段是否存在），Nomi 确认卡不出现
+    expect(verifyClientGenerationConfirmation).toHaveBeenCalledTimes(1)
+    expect(confirmGenerationInNomi).not.toHaveBeenCalled()
   })
 
   it('treats client decline as no approval and keeps the challenge identity', async () => {
@@ -213,5 +223,173 @@ describe('one generation challenge, two confirmation surfaces', () => {
     const request = frames.find((frame) => (frame as { method?: string }).method === 'elicitation/create') as { id: string }
     protocol.handleIncoming({ id: request.id, result: { action: 'decline' } })
     await expect(resultPromise).resolves.toMatchObject({ challengeId: 'challenge-1', confirmed: false, surface: 'client' })
+  })
+})
+
+// ── 生产装配面下的确认面：现实是什么样，就断言什么样 ──
+//
+// 为什么要单独一组：上面那些用例都给 transport 传了 verifyClientGenerationConfirmation 的 mock，而
+// **两个生产装配点（mcpNodeLauncher / mcpStdioServer）都没有传它**。于是那些绿灯证明不了生产行为——
+// 真实用户遇到的是下面这组。它们刻意只用生产真有的能力装配 transport。
+//
+// 本组断言的是**现状**，不是理想态：没有验证器 = 客户端的同意换不来收据 = 只能回落 Nomi。
+// 理想态（客户端点同意就能开始生成）要等「铸收据」那一环接上，不是靠放宽这里的断言换来的。
+describe('生产装配面：没有验证器时，客户端的同意换不来收据', () => {
+  /** 只含两个生产装配点真正传入的能力——没有 verifyClientGenerationConfirmation。 */
+  function productionTransport(overrides: Partial<McpTransport> = {}): McpTransport {
+    return {
+      send: () => {},
+      invoke: vi.fn(async () => ({})),
+      isAppOpen: () => true,
+      getAuthenticatedClient: () => 'codex',
+      confirmGenerationInNomi: vi.fn(async () => ({ confirmed: true, receiptId: 'receipt-gui' })),
+      getLocale: () => 'zh-CN',
+      ...overrides,
+    }
+  }
+
+  async function acceptInClient(transport: McpTransport, content: Record<string, unknown>) {
+    const frames: unknown[] = []
+    const withCapture: McpTransport = { ...transport, send: (frame) => frames.push(frame) }
+    const protocol = await initialized(withCapture)
+    const promise = protocol.requestGenerationConfirmation({
+      ...challenge,
+      handoff: { challengeToken: 'challenge-token', clientAttestation: true },
+    })
+    await tick()
+    const request = frames.find((f) => (f as { method?: string }).method === 'elicitation/create') as { id: string }
+    protocol.handleIncoming({ id: request.id, result: { action: 'accept', content } })
+    return promise
+  }
+
+  // 这条是本轮最贵的一课：2026-09-03 曾把它断言成「就地确认、不弹 Nomi 卡」，真机走查（打包版 + 真
+  // Codex 客户端 + 零额度 loopback）证明那样做的净效果是——elicitation 帧确实弹到客户端了、用户也
+  // accept 了，然后 gate 回 `human_approval_required`，生成压根没开始。比多点一次更糟。
+  // 现在断言现状：回落 Nomi。等「铸收据」接上再来改它，并且要连着下游一起验，不能只看这一层返回值。
+  it('客户端明确点「是」但拿不到收据 → 回落 Nomi 卡（那条路才铸真收据）', async () => {
+    const transport = productionTransport()
+    await expect(acceptInClient(transport, { confirm: true })).resolves.toMatchObject({
+      confirmed: true, surface: 'nomi', receiptId: 'receipt-gui',
+    })
+    expect(transport.confirmGenerationInNomi).toHaveBeenCalledTimes(1)
+  })
+
+  it('客户端已确认但 Nomi 没开着 → 如实回 surface:none，不假装成功', async () => {
+    const transport = productionTransport({ isAppOpen: () => false })
+    await expect(acceptInClient(transport, { confirm: true })).resolves.toMatchObject({
+      confirmed: false, surface: 'none',
+    })
+  })
+
+  it('客户端给了凭证但生产装配没有验证器 → 不许降级成就地确认，回落 Nomi', async () => {
+    const transport = productionTransport()
+    await expect(acceptInClient(transport, { confirm: true, attestation: 'unverifiable' })).resolves.toMatchObject({
+      surface: 'nomi',
+    })
+    expect(transport.confirmGenerationInNomi).toHaveBeenCalledTimes(1)
+  })
+  // 2026-09-10（R2 + 21:00 拍板）：客户端里那段文字**就是**那张确认卡。只给一个总数等于让用户闭眼签字，
+  // 所以摘要必须摊开逐镜价目（镜号 · 模型 · 单价）+ 合计；降到 budget_only 时还要说清「¥X 内不再逐镜问」。
+  it('itemizes每镜价目与合计，并在信任降档时说清 ¥X 内不再逐镜问', async () => {
+    const frames: unknown[] = []
+    const transport: McpTransport = {
+      send: (frame) => frames.push(frame),
+      invoke: vi.fn(async () => ({})),
+      isAppOpen: () => false,
+      getAuthenticatedClient: () => 'codex',
+    }
+    const protocol = await initialized(transport)
+    void protocol.requestGenerationConfirmation({
+      challengeId: 'challenge-trust',
+      model: 'apimart · kling-v2（i2v）',
+      costScope: 'trust.budget-only:run-1:¥:9',
+      maximumCost: 9,
+      currency: '¥',
+      expiresAt: '2026-08-23T01:00:00.000Z',
+      trustGrant: { currency: '¥', maximum: 9 },
+      shots: {
+        currency: '¥',
+        shots: [
+          { shotId: 'shot-1', index: 1, sceneOneLiner: '开场', providerModelText: 'apimart · kling-v2（i2v）', durationSeconds: null, price: { known: true, amount: 4 }, degradations: [] },
+          { shotId: 'shot-2', index: 2, sceneOneLiner: '收尾', providerModelText: 'apimart · kling-v2（i2v）', durationSeconds: null, price: { known: false }, degradations: [] },
+        ],
+      },
+    })
+    await tick()
+    const request = frames.find((frame) => (frame as { method?: string }).method === 'elicitation/create') as { params: { message: string; requestedSchema: unknown } }
+    expect(request.params.message).toContain('#1 开场 · apimart · kling-v2（i2v） · ¥4')
+    // 算不出价格的那镜如实写「价格未知」，绝不凑一个 ¥0 出来。
+    expect(request.params.message).toContain('#2 收尾 · apimart · kling-v2（i2v） · 价格未知')
+    expect(request.params.message).toContain('合计最多 ¥9')
+    expect(request.params.message).toContain('¥9 内不再逐镜问')
+  })
+
+  // 2026-09-21 未知价开闸：整批定不出价**照样弹**，只是如实说「没有标价、花多少事后才知道」。
+  // 这条从前钉的是「别弹、回 surface:none」——那等于外部 MCP 这条路上用户连拒绝的机会都没有，
+  // 而内置 204 个模型一条价都没填。永不把「算不出」当 ¥0 摆出去这一条一个字没松（见下面两条）。
+  it('asks with an honest unpriced message instead of refusing to ask at all', async () => {
+    const frames: unknown[] = []
+    const confirmGenerationInNomi = vi.fn(async () => true)
+    const transport: McpTransport = {
+      send: (frame) => frames.push(frame),
+      invoke: vi.fn(async () => ({})),
+      isAppOpen: () => true,
+      getAuthenticatedClient: () => 'codex',
+      confirmGenerationInNomi,
+    }
+    const protocol = await initialized(transport)
+    const promise = protocol.requestGenerationConfirmation({
+      ...challenge,
+      challengeId: 'challenge-unpriced',
+      maximumCost: null,
+      unknownShotCount: 1,
+      confirmationText: undefined,
+      shots: {
+        currency: '¥',
+        shots: [{ shotId: 'shot-1', index: 1, sceneOneLiner: '开场', providerModelText: 'apimart · kling-v2', durationSeconds: null, price: { known: false }, degradations: [] }],
+      },
+    })
+    await tick()
+    const request = frames.find((frame) => (frame as { method?: string }).method === 'elicitation/create') as { id: string; params: { message: string } }
+    // 问出去了（从前这里一帧都不发），而且那段文字里没有任何被编出来的 ¥0。
+    expect(request).toBeTruthy()
+    expect(request.params.message).toContain('#1 开场 · apimart · kling-v2 · 价格未知')
+    expect(request.params.message).toContain('花多少事后才知道')
+    expect(request.params.message).not.toMatch(/[¥$]\s?0(?!\d)/)
+    protocol.handleIncoming({ id: request.id, result: { action: 'accept', content: { confirm: true } } })
+    await expect(promise).resolves.toMatchObject({ confirmed: true })
+  })
+
+  it('never prints ¥0 for an unpriced batch', () => {
+    const message = spendConfirmationMessage({
+      ...challenge,
+      maximumCost: null,
+      unknownShotCount: 1,
+      shots: {
+        currency: '¥',
+        shots: [{ shotId: 'shot-1', index: 1, sceneOneLiner: '开场', providerModelText: 'apimart · kling-v2', durationSeconds: null, price: { known: false }, degradations: [] }],
+      },
+    })
+    expect(message).toContain('价格未知')
+    expect(message).toContain('花多少事后才知道')
+    expect(message).not.toMatch(/[¥$]\s?0(?!\d)/)
+    expect(message).not.toContain('合计最多')
+  })
+
+  it('states the known subtotal AND the unpriced remainder for a mixed batch', () => {
+    const message = spendConfirmationMessage({
+      ...challenge,
+      maximumCost: 9,
+      unknownShotCount: 1,
+      shots: {
+        currency: '¥',
+        shots: [
+          { shotId: 'shot-1', index: 1, sceneOneLiner: '开场', providerModelText: 'apimart · kling-v2', durationSeconds: null, price: { known: true, amount: 9 }, degradations: [] },
+          { shotId: 'shot-2', index: 2, sceneOneLiner: '收尾', providerModelText: 'apimart · kling-v2', durationSeconds: null, price: { known: false }, degradations: [] },
+        ],
+      },
+    })
+    expect(message).toContain('已知的部分合计最多 ¥9')
+    expect(message).toContain('另有 1 镜目录未标价')
   })
 })

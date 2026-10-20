@@ -1,13 +1,12 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconArrowLeft, IconChevronRight, IconLock, IconRobot } from '@tabler/icons-react'
+import { IconArrowLeft, IconChevronRight, IconRobot } from '@tabler/icons-react'
 
-import { DesignSwitch, IconActionButton, NomiSegmented } from '../../design'
+import { DesignSwitch, IconActionButton } from '../../design'
 import { getDesktopBridge } from '../../desktop/bridge'
 import type { McpInfo } from '../../desktop/mcpBridgeTypes'
 import { lazyWithChunkBoundary } from '../../ui/chunkBoundary'
 import type { AutomationPolicySettings } from '../../../electron/settings/automationPolicyContract'
-import { buildAutomationSettingsView, type SettingsHostKey } from './settingsAutomationView'
 
 const ConnectAssistantCard = lazyWithChunkBoundary('MCP', () =>
   import('../../ui/onboarding/ConnectAssistantCard').then((module) => ({ default: module.ConnectAssistantCard })),
@@ -38,7 +37,7 @@ function SettingRow({
   children,
 }: {
   title: string
-  hint: string
+  hint?: string
   section?: string
   children: React.ReactNode
 }): JSX.Element {
@@ -46,22 +45,10 @@ function SettingRow({
     <div data-settings-section={section} className="flex min-h-12 items-center justify-between gap-4 py-2">
       <div className="min-w-0">
         <div className="text-body-sm text-nomi-ink">{title}</div>
-        <div className="mt-0.5 text-caption leading-relaxed text-nomi-ink-40">{hint}</div>
+        {hint ? <div className="mt-0.5 text-caption leading-relaxed text-nomi-ink-40">{hint}</div> : null}
       </div>
       <div className="shrink-0">{children}</div>
     </div>
-  )
-}
-
-function LockedRule({ title, hint }: { title: string; hint: string }): JSX.Element {
-  const { t } = useTranslation()
-  return (
-    <SettingRow title={title} hint={hint}>
-      <span className="inline-flex items-center gap-1 rounded-full bg-nomi-ink-05 px-2 py-1 text-micro text-nomi-ink-60">
-        <IconLock size={12} stroke={1.7} aria-hidden="true" />
-        {t('settings.automation.always')}
-      </span>
-    </SettingRow>
   )
 }
 
@@ -71,14 +58,13 @@ export function AutomationPermissionsSection({ settings, onChange }: Props): JSX
   const mcpBackButtonRef = React.useRef<HTMLButtonElement>(null)
   const mcpEntryButtonRef = React.useRef<HTMLButtonElement>(null)
   const [page, setPage] = React.useState<'main' | 'mcp'>('main')
-  const [focusCursorHost, setFocusCursorHost] = React.useState(false)
   const [focusMcpEntry, setFocusMcpEntry] = React.useState(false)
   const [mcpSnapshot, setMcpSnapshot] = React.useState<McpConnectionSnapshot>(readMcpConnectionSnapshot)
-  const view = buildAutomationSettingsView(settings)
   const refreshMcpInfo = React.useCallback(() => {
     setMcpSnapshot(readMcpConnectionSnapshot())
   }, [])
-  const toggleHost = (host: SettingsHostKey, enabled: boolean): void => {
+  // 「可信发起方」的唯一写入口：住在每张客户端卡的第二个开关里（ConnectAssistantCard），不再是独立一栏。
+  const toggleHost = (host: string, enabled: boolean): void => {
     if (host === 'nomi') return
     const next = new Set(settings.trustedHosts)
     if (enabled) next.add(host)
@@ -100,17 +86,6 @@ export function AutomationPermissionsSection({ settings, onChange }: Props): JSX
     })
     return () => window.cancelAnimationFrame(frame)
   }, [focusMcpEntry, page])
-
-  React.useEffect(() => {
-    if (page !== 'main' || !focusCursorHost) return
-    const frame = window.requestAnimationFrame(() => {
-      const section = rootRef.current?.querySelector<HTMLElement>('[data-settings-section="cursor-host"]')
-      section?.scrollIntoView({ block: 'center' })
-      section?.querySelector<HTMLElement>('button, input, [tabindex]')?.focus({ preventScroll: true })
-      setFocusCursorHost(false)
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [focusCursorHost, page])
 
   if (page === 'mcp') {
     return (
@@ -149,14 +124,16 @@ export function AutomationPermissionsSection({ settings, onChange }: Props): JSX
             )}
           >
             <ConnectAssistantCard
-              info={mcpSnapshot.info}
+              info={{ ...mcpSnapshot.info, trustedHosts: settings.trustedHosts }}
               onChanged={refreshMcpInfo}
-              onOpenAutomationPermissions={() => {
-                setFocusCursorHost(true)
-                setPage('main')
-              }}
+              onTrustChange={toggleHost}
               detailMode
             />
+            {/* TODO(ui-deferred, R8): CustomMcpClientCard — 自定义 MCP 客户端接入 UI。
+                底层能力（profile 注册表 / HMAC 签名 / watchFile 回流）已就绪（#298-v2）。
+                需先出 HTML mockup 样张、用户拍板（R8），再实现 CustomMcpClientCard 组件并挂在此处。
+                参考：docs/fixes/2026-09-03-generic-mcp-client-profiles.root-cause.json §ui_todo。
+            */}
           </React.Suspense>
         ) : (
           <div role="status" className="rounded-nomi bg-nomi-ink-05 px-3 py-3 text-caption leading-relaxed text-nomi-ink-60">
@@ -171,41 +148,10 @@ export function AutomationPermissionsSection({ settings, onChange }: Props): JSX
     <div ref={rootRef} data-settings-section="automation">
       <h2 className="mb-5 text-title font-medium text-nomi-ink">{t('settings.automation.title')}</h2>
 
-      <section className="mb-6" aria-labelledby="settings-mode-title">
-        <h3 id="settings-mode-title" className="mb-2 text-caption font-medium text-nomi-ink-60">
-          {t('settings.automation.mode.title')}
-        </h3>
-        <NomiSegmented
-          value={view.mode}
-          ariaLabel={t('settings.automation.mode.title')}
-          onChange={(value) => onChange({ mode: value as AutomationPolicySettings['mode'] })}
-          options={[
-            { value: 'guided', label: t('settings.automation.mode.guided') },
-            { value: 'balanced', label: t('settings.automation.mode.balanced') },
-            { value: 'policy-auto', label: t('settings.automation.mode.policyAuto') },
-          ]}
-        />
-        <div className="mt-2 text-caption leading-relaxed text-nomi-ink-40">
-          {t(`settings.automation.mode.hint.${view.mode}`)}
-        </div>
-      </section>
-
-      <section className="mb-6 border-t border-nomi-line pt-4" aria-labelledby="settings-risk-title">
-        <h3 id="settings-risk-title" className="text-caption font-medium text-nomi-ink-60">
-          {t('settings.automation.risk.title')}
-        </h3>
-        <LockedRule title={t('settings.automation.risk.firstSpend')} hint={t('settings.automation.risk.firstSpendHint')} />
-        <SettingRow title={t('settings.automation.risk.continue')} hint={t('settings.automation.risk.continueHint')}>
-          <DesignSwitch
-            checked={settings.autoContinueWithinBudget}
-            onChange={(event) => onChange({ autoContinueWithinBudget: event.currentTarget.checked })}
-            aria-label={t('settings.automation.risk.continue')}
-          />
-        </SettingRow>
-        <LockedRule title={t('settings.automation.risk.irreversible')} hint={t('settings.automation.risk.irreversibleHint')} />
-      </section>
-
-      <section className="mb-6 border-t border-nomi-line pt-4" aria-labelledby="settings-mcp-title">
+      {/* 2026-09-14 删掉了「默认制作模式」三段与「支出与风险边界」整栏（审计 §⑥ 1/5）：
+          档位唯一 owner 是 Agent 面板输入框下方的「每步问 / 自动改 / 全自动」；花钱与不可逆
+          的确认是付费确认卡本身的规矩，不是这里能调的设置。 */}
+      <section className="mb-6" aria-labelledby="settings-mcp-title">
         <h3 id="settings-mcp-title" className="mb-2 text-caption font-medium text-nomi-ink-60">
           {t('settings.automation.mcp.title')}
         </h3>
@@ -234,30 +180,6 @@ export function AutomationPermissionsSection({ settings, onChange }: Props): JSX
         </div>
       </section>
 
-      <section className="mb-6 border-t border-nomi-line pt-4" aria-labelledby="settings-hosts-title">
-        <h3 id="settings-hosts-title" className="mb-1 text-caption font-medium text-nomi-ink-60">
-          {t('settings.automation.hosts.title')}
-        </h3>
-        {view.hosts.map((host) => (
-          <SettingRow
-            key={host.key}
-            section={host.key === 'cursor' ? 'cursor-host' : undefined}
-            title={t(`settings.automation.hosts.${host.key}.name`)}
-            hint={t(`settings.automation.hosts.${host.key}.hint`)}
-          >
-            {host.locked ? (
-              <span className="text-caption text-nomi-success">{t('settings.automation.hosts.local')}</span>
-            ) : (
-              <DesignSwitch
-                checked={host.enabled}
-                onChange={(event) => toggleHost(host.key, event.currentTarget.checked)}
-                aria-label={t(`settings.automation.hosts.${host.key}.name`)}
-              />
-            )}
-          </SettingRow>
-        ))}
-      </section>
-
       <section className="border-t border-nomi-line pt-4" aria-labelledby="settings-notifications-title">
         <h3 id="settings-notifications-title" className="text-caption font-medium text-nomi-ink-60">
           {t('settings.automation.notifications.title')}
@@ -267,13 +189,6 @@ export function AutomationPermissionsSection({ settings, onChange }: Props): JSX
             checked={settings.systemNotifications}
             onChange={(event) => onChange({ systemNotifications: event.currentTarget.checked })}
             aria-label={t('settings.automation.notifications.system')}
-          />
-        </SettingRow>
-        <SettingRow title={t('settings.automation.notifications.sound')} hint={t('settings.automation.notifications.soundHint')}>
-          <DesignSwitch
-            checked={settings.notificationSound}
-            onChange={(event) => onChange({ notificationSound: event.currentTarget.checked })}
-            aria-label={t('settings.automation.notifications.sound')}
           />
         </SettingRow>
       </section>

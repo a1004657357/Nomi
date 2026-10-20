@@ -1,4 +1,6 @@
 import { ipcMain } from "electron";
+import { upsertRendererCatalogVendorApiKey } from "../../catalog/rendererCatalogMutation";
+import { appFetch } from "../../appFetch";
 import type { AiSdkProviderKind } from "../../catalog/types";
 import { describeIllegalHeader, findIllegalHeader, findNonHeaderSafeChar, mergeHeadersCaseInsensitive } from "../../jsonUtils";
 import { guessModelKind, type GuessableModelKind } from "../../catalog/modelKindHeuristic";
@@ -9,11 +11,18 @@ import {
   readExtraHeaders,
   upstreamErrorText,
 } from "./modelListProbe";
-import { normalizeProviderKind } from "../../catalog/catalogStore";
+import { normalizeProviderKind, readCatalog } from "../../catalog/catalogStore";
+import { connectionAuthSpec } from "../../catalog/vendorAuthSpec";
+import type { VendorAuthSpec } from "../requestPipeline";
+import { credentialProbePlan } from "../../catalog/credentialProbePolicy";
+import { directKeyProbeModelId } from "../../catalog/directKeyCredential";
+import { quoteSpendLine } from "../../spendQuote";
 import { checkVendorHealth } from "./vendorHealth";
+import { createExplicitProxyDispatcher } from "../../systemProxy";
 
 import { assertTrustedSender } from "../../ipcSenderGuard";
 import { registerAntigravityIpc } from "../antigravityIpc";
+import type { Dispatcher } from "undici";
 // ---------------------------------------------------------------------------
 // Onboarding — 中转拉取式接入 IPC（手填地址+key → 拉模型 → 按 id 分类 → 保存）。
 // 「AI 读文档」子系统已下线（Issue #8：各家中转参数不一，读文档抠参数不可靠）。
@@ -28,6 +37,14 @@ type ProtocolProbe = { ok: boolean; status?: number; error?: string; mismatch?: 
  *  - openai-responses : {baseUrl}/responses，bearer，{input, max_output_tokens}（非 messages！）
  *  - openai-compatible: {baseUrl}/chat/completions，bearer，{messages, max_tokens}
  */
+/**
+ * 探测这条地址时该用哪份鉴权说法：全新接入 = 没有已保存的连接 → 按协议缺省；
+ * 重测一条已存在的连接 → 用它声明的那份（方案词只住在那里，向导上没有填它的格子）。
+ */
+function savedConnectionAuth(baseUrl: string, kind: AiSdkProviderKind): VendorAuthSpec {
+  return connectionAuthSpec({ baseUrl, authType: kind === "anthropic" ? "x-api-key" : "bearer" });
+}
+
 async function probeOneProtocol(
   kind: AiSdkProviderKind,
   rawBaseUrl: string,
@@ -35,9 +52,11 @@ async function probeOneProtocol(
   modelId: string,
   extraHeaders: Record<string, string>,
   signal: AbortSignal,
+  proxyUrl?: string,
+  auth?: VendorAuthSpec,
 ): Promise<ProtocolProbe> {
   let url: string;
-  const headers = mergeHeadersCaseInsensitive({ "content-type": "application/json" }, buildAuthHeaders(kind, apiKey, extraHeaders));
+  const headers = mergeHeadersCaseInsensitive({ "content-type": "application/json" }, buildAuthHeaders(kind, apiKey, extraHeaders, auth));
   let body: Record<string, unknown>;
   if (kind === "anthropic") {
     const root = (rawBaseUrl || "https://api.anthropic.com").replace(/\/v1$/i, "");
@@ -50,8 +69,10 @@ async function probeOneProtocol(
     url = `${rawBaseUrl}/chat/completions`;
     body = { model: modelId || "gpt-3.5-turbo", messages: [{ role: "user", content: "ping" }], max_tokens: 1 };
   }
+  let dispatcher: Dispatcher | undefined;
   try {
-    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
+    dispatcher = proxyUrl ? createExplicitProxyDispatcher(proxyUrl) : undefined;
+    const res = await appFetch(url, { method: "POST", headers, body: JSON.stringify(body), signal, ...(dispatcher ? { dispatcher } : {}) });
     if (res.ok) return { ok: true, status: res.status };
     const text = await res.text().catch(() => "");
     // 404/405/501/502/503 多为「路由/协议不对」→ 换下一个协议；401/403/400 多为鉴权/请求问题（不是协议错）。
@@ -59,11 +80,30 @@ async function probeOneProtocol(
     return { ok: false, status: res.status, error: upstreamErrorText(text, res.status), mismatch };
   } catch (error) {
     return { ok: false, error: await describeNetworkErrorLazy(error), mismatch: true };
+  } finally {
+    if (dispatcher) await dispatcher.close().catch(() => undefined);
   }
 }
-
 export function registerOnboardingIpc(): void {
   registerAntigravityIpc();
+  ipcMain.handle("nomi:model-catalog:vendor-api-key:upsert", async (event, vendorKey: string, payload: unknown) => {
+    assertTrustedSender(event);
+    try { return { ok: true, value: await upsertRendererCatalogVendorApiKey(vendorKey, payload) }; }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+  });
+
+  // 「这家验一次 key 要不要花钱」——接入页的按钮文案读它（T-MO-10，用户 2026-09-22 拍板）。
+  // 判据不在渲染层第二次成立：这里只是把主进程那份唯一策略（credentialProbePolicy）投影出去，
+  // 于是「界面说免费、实际扣了钱」在结构上讲不出来。金额走同一个报价 owner quoteSpendLine。
+  ipcMain.handle("nomi:model-catalog:credential-probe-plan", async (event, vendorKey: string) => {
+    assertTrustedSender(event);
+    const key = String(vendorKey || "").trim();
+    const plan = credentialProbePlan(key);
+    if (plan.cost === "free") return { cost: "free" as const, amount: null };
+    const modelKey = directKeyProbeModelId(readCatalog(), key);
+    return { cost: "paid" as const, amount: modelKey ? quoteSpendLine({ vendorKey: key, modelKey }).amount : null };
+  });
+
   // 「AI 读文档」接入路径已下线（Issue #8：改为中转拉取式接入图片/视频/文本）。
 
   // 供应商连接健康：模型面板每次打开时按家自查「现在能不能用」。凭证由主进程自取——
@@ -73,88 +113,6 @@ export function registerOnboardingIpc(): void {
     const vendorKey = String(payload?.vendorKey || "").trim();
     if (!vendorKey) return { vendorKey: "", state: "unsupported" as const, checkedAt: Date.now() };
     return checkVendorHealth(vendorKey, payload?.force === true);
-  });
-
-  // PRIMARY model-adding path — manual provider entry (BaseURL + key + models).
-  // Deterministic openai-compatible text commit; reuses the single catalog write
-  // path. No forced connectivity test (aligns with opencode; see test-connection).
-  ipcMain.handle("nomi:onboarding:manual-commit", async (event, payload: Record<string, unknown>) => {
-    assertTrustedSender(event);
-    try {
-      // R1：走唯一 normalizeProviderKind（接受 openai-responses），不再 2 值 clamp。
-      const providerKind = normalizeProviderKind(payload?.providerKind);
-      const { commitManualOpenAiCompatibleModels } = await import("../../catalog/catalogCommit");
-      const { smartDefaultImageEditProtocol } = await import("../../catalog/newapiTransport");
-      const { probeImageEditProtocol } = await import("../../catalog/imageEditProbe");
-      const headers: Record<string, string> = {};
-      if (payload?.headers && typeof payload.headers === "object") {
-        for (const [k, v] of Object.entries(payload.headers as Record<string, unknown>)) {
-          headers[String(k)] = String(v ?? "");
-        }
-      }
-      const baseUrl = String(payload?.baseUrl || "").trim();
-      const apiKey = String(payload?.apiKey || "").trim();
-      const rawModels = Array.isArray(payload?.models) ? (payload.models as Array<Record<string, unknown>>) : [];
-      // 改图协议判定（探测优先 → 智能默认 → chat 兜底）。只对**图片模型且智能默认落 chat（歧义）**的做免费
-      // 探测（gpt-image/dall-e/grok 已由智能默认判定、无需探）；用户/UI 显式给了 imageEditProtocol 则直接用。
-      // 探测发 multipart 缺 image 的请求读报错形状，**不触发付费生成**；带超时兜底，永不阻塞保存。
-      // 原生报文探测（每个 probePath 只探一次，结果在本次提交内复用）：模型命中内置档案且这家中转
-      // 真提供该档案的原生端点 → 用那份完整报文而不是通用最小模板。探测只发 GET、不建任务、不计费。
-      const { archetypeIdForModel } = await import("../../catalog/archetypeIdentity");
-      const { nativeWireProfileForArchetype } = await import("../../catalog/nativeWireProfiles");
-      const { probeNativeEndpoint } = await import("../../catalog/nativeEndpointProbe");
-      const nativeProbeCache = new Map<string, Promise<boolean>>();
-      const nativeArchetypeIdFor = async (id: string): Promise<string | undefined> => {
-        const archetypeId = archetypeIdForModel(id);
-        const profile = nativeWireProfileForArchetype(archetypeId);
-        if (!profile) return undefined;
-        let pending = nativeProbeCache.get(profile.probePath);
-        if (!pending) {
-          pending = probeNativeEndpoint(baseUrl, profile.probePath, apiKey).then((r) => r.exists).catch(() => false);
-          nativeProbeCache.set(profile.probePath, pending);
-        }
-        return (await pending) ? profile.archetypeId : undefined;
-      };
-      const models = await Promise.all(rawModels.map(async (m) => {
-        const id = String(m?.id || "");
-        const k = m?.kind;
-        const kind = (k === "image" || k === "video" || k === "text" || k === "audio" || k === "model3d" ? k : undefined) as GuessableModelKind | undefined;
-        const displayName = m?.displayName ? String(m.displayName) : undefined;
-        const explicit = typeof m?.imageEditProtocol === "string" ? (m.imageEditProtocol as "chat-completions-image-url" | "xai-json-edits" | "openai-multipart-edits") : undefined;
-        const effectiveKind = kind || (id ? guessModelKind(id) : undefined);
-        if (effectiveKind === "video" && id) {
-          const nativeWireArchetypeId = await nativeArchetypeIdFor(id);
-          return { id, displayName, kind, ...(nativeWireArchetypeId ? { nativeWireArchetypeId } : {}) };
-        }
-        if (effectiveKind !== "image" || !id) return { id, displayName, kind };
-        // 图像同样探原生报文。命中就直接用，**并跳过改图协议探测**——原生自带 image_edit op，而
-        // chat/completions 那条路对 Seedream 这类非聊天模型本来就是错的（改图不按原图甚至直接失败）。
-        const nativeImageArchetypeId = await nativeArchetypeIdFor(id);
-        if (nativeImageArchetypeId) return { id, displayName, kind, nativeWireArchetypeId: nativeImageArchetypeId };
-        if (explicit) return { id, displayName, kind, imageEditProtocol: explicit };
-        if (smartDefaultImageEditProtocol(id) !== "chat-completions-image-url") return { id, displayName, kind };
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        try {
-          const probed = await probeImageEditProtocol({ baseUrl, apiKey, modelKey: id, headers, signal: controller.signal });
-          return probed ? { id, displayName, kind, imageEditProtocol: probed } : { id, displayName, kind };
-        } finally {
-          clearTimeout(timer);
-        }
-      }));
-      const result = commitManualOpenAiCompatibleModels({
-        vendorName: String(payload?.vendorName || ""),
-        baseUrl,
-        apiKey,
-        providerKind,
-        headers,
-        models,
-      });
-      return { ok: true, vendorKey: result.vendorKey, committed: result.committed };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { ok: false, error: message };
-    }
   });
 
   // 类型启发式（Issue #8）：从 /v1/models 拉到/手填的模型 id 没带类型，主进程按关键词猜
@@ -187,6 +145,7 @@ export function registerOnboardingIpc(): void {
     // User-supplied relay/proxy headers replay on every probe so a gateway that gates
     // on them doesn't report a false failure.
     const extraHeaders = readExtraHeaders(payload?.headers);
+    const proxyUrl = typeof payload?.proxyUrl === "string" ? payload.proxyUrl : undefined;
     // 发送前请求头守卫（与 vendorHttp.requestJson 同一判据/措辞）：这条 handler 自带裸 fetch，
     // 不经发送闸——脏 key（含中文/全角）会让 fetch 同步抛原始 ByteString，被 describeNetworkError
     // 误判网络。先识别、说人话、根本不发 fetch（治本，避免「连不上：Cannot convert…」）。
@@ -198,11 +157,13 @@ export function registerOnboardingIpc(): void {
     if (reachabilityOnly) {
       if (!/^https?:\/\//i.test(rawBaseUrl)) return { ok: false, failureKind: "invalid_response", error: "接入地址需以 http:// 或 https:// 开头" };
       const kind = forcedKind ?? "openai-compatible";
-      const headers = buildAuthHeaders(kind, apiKey, extraHeaders);
+      // 已保存的那条连接可能声明了方案词（Higgsfield 的 `Key id:secret`）。不带它探，
+      // 得到的 401 说的是「我们头拼错了」，用户读到的却是「你的 key 不对」。
+      const headers = buildAuthHeaders(kind, apiKey, extraHeaders, savedConnectionAuth(rawBaseUrl, kind));
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12_000);
       try {
-        const listed = await fetchModelList(kind, rawBaseUrl, headers, controller.signal);
+        const listed = await fetchModelList(kind, rawBaseUrl, headers, controller.signal, { proxyUrl });
         return listed.ok
           ? { ok: true, reachabilityOnly: true }
           : { ok: false, status: listed.status, failureKind: listed.failureKind, error: listed.error };
@@ -238,7 +199,7 @@ export function registerOnboardingIpc(): void {
       for (const kind of candidates) {
         // openai-* 没地址就跳过（避免 fetch 无效 URL）。
         if (kind !== "anthropic" && !/^https?:\/\//i.test(rawBaseUrl)) continue;
-        const r = await probeOneProtocol(kind, rawBaseUrl, apiKey, modelId, extraHeaders, controller.signal);
+        const r = await probeOneProtocol(kind, rawBaseUrl, apiKey, modelId, extraHeaders, controller.signal, proxyUrl, savedConnectionAuth(rawBaseUrl, kind));
         if (r.ok) return { ok: true, status: r.status, detectedKind: kind };
         // 留住「最该报给用户」的错：非 mismatch（鉴权/请求错，可操作）优先于 mismatch（换协议）。
         if (!best || (best.mismatch && !r.mismatch)) best = { ...r, kind };
@@ -263,14 +224,15 @@ export function registerOnboardingIpc(): void {
     const apiKey = String(payload?.apiKey || "").trim();
     if (!/^https?:\/\//i.test(baseUrl)) return { ok: false, failureKind: "invalid_response", error: "接入地址需以 http:// 或 https:// 开头" };
     const extraHeaders = readExtraHeaders(payload?.headers);
-    const headers = buildAuthHeaders(providerKind, apiKey, extraHeaders);
+    const proxyUrl = typeof payload?.proxyUrl === "string" ? payload.proxyUrl : undefined;
+    const headers = buildAuthHeaders(providerKind, apiKey, extraHeaders, savedConnectionAuth(baseUrl, providerKind));
     // 发送前请求头守卫（同 test-connection）：自带裸 fetch 绕过发送闸，脏 key 先拦+说人话，不发 fetch。
     const headerProblem = findIllegalHeader(headers);
     if (headerProblem) return { ok: false, failureKind: "auth", error: describeIllegalHeader(headerProblem).message };
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
-      return await fetchModelList(providerKind, baseUrl, headers, controller.signal);
+      return await fetchModelList(providerKind, baseUrl, headers, controller.signal, { proxyUrl });
     } finally {
       clearTimeout(timeout);
     }

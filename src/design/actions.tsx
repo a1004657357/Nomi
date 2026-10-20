@@ -1,5 +1,5 @@
 import { ActionIcon, Button, type ActionIconProps, type ButtonProps } from '@mantine/core'
-import { forwardRef, type ButtonHTMLAttributes, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import { type JSX, forwardRef, type ButtonHTMLAttributes, type ComponentPropsWithoutRef, type ReactNode } from 'react'
 import { cn } from '../utils/cn'
 import { NomiLoadingMark } from './identity'
 
@@ -16,7 +16,6 @@ export const IconActionButton = forwardRef<HTMLButtonElement, IconActionButtonPr
   ...props
 }, ref): JSX.Element {
   const rootClassName = cn(
-    'tc-icon-action-button',
     'inline-flex items-center justify-center',
     'size-8 rounded-workbench-control',
     'text-workbench-muted',
@@ -43,7 +42,34 @@ export const IconActionButton = forwardRef<HTMLButtonElement, IconActionButtonPr
   )
 })
 
-export type DesignButtonProps = ButtonProps & ComponentPropsWithoutRef<'button'>
+// DesignButton 的尺寸真相源。原先包装层把 `h-8 px-3 text-body-sm` 写死，而生成的 CSS 里
+// Tailwind 整段排在 `@mantine/core/styles.css` 之后（scripts/build-tailwind.mjs:42-51），
+// 同特异度下后来者胜 —— Mantine 按 `size` 生成的 `--button-height/-padding-x/-fz` 全被盖掉，
+// `size` prop 是死的。改成本地映射后 `size` 真正生效；`md`(h-9 px-3) 就是各处
+// `className="h-9"` 绕行写法的正主。默认档 `sm` 与历史渲染逐像素一致。
+const DESIGN_BUTTON_SIZE = {
+  xs: 'h-7 px-3 text-caption', // 与 WorkbenchButton 的紧凑档同一根尺寸轴
+  sm: 'h-8 px-3 text-body-sm',
+  md: 'h-9 px-3 text-body-sm',
+} as const
+
+/**
+ * Mantine `Button` 的合法 variant 八值。收窄它的理由是实测：写一个**不存在**的值
+ * （`BrowserAssetPopoverView` 曾写 `variant="primary"`——那是 `WorkbenchButton` 的词表，
+ * 两个组件容易混）不会报错、也不会裸奔，Mantine 对未知 variant 不设 `--button-bg`，
+ * CSS 回落到主题 `primaryColor`；而本仓 `primaryColor: 'dark'`（nomiTheme.ts:122）
+ * 恰好与 `filled` 同一块深底，于是**碰巧渲染正确**。
+ * 下一个人写 `variant="ghost"` 就不一定有这个运气——所以让编译器拦，别赌回落。
+ */
+type DesignButtonVariant = 'filled' | 'light' | 'outline' | 'subtle' | 'default' | 'gradient' | 'transparent' | 'white'
+
+export type DesignButtonProps =
+  Omit<ButtonProps, 'size' | 'variant'>
+  & Omit<ComponentPropsWithoutRef<'button'>, 'size'>
+  & {
+    size?: keyof typeof DESIGN_BUTTON_SIZE
+    variant?: DesignButtonVariant
+  }
 
 export const DesignButton = forwardRef<HTMLButtonElement, DesignButtonProps>(function DesignButton({
   children,
@@ -52,14 +78,14 @@ export const DesignButton = forwardRef<HTMLButtonElement, DesignButtonProps>(fun
   leftSection,
   loading = false,
   radius = 'sm',
+  size = 'sm',
   variant = 'light',
   ...props
 }, ref): JSX.Element {
   const rootClassName = cn(
-    'tc-design-button',
     'inline-flex items-center justify-center gap-1.5',
-    'h-8 px-3 rounded-nomi-sm',
-    'text-body-sm font-medium',
+    'rounded-nomi-sm font-medium',
+    DESIGN_BUTTON_SIZE[size],
     'transition-[background,color,border-color] duration-150 ease-out',
     'disabled:opacity-50 disabled:cursor-not-allowed',
     className,
@@ -86,19 +112,27 @@ export const DesignButton = forwardRef<HTMLButtonElement, DesignButtonProps>(fun
 export type WorkbenchIconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   icon: ReactNode
   label: string
+  /** md = 32px (default), sm = 28px for compact canvas/tool surfaces. */
+  size?: 'sm' | 'md'
 }
+
+const WORKBENCH_ICON_BUTTON_SIZE = {
+  md: 'size-8',
+  sm: 'size-7',
+} as const
 
 export const WorkbenchIconButton = forwardRef<HTMLButtonElement, WorkbenchIconButtonProps>(function WorkbenchIconButton({
   icon,
   label,
+  size = 'md',
   className,
   type = 'button',
   ...props
 }, ref): JSX.Element {
   const rootClassName = cn(
-    'tc-workbench-icon-button',
     'inline-grid place-items-center',
-    'size-8 rounded-workbench-control border-0',
+    WORKBENCH_ICON_BUTTON_SIZE[size],
+    'rounded-workbench-control border-0',
     'bg-transparent text-workbench-muted',
     'cursor-pointer',
     'transition-[background,color] duration-150 ease-out',
@@ -151,6 +185,9 @@ export const ActionCard = forwardRef<HTMLButtonElement, ActionCardProps>(functio
       type={type}
       data-variant={variant}
       className={cn(
+        // 唯一还活着的 `tc-` 钩子：它不是样式钩子，是走查锚点——
+        // tests/ux/design-fidelity.e2e.mjs:57 与 tests/ux/cold-start.e2e.mjs:63 靠它定位动作卡。
+        // 同族另外 20 个 `tc-*` 已于 2026-09-07 删除（全仓零 CSS 定义、零选择器）。
         'tc-action-card',
         'flex items-center gap-3 w-[280px] h-[88px] px-5 text-left cursor-pointer font-inherit',
         'rounded-nomi border shadow-nomi-sm',
@@ -175,7 +212,10 @@ export const ActionCard = forwardRef<HTMLButtonElement, ActionCardProps>(functio
         {icon}
       </span>
       <span className="flex-1 min-w-0">
-        <span className="block text-body font-semibold truncate">{title}</span>
+        {/* 标题允许 2 行（line-clamp-2），不按最长中文标题定死单行截断——EN 标题（如
+            "See how Nomi creates a video"）比中文长得多，单行 truncate 会截成「…a v…」。
+            2 行 clamp 各 locale 通吃：短标题仍单行，长标题换行不外溢，卡片高度 88px 兜得住。 */}
+        <span className="block text-body font-semibold line-clamp-2 leading-snug">{title}</span>
         <span
           className={cn(
             'block mt-0.5 text-caption truncate',
@@ -235,7 +275,6 @@ export const WorkbenchButton = forwardRef<HTMLButtonElement, WorkbenchButtonProp
   ...props
 }, ref): JSX.Element {
   const rootClassName = cn(
-    'tc-workbench-button',
     // whitespace-nowrap:按钮文字永不逐字折行(根因治本)——窄容器里被挤压时宁可溢出/由
     // 调用处给 shrink-0,也绝不把「整笔撤销」这种 4 字标签折成竖排(2026-06-23 用户截图根因)。
     'inline-flex items-center justify-center gap-1.5 rounded-workbench-control font-medium whitespace-nowrap',

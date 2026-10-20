@@ -9,7 +9,7 @@
 //   在 data.result.videos[0].url[0]，url 是嵌套数组）→ 共用 apimartVendor 的 APIMART_VIDEO_QUERY_OP。
 //
 // 字段名分歧（这正是每条 mapping 各自翻译的原因）：
-//   比例：aspect_ratio(sora/veo/kling) · size(seedance/wan) · 无(hailuo)
+//   比例：aspect_ratio(veo/kling) · size(seedance/wan) · 无(hailuo)
 //   清晰度：resolution(多数) · mode(kling)
 //   图生视频：image_urls 数组(多数) · first_frame_image 字符串(hailuo)
 //   音频：audio(kling) · generate_audio(seedance)
@@ -18,6 +18,8 @@ import type { HttpOperation, ProfileKind } from "./types";
 import type { ParamMap } from "./paramTranslate";
 import { APIMART_CREATE_TASK_ID_PATH, APIMART_STATUS_MAPPING, APIMART_VIDEO_QUERY_OP } from "./apimartVendor";
 import "./apimartMinimaxH3";
+import "./apimartHailuo23";
+import "./apimartModelIds";
 
 const CREATE_HEADERS = { Authorization: "Bearer {{user_api_key}}", "Content-Type": "application/json" };
 
@@ -116,7 +118,7 @@ function videoModel(p: {
   return { modelKey: p.modelKey, labelZh: p.labelZh, archetypeId: p.archetypeId, mappings };
 }
 
-/** 11 个 apimart 视频模型（单源）。 */
+/** apimart 视频模型（单源）。 */
 export const APIMART_VIDEO_MODELS: ApimartVideoModel[] = [
   // Vidu Q3（2026-07-29）：参考生视频，1-7 张参考图必填、无纯文生 → 只种 i2v mapping。
   // 变体（标准 viduq3 / Mix viduq3-mix）→ body model 取 {{request.params.model}}。
@@ -142,16 +144,12 @@ export const APIMART_VIDEO_MODELS: ApimartVideoModel[] = [
   // Grok Imagine 1.5：文生/图生共用标准视频端点。图生最多 7 图，比例自动跟随参考图，故不发 size。
   videoModel({
     modelKey: "grok-imagine-1.5-video-apimart", labelZh: "Grok Imagine 1.5", archetypeId: "grok-imagine-1.5-video",
+    requestTransform: "apimart-canonical-model-id",
     t2vBody: { size: SIZE, quality: QUALITY, duration: DURATION },
     i2vBody: { quality: QUALITY, duration: DURATION, image_urls: IMAGE_URLS },
   }),
-  // Sora 2：变体（标准 sora-2 / Pro sora-2-pro）→ body model 取 {{request.params.model}}。duration 离散枚举。
-  videoModel({
-    modelKey: "sora-2", labelZh: "Sora 2", archetypeId: "sora-2", modelRef: VARIANT_MODEL_REF,
-    t2vBody: { aspect_ratio: ASPECT, resolution: RESOLUTION, duration: DURATION },
-    i2vBody: { resolution: RESOLUTION, duration: DURATION, image_urls: IMAGE_URLS }, // i2v 时 aspect 由图自动决定
-    i2vDrops: ["aspect_ratio"],
-  }),
+  // Sora 2 已退役（2026-09-28，OpenAI 于 2026-09-24 关停 Sora 2 与 Videos API）：这里删掉的同时，
+  // seedBuiltins 的退役清单把老装机里已落盘的那一行摘掉——两处必须同删，否则启动时插回来来回抖。
   // Veo 3.1：变体（fast/quality/lite）→ {{request.params.model}}。i2v 含 generation_type（reference 参考图 /
   // frame 首尾帧，由 mode.fixedParams 注入）；duration 固定 8 不发（走 API 默认）。
   videoModel({
@@ -172,7 +170,7 @@ export const APIMART_VIDEO_MODELS: ApimartVideoModel[] = [
   // {{request.params.model}}（= 档案当前变体的 modelKey，如 doubao-seedance-2.0-fast），同 happyhorse 通道。
   // body 形状一致（SEEDANCE_*_BODY 单源 P1）：i2vBody 一条覆盖 图生/全能参考/首尾帧 三模式——
   // image_urls + video_urls/audio_urls + image_with_roles(与 image_urls 互斥) + seed；空键由模板自动丢（M2）。
-  videoModel({ modelKey: "doubao-seedance-2.0", labelZh: "Seedance 2.0", archetypeId: "seedance-2-apimart", modelRef: VARIANT_MODEL_REF, t2vBody: SEEDANCE_T2V_BODY, i2vBody: SEEDANCE_I2V_BODY }),
+  videoModel({ modelKey: "doubao-seedance-2.0", labelZh: "Seedance 2.0", archetypeId: "seedance-2-apimart", modelRef: VARIANT_MODEL_REF, requestTransform: "apimart-canonical-model-id", t2vBody: SEEDANCE_T2V_BODY, i2vBody: SEEDANCE_I2V_BODY }),
   // Seedance 2.5（2026-08-12 接入，逐项对账 docs.apimart.ai/cn/api-reference/videos/doubao-seedance-2-5）。
   // 与 2.0 的通道差异：无变体（官方 model 固定 doubao-seedance-2.5，故用默认 {{model.modelKey}}）、
   // 多一个 return_last_frame（2.5 独有，返回尾帧图）。参考通道键名与 2.0 相同（image_urls /
@@ -180,6 +178,7 @@ export const APIMART_VIDEO_MODELS: ApimartVideoModel[] = [
   // size 在首尾帧模式由档案 fixedParams 钉成 adaptive（官方硬约束），不在这里 drop —— 值照发即可。
   videoModel({
     modelKey: "doubao-seedance-2.5", labelZh: "Seedance 2.5", archetypeId: "seedance-2.5-apimart",
+    requestTransform: "apimart-canonical-model-id",
     t2vBody: { ...SEEDANCE_T2V_BODY, return_last_frame: RETURN_LAST_FRAME },
     i2vBody: { ...SEEDANCE_I2V_BODY, return_last_frame: RETURN_LAST_FRAME },
   }),
@@ -212,6 +211,7 @@ export const APIMART_VIDEO_MODELS: ApimartVideoModel[] = [
   }),
   // Hailuo 2.3：无 aspect_ratio；图生视频用 first_frame_image（字符串，非数组）。变体（标准 / Fast）→ {{request.params.model}}。
   videoModel({
+    requestTransform: "apimart-hailuo-23",
     modelKey: "MiniMax-Hailuo-2.3", labelZh: "Hailuo 2.3", archetypeId: "hailuo-2.3", modelRef: VARIANT_MODEL_REF,
     t2vBody: { resolution: RESOLUTION, duration: DURATION },
     i2vBody: { resolution: RESOLUTION, duration: DURATION, first_frame_image: FIRST_FRAME_IMAGE },
@@ -220,6 +220,7 @@ export const APIMART_VIDEO_MODELS: ApimartVideoModel[] = [
   // generation_type:reference（mode.fixedParams 注入，否则 3 图被拒）。
   videoModel({
     modelKey: "Omni-Flash-Ext", labelZh: "Omni-Flash-Ext", archetypeId: "omni-flash-ext",
+    requestTransform: "apimart-omni-flash-ext-contract",
     t2vBody: { size: SIZE, resolution: RESOLUTION, duration: DURATION },
     i2vBody: { size: SIZE, resolution: RESOLUTION, duration: DURATION, image_urls: IMAGE_URLS, generation_type: GENERATION_TYPE },
   }),

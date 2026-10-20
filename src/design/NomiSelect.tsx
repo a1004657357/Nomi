@@ -1,12 +1,23 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Combobox, useCombobox } from '@mantine/core'
-import { IconCheck, IconChevronDown } from '@tabler/icons-react'
+import { IconCheck, IconChevronDown, IconEyeOff } from '@tabler/icons-react'
 import { cn } from '../utils/cn'
 import { NOMI_OVERLAY_Z_INDEX } from './overlayLayers'
+import { NomiIdentityIcon, type NomiIdentityIconSource } from './NomiIdentityIcon'
 
 /**
- * NomiSelect —— 全仓统一的「选择面板」通用组件（规则 1/5：一个来源，别散落原生 <select>）。
+ * NomiSelect —— 设计系统的「选择面板」组件（27 个文件在用，是本仓选择器的主力）。
+ *
+ * ⚠️ **不是「全仓统一」**（这句话在 2026-09-07 之前写在这里，而全仓仍有 6 处原生 `<select>`）：
+ *   · `generationCanvas/nodes/scene3d/scene3dMoveHub.tsx:166`、
+ *     `generationCanvas/components/SelectionPromptSaveController.tsx:215`、
+ *     `creation/storyboard/StoryboardSelectionToolbar.tsx:76`、
+ *     `creation/storyboard/shotRow/StoryboardFrameActions.tsx:126` —— 这 4 处是真该迁的
+ *     （原本是 5 处：分镜多选条的「统一模型」2026-09-12 已并进 `BulkModelPicker`）；
+ *   · `generationCanvas/components/CanvasToolbar.tsx:392` 是**有意的例外**：一个 `opacity-0`
+ *     的原生 select 铺在图标上当菜单触发器，形态是「图标钮弹菜单」不是「选择面板」。
+ *     它真正该等的是菜单原语（D 档刀 1），不是本组件。
  *
  * 为什么不用原生 <select>：原生下拉点开是 OS 框，字体/圆角/阴影/选中态全不受控、长列表大块留白，
  * 跟设计语言割裂。这里基于 Mantine `Combobox`（官方原语，R5：定位/翻向/键盘/点外关闭都由它处理），
@@ -21,18 +32,31 @@ export type NomiSelectTone = 'accent' | 'muted' | 'danger'
 export type NomiSelectOption = {
   value: string
   label: string
+  /** Local model-brand or provider-route mark. Never fetches a remote favicon. */
+  icon?: NomiIdentityIconSource
   /** 选项右侧附加文字（如价格、模板/通用），在对勾左边。 */
   trailing?: string
   trailingTone?: NomiSelectTone
+  /**
+   * 行尾供应商 chip：同名模型折成一行后，「这一行能走哪几家」就靠它表达（第一个=当前生效那家）。
+   *
+   * 与 `trailing` **互斥**：两者都在的话，同一件事（走哪家）会有两个说法，而且窄下拉里
+   * 它们会一起把模型名挤没——2026-09-06 真机实测，三行只剩「[图标] 3 家 (APIMart)(Kie)(RunningHub)」，
+   * 模型名一个字都不剩。调用方要 chips 就别给 trailing。
+   */
+  chips?: Array<{ value: string; label: string; active?: boolean }>
   disabled?: boolean
   /** 整行减淡（仍可点）——「能选但眼下不建议」，如近期连败的模型沉底后。 */
   dimmed?: boolean
+  more?: boolean
 }
 
 export type NomiSelectProps = {
   value: string
   options: NomiSelectOption[]
   onChange: (value: string) => void
+  /** Optional click handler for row-end chips; chip clicks do not select the row itself. */
+  onChipChange?: (optionValue: string, chipValue: string) => void
   ariaLabel: string
   /** pill 内左侧小灰标签：比例 / 模式 / 画幅… */
   leadingLabel?: string
@@ -44,6 +68,15 @@ export type NomiSelectProps = {
   size?: 'sm' | 'xs'
   /** 长值（模型名）截断上限 px。 */
   triggerMaxWidth?: number
+  /**
+   * 触发 pill 的**宽度下限**（CSS 长度，如 `calc(8ch + 56px)`）。
+   *
+   * 为什么需要它：`flex-shrink` 只说了「谁先让位」，没说「让到哪儿为止」。给了优先级不给下限，
+   * 最先让位的那枚就会被一路压到 0——2026-09-17 分镜底栏的模型胶囊被压成一颗图标、型号名一个字
+   * 不剩，就是这条缺口（§1.5.4「模型是一等决策，不许埋」）。传了它，值区照旧 `truncate`，
+   * 但整枚不会再缩到没字。
+   */
+  triggerMinWidth?: string | number
   disabled?: boolean
   title?: string
   className?: string
@@ -51,9 +84,45 @@ export type NomiSelectProps = {
   searchable?: boolean
   /** Nested floating panels own their portal so outside-click handling and scrolling stay correct. */
   portalTarget?: React.RefObject<HTMLElement | null>
+  /**
+   * 下拉朝哪边长。默认 `start`（左对齐触发器，向右长）。
+   *
+   * `end` 用在**窄列里靠右的触发器**上（2026-09-17，W-05）：下拉宽度是内容驱动的
+   * （`width="max-content"`，最宽可到 280/380px），而分镜行所在的列在 1280 视口下只有 ~570px。
+   * 左对齐 + 向右长 = 浮层画到右侧 Agent 面板上，盖住那里的卡。floating-ui 的 `shift`
+   * 钳的是**视口**边界，不是这一列的边界，所以它不会帮忙。右对齐让它朝列内长。
+   */
+  dropdownAlign?: 'start' | 'end'
+  /**
+   * 列表底部的一行动作——**不是一个选项**，点它不选中任何值。
+   *
+   * 给「在这个列表本身上做点什么」用（第一个用例：模型框底部的「隐藏模型」）。与「更多」那行
+   * 同一处摆放、同一种形态，所以它不会长成下拉里的第二种心智。图标由调用方给：
+   * 这是设计系统组件，不该知道「隐藏」该用哪个图标。
+   */
+  footerAction?: { label: string; icon?: React.ReactNode; onSelect: () => void }
+  /**
+   * 列表底部那一行「有些选项被你藏起来了」的脚注（模型框：「已隐藏 N 个 · 在设置里找回」）。
+   *
+   * 为什么它是这个组件的一个具名槽、而不是一个通用的 footer：一个通用插槽会立刻被拿去塞
+   * 别的东西（提示、广告、第二个动作），而这里要表达的只有一件事——**这个列表不是全部**。
+   * 空串/缺省 = 什么都不渲染：没藏过东西的下拉不该无缘无故多一条脚注。
+   *
+   * 它与 footerAction 是两件事，不是两份实现：一个可点（做点什么），一个只陈述（这不是全部）。
+   */
+  hiddenNote?: string
 }
 
 const SURFACE_SHADOW = 'var(--workbench-shadow-pop)'
+/**
+ * 行尾最多摆几个 chip。超出的收成「+N」——不是为了好看，是为了**模型名优先**：
+ * chip 是 `shrink-0`，摆多少个就从名字那里扣多少宽，第 4 个之后扣掉的比它带来的信息多。
+ * 真要看全哪几家，选中该模型后第二段「供应商」下拉里一家不少。
+ */
+const MAX_ROW_CHIPS = 3
+/** 有 chip 的行更宽：默认 280 是给「名字 + 一个附注」算的，塞下 3 个 chip 后名字会被挤没。 */
+const DROPDOWN_MAX_WIDTH = 280
+const DROPDOWN_MAX_WIDTH_WITH_CHIPS = 380
 function toneClass(tone: NomiSelectTone | undefined, kind: 'badge' | 'trailing'): string {
   if (tone === 'accent') return 'bg-nomi-accent-soft text-nomi-accent'
   if (tone === 'danger') return 'text-workbench-danger'
@@ -65,24 +134,31 @@ export function NomiSelect({
   value,
   options,
   onChange,
+  onChipChange,
   ariaLabel,
   leadingLabel,
   placeholder,
   triggerBadge,
   size = 'sm',
   triggerMaxWidth,
+  triggerMinWidth,
   disabled,
   title,
   className,
   searchable = false,
   portalTarget,
+  dropdownAlign = 'start',
+  footerAction,
+  hiddenNote,
 }: NomiSelectProps): JSX.Element {
   const { t } = useTranslation()
+  const [more, setMore] = React.useState(false)
   const [search, setSearch] = React.useState('')
   const combobox = useCombobox({
     onDropdownClose: () => {
       combobox.resetSelectedOption()
       setSearch('')
+      setMore(false)
     },
   })
   const wasOpen = React.useRef(false)
@@ -98,7 +174,8 @@ export function NomiSelect({
   const triggerText = selected?.label ?? (value || placeholder || t('common.select'))
   const heightClass = size === 'xs' ? 'h-6' : 'h-7'
   const query = search.trim().toLocaleLowerCase()
-  const visibleOptions = searchable && query ? options.filter((option) => option.label.toLocaleLowerCase().includes(query)) : options
+  const visibleOptions = searchable && query ? options.filter((option) => option.label.toLocaleLowerCase().includes(query)) : options.filter((option) => more || !option.more || option.value === value)
+  const hasChips = options.some((option) => (option.chips?.length ?? 0) > 0)
 
   return (
     <Combobox
@@ -110,7 +187,7 @@ export function NomiSelect({
       // 选项标签（auto/1:1/16:9…）被 truncate 成空 → 看着「点开是空白」。改 max-content 后
       // 下拉跟着最长选项自然撑开；超长模型名由 maxWidth + 选项内 truncate 兜底，不会撑成怪物。
       width="max-content"
-      position="bottom-start"
+      position={dropdownAlign === 'end' ? 'bottom-end' : 'bottom-start'}
       offset={6}
       zIndex={NOMI_OVERLAY_Z_INDEX.popover}
       middlewares={{ flip: true, shift: true }}
@@ -121,7 +198,7 @@ export function NomiSelect({
       styles={{
         dropdown: {
           padding: 4,
-          maxWidth: 280,
+          maxWidth: hasChips ? DROPDOWN_MAX_WIDTH_WITH_CHIPS : DROPDOWN_MAX_WIDTH,
           border: '1px solid var(--nomi-line)',
           borderRadius: 'var(--nomi-radius-lg)',
           background: 'var(--nomi-paper)',
@@ -152,10 +229,12 @@ export function NomiSelect({
             heightClass,
             className,
           )}
+          style={triggerMinWidth === undefined ? undefined : { minWidth: triggerMinWidth }}
         >
           {leadingLabel ? (
             <span className="shrink-0 text-micro leading-none text-nomi-ink-40">{leadingLabel}</span>
           ) : null}
+          {selected?.icon ? <NomiIdentityIcon icon={selected.icon} /> : null}
           <span
             className="min-w-0 truncate text-caption text-nomi-ink-80"
             style={triggerMaxWidth ? { maxWidth: triggerMaxWidth } : undefined}
@@ -171,7 +250,7 @@ export function NomiSelect({
         </button>
       </Combobox.Target>
 
-      <Combobox.Dropdown data-nomi-select-dropdown>
+      <Combobox.Dropdown data-nomi-select-dropdown className="nokey">
         {searchable ? (
           <Combobox.Search
             // Focus after the visible search input mounts, including nested-portal reparenting.
@@ -187,7 +266,11 @@ export function NomiSelect({
             classNames={{ input: 'text-caption bg-nomi-paper text-nomi-ink border-nomi-line' }}
           />
         ) : null}
-        <Combobox.Options className="max-h-[240px] overflow-auto">
+        {/* nowheel/nodrag：React Flow 的默认 no-wheel/no-drag class 名（v12 未改名就是它俩）。
+            通用组件不知道自己会不会被挂进画布节点内部（如生成画布的行内参数面板把
+            portalTarget 指回节点自身 DOM，而不是 document.body）——挂了就必须挡住滚轮被画布
+            当缩放吃掉；没挂进画布时这两个 class 谁也不认，纯粹无操作。 */}
+        <Combobox.Options className="nowheel nodrag max-h-[240px] overflow-auto">
           {visibleOptions.length === 0 ? <Combobox.Empty>{t('common.noMatchingOptions')}</Combobox.Empty> : null}
           {visibleOptions.map((option) => {
             const isSel = option.value === value
@@ -196,7 +279,16 @@ export function NomiSelect({
                 {/* dimmed：整行减淡但仍可点（「能选、眼下不建议」）。不用 disabled——那是"点不了"，
                     两种语义别混（近期连败的模型仍允许手动选，是拍板过的原则）。 */}
                 <span className={cn('flex min-w-0 items-center gap-2 w-full', option.dimmed ? 'opacity-45' : '')}>
-                  <span className={cn('min-w-0 text-caption', searchable ? 'whitespace-normal break-all py-1' : 'truncate', isSel ? 'text-nomi-ink font-semibold' : 'text-nomi-ink-80')}>
+                  {option.icon ? <NomiIdentityIcon icon={option.icon} size="md" /> : null}
+                  {/* `flex-1` 而不是让附注 `ml-auto` 撑开：名字是这一行的主语，剩余宽度先归它，
+                      附注/chip/对勾都是 `shrink-0` 的附属物。没有 flex-1 时名字会被 chip 一路压到 0
+                      宽（2026-09-06 真机：三行只剩「3 家 + 三个 chip」，模型名一个字不剩）。 */}
+                  {/* data 锚点给走查用：「模型名被行尾 chip 挤到 0 宽」这条断言必须量到**这一个** span，
+                      按 class 形状猜会量到图标或对勾（都是十几 px），于是永远红——一条自己骗自己的断言。 */}
+                  <span
+                    data-nomi-select-option-label
+                    className={cn('min-w-0 flex-1 text-caption', searchable ? 'whitespace-normal break-all py-1' : 'truncate', isSel ? 'text-nomi-ink font-semibold' : 'text-nomi-ink-80')}
+                  >
                     {option.label}
                   </span>
                   {option.trailing ? (
@@ -204,19 +296,74 @@ export function NomiSelect({
                     //（曾被「即梦会员（本地 CLI）」10 字长名挤乱布局）；悬停 title 看全文。
                     <span
                       title={option.trailing}
-                      className={cn('ml-auto shrink-0 max-w-[96px] truncate text-micro leading-none px-1.5 py-[1px] rounded-pill', toneClass(option.trailingTone, 'trailing'))}
+                      className={cn('shrink-0 max-w-[96px] truncate text-micro leading-none px-1.5 py-[1px] rounded-pill', toneClass(option.trailingTone, 'trailing'))}
                     >
                       {option.trailing}
                     </span>
                   ) : null}
-                  <span className={cn('shrink-0 w-3.5 grid place-items-center', option.trailing ? '' : 'ml-auto', isSel ? '' : 'invisible')} aria-hidden>
+                  {option.chips?.length ? (
+                    <span className="flex shrink-0 items-center gap-1">
+                      {option.chips.slice(0, MAX_ROW_CHIPS).map((chip) => (
+                        <button
+                          key={chip.value}
+                          type="button"
+                          title={chip.label}
+                          aria-label={chip.label}
+                          aria-pressed={chip.active}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            onChipChange?.(option.value, chip.value)
+                          }}
+                          className={cn(
+                            'max-w-[76px] truncate rounded-pill border px-1.5 py-[1px] text-micro leading-none transition-colors',
+                            chip.active ? 'border-nomi-accent bg-nomi-accent-soft text-nomi-accent' : 'border-nomi-line text-nomi-ink-40 hover:border-nomi-accent hover:text-nomi-accent',
+                            'cursor-pointer',
+                          )}
+                        >
+                          {chip.label}
+                        </button>
+                      ))}
+                      {option.chips.length > MAX_ROW_CHIPS ? (
+                        <span className="text-micro leading-none text-nomi-ink-40">
+                          {t('common.plusMore', { count: option.chips.length - MAX_ROW_CHIPS })}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  <span className={cn('shrink-0 w-3.5 grid place-items-center', isSel ? '' : 'invisible')} aria-hidden>
                     <IconCheck size={14} stroke={1.6} className="text-nomi-accent" aria-hidden />
                   </span>
                 </span>
               </Combobox.Option>
             )
           })}
+          {!more && !query && options.some((option) => option.more && option.value !== value) ? (
+            <button type="button" onClick={() => { setMore(true); combobox.resetSelectedOption() }} className="w-full px-2 py-1.5 text-left text-caption text-nomi-ink-60">{t('onboardingProviders.modelControls.more')}</button>
+          ) : null}
+          {footerAction ? (
+            <button
+              type="button"
+              onClick={() => { combobox.closeDropdown(); footerAction.onSelect() }}
+              className="mt-0.5 flex w-full items-center gap-1.5 border-t border-nomi-line px-2 py-1.5 text-left text-caption text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink"
+            >
+              {footerAction.icon}
+              {footerAction.label}
+            </button>
+          ) : null}
         </Combobox.Options>
+        {hiddenNote ? (
+          // 不是选项：它点不了、也不该被键盘导航选中——藏起来的东西要找回在设置里，
+          // 这行只负责让「列表变短了」这件事说出来（放在 Options 外面就自然不进 Mantine 的选项序列）。
+          <div
+            data-nomi-select-hidden-note
+            className="mt-0.5 flex h-7 items-center gap-1.5 border-t border-nomi-line px-2.5 text-micro leading-none text-nomi-ink-40"
+          >
+            <IconEyeOff size={12} stroke={1.7} aria-hidden="true" />
+            {hiddenNote}
+          </div>
+        ) : null}
       </Combobox.Dropdown>
     </Combobox>
   )

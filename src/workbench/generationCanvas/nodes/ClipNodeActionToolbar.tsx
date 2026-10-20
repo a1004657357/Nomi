@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { IconCopy, IconCut, IconTrash } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
 import { WorkbenchIconButton } from '../../../design'
@@ -51,7 +52,7 @@ export default function ClipNodeActionToolbar({
           label={t('generationCommon.clipNode.remove')}
           title={editDisabledReason ? '' : t('generationCommon.clipNode.remove')}
           icon={<IconTrash />}
-          className="shrink-0 rounded-nomi-sm bg-transparent text-nomi-ink-45 hover:bg-workbench-danger-soft hover:text-workbench-danger"
+          className="shrink-0 rounded-nomi-sm bg-transparent text-nomi-ink-40 hover:bg-workbench-danger-soft hover:text-workbench-danger"
           disabled={!canEdit}
           data-testid="clip-node-remove"
           onClick={onRemove}

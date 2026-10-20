@@ -1,435 +1,207 @@
 # Nomi 工程纪律 — 详细规则（L2 · 触发才查）
 
-> 这是 `CLAUDE.md` 的「按需查阅」层。`CLAUDE.md`（always 加载）= 精简核心：项目事实 + P1–P5 + D1–D5 + 规则索引 + 三闸。本文件存**触发某条规则后才查的细节**：R1–R16 详解、工作流框架、技能库映射、固化的工作纪律。
-> 真相源仍单一：`CLAUDE.md` 的规则索引指明每条住哪；冲突一律以 `CLAUDE.md` 的 P1–P5 / D1–D5 为准。改触发清单同步 `.claude/hooks/self-check.sh`，规则细节只改本文件。
+> `CLAUDE.md`（常驻）只放原则和少数规则；本文件存**触发某条规则后才查的细节**。
+> 规则正本是 [`engineering/rules.json`](engineering/rules.json)（可读视图 [`engineering/rules.md`](engineering/rules.md)）：每条规则的旧号写在 `aliases` 里，`pnpm run check:rule-aliases` 保证任何 `R<数字>` 引用都解析得到。改规则只改 `rules.json`，再 `node scripts/gen-rules-view.mjs`。
+> 改触发清单同步 `scripts/claude-hooks/self-check.sh`（真相源；`.claude/` 下那份由 `pnpm install` 装）。
+> 2026-10-02 瘦身：删了 R3 / R4 / R7 / R25 / 画新面块等被设计卡 [`engineering/design-card.md`](engineering/design-card.md) 与独立验收取代的内容；有真实教训的段落搬到 [`lessons/framework-and-external-contract-lessons.md`](lessons/framework-and-external-contract-lessons.md)，其余靠 git 历史找回。
 
-# 详细规则 R1–R16
+## R1 加新必删旧（= P1 · 含旧 R10、R23）
 
-> `CLAUDE.md` 的规则索引触发某个编号后，到这里查它的细节。
+引入新组件 / 新流程替代旧的，必须同一 commit 删除被替代的旧代码。
 
-## R1 加新必删旧（No Parallel Versions）
+- 不留「逃生口 / Collapse / 备选 fallback」；死代码（grep 不到外部引用）立刻物理删除；旧的有价值就把价值合并进新代码再删旧。
+- **CSS**：新样式一律用 Tailwind utility 写在组件 `className` 上；不用 `@apply`；CSS 文件分工固定、只可减不可增：`src/theme/nomi-tokens.css`（设计 token）、`src/styles/index.css`（App 唯一 CSS 入口）、`tailwind.config.ts` 的 `workbenchBasePlugin` addBase（全局 reset / keyframes / 第三方 DOM 覆盖的唯一真相源）。
+- **生成画布单内核（旧 R23）**：生产生成画布只许 `@xyflow/react` 一个内核，`GenerationCanvas` 是稳定入口；禁止第二 renderer、engine flag、fallback 或并行实现。Zustand / domain / 项目快照是唯一真相源，React Flow state 只是可丢弃的渲染投影，写入必须回到现有 graph actions。迁移或升级 React Flow 时，逐项保留旧画布的节点真实尺寸、fit/focus/虚拟化几何、连接入口与端点贴边、hover/selection、resize 命中区、边样式与菜单、动画、右键/键盘/触控协议；删旧实现前证明新内核覆盖对应能力；产品要改的另走样张流程。证据：纯映射写 adapter 测试，入口唯一写结构门禁，用户能看到的进真实 Electron 旅程，用计算样式、DOM 几何和截图共同验证。
+- 规则编号 R24 由 PR #223 的能力完整性合同保留；本仓不定义也不复制。
 
-引入新组件/新流程替代旧的，必须同一 commit 删除被替代的旧代码。
+## R2 用户视角 + 极简（建议档）
 
-- 不留"逃生口 / Collapse / 备选 fallback"——这些都是借口
-- 死代码（grep 不到外部引用）立刻物理删除，不留"以防万一"
-- 旧的有点价值 → 把价值合并进新代码，再删旧
-- **CSS（R10 = R1 的 CSS 实例）**：新样式一律用 Tailwind utility 写在组件 `className` 上；不用 `@apply`；CSS 文件分工固定只可减不可增
-  - `src/theme/nomi-tokens.css` — 设计 token
-  - `src/styles/index.css` — 全局 reset/keyframes
-  - `src/styles/vendor-overrides.css` — Mantine 等第三方 DOM 覆盖
-  - `src/styles/globals.css` — 只准删，不准加组件样式
+做 UI / 文案 / 卡片前先问：用户进来要看什么？每条信息有行动价值吗？没有就删。0 权重嫌疑犯：节点功能描述文字、每次出现的 onboarding 文案、重复的分组标签、长 error stack 灌满卡片（缩成图标 + tooltip）、双层 border、永远 80px 的空信息区。好产品不靠解释，优先用图标 / 形态 / 位置说明；审视每条文案「删了它，用户还懂吗」。**词汇用模型真名**，不替用户翻译，自创意图词可能把能力说窄。
 
-## R2 用户视角 + 极简
+## R5 先查别人（= P0 的执行 · 含旧 R6 / R29 / R31；R5.2 / R5.5 为建议档）
 
-做 UI/文案/卡片设计前，先问：用户进来要看什么？每条信息有行动价值吗？没有 → 删。
+动手前先看别人已经做好的：**凭记忆判断 = 没查；查完默认是接入**，自写才是要登记的例外。领域目录（`docs/engineering/self-written.json` 的 `domainRoots`）里写代码不需要手续；领域目录之外新增模块 = 自写一项通用能力，必须登记（查过哪些现成方案带出处、为什么不接入只认领域约束、何时重新评估）。
 
-**0 权重嫌疑犯**：节点功能描述文字 / 每次出现的 onboarding 文案 / 重复的分组标签 / 长 error stack 灌满卡片（应缩成 ⚠️ + tooltip）/ 双层 border / 永远 80px 的空信息区。
-
-**好产品不靠解释**：优先让东西本身一眼说明该干嘛（图标/形态/位置），把文字降到最少。审视每条文案："删了它，用户还懂吗？"——懂 → 删。
-
-**词汇 = 模型真名，别替用户翻译**：模式/能力标签用模型自己的叫法（vendor 原词，如「全能参考」）为主——用户已熟悉；自创意图词可能把能力说窄。
-
-## R3 决策格式
-
-涉及范围/取舍时，先给用户对比表，再让用户拍板：
-
-```
-| 方案 | 用户看到什么 | 代价 |
+| 触发面 | 做什么 | 执行点 |
 |---|---|---|
-```
+| 用第三方库 / 框架 / 模型的 API（R5.1） | Context7（或官方站）实查，照官方语义写 | `model-doc-check.sh` hook |
+| 做方案（R5.2，建议） | 读同用户任务 / 同媒介 / 同载体的近邻开源真实代码，给 `file:line`；找不到近邻要写明检索过哪些方向 | `check:prior-art`（只对新增通用能力） |
+| 要写一段通用能力（旧 R20） | build-vs-buy 三问：通用吗？别人怎么做（实查，不凭记忆）？在不在护城河上（在就自研到底，不在就用标准实现或行为对齐标准）？ | `check:self-written` |
+| 接框架 / SDK / 运行时（R5.4） | 四列表 + 参考实现逐层对照 + 逐字段裁决 | `check:framework-boundary`、`check:framework-surface` |
+| 外部也读写的格式 / 协议 / 契约（旧 R31，建议） | 先找规范或事实标准，写「规范链接 / 我们的偏差 / 偏差理由」；扩展只放标准留的扩展点，不另起平行文件；**偏好不是理由** | 无（原 `check:standard-formats` 零红已删） |
 
-不要单方面"我建议 A"然后开干。样张或 plan 内部有两条「拍板」互相冲突 → 停下上报，不许自己挑一条实现。
+判据速查：护城河（账本、预算 / 收据 / 幂等、锚一致性、Proposal 撤销、能力核权限）自研到底；标准协议 / 边界（MCP JSON-RPC、Electron IPC 合同、schema 校验、请求生命周期）用标准或对齐标准；通用交互内核先把瞬时状态和领域状态分开再谈换；已用成熟库（R3F、Tiptap、Leafer、TanStack Virtual）别迁移，修用法。
 
-## R4 执行前必写文档
+### R5.1 查官方文档（建议档）
 
-涉及多文件/多步骤改动，先在 `docs/plan/` 或 `docs/audit/` 写执行文档：
-- 范围
-- 不动什么
-- 回滚策略
-- 验收门
+- 碰第三方库：`resolve-library-id` → `query-docs`，照官方推荐实现，官方没有才自定义并注释理由。Context7 没加载就退回官方站。
+- **只吃近期**：搜资料 / 开源项目必须看发布 / 更新时间，默认近 6–12 个月，每条结论标来源日期，写「最新 / SOTA」前先确认它现在还是。
+- **实查对象是「现役」不是「本机」**：本机已装版本的 `-h` / 行为不算实查（栽过：拿旧版 CLI 断言「不支持某模型」，官方新版早已支持）。
+- **接入或修改任何模型，动手前先拿真实官方 API 文档**（hook 每次碰模型接入文件都提醒）：逐项对账端点与方法、鉴权、全部变体、全部生成模式、全部参数（名字 / 类型 / 枚举 / 默认 / 上下限），禁止凭记忆填；没查到的写「文档未写明」，不许填猜的数字。
+- **三段标准作业**：① 文档给依据（出处 URL + 日期落库；报错信息只是线索）；② 零额度给覆盖（合同测试 + 请求构造干跑逐字段比对 + 免费探针，全部模式无一漏过）；③ 付费给封印（每模型一发最小参数真实生成，带参考输入的模式优先，产物亲眼双验：提示词特征 + 参考特征；余额不足诚实记 unverified）。验收类测试默认走回环假供应商，需要真实生成时显式声明额度（每模型 1 次、最低档、事后如实报花了多少）。
+- 选型 / 引入新框架时，实查当前现役框架与技术栈，不凭记忆判断新旧或是否被取代，再给用户对比表。
 
-写完用户能预读/反驳；执行完回填结果。
+### R5.4 接框架：四列表 + 参考实现逐层对照 + 逐字段裁决
 
-## R5 查官方文档（Context7 强制）
+**触发**：引入 / 接入 / 升级任何框架 SDK 运行时，**或用它一个此前没用过的层**。动手前在 `docs/research/` 或 `docs/plan/` 出三份交付物，每格带 `file:line` 或文档 URL：
 
-凡涉及第三方框架/库（React Flow、AI SDK、Mantine、Electron、Tiptap、Vite…）的实现或改动，动手前必须先用 Context7 查官方文档。
+1. **四列表**：它提供 / 我们用了 / 我们另写了 / 我们拆散了。派工 brief 必须附这张表。结论翻译成 `docs/engineering/framework-boundaries.json` 的规则，跑 `pnpm run check:framework-boundary`；存量按债登记（绑收敛方案和到期日，到期不清零就红）。
+2. **参考实现逐层对照**（`docs/research/<日期>-<框架>-reference-implementation-conformance.md`，模板 `docs/research/TEMPLATE-reference-conformance.md`）：框架自带的参考实现按九层（工具 / 转录渲染 / 会话 / 上下文 / 模型与花费 / 控制流 / 扩展 API / 观测与测试 / 安全）逐层摆在我们旁边，每层判「一致 / 有意不同（理由须是领域约束）/ 没想到」；全是「一致」说明抄了，全是「有意不同」说明没看。「没想到」清单是实施阶段的前置门。
+3. **framework-surface 逐字段裁决**：框架公开的每个字段都有一条裁决：`derived` / `constant`（值 + 领域约束理由）/ `unused` / `upstream-default` / `debt`（到期日 + owner）。字段由机器从 `.d.ts` 抽，`check:framework-surface` 校验；抽到 0 个字段也红。门岗和抽取器框架无关。
 
-1. `resolve-library-id` 拿库的 Context7 ID
-2. `get-library-docs` 拉相关主题官方文档
-3. 对照官方推荐 API/模式实现
-4. 官方无此能力时才允许自定义，注释写明理由
-
-**不查就写 = 工作错误**。若 Context7 工具未加载，退回 WebFetch 查对应官方站（等价）。
-
-**核对时间点 · 只吃近期（2026-06-21 用户纠）**：搜资料 / 搜开源项目时**必须看发布/更新时间**——AI 半年换一轮，去年的「最新」今年可能已过时。默认加时间过滤（近 6–12 个月）、按时间排序、**每条结论标来源日期**；论断里写「最新/SOTA」前先确认它现在还是不是。别吃老本（连自己上一轮的调研也要意识到会过期，重大判断重查）。
-
-**接入 / 修改任何模型 = 必查真实官方 API 文档，禁凭记忆瞎编（2026-06-30 用户再次要求固化 · 已挂 `model-doc-check.sh` hook）**：接入或修改**任何**模型（新模型、新变体、改参数、改端点、改鉴权），**动手前必须先拿到该模型 / 该 vendor 的真实官方 API 文档**——WebFetch 官方文档站 / vendor 文档门户（如 apimart `docs.apimart.ai`、kie `docs.kie.ai`、即梦官方、火山引擎、ModelScope）/ Context7。照文档**逐项对账**：① 端点路径 + HTTP 方法；② 鉴权方式（bearer / header 名 / OAuth / CLI 登录态）；③ 全部变体（fast/face/lite/quality…）；④ 全部生成模式（t2v/i2v/首尾帧/参考…）；⑤ 全部参数（名字、类型、合法枚举值、默认值、上下限）。**禁止凭记忆或凭印象瞎编**端点、参数名、枚举、模式组合——「记得大概是这样」「应该是这个字段」= 工作错误，必须实查文档原文。这条**每次都要控制住**，不是接一次就免检：每次碰模型接入文件（`electron/catalog/*Vendor.ts` / `*Images.ts` / `*Videos.ts` / `*Texts.ts` / `*Audios.ts` / `*Codec.ts` / `kie*.ts` 等）hook 都会顶提醒。流程固定：抓全官方文档 → 列 {变体×模式×参数} 全表 → 对账现有 catalog/archetype → 补齐/修正缺口 → 真实生成 E2E 验一条（见「固化的工作纪律」接入即验证 + [[model-onboarding-must-cover-full-api-doc]] 记忆）。用户原话：「都要去真实的查到官方文档才去接入，而不是自己去瞎编」。
-
-**出处必须可追、接入必须一次接完（2026-08-12 用户要求固化 · 已挂门岗 `pnpm run check:archetype-sources`）**：
-上面那条「必查官方文档逐项对账」**早就存在、还挂着 hook，仍然失效了**——2026-08-12 复核 Seedance 2.5 档案，
-参考图/视频/音频上限写的是 9/3/3、比例默认 16:9，而 kie 与 apimart 官方文档都是 30/10/10、默认 adaptive：
-**四个数没一个来自文档**，而文件头注释白纸黑字写着「契约逐项对账自 kie 官方文档」。
-
-**根因不是「填错了」，是「声称对过」与「真的对过」之间没有任何验证手段。** 注释是自由文本，
-写什么都行、没人能反证。所以这条规则的执行层必须是结构化数据 + 门岗，不能再是一句叮嘱：
-
-- **G1 出处落库不落注释** —— 档案必须声明 `sources: [{ url, checkedAt, vendorKey, covers }]`
-  （`ModelArchetype.sources`）。官方文档地址，不是第三方转述（转述会漏会错：Runware 转述里就没有
-  apimart 那条「首尾帧模式 size 必须 adaptive」的硬约束）。地址簿索引见 `docs/integrations/provider-api-docs.md`。
-- **G2 一次接完，不做「先接个能跑的」** —— 接入 = 把该模型在该供应商下的**全部**能力对完：
-  端点/鉴权、**每条参考通道的字段名与上限**、首尾帧怎么表达、标量参数枚举与默认、模式互斥、
-  供应商级硬约束、轮询与状态词表、产物在响应里的确切路径、计费口径。清单见上述地址簿文件。
-  **没查到的写「文档未写明」，不许填我们猜的**——猜的数字比缺失更坏，缺失会被发现，猜的会被当成真的。
-- **G3 数字必须能追到出处** —— 改任何契约数字（上限/枚举/默认值）必须同步该条 `sources.checkedAt`。
-
-门岗棘轮：存量 40 个未登记档案进白名单、**只减不增**，补一个删一行（补了却不删白名单也报错，防永久豁免）。
-为什么不做「checkedAt 超期红灯」：文档不常变，超期红灯会变成噪音、被习惯性跳过——
-**被习惯性忽略的门岗等于不存在**。复核由改动驱动，不由日历驱动。
-
-**选型 / 引入新框架时实查最新现役框架（2026-06-21 用户要求 · 已挂 hook）**：每次出方案**可能引入新框架 / 新技术栈元素**（agent 框架、eval 框架、状态库、构建工具…）时，**动手前必须 Context7 + web 实查当前最核心、最现役的框架与技术栈**——不准凭记忆判断某框架的能力、新旧、是否已被取代。栽过（本会话）：凭记忆把 Mastra（现役 TS agent 框架）当「并行版」一刀切挡回，实查后改口它正好对口 eval/编排层。流程：① 列出方案要引入的框架/技术点 → ② 逐个 `resolve-library-id` + `query-docs` 拉最新文档（含版本/发布日期）→ ③ web 扫一眼有无更对路的现役框架 → ④ 给用户对比表（R3）。**已挂 PreToolUse hook（写 `docs/plan/*.md` 或动 `package.json` 时顶提醒）+ self-check.sh 闸① 每轮提醒**——别等想起来。
-
-## R6 读顶尖开源代码
-
-做任何项目方案前，先去 GitHub 找 1~N 个顶尖开源项目读真实代码（不是扫 README），产出：
-- 它们怎么做的（具体到文件/代码位置）
-- 我们能直接借鉴什么
-- 哪里不适用、为什么
-
-参考池（非穷尽，按专题选，别拿这串当唯一清单——做某专题就去查那个专题真正的顶尖项目）：
-- coding agent / 通用：Cline / OpenHands / Aider / Continue / Cherry Studio / LobeChat
-- 画布向：tldraw / ComfyUI / xyflow
-- **记忆/上下文专题**：Mem0 / Letta（MemGPT）/ Zep（Graphiti，双时间知识图谱）/ Anthropic memory tool / Cline Memory Bank / 学术（Generative Agents 反思·A-Mem·MIRIX）；创作域：SillyTavern lorebook / Novelcrafter Codex（结构化设定卡+三态挂载）/ Sudowrite·NovelAI story bible。完整调研见 `docs/plan/2026-06-20-memory-system-redesign.md`。
-
-## R7 6 角色评审
-
-**触发条件**：任何涉及架构/取舍/UX 的项目方案，在给用户拍板前。
-
-并行审查 6 个角色：
-1. **CTO** — 架构合理性、技术债、扩展性、与现有内核是否冲突
-2. **设计师** — 视觉一致性、对齐 `Design.md`、密度优先
-3. **产品经理** — 用户价值、范围是否过大、是否解决真痛点
-4. **前端** — 可行性、状态管理、性能、组件复用
-5. **后端** — runtime/数据/IPC/持久化影响
-6. **真实用户** — 用起来顺不顺、爽不爽、看着舒不舒服
-
-流程：研究开源（R6）→ 起草方案 → 6 角色并行审查 → 汇总修方案 → 对比表（R3）给用户拍板。
+教训（接 pi SDK 只接了最底层 loop、逐工具可选字段被一刀切硬写）见 [`lessons/framework-and-external-contract-lessons.md`](lessons/framework-and-external-contract-lessons.md)。
 
 ## R8 先出可视样张
 
-**触发条件**：任何用户会看到的东西（界面/卡片/节点/面板/交互/文案排版）。
+**触发**：任何用户会看到的东西。**碰花钱 / 长跑 / 可打断 / 新界面先写设计卡**（[`engineering/design-card.md`](engineering/design-card.md)）；纯样张流程如下：
 
-**铁律（实现前必须走完）**：
-0. **先看这个 UI 真实当前长什么样（改/扩现有界面尤其必做）**：读**完整渲染外壳组件**（整个 `Base*`/`*Shell`，不是某个 body 片段），或看 `docs/design/app-screenshots-*` / `docs/ui-designs/` 真实截图。**样张 = 真实布局 + 你的改动**——是对现状的忠实 diff，不准从零散组件片段在脑子里拼整体排版。栽过（2026-06-27）：3D 节点样张连画三版都错位，根因=没看真实「生成节点」布局（**上工具条 / 中预览 / 下提示词 composer**）就脑补，连底部整个提示词区都漏掉——和「凭记忆讲框架」同一类错（拿部分当全貌、脑补代替观察）。
-1. **先读完整设计系统 `docs/design/nomi-design-system.md`**（§2 token 全表 / §3 通用组件 / 规范）+ `src/design/` 现有组件——文档原话"做任何新设计前请先读完整版"；token-only（**禁非 token 的 px/hex/圆角**，如 `h-[34px]`/`text-[12.5px]`/`gap-2.5` 都违规，用 `h-8`/`text-[13px]`/`gap-2`），不凭空造组件。**样张/UI 里出现 Nomi 品牌就用真品牌**：字标用 `NomiWordmark`「No·m·i」（中间 m = accent 色 + Fraunces，§3.9）、标记用 `NomiLogoMark`、配色用设计 token——**别拿通用 logo / 羽毛 / 火花图标冒充 Nomi**（2026-06-20 用户纠：样张要带我们自己的 logo 和设计，不要泛用占位）
-2. **出可体验样张，不只是静态图**：凡涉及交互（可拖/可点/可调/有状态切换的东西），样张必须做成**用户能亲手拖、点、调**的可交互 widget（首选 `mcp__visualize__show_widget`，把交互逻辑真写进去），让用户上手感受真实手感后再拍板——静态截图说不清"拖起来顺不顺"。纯静态排版（文案/卡片布局）才允许静态 mockup。**默认给可体验的，别等用户开口要。**
-3. 设计师 Agent + 真实用户 Agent 审一遍（R7）
-4. 用户本人确认后才进入实现
-5. **实现后必须与获批样张逐项对账**：截图并排比，列出每一处差异；差异当场补齐或说明暂缓原因 → 样张是验收合同，不是参考图
+0. **先看这个 UI 真实当前长什么样**（改 / 扩现有界面必做）：读完整渲染外壳组件，或看 `docs/design/app-screenshots-*` 真实截图。样张 = 真实布局 + 你的改动，不准从零散片段在脑子里拼整体。
+1. 先读 `docs/design/nomi-design-system.md` 与 `src/design/` 现有组件；token-only（禁非 token 的 px / hex / 圆角）；Nomi 品牌用真品牌（`NomiWordmark` / `NomiLogoMark`）。
+2. 涉及交互的样张必须是用户能亲手拖 / 点 / 调的可交互 widget（首选 `mcp__visualize__show_widget`），纯静态排版才允许静态 mockup。
+3. 用户确认后才实现。
+4. 实现后与获批样张逐项对账：截图并排比，每处差异当场补齐或说明暂缓原因。样张是验收合同，不是参考图。
+5. 任何新功能 / 新对象，讲它在用户旅程哪一步出现、在界面哪几处露出、怎么被用到时，出一张可视路径图，别让用户靠文字拼。
+6. 设计落地 = 规范驱动 + computed style 核对：改完跑 `tests/ux/design-fidelity.e2e.mjs`；加自定义 Tailwind token 同步进 `cn()` 的 `extendTailwindMerge`。样张契约用 `pnpm run check:mockup-contracts`。
 
-**设计交付要配齐参考文档**：样张只是「理想态快照」，必须同时交付：① 设计系统 token/组件 ② Context7 库官方文档（R5）③ 数据/代码现状（先 Explore 摸底）④ 实现规范（精确 token + DOM 结构 + 状态 + 数据绑定）。缺参考 = 凭空设计 = 实现卡死/跑偏。
+## R9 模块化 + 防巨壳（含旧 R12）
 
-**出「用户路径图」，别让用户靠文字想象功能在哪（2026-06-20 用户纠）**：任何新功能/新对象（卡片/面板/能力），讲它「在用户旅程的哪一步出现、在界面哪几处露出、怎么被用到」时，**默认出一张可视路径图（show_widget / SVG）**——按真实产品布局（项目库→创作→生成画布→时间轴→导出）把触点钉在图上，**别用大段文字让用户在脑子里拼**（用户原话：「我还是不够理解…要去出整个路径图，而不是要我靠文字去想」）。路径图铁律：① 钉到真实界面位置（哪个面板/侧边栏/节点面），不抽象；② **每个触点标当前真实状态（通/半通/断）**，状态必须先 Explore 核实当前代码、不拿旧记忆当现状（栽过：拿 7 天前审计当现状被用户当场点破「可能已经改了呢」）；③ 诞生点 vs 消费点分清。**用户可见功能交付/答疑两个时机都适用：方案期画「将来长这样」，答疑期画「现在到哪了」。**
+写码前先想清楚分层：这块逻辑该放哪一层（UI / 状态 / 领域 / runtime / 持久化）、新东西和现有内核的边界、会不会引入第二份真相源（→ R1）。单个非测试 `.ts` / `.tsx` 文件硬上限 800 行，存量巨壳列白名单并记录基线行数、棘轮只减不增；门岗 `pnpm run check:filesize`。
 
-**设计落地 = 规范驱动 + computed style 核对**：改设计前先写/读实现规范；改完跑 `tests/ux/design-fidelity.e2e.mjs`（它把规范写成 computed-style/DOM 结构断言，能抓 twMerge 吞字号 / Mantine 吃样式等隐藏覆盖）；加自定义 Tailwind token 务必同步进 `cn()` 的 `extendTailwindMerge`。
+## R11 交付与状态（含旧 R19）
 
-## R9 模块化 + 防巨壳
+**推送**：完成一个有意义、验证通过的改动就自己 commit + push，不等用户催。开始前在独立 sibling worktree 的任务分支跑 `pnpm run delivery:preflight`（一次有超时的非交互 fetch，拒绝受保护分支、脏工作树和未含最新远端基线的分支）。验证档位按 R22；连续小修先本地收敛，定向验证通过后只推一次。一个逻辑改动一个 commit，message 写做了什么 + 为什么 + 验证结果。例外先问：改动未验证、破坏性操作（删历史 / force push / 发版 tag）、用户说先别提交、混入多个不相关改动。
 
-写码前先想清楚：
+**状态词只有四档**（把侧分支里的实现状态误报成「用户拿得到的解决状态」是这条的起因）：
 
-- 这块逻辑该放哪一层？（UI / 状态 / 领域逻辑 / runtime / 持久化——别混一个文件）
-- 关注点分离了吗？渲染归渲染、状态归 store、领域逻辑归领域层
-- 新东西和现有内核的边界在哪？会不会引入第二份真相源（→ R1）
+1. **已实现、未推送**：只在本地。必须给工作树、分支、提交。
+2. **已推送、待合入**：远端侧分支有提交，目标分支没有。必须给分支 / PR。
+3. **已合入、待验证**：目标分支包含提交，但目标分支门禁或真实用户任务未通过。只能称「已合入」。
+4. **已解决**：修复在用户指定的远端目标分支，且该分支上必需门禁与真实用户任务都通过。
 
-架构决策过：Context7 查官方推荐架构（R5）→ 读顶尖开源分层（R6）→ CTO+前端+后端三角讨论（R7 子集）→ 有取舍出对比表（R3）。
+**机械证据**：报「已解决」前拿到 merge commit SHA，在该提交上跑 `pnpm run delivery:verify-merged -- --expected-sha <sha>`（要求 HEAD、远端目标分支、expected SHA 完全一致，记录 commit / tree 两种身份）。身份检查失败就降级状态；禁止用 REST compare、commit message 重放或低层 Git 对象合成伪造远端身份；未推送提交不得被引用为团队现状；删分支前逐提交审计；完成报告同时给目标分支、远端 commit、验证结果；用户要求验收后再合入的，只能报「待验收修复」。
 
-**R12 = R9 的量化门岗**：
-- 单个非测试 `.ts`/`.tsx` 文件硬上限 800 行
-- 现存巨壳列白名单并记录基线行数，棘轮只减不增
-- 门岗命令：`pnpm run check:filesize`（已接入 CI）
+## R13 完成标准（= P3 · 含旧 R16 / R30 / R32）
 
-## R10 → 见 R1（CSS 实例）
+P3「全绿不等于完成」的量化门。三档触发：
 
-CSS 文件分工与「只可减不可增」规则详见 R1 最后一节。
-
-## R11 自动 commit + push
-
-完成一个有意义的、验证通过的改动就自己 commit + push，不用等用户催。
-
-**验证门槛**：`pnpm build` 绿 + `npx vitest run` 不回归（重大改动按速览「Push 前必须全过」走五门）。
-
-**commit 规范**：
-- 一个逻辑改动一个 commit
-- Message：做了什么 + 为什么 + 验证结果，中文风格，结尾按 harness 要求挂 `Co-Authored-By:` 行
-- 只 `git add` 本次改动文件，不用 `-A`
-
-**例外（先问再 push）**：改动未验证 / 破坏性操作（删历史/force push/发版 tag）/ 用户说先别提交 / 混入多个不相关改动。
-
-## R12 → 见 R9（量化门岗）
-
-白名单巨壳基线与 check:filesize 详见 R9 最后一节。
-
-## R13 穿透式体验走查
-
-**定义**：Playwright `_electron` 驱动真实 app，按真实用户旅程逐步截图，以真实用户视角判断顺不顺、美不美——这是体验穿透，不是功能 pass/fail。
-
-**触发条件（任一）**：
-- 用户可见改动报完成前
-- **把任何可运行/可看的东西交付给用户前（开实例「给你看」、发截图、发链接）——交付=报完成，同一道闸**
-- 整条功能链路实现完成时
-- 用户提出「用不顺 / 看不懂」反馈时
-- 重构/重大改动后确认主链路未拆坏
-- ≥25 commit 或发版前（配合 R14）
-
-### 眼见链（2026-07-12 固化：走查有效性的四问，缺一环 = 没走查）
-
-走查的本质是**证据链从改动一路连到我的眼睛**，四问逐环校验：
-
-1. **截图存在吗** —— 跑了走查脚本、产出了截图文件；
-2. **我 Read 过吗** —— 截图必须被亲眼 Read 消费。**产出验证物 ≠ 消费验证物**（栽过：shell3 截图躺在盘里没看，就把沙盒递给用户，用户当场抓到「和原来一样」）；
-3. **它来自用户所见物吗** —— 同构建（非 stale chunk/僵尸实例）、同入口（生产构建非 dev）、**同平台分支**（mac `NomiAppBar` ≠ win32 windowbar ≠ 项目库页，平台/条件分叉的 UI 改哪面就必须验哪面，全仓 `isWindows` 类分叉先 grep 清点）；
-4. **它拍得到改动区吗** —— 截图手段对改动区不是盲区（栽过：`BrowserWindow.capturePage` 拍不到子 view；打开态/弹层要逐个打开拍）。
-
-历史同类事故（这条规则的由来，均为「链在最后一跳断裂」）：素材盒修在 win32 分支 mac 没生效+截图没看就交付（07-12）；样张凭脑补不基于真实 UI（v07，×3）；gates 全绿但生产构建无样式（dev≠prod）；走查跑在 stale chunk/僵尸实例上；capturePage 拍不到捕捞子 view。机械闸：Stop hook `completion-check.sh` 已升级为**查眼不查嘴**——改了 src/electron 又宣布完成/交付时，近窗口内必须有图片 Read 痕迹，否则 block。
-
-### 旅程构建铁律
-
-**走查旅程必须是真实创作目标，每条要有「任务成功标准」。**
-
-| 错误示范（功能探索）| 正确示范（创作目标）|
+| 触发 | 必做 |
 |---|---|
-| 「查看生成配置面板」 | 「为商品图选好模型，准备生成」|
-| 「探索 AI 面板」 | 「用 AI 把故事稿拆成镜头」|
-| 「添加新节点」 | 「在画布上补加一个空镜头，填好提示词」|
+| 用户可见改动 / 把任何可看的东西交给用户 | 和获批样张逐项对账 + 眼见链四问 + 位置断言 + zh/en 双语真截图 + 真人乱输路径（R13.1） |
+| 功能交付（尤其用户可见 / 体感） | 设计卡 ★1 的 2–3 条真实用户任务跑通闭环，冒出的问题全修掉，重跑到干净 |
+| Agent / 工具定义 / 工具契约 / 系统提示词 / 模型档案改动 | 工具写对率 + 回合成功率两个数字写进 PR 正文（R13.1 后半） |
 
-构建格式：`我有 [输入]，我想得到 [输出]，成功标准是 [可验证的结果]`
+**四件真实**（缺一件，这条测试不成立；起因：第一次拿用户真实素材跑，导入和 S 规模进画布当场炸，而合成夹具的画布基准跑了几十轮从没红）：
 
-### Nomi 5 条标准核心旅程（J1-J5）
-
-| # | 旅程名称 | 输入 | 成功标准 |
+| # | 必备件 | 什么不算 | 判据 |
 |---|---|---|---|
-| J1 | **产品宣传视频（主链路）** | 产品文案（可用示例项目）| 文案 → 拆镜头 → 画布节点排布 → 每个镜头选好模型配好参数 → 「可以生成了」|
-| J2 | **故事 → 漫画短片（定妆链路）** | 漫画剧本 | 写剧本 → 拆镜头 → 定妆建角色/场景卡 → 角色卡有提示词 → 「可以批量生成了」|
-| J3 | **新用户 30 秒上手** | 无（冷启动）| 首页点「30 秒体验」→ 自动创建项目 → 画布展开 → 能说出「这些格子是什么」→ 能点开一个节点看参数 |
-| J4 | **参考图驱动生成** | 几张素材图 | 上传图片 → 图出现在素材库/画布 → 作为节点参考图挂好 → 「参数配好，可以生成了」|
-| J5 | **修改旧节点并导出** | 已有项目（示例项目即可）| 打开项目 → 找到节点 → 修改 prompt → 知道怎么重新生成 → 进入导出面板 → 知道怎么导出 |
+| ① | 真实应用 | 组件夹具 / 设计实验室 / dev server 一页 / vitest mount 的树 | 走查报告有构建戳且与被验证 commit 对得上 |
+| ② | 真实页面输入 | 往 store 灌状态、E2E 桥、夹具 JSON、`page.evaluate` 改状态、直接写快照绕过导入 | 输入只有 `mouse` / `keyboard` / `locator.click\|fill\|hover\|dragTo`；`evaluate` 只许出现在标注的准备阶段 |
+| ③ | 真实工具轨迹 | 手写合法参数喂单测 | 真模型跑出的调用序列 → 写对率 + 回合成功率 |
+| ④ | 真实素材 | `testsrc2` 色块、1px 占位图、2 秒 crf-35 的 720p | 登记在 `tests/ux/real-media-fixtures.json`，路径走 `NOMI_REAL_MEDIA_DIR`，门岗 `check:real-media-fixture` |
 
-每条旅程走查时问：① 新用户不看文档能走通吗？卡在哪？ ② 每步美吗、顺吗？ ③ 每步到下一步的过渡自然吗？
+缺素材时红不是跳；CI 素材未就位期间登记为 `docs/engineering/real-media-debt.json` 里带到期日（≤30 天）的债。没有真实资源（供应商 key、ComfyUI、外部宿主、跨版本升级）记 `unverified`，不许 mock 绿灯顶替。单元测试与设计实验室基线不声称证明「能用」，规则拦的是拿它们当验收结论。执行版：[`engineering/acceptance-walkthrough-doctrine.md`](engineering/acceptance-walkthrough-doctrine.md)。
 
-**发布前必须全部过一遍。**
+### R13.1 穿透式体验走查与 Agent 数字（建议档 · 含旧 R13.3 / R30）
 
-### 工具栈
+**走查**：Playwright `_electron` 驱动真实 app，按真实用户旅程逐步截图，以真实用户视角判断顺不顺、美不美。触发：用户可见改动报完成前、把任何可运行 / 可看的东西交给用户前（交付 = 报完成）、整条功能链实现完成、用户反馈用不顺、重构后确认主链路、≥25 commit 或发版前。
 
-- **`tests/ux/ui-driver.mjs` + `tests/ux/ui.mjs` — 常驻交互式驱动（交互探索/调 UI 首选，开一次·边看边点）**：
-  后台起 `node tests/ux/ui-driver.mjs`（Bash `run_in_background:true`；**app 启动一次保持开着，不再每步 launch→close 闪屏**），
-  就绪后逐步发命令 `node tests/ux/ui.mjs <action>`：
-  `snap`（列当前所有可点元素：标签/文字/aria/中心坐标——**据此决定点哪，不靠提前盲猜选择器**）｜
-  `shot [名]`（截图到 `tests/ux/shots/<名>.png`，再用 Read 看）｜`click "文字"`（也支持 `aria:` / `css:` / `text:` / `xy:x,y`）｜
-  `fill <css> <值>`｜`eval <js>`｜`wait <ms>`｜`quit`（关 app+停驱动）。
-  **循环 = snap/shot 看真实界面 → 判断 → click/fill 操作 → 再 shot 看结果**（感知→决策→行动→再感知）。
-  Electron 专用（Nomi 要主进程+IPC，普通浏览器预览工具附不上去）。用完务必 `quit`，别留后台进程/窗口。
-- `tests/ux/walkthrough.mjs` — 一次性探索式走查（逐步截图 + DOM dump）；**新工作优先用上面的常驻驱动**，盲脚本只在固定流程时用
-- **僵尸 Electron 防线（2026-07-12 栽过：迭代 12 轮一次性 walk + close 挂死 → 桌面十几个僵尸）**：
-  ① 探索/调试迭代必用常驻驱动（一个实例改一轮测一轮），一次性 walk 只跑最终验证的一两遍；
-  ② 一次性 walk 的 finally 必须「`app.close()` 竞速 8s → 超时 SIGKILL `app.process()`」——外层 shell `timeout` 只杀 node、会孤儿整棵 Electron 树，不算兜底；
-  ③ 迭代结束顺手 `pnpm run kill:zombies`（按本仓 node_modules 路径精确清，不碰正装/他仓）。
-- `tests/ux/smoke.e2e.mjs`（`pnpm run test:e2e`）— 可断言冒烟，失败即非零退出，CI-ready
+**眼见链四问，缺一环 = 没走查**：① 截图存在吗；② 我 Read 过吗（产出 ≠ 消费，Stop hook `completion-check.sh` 查眼不查嘴）；③ 它来自用户所见物吗（同构建、生产构建非 dev、同平台分支）；④ 它拍得到改动区吗（`capturePage` 拍不到子 view；打开态 / 弹层逐个打开拍）。
 
-**「特别完整的用户测试」标准方法（定稿）**：不引入外部工具——**自主点击的「computer-use 智能体」就是 AI 本身**，驱动层用上面的常驻驱动。标准动作：① 清场（`osascript -e 'quit app "Nomi"'` 关已装 app 释放 single-instance 锁 + 杀残留 Electron/驱动）→ ② `pnpm build` 全新构建（防 stale-chunk 伪 bug）→ ③ 起常驻驱动 → ④ 逐旅程走 J1–J5（snap→判断→click/fill/setfile→shot+Read 人眼判断）→ ⑤ 逐个打开交互态看遮挡 → ⑥ Explore agent 挖根因到 file:line、分症状/根因/地基 → ⑦ 落 `docs/audit`（问题分级 + 局部/地基拆分）→ ⑧ `quit`。完整方法 + 外部工具调研：`docs/workflow/2026-06-10-autonomous-ui-test-method.md`。
-**外部工具结论**：Midscene.js 等是最方便的外部自主探索器（支持 Electron CDP/desktop），但需 vision-model 额度（用户资源、要拍板）且不比现有 DOM 感知驱动更准——**常规续用现驱动**，无人值守批量爬再评估接入。
+**走查三升级**：位置断言（对照样张断言控件的位置 / 归属，不只断言存在）；zh/en 两轨真截图都亲眼 Read（英文串比中文长 1.5–2 倍，只有眼睛看得出截断）；真人乱输路径（瞎写的 API key 必须诚实报错、空态、关不掉的弹层、断供应商）。有打开态的 UI 交付前逐个打开截图，几何实测（`getBoundingClientRect` 对照祖先 overflow 与视口），落成可复跑断言。
 
-能力边界：渲染层交互 + 感知判断（~90%）用 Playwright 完全覆盖；原生 OS 边界（系统文件对话框/Finder 拖拽）可经 `electronApp.evaluate` stub `dialog.*` 走通。
+**旅程是创作目标不是功能探索**，格式「我有 [输入]，我想得到 [输出]，成功标准是 [可验证结果]」。标准旅程 J1 产品宣传视频、J2 故事到漫画短片、J3 新用户 30 秒上手、J4 参考图驱动生成、J5 修改旧节点并导出；发布前全过一遍。
 
-### UI 有「打开/交互态」的额外要求
+**工具栈**：`tests/ux/ui-driver.mjs` + `tests/ux/ui.mjs`（常驻交互式驱动，探索与调 UI 首选，用完 `quit`）；`tests/ux/walkthrough.mjs`（一次性走查）；`tests/ux/smoke.e2e.mjs`（`pnpm run test:e2e`）。一次性走查的 finally 必须 `app.close()` 竞速 8s 后 SIGKILL，迭代结束 `pnpm run kill:zombies`。
 
-任何有打开态的 UI（弹层/面板/菜单/下拉/picker/modal），交付前必须：
-1. 真机逐个打开每一个交互态截图，以真实用户视角看「能不能看全 / 会不会被挡」
-2. 几何实测：`getBoundingClientRect` 对照祖先 overflow 容器 + 视口，确认不被裁、不溢出、不重叠（含节点在画布边缘等极端位置）；弹层默认放不裁剪层（BodyPortal / 外层锚，仿 `SettingsPopover`），带向上翻转 + 视口 clamp
-3. 把上述结果落成可复跑回归断言（`tests/ux/design-fidelity.e2e.mjs`）
+**Agent 数字**：任何 Agent / 工具定义 / 工具契约 / 系统提示词 / 模型档案改动，PR 正文写两个数：**工具写对率**（模型产出的参数通过运行时校验并成功执行的比例，零额度回放夹具逐工具计数，落点 `tests/agent-tools/<toolName>.case.json`）与**回合成功率**（真实用户任务从提问到可用产物无需人接手的比例，小额真实模型定期跑）。**红线：外观绿不等于接好了**——设计实验室基线只证长相，走查截图只证界面在，都不证明按下去会发生事。采集方法见 doctrine §二.2、§二.6。
 
-## R14 周期性多维审计
+## R14 周期审计（建议档 · 含旧 R14.1 / R14.2）
 
-**触发条件（任一）**：距上次 `docs/audit/` 审计文档 ≥25 个 main commit（`pnpm run check:audit` 提醒）/ 发布新 minor 版本前 / 巨壳逼近上限 / lint warning 基线明显上涨。
+满 25 个 main commit 或发版前：多维 subagent 深审真实代码 + 走查（R13.1）+ 同一语义有几份定义横扫，落 `docs/audit/<date>-*.md`（现状 + 分级问题带 `file:line` + 路线），清 P0。自写登记复查：`self-written.json` 里 `to-replace` / `under-review` / `revisitBy` 到期 / 「框架后来已经提供了」的项逐条列进替换计划（`pnpm run audit:self-written`）。
 
-**执行**：
-1. 多维 subagent 深审真实代码（R7 6 角色 + 技术栈/架构/测试/产品多维度）
-2. Playwright 走查（R13）
-3. 落 `docs/audit/<date>-*.md`：现状 + 分级问题（带 file:line）+ 立即/中期/长期路线
-4. 清掉 P0，方案级取舍留用户拍板（R3）；关键论断亲自实跑核实
+**同一语义有几份定义**：重复实现通常是写新代码时没检索到第一套，P1 拦不住。新增或修改下列合同前先 `rg` 横扫现有 owner，把复用点或独立理由写清。机器守一部分：`pnpm run check:vocabularies`（TS AST 扫字符串 union / `z.enum` / `as const` / `Set`，按「文件 + 声明路径」登记 owner；第二份相同 owner、新增词表、成员漂移、陈旧基线、空 reason、debt 超上限都红；基线 `registered` / `debt` / `converged` 三桶，`debtCap` 只减不增）。机器查不到、必须人工横扫的七维：工具面（同一操作各入口叫什么、走不走同一 executor）、可见性 / 过滤口径、标识符（一个对象一个主键）、格式契约（是否自造生态已有的信封）、字段取值来源（一条取值链）、确认 / 权限面（放行只有一个真相源）、规则的路径覆盖。**最难查的一族是只做了一半**：加了「列」的过滤，「读」是否复用同一判定？加了「写」的校验，「改 / 删」呢？加了「导入」，「导出」是否同构？加了内部工具，外部 MCP 是否投影同一能力定义？
+
+每次审计固定加三条：依赖框架四列表重跑（对账 `framework-boundaries.json` 债条目）；核心链路用真实模型量工具写对率与回合成功率；重造清单反向扫（新增文件名与导出符号命中框架能力词的，逐个问「框架里是不是已经有了」）。
 
 ## R15 可见文字国际化
 
-**范围**：所有用户能看到或辅助技术能读到的产品文字，包括正文、按钮、菜单项、标签、占位符、`title`、`aria-label`、toast、确认框、空态、加载态与错误态。
+所有用户能看到或辅助技术能读到的产品文字（正文、按钮、菜单、标签、占位符、`title`、`aria-label`、toast、确认框、空 / 加载 / 错误态）：
 
-**铁律**：
+1. 放进 `src/i18n/resources.ts`，组件用 `useTranslation()`，非 React 用共享 `i18n.t()`；禁止新增硬编码中文或英文 UI 文案。
+2. 默认 `zh-CN`，仅支持 `zh-CN` 与 `en`，不按系统语言切换；用户选择持久化并同步 `document.documentElement.lang`。
+3. 两种语言同一个改动内补齐，同名 key 结构一致；插值用命名参数，不拼接可翻译句子。
+4. 不翻译用户内容、模型原始输出、AI / 系统提示词、协议字段、事件名、官方名称、路径与日志诊断。
+5. `pnpm run check:i18n` 是零遗留门岗（JSX、常见可见对象字段、Electron 原生界面）；协议 / 提示词 / 稳定元数据只用脚本内带原因的窄豁免，不允许用基线接受国际化债务。`check:i18n-key-refs` 静态提取 `src/` 全部翻译引用，对照 `resources.ts` 真实合并键树，解析不到就红。
+6. 验收：`zh-CN` 与 `en` 各走查一次并验证刷新后语言保持；全 App 双语扫查见 `tests/ux/i18n-sweep.walk.mjs`。
 
-1. 新增或修改可见文字必须放入 `src/i18n/resources.ts`，组件使用 `useTranslation()`，非 React/类组件使用共享 `i18n.t()`；禁止在产品代码里新增硬编码中文或英文 UI 文案。
-2. 默认语言固定为 `zh-CN`，当前仅支持 `zh-CN` 与 `en`；不根据操作系统语言自动切换。用户选择持久化，并同步 `document.documentElement.lang`。
-3. 两种语言必须在同一个改动中补齐，同名 key 保持结构一致；插值使用命名参数，不拼接可翻译句子。
-4. 不翻译用户内容、模型原始输出、AI/系统提示词、协议字段、事件名、模型/供应商官方名称、文件路径和日志诊断信息。
-5. `pnpm run check:i18n` 是零遗留门岗：扫描 JSX、常见可见对象字段和 Electron 原生界面，发现用户可见字面量即失败。协议、提示词和稳定元数据只能使用脚本内带原因的窄豁免，不允许用基线接受国际化债务。
+## R17 防线建在最早能拦住的那层（含旧 R18 / R26 / R28 · 棘轮门岗族）
 
-**验收**：涉及界面文案的改动必须在 `zh-CN` 与 `en` 各走查一次，并验证刷新后语言保持。
+**规则**：能让类型系统拦的别留给门岗，能让门岗拦的别留给人肉 review。**安全关键依赖不许写成 optional 成员再配欠账登记**——登记只是备忘录，不阻止下一个人合法地漏传；能力确实可能不存在时用显式 `unsupported` 返回值，不用 `undefined`。自检：写下 `foo?:` 或往基线加一条时问「漏了它会怎样」，答案是「运行时静默降级」且碰钱 / 权限 / 数据完整性，就不该可选。（起因：打包态确认门恒拒——可选成员漏传是合法 TypeScript，开发态 43/43 全绿、打包态 15/43。）
 
----
+**棘轮门岗族的共同规矩**（新加任何棘轮门岗照办）：
 
-## R16 真实用户任务测试系统 = 完成的一部分
+1. 基线只减不增，存身份不存裸数字（裸数字放过「删一处旧的、同 commit 加一处新的」）。
+2. 加规则必须先验它会红：临时塞一处违规 → 跑门岗确认报红且 `file:line` 对 → 删掉。有「合法例外」的规则再补一发反向控制。只验过绿的门岗不算门岗。
+3. 先问存量是债还是本来就对：是债才进基线，本来就对的在扫描器里判合规。
+4. 门岗红了先读它红在哪条判据，别改预算或抬基线挤 PR。
+5. 被忽略的门岗等于不存在：误报多的门岗要改判据或自动修，别让人习惯性跳过。
 
-> 2026-08-01 用户拍板固化。**R16 是 P3「全绿≠完成」的量化门**：功能类交付，光有单测/五门绿、甚至跑一次 R13 走查，都不算真完成——必须建起「真实用户任务」的端到端测试系统、带真实任务把整个使用闭环跑通、把过程中冒出的问题全修掉，才算完毕、不留半成品。
+**成员**：重活 `check:heavy-path` ｜测试等待 `check:test-waits`（硬零）｜分层边界 `check:boundaries` ｜`check:tokens` ｜`check:vocabularies` ｜`check:i18n`（硬零）｜`check:framework-boundary` / `check:framework-surface` ｜`check:real-media-fixture` ｜`check:concept-owners`（警告档）。
 
-**为什么**：五门只证代码健康；一次性走查只证「这一条路当时能走」。**一个功能真正好不好用、闭不闭环、体感对不对，只有拿真实任务从头走到尾才暴露**——多数体验/设计/UI/UX/产品感/功能问题不在单测里，在「用户真的想干成一件事」的完整流程里。所以交付的一部分，是把这套「真实任务测试」建成可复跑的系统，并跑到干净。
+**重活门岗（旧 R17.1，用户体感「卡死」的一族）** `scripts/check-heavy-path.mjs` + `scripts/heavy-path-baseline.json`，每条规则各自棘轮：`sync-image-encode`（`toDataURL()` 同步编码冻界面，改用 `convertToBlob()` / `toBlob()`）；`base64-into-store`（base64 进 store 被深拷贝 / 撤销日志 / IPC / 每次保存全量序列化，改用 `persistNodeImageBlob()` 落盘换 `nomi-local://`）；`duplicate-node-size-bounds`（在 `nodeSizing` 外重声明尺寸常量，布局与渲染错位，尺寸只有一个真相源）；`node-stream-into-response`（Node 流交给 undici，大视频拖进度条抛 `ERR_INVALID_STATE`，改用 `createOwnedFileStream()`）；`unguarded-fsync`（`electron/durability.ts` 之外直接 `fs.fsyncSync`，CI 磁盘队列深时才红，文件 fd 用 `fsyncIfDurable(fd)`；判据是「有没有过闸」不是「在哪个文件」，基线为 0）。`stripComments()` 必须逐行等高，否则 `file:line` 点开是别处。加新规则：修完 bug → 判断通用 → 全仓实扫 → 加进 `RULES`（hint 必须给替代写法）→ `--update-baseline`。
 
-**怎么做（做一件功能，收尾必走）**：
+**测试等待门岗（旧 R17.2）** `check:test-waits`（硬零）：测试里的私有 `waitFor` 定义与 `Date.now()` 截止轮询判红，直接写死 ≥5000ms 同判；等 detached driver 一律用 `productionRunTestHelpers.waitForProduction`（全仓唯一等待实现）；站点等待按调用指纹登记存量，只减不增。
 
-1. **建测试系统，不是跑一次**：为这次功能设计**几条**（≥2-3 条，覆盖主路径 + 边界/降级）「真实用户任务」场景——是**创作目标**（如「给一段剧本，出一份能播的初稿」「把某镜套上迪金斯打光重生成」「外部 Claude/WorkBuddy 驱动 Nomi 出初稿」），不是功能探索（点点看每个按钮）。参照 R13 的旅程构建铁律与 J1-J5。把这些场景**固化成可复跑的脚本/清单**（存进 `evals/` 或 e2e），不是一次性手点。
-2. **带真实任务跑通闭环**：用 R13 走查法（Playwright + 眼见链截图，真机/真构建/真入口）把每条场景**从起点走到用户真正拿到结果**——闭环 = 用户那件事真办成了（真出了初稿、真改对了那一镜），不是「中间某步没报错」。
-3. **过程中主动挑问题**：跑的时候戴产品/设计/用户三顶帽子，专门找——**体验问题**（卡顿/多余步骤/看不懂）、**设计问题**（信息层级/入口）、**UI 问题**（越界/错位/暗色不可读）、**UX 问题**（流程绕/反直觉/无反馈）、**产品感问题**（这功能到底解不解决摩擦、值不值得存在）、**功能问题**（做错/漏做/边界崩）。
-4. **全修掉，不挑拣**：发现的问题**全部**按 P2 根因修完（不是记 backlog 甩给用户）；只有「关键决策」类（产品方向/不可逆取舍）才按决策自治停下问。修完**重跑**测试系统直到闭环干净。
-5. **才算完成**：以上跑到干净，才能报「真完成」。半成品、留尾、「还剩 N 项」都不算。
+**分层边界门岗（旧 R17.3）** `check:boundaries`（`dependency-cruiser`，规则 `.dependency-cruiser.mjs`，基线 `scripts/boundaries-baseline.json`）：`src/` → `electron/` 存量冻结只减不增（走 `src/desktop/bridge.ts` 或 `electron/shared/contracts/`）；`electron/` → `src/` 与 `src/` → `scripts/` 硬零；新增完全静态循环（非 dynamic-import、非 type-only）判红，存量冻结。归属地图 `docs/architecture/module-ownership-map.md`。
 
-**与其它规则的关系**：R16 用 R13 的走查方法 + P3 的样张对账，但把标准拔高成「**多条真实任务测试系统 + 闭环 + 修全发现的问题**」；与 R14（周期审计）区别 = R14 是攒够 commit/发版前的定期体检，R16 是**每个功能交付自带**的完成门。
+## RW 重写判据（旧 R21.2，试用到 2026-10-15）
 
-**适用范围**：功能类交付（尤其用户可见 / 体感功能）必走；纯内部重构 / 文案 / 脚本类改动按 P3 常规走查即可，不强求建多条任务测试系统。
+出现任一条就停止打补丁：① 同一文件 14 天内第三次因 bug 修改；② 要给现有函数加第三个特例分支或参数；③ 改一处要读两处以上旁路逻辑。此时选定「补 / 重写 / 删」之一并给出特征测试路径：选**重写**先写特征测试钉住旧行为，范围限一个模块，**同一次提交删掉旧的**（P1）；选补或删同样写明特征测试并说明为什么不重写。根因合同可带 `rewrite_decision: { decision, characterization_test }`，写了就必须成立（选项合法、测试文件存在、选 rewrite 时测试在本次 diff 里）。判据只判做没做，不判做得好不好。动手那一刻的提醒：`scripts/claude-hooks/edit-time-reminder.sh`（只提醒不拦）——文件近 14 天已有 ≥3 次 fix 提交时提醒先过本判据；在 `src/`、`electron/` 新建文件时附接口级已有能力清单并要一行「已查过 / 没找到」。数字是试用值，校准用提交历史回测。
 
-## 工作流框架（阶段 × agent 编排）
+## P2 修复走根因流程（旧 R21 / R21.1 / R21.3）
 
-> 核心三原则：① 独立工作并行、共享文件顺序；② 评审/验证用对抗式多视角（让 agent 挑毛病）；③ UI 收尾必过真实用户体验 agent。范围按事情大小缩放：小改省略中间阶段，项目级大改全走。
+**触发**：所有 bug、回归、CI / 平台失败、flaky、性能 / 安全问题和评审发现，不按目录或改动大小豁免。方法只住在 `.agents/skills/root-cause-remediation/SKILL.md`。可复发 / 高风险 / 逃逸 bug 在改代码前提交 schema-v3 `docs/fixes/*.root-cause.json`；`pnpm run check:root-cause-contracts` **只对 schema 不合法阻断，其余降为警告**，合同强制由合并前扫描（`scripts/merge-preflight.mjs`）查修的是逃逸 bug 的情形；「第二次修同一类问题」目前**暂未检查**，靠协调会话人工。v3 新增 `recurrence_check_on`（默认合并日 + 30 天）与 `detected_by`（user / post-release / walkthrough / ci / review）：新合同属 recurring、高风险或逃逸 bug（`detected_by` 为 user 或 post-release）时两项必填，老合同按日期前缀豁免。
 
-| 阶段 | 防的根因 | 用什么 | 过门标志 |
-|---|---|---|---|
-| 0 调研 | 凭记忆手搓 | Context7（R5）+ 顶尖开源代码（R6）+ Explore agent 摸现状 | 现状盘点（带 file:line）|
-| 1 设计/方案 | 想清楚再动手 | 实现规范（HTML 长相 + 精确 token/结构/状态/数据）；架构拉 CTO+前端+后端（R9）| 实现规范文档（R4）|
-| 2 方案评审 | 带病开工 | 6 角色评审（R7）+ 对抗评审（专开 agent 挑毛病）；有取舍出对比表（R3）| 评审回填 + 必改项 |
-| 3 实现 | 加新不删旧 / 喂巨壳 | 主 loop 顺序实现；互不碰同一文件的独立项 → 多 agent worktree 并行 | 代码 + 单测 |
-| 4 逐元素核对 | twMerge/Mantine 隐藏覆盖 | `tests/ux/design-fidelity.e2e.mjs`（computed-style/DOM 结构断言）| 门全绿 |
-| 5 交互态视觉收尾 | 遮挡/溢出/重叠（逐元素绿也抓不到）| 真实用户体验 agent + Playwright 逐个打开每个交互态 + 截图 + 几何实测 | 遮挡/溢出回归断言绿 |
-| 6 代码评审 | 正确性/复用/效率 | `/code-review` 或评审 agent + 对抗验证（多 agent 各挑一角度）| 评审通过 |
-| 7 迭代 | 全绿 ≠ 完成 | 发现问题回到对应阶段 | 全门绿 + 样张/体验对账过 |
+**第三个问题（`invariant_owner_layer`，2026-09-07 起）**：这条不变量从此归哪层管、那一层有没有测试？填 `layer`（确实没人管填 `none`）、`tests`、`structural_ticket`（`none` 或无测试时必填且必须存在）。填 `none` 是诚实答案，代价是一份结构工单。
 
-**UI 可见改动的最后一道永远是「真实用户体验 agent 视觉走查」（R13 固化）。**
+**先数门（`doors`，2026-09-11 起）**：不变量碰到的那份状态一共有几扇入口？连着三簇 bug 都是「不变量只在一扇门上实现，另一个入口绕过去」。合同带 `doors` 与 `door_reduction { before, after, why_not }`；**门表用脚本生成不手写**：`node scripts/door-map.mjs <符号或文件>`（TS compiler API，约 1 秒）。门的身份 = 文件 + 符号，不含行号；合同检查自己调 door-map 核对（path 存在、符号对得上、`after` 等于 `doors.length`、`before ≥ 2` 而没减时 `why_not` 必填、改动里属 `scope_paths` 的生产文件 ⊆ 门表）。允许不减、不允许无声地不减；只数直接调用点不做传递闭包。派工侧：复发类修复先派数门工人，任务书引用门表（编排手册）。
 
----
+## R22 验证分层与测试预算
 
-## 技能库（Skills）— 规则的可执行版本
+目标不是少测，而是把反馈成本花在真正可能受影响的地方：小改动尽快反馈，高风险绝不降级。
 
-> 已装一批 Claude Skill。它们**不是新规矩**，是上面 P1–P5 / R1–R14 / 工作流阶段的**可调用执行体**：规则讲「该这么做」，skill 把这套步骤直接跑出来。触发对应规则时就 `Skill` 调用对应技能，别另起炉灶（违 P1）。
->
-> **冲突时**：本文件 CLAUDE.md = 最高真相源。skill 与本文件冲突一律**以本文件为准**（如 skill 默认 Next.js 写法、或它的 review 分级和 R7 六角色不一致，都按本项目走）。skill 是工具，纪律是宪法。`using-superpowers` 是元技能（提倡每条消息先查 skill）——本项目已用 CLAUDE.md 做编排，**按需调用即可，不强制每条触发**。
-
-**安装事实**：项目级装在 `.claude/skills/`（PromptScript 类，仅支持项目级，以完整 agent 权限运行）。技能目录已 gitignore，**唯一 committed 真相源 = `skills-lock.json`**；换机 / 协作者用 `npx skills experimental_install` 一键还原。
-
-### 触发 → 技能映射（在既有规则触发时调用，不替代规则）
-
-| 什么时候 | 调用技能 | 对应规则 / 阶段 |
+| 风险面 | 触发 | 验证 |
 |---|---|---|
-| 任何创作 / 加功能 / 改行为，**动手前** | `brainstorming` | P5「想清楚再动手」/ 阶段 1 |
-| 有 spec、要落多步任务，**写码前** | `writing-plans` | R4「执行前写文档」→ 落 `docs/plan` |
-| 拿着写好的 plan 执行（带检查点） | `executing-plans` | 阶段 3 实现 |
-| 一会话内并行干多个互不依赖的子任务 | `subagent-driven-development` / `dispatching-parallel-agents` | 阶段 3「独立项并行」 |
-| 写任何功能 / 修 bug，**写实现前** | `test-driven-development` | 单测先行 / Push 前必过 test |
-| 撞 bug / 测试挂 / 行为怪，**提方案前** | `systematic-debugging` | P2「修根因不修症状」 |
-| 写 React 组件 / 取数 / 性能优化时 | `vercel-react-best-practices` | **仅 React**（本项目非 Next.js，取其 React 性能那部分）|
-| 完成任务 / 合并前要审代码 | `requesting-code-review` + `code-review-expert` | R7 / 阶段 6；与内置 `/code-review` 并用，这俩重 SOLID/安全的 P0–P3 分级 |
-| 收到 review 意见、**动手改前** | `receiving-code-review` | 不盲改，先技术核实 |
-| 要宣布「做完 / 修好 / 通过」前 | `verification-before-completion` | P3「全绿≠完成」/ R11 验证门槛 |
-| 开新分支要隔离工作区 | `using-git-worktrees` | worktree 放仓库**同级**（见「工作目录」）|
-| 实现完成、决定怎么并入 main | `finishing-a-development-branch` | R11 commit/push |
-| 自己造 / 改 skill 时 | `writing-skills` / `skill-creator` | — |
+| contracts | 所有 PR 与 main push | 静态合同、lint、typecheck、结构门岗 |
+| unit | 普通隔离改动 focused；Electron、模型执行、画布、基础设施 full | changed / sibling / related 或全量 Vitest |
+| desktop | Electron 与桌面运行边界 | 一次 build + Electron smoke |
+| journeys | Agent、模型执行、真实工作流边界 | CI-safe J3/J5 真实用户旅程 |
+| canvas | 生成画布 critical；React Flow 内核 full | 功能画布验收，不含性能 benchmark |
+| performance | React Flow viewport、节点媒体渲染 / 调度、性能基准自身 | 独立性能预算，`pass:false` 必须非零退出 |
+| package | 依赖 / 构建配置、Electron main / preload identity、release 边界 | macOS build、目录打包、codesign |
 
----
+权威实现是 `scripts/validation-policy.mjs`（**认不出的路径默认跑全量**）；`scripts/select-quality-gate-profile.mjs` 只从 Git diff / 事件取输入，CI workflow 与本机 `pnpm run gates` 只消费输出。**必须保留的测试**：凭据不出主进程、SSRF / 重定向 / 私网边界、认证与发布状态机、幂等 / 并发 / 取消、崩溃恢复与升级持久化、迁移与 unknown reconcile、媒体验真、真实入口 round-trip、安装包身份与签名。可 focused 的是同目录 sibling test 与 import graph 的 related tests；可简化的是重复 fixture / helper，先证行为覆盖等价再合并，不用删测试换速度。没有真实资源记 `unverified`。一个逻辑批次完成后跑一次定向验证再统一推送，只有测试基础设施自身、删除 / 重命名、无法分类或手动 release 才跑显式全维度。
+
+**分支定性先算 merge-base**：评审、对账或打捞任何分支前先 `git merge-base origin/main <branch>`，真实 authored delta = `MB..branch`；两点视图里的大片删除第一假设是「main 在分支落后期间前进了」。最终交付在真实 merged-main SHA 上跑 `pnpm run delivery:verify-merged`，等待该 exact SHA 的 `Quality Gate` 与 `Mac Package` check run，不本地跑第三遍。
+
+## R27 多智能体编排
+
+任务书带开工三行头与概念占用；收货三查；一个概念一个 PR、按阶段攒（提交不压缩）；协调会话运作（状态落盘、工人不建卡不直接问用户、CI 绿 + 扫描干净才合、最多 3 个等收据）。正文：[`engineering/agent-orchestration-playbook.md`](engineering/agent-orchestration-playbook.md)。
+
+## R33 概念的 owner 先于目录（含 R33.2 – R33.5）
+
+派工切的是概念不是文件夹：并行 lane 按目录派工时，同一概念在合并前就各自长出第二份实现，两条 lane 改的文件一个都不重叠，`git merge` 看不见，而两份都有测试都绿。
+
+- **谁说了算在动手前回答**：设计卡 ★2 格写概念 → 唯一 owner（`concept-owners.json` 的 id）→ 允许的消费者；owner 落到文件 + 符号，owner 未定标 `pending` 并写清由哪份任务书收口。
+- **同一时段同一概念只归一条 lane**（R33.2）：编排者维护全局占用表；跨概念改动只能由持有者做或等它合并；目录不冲突不是理由。
+- **验收多一问**（R33.3）：这一刀有没有让任何概念多出第二个 owner（第二份状态 / 规则 / 判据，或渲染层替主进程做决定的补偿逻辑）？有就打回，测试绿不作放行理由。
+- **概念登记表** `docs/engineering/concept-owners.json`（R33.4）与 `check:concept-owners`（**警告档**，判据 `scripts/concept-owners-lib.mjs`）：只登记碰到的概念，当场登记；同一概念出现第二个写口即违规；`pending` 条目必须写 `migration_strategy`；owner 只写真实存在的文件。字段：`name` / `subject` / `lifecycle` / `authority_kind` / `trust_domain` / `fact_kind` / `migration_status` / `owner` / `write_api` / `forbidden_derivations` / `allowed_consumers` / `identity_fields`（身份比对必填）/ `parity_test` / `since` / `notes`。门岗只抓形状：同一件事换名字再写一份它看不见，那一半归对拍测试、真实旅程和收货那一问。
+- **对等矩阵**（R33.5）：多入口（Agent 面板 / 画布 / 外部 MCP / 批量）共享同一概念时，要有一条会红的判据证明同源——同一输入 → 各入口出站报文逐字节相同；新入口必须登记。
+
+## SECRET 敏感数据
+
+禁 `--no-verify`、禁 `git add -f`；提交前敏感数据扫描不得绕过（`secret-guard.sh`、`commit-bypass-check.sh`、`check:secrets`）。
 
 ## 固化的工作纪律
 
-以下是从实际踩坑中提炼的、不属于任何单一规则的独立纪律。
-
-**接入即验证 + 真实生成 E2E 回路**：一个模型/生成链路不算「接入成功」，直到一次真实 E2E 生成跑通。验证链路：定义真实任务 → 真机驱动 + 主进程埋点（Playwright 渲染层抓不到 vendor HTTP，它在 Electron 主进程发）→ 分层暴露所有问题（UI/交互/配置/传输/渲染）→ 逐个挖根因 → 分级修 → 补可观测 + 锁回归断言。缺 archetype 的模型先补 archetype 再配 mapping，别手配（手配必漂）。参考：`docs/workflow/2026-06-06-real-generation-e2e-loop.md`。
-
-**词汇 = 模型真名，别替用户翻译**：模式/能力标签用模型自己的叫法（vendor 原词）为主。自创意图词可能把能力说窄（「全能参考」写成「角色参考」会让人以为只能放角色）。
-
-## R17 重活门岗（用户体感「卡死」的一族）
-
-**门岗**：`pnpm run check:heavy-path`（`scripts/check-heavy-path.mjs` + `scripts/heavy-path-baseline.json`），每条规则各自棘轮，只减不增。已进 `gates` 链。（规则条数别写死在文档里——以脚本里的 `RULES` 为准。）
-
-**它抓什么、为什么这些是一族**（2026-08-20「九宫格切图卡死半小时」挖到底的产物）：
-
-| 规则 | 写法 | 后果 |
-|---|---|---|
-| `sync-image-encode` | `canvas.toDataURL()` | 同步 PNG 编码，编码期间整个界面冻住。9 张 4K 切片 = 701ms 纯阻塞。改用 `convertToBlob()`/`toBlob()`（异步、编码不占主线程）|
-| `base64-into-store` | `updateNode({ result: { url: dataUrl } })` | base64 进 store → 每次写入被 `emitCanvasGesture` 整段 JSON 深拷贝、压进撤销日志、IPC 发去事件日志、随每次保存全量序列化。改用 `persistNodeImageBlob()` 落盘换 `nomi-local://`，store 只存门牌号、只写一次 |
-| `duplicate-node-size-bounds` | 在 `nodeSizing` 外重新声明 `MIN/MAX_NODE_WIDTH/HEIGHT` | 布局算一套尺寸、渲染算另一套 → 必然错位（切图九张按 129px 步距摆、卡片各渲染 240 宽，互相压掉 110px）。尺寸只有一个真相源：常量从 `nodeSizing` 导入，「卡片实际渲染多大」问 `resolveNodeVisualSize()` |
-| `node-stream-into-response` | `new Response(createReadStream(...))` / `Readable.toWeb(...)` | 把 Node 流交给 undici / Node 适配器管生命周期。小文件、不 seek 时完全正常；大视频一拖进度条就从 microtask 抛出 `ERR_INVALID_STATE`，call site 的 try/catch 一律接不住。改用 `createOwnedFileStream()`（`electron/protocol/fileResponseStream.ts`）自己拥有流 |
-| `unguarded-fsync` | 在 `electron/durability.ts` 之外直接 `fs.fsyncSync(fd)` | 绕过全仓唯一的落盘屏障 → 那条写路径在测试里关不掉，productionRun 的 flake 长回来一角（屏障关掉前该子集 98.7s、最重的几个文件贴着 5000ms `testTimeout`）。而**本地单跑照样全绿**，只有 CI 磁盘队列深的那一刻才红。文件 fd 用 `fsyncIfDurable(fd)` |
-
-**`unguarded-fsync` 的判据是「有没有过闸」，不是「在哪个文件」**（所以基线是 0，不是「现存 2 处」）：
-
-- 正道 `fsyncIfDurable(fd)` 本就匹配不到；
-- 合法例外只有一种形态——**只为 fsync 而开的目录 fd**（`productionRunIntentLog.ts` / `productionRunLock.ts` 各一处）。它连 `openSync` 都要省掉，没法用 `fsyncIfDurable` 表达，于是在开 fd 之前先 `if (!isDurable()) return`；门岗按「本顶层声明里有没有这道闸」认它，屏障一样被尊重。
-- **为什么不把那 2 处收进基线**：基线在本仓的语义是「待清零的存量债」。那 2 处是永远正确的写法，收进去等于把正确代码标成永远清不掉的债；更要命的是留了个洞——删掉一处合法的、同时新增一处违规的，计数不变、门岗照样绿。按闸判则两种情况都当场报红，且将来新写的合规目录 fsync 不用抬基线（抬基线正是棘轮被磨平的方式）。
-
-**为什么必须是门岗而不是文档**：这些写法**当场看不出毛病**——小图上跑得飞快，大图才冻死；本地磁盘闲，CI 忙起来才超时。而写代码的人手里多半是小图、跑的多半是本地。靠自觉记不住，只能靠机器每次拦。`electron/durability.ts` 里那句「除本模块外不要直接调 `fs.fsyncSync`」当了一阵子纯注释、没有任何东西执行它，本规则就是来给它上闸的。
-
-**基线里还留着的（存量，只减不增）**：`sync-image-encode = 5`。其中 `electron/browser/media/browserMediaVisualCapture.ts` 那处跑在注入页面的脚本里，返回值必须可 JSON 序列化，base64 是被迫的——它是这条规则的合法例外，清零时最后处理。
-
-**配套的运行时/主进程护栏**（grep 抓不到的那半）：
-- `electron/events/eventLogRepository.ts` 的 `MAX_FIELD_BYTES = 256KB`：超限字符串在脱敏/哈希/落 sidecar **之前**就换成体积标记。事件日志是旁路观察，绝不许因为一个大字段把主进程拖死。
-- 走查断言：`tests/ux/image-grid-split-freeze.walk.mjs` 量主线程最长阻塞、零 `toDataURL`、零 `data:` URL。
-
-**加新规则的姿势**（P2 通用性判定的落地路径）：修完一个 bug → 判断是不是通用 → 全仓实扫拿 file:line → 能 grep 的加进本门岗的 `RULES`（写清 label + hint，hint 必须给出替代写法）→ `node scripts/check-heavy-path.mjs --update-baseline` 把存量收进基线 → 存量后续慢慢清零。**先问一句「存量是债还是本来就对」**：是债才进基线；本来就对的写法应该在 `scan()` 里判成合规（例：`unguarded-fsync` 认 `isDurable()` 闸），否则等于把正确代码标成永远清不掉的债，还会被「删一处合法的 + 加一处违规的」凑出假绿。
-
-**加规则前必须验一次它会红**（2026-08-25）：临时在 `electron/` 塞一处违规写法 → 跑门岗确认报红且 file:line 点得对 → 删掉。**只验过绿的门岗不算门岗**——绿有可能是正则根本没匹配上。对有「合法例外」的规则还要补一发反向控制：把真实合法处的豁免条件（如那道 `isDurable()` 闸）临时去掉，确认它当场变红——这才证明扫描器真的走到了那几行，而不是碰巧漏过。
-
-**`stripComments()` 必须逐行等高**：抹注释不许改变总行数，否则报出来的 `file:line` 点开是别的地方。两个坑都踩过并已修（2026-08-25）：① 块注释整段删会把后面的行整体上移；② 行注释正则写 `^\s*//` 时 `\s` **含换行**，「空行 + `//` 注释」会被吞掉一行。修之前全仓 2015 个被扫文件里 **1053 个行号是错的，最差的一个偏 995 行**。
-**加新规则的姿势**（P2 通用性判定的落地路径）：修完一个 bug → 判断是不是通用 → 全仓实扫拿 file:line → 能 grep 的加进本门岗的 `RULES`（写清 label + hint，hint 必须给出替代写法）→ `node scripts/check-heavy-path.mjs --update-baseline` 把存量收进基线 → 存量后续慢慢清零。
-## R18 测试等待门岗（并行才炸的私有墙钟等待）
-**门岗**：`pnpm run check:test-waits`（`scripts/check-test-waits.mjs`，硬零无基线）。已进 `gates` 链。
-**它抓什么**：测试文件里的私有 `waitFor` 定义与 `Date.now()` 截止时间轮询。起因（2026-08-25）：electron/productionRun 十一个测试文件各自复制/手写墙钟等待（硬闹钟 500ms~5s），赛跑「每条命令 3 次真 fsync」的 ProductionRunService 编排链——单跑永远绿，vitest 并行满载时 fsync 排队放大 → 干净 main 上 5 跑 4 挂。flake 的两条腿分两处修：**耗时腿**在 `electron/durability.ts`（单测 ephemeral 不 fsync，测试 20× 提速，PR #139）；**赛跑腿**在本门岗——就算测试再快，复制粘贴的私有闹钟也是下一次事故的年轮，机器拦住不许再长。
-**正确姿势**：等 detached driver（`void driveGeneration(...)` 这类）一律用 `productionRunTestHelpers.waitForProduction`（全仓唯一等待实现，统一预算、超时信息带 `check.toString()` 直接定位卡在哪步）。不许在测试里再写 `function waitFor` 或 `Date.now()` 截止轮询——第 11 个复制品（`productionStoryboardBinding` 的匿名内联循环，连名字都不叫 waitFor）就是靠本门岗的模式扫描抓出来的。来龙去脉：`docs/plan/2026-08-25-production-run-test-flake-fsync.md`（耗时腿）+ `docs/plan/2026-08-25-fix-flaky-production-run-tests.md`（赛跑腿与门岗）。
-
-## R19 解决状态必须可交付
-
-> 2026-08-15 用户要求固化。根因不是“忘了合分支”，而是把侧分支里的实现状态误报成了用户拿得到的解决状态。以后状态名称与 Git 证据绑定，不靠口头判断。
->
-> **原为 R17，2026-08-25 改号为 R19**：本条当初只写进了 `AGENTS.md` 一侧的规则索引，`CLAUDE.md` 那侧从未见过它，于是 08-20 加「重活门岗」时把 R17 号又占了一次，本文件一度出现两个 `## R17`。因本条全仓零引用、而「重活门岗」被代码注释与 4 篇计划文档引用，故改本条。旧文中提到的「R17 解决状态」即此条。
-
-**状态词只有以下四种，禁止混用**：
-
-1. **已实现、未推送**：改动只在本地工作区或本地提交。必须给出工作树、分支和提交；不能称为“已解决”。
-2. **已推送、待合入**：远端侧分支能找到提交，但目标分支不包含它。必须给出远端分支/PR；不能称为“已解决”。
-3. **已合入、待验证**：目标分支已包含提交，但目标分支门禁或真实用户任务尚未通过。只能称“已合入”。
-4. **已解决**：修复提交已进入用户指定的远端目标分支，并且该目标分支上的必需门禁与真实用户任务都通过。
-
-**机械证据（报“已解决”前必做）**：
-
-```bash
-git fetch origin
-git merge-base --is-ancestor <fix-commit> origin/<target-branch>
-git status --short --branch
-```
-
-- 第一条祖先检查失败：状态必须降级为“已推送、待合入”，当轮继续完成合入，不能把尾巴留给用户。
-- 未推送提交不允许被引用为团队现状；需要保留就先推到明确命名的远端分支。
-- 删除分支前先逐提交审计；目标分支未包含的有效提交必须先合入或明确归档，不能靠删分支消失。
-- 完成报告必须同时给出目标分支、远端 commit、验证结果；不再只给一个侧分支 hash 让用户自行判断。
-- 若用户明确要求验收后再合入，只能报告“待验收修复”，直到用户批准并实际合入；不能提前写“已解决”。
-
-## R20 造轮子前先过 build-vs-buy 闸
-
-**触发**：你正准备写一段「通用能力」的代码——协议处理、状态/渲染调度、手势、虚拟列表、校验框架、任务队列、编辑器内核等等（不是 Nomi 业务语义）。
-
-**三问（缺一不许动手）**
-1. **这是不是通用问题？** 别人也会遇到 = 通用。只有 Nomi 会遇到（分镜锚一致性、生成预算账本）= 业务。
-2. **同类产品/成熟方案怎么做的？** Context7 查官方文档 + web 查现役方案 + 读顶尖开源真实代码（R5/R6）。**禁止凭记忆判断「有没有成熟方案」「哪个更现役」**。
-3. **自研它在不在护城河上？** 在 = 自研到底；不在 = 用标准实现，或至少**行为对齐标准语义**（将来才可能平滑换过去）。
-
-**判据速查**
-
-| 类型 | 例子 | 处置 |
-|---|---|---|
-| 护城河（自研到底） | ProductionRun 账本、预算/收据/幂等、锚一致性、Proposal 撤销、能力核权限 | 没有现成品，且是差异化本身 |
-| 标准协议/边界（用标准或对齐标准） | MCP JSON-RPC、Electron IPC 合同、schema 校验、请求生命周期 | 自研不产生差异化，**出事代价极大** |
-| 通用交互内核（先隔离再评估） | 画布 viewport/手势、时间轴播放时钟 | 先把瞬时状态与领域状态分离，再谈换不换 |
-| 已用成熟库（别迁移，修用法） | R3F/Three、Tiptap、Leafer、TanStack Virtual | 查渲染模式、缓存、dispose、订阅粒度 |
-
-**已交的学费**（2026-08-25 全应用地基审计 PR #171）：手写 MCP 协议缺 `notifications/cancelled` 与在飞操作的绑定（客户端断开后付费生成仍在后台跑）、tools/call 参数直接 cast 无运行时校验、协议版本原样回显无交集协商、IPC apply reply 只按 id 路由不绑 sender/origin。这些**都不是业务复杂度，是标准语义没补齐**——正是这条闸要拦住的东西。
-
-**与既有规则的关系**：R5 管「用第三方库时先查官方文档」，R6 管「做方案前先读顶尖开源」，**R20 管更早的一步：先判断该不该自己写**。P2 的「通用性判定」是修 bug 侧的同一思维（这类还会从别的入口出现吗），R20 是造东西侧。
+**接入即验证**：一个模型 / 生成链路不算接入成功，直到一次真实 E2E 生成跑通：真机驱动 + 主进程埋点（Playwright 渲染层抓不到 vendor HTTP，它在 Electron 主进程发）→ 分层暴露问题 → 逐个挖根因 → 补可观测 + 锁回归断言。缺 archetype 的模型先补 archetype 再配 mapping，别手配。

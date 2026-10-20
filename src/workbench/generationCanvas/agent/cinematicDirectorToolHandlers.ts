@@ -1,3 +1,4 @@
+import { selectActiveStoryboardDesign } from '../../workbenchDocumentSlice'
 import { filmBibleSchema } from '../../domain/cinematicSchema'
 import { cancelWorkbenchTask } from '../../api/taskApi'
 import {
@@ -6,7 +7,7 @@ import {
   readShotSpec,
   readStoryboardAsShotSpecs,
 } from '../../domain/shotSpecReaders'
-import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
+import type { ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import { useWorkbenchStore } from '../../workbenchStore'
 import { archiveRevision, selectRevision } from '../model/graphOps'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
@@ -33,22 +34,22 @@ export async function routeCinematicDirectorToolCall(
   toolName: string,
   args: unknown,
   executeDelegate: DelegateExecutor,
+  project: ProjectExecutionContext,
 ): Promise<HandledResult> {
+  project.assertCurrent()
   const delegate = resolveCinematicDirectorDelegate(toolName, args)
   if (delegate) {
-    return { handled: true, value: await executeDelegate(delegate.toolName, delegate.args) }
+    const value = await executeDelegate(delegate.toolName, delegate.args)
+    project.assertCurrent()
+    return { handled: true, value }
   }
-  return tryApplyCinematicDirectorToolCall(toolName, args)
+  return tryApplyCinematicDirectorToolCall(toolName, args, project)
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
-}
-
-function activeProjectId(): string {
-  return getActiveWorkbenchProjectId() || 'local'
 }
 
 function revisionSummary(node: GenerationCanvasNode): Record<string, unknown> {
@@ -96,18 +97,19 @@ function updateRevisionNode(nodeId: string, revisionId: string, operation: 'sele
   }
 }
 
-export function tryApplyCinematicDirectorToolCall(toolName: string, args: unknown): HandledResult {
+export function tryApplyCinematicDirectorToolCall(toolName: string, args: unknown, project: ProjectExecutionContext): HandledResult {
+  project.assertCurrent()
   const record = recordValue(args)
   const workbench = useWorkbenchStore.getState()
   const canvas = useGenerationCanvasStore.getState()
-  const projectId = activeProjectId()
+  const projectId = project.binding.projectId
 
   if (toolName === 'read_project_summary') {
     return {
       handled: true,
       value: {
         projectId,
-        ...readProjectSummary(workbench.storyboardPlan, canvas.nodes),
+        ...readProjectSummary((selectActiveStoryboardDesign(workbench)?.plan ?? null), canvas.nodes),
         hasPersistedFilmBible: Boolean(workbench.filmBible),
       },
     }
@@ -115,7 +117,7 @@ export function tryApplyCinematicDirectorToolCall(toolName: string, args: unknow
   if (toolName === 'read_film_bible') {
     return {
       handled: true,
-      value: workbench.filmBible ?? readFilmBibleView(workbench.storyboardPlan, projectId, {
+      value: workbench.filmBible ?? readFilmBibleView((selectActiveStoryboardDesign(workbench)?.plan ?? null), projectId, {
         aspectRatio: workbench.previewAspectRatio,
         fps: workbench.timeline.fps,
       }),
@@ -124,14 +126,14 @@ export function tryApplyCinematicDirectorToolCall(toolName: string, args: unknow
   if (toolName === 'read_storyboard') {
     return {
       handled: true,
-      value: readStoryboardAsShotSpecs(workbench.storyboardPlan, canvas.nodes, projectId),
+      value: readStoryboardAsShotSpecs((selectActiveStoryboardDesign(workbench)?.plan ?? null), canvas.nodes, projectId),
     }
   }
   if (toolName === 'read_shot_spec') {
     const shotId = typeof record.shotId === 'number' || typeof record.shotId === 'string'
       ? record.shotId
       : ''
-    const shot = readShotSpec(shotId, workbench.storyboardPlan, canvas.nodes, projectId)
+    const shot = readShotSpec(shotId, (selectActiveStoryboardDesign(workbench)?.plan ?? null), canvas.nodes, projectId)
     if (!shot) throw new Error(`shot_not_found:${String(shotId)}`)
     return { handled: true, value: shot }
   }
@@ -167,7 +169,7 @@ export function tryApplyCinematicDirectorToolCall(toolName: string, args: unknow
   }
   if (toolName === 'apply_film_bible_patch') {
     const patch = recordValue(record.patch)
-    const current = workbench.filmBible ?? readFilmBibleView(workbench.storyboardPlan, projectId) ?? {
+    const current = workbench.filmBible ?? readFilmBibleView((selectActiveStoryboardDesign(workbench)?.plan ?? null), projectId) ?? {
       version: 1 as const,
       projectId,
     }
@@ -187,14 +189,17 @@ export function tryApplyCinematicDirectorToolCall(toolName: string, args: unknow
     const runId = typeof record.runId === 'string' ? record.runId.trim() : ''
     const taskId = typeof record.taskId === 'string' ? record.taskId.trim() : ''
     if (!runId && !taskId) throw new Error('cancel_provider_task requires runId or taskId')
+    const payload = {
+      projectId,
+      projectBinding: project.binding,
+      runId: runId || taskId,
+      ...(taskId ? { taskId } : {}),
+      ...(typeof record.nodeId === 'string' ? { nodeId: record.nodeId } : {}),
+      ...(typeof record.vendor === 'string' ? { vendor: record.vendor } : {}),
+    }
     return {
       handled: true,
-      value: cancelWorkbenchTask({
-        runId: runId || taskId,
-        ...(taskId ? { taskId } : {}),
-        ...(typeof record.nodeId === 'string' ? { nodeId: record.nodeId } : {}),
-        ...(typeof record.vendor === 'string' ? { vendor: record.vendor } : {}),
-      }),
+      value: cancelWorkbenchTask(payload).then(result => { project.assertCurrent(); return result }),
     }
   }
   return { handled: false }

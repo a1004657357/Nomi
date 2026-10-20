@@ -27,6 +27,13 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "ref": "text_to_video"
     }
   },
+  "minimax-h3-max": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video"
+    }
+  },
   "happyhorse": {
     "defaultModeId": "t2v",
     "modes": {
@@ -34,6 +41,381 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "i2v": "text_to_video",
       "ref": "text_to_video",
       "edit": "text_to_video"
+    }
+  },
+  "vidu-q3": {
+    "defaultModeId": "ref",
+    "modes": {
+      "ref": "image_to_video"
+    }
+  },
+  "kling-3.0-turbo": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video"
+    }
+  },
+  "happyhorse-1.1": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "ref": "image_to_video"
+    }
+  },
+  "grok-imagine-1.5-video": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video"
+    }
+  },
+  "veo-3.1": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "reference": "image_to_video",
+      "frame": "image_to_video"
+    }
+  },
+  "gemini-omni-1.1": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "firstlast": "image_to_video",
+      "reference": "image_to_video"
+    }
+  },
+  "runway-gen4.5": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video"
+    }
+  },
+  "runway-gen4-turbo": {
+    "defaultModeId": "i2v",
+    "modes": {
+      "i2v": "image_to_video"
+    }
+  },
+  "kling-3.0": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video"
+    }
+  },
+  "seedance-2-apimart": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "omni": "image_to_video",
+      "firstlast": "image_to_video"
+    }
+  },
+  "seedance-2.5-apimart": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "omni": "image_to_video"
+    }
+  },
+  "seedance-2.5-runway": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "omni": "text_to_video"
+    }
+  },
+  "minimax-h3-apimart": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "ref": "image_to_video"
+    }
+  },
+  "minimax-h3-pixstag": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "ref": "image_to_video"
+    }
+  },
+  "wan-2.7": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "ref": "image_to_video"
+    }
+  },
+  "wan-3.0": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "ref": "image_to_video"
+    }
+  },
+  "wan-3.0-apimart": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "ref": "image_to_video"
+    }
+  },
+  "hailuo-2.3": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video"
+    }
+  },
+  "omni-flash-ext": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video"
+    }
+  },
+  "minimax-h3-regeneration": {
+    "defaultModeId": "regenerate",
+    "modes": {
+      "regenerate": "text_to_video"
+    }
+  },
+  "higgsfield-dop": {
+    "defaultModeId": "i2v",
+    "modes": {
+      "i2v": "image_to_video",
+      "firstlast": "image_to_video"
+    }
+  },
+  "volcengine-seedance-2": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "omni": "image_to_video"
+    }
+  },
+  "volcengine-seedance-2-5": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "first": "image_to_video",
+      "firstlast": "image_to_video",
+      "omni": "image_to_video"
+    }
+  },
+  "dreamina-seedance-2": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "firstlast": "image_to_video",
+      "multimodal": "image_to_video"
+    }
+  },
+  "dreamina-seedance-2.5": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "firstlast": "image_to_video",
+      "multimodal": "image_to_video"
+    }
+  },
+  "jimeng-web-seedance-2": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "firstlast": "image_to_video",
+      "multimodal": "image_to_video"
+    }
+  },
+  "dreamina-multiframe": {
+    "defaultModeId": "multiframe",
+    "modes": {
+      "multiframe": "image_to_video"
+    }
+  },
+  "runninghub-seedance": {
+    "defaultModeId": "text",
+    "modes": {
+      "text": "text_to_video",
+      "image": "image_to_video"
+    }
+  },
+  "rh-veo-3.1": {
+    "defaultModeId": "text",
+    "modes": {
+      "text": "text_to_video",
+      "image": "image_to_video"
+    }
+  },
+  "rh-kling-3.0": {
+    "defaultModeId": "text",
+    "modes": {
+      "text": "text_to_video",
+      "image": "image_to_video"
+    }
+  },
+  "rh-wan-2.7": {
+    "defaultModeId": "text",
+    "modes": {
+      "text": "text_to_video",
+      "image": "image_to_video"
+    }
+  },
+  "rh-hailuo-2.3": {
+    "defaultModeId": "text",
+    "modes": {
+      "text": "text_to_video",
+      "image": "image_to_video"
+    }
+  },
+  "agnes-video": {
+    "defaultModeId": "t2v",
+    "modes": {
+      "t2v": "text_to_video",
+      "i2v": "image_to_video",
+      "keyframes": "image_to_video"
+    }
+  },
+  "agnes-video-2.5": {
+    "defaultModeId": "text",
+    "modes": {
+      "text": "text_to_video",
+      "keyframe": "image_to_video",
+      "reference": "image_to_video"
+    }
+  },
+  "agnes-video-2.5-flash": {
+    "defaultModeId": "text",
+    "modes": {
+      "text": "text_to_video",
+      "keyframe": "image_to_video",
+      "reference": "image_to_video"
+    }
+  },
+  "jimeng-web-image": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "edit": "image_edit"
+    }
+  },
+  "minimax-music-3": {
+    "defaultModeId": "music",
+    "modes": {
+      "music": "text_to_audio"
+    }
+  },
+  "minimax-speech-2.8": {
+    "defaultModeId": "speech",
+    "modes": {
+      "speech": "text_to_audio"
+    }
+  },
+  "eleven-v3": {
+    "defaultModeId": "speech",
+    "modes": {
+      "speech": "text_to_audio"
+    }
+  },
+  "eleven-multilingual-v2": {
+    "defaultModeId": "speech",
+    "modes": {
+      "speech": "text_to_audio"
+    }
+  },
+  "eleven-music-v2": {
+    "defaultModeId": "music",
+    "modes": {
+      "music": "text_to_audio"
+    }
+  },
+  "eleven-sfx-v2": {
+    "defaultModeId": "sfx",
+    "modes": {
+      "sfx": "text_to_audio"
+    }
+  },
+  "eleven-scribe-v2": {
+    "defaultModeId": "transcribe",
+    "modes": {
+      "transcribe": "transcribe"
+    }
+  },
+  "meshy-7": {
+    "defaultModeId": "i2m",
+    "modes": {
+      "i2m": "image_to_3d"
+    }
+  },
+  "runway-gen4-image": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "runway-gen4-image-turbo": {
+    "defaultModeId": "i2i",
+    "modes": {
+      "i2i": "image_edit"
+    }
+  },
+  "runway-muse-image": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "grok-imagine-image-2": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "gemini-image-3-pro": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "gemini-image-3.1-flash": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "runway-seed-audio": {
+    "defaultModeId": "sfx",
+    "modes": {
+      "sfx": "text_to_audio",
+      "speech": "text_to_audio"
     }
   },
   "gpt-image-2": {
@@ -92,13 +474,6 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "edit": "image_edit"
     }
   },
-  "kling-3.0": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video"
-    }
-  },
   "qwen-image-3": {
     "defaultModeId": "t2i",
     "modes": {
@@ -125,124 +500,6 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "t2i": "text_to_image"
     }
   },
-  "sora-2": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video"
-    }
-  },
-  "veo-3.1": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "reference": "image_to_video",
-      "frame": "image_to_video"
-    }
-  },
-  "wan-2.7": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video",
-      "ref": "image_to_video"
-    }
-  },
-  "wan-3.0": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "first": "image_to_video",
-      "firstlast": "image_to_video",
-      "ref": "image_to_video"
-    }
-  },
-  "wan-3.0-apimart": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "first": "image_to_video",
-      "firstlast": "image_to_video",
-      "ref": "image_to_video"
-    }
-  },
-  "hailuo-2.3": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video"
-    }
-  },
-  "grok-imagine-1.5-video": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video"
-    }
-  },
-  "seedance-2-apimart": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video",
-      "omni": "image_to_video",
-      "firstlast": "image_to_video"
-    }
-  },
-  "seedance-2.5-apimart": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "first": "image_to_video",
-      "firstlast": "image_to_video",
-      "omni": "image_to_video"
-    }
-  },
-  "minimax-h3-apimart": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "first": "image_to_video",
-      "firstlast": "image_to_video",
-      "ref": "image_to_video"
-    }
-  },
-  "minimax-h3-pixstag": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "first": "image_to_video",
-      "firstlast": "image_to_video",
-      "ref": "image_to_video"
-    }
-  },
-  "minimax-h3-regeneration": {
-    "defaultModeId": "regenerate",
-    "modes": {
-      "regenerate": "text_to_video"
-    }
-  },
-  "vidu-q3": {
-    "defaultModeId": "ref",
-    "modes": {
-      "ref": "image_to_video"
-    }
-  },
-  "kling-3.0-turbo": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video"
-    }
-  },
-  "happyhorse-1.1": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video",
-      "ref": "image_to_video"
-    }
-  },
   "seedream-5-pro": {
     "defaultModeId": "t2i",
     "modes": {
@@ -250,18 +507,31 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "edit": "image_edit"
     }
   },
-  "omni-flash-ext": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video"
-    }
-  },
   "nomi-audio": {
     "defaultModeId": "speech",
     "modes": {
       "speech": "text_to_audio",
       "transcribe": "transcribe"
+    }
+  },
+  "suno-v5.5": {
+    "defaultModeId": "music",
+    "modes": {
+      "music": "text_to_audio",
+      "extend": "text_to_audio",
+      "cover": "text_to_audio"
+    }
+  },
+  "suno-sfx-v5.5": {
+    "defaultModeId": "sfx",
+    "modes": {
+      "sfx": "text_to_audio"
+    }
+  },
+  "lyria-3.5": {
+    "defaultModeId": "music",
+    "modes": {
+      "music": "text_to_audio"
     }
   },
   "volcengine-doubao-tts": {
@@ -302,42 +572,6 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "edit": "image_edit"
     }
   },
-  "volcengine-seedance-2": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "first": "image_to_video",
-      "firstlast": "image_to_video",
-      "omni": "image_to_video"
-    }
-  },
-  "volcengine-seedance-2-5": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "first": "image_to_video",
-      "firstlast": "image_to_video",
-      "omni": "image_to_video"
-    }
-  },
-  "dreamina-seedance-2": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video",
-      "firstlast": "image_to_video",
-      "multimodal": "image_to_video"
-    }
-  },
-  "dreamina-seedance-2.5": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video",
-      "firstlast": "image_to_video",
-      "multimodal": "image_to_video"
-    }
-  },
   "dreamina-image": {
     "defaultModeId": "t2i",
     "modes": {
@@ -349,28 +583,6 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
     "defaultModeId": "upscale",
     "modes": {
       "upscale": "image_edit"
-    }
-  },
-  "dreamina-multiframe": {
-    "defaultModeId": "multiframe",
-    "modes": {
-      "multiframe": "image_to_video"
-    }
-  },
-  "jimeng-web-image": {
-    "defaultModeId": "t2i",
-    "modes": {
-      "t2i": "text_to_image",
-      "edit": "image_edit"
-    }
-  },
-  "jimeng-web-seedance-2": {
-    "defaultModeId": "t2v",
-    "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video",
-      "firstlast": "image_to_video",
-      "multimodal": "image_to_video"
     }
   },
   "codex-imagegen": {
@@ -405,48 +617,6 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
     "modes": {
       "text": "text_to_3d",
       "image": "image_to_3d"
-    }
-  },
-  "runninghub-seedance": {
-    "defaultModeId": "text",
-    "modes": {
-      "text": "text_to_video",
-      "image": "image_to_video"
-    }
-  },
-  "rh-veo-3.1": {
-    "defaultModeId": "text",
-    "modes": {
-      "text": "text_to_video",
-      "image": "image_to_video"
-    }
-  },
-  "rh-kling-3.0": {
-    "defaultModeId": "text",
-    "modes": {
-      "text": "text_to_video",
-      "image": "image_to_video"
-    }
-  },
-  "rh-wan-2.7": {
-    "defaultModeId": "text",
-    "modes": {
-      "text": "text_to_video",
-      "image": "image_to_video"
-    }
-  },
-  "rh-hailuo-2.3": {
-    "defaultModeId": "text",
-    "modes": {
-      "text": "text_to_video",
-      "image": "image_to_video"
-    }
-  },
-  "rh-sora-2": {
-    "defaultModeId": "text",
-    "modes": {
-      "text": "text_to_video",
-      "image": "image_to_video"
     }
   },
   "rh-seedream-4.5": {
@@ -491,28 +661,48 @@ export const ARCHETYPE_MODE_MANIFEST: Record<string, { defaultModeId: string; mo
       "edit": "image_edit"
     }
   },
-  "agnes-video": {
-    "defaultModeId": "t2v",
+  "nomi-local-speech": {
+    "defaultModeId": "transcribe",
     "modes": {
-      "t2v": "text_to_video",
-      "i2v": "image_to_video",
-      "keyframes": "image_to_video"
+      "transcribe": "transcribe"
     }
   },
-  "agnes-video-2.5": {
-    "defaultModeId": "text",
+  "higgsfield-soul-2": {
+    "defaultModeId": "t2i",
     "modes": {
-      "text": "text_to_video",
-      "keyframe": "image_to_video",
-      "reference": "image_to_video"
+      "t2i": "text_to_image"
     }
   },
-  "agnes-video-2.5-flash": {
-    "defaultModeId": "text",
+  "higgsfield-soul-cinema": {
+    "defaultModeId": "t2i",
     "modes": {
-      "text": "text_to_video",
-      "keyframe": "image_to_video",
-      "reference": "image_to_video"
+      "t2i": "text_to_image"
+    }
+  },
+  "gpt-image-2.5-flare": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "gpt-image-2.5-sunburst": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image",
+      "i2i": "image_edit"
+    }
+  },
+  "imagen-4-fast": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image"
+    }
+  },
+  "imagen-4-ultra": {
+    "defaultModeId": "t2i",
+    "modes": {
+      "t2i": "text_to_image"
     }
   }
 };

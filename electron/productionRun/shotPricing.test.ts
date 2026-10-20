@@ -286,6 +286,28 @@ describe("checkSealAffordability", () => {
     // a=20 ≤ 25 fits; b unknown (0 toward cap) still fits; c pushes to 40 > 25 → 2 shots affordable.
     expect(result).toEqual({ ok: false, maxAffordableShots: 2, knownSubtotal: 40, maxSpend: 25 });
   });
+
+  it("admits an exact-cap decimal prefix and rejects the first real overage", () => {
+    const hundred = Array.from({ length: 100 }, (_, index) => ({
+      shotId: `shot-${index + 1}`,
+      price: price(0.3),
+    }));
+
+    expect(checkSealAffordability({ shots: hundred, maxSpend: 30 })).toEqual({
+      ok: true,
+      hasUnknownPrice: false,
+    });
+    const overage = checkSealAffordability({
+      shots: [...hundred, { shotId: "shot-101", price: price(0.3) }],
+      maxSpend: 30,
+    });
+    expect(overage).toMatchObject({
+      ok: false,
+      maxAffordableShots: 100,
+      maxSpend: 30,
+    });
+    if (!overage.ok) expect(overage.knownSubtotal).toBeCloseTo(30.3, 12);
+  });
 });
 
 describe("P4 S4 buildMultiShotGateProjection (the real display.shots for the confirmation card)", () => {
@@ -295,8 +317,8 @@ describe("P4 S4 buildMultiShotGateProjection (the real display.shots for the con
   it("builds serializable per-shot rows with index, human model text, and honest prices", () => {
     const projection = buildMultiShotGateProjection({
       shots: [
-        { shotId: "shot-1", sceneOneLiner: "雨夜推门", providerModelText: "APIMart · 即梦（文生图）", candidate: { providerId: "apimart", modelId: "video-model", parameters: {} }, durationSeconds: 5 },
-        { shotId: "shot-2", sceneOneLiner: "货架对视", providerModelText: "APIMart · 未定价模型", candidate: { providerId: "apimart", modelId: "unpriced-model", parameters: {} } },
+        { shotId: "shot-1", sceneOneLiner: "雨夜推门", providerModelText: "APIMart · 即梦（文生图）", candidate: { providerId: "apimart", modelId: "video-model", parameters: {}, references: [] }, durationSeconds: 5 },
+        { shotId: "shot-2", sceneOneLiner: "货架对视", providerModelText: "APIMart · 未定价模型", candidate: { providerId: "apimart", modelId: "unpriced-model", parameters: {}, references: [] } },
       ],
       resolvePricing: resolve,
       currency: "CNY",
@@ -322,7 +344,7 @@ describe("P4 S4 buildMultiShotGateProjection (the real display.shots for the con
 
   it("flags the 'model_cannot_take_character_reference' degradation as a STRUCTURED code (not a string)", () => {
     const projection = buildMultiShotGateProjection({
-      shots: [{ shotId: "s", sceneOneLiner: "x", providerModelText: "m", candidate: { providerId: "apimart", modelId: "no-ref", parameters: {} }, hasCharacter: true, supportsReferenceImage: false }],
+      shots: [{ shotId: "s", sceneOneLiner: "x", providerModelText: "m", candidate: { providerId: "apimart", modelId: "no-ref", parameters: {}, references: [] }, hasCharacter: true, supportsReferenceImage: false }],
       resolvePricing: resolve,
     });
     expect(projection.shots[0].degradations).toEqual([{ code: "model_cannot_take_character_reference", params: { modelId: "no-ref" } }]);

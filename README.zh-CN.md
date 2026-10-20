@@ -1,117 +1,159 @@
 <p align="center">
-  <img src="public/nomi-logo.svg" alt="Nomi" width="80" />
-</p>
-
-# Nomi
-
-**模型你自己带，让你的 AI 助手替你导演。**
-
-Nomi 是一个开源的 AI 视频创作桌面工作台。接任何 OpenAI 兼容接口，或者你本机跑着的 ComfyUI；然后让 Claude Code / Codex / Cursor 经 MCP 直接开工——搭分镜、连参考、跑生成，在真实时间线上给你一版能改的初稿。
-
-项目、提示词和密钥都在你自己电脑上。不用注册，没有埋点。
-
-[English](README.md) · [官网](https://nomiaqm.com/) · [下载](#下载) · [夸克网盘镜像](https://pan.quark.cn/s/d3322c17e7b6) · [加入用户群](#用户群) · [团队合作](#团队服务) · [看 60 秒宣传片](https://nomiaqm.com/assets/demo.mp4)
-
-## 微信联系
-
-### 加入 Nomi 用户群
-
-<p align="center">
-  <a href="docs/media/nomi-canvas-group-wechat-2026-08-25.jpg"><img src="docs/media/nomi-canvas-group-wechat-2026-08-25.jpg" alt="Nomi 用户群微信二维码" width="220" /></a>
+  <a href="https://nomiaqm.com/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="marketing/assets/promo-0.22/cover-zh-dark.jpg" />
+      <img src="marketing/assets/promo-0.22/cover-zh-light.jpg" alt="Nomi —— 对话出片，模型按原价" width="100%" />
+    </picture>
+  </a>
 </p>
 
 <p align="center">
-  <strong>扫码加入 Nomi 用户群</strong><br />
-  群内反馈会直接进入产品迭代。
-</p>
-
-### 群码失效 / 项目合作
-
-<p align="center">
-  <a href="docs/media/qingyang-wechat.jpg"><img src="docs/media/qingyang-wechat.jpg" alt="Nomi 作者青阳的微信二维码" width="180" /></a>
+  <strong>Nomi 是一个开源、本地优先的 AI 视频工作台。</strong><br />
+  跟它的 Agent 说你想拍什么，它自己拆镜头、出关键帧、做视频、排进时间轴——<br />
+  用的是<em>你自己接</em>的模型，按<em>供应商的原价</em>付钱。
 </p>
 
 <p align="center">
-  群码失效，或沟通定制开发、系统集成、贴牌交付与持续迭代，请添加作者微信 <strong>TZ857886159</strong>。
+  <a href="#下载"><b>下载</b></a> ·
+  <a href="https://nomiaqm.com/">官网</a> ·
+  <a href="#看宣传片">看 90 秒宣传片</a> ·
+  <a href="https://nomiaqm.com/quickstart">快速上手</a> ·
+  <a href="https://pan.quark.cn/s/d3322c17e7b6">夸克网盘镜像</a> ·
+  <a href="docs/integrate-with-your-agent.md">让你的 AI 帮你接入</a> ·
+  <a href="#社区">加入用户群</a> ·
+  <a href="#团队合作">团队合作</a> ·
+  <a href="README.md">English</a>
 </p>
 
-[参与 GitHub Issues](https://github.com/aqm857886159/Nomi/issues) · [提交商务咨询](https://github.com/aqm857886159/Nomi/issues/new?template=business_inquiry.yml)
-
-[![最新版本](https://img.shields.io/github/v/release/aqm857886159/Nomi?label=release)](https://github.com/aqm857886159/Nomi/releases/latest)
-![平台](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-1a1816)
-[![许可证](https://img.shields.io/badge/license-AGPL--3.0--only-1a1816)](LICENSE)
-
-[![Nomi 导演工作流](marketing/assets/video/hero-poster.jpg)](https://nomiaqm.com/assets/demo.mp4)
+<p align="center">
+  <a href="https://github.com/aqm857886159/Nomi/releases/latest"><img src="https://img.shields.io/github/v/release/aqm857886159/Nomi?label=release&color=1a1816" alt="最新版本" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-1a1816" alt="平台" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-1a1816" alt="许可证" /></a>
+</p>
 
 ## 为什么是 Nomi
 
-- **一个项目，不是十一个标签页**：故事、镜头、参考、生成结果和时间线在你自己盘上的同一个文件里，不用在多个工具之间反复搬运。
-- **第 4 个镜头和第 9 个镜头得是同一个人**：人物、场景、道具、机位和风格先锁一次，后面的镜头继承它，而不是重新赌一次提示词。
-- **自带全套**：内置约 10 家可直接用的供应商；任何 OpenAI 兼容 / Anthropic / Responses / 中转接口，粘贴地址和密钥就能加，不用重新编译。本机 ComfyUI 和云端模型一样是一个供应商：Nomi 会转换 ComfyUI 常规「保存」格式的工作流，你从网上下载的工作流能直接导入；并且会拿工作流和 `/object_info` 对账，在你按下运行之前就告诉你缺哪些自定义节点和模型文件。
-- **你的 AI 助手能真的操作它**：15 个 MCP 工具，让 Claude Code / Codex / Cursor 建项目、排镜头、连参考、跑生成并发起可恢复的完整制作。创作方向、付费生成、粗剪采用和导出都必须回到 Nomi 明确批准；审批由主进程强制执行，助手无法越权。
+中转站、官方 API、ComfyUI、本地模型，本身都很便宜。商业 AI 视频产品用的往往是同一批模型，价钱却常常翻几倍。
+
+Nomi 给你商业产品级别的工作流，底下跑的是**你自己的**模型：钱直接付给供应商，上游什么价你就付什么价。连 Agent 用的也是你挑的模型——不订阅，不加价。
+
+## 看宣传片
+
+[![看 90 秒 Nomi 0.22 宣传片](marketing/assets/promo-0.22/film-poster-zh.jpg)](https://github.com/aqm857886159/Nomi/blob/main/marketing/assets/video/nomi-0.22-film.mp4)
+
+片子里的界面都是 Nomi 的真实组件，画面素材都是用 Nomi 生成的。
+
+## 你能用它做什么
+
+### 说一句，Agent 在画布上替你干活
+
+<img src="marketing/assets/promo-0.22/still-agent.jpg" alt="Nomi 的 Agent 把一句需求变成画布上的四张关键帧" width="100%" />
+
+说说你想拍什么。Agent 会看你的画布、把故事拆成镜头、出关键帧、做成视频、排进时间轴。它做的每样东西都落在画布上，你看得见，也随时能改。
+
+它每一步问不问你，你来定：**每步问**、**自动改**（花钱的生成仍然先问）、**全自动**。
+
+### 一镜一镜，由你导演
+
+<img src="marketing/assets/promo-0.22/still-storyboard.jpg" alt="分镜表里四个镜头都已出片，角色参考卡已锁定" width="100%" />
+
+分镜表一镜一行：提示词、首帧、模型、时长，一眼看全。给角色或场景锁一张参考卡，用到它的每个镜头都还是同一张脸。
+
+### 拿在手里的 3D 导演台
+
+<img src="marketing/assets/promo-0.22/still-director.jpg" alt="3D 导演台和手机取景页" width="100%" />
+
+摆好人物姿势、定好机位，拿起手机就能取景。拍到的画面直接回到画布上。
+
+### 哪家模型都能用，一镜一换
+
+<img src="marketing/assets/promo-0.22/still-model.jpg" alt="同一张视频卡换个模型再拍一版" width="100%" />
+
+Seedance、可灵、Wan、海螺、Nano Banana、GPT Image……走 APIMart、Kie.ai、火山方舟、魔搭社区、即梦会员、任意 OpenAI 兼容的中转站，或者你本地的 ComfyUI 都行。同一个镜头换个模型，再拍一版。
+
+### 新模型，当天就能用
+
+新模型一出，点「**用 AI 帮我接入**」，让 Claude Code 或 Codex 替你接进来：地址、参数、模型 ID 它去查；Key 你在 Nomi 自己的页面里贴（助手看不到）；它真跑一次验证，通过了模型就出现在列表里。
+
+### 东西都是你的
+
+一个项目就是你硬盘上的一个文件夹：画布、分镜、时间轴、每一个生成的文件、导出的成片都在里面。不用注册，不上报数据。代码 AGPL-3.0 开源。
+
+**下一步：AI 剪辑。** Nomi 要做的是一站式的内容创作 AI 工作台，欢迎一起来做。
 
 ## 下载
 
-| 系统 | 适用机型 | 下载 |
+| 系统 | 版本 | 下载 |
 |---|---|---|
-| macOS | Apple Silicon（M 系列） | [Nomi-mac-arm64.dmg](https://github.com/aqm857886159/Nomi/releases/latest/download/Nomi-mac-arm64.dmg) |
-| macOS | Intel 芯片 | [Nomi-mac-intel.dmg](https://github.com/aqm857886159/Nomi/releases/latest/download/Nomi-mac-intel.dmg) |
+| macOS | Apple 芯片 | [Nomi-mac-arm64.dmg](https://github.com/aqm857886159/Nomi/releases/latest/download/Nomi-mac-arm64.dmg) |
+| macOS | Intel | [Nomi-mac-intel.dmg](https://github.com/aqm857886159/Nomi/releases/latest/download/Nomi-mac-intel.dmg) |
 | Windows | Windows 10 / 11 x64 | [Nomi-windows-setup.exe](https://github.com/aqm857886159/Nomi/releases/latest/download/Nomi-windows-setup.exe) |
 
-🇨🇳 GitHub 打不开或下载慢：[夸克网盘镜像](https://pan.quark.cn/s/d3322c17e7b6)。最新版本以 [GitHub Releases](https://github.com/aqm857886159/Nomi/releases/latest) 和 [官网](https://nomiaqm.com/)为准。
+🇨🇳 GitHub 打不开或下载慢：[夸克网盘镜像](https://pan.quark.cn/s/d3322c17e7b6)。最新版本以 [GitHub Releases](https://github.com/aqm857886159/Nomi/releases/latest) 和 [官网](https://nomiaqm.com/) 为准。
 
-当前仅提供 macOS arm64/x64 与 Windows x64 安装包。
+暂时没有 Linux、Windows arm64 和 macOS 通用版安装包。
 
-### 在 macOS 上第一次打开
+<details>
+<summary><b>macOS 第一次打开</b></summary>
 
-当前 macOS 安装包**未使用 Apple Developer ID 签名，也未经过 Apple 公证**，所以第一次打开时可能被系统拦截。请只使用上表直链、Nomi 官网或 Nomi GitHub 官方仓库提供的下载链接。
+当前 macOS 安装包**没有使用 Apple Developer ID 签名，也没有经过 Apple 公证**，第一次打开可能被系统拦截。请只用上面表格或 Nomi 官网、GitHub 官方仓库里的下载链接。
 
 1. 下载对应的 DMG，把 `Nomi.app` 拖进“应用程序”。
-2. 在 Finder 的“应用程序”中右键 `Nomi.app`，选择“打开”，再确认“打开”。
-3. 如果仍被拦截，打开“系统设置”→“隐私与安全”，找到 Nomi 的提示后点击“仍要打开”。
+2. 在访达的“应用程序”里右键 `Nomi.app`，选择“打开”，再确认“打开”。
+3. 仍被拦截时，打开“系统设置”→“隐私与安全”，找到 Nomi 那条提示，点“仍要打开”。
 
-仅当 macOS 提示 Nomi“已损坏”时，先确认安装包来自 Nomi 官方链接，再打开“终端”运行：
+只有在 macOS 提示 Nomi“已损坏”时，先确认安装包来自 Nomi 官方链接，再运行：
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Nomi.app"
 ```
 
-不需要、也不要全局关闭 Gatekeeper。升级时需下载对应 DMG 后手动替换 `/Applications/Nomi.app`。
+不要全局关闭 Gatekeeper。更新时下载新的 DMG 覆盖即可。
+</details>
 
-### 在 Windows 上第一次打开
+<details>
+<summary><b>Windows 第一次打开</b></summary>
 
-Windows 安装包未使用 Authenticode 签名。SmartScreen 弹窗选择“更多信息”→“仍要运行”。
+安装包暂时没有 Authenticode 签名。在 SmartScreen 提示里点“更多信息”→“仍要运行”。
+</details>
 
-## 三步开始
+## 快速上手
 
-1. **接入模型**：选择预置供应商并填写一个 Key，或添加自己的 OpenAI / Responses / Anthropic 兼容接口。
-2. **说出镜头意图**：写一个故事或一句镜头描述，让 Nomi 或已接入的 AI 助手生成可编辑的分镜与画布方案。
-3. **导演并导出**：检查视觉锚点，用自己配置的模型生成图片或视频，选择结果、排上时间线并导出 MP4。
+1. **接一个模型。** 选 APIMart 或 Kie.ai，贴一个 Key 就能用；也可以接你自己的中转站、OpenAI 兼容接口或本地 ComfyUI。懒得自己弄？把《[让你的 AI 帮你接入 Nomi](docs/integrate-with-your-agent.md)》丢给 Claude Code 或 Codex。
+2. **说你想拍什么。** 直接在 Agent 面板里说，或者从分镜表里的一段故事开始。
+3. **挑片、排片、导出。** 留下满意的版本，排好时间轴，导出 MP4。
 
-> **利益披露**：预置供应商中有一家（APImart）的注册链接带推广码。你始终用自己的密钥、按供应商原价直接付给他们——Nomi 不代理、不转售任何推理服务，任何一家供应商都可以换成你自己的接口。
+> **说明：** APIMart 的链接带推荐码。你永远用自己的 Key、按供应商原价直接付钱；Nomi 不代理、不转售任何模型调用，每一家都能换成你自己的接口。
 
-详细说明：[使用指南](docs/user-guide.md) · [模型接入](docs/provider-integration.md) · [CLI + MCP 指南](docs/guide/capability-core-cli-mcp.md)
+更多：[快速上手](https://nomiaqm.com/quickstart) · [B 站视频教程](https://www.bilibili.com/video/BV1Lf8b6nEjf/) · [对话式接入模型](docs/guide/conversational-model-integration.md) · [用户指南](docs/user-guide.md) · [供应商](docs/provider-integration.md) · [CLI + MCP](docs/guide/capability-core-cli-mcp.md)
 
-## 团队服务
+## 让你自己的 Agent 来用 Nomi
 
-如果你想把 Nomi 变成内部 AI 视频工作台、客户项目、垂直行业流程或贴牌产品，我们可以从首次验证一直做到上线后的持续迭代：
+Nomi 自带 MCP 服务（24 个 MCP 工具）：Claude Code、Codex、Cursor 都能直接驱动它生成、编排、剪辑，顺便用上你会员套餐里送的额度。见《[让你的 AI 帮你接入 Nomi](docs/integrate-with-your-agent.md)》。
 
-- 定制开发
-- 系统与模型集成
-- 贴牌交付与商业授权
-- 持续优化、维护与迭代
+## 社区
 
-[提交商务咨询](https://github.com/aqm857886159/Nomi/issues/new?template=business_inquiry.yml)，或添加作者微信 **TZ857886159**（[查看个人微信二维码](docs/media/qingyang-wechat.jpg)）。GitHub Issue 是公开页面，请勿填写密钥、私人联系方式、预算明细或受 NDA 保护的材料。
+扫左边的码加入用户群，反馈直接进迭代。群码过期了，或者要做 AGPL 合规的定制开发、部署和长期迭代，加右边的维护者微信 **TZ857886159**。
 
-## 用户群
+<p align="center">
+  <a href="docs/media/nomi-canvas-group-wechat-2026-10-09.jpg"><img src="docs/media/nomi-canvas-group-wechat-2026-10-09.jpg" alt="Nomi 用户群微信二维码" width="220" /></a>
+  &nbsp;&nbsp;
+  <a href="docs/media/qingyang-wechat.jpg"><img src="docs/media/qingyang-wechat.jpg" alt="Nomi 维护者微信二维码" width="180" /></a>
+</p>
 
-欢迎加入“nomi 画布群”，反馈会直接进入产品迭代。
+- 提问、分享工作流、看接下来做什么：[GitHub Discussions](https://github.com/aqm857886159/Nomi/discussions)
+- 报 bug、提需求：[GitHub Issues](https://github.com/aqm857886159/Nomi/issues)
+- 更新和短演示：[B 站](https://www.bilibili.com/video/BV1Lf8b6nEjf/) · [X / Twitter](https://x.com/sdf297417627618)
 
-群二维码已放在 README 首屏；也可以[打开群二维码原图](docs/media/nomi-canvas-group-wechat-2026-08-25.jpg)。二维码不可用时，添加作者微信 **TZ857886159** 拉你进群。
+遇到 bug？代码是开源的——把报错和[这段修 bug 提示词](docs/guide/codex-issue-fix-prompt-en.md)发给 Claude Code 或 Codex，很多问题它能直接帮你改好。大家都会碰到的问题，告诉我们，会并进主线。
+
+## 团队合作
+
+给想把 Nomi 放进真实生产流程的团队：定制开发、系统集成、AGPL 合规部署、长期迭代。[提交项目需求](https://github.com/aqm857886159/Nomi/issues/new?template=business_inquiry.yml)——表单是公开的，只写不涉密的概要，不要贴密钥、私人联系方式、预算或保密协议内容。
 
 ## 开发者
 
-需要 Node.js 20+ 与 pnpm，无需 Docker 或数据库。
+需要 Node.js 20+ 和 pnpm，不需要 Docker 或数据库。
 
 ```bash
 git clone https://github.com/aqm857886159/Nomi.git
@@ -122,27 +164,19 @@ pnpm dev
 ```
 
 ```text
-electron/    Electron 主进程、本地运行时、文件存储与模型调用
+electron/    Electron 主进程：本地运行时、文件存储、模型调用
 src/         React + Vite + Tailwind 工作台
-skills/      Skill Pack v2，详见 docs/skill-pack-format.md
+skills/      Skill Pack v2（见 docs/skill-pack-format.md）
 ```
 
-提交前运行：
-
-```bash
-pnpm run test
-pnpm run typecheck
-pnpm run gates
-```
+常用检查：`pnpm run test` · `pnpm run typecheck` · `pnpm run gates`
 
 ## 贡献与许可证
 
-欢迎提交 Bug、需求、文档和代码。外部贡献者在 Pull Request 中一次性签署 [CLA](CLA.md)。
+欢迎报 bug、提想法、改文档、写代码。不需要签 CLA，贡献按 AGPL-3.0-only 接收。
 
-当前版本采用 **[AGPL-3.0-only](LICENSE)**；此前以 Apache-2.0 发布的历史版本继续保留原许可证。闭源集成、换牌分发或其他商业授权需求，请通过[商务咨询](https://github.com/aqm857886159/Nomi/issues/new?template=business_inquiry.yml)联系。
+当前版本采用 **[AGPL-3.0-only](LICENSE)**；此前以 Apache-2.0 发布的历史版本继续保留原许可证。我们可以收费提供遵守 AGPL 的定制开发、集成、部署、培训和持续迭代，但不提供隐瞒对应源代码的闭源 Nomi 分发版本。
 
 ## 关于作者
 
-**青阳** — AI 产品经理 / 创作者
-
-[打开作者微信二维码原图](docs/media/qingyang-wechat.jpg)，或直接添加微信 **TZ857886159**。
+**青阳** —— AI 产品经理 / 创作者。微信 **TZ857886159**。

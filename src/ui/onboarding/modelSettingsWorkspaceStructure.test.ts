@@ -85,9 +85,9 @@ describe('model settings workspace structure', () => {
   it('restores persisted background work and exposes a real main-process cancel action', () => {
     const tasks = read('src/ui/onboarding/useProviderAdapterTasks.ts')
     const drawer = read('src/ui/onboarding/OnboardingDrawer.tsx')
-    expect(tasks).toContain('adapterList')
-    expect(tasks).toContain('adapterCancel')
-    expect(tasks).toContain('adapterRetry({ runId: run.id, ...(modelKey ? { modelKey } : {}) })')
+    expect(tasks).toContain('certificationList')
+    expect(tasks).toContain('certificationCancel')
+    expect(tasks).toContain('httpCertificationRetry')
     expect(tasks).toContain('recordRun(result.run)')
     expect(tasks).toContain('setInterval')
     expect(drawer).toContain('<AdapterTaskList')
@@ -97,9 +97,25 @@ describe('model settings workspace structure', () => {
     expect(drawer).toContain('replaceModelSettingsPage(current, { type: \'verification\', runId: nextRun.id })')
     expect(drawer).not.toContain('wizardRunId')
     expect(drawer).not.toContain('handleWizardRunChange')
-    expect(drawer).toContain("alertDialog({ title: t('onboardingProviders.drawer.operationFailed')")
+    expect(drawer).not.toContain('alertDialog(')
+    expect(drawer).toContain("reportError('retry', error instanceof CertificationUiError")
+    expect(drawer).toContain('errors[feedbackOwner]')
+    expect(drawer).toContain('role="alert"')
     expect(read('src/ui/onboarding/AdapterTaskWorkspace.tsx')).toContain('onRetry={onRetry}')
     expect(read('src/ui/onboarding/AdapterVerificationScreen.tsx')).toContain('onRetry(model.modelKey)')
+  })
+
+  it.each([
+    'src/ui/onboarding/ComfyuiLocalCard.tsx',
+    'src/ui/onboarding/LocalModelCard.tsx',
+    'src/ui/onboarding/workflowPage/ComfyuiWorkflowSettingsPage.tsx',
+    'src/ui/onboarding/OnboardingDrawer.tsx',
+  ])('%s keeps operation failures in the owning settings surface', (file) => {
+    const text = read(file)
+    expect(text).not.toMatch(/\b(?:alertDialog|toast)\(/)
+    expect(text).toContain("level: 'inline'")
+    expect(text).toContain('present:')
+    expect(text).toMatch(/role=(?:"alert"|\{feedback.error)/)
   })
 
   it('refreshes the model catalog when a background adapter run reaches a terminal state', () => {
@@ -114,7 +130,7 @@ describe('model settings workspace structure', () => {
     const status = read('src/ui/onboarding/ModelAdapterStatusSection.tsx')
 
     expect(workspace).toContain('<ModelAdapterStatusSection')
-    expect(drawer).toContain('adapterAdaptExisting')
+    expect(drawer).toContain('httpCertificationStartExisting')
     expect(drawer).toContain("t('onboardingProviders.workspace.adapter.consentMessage')")
     expect(drawer).toContain('selectedModelKeys.includes(model.modelKey)')
     expect(status).toContain("primaryAction === 'openTask'")

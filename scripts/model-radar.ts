@@ -8,22 +8,50 @@
 //
 // 用法：
 //   pnpm run radar:models                    抓 + 对比 + 打摘要
-//   pnpm run radar:models -- --update-baseline   确认过之后更新快照
-//   pnpm run radar:models -- --offline <dir>     用本地样本跑（单测/离线复现，不打网络）
+//   pnpm run radar:models -- --update-baseline   确认过之后更新快照（只更新本轮查成的家）
+//   pnpm run radar:models -- --offline <dir>     用本地样本跑（单测/离线复现，不打网络；
+//                                                文件名 = offlineFileName(url)，一家可有多份）
+//
+// 车道有两种（都是确定性集合差，都**不打生成调用**、不烧生成额度）：
+//   ① 文档车道（kie / apimart）：抓公开 llms.txt 索引，比对「文档里有几个模型页」。
+//   ② LLM 车道（apimart-llm）：打 authenticated `GET /v1/models`，比对「供应商今天列了哪些 chat id」。
+//      为什么必须有它：文档索引的 texts 分区不盯（用户拍板只盯生图/生视频/音频），于是
+//      **退役的文本模型能在我们的 catalog 里躺着没人发现**——2026-09-06 实测 `deepseek-v3.2-think`
+//      就是这么烂在种子里的。这条车道的主信号是 `unlisted`：我们种了、供应商今天没列。
+//      它需要凭据，取法见 resolveApimartApiKey（只从 env / 明文记录取，**永不打印**）。
+//
+// 失败语义（2026-08-31 apimart 改版把 kie 陪葬后定死，合同见
+// docs/fixes/2026-08-31-model-radar-vendor-isolation.root-cause.json）：
+//   单家采集失败（含解析 0 条）只把该家标成「没查成」——摘要打 ⚠️、latest.json 记 failures[]、
+//   该家快照不动，其余家照常出差异，退出码 0；**全部**家失败才红着退出（1）。
+//   「没查成」永远不许被读成「没有新模型」。
 import fs from "node:fs";
+import { BUILTIN_VENDOR_SEEDS } from "../electron/catalog/builtinVendorSeeds.ts";
+import { probeWeeklyModels, type LivenessReceipt } from "./model-liveness.ts";
+import { resolveCacheDir } from "./lib/intake-radar/store.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MODEL_ARCHETYPES } from "../src/config/modelArchetypes/index.ts";
+import { realNomiProfile } from "../tests/ux/_realProfile.mjs";
+import { MODEL_ARCHETYPES } from "../electron/shared/modelArchetypes/index.ts";
 import { applyBuiltinSeeds } from "../electron/catalog/seedBuiltins.ts";
-import type { CatalogState } from "../electron/catalog/types.ts";
+import { buildApimartHealthInventory, type ApimartHealthEntry } from "../electron/catalog/apimartModelHealth.ts";
+import { billingKindForTaskKind, type CatalogState, type Mapping } from "../electron/catalog/types.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/** 基线快照（apimart.json / kie.json）：进仓库，只由 --update-baseline 写。 */
 const SNAPSHOT_DIR = path.join(ROOT, "docs/research/model-radar");
+/**
+ * 运行结果（latest.json / liveness.json）：**不进仓库**，和用户反馈雷达一样落在 intake 缓存目录（NOMI_INTAKE_CACHE 可改）。
+ * 这是它们唯一的输出位置——写在工作树里，每个任务工作树每天都会被弄脏一次，容易被顺手提交进无关 PR，也让 preflight 报不干净。
+ */
+export const modelRadarResultDir = (env: NodeJS.ProcessEnv = process.env): string => path.join(resolveCacheDir(env), "model-radar");
+const RESULT_DIR = modelRadarResultDir();
 
-/** 盯的类别（2026-08-27 用户拍板：生图 + 生视频 + 音频/TTS；不含 LLM、不含 3D）。
- *  要开新类别只改这里一处。 */
-export type RadarCategory = "image" | "video" | "audio";
-const WATCHED: readonly RadarCategory[] = ["image", "video", "audio"];
+/** 盯的类别（2026-08-27 用户拍板：生图 + 生视频 + 音频/TTS；不含 3D）。
+ *  `text` 是 2026-09-06 补的 LLM 车道——**只走 authenticated /v1/models**，
+ *  文档车道的 texts 分区仍不盯（那是端点手册，不是模型目录）。要开新类别只改这里一处。 */
+export type RadarCategory = "image" | "video" | "audio" | "text";
+const WATCHED: readonly RadarCategory[] = ["image", "video", "audio", "text"];
 
 export type RadarEntry = {
   vendor: string;
@@ -115,6 +143,34 @@ export function parseApimart(text: string): RadarEntry[] {
   return dedupe(out);
 }
 
+/** Associate curated catalog identities with documentation pages without guessing a URL. */
+export function associateCatalogDocs(modelKeys: readonly string[], entries: readonly RadarEntry[], aliasesByModel = new Map<string, readonly string[]>()): Map<string, RadarEntry[]> {
+  const docs = entries.filter((entry) => entry.vendor === "apimart");
+  // Generic family words are shared by unrelated vendors (for example
+  // midjourney/imagine and midjourney/video). They may not claim a curated
+  // APIMart model through the broad isCovered containment rule.
+  const genericFamilyWords = new Set(["imagine", "video", "audio", "image", "model", "generation"]);
+  return new Map(modelKeys.map((modelKey) => [
+    modelKey,
+    docs.filter((entry) => {
+      const slug = normalizeToken(entry.slug.split("/").pop() ?? entry.slug);
+      const coverage = new Set([normalizeToken(modelKey), ...(aliasesByModel.get(modelKey) ?? []).map(normalizeToken)]);
+      return !genericFamilyWords.has(slug) && isCovered(entry.slug, coverage);
+    }),
+  ]));
+}
+
+/** The one place that answers "which APIMart models we ship, and which documentation pages cover each". */
+export function apimartDocumentationCoverage(
+  entries: readonly RadarEntry[],
+  inventory: readonly ApimartHealthEntry[] = buildApimartHealthInventory(),
+): { modelKey: string; docs: RadarEntry[] }[] {
+  const modelKeys = [...new Set(inventory.map((entry) => entry.modelKey))];
+  const aliasesByModel = new Map(modelKeys.map((modelKey) => [modelKey, [...new Set(inventory.filter((entry) => entry.modelKey === modelKey).flatMap((entry) => entry.documentationKeys))]] as const));
+  const associations = associateCatalogDocs(modelKeys, entries, aliasesByModel);
+  return modelKeys.map((modelKey) => ({ modelKey, docs: associations.get(modelKey) ?? [] }));
+}
+
 function dedupe(entries: RadarEntry[]): RadarEntry[] {
   const seen = new Set<string>();
   return entries.filter((e) => {
@@ -125,10 +181,225 @@ function dedupe(entries: RadarEntry[]): RadarEntry[] {
   });
 }
 
-export const VENDORS: Record<string, { indexUrl: string; parse: (text: string) => RadarEntry[] }> = {
-  kie: { indexUrl: "https://docs.kie.ai/llms.txt", parse: parseKie },
-  apimart: { indexUrl: "https://docs.apimart.ai/llms.txt", parse: parseApimart },
+// ---------------------------------------------------------------------------
+// 采集：一次「抓」可能是多个请求（apimart 2026-08-31 起是两级索引）
+// ---------------------------------------------------------------------------
+
+export type FetchText = (url: string) => Promise<string>;
+
+const KIE_INDEX_URL = "https://docs.kie.ai/llms.txt";
+const APIMART_INDEX_URL = "https://docs.apimart.ai/llms.txt";
+
+/** 索引跟进上限：现网只需 2 次（根 + en/api-manual）。超界 = 结构又大改，红着报，不无界爬。 */
+const APIMART_MAX_INDEX_FETCHES = 8;
+
+/**
+ * 从 apimart 索引文本里挑「要跟进的子索引」。2026-08-31 改版（实抓）后根 llms.txt 是
+ * 「索引的索引」：模型页全部搬进 `/_llms/en/api-manual.md`，根里自述「Follow each /_llms/
+ * index recursively until you reach documentation pages」。只跟**英文份**（`/_llms/en.md`
+ * 或 `/_llms/en/**`）：其余 9 份语言镜像与英文同册，跟了 = 每页抓 10 遍再靠去重扔掉。
+ */
+export function apimartSubIndexUrls(text: string): string[] {
+  const urls: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = LINE_RE.exec(line.trim());
+    if (!m) continue;
+    const url = m[3];
+    const pathname = new URL(url).pathname;
+    if (!pathname.startsWith("/_llms/")) continue;
+    const rest = pathname.slice("/_llms/".length);
+    if (rest !== "en.md" && !rest.startsWith("en/")) continue;
+    if (!urls.includes(url)) urls.push(url);
+  }
+  return urls;
+}
+
+/**
+ * apimart 采集：从根索引出发，有界跟进英文子索引，把沿途文本合并后走同一个行解析器。
+ * 根里若直接列模型页（2026-08-31 之前的扁平结构）同一算法照收——这不是新旧两条
+ * fallback 分支，而是「解析一切可达页面」的单一算法。
+ */
+export async function collectApimart(fetchText: FetchText): Promise<RadarEntry[]> {
+  const queue: string[] = [APIMART_INDEX_URL];
+  const seen = new Set<string>();
+  const texts: string[] = [];
+  for (let i = 0; i < queue.length; i += 1) {
+    const url = queue[i];
+    if (!url || seen.has(url)) continue;
+    if (seen.size >= APIMART_MAX_INDEX_FETCHES) {
+      throw new Error(
+        `apimart 索引跟进超过 ${APIMART_MAX_INDEX_FETCHES} 个，结构可能又大改——实抓确认再适配，别放开上限硬爬`,
+      );
+    }
+    seen.add(url);
+    const text = await fetchText(url);
+    texts.push(text);
+    queue.push(...apimartSubIndexUrls(text));
+  }
+  return parseApimart(texts.join("\n"));
+}
+
+// ---------------------------------------------------------------------------
+// LLM 车道：authenticated GET /v1/models（文档索引看不见的那一半）
+// ---------------------------------------------------------------------------
+
+/**
+ * apimart 的模型目录 API。带 `expand=category&category=chat` 只取 chat 一类——
+ * 裸 `/v1/models` 把生图/生视频 id 也混进来，而那些 id 与生成端点上的真实 id **命名不一致**
+ * （实测：目录写 `seedream-5-0-pro`，我们生成端点上种的是 `doubao-seedream-5-0-pro`），
+ * 拿它判生成模型死活会天天诈胡。chat 分区的 id 才和 `/v1/chat/completions` 的 model 同名。
+ */
+const APIMART_MODELS_API_URL = "https://api.apimart.ai/v1/models?expand=category&category=chat";
+const HIGGSFIELD_MODELS_API_URL = "https://api.higgsfield.ai/models";
+
+/**
+ * 从凭据记录里取脚本层**能用**的明文。
+ *
+ * safeStorage 密文要 Electron 主进程才解得开，纯 tsx 脚本拿不到——这时返回空串，让调用方
+ * 走「这条车道今天没查成」的显式失败，**绝不**静默当成「没有新模型」。
+ * 永远不打印、不落盘任何返回值。
+ */
+export function usableApiKeyFromRecord(record: { apiKey?: string; enc?: string } | undefined): string {
+  if (!record?.apiKey) return "";
+  if (record.enc === "safeStorage") return ""; // 需 Electron safeStorage 才解得开
+  return record.apiKey;
+}
+
+/** 本机 Nomi catalog 的位置：只问真实资料目录的唯一 owner（tests/ux/_realProfile.mjs，三平台同一份判据）。 */
+function localCatalogFiles(): string[] {
+  return [realNomiProfile().catalogPath];
+}
+
+/**
+ * 取 apimart 凭据。顺序：`APIMART_API_KEY` 环境变量 → 本机 catalog 里的**明文**记录。
+ * 都拿不到就抛——错误文案只说「怎么给」，**不带任何密钥内容**。
+ */
+export function resolveApimartApiKey(): string {
+  const fromEnv = (process.env.APIMART_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  for (const file of localCatalogFiles()) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as {
+        apiKeysByVendor?: Record<string, { apiKey?: string; enc?: string }>;
+      };
+      const usable = usableApiKeyFromRecord(parsed.apiKeysByVendor?.apimart);
+      if (usable) return usable;
+    } catch {
+      /* 该目录没有 catalog / 读不动 → 试下一个 */
+    }
+  }
+  throw new Error(
+    "拿不到 apimart 凭据：本机记录是 safeStorage 密文（要 Electron 才解得开）。" +
+      "给这条车道设 APIMART_API_KEY 环境变量后重跑。",
+  );
+}
+
+/** 把 `/v1/models` 的 JSON 解析成 RadarEntry。抛错 = 该车道「没查成」。 */
+export function parseApimartLlm(text: string): RadarEntry[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error("/v1/models 返回的不是 JSON——凭据或网关可能出问题了，不是「没有新模型」");
+  }
+  const rows = (json as { data?: unknown })?.data;
+  if (!Array.isArray(rows)) throw new Error("/v1/models 返回里没有 data 数组——形状变了，实抓确认再适配");
+  const out: RadarEntry[] = [];
+  for (const row of rows) {
+    const id = typeof row === "string" ? row : String((row as { id?: unknown })?.id ?? "");
+    if (!id) continue;
+    out.push({ vendor: "apimart-llm", category: "text", slug: id, title: id, url: APIMART_MODELS_API_URL });
+  }
+  return dedupe(out);
+}
+
+export type VendorAdapter = {
+  collect: (fetchText: FetchText) => Promise<RadarEntry[]>;
+  /** catalog 里对应的 vendorKey（覆盖集/种子集按它取）。省略 = 与适配器名同名。 */
+  catalogVendorKey?: string;
+  /** 这条车道的 slug 是不是**真实 model id**——是才能做「我们种了、他们没列」的反向检查。
+   *  文档车道的 slug 是文档页路径，不是 id，做反向检查必然诈胡，故只有 LLM 车道开。 */
+  seededKind?: "text";
 };
+
+/**
+ * 取 Higgsfield 凭据。只从 env 取（`HIGGSFIELD_API_KEY`，形如 `id:secret`）；
+ * 拿不到就抛 —— 由 collectVendors 翻译成这条车道「没查成」，**绝不静默当成「没有新模型」**。
+ */
+export function resolveHiggsfieldApiKey(): string {
+  const fromEnv = (process.env.HIGGSFIELD_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  throw new Error("拿不到 higgsfield 凭据：给这条车道设 HIGGSFIELD_API_KEY 环境变量（id:secret）后重跑。");
+}
+
+/**
+ * 把 Higgsfield 的 `GET /models` 解析成 RadarEntry。
+ *
+ * ⚠️ 这个目录**不是可调用性的权威源**：2026-09-17 实测 Soul Cinema 与 DoP 都不在这 76 条里，
+ * 端点却是活的（见 docs/evidence/2026-09-17-higgsfield-contract）。所以这条车道只回答
+ * 「目录上新了什么」，回答不了「这家还有什么能调」——别拿它的缺席当「该模型没了」。
+ * 同理它也和账户额度无关：两把额度不同的 key 返回逐字节相同的 76 条。
+ */
+export function parseHiggsfield(text: string): RadarEntry[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error("higgsfield /models 返回的不是 JSON——凭据或网关可能出问题了，不是「没有新模型」");
+  }
+  const rows = (json as { items?: unknown })?.items;
+  if (!Array.isArray(rows)) throw new Error("higgsfield /models 返回里没有 items 数组——形状变了，实抓确认再适配");
+  const out: RadarEntry[] = [];
+  for (const row of rows) {
+    const slug = String((row as { slug?: unknown })?.slug ?? "");
+    if (!slug) continue;
+    const output = String((row as { output_type?: unknown })?.output_type ?? "");
+    const category: RadarCategory = output === "video" ? "video" : output === "audio" ? "audio" : "image";
+    out.push({
+      vendor: "higgsfield",
+      category,
+      slug,
+      title: String((row as { title?: unknown })?.title ?? slug),
+      url: HIGGSFIELD_MODELS_API_URL,
+    });
+  }
+  return dedupe(out);
+}
+
+export const VENDORS: Record<string, VendorAdapter> = {
+  kie: { collect: async (fetchText) => parseKie(await fetchText(KIE_INDEX_URL)) },
+  apimart: { collect: collectApimart },
+  "apimart-llm": {
+    collect: async (fetchText) => parseApimartLlm(await fetchText(APIMART_MODELS_API_URL)),
+    catalogVendorKey: "apimart",
+    seededKind: "text",
+  },
+  higgsfield: { collect: async (fetchText) => parseHiggsfield(await fetchText(HIGGSFIELD_MODELS_API_URL)) },
+};
+
+export type VendorFailure = { vendor: string; error: string };
+
+/**
+ * 逐家采集，**单家失败只标记该家、不打死整轮**（2026-08-31 apimart 改版把 kie 陪葬的教训）。
+ * 0 条守卫也住在这道边界里：解析出 0 条 = 该家「没查成」，永不静默等同「没有新模型」。
+ */
+export async function collectVendors(
+  vendors: Record<string, VendorAdapter>,
+  fetchText: FetchText,
+): Promise<{ entries: Record<string, RadarEntry[]>; failures: VendorFailure[] }> {
+  const entries: Record<string, RadarEntry[]> = {};
+  const failures: VendorFailure[] = [];
+  for (const [vendor, adapter] of Object.entries(vendors)) {
+    try {
+      const current = await adapter.collect(fetchText);
+      if (current.length === 0) throw new Error("解析出 0 条模型——索引结构可能变了，别当成「没新模型」");
+      entries[vendor] = current;
+    } catch (err) {
+      failures.push({ vendor, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { entries, failures };
+}
 
 // ---------------------------------------------------------------------------
 // 覆盖集：我们到底接了哪些——**全部从代码 derive**
@@ -155,25 +426,43 @@ export const VENDORS: Record<string, { indexUrl: string; parse: (text: string) =
  * 不受本函数影响），`uncovered` 只是次要提示；而一旦天天把已接的模型报成缺口，几次之后就没人看了。
  * 实测校准：`flux2/flex-text-to-image`、`bytedance/seedance-1-5-pro` 这类真缺口仍被正确报出。
  */
+/** 第三级判据的长度闸。`ANCHOR`（已接的 coverage token，可信方）门槛不变；`PROBE`（新文档探针，
+ *  待判定方）2026-09-18 从 8 降到 4——"veo3" 这类 4 字真实缺口够不到已接的 "veo3.1" 家族 token，
+ *  被误报成假缺口（档案批 lane 实测）。"wan"(3 字)/"x"(1 字) 仍在 4 以下，底线没有下移。 */
+const MIN_PROBE_TOKEN_LEN = 4;
+const MIN_ANCHOR_TOKEN_LEN = 8;
+
 export function isCovered(slug: string, coverage: Set<string>): boolean {
   const full = normalizeToken(slug);
   if (!full) return false;
   if (coverage.has(full)) return true;
   const last = normalizeToken(slug.split("/").pop() ?? "");
   if (last && coverage.has(last)) return true;
+  // 三级判据的第三级：**只认「已接的 token 包住新 probe」这一个方向**。
+  // 2026-09-18 前还认反方向（新 probe 包住已接的 token），于是 "gpt-image-2.5" 的 probe
+  // "gptimage25" 把已接的 "gptimage2" 整个包在里面、被判成"已覆盖"——但 2.5 是与 2 不同的型号
+  // （多 6 个真参数），那不是覆盖，是新版本号把旧型号的 token 冒领了。新 probe 更长/更新，
+  // 天然更可能是"同族但没接过的新型号"而不是"已接模型的别名"，故这个方向必须去掉（P2 根因修复，
+  // 不是加豁免）。保留的方向（token 包住 probe）仍是合法场景：已接 token 常带厂商后缀
+  // （"gemini-3.1-flash" 的真实 id 是 "...-image-preview"），新文档页给的是不带后缀的短名。
   for (const probe of [full, last]) {
-    if (probe.length < 8) continue;
+    if (probe.length < MIN_PROBE_TOKEN_LEN) continue;
     for (const token of coverage) {
-      if (token.length < 8) continue;
-      if (token.includes(probe) || probe.includes(token)) return true;
+      if (token.length < MIN_ANCHOR_TOKEN_LEN) continue;
+      if (token.includes(probe)) return true;
     }
   }
   return false;
 }
 
-export function coverageTokens(vendorKey?: string): Set<string> {
+/** 内置种子的目录状态——coverage/seeded/wire 三处判据共用同一份 derive，不各自重复拼一次空壳。 */
+function seededCatalogState(): CatalogState {
   const empty: CatalogState = { version: 4, vendors: [], models: [], mappings: [], apiKeysByVendor: {} };
-  const state = applyBuiltinSeeds(empty, "2026-01-01T00:00:00.000Z").state;
+  return applyBuiltinSeeds(empty, "2026-01-01T00:00:00.000Z").state;
+}
+
+export function coverageTokens(vendorKey?: string): Set<string> {
+  const state = seededCatalogState();
   const tokens = new Set<string>();
   const add = (value: unknown) => {
     const token = normalizeToken(String(value ?? ""));
@@ -192,6 +481,24 @@ export function coverageTokens(vendorKey?: string): Set<string> {
   return tokens;
 }
 
+/**
+ * 我们**为某家种下的真实 chat model id**（不是文档页 slug）。用于 LLM 车道的反向检查
+ * 「我们种了、供应商今天没列」。全部从种子 derive，不手写清单。
+ *
+ * ⚠️ `kind === "text"` 还不够：种子里有 `MiniMax-H3-Context-IR` 这种 kind=text 但其实**走
+ * 生成端点**的行（提示词增强，POST /v1/videos/generations），它本来就不在 chat 目录里，
+ * 拿它比对会天天报一条假的「没列」——几次之后这个 ⚠️ 就没人看了。
+ * 判据用代码里已有的不变量（seedBuiltins.test.ts 断言过）：**聊天大脑不挂任何 mapping**
+ * （走 buildLanguageModelForVendor 直连 /chat/completions），挂了 mapping 的就不是聊天大脑。
+ */
+export function seededModelKeys(vendorKey: string, kind: "text"): string[] {
+  const state = seededCatalogState();
+  const mapped = new Set(state.mappings.filter((p) => p.vendorKey === vendorKey).map((p) => p.modelKey));
+  return state.models
+    .filter((m) => m.vendorKey === vendorKey && m.kind === kind && !mapped.has(m.modelKey))
+    .map((m) => m.modelKey);
+}
+
 // ---------------------------------------------------------------------------
 // 差分
 // ---------------------------------------------------------------------------
@@ -202,24 +509,115 @@ export type RadarDiff = {
   added: RadarEntry[];
   removed: RadarEntry[];
   uncovered: RadarEntry[];
+  /**
+   * 我们种了、供应商这一轮**没列**的 model id。LLM 车道的主信号——它与快照无关，
+   * 首轮（还没基线）就能报，正是「退役文本模型烂在 catalog 里」那一族的探测器。
+   * 只有 slug 就是真实 id 的车道会传 seeded；其余车道恒空。
+   */
+  unlisted: string[];
 };
 
+/**
+ * @param coverage 传 `null` = 这条车道**不问**「供应商还有什么我们没接」。
+ *   反向车道（LLM）就该传 null：我们刻意只curated 几个大脑，把 186 个没接的 chat 模型
+ *   报成「未接入存量」既没有行动价值，又要把它们整包写进 latest.json。
+ */
 export function diffVendor(
   vendor: string,
   current: RadarEntry[],
   previous: RadarEntry[] | null,
-  coverage: Set<string>,
+  coverage: Set<string> | null,
+  seeded: readonly string[] = [],
 ): RadarDiff {
   const key = (e: RadarEntry) => `${e.category}:${normalizeToken(e.slug)}`;
   const prevKeys = new Set((previous ?? []).map(key));
   const curKeys = new Set(current.map(key));
+  const liveIds = new Set(current.map((e) => normalizeToken(e.slug)));
   return {
     vendor,
     total: current.length,
     // previous 为 null = 首次建基线：不把整册报成「新增」（那是噪音，不是信号）。
     added: previous ? current.filter((e) => !prevKeys.has(key(e))) : [],
     removed: (previous ?? []).filter((e) => !curKeys.has(key(e))),
-    uncovered: current.filter((e) => !isCovered(e.slug, coverage)),
+    uncovered: coverage ? current.filter((e) => !isCovered(e.slug, coverage)) : [],
+    // 归一后比对：目录大小写/分隔符与我们种的 id 偶有出入（MiniMax-H3 ↔ minimax-h3）。
+    unlisted: seeded.filter((id) => !liveIds.has(normalizeToken(id))),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// wire / elsewhere —— 把「缺档案」和「缺协议」分开看（2026-09-18，普查报告结构性发现 2、3）
+// ---------------------------------------------------------------------------
+
+export type WireStatus = "known" | "unknown";
+
+export type AnnotatedRadarEntry = RadarEntry & {
+  /** 该 (vendor, category) 有没有现役协议（enabled 的 Mapping）。`known` = 加这个模型只是
+   *  多一份档案（catalog 行 + 参数表），不用碰协议层；`unknown` = 这家这个模态我们从没接过，
+   *  真要接得先搞清楚协议长什么样。判定来源见 hasKnownWire。 */
+  wire: WireStatus;
+  /** 同一个模型是否已经被别的供应商接了（跨 vendor，如 Runway 代理了 apimart/kie 都没有的模型）。
+   *  命中的供应商 key 列表；没有 = []。判定来源见 elsewhereVendors。 */
+  elsewhere: string[];
+};
+
+/**
+ * 该 (vendorKey, category) 有没有现役协议——electron/catalog 里有没有 enabled 的 Mapping 落在
+ * 这个模态（taskKind 经 billingKindForTaskKind 归到 image/video/audio/text）。
+ * 只喂 mappings 数组、不摸真实 catalog：纯函数，可单测；调用方从 seededCatalogState().mappings 传入。
+ * 不 hardcode 供应商名单——"apimart images/videos/audio 已知、kie 没有 text mapping" 这类结论
+ * 全部从 mappings 数据 derive，不是写死在这个函数里的判断。
+ */
+export function hasKnownWire(vendorKey: string, category: RadarCategory, mappings: readonly Mapping[]): boolean {
+  return mappings.some(
+    (m) => m.enabled && m.vendorKey === vendorKey && billingKindForTaskKind(m.taskKind) === category,
+  );
+}
+
+/**
+ * 同一个 slug 是否已经被别的供应商覆盖——跨 vendor 版 isCovered。`coverageByVendor` 是
+ * 「vendorKey → coverageTokens(vendorKey)」的预算表；本函数纯查表、可单测。
+ * `excludeVendor` 排除条目自己的供应商（同供应商的覆盖已经在 diffVendor 的 uncovered 里判过，
+ * 这里只找"别家"）。命中的供应商按 key 排序返回，方便打印时稳定。
+ */
+export function elsewhereVendors(
+  slug: string,
+  excludeVendor: string,
+  coverageByVendor: ReadonlyMap<string, Set<string>>,
+): string[] {
+  const hits: string[] = [];
+  for (const [vendorKey, tokens] of coverageByVendor) {
+    if (vendorKey === excludeVendor) continue;
+    if (isCovered(slug, tokens)) hits.push(vendorKey);
+  }
+  return hits.sort();
+}
+
+/** 把 wire/elsewhere 两列贴到一批条目上（纯函数，main() 与测试共用）。 */
+export function annotateEntries(
+  entries: readonly RadarEntry[],
+  wireFor: (category: RadarCategory) => WireStatus,
+  elsewhereFor: (slug: string) => string[],
+): AnnotatedRadarEntry[] {
+  return entries.map((e) => ({ ...e, wire: wireFor(e.category), elsewhere: elsewhereFor(e.slug) }));
+}
+
+/** RadarDiff 的「未接入 / 新增」两列换成带 wire/elsewhere 的版本；其余字段原样带过。
+ *  不改 diffVendor 本身（它是纯差分，不该知道 catalog 长什么样）——注解是差分之外单独的一层。 */
+export type AnnotatedRadarDiff = Omit<RadarDiff, "added" | "uncovered"> & {
+  added: AnnotatedRadarEntry[];
+  uncovered: AnnotatedRadarEntry[];
+};
+
+export function annotateDiff(
+  diff: RadarDiff,
+  wireFor: (category: RadarCategory) => WireStatus,
+  elsewhereFor: (slug: string) => string[],
+): AnnotatedRadarDiff {
+  return {
+    ...diff,
+    added: annotateEntries(diff.added, wireFor, elsewhereFor),
+    uncovered: annotateEntries(diff.uncovered, wireFor, elsewhereFor),
   };
 }
 
@@ -241,11 +639,26 @@ export function readSnapshot(vendor: string): RadarEntry[] | null {
 function writeSnapshot(vendor: string, entries: RadarEntry[]): void {
   fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
   const sorted = [...entries].sort((a, b) => `${a.category}${a.slug}`.localeCompare(`${b.category}${b.slug}`));
-  fs.writeFileSync(snapshotPath(vendor), `${JSON.stringify({ vendor, entries: sorted }, null, 2)}\n`);
+  fs.writeFileSync(snapshotPath(vendor), `${JSON.stringify({ generatedAt: new Date().toISOString(), vendor, entries: sorted }, null, 2)}\n`);
+}
+
+/** 离线样本文件名：URL 的 host+path 压平成一个安全文件名（`/`→`_`）。
+ *  两级索引意味着一家可能要多份样本文件，所以不能再用 `<vendor>.txt` 一对一命名。
+ *  例：https://docs.apimart.ai/_llms/en/api-manual.md → docs.apimart.ai__llms_en_api-manual.md */
+export function offlineFileName(url: string): string {
+  const u = new URL(url);
+  return `${u.host}${u.pathname}`.replace(/\//g, "_");
+}
+
+export function offlineFetcher(dir: string): FetchText {
+  return async (url) => fs.readFileSync(path.join(dir, offlineFileName(url)), "utf8");
 }
 
 /** 抓索引。走 HTTPS_PROXY（本机 apimart/kie 需本地代理）。
- *  **失败必须抛**——静默当成「没有新模型」会让雷达永远绿，是最坏的坏法。 */
+ *  LLM 车道打的是需鉴权的模型目录 API，这里按 host 补 Authorization——凭据只在内存里流过，
+ *  **不打印、不落盘、不进任何报告**（抓取失败的报错也只带 URL 与状态码）。
+ *  **失败必须抛**——collectVendors 会把抛错翻译成该家的显式「没查成」；
+ *  静默当成「没有新模型」会让雷达永远绿，是最坏的坏法。 */
 async function fetchIndex(url: string): Promise<string> {
   const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || "";
   let dispatcher: unknown;
@@ -253,7 +666,16 @@ async function fetchIndex(url: string): Promise<string> {
     const { ProxyAgent } = await import("undici");
     dispatcher = new ProxyAgent(proxy);
   }
-  const res = await fetch(url, { ...(dispatcher ? { dispatcher } : {}) } as RequestInit);
+  // 每家的 Authorization 方案词不同：apimart 是 Bearer，higgsfield 是 `Key id:secret`
+  // （见 electron/catalog/higgsfieldVendor.ts 的 authScheme）。凭据永不打印、不落盘。
+  const host = new URL(url).host;
+  const headers =
+    host === "api.apimart.ai"
+      ? { Authorization: `Bearer ${resolveApimartApiKey()}` }
+      : host === "api.higgsfield.ai"
+        ? { Authorization: `Key ${resolveHiggsfieldApiKey()}` }
+        : undefined;
+  const res = await fetch(url, { ...(headers ? { headers } : {}), ...(dispatcher ? { dispatcher } : {}) } as RequestInit);
   if (!res.ok) throw new Error(`抓取失败 ${url} → HTTP ${res.status}`);
   const text = await res.text();
   if (text.trim().length < 200) throw new Error(`抓到的索引异常短（${text.length} 字节），疑似被拦截：${url}`);
@@ -264,39 +686,116 @@ async function fetchIndex(url: string): Promise<string> {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const updateBaseline = args.includes("--update-baseline");
+  // --no-liveness：跳过每周一次的存活探测。探测会向供应商发真实（付费）请求，SessionStart hook 路径里不许有任何扣费请求。
+  const noLiveness = args.includes("--no-liveness");
   const offlineIdx = args.indexOf("--offline");
   const offlineDir = offlineIdx >= 0 ? args[offlineIdx + 1] : "";
 
-  const diffs: RadarDiff[] = [];
-  for (const [vendor, cfg] of Object.entries(VENDORS)) {
-    const text = offlineDir
-      ? fs.readFileSync(path.join(offlineDir, `${vendor}.txt`), "utf8")
-      : await fetchIndex(cfg.indexUrl);
-    const current = cfg.parse(text);
-    if (current.length === 0) throw new Error(`${vendor}: 解析出 0 条模型——索引结构可能变了，别当成「没新模型」`);
-    diffs.push(diffVendor(vendor, current, readSnapshot(vendor), coverageTokens(vendor)));
+  const { entries, failures } = await collectVendors(VENDORS, offlineDir ? offlineFetcher(offlineDir) : fetchIndex);
+  const apimartDocumentationMissing = apimartDocumentationCoverage(entries.apimart ?? [])
+    .filter((row) => row.docs.length === 0)
+    .map((row) => row.modelKey);
+
+  // Offline fixtures never spend. Credentials are read only from the process environment here.
+  if (!offlineDir && !noLiveness) {
+    const receiptPath = path.join(RESULT_DIR, "liveness.json");
+    const previous = fs.existsSync(receiptPath) ? JSON.parse(fs.readFileSync(receiptPath, "utf8")) as { receipts?: LivenessReceipt[] } : {};
+    const generatedAt = new Date().toISOString();
+    const receipts = await probeWeeklyModels({ vendors: BUILTIN_VENDOR_SEEDS, modelIds: (vendorKey) => seededModelKeys(vendorKey, "text"),
+      apiKey: (vendorKey) => process.env[`${vendorKey.toUpperCase().replace(/-/g, "_")}_API_KEY`] || "", previous: previous.receipts || [], now: generatedAt });
+    fs.mkdirSync(RESULT_DIR, { recursive: true });
+    fs.writeFileSync(receiptPath, `${JSON.stringify({ generatedAt, receipts }, null, 2)}\n`);
+    const missing = receipts.filter((row) => row.reason === "credential-missing").length;
+    console.log(`Weekly liveness: ${receipts.filter((row) => row.ok).length}/${receipts.length}; credential missing: ${missing}.`);
+  }
+
+  // wire/elsewhere 的两张表只建一次：coverageByVendor 覆盖全部内置供应商（不止本轮抓到的几家，
+  // "别家已接" 要能看见没被抓的 vendor，如 Runway）；mappings 是 wire 判据的唯一真相源。
+  const coverageByVendor = new Map<string, Set<string>>(
+    BUILTIN_VENDOR_SEEDS.map((v) => [v.key, coverageTokens(v.key)]),
+  );
+  const mappings = seededCatalogState().mappings;
+
+  const diffs: AnnotatedRadarDiff[] = [];
+  for (const [vendor, current] of Object.entries(entries)) {
+    const adapter = VENDORS[vendor];
+    const catalogVendorKey = adapter?.catalogVendorKey ?? vendor;
+    // 一处声明驱动两件事：声明了 seededKind 的车道做反向检查（unlisted），
+    // 并且不再问正向的「还有什么没接」（uncovered）——它俩是两个不同的问题。
+    const seeded = adapter?.seededKind ? seededModelKeys(catalogVendorKey, adapter.seededKind) : [];
+    const coverage = adapter?.seededKind ? null : coverageByVendor.get(catalogVendorKey) ?? coverageTokens(catalogVendorKey);
+    const diff = diffVendor(vendor, current, readSnapshot(vendor), coverage, seeded);
+    // 把「缺档案」和「缺协议」分开看的那两列——贴在 added/uncovered 上，不留旧的未注解版本（P1）。
+    diffs.push(
+      annotateDiff(
+        diff,
+        (category) => (hasKnownWire(catalogVendorKey, category, mappings) ? "known" : "unknown"),
+        (slug) => elsewhereVendors(slug, catalogVendorKey, coverageByVendor),
+      ),
+    );
+    // 没查成的家不在 entries 里，快照自然不动：修好后重跑才有真差异，不会把断档吃成「全下架」。
     if (updateBaseline) writeSnapshot(vendor, current);
   }
 
-  const byCat = (list: RadarEntry[]) =>
-    WATCHED.map((c) => `${c} ${list.filter((e) => e.category === c).length}`).join(" · ");
+  // 类别行只列这条车道真有的类别（LLM 车道只有 text，文档车道没有 text），别印一排恒 0。
+  const byCat = (list: RadarEntry[], present: ReadonlySet<RadarCategory>) =>
+    WATCHED.filter((c) => present.has(c))
+      .map((c) => `${c} ${list.filter((e) => e.category === c).length}`)
+      .join(" · ");
+
+  // wire/elsewhere 的行内标注——协议已知/未知 + 命中的别家 vendor，added 与「值得看一眼」的
+  // uncovered 行共用同一句拼法。
+  const wireTag = (e: AnnotatedRadarEntry) =>
+    `协议:${e.wire === "known" ? "已知" : "未知"}${e.elsewhere.length ? ` · 别家已接:${e.elsewhere.join(",")}` : ""}`;
 
   for (const d of diffs) {
+    const present = new Set<RadarCategory>((entries[d.vendor] ?? []).map((e) => e.category));
     console.log(`\n=== ${d.vendor} ===  盯住 ${d.total} 个模型`);
-    console.log(`  新增 ${d.added.length} · 下架 ${d.removed.length} · 未接入 ${d.uncovered.length}（${byCat(d.uncovered)}）`);
-    for (const e of d.added) console.log(`  🆕 [${e.category}] ${e.slug} — ${e.title}`);
+    const seededLane = Boolean(VENDORS[d.vendor]?.seededKind);
+    const uncoveredKnownWire = d.uncovered.filter((e) => e.wire === "known").length;
+    const uncoveredElsewhere = d.uncovered.filter((e) => e.elsewhere.length > 0).length;
+    console.log(
+      `  新增 ${d.added.length} · 下架 ${d.removed.length}` +
+        (seededLane
+          ? ` · ⚠️ 我们种了但没列 ${d.unlisted.length}`
+          : ` · 未接入 ${d.uncovered.length}（其中协议已知 ${uncoveredKnownWire} · 别家已接 ${uncoveredElsewhere}）（${byCat(d.uncovered, present)}）`),
+    );
+    if (d.vendor === "apimart") {
+      console.log(`  文档页未匹配（我们已接、索引里没对上） ${apimartDocumentationMissing.length}: ${apimartDocumentationMissing.join(", ") || "（无）"}`);
+    }
+    for (const e of d.added) console.log(`  🆕 [${e.category}] ${e.slug} — ${e.title}（${wireTag(e)}）`);
     for (const e of d.removed) console.log(`  🗑️  [${e.category}] ${e.slug}（上次有、这次没了）`);
-    if (d.added.length === 0 && d.removed.length === 0) console.log("  （索引无变化）");
+    // 未接入整册（能有 93 条）逐条打印是噪音；只挑「其实不是协议缺口/别家已经接了」的子集出来——
+    // 这正是本次误判（"以为协议不够"）的那几条，值得单独看见，其余留给 latest.json。
+    const actionable = d.uncovered.filter((e) => e.wire === "known" || e.elsewhere.length > 0);
+    for (const e of actionable) console.log(`  🔎 [${e.category}] ${e.slug} — ${e.title}（未接入 · ${wireTag(e)}）`);
+    for (const id of d.unlisted) console.log(`  ⚠️  ${id}（我们的种子里有，供应商这一轮没列——查是不是退役了）`);
+    if (d.added.length === 0 && d.removed.length === 0 && d.unlisted.length === 0) console.log("  （索引无变化）");
+  }
+  for (const f of failures) {
+    console.log(`\n=== ${f.vendor} ===  ⚠️ 今天没查成：${f.error}`);
+    console.log("  （这不是「没有新模型」——该家快照未动，修好后重跑）");
   }
 
-  fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
-  fs.writeFileSync(path.join(SNAPSHOT_DIR, "latest.json"), `${JSON.stringify({ diffs }, null, 2)}\n`);
+  fs.mkdirSync(RESULT_DIR, { recursive: true });
+  fs.writeFileSync(path.join(RESULT_DIR, "latest.json"), `${JSON.stringify({ generatedAt: new Date().toISOString(), diffs, failures, apimartDocumentationMissing }, null, 2)}\n`);
   const totalNew = diffs.reduce((n, d) => n + d.added.length, 0);
+  const totalUnlisted = diffs.reduce((n, d) => n + d.unlisted.length, 0);
+  const totalUncovered = diffs.reduce((n, d) => n + d.uncovered.length, 0);
+  const totalUncoveredKnownWire = diffs.reduce((n, d) => n + d.uncovered.filter((e) => e.wire === "known").length, 0);
+  const failNote =
+    failures.length > 0 ? `；⚠️ ${failures.map((f) => f.vendor).join(" / ")} 没查成（见上，不是「没新模型」）` : "";
   console.log(
-    `\n结果已写 docs/research/model-radar/latest.json。本轮新增 ${totalNew} 个；` +
-      `未接入存量 ${diffs.reduce((n, d) => n + d.uncovered.length, 0)} 个。` +
+    `\n结果已写 ${path.join(RESULT_DIR, "latest.json")}（仓库外）。本轮新增 ${totalNew} 个；` +
+      `未接入存量 ${totalUncovered} 个（其中协议已知 ${totalUncoveredKnownWire}）；` +
+      `我们种了但供应商没列 ${totalUnlisted} 个${failNote}。` +
       (updateBaseline ? "（已更新快照）" : "（未更新快照，确认后跑 --update-baseline）"),
   );
+
+  if (diffs.length === 0) {
+    // 全部供应商都没查成 = 这一轮真没查成，红着退出（failures 已写进 latest.json 留档）。
+    throw new Error(`全部供应商都没查成：${failures.map((f) => `${f.vendor}: ${f.error}`).join("；")}`);
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

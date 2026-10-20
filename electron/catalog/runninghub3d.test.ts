@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildProfileTaskResult } from '../tasks/profileTaskExecution'
+import { buildProfileTaskResult } from '../runtime'
 import { RUNNINGHUB_3D_CURATED_MAPPINGS } from './runninghub3d'
 import type { Mapping } from './types'
 

@@ -37,7 +37,7 @@ vi.mock("electron", () => ({
 }));
 
 import { registerAutomationPolicyIpc } from "./automationPolicyIpc";
-import { setMainWindow } from "../mainWindowRegistry";
+import { setMainWindow } from "../appWindowRegistry";
 
 const GET = "nomi:settings:automation-policy-get";
 const SET = "nomi:settings:automation-policy-set";
@@ -58,19 +58,19 @@ describe("automation policy IPC", () => {
   });
 
   it("registers read and write handlers", () => {
-    const store = { read: vi.fn(() => ({ mode: "balanced" })), write: vi.fn((value) => value) };
+    const store = { read: vi.fn(() => ({ maxAttemptsPerJob: 3 })), write: vi.fn((value) => value) };
     registerAutomationPolicyIpc(store as never);
     expect([...handlers.keys()]).toEqual([GET, SET]);
   });
 
   it("returns the durable value produced by the settings store", async () => {
-    const stored = { mode: "balanced", trustedHosts: ["nomi", "codex"] };
+    const stored = { maxAttemptsPerJob: 3, trustedHosts: ["nomi", "codex"] };
     const store = { read: vi.fn(() => stored), write: vi.fn(() => stored) };
     registerAutomationPolicyIpc(store as never);
 
     expect(await handlers.get(GET)?.(trustedEvent(mainWindow))).toEqual(stored);
-    expect(await handlers.get(SET)?.(trustedEvent(mainWindow), { mode: "policy-auto" })).toEqual(stored);
-    expect(store.write).toHaveBeenCalledWith({ mode: "policy-auto" });
+    expect(await handlers.get(SET)?.(trustedEvent(mainWindow), { maxAttemptsPerJob: 5 })).toEqual(stored);
+    expect(store.write).toHaveBeenCalledWith({ maxAttemptsPerJob: 5 });
   });
 
   // —— 权限升级链的回归（PR#174 安全跟进）——
@@ -89,9 +89,9 @@ describe("automation policy IPC", () => {
       const remoteEvent = { sender: remote, senderFrame: { routingId: 7, url: "https://evil.example/" } };
 
       await expect(handlers.get(SET)?.(remoteEvent, { anonymousAssetHosting: "allow" })).rejects.toThrow(
-        /不是 Nomi 主窗口/,
+        /不是 Nomi 自有窗口/,
       );
-      await expect(handlers.get(GET)?.(remoteEvent)).rejects.toThrow(/不是 Nomi 主窗口/);
+      await expect(handlers.get(GET)?.(remoteEvent)).rejects.toThrow(/不是 Nomi 自有窗口/);
       // 关键断言：策略一个字都没被写进去，不是「写了但记了条日志」。
       expect(store.write).not.toHaveBeenCalled();
     });
@@ -103,7 +103,7 @@ describe("automation policy IPC", () => {
 
       await expect(
         handlers.get(SET)?.(trustedEvent(otherWindow), { anonymousAssetHosting: "allow" }),
-      ).rejects.toThrow(/不是 Nomi 主窗口/);
+      ).rejects.toThrow(/不是 Nomi 自有窗口/);
       expect(store.write).not.toHaveBeenCalled();
     });
   });

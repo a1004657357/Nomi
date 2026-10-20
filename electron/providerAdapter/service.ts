@@ -1,13 +1,19 @@
 import crypto from "node:crypto";
 import type { LanguageModelV1 } from "ai";
-import { buildLanguageModelForVendor } from "../ai/vendorLanguageModel";
-import { readCatalog } from "../catalog/catalogStore";
-import { deriveVendorKeyFromBaseUrl } from "../catalog/catalogCommit";
-import { decryptApiKeyRecord } from "../catalog/secrets";
+import type { OperationLedger } from "../integrationCertification/operationLedger";
+import type { PromotionJournal } from "../integrationCertification/promotionJournal";
+import {
+  AdapterPromotionRecoveryRequiredError,
+  AdapterReconciliationRequiredError,
+  ProviderAdapterCertificationCoordinator,
+  type CertificationStartCheckpoint,
+} from "../integrationCertification/providerAdapterCoordinator";
+import { certificationModeOperationKey } from "../integrationCertification/modeIdentity";
+import { resolveHostVendorKey } from "../catalog/connectionVendorKey";
 import type { BillingModelKind, Model, Vendor } from "../catalog/types";
-import { humanizeModelKey } from "../catalog/modelLabel";
-import { AdapterNeedsAiError, compileProviderAdapter, repairProviderAdapter } from "./compiler";
-import { discoverProviderDocs, type DiscoveredDocs } from "./docsDiscovery";
+import { AdapterNeedsAiError, compileProviderAdapter } from "./compiler";
+import type { DiscoveredDocs } from "./docsDiscovery";
+import { resolveProviderDocs } from "./providedDocs";
 import { builtinDraftForUndocumentedEndpoint } from "./builtinOpenAiCompatibleDraft";
 import {
   connectionFingerprint,
@@ -17,42 +23,68 @@ import {
 } from "./store";
 import type {
   AdapterAuthType,
-  AdapterModeResult,
-  ProviderAdapterConnectionInput,
+  ProviderAdapterCertificationInput,
   ProviderAdapterCompilation,
   ProviderAdapterCompileFailure,
   ProviderAdapterDraft,
   ProviderAdapterRegisterInput,
   ProviderAdapterRegistration,
-  ProviderAdapterRevision,
   ProviderAdapterRun,
 } from "./types";
-import { adapterRevisionDigest } from "./validator";
-import { verifyAdapterMode, type AdapterVerificationResult } from "./verifier";
+import { probeAdapterCredential, verifyAdapterMode, type AdapterCredentialProbe, type AdapterVerificationResult } from "./verifier";
 import { redactAdapterSecrets } from "./redaction";
 import { defaultCatalog, type LoadedConnection, type ProviderAdapterCatalogPort } from "./serviceCatalog";
-import { AdapterWaitError, awaitAdapterStep, deadlineExpired, deadlineFrom } from "./serviceLifecycle";
 import {
+  AdapterWaitError,
+  awaitAdapterStep,
+  deadlineExpired,
+  deadlineFrom,
+  PROVIDER_ADAPTER_BATCH_TIMEOUT_MS,
+} from "./serviceLifecycle";
+import {
+  compileErrorBanner,
   completedModelCount,
-  failUnfinishedModes,
   genericCompilation,
-  primaryTaskKind,
   withTextModels,
 } from "./serviceFallback";
-import { compileMediaModels } from "./serviceCompilation";
+import { discoverAndCompileMediaModels, externallyCompiledDraft } from "./serviceCompilation";
 import { normalizeProviderAdapterInput, registerProviderConnection } from "./registration";
+import {
+  activeRunsSupersededBy,
+  adapterRunLineageRoot,
+  buildTerminalFailureRun,
+  latestRunInLineage,
+  planAdapterPromotionFinal,
+  staleAdapterRun,
+  type ModeResultWithModel,
+} from "./serviceRunLifecycle";
+import { defaultResolveLanguageModels } from "./serviceLanguageModels";
+import {
+  createTerminalMachinery,
+  neverThrows,
+  writeAdapterTerminalFailure,
+  type TerminalReaper,
+  type TerminalWriteGuarantee,
+} from "./terminalGuarantee";
+import { logError } from "../logging/logger";
+import {
+  initialVerificationState,
+  modeResultFromVerification,
+  persistedModeResult,
+} from "./serviceVerificationResults";
 
 export { adapterModelMetadataForPromotion } from "./promotionMeta";
+export { prioritizeCompilerCandidates } from "./compilerCandidatePriority";
 export { defaultCatalog } from "./serviceCatalog";
 export type { ProviderAdapterCatalogPort } from "./serviceCatalog";
 
-export type ProviderAdapterStartInput = ProviderAdapterConnectionInput;
+export type ProviderAdapterStartInput = ProviderAdapterCertificationInput;
 export type { ProviderAdapterRegisterInput, ProviderAdapterRegistration } from "./types";
 
 export type ProviderAdapterServiceDependencies = {
   catalog: ProviderAdapterCatalogPort;
   schedule?: (runId: string) => void;
-  discover: (input: { baseUrl: string; modelKeys: readonly string[]; signal?: AbortSignal }) => Promise<DiscoveredDocs>;
+  discover: (input: { baseUrl: string; modelKeys: readonly string[]; providedDocs?: string; proxyUrl?: string; signal?: AbortSignal }) => Promise<DiscoveredDocs>;
   resolveLanguageModels: (connection: LoadedConnection) => readonly LanguageModelV1[];
   compile: (input: {
     languageModels: readonly LanguageModelV1[];
@@ -62,119 +94,93 @@ export type ProviderAdapterServiceDependencies = {
     docs: DiscoveredDocs["sources"];
     signal?: AbortSignal;
   }) => Promise<ProviderAdapterCompilation>;
-  repair: (input: {
-    languageModels: readonly LanguageModelV1[];
-    providerBaseUrl: string;
-    selectedModelKeys: readonly string[];
-    previousDraft: ProviderAdapterDraft;
-    failure: { stage: string; message: string; modelKey?: string; taskKind?: string; requestSummary?: unknown };
-    docs: DiscoveredDocs["sources"];
-    signal?: AbortSignal;
-  }) => Promise<ProviderAdapterDraft>;
+  /**
+   * 一条连接探一次的免费凭据自检（鉴权 + 模型清单）。结论对这条连接下所有模型相同。
+   * 2026-09-11：**自动修复（repair）整族删了**——它存在的唯一理由是「付费验证失败了再花钱试一次」，
+   * 而付费验证本身已经不在了。修不动的说明卡如实回报，由驱动 Agent 拿真实错误重新 propose。
+   */
+  probeCredential: (input: { vendor: Vendor; apiKey: string; signal?: AbortSignal }) => Promise<AdapterCredentialProbe>;
   verify: (input: {
     vendor: Vendor;
     model: Model;
     apiKey: string;
     mode: ProviderAdapterDraft["models"][number]["modes"][number];
+    credential: AdapterCredentialProbe;
     signal?: AbortSignal;
   }) => Promise<AdapterVerificationResult>;
+  operationLedger?: OperationLedger;
+  promotionJournal?: PromotionJournal;
   now: () => string;
   id: () => string;
-  maxRepairs?: number;
   batchTimeoutMs?: number;
   discoverTimeoutMs?: number;
   compileTimeoutMs?: number;
-  repairTimeoutMs?: number;
   verifyTimeoutMs?: number;
+  canonicalStartWaitMs?: number;
+  certificationCheckpoint?: (checkpoint: CertificationStartCheckpoint) => void | Promise<void>;
+  terminalWriteBackoffMs?: readonly number[]; // 以下四项只给测试注入
+  terminalWriteTimer?: (callback: () => void, ms: number) => unknown;
+  reaperIntervalMs?: number;
+  terminalErrorJournalPath?: string;
 };
-
-export function prioritizeCompilerCandidates<T extends { vendorKey: string }>(
-  candidates: readonly T[],
-  targetVendorKey?: string,
-): T[] {
-  const seenVendors = new Set<string>();
-  const firstPerVendor: T[] = [];
-  const remaining: T[] = [];
-  for (const candidate of candidates) {
-    if (seenVendors.has(candidate.vendorKey)) remaining.push(candidate);
-    else {
-      seenVendors.add(candidate.vendorKey);
-      firstPerVendor.push(candidate);
-    }
-  }
-  const prioritized = [...firstPerVendor, ...remaining];
-  if (!targetVendorKey) return prioritized;
-  return [
-    ...prioritized.filter((candidate) => candidate.vendorKey !== targetVendorKey),
-    ...prioritized.filter((candidate) => candidate.vendorKey === targetVendorKey),
-  ];
-}
-
-function defaultResolveLanguageModels(connection: LoadedConnection): LanguageModelV1[] {
-  const state = readCatalog();
-  const candidates: Array<{ vendorKey: string; modelKey: string; languageModel: LanguageModelV1 }> = [];
-  for (const model of state.models) {
-    if (model.kind !== "text" || !model.enabled) continue;
-    const vendor = state.vendors.find((item) => item.key === model.vendorKey && item.enabled && item.baseUrlHint);
-    if (!vendor || (vendor.authType && vendor.authType !== "none" && vendor.authType !== "bearer")) continue;
-    const apiKey = vendor.authType === "none" ? "" : decryptApiKeyRecord(state.apiKeysByVendor[vendor.key]);
-    if (vendor.authType !== "none" && !apiKey) continue;
-    candidates.push({
-      vendorKey: vendor.key,
-      modelKey: model.modelKey,
-      languageModel: buildLanguageModelForVendor(vendor, model, apiKey),
-    });
-  }
-  const selectedText = connection.models.find((model) => model.kind === "text");
-  if (selectedText) {
-    candidates.push({
-      vendorKey: connection.vendor.key,
-      modelKey: selectedText.modelKey,
-      languageModel: buildLanguageModelForVendor(connection.vendor, selectedText, connection.apiKey),
-    });
-  }
-  const seen = new Set<string>();
-  return prioritizeCompilerCandidates(candidates, connection.vendor.key)
-    .filter((candidate) => {
-      const key = `${candidate.vendorKey}\0${candidate.modelKey}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 4)
-    .map((candidate) => candidate.languageModel);
-}
 
 const defaultDependencies: ProviderAdapterServiceDependencies = {
   catalog: defaultCatalog,
-  discover: ({ baseUrl, modelKeys, signal }) => discoverProviderDocs({ baseUrl, modelKeys, signal }),
+  discover: (input) => resolveProviderDocs(input),
   resolveLanguageModels: defaultResolveLanguageModels,
   compile: (input) => compileProviderAdapter(input),
-  repair: (input) => repairProviderAdapter(input),
+  probeCredential: (input) => probeAdapterCredential(input),
   verify: (input) => verifyAdapterMode(input),
   now: () => new Date().toISOString(),
   id: () => `adapter-run-${crypto.randomUUID()}`,
-  maxRepairs: 2,
-  batchTimeoutMs: 5 * 60_000,
+  batchTimeoutMs: PROVIDER_ADAPTER_BATCH_TIMEOUT_MS,
   discoverTimeoutMs: 45_000,
   compileTimeoutMs: 120_000,
-  repairTimeoutMs: 90_000,
-  verifyTimeoutMs: 90_000,
+  verifyTimeoutMs: 30_000,
 };
-
-type ModeResultWithModel = AdapterModeResult & { modelKey: string };
 
 export class ProviderAdapterService {
   private readonly dependencies: ProviderAdapterServiceDependencies;
   private readonly active = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, AbortController>();
+  private readonly certification: ProviderAdapterCertificationCoordinator;
+  /** 终态保证 + deadline 看门狗；不变量说明见 terminalGuarantee.ts 顶部。 */
+  private readonly terminal: TerminalWriteGuarantee;
+  private readonly reaper: TerminalReaper;
 
   constructor(
     private readonly store = new ProviderAdapterStore(),
     dependencies: Partial<ProviderAdapterServiceDependencies> = {},
   ) {
     this.dependencies = { ...defaultDependencies, ...dependencies };
+    this.certification = new ProviderAdapterCertificationCoordinator(
+      this.store,
+      this.dependencies.catalog,
+      this.dependencies.now,
+      {
+        operationLedger: dependencies.operationLedger,
+        promotionJournal: dependencies.promotionJournal,
+        canonicalStartWaitMs: dependencies.canonicalStartWaitMs,
+      },
+    );
+    const machinery = createTerminalMachinery({
+      write: (runId, stage, message) => { writeAdapterTerminalFailure({ store: this.store, id: runId, stage, message, redact: redactAdapterSecrets,
+        catalogFail: (run) => this.dependencies.catalog.fail(run), now: this.dependencies.now, buildRun: (input) => buildTerminalFailureRun(input as Parameters<typeof buildTerminalFailureRun>[0]) }); },
+      read: (runId) => this.store.getRun(runId),
+      activeRuns: () => this.store.listRuns({ activeOnly: true, limit: 200 }),
+      forceTimeout: (runId, message) => { this.finishTerminal(runId, "timed_out", message); },
+      now: this.dependencies.now,
+      abort: (runId) => this.controllers.get(runId)?.abort(),
+      log: (entry) => neverThrows(() => logError("onboarding", "adapter-terminal-write-abandoned", new Error(entry.writeError), { runId: entry.runId, stage: entry.stage })),
+      options: this.dependencies,
+    });
+    this.terminal = machinery.guarantee;
+    this.reaper = machinery.reaper;
   }
+
+  stopWatchdog(): void { this.reaper.stop(); this.terminal.dispose(); }
+  awaitTerminalWrites(): Promise<void> { return this.terminal.flush(); } // 测试用：等重试链落定
+  sweepExpiredRuns(): string[] { return this.reaper.sweep(); }
 
   register(rawInput: ProviderAdapterRegisterInput): ProviderAdapterRegistration {
     return registerProviderConnection({
@@ -184,79 +190,95 @@ export class ProviderAdapterService {
     });
   }
 
-  start(rawInput: ProviderAdapterStartInput): ProviderAdapterRun {
+  async start(rawInput: ProviderAdapterStartInput): Promise<ProviderAdapterRun> {
     const input = normalizeProviderAdapterInput(rawInput, "verify");
-    const vendorKey = String(input.catalogVendorKey || "").trim() || deriveVendorKeyFromBaseUrl(input.baseUrl);
-    if (!vendorKey) throw new Error("Unable to derive a provider id from the API base URL");
+    // #831：这里只解析到「这一族的 root」，和 registration.ts 同一支。落在哪条兄弟连接上
+    // 由目录写入层决定 —— 身份判据只许有一个 owner，而它必须是读得到目录的那一层。
+    // （验证流程手里本来就有 catalogVendorKey：连接是先保存、后验证的。）
+    const vendorKey = resolveHostVendorKey({
+      baseUrl: input.baseUrl,
+      catalogVendorKey: input.catalogVendorKey,
+    });
     const id = this.dependencies.id();
-    const staged = this.dependencies.catalog.stage({ ...input, vendorKey, runId: id });
+    const prepared = await this.certification.prepareStart(input, id, vendorKey);
+    if (prepared.duplicate) return prepared.duplicate;
     const timestamp = this.dependencies.now();
-    const run: ProviderAdapterRun = {
-      id,
-      vendorKey: staged.vendor.key,
-      vendorName: staged.vendor.name,
+    if (!prepared.operation) throw new Error("Certification start reservation is missing");
+    const { run, staged } = await this.certification.completePreparedStart({
+      connection: input,
+      operation: prepared.operation,
+      sourceVendorKey: vendorKey,
       connectionFingerprint: connectionFingerprint({
         baseUrl: input.baseUrl,
         authType: input.authType,
         apiKey: input.apiKey,
         selectedModelKeys: input.models.map((model) => model.modelKey),
         headers: input.headers,
+        proxyUrl: input.proxyUrl,
       }),
-      selectedModelKeys: input.models.map((model) => model.modelKey),
-      stage: "queued",
-      completedCount: 0,
-      totalCount: input.models.length,
-      lastProgressAt: timestamp,
-      stageStartedAt: timestamp,
-      deadlineAt: deadlineFrom(timestamp, this.dependencies.batchTimeoutMs ?? 5 * 60_000),
-      repairAttempt: 0,
-      models: input.models.map((model) => ({
-        modelKey: model.modelKey,
-        labelZh: model.labelZh || humanizeModelKey(model.modelKey),
-        kind: model.kind,
-        modes: [],
-      })),
-      sourceUrls: [],
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    this.store.upsertRun(run);
-    this.schedule(id);
+      deadlineAt: deadlineFrom(timestamp, this.dependencies.batchTimeoutMs ?? PROVIDER_ADAPTER_BATCH_TIMEOUT_MS),
+      checkpoint: this.dependencies.certificationCheckpoint,
+    });
+    // 用户交的文档 / 外部编译好的说明卡跟着 run 落盘（边表，不进 run DTO）。
+    // 必须在 schedule 之前写：process() 一开跑就会去读它。
+    const externalInput = { ...(input.docs ? { docs: input.docs } : {}), ...(input.adapterDraft ? { draft: input.adapterDraft } : {}) };
+    if (Object.keys(externalInput).length > 0) this.store.setRunInput({ runId: run.id, ...externalInput, updatedAt: timestamp });
+    this.supersedeActiveLineageRuns(
+      run.id,
+      staged.lineageRootVendorKey,
+      new Set(staged.supersededVendorKeys),
+      timestamp,
+    );
+    this.schedule(run.id);
     return run;
   }
 
+  // Pure pass-through delegators to store/certification (grouped tightly).
   getRun(id: string): ProviderAdapterRun | undefined {
     return this.store.getRun(id);
   }
-
+  certificationChildRunRef(id: string) {
+    return this.certification.childRunRef(id);
+  }
+  certificationSourceVendorKey(id: string) {
+    return this.certification.sourceVendorKey(id);
+  }
   latestRun(vendorKey: string): ProviderAdapterRun | undefined {
     return this.store.latestRun(vendorKey);
   }
-
   listRuns(options: { vendorKey?: string; activeOnly?: boolean; limit?: number } = {}): ProviderAdapterRun[] {
     return this.store.listRuns(options);
   }
-
   cancel(id: string): ProviderAdapterRun | undefined {
     const current = this.store.getRun(id);
     if (!current || isTerminalAdapterStage(current.stage)) return current;
-    const run = this.finishTerminal(id, "cancelled", "Adapter verification cancelled by user");
-    this.controllers.get(id)?.abort();
-    return run;
+    if (!this.certification.cancelBeforeRemoteSettlement(id)) {
+      this.controllers.get(id)?.abort();
+      return this.store.getRun(id);
+    }
+    this.finishTerminal(id, "cancelled", "Adapter verification cancelled by user");
+    return this.store.getRun(id);
   }
-
   resumeInterrupted(): void {
+    this.terminal.compensate(); this.reaper.start(); // 先补偿上次没写成的终态，再开看门狗
+    this.certification.recoverPreparedStarts();
+    try {
+      this.certification.replayPromotions();
+    } catch (error) {
+      if (!(error instanceof AdapterPromotionRecoveryRequiredError)) throw error;
+    }
     for (const run of recoverableAdapterRuns(this.store.snapshot().runs)) {
-      const deadlineAt = run.deadlineAt || deadlineFrom(run.createdAt, this.dependencies.batchTimeoutMs ?? 5 * 60_000);
+      if (run.recovery?.reasonCode === "promotion_commit_unknown") continue;
+      // 没有对账能力了（自检不提交任何东西，也就不会有「不知道有没有落地」的远端任务）。
+      // 本次改动之前落盘、仍停在 submitting/unknown 的历史 run 由 resumeDisposition 判成 wait，
+      // 停在那里等人处理，而不是被我们再花一次钱去重试。
+      if (this.certification.resumeDisposition(run, false) === "wait") continue;
+      const deadlineAt = run.deadlineAt || deadlineFrom(run.createdAt, this.dependencies.batchTimeoutMs ?? PROVIDER_ADAPTER_BATCH_TIMEOUT_MS);
       if (deadlineExpired(deadlineAt, this.dependencies.now())) {
         this.finishTerminal(run.id, "timed_out", "Adapter run deadline expired before it could resume");
         continue;
       }
-      this.finishWithError(
-        run.id,
-        "failed",
-        "Adapter verification was interrupted by an app restart. Review the saved connection and retry explicitly.",
-      );
+      this.schedule(run.id);
     }
   }
 
@@ -265,10 +287,21 @@ export class ProviderAdapterService {
     if (existing) return existing;
     const controller = new AbortController();
     this.controllers.set(id, controller);
-    const work = this.process(id).finally(() => {
-      this.active.delete(id);
-      if (this.controllers.get(id) === controller) this.controllers.delete(id);
-    });
+    // 以前是 fire-and-forget：`process()` 里的失败处理自己抛出时（终态写拿不到文件锁）
+    // 没人接，run 永久停在 `certifying`。失败路径必须与主路径等强，所以这里必须兜住。
+    const work = this.process(id)
+      .catch((error: unknown) => {
+        neverThrows(() => logError("onboarding", "adapter-run-execution-crashed", error, { runId: id }));
+        void this.terminal.settle(
+          id,
+          "failed",
+          redactAdapterSecrets(error instanceof Error ? error.message : String(error)),
+        );
+      })
+      .finally(() => {
+        this.active.delete(id);
+        if (this.controllers.get(id) === controller) this.controllers.delete(id);
+      });
     this.active.set(id, work);
     return work;
   }
@@ -284,7 +317,7 @@ export class ProviderAdapterService {
     if (!initial.deadlineAt) {
       initial = this.store.updateRun(id, (current) => ({
         ...current,
-        deadlineAt: deadlineFrom(current.createdAt, this.dependencies.batchTimeoutMs ?? 5 * 60_000),
+        deadlineAt: deadlineFrom(current.createdAt, this.dependencies.batchTimeoutMs ?? PROVIDER_ADAPTER_BATCH_TIMEOUT_MS),
       }));
     }
     if (deadlineExpired(initial.deadlineAt, this.dependencies.now())) {
@@ -292,24 +325,36 @@ export class ProviderAdapterService {
       return;
     }
     if (this.markStaleIfSuperseded(initial)) return;
-    const connection = this.dependencies.catalog.load(initial.vendorKey, initial.selectedModelKeys);
-    if (!connection) {
-      this.finishWithError(id, "failed", "Provider credentials or selected models are no longer available");
-      return;
-    }
-    const fingerprint = connectionFingerprint({
-      baseUrl: String(connection.vendor.baseUrlHint || ""),
-      authType: connection.vendor.authType || "bearer",
-      apiKey: connection.apiKey,
-      selectedModelKeys: initial.selectedModelKeys,
-      headers: connection.headers,
-    });
-    if (fingerprint !== initial.connectionFingerprint) {
-      this.store.markStaleIfConnectionChanged(id, fingerprint);
-      return;
-    }
-
     try {
+      const connection = await this.dependencies.catalog.load(initial.vendorKey, initial.selectedModelKeys);
+      if (!connection) {
+        this.finishTerminal(id, "failed", "Provider credentials or selected models are no longer available");
+        return;
+      }
+      const fingerprint = connectionFingerprint({
+        baseUrl: String(connection.vendor.baseUrlHint || ""),
+        authType: connection.vendor.authType || "bearer",
+        apiKey: connection.apiKey,
+        selectedModelKeys: initial.selectedModelKeys,
+        headers: connection.headers,
+        proxyUrl: connection.vendor.network?.proxyUrl,
+      });
+      if (fingerprint !== initial.connectionFingerprint) {
+        const staleAt = this.dependencies.now();
+        const stale: ProviderAdapterRun = {
+          ...initial,
+          stage: "stale",
+          error: "Provider connection changed before verification completed",
+          currentModelKey: undefined,
+          stageStartedAt: staleAt,
+          lastProgressAt: staleAt,
+          updatedAt: staleAt,
+        };
+        this.dependencies.catalog.fail(stale);
+        this.store.upsertRun(stale);
+        return;
+      }
+
       // 自建/局域网端点没有公开文档可读（为什么见 builtinOpenAiCompatibleDraft 头注释）：不猜文档、
       // 不叫 AI，直接用内置 OpenAI 兼容契约进真实验证。必须在下面的分级之前——媒体模型也一样适用。
       const builtinDraft = builtinDraftForUndocumentedEndpoint(connection);
@@ -332,40 +377,28 @@ export class ProviderAdapterService {
       // 编译它纯属白花时间，还平添「文档没抓到 / 编译失败」这些真实使用路径没有的失败模式。
       // 旧行为：全部无差别走完整流程，两个 DeepSeek 文本模型烧掉 132 秒后判死。
       const mediaModels = connection.models.filter((model) => model.kind !== "text");
-      const needsCompile = mediaModels.length > 0;
-      let docs: DiscoveredDocs = { sources: [], corpus: "" };
-      let compilation = genericCompilation(connection, []);
-      let compiledModelKeys = new Set<string>();
+      const runInput = this.store.getRunInput(id);
+      const suppliedDraft = externallyCompiledDraft(runInput, connection);
+      const needsCompile = mediaModels.length > 0 && !suppliedDraft;
+      let compilation = suppliedDraft ? { draft: suppliedDraft, failures: [] } : genericCompilation(connection, []);
       const languageModels = needsCompile ? this.dependencies.resolveLanguageModels(connection) : [];
       if (needsCompile) {
-        this.setStage(id, "discovering_docs");
-        try {
-          docs = await this.awaitStep(id, "Document discovery", this.dependencies.discoverTimeoutMs ?? 45_000, (signal) =>
-            this.dependencies.discover({
-              baseUrl: String(connection.vendor.baseUrlHint || ""),
-              modelKeys: mediaModels.map((model) => model.modelKey),
-              signal,
-            }),
-          );
-        } catch (error) {
-          if (error instanceof AdapterWaitError && error.reason !== "step_timeout") throw error;
-          docs = { sources: [], corpus: "" };
-        }
-        if (docs.sources.length > 0 && docs.corpus.trim()) {
-          this.updateRunIfActive(id, (run) => ({
-            ...run,
-            sourceUrls: docs.sources.map((source) => source.url),
-            lastProgressAt: this.dependencies.now(),
-            updatedAt: this.dependencies.now(),
-          }));
-        }
-        const compiled = await compileMediaModels({
+        const compiled = await discoverAndCompileMediaModels({
           connection,
           models: mediaModels,
-          docs,
+          ...(runInput?.docs ? { providedDocs: runInput.docs } : {}),
           languageModels,
-          onModel: (modelKey) => this.setStage(id, "compiling", modelKey),
-          compileOne: (model) => this.awaitStep(
+          discover: this.dependencies.discover,
+          discoverTimeoutMs: this.dependencies.discoverTimeoutMs ?? 45_000,
+          onStage: (stage, modelKey) => this.setStage(id, stage, modelKey),
+          onDocs: (found) => this.updateRunIfActive(id, (run) => ({
+            ...run,
+            sourceUrls: found.sources.map((source) => source.url),
+            lastProgressAt: this.dependencies.now(),
+            updatedAt: this.dependencies.now(),
+          })),
+          runStep: (label, timeoutMs, work) => this.awaitStep(id, label, timeoutMs, work),
+          compileOne: (model, found) => this.awaitStep(
             id,
             `Adapter compilation for ${model.modelKey}`,
             this.dependencies.compileTimeoutMs ?? 120_000,
@@ -374,85 +407,30 @@ export class ProviderAdapterService {
               providerBaseUrl: String(connection.vendor.baseUrlHint || ""),
               authType: (connection.vendor.authType || "bearer") as AdapterAuthType,
               selectedModels: [{ modelKey: model.modelKey, label: model.labelZh, kind: model.kind }],
-              docs: docs.sources,
+              docs: found.sources,
               signal,
             }),
           ),
         });
         compilation = compiled.compilation;
-        compiledModelKeys = compiled.compiledModelKeys;
       }
       // 文本条目不经 AI：接法固定、模式表也固定（chat）。合进草稿只为让验证与展示有位置。
       // 文本条目**以这里为单一真相**——编译器万一也吐了同名文本条目（误分类/被喂了不该喂的），
       // 一律以这份为准替换掉，否则同一个模型会出现两条、验证跑两遍（有回归钉子）。
       const textModels = connection.models.filter((model) => model.kind === "text");
-      let candidate: ProviderAdapterDraft = {
+      const candidate: ProviderAdapterDraft = {
         ...compilation.draft,
         models: withTextModels(compilation.draft.models, textModels),
       };
-      let verification = await this.verifyDraft(id, connection, candidate, 1, compilation.failures);
-      let results = verification.results;
-      if (verification.deadlineError) {
-        await this.promoteFinal(id, candidate, results, verification.deadlineError, true);
-        return;
-      }
-      const maxRepairs = this.dependencies.maxRepairs ?? 2;
-      let repairError: string | undefined;
-      let deadlineReached = false;
-      // 自动修复重新生成的是「HTTP 接法草稿」，而文本模型的验证走 streamTextTask（生产同一条路）、
-      // 压根不读这份草稿——对文本失败重修等于原样再发一次同样的请求，必然同样失败。
-      // 旧行为：白转 2 轮、界面还写着「正在根据真实错误自动修复…」（假的），用户干等 2 分钟拿同一个结果。
-      // 只让「修得动的」失败（真正按草稿发请求的非文本模型）触发重修。(2026-08-12)
-      const repairableKeys = compiledModelKeys;
-      for (let repairAttempt = 1; repairAttempt <= maxRepairs; repairAttempt += 1) {
-        const compiledKeys = new Set(candidate.models.map((model) => model.modelKey));
-        const failure = results.find(
-          (result) => result.state === "failed" && compiledKeys.has(result.modelKey) && repairableKeys.has(result.modelKey),
-        );
-        if (!failure) break;
-        this.setStage(id, "repairing", failure.modelKey, { repairAttempt });
-        try {
-          // 只让重修碰它修得动的那些模型，修完再把文本条目按单一真相合回去——
-          // 否则重修会顺手用 AI 重新生成文本条目，把确定性的那份覆盖掉。
-          const repaired = await this.awaitStep(id, "Adapter repair", this.dependencies.repairTimeoutMs ?? 90_000, (signal) =>
-            this.dependencies.repair({
-              languageModels,
-              providerBaseUrl: String(connection.vendor.baseUrlHint || ""),
-              selectedModelKeys: candidate.models.filter((model) => repairableKeys.has(model.modelKey)).map((model) => model.modelKey),
-              previousDraft: candidate,
-              failure: {
-                stage: failure.stage || "create",
-                message: failure.error || "Unknown verification failure",
-                modelKey: failure.modelKey,
-                taskKind: failure.taskKind,
-              },
-              docs: docs.sources,
-              signal,
-            }),
-          );
-          candidate = { ...repaired, models: withTextModels(repaired.models, textModels) };
-        } catch (error) {
-          if (error instanceof AdapterWaitError) {
-            if (error.reason === "cancelled" || error.reason === "terminal") throw error;
-            repairError = error.message;
-            deadlineReached = error.reason === "deadline";
-            break;
-          }
-          repairError = redactAdapterSecrets(error instanceof Error ? error.message : String(error));
-          break;
-        }
-        // Full regression after every repair: a local fix must not break a mode that previously passed.
-        verification = await this.verifyDraft(id, connection, candidate, repairAttempt + 1, compilation.failures);
-        results = verification.results;
-        if (verification.deadlineError) {
-          repairError = verification.deadlineError;
-          deadlineReached = true;
-          break;
-        }
-      }
-      const compileError = compilation.failures.length
-        ? compilation.failures.map((failure) => `${failure.modelKey}: ${failure.error}`).join("; ")
-        : undefined;
+      // 一次自检，没有第二轮。**自动修复整族删了**（2026-09-11 用户拍板「删掉所有会花用户钱的
+      // 自动逻辑」）：它的机制是「失败 → 叫 AI 重写说明卡 → 再发一次真实生成 → 全量回归」，
+      // 最坏 3 轮 × 2 模式 = 6 次付费出图，而它修的正是我们自己按 kind 写死的那份配方。
+      // 根因治在配方层（transportDelivery.ts 的声明式交付形状），不靠事后花钱重试（P2）。
+      const verification = await this.verifyDraft(id, connection, candidate, 1, compilation.failures);
+      const results = verification.results;
+      const deadlineReached = Boolean(verification.deadlineError);
+      const repairError = verification.deadlineError;
+      const compileError = compileErrorBanner(compilation.failures);
       await this.promoteFinal(
         id,
         candidate,
@@ -464,8 +442,12 @@ export class ProviderAdapterService {
       if (error instanceof AdapterWaitError) {
         if (error.reason === "cancelled" || error.reason === "terminal") return;
         this.finishTerminal(id, "timed_out", error.message);
-      } else if (error instanceof AdapterNeedsAiError) this.finishWithError(id, "needs_ai", error.message);
-      else this.finishWithError(id, "failed", error instanceof Error ? error.message : String(error));
+      } else if (error instanceof AdapterReconciliationRequiredError || error instanceof AdapterPromotionRecoveryRequiredError) {
+        // The durable ledger is the authority. Keep the candidate staged and wait
+        // for an explicit remote reconciliation; never turn uncertainty into retry.
+        return;
+      } else if (error instanceof AdapterNeedsAiError) this.finishTerminal(id, "needs_ai", error.message);
+      else this.finishTerminal(id, "failed", error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -476,52 +458,26 @@ export class ProviderAdapterService {
     attempt: number,
     compileFailures: readonly ProviderAdapterCompileFailure[] = [],
   ): Promise<{ results: ModeResultWithModel[]; deadlineError?: string }> {
-    const candidates = new Map(draft.models.map((model) => [model.modelKey, model]));
-    const failures = new Map(compileFailures.map((failure) => [failure.modelKey, failure]));
-    const emptyModels = connection.models.map((model) => {
-      const candidate = candidates.get(model.modelKey);
-      const failure = failures.get(model.modelKey);
-      return {
-        modelKey: model.modelKey,
-        labelZh: candidate?.labelZh || model.labelZh,
-        kind: model.kind,
-        modes: candidate
-          ? candidate.modes.map((mode) => ({ taskKind: mode.taskKind, state: "queued" as const, attempts: attempt }))
-          : failure
-            ? [{
-                taskKind: primaryTaskKind(model.kind),
-                state: "failed" as const,
-                attempts: 1,
-                stage: "compile" as const,
-                error: failure.error,
-              }]
-            : [],
-      };
-    });
+    const initial = initialVerificationState({ connection, draft, compileFailures, attempt });
     const testingAt = this.dependencies.now();
     this.updateRunIfActive(id, (run) => ({
       ...run,
       stage: "testing",
       currentModelKey: undefined,
-      models: emptyModels,
-      completedCount: completedModelCount(emptyModels),
+      models: initial.models,
+      completedCount: completedModelCount(initial.models),
       totalCount: connection.models.length,
       stageStartedAt: testingAt,
       lastProgressAt: testingAt,
       updatedAt: testingAt,
     }));
-    const results: ModeResultWithModel[] = compileFailures.map((failure) => {
-      const model = connection.models.find((item) => item.modelKey === failure.modelKey);
-      return {
-        modelKey: failure.modelKey,
-        taskKind: primaryTaskKind(model?.kind || "text"),
-        state: "failed",
-        attempts: 1,
-        stage: "compile",
-        error: failure.error,
-      };
-    });
+    const results = initial.results;
     let deadlineError: string | undefined;
+    // 凭据自检**一条连接只打一次**：结论对这条连接下每个模型每个模式都一样，按模式各打一次
+    // 纯属白打（也会毫无必要地给上游刷 N 次 /models）。
+    const credential = await this.awaitStep(id, "Credential self-check", this.dependencies.verifyTimeoutMs ?? 30_000, (signal) =>
+      this.dependencies.probeCredential({ vendor: connection.vendor, apiKey: connection.apiKey, signal }),
+    );
     for (const candidateModel of draft.models) {
       const model = connection.models.find((item) => item.modelKey === candidateModel.modelKey);
       if (!model) throw new Error(`Selected model disappeared during verification: ${candidateModel.modelKey}`);
@@ -544,55 +500,84 @@ export class ProviderAdapterService {
         }));
         let verified: AdapterVerificationResult;
         try {
-          verified = await this.awaitStep(id, "Model verification", this.dependencies.verifyTimeoutMs ?? 90_000, (signal) =>
-            this.dependencies.verify({ vendor: connection.vendor, model, apiKey: connection.apiKey, mode, signal }),
-          );
+          const operationKey = certificationModeOperationKey(candidateModel.modelKey, mode.taskKind, attempt);
+          verified = await this.certification.executeSubmission({
+            runId: id,
+            operationKey,
+            modelKey: candidateModel.modelKey,
+            taskKind: mode.taskKind,
+            attempt,
+            beforeSubmit: () => {
+              const beforeCreate = this.store.getRun(id);
+              if (!beforeCreate || isTerminalAdapterStage(beforeCreate.stage)) {
+                throw new AdapterWaitError("terminal", "Model verification", "Model verification ignored because the run is terminal");
+              }
+              if (deadlineExpired(beforeCreate.deadlineAt, this.dependencies.now())) {
+                throw new AdapterWaitError(
+                  "deadline",
+                  "Model verification",
+                  "Model verification stopped because the adapter run deadline was reached",
+                );
+              }
+            },
+            execute: () => this.awaitStep(id, "Model self-check", this.dependencies.verifyTimeoutMs ?? 30_000, (signal) =>
+              this.dependencies.verify({ vendor: connection.vendor, model, apiKey: connection.apiKey, mode, credential, signal }),
+            ),
+            reuse: (operation) => {
+              const persisted = this.store.getRun(id)?.models
+                .find((item) => item.modelKey === candidateModel.modelKey)?.modes
+                .find((item) => item.taskKind === mode.taskKind);
+              return operation.settledResult?.ok === false || persisted?.state === "failed"
+                ? {
+                    ok: false as const,
+                    taskKind: mode.taskKind,
+                    stage: persisted?.stage === "contract" || operation.settledResult?.stage === "contract"
+                      ? ("contract" as const)
+                      : ("credential" as const),
+                    error: persisted?.error || "Provider self-check failed",
+                    errorCategory: persisted?.errorCategory || operation.settledResult?.errorCategory,
+                    httpStatus: persisted?.httpStatus,
+                    selfCheckReason: persisted?.selfCheckReason || ("endpoint_unreachable" as const),
+                    submissionState: "settled" as const,
+                  }
+                : {
+                    ok: true as const,
+                    taskKind: mode.taskKind,
+                    submissionState: "settled" as const,
+                  };
+            },
+            // 自检不向上游提交任何东西（见上面 2026-09-11 拍板注释），所以自检本身超时
+            // 不可能留下一个「不知道有没有落地」的远端任务——executeSubmission 已删掉
+            // 「execute 超时就判 uncertain → reconciling」的分支（2026-09-22，isUncertainError
+            // 选项本身也删了，唯一调用者一直恒 false，是死代码）。这里的 AdapterWaitError
+            // 原样往上抛，走下面 catch 的 deadline 分支即可。
+          });
         } catch (error) {
+          if (error instanceof AdapterReconciliationRequiredError) throw error;
           if (!(error instanceof AdapterWaitError)) throw error;
           if (error.reason === "cancelled" || error.reason === "terminal") throw error;
           if (error.reason === "deadline") deadlineError = error.message;
           verified = {
             ok: false,
             taskKind: mode.taskKind,
-            stage: "verify_asset",
+            stage: "credential",
             error: error.message,
             errorCategory: "network",
+            selfCheckReason: "endpoint_unreachable",
           };
         }
-        const modeResult: ModeResultWithModel = verified.ok
-          ? {
-              modelKey: candidateModel.modelKey,
-              taskKind: mode.taskKind,
-              state: "verified",
-              attempts: attempt,
-              verifiedAt: this.dependencies.now(),
-            }
-          : {
-              modelKey: candidateModel.modelKey,
-              taskKind: mode.taskKind,
-              state: "failed",
-              attempts: attempt,
-              stage: verified.stage,
-              error: verified.error,
-              // 归类原样透传（抛出点已查表定好），别让渲染层再去猜。
-              ...(verified.errorCategory ? { errorCategory: verified.errorCategory } : {}),
-              ...(verified.httpStatus ? { httpStatus: verified.httpStatus } : {}),
-            };
+        const modeResult = modeResultFromVerification({
+          modelKey: candidateModel.modelKey,
+          attempt,
+          verifiedAt: this.dependencies.now(),
+          verification: verified,
+        });
         results.push(modeResult);
-        const persistedModeResult: AdapterModeResult = {
-          taskKind: modeResult.taskKind,
-          state: modeResult.state,
-          attempts: modeResult.attempts,
-          ...(modeResult.stage ? { stage: modeResult.stage } : {}),
-          ...(modeResult.error ? { error: modeResult.error } : {}),
-          ...(modeResult.errorCategory ? { errorCategory: modeResult.errorCategory } : {}),
-          ...(modeResult.httpStatus ? { httpStatus: modeResult.httpStatus } : {}),
-          ...(modeResult.verifiedAt ? { verifiedAt: modeResult.verifiedAt } : {}),
-        };
+        const persisted = persistedModeResult(modeResult);
         this.updateRunIfActive(id, (run) => {
           const models = run.models.map((item) =>
             item.modelKey === candidateModel.modelKey
-              ? { ...item, modes: item.modes.map((state) => (state.taskKind === mode.taskKind ? persistedModeResult : state)) }
+              ? { ...item, modes: item.modes.map((state) => (state.taskKind === mode.taskKind ? persisted : state)) }
               : item);
           const progressAt = this.dependencies.now();
           return {
@@ -617,45 +602,29 @@ export class ProviderAdapterService {
   ): Promise<void> {
     const current = this.store.getRun(id);
     if (!current || isTerminalAdapterStage(current.stage) || this.markStaleIfSuperseded(current)) return;
-    const verifiedModes = results
-      .filter((result) => result.state === "verified")
-      .map((result) => ({ modelKey: result.modelKey, taskKind: result.taskKind }));
-    const digest = adapterRevisionDigest(draft);
-    const revision: ProviderAdapterRevision = {
-      id: `adapter-revision-${digest.slice(0, 20)}`,
-      vendorKey: this.store.getRun(id)?.vendorKey || "",
-      digest,
+    const { verifiedModes, revision, completedRun } = planAdapterPromotionFinal({
+      current,
       draft,
+      results,
+      repairError,
+      deadlineReached,
+      completedAt: this.dependencies.now(),
+    });
+    // A zero-pass run has no publishable contract. Cleanup is the durable result;
+    // only persist the terminal run after catalog cleanup succeeds.
+    if (verifiedModes.length === 0) {
+      this.dependencies.catalog.fail(completedRun);
+      this.store.upsertRun(completedRun);
+      this.certification.finishWithoutPromotion(completedRun);
+      return;
+    }
+    this.certification.commitPromotion({
+      current,
+      completedRun,
+      draft,
+      revision,
       verifiedModes,
-      createdAt: this.dependencies.now(),
-    };
-    const finalStage = deadlineReached && verifiedModes.length === 0
-      ? "timed_out"
-      : verifiedModes.length === 0
-        ? "failed"
-        : results.some((result) => result.state === "failed")
-          ? "partial"
-          : "completed";
-    const completedAt = this.dependencies.now();
-    const completedRun: ProviderAdapterRun = {
-      ...current,
-      stage: finalStage,
-      currentModelKey: undefined,
-      completedCount: current.totalCount ?? current.selectedModelKeys.length,
-      totalCount: current.totalCount ?? current.selectedModelKeys.length,
-      activeRevision: verifiedModes.length > 0 ? revision.id : current.activeRevision,
-      ...(repairError ? { error: repairError.slice(0, 2_000) } : {}),
-      stageStartedAt: completedAt,
-      lastProgressAt: completedAt,
-      updatedAt: completedAt,
-    };
-    // The catalog is the user-visible result. Do not publish a successful run
-    // before that result is durable, otherwise a write failure becomes a false
-    // "completed" state that the outer error handler can no longer change.
-    this.dependencies.catalog.promote({ run: completedRun, draft, revision, verifiedModes });
-    this.store.upsertRun(completedRun);
-    if (verifiedModes.length === 0) return;
-    this.store.upsertRevision(revision);
+    });
   }
 
   private setStage(
@@ -676,53 +645,9 @@ export class ProviderAdapterService {
     }));
   }
 
-  private finishWithError(id: string, stage: "failed" | "needs_ai", message: string): void {
-    this.finishRunWithFailure(id, stage, message);
-  }
-
-  private finishTerminal(
-    id: string,
-    stage: "cancelled" | "timed_out",
-    message: string,
-  ): ProviderAdapterRun | undefined {
-    try {
-      return this.finishRunWithFailure(id, stage, message);
-    } finally {
-      this.controllers.get(id)?.abort();
-    }
-  }
-
-  private finishRunWithFailure(
-    id: string,
-    stage: "failed" | "needs_ai" | "cancelled" | "timed_out",
-    message: string,
-  ): ProviderAdapterRun | undefined {
-    const existing = this.store.getRun(id);
-    if (!existing || isTerminalAdapterStage(existing.stage)) return existing;
-    const failureStage = existing.stage === "discovering_docs"
-      ? "docs"
-      : existing.stage === "compiling"
-        ? "compile"
-        : existing.stage === "testing"
-          ? "verify_asset"
-          : "promote";
-    const error = redactAdapterSecrets(message);
-    const finishedAt = this.dependencies.now();
-    const models = failUnfinishedModes(existing.models, failureStage, error);
-    const run = this.store.updateRun(id, (current) => ({
-      ...current,
-      stage,
-      error,
-      currentModelKey: undefined,
-      models,
-      completedCount: completedModelCount(models),
-      totalCount: current.totalCount ?? current.selectedModelKeys.length,
-      stageStartedAt: finishedAt,
-      lastProgressAt: finishedAt,
-      updatedAt: finishedAt,
-    }));
-    this.dependencies.catalog.fail(run);
-    return run;
+  /** 终态化的唯一入口；写不进去时由 terminal guarantee 退避重试 + 旁路日志兜底。 */
+  private finishTerminal(id: string, stage: ProviderAdapterRun["stage"], message: string): void {
+    void this.terminal.settle(id, stage, message);
   }
 
   private updateRunIfActive(
@@ -763,21 +688,38 @@ export class ProviderAdapterService {
 
   private markStaleIfSuperseded(run: ProviderAdapterRun): boolean {
     if (isTerminalAdapterStage(run.stage)) return true;
-    const latest = this.store.latestRun(run.vendorKey);
+    const lineageRoot = adapterRunLineageRoot(run);
+    const latest = latestRunInLineage(this.store.snapshot().runs, lineageRoot);
     if (!latest || latest.id === run.id) return false;
     const staleAt = this.dependencies.now();
-    this.store.updateRun(run.id, (current) => ({
-      ...current,
-      stage: "stale",
-      error: "A newer verification run replaced this result",
-      currentModelKey: undefined,
-      stageStartedAt: staleAt,
-      lastProgressAt: staleAt,
-      updatedAt: staleAt,
-    }));
+    const stale = staleAdapterRun(run, staleAt, "A newer verification run replaced this result");
+    this.dependencies.catalog.fail(stale);
+    this.store.upsertRun(stale);
+    this.controllers.get(run.id)?.abort();
     return true;
   }
 
+  private supersedeActiveLineageRuns(
+    nextRunId: string,
+    lineageRootVendorKey: string,
+    supersededVendorKeys: ReadonlySet<string>,
+    staleAt: string,
+  ): void {
+    const superseded = activeRunsSupersededBy({
+      runs: this.store.snapshot().runs,
+      nextRunId,
+      lineageRootVendorKey,
+      supersededVendorKeys,
+    });
+    for (const current of superseded) {
+      const stale = staleAdapterRun(current, staleAt, "A newer verification run replaced this result");
+      // stage() removes superseded candidate rows atomically; fail() is an
+      // idempotent lifecycle acknowledgement for alternate catalog ports.
+      this.dependencies.catalog.fail(stale);
+      this.store.upsertRun(stale);
+      this.controllers.get(current.id)?.abort();
+    }
+  }
 }
 
 let singleton: ProviderAdapterService | null = null;

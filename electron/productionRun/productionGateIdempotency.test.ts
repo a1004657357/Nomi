@@ -31,7 +31,9 @@ function makeService(root: string) {
     repository,
     projectRootResolver: () => root,
     requestRenderer,
-    policyResolver: () => ({ trustedHosts: ['codex'], allowedProviders: ['local'], allowedModels: ['demo-video'], maxSpend: 10, maxAttemptsPerJob: 1 }),
+    // 这份夹具要的是「方向门自动过、直接停在合同门」的现场。2026-09-21 起档位只能来自用户设置，
+    // 不能由 createDraft 的 payload 自报，所以搬到这里。
+    policyResolver: () => ({ trustedHosts: ['codex'], allowedProviders: ['local'], allowedModels: ['demo-video'], maxSpend: 10, maxAttemptsPerJob: 1, trustLevel: 'budget_only' }),
   })
   return service
 }
@@ -41,7 +43,6 @@ async function draftAtContractGate(service: ReturnType<typeof createProductionRu
   service.createDraft({
     runId, projectId: 'project-1', playbook: { name: 'brand.promo', version: '1.0.0' },
     origin: { host: 'codex' }, brief: { goal: 'idempotency', durationSeconds: 30 },
-    policy: { trustLevel: 'budget_only' },
   })
   await approveLatestScript(service, 'project-1', runId)
   await approveLatestStoryboard(service, 'project-1', runId)
@@ -64,7 +65,7 @@ describe('gate.decide idempotency (B4)', () => {
 
     const atGate = service.readFull('project-1', runId)!
     const first = await service.command('project-1', runId, {
-      commandId: 'decide-A', expectedRevision: atGate.revision, type: 'gate.decide',
+      commandId: 'decide-A', expectedRevision: atGate.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-contract-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
     })
     expect(first.run.gates.find((g) => g.gateId === 'gate-contract-v1')!.status).toBe('approved')
@@ -72,7 +73,7 @@ describe('gate.decide idempotency (B4)', () => {
     // 第二次（新 commandId、拿最新 revision）：门已 approved → 不再抛「already decided」，幂等返回。
     const afterFirst = service.readFull('project-1', runId)!
     const second = await service.command('project-1', runId, {
-      commandId: 'decide-B', expectedRevision: afterFirst.revision, type: 'gate.decide',
+      commandId: 'decide-B', expectedRevision: afterFirst.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-contract-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
     })
     expect(second.run.gates.find((g) => g.gateId === 'gate-contract-v1')!.status).toBe('approved')
@@ -93,12 +94,12 @@ describe('gate.decide idempotency (B4)', () => {
 
     const atGate = service.readFull('project-1', runId)!
     await service.command('project-1', runId, {
-      commandId: 'approve', expectedRevision: atGate.revision, type: 'gate.decide',
+      commandId: 'approve', expectedRevision: atGate.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-contract-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
     })
     const afterApprove = service.readFull('project-1', runId)!
     await expect(service.command('project-1', runId, {
-      commandId: 'flip-reject', expectedRevision: afterApprove.revision, type: 'gate.decide',
+      commandId: 'flip-reject', expectedRevision: afterApprove.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-contract-v1', status: 'rejected' }, issuedAt: new Date().toISOString(),
     })).rejects.toThrow(/already decided/i)
     // 门仍是 approved（翻决议被拒，不改写）。
@@ -113,7 +114,7 @@ describe('gate.decide idempotency (B4)', () => {
 
     const atGate = service.readFull('project-1', runId)!
     const cmd = {
-      commandId: 'same-id', expectedRevision: atGate.revision, type: 'gate.decide' as const,
+      commandId: 'same-id', expectedRevision: atGate.revision, type: 'gate.decide' as const, humanGesture: true as const,
       payload: { gateId: 'gate-contract-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
     }
     const first = await service.command('project-1', runId, cmd)
@@ -141,7 +142,7 @@ describe('two runs decide independently (B4 并发不互相覆盖)', () => {
     // 批准 A → B 不受影响（仍 waiting）。
     const atA = service.readFull('project-1', runA)!
     await service.command('project-1', runA, {
-      commandId: 'approve-a', expectedRevision: atA.revision, type: 'gate.decide',
+      commandId: 'approve-a', expectedRevision: atA.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-contract-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
     })
     expect(service.readFull('project-1', runA)!.gates.find((g) => g.gateId === 'gate-contract-v1')!.status).toBe('approved')
@@ -150,7 +151,7 @@ describe('two runs decide independently (B4 并发不互相覆盖)', () => {
     // 再批准 B → 各自独立完成。
     const atB = service.readFull('project-1', runB)!
     await service.command('project-1', runB, {
-      commandId: 'approve-b', expectedRevision: atB.revision, type: 'gate.decide',
+      commandId: 'approve-b', expectedRevision: atB.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-contract-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
     })
     expect(service.readFull('project-1', runB)!.gates.find((g) => g.gateId === 'gate-contract-v1')!.status).toBe('approved')

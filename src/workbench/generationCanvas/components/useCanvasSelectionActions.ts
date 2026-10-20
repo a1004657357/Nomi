@@ -80,7 +80,7 @@ export function useCanvasSelectionActions(options: UseCanvasSelectionActionsOpti
     if (!ids.length) return
     const state = useGenerationCanvasStore.getState()
     const expandedIds = expandNodeIdsWithUngeneratedReferenceAncestors(ids, { nodes: state.nodes, edges: state.edges })
-    void confirmAndRunPlan(buildDependencyWaves(expandedIds, { nodes: state.nodes, edges: state.edges }))
+    void confirmAndRunPlan(buildDependencyWaves(expandedIds, { nodes: state.nodes, edges: state.edges }), { initiator: 'user' })
   }, [selectedNodeIds])
 
   const handleBatchConvertSelectedImagesToVideos = React.useCallback(() => {
@@ -141,7 +141,7 @@ export function useCanvasSelectionActions(options: UseCanvasSelectionActionsOpti
 
     setTransferringSelectionMode(mode)
     try {
-      const result = createProjectFromSelectedNodes({
+      const result = await createProjectFromSelectedNodes({
         selectedNodeIds: ids,
         sourceProjectName: projectName,
         targetProjectName,

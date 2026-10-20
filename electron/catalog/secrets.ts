@@ -2,9 +2,11 @@
 // docs/plan/2026-06-04-runtime-split-execution.md 第 4 步）。
 //
 // safeStorage 走 OS 钥匙串（macOS Keychain / Windows DPAPI / Linux libsecret）。
-// 不可用时（如无 keyring 的 rootless Linux）回退明文，并给记录打 enc 标记，
-// 供下次读取时懒升级（见 runtime.ts readCatalog）。
+// 不可用时（如无 keyring 的 rootless Linux）新写入 fail-closed；legacy 明文只保留迁移识别。
+// 目录读取不触碰钥匙串，只有明确的凭据写操作才尝试加密。
 import { safeStorage } from "electron";
+import type { ApiKeyDecryptStatus } from "../shared/contracts/apiKeyStatus";
+import { logError, logWarn } from "../logging/logger";
 
 export type ApiKeyRecord = {
   vendorKey: string;
@@ -13,6 +15,8 @@ export type ApiKeyRecord = {
   /** v2+: how the apiKey above is encoded. Absent = legacy plaintext (v1). */
   enc?: "safeStorage" | "plain";
   enabled: boolean;
+  /** Connectivity was inconclusive when saved; retry before calling the provider. */
+  verificationPending?: true;
   createdAt: string;
   updatedAt: string;
   /**
@@ -21,6 +25,17 @@ export type ApiKeyRecord = {
    * deletion boundary. Values are never exposed through the vendor DTO.
    */
   customConfig?: Record<string, EncryptedSecretValue>;
+  /**
+   * Credential-bearing connection network config — the proxy URL (may carry
+   * `user:pass@`) and custom request headers (may carry Authorization). Rides the
+   * same encrypted tier / deletion boundary as apiKey and customConfig so no
+   * credential-bearing vendor field lands as plaintext. Shape/encoding owned by
+   * electron/catalog/networkConfigStore.ts; never exposed through the vendor DTO.
+   */
+  networkConfig?: {
+    proxyUrl?: EncryptedSecretValue;
+    extraHeaders?: Record<string, EncryptedSecretValue>;
+  };
 };
 
 export type EncryptedSecretValue = {
@@ -45,12 +60,12 @@ export function isSafeStorageAvailable(): boolean {
   }
   if (!__safeStorageUnavailableWarned) {
     __safeStorageUnavailableWarned = true;
-    console.warn("[catalog] safeStorage unavailable; API keys will be stored as plaintext");
+    logWarn("catalog", "safe-storage-unavailable-write-rejected");
   }
   return false;
 }
 
-/** Build a fresh ApiKeyRecord from plaintext, encrypting if safeStorage is available. */
+/** Build a fresh encrypted ApiKeyRecord. New writes never fall back to plaintext. */
 export function makeApiKeyRecordFromPlain(
   plain: string,
   vendorKey: string,
@@ -58,11 +73,15 @@ export function makeApiKeyRecordFromPlain(
   createdAt: string,
   updatedAt: string,
 ): ApiKeyRecord {
-  if (isSafeStorageAvailable()) {
+  if (!isSafeStorageAvailable()) {
+    throw new Error("System secure storage is unavailable; the API credential was not saved. Unlock the system keychain and try again.");
+  }
+  try {
     const encrypted = safeStorage.encryptString(plain).toString("base64");
     return { vendorKey, apiKey: encrypted, enc: "safeStorage", enabled, createdAt, updatedAt };
+  } catch {
+    throw new Error("The API credential could not be encrypted and was not saved. Unlock the system keychain and try again.");
   }
-  return { vendorKey, apiKey: plain, enc: "plain", enabled, createdAt, updatedAt };
 }
 
 /** Custom config is always fail-closed: unlike legacy API keys it may not add a plaintext fallback. */
@@ -81,9 +100,7 @@ export function decryptCustomSecretValue(record: EncryptedSecretValue | undefine
   try {
     return safeStorage.decryptString(Buffer.from(record.value, "base64"));
   } catch (error) {
-    console.error(
-      `[catalog] failed to decrypt custom configuration: ${error instanceof Error ? error.message : error}`,
-    );
+    logError("catalog", "custom-config-decrypt-failed", error);
     return "";
   }
 }
@@ -98,7 +115,7 @@ export function decryptCustomConfigRecord(record: ApiKeyRecord | undefined): Rec
   return out;
 }
 
-/** Runtime compatibility for a v8 catalog whose migration is deferred until the keychain is available. */
+/** Runtime compatibility for a v8 catalog whose migration is deferred until an explicit custom-config write. */
 export function decryptCustomConfigWithLegacy(
   record: ApiKeyRecord | undefined,
   vendorMeta: unknown,
@@ -119,43 +136,65 @@ export function decryptCustomConfigWithLegacy(
   return { ...legacy, ...decryptCustomConfigRecord(record) };
 }
 
-/** Decode an ApiKeyRecord to plaintext. Returns "" if a safeStorage-encoded value can't be decrypted. */
+/**
+ * Resolve an API credential for execution. Only safeStorage records are executable:
+ * legacy/plain records remain readable as catalog metadata for `needs_resave`, but
+ * their key material never crosses this boundary.
+ */
 export function decryptApiKeyRecord(rec: ApiKeyRecord | undefined): string {
   if (!rec || !rec.apiKey) return "";
-  if (rec.enc === "safeStorage") {
-    try {
-      return safeStorage.decryptString(Buffer.from(rec.apiKey, "base64"));
-    } catch (e) {
-      console.error(
-        `[catalog] failed to decrypt API key for vendor ${rec.vendorKey}: ${e instanceof Error ? e.message : e}`,
-      );
-      return "";
-    }
+  if (rec.enc !== "safeStorage") return "";
+  try {
+    return safeStorage.decryptString(Buffer.from(rec.apiKey, "base64"));
+  } catch (e) {
+    logError("catalog", "api-key-decrypt-failed", e, { vendor: rec.vendorKey });
+    return "";
   }
-  // enc === "plain" or absent (legacy v1)
-  return rec.apiKey;
 }
 
 /**
- * 一条 vendor 凭据记录的三态健康度——**"key 到底能不能用" 的单一真相源**（供 executableModel 报诚实错误、
+ * 一条 vendor 凭据记录的认证健康度——**"key 到底能不能用于新认证" 的单一真相源**（供 executableModel 报诚实错误、
  * list_models 标 keyStatus 共用，P1 不各写一份）：
  *   · `missing`：根本没有记录，或记录里没有任何 key 材料 → 没配过。
  *   · `locked` ：记录**在**，且是 safeStorage 密文，但当前宿主身份解不开（decrypt 抛错或吐空串）——
  *               典型是 capability 宿主身份与主 App 加密时的身份不符（host.ts 头注点名的坑）。
  *               这与 `missing` 天差地别：文件里明明有 key，只是这个进程读不动它。
- *   · `ok`     ：解出非空明文（或本就是非空明文的 legacy/plain 记录）→ 真能用。
+ *   · `needs_resave`：legacy/plain 材料仍可识别，但必须由用户显式重存为 safeStorage 后才能认证。
+ *   · `ok`     ：safeStorage 记录解出非空明文 → 真能用。
  *
- * 注意「密文非空 vs 明文非空」的分野：只有 safeStorage 记录才会落进 `locked`；plain/legacy 记录解不出非空
- * 就是从未真正配好，算 `missing`（它没有"被锁住的"东西——所见即所得）。
+ * 注意「密文非空 vs 明文非空」的分野：只有 safeStorage 记录才会落进 `ok` / `locked`；plain/legacy
+ * 非空统一落进 `needs_resave`，空值仍是 `missing`。
+ *
+ * 成员定义已上移到中立契约单一 owner electron/shared/contracts/apiKeyStatus.ts（renderer 侧 connector DTO
+ * 也从那里 derive，跨进程不再各写一份）；此处 import 后再导出，保持既有 import 路径不变（P1）。
  */
-export type ApiKeyDecryptStatus = "ok" | "missing" | "locked";
+export type { ApiKeyDecryptStatus };
+
+/**
+ * 解密探测缝（house DI）的**唯一**类型。生产永远传下面这个真 `apiKeyDecryptStatus`；
+ * 聚焦测试注入确定性假状态，从不碰真钥匙串。三处消费者（目录列表 / 可用性派生 / 生成默认模型）
+ * 曾各起一个名字写同一个签名——同一个东西三个名字，改的时候必漏一个（P1）。
+ */
+export type KeyStatusProbe = (record: ApiKeyRecord | undefined) => ApiKeyDecryptStatus;
+
+/**
+ * 这条凭据记录**本身**算不算数——不开钥匙串就能答的那一半：没有材料，或用户把它停用了。
+ *
+ * 单独抽出来是因为它有两个合法消费者：`apiKeyDecryptStatus`（真解密那条路）和可用性派生器里
+ * 的探测缝（注入假探针的测试也必须先过这一关，否则「停用的 key 不许去解」就成了只在生产成立的
+ * 口头承诺）。以前这条规则由各个读者各写一遍 `record?.enabled` —— 文本大脑、生成默认模型、
+ * 健康度各一份，删一处漏两处。
+ */
+export function credentialRecordCounts(rec: ApiKeyRecord | undefined): boolean {
+  return Boolean(rec?.apiKey) && rec?.enabled !== false;
+}
 
 export function apiKeyDecryptStatus(rec: ApiKeyRecord | undefined): ApiKeyDecryptStatus {
-  if (!rec || !rec.apiKey) return "missing";
+  if (!credentialRecordCounts(rec) || !rec) return "missing";
   if (rec.enc === "safeStorage") {
     // 密文在手：解得开非空 = ok；解不开 / 解出空串 = locked（身份不匹配等，key 确实存在只是读不动）。
     return decryptApiKeyRecord(rec) ? "ok" : "locked";
   }
-  // plain / legacy：非空明文 = ok；空 = 从未配好，算 missing（没有"被锁"的东西）。
-  return rec.apiKey ? "ok" : "missing";
+  // plain / legacy：保留结构识别供迁移提示，但绝不把它当作新认证可用的 credential。
+  return rec.apiKey ? "needs_resave" : "missing";
 }

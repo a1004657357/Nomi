@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelOption } from '../../../config/models'
-import { parseCustomCapabilityContract } from '../../../config/modelArchetypes'
+import { parseCustomCapabilityContract } from '../../../../electron/shared/modelArchetypes'
 import { createGenerationNode } from '../model/graphOps'
 import { applyArchetypeModeSwitch } from '../nodes/controls/archetypeMeta'
 import { buildNodeModelChangePatch } from '../nodes/buildNodeModelChangePatch'
@@ -129,7 +129,7 @@ describe('custom capability contract catalog -> canvas -> request', () => {
     expect(resolveTaskArchetype(selected.meta)).toBeNull()
   })
 
-  it('restores the target catalog contract when a disconnected provider is replaced at runtime', async () => {
+  it('keeps the disconnected provider until the user chooses its successor', async () => {
     const node = createGenerationNode({ id: 'migrate-node', kind: 'video' })
     node.meta = {
       modelKey: 'future-video-v1',
@@ -152,31 +152,50 @@ describe('custom capability contract catalog -> canvas -> request', () => {
         enabled: true,
         hasApiKey: true,
         authType: 'bearer',
+        meta: {
+          adapterCandidateRootVendorKey: 'disconnected-relay',
+          adapterCandidateSourceVendorKey: 'disconnected-relay',
+          adapterCandidatePromotionPredecessors: {
+            'future-video-v1': { vendorKey: 'disconnected-relay', publishedModes: ['image_to_video'] },
+          },
+        },
         createdAt: '',
         updatedAt: '',
       },
     ]
-    const models: ModelCatalogModelDto[] = [{
+    const successor: ModelCatalogModelDto = {
       modelKey: 'future-video-v1',
       vendorKey: 'replacement-relay',
       labelZh: 'Future Video V1',
       kind: 'video',
       enabled: true,
+      published: true,
+      availability: { usable: true },
+      publishedModes: ['image_to_video'],
       meta: { customCapabilityContract: contract },
       createdAt: '',
       updatedAt: '',
-    }]
+    }
+    // 候选晋升（serviceCatalog.promote）只把前任那一行**停用**、不删：旧行还在，这是「供应商断开」，不是退役。
+    const predecessor: ModelCatalogModelDto = {
+      ...successor,
+      vendorKey: 'disconnected-relay',
+      enabled: false,
+      published: false,
+      availability: { usable: false, reason: 'model_disabled' },
+      publishedModes: [],
+    }
+    const models = [successor, predecessor]
 
-    const migrated = await resolveExecutableNodeFromCatalog(node, {
+    await expect(resolveExecutableNodeFromCatalog(node, {
       listCatalogVendors: async () => vendors,
-      listCatalogModels: async () => models,
-    })
+      // 按主进程 filterByParams 的语义作答：带了哪个条件就按哪个筛。
+      listCatalogModels: async (params) => models.filter((row) =>
+        (params.vendorKey === undefined || row.vendorKey === params.vendorKey)
+        && (params.kind === undefined || row.kind === params.kind)
+        && (params.enabled === undefined || row.enabled === params.enabled)),
+    })).rejects.toThrow(/disconnected-relay/)
+    expect(node.meta?.modelVendor).toBe('disconnected-relay')
 
-    expect(migrated.meta?.modelVendor).toBe('replacement-relay')
-    expect(parseCustomCapabilityContract(migrated.meta)).toEqual(contract)
-    expect(resolveTaskArchetype(migrated.meta ?? {})?.modes.map((mode) => mode.id)).toEqual([
-      'references',
-      'frames',
-    ])
   })
 })

@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { webContents as electronWebContents } from "electron";
 import { appendEvents } from "../events/eventLogRepository";
 import { runTechnicalCheck } from "./technicalCheck";
+import { logError } from "../logging/logger";
 
 const pendingTechnicalReviews = new Set<Promise<void>>();
 
@@ -44,7 +45,7 @@ export function scheduleTechnicalReview(input: {
         }
       }
     } catch (error) {
-      console.error(`[review] 技术自检旁路失败(忽略): ${error instanceof Error ? error.message : String(error)}`);
+      logError("review", "self-check-bypass-failed", error);
     }
   })();
   pendingTechnicalReviews.add(review);

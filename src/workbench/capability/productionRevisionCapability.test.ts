@@ -1,16 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const sendWorkbenchAiMessage = vi.fn()
-const clearWorkbenchAgentSession = vi.fn().mockResolvedValue(undefined)
+const runSingleShotAgent = vi.fn()
 
-vi.mock('../ai/workbenchAiClient', () => ({
-  sendWorkbenchAiMessage: (...args: unknown[]) => sendWorkbenchAiMessage(...args),
+vi.mock('../ai/agentLoopMode', () => ({
+  runSingleShotAgent: (...args: unknown[]) => runSingleShotAgent(...args),
 }))
-vi.mock('../../api/desktopClient', () => ({
-  clearWorkbenchAgentSession: (...args: unknown[]) => clearWorkbenchAgentSession(...args),
-}))
-vi.mock('../ai/assistantModelPref', () => ({ getAssistantModelPref: () => undefined }))
-vi.mock('../project/workbenchProjectSession', () => ({ getActiveWorkbenchProjectId: () => 'project-1' }))
 vi.mock('../generationCanvas/agent/runDirectionPlanner', () => ({ runDirectionPlanner: vi.fn() }))
 vi.mock('../generationCanvas/agent/runStoryboardPlanner', () => ({ runStoryboardPlanner: vi.fn() }))
 
@@ -24,12 +18,11 @@ const VALID_PLAN = {
 
 describe('production.revise-storyboard renderer seam', () => {
   beforeEach(() => {
-    sendWorkbenchAiMessage.mockReset()
-    clearWorkbenchAgentSession.mockClear()
+    runSingleShotAgent.mockReset()
   })
 
   it('asks the real planner for schema-shaped JSON and validates the returned plan', async () => {
-    sendWorkbenchAiMessage.mockResolvedValue({ text: JSON.stringify(VALID_PLAN) })
+    runSingleShotAgent.mockResolvedValue({ text: JSON.stringify(VALID_PLAN) })
 
     const result = await handleCapabilityApply('production.revise-storyboard', {
       projectId: 'project-1',
@@ -39,14 +32,17 @@ describe('production.revise-storyboard renderer seam', () => {
     }) as { plan?: unknown }
 
     expect(result.plan).toEqual(VALID_PLAN)
-    const request = sendWorkbenchAiMessage.mock.calls[0][0] as Record<string, unknown>
+    const request = runSingleShotAgent.mock.calls[0][0] as Record<string, unknown>
     expect(String(request.prompt)).toContain('只输出 JSON')
-    expect(String(request.prompt)).toContain('transition')
-    expect(request.skillKey).toBe('workbench.production.script-planner')
+    expect(String(request.prompt)).not.toContain('transition')
+    expect(request).not.toHaveProperty('skillKey')
+    expect(request).not.toHaveProperty('skillName')
+    expect(request).not.toHaveProperty('history')
+    expect(request.featureKey).toBe('nomi:production-script:project-1')
   })
 
   it('rejects prose instead of turning an unstructured model answer into a candidate', async () => {
-    sendWorkbenchAiMessage.mockResolvedValue({ text: '我建议把第一镜拍得更近一些。' })
+    runSingleShotAgent.mockResolvedValue({ text: '我建议把第一镜拍得更近一些。' })
 
     await expect(handleCapabilityApply('production.revise-storyboard', {
       projectId: 'project-1',

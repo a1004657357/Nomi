@@ -1,4 +1,5 @@
 import { BrowserWindow, session, shell } from "electron";
+import { registerAppWindow } from '../appWindowRegistry';
 import { JIMENG_WEB_VENDOR_SEED } from "../catalog/jimengWeb";
 import { probeJimengWebServer, resolveJimengWebBaseUrl } from "./seedanceBridge";
 import {
@@ -68,6 +69,7 @@ export async function jimengWebOpenLogin(): Promise<{ ok: boolean; url: string }
   loginWindow.on("closed", () => {
     loginWindow = null;
   });
+  registerAppWindow(loginWindow, 'untrusted', JIMENG_HOME_URL);
   await loginWindow.loadURL(JIMENG_HOME_URL);
   loginWindow.show();
   return { ok: true, url: JIMENG_HOME_URL };

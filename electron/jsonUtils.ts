@@ -26,6 +26,30 @@ export function isJsonRecord(value: unknown): value is JsonRecord {
 }
 
 /**
+ * 从 LLM 输出里抠出 JSON 对象。
+ *
+ * 为什么需要它：即使 prompt 里写死「只返回 JSON、不要 markdown」，模型仍会时不时
+ * 裹上 ```json 围栏或在前后加一句寒暄——**这不是模型坏了，是普遍行为**，必须在解析层容忍，
+ * 不能靠祈祷。取第一个 `{` 到最后一个 `}` 之间的片段（对象内部的 } 不受影响，因为取的是最后一个）。
+ *
+ * 解不出返回 null（调用方据此走「这一镜没拆出来」的降级，而不是整批炸掉）。
+ */
+export function parseLooseJsonObject(text: unknown): JsonRecord | null {
+  const raw = trim(text);
+  if (!raw) return null;
+  const withoutFence = raw.replace(/^\s*```[a-zA-Z]*\s*/u, "").replace(/\s*```\s*$/u, "").trim();
+  const start = withoutFence.indexOf("{");
+  const end = withoutFence.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(withoutFence.slice(start, end + 1));
+    return isJsonRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * ComfyUI /prompt 校验失败的按节点错误摊平成一句人话（形状实查 ComfyUI server.py:1124-1136）：
  * { node_errors: { <id>: { class_type, errors:[{ message, details }] } } }。
  * 有用的信息全在 details（如 "ckpt_name: 'x.safetensors' not in (list of length 3)"）——顶层
@@ -85,6 +109,22 @@ export function pickUpstreamMessage(record: JsonRecord, sanitize: (message: stri
     readNestedRecord(record, ["errors", "detail"]),
     record.errors,
   ));
+}
+
+/**
+ * 从上游失败响应体里挑出**它自己给的错误码**（不是那句人话）：`{ error: { code: "model_not_found" } }` /
+ * `{ code: "model_not_found" }`。与 `pickUpstreamMessage` 同住一处、同一个「全仓唯一键优先级表」的纪律——
+ * 谁要把上游失败的原因带过 IPC（vendorHttp 的媒体请求、aiSdkVendorError 的文本请求）都读这一份。
+ *
+ * 为什么要带码：状态码（400/422）只说「请求有问题」，从不说**为什么**——把它当成「参数不被接受」就是猜
+ * （2026-09-29：供应商说模型已下线，界面却叫用户去改比例）。上游的错误码才是它自己说的原因。
+ *
+ * 只收**字符串形的标识码**（`[A-Za-z0-9_.:-]`，≤64）；纯数字的业务码走 `logicalCode`，
+ * 自由文本走 `pickUpstreamMessage`。挑不出返回 ""。
+ */
+export function pickUpstreamCode(record: JsonRecord): string {
+  const candidate = firstString(readNestedRecord(record, ["error", "code"]), readNestedRecord(record, ["errors", "code"]), record.code);
+  return /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/.test(candidate) ? candidate : "";
 }
 
 /**
@@ -156,4 +196,15 @@ export function readNestedRecord(input: unknown, pathParts: string[]): unknown {
     current = (current as JsonRecord)[part];
   }
   return current;
+}
+
+/**
+ * 就地深冻结一棵纯数据树并原样返回（已冻结的子树跳过）。调用方负责先拷贝，
+ * 冻结的是「交出去之后谁都不许改」的那一份：改了在严格模式下当场抛，而不是静默污染共享状态。
+ */
+export function deepFreeze<T>(value: T): T {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  return value;
 }

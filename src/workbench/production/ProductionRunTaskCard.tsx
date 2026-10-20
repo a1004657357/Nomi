@@ -1,5 +1,5 @@
 import { IconAlertTriangle, IconCheck, IconChevronRight, IconPlayerPlayFilled } from '@tabler/icons-react'
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { NomiLoadingMark, WorkbenchButton } from '../../design'
@@ -8,6 +8,7 @@ import { cn } from '../../utils/cn'
 import { ProductionDetails } from './ProductionDetails'
 import type { ProductionRunPrimaryAction, ProductionRunView } from './productionRunView'
 import type { ProductionArtifact } from '../../../electron/productionRun/productionRunTypes'
+import { MCP_CLIENT_REGISTRY, isBuiltinMcpClient } from '../../../electron/shared/mcpClientRegistry'
 
 // 制作任务卡（任务中心里的「看片台 + 兜底」· plan 2026-08-11-nomi-side-viewer-and-fallback N1/N4）。
 //
@@ -28,9 +29,9 @@ export type ProductionRunCardCopy = {
 type Props = {
   projectId: string
   view: ProductionRunView
-  playbookName: string
   artifacts?: ProductionArtifact[]
   focusedArtifactId?: string | null
+  actionError?: string | null
   onPrimaryAction: (action: Exclude<ProductionRunPrimaryAction, null>) => void
   onControl: (action: 'pause' | 'cancel') => void
   /** 点预览 = 跳到该产物（画布节点 / 预览页）。 */
@@ -73,9 +74,9 @@ function safePreviewPath(value: string | undefined): value is string {
 export function ProductionRunTaskCard({
   projectId,
   view,
-  playbookName,
   artifacts = [],
   focusedArtifactId = null,
+  actionError = null,
   onPrimaryAction,
   onControl,
   onOpenPreview,
@@ -130,7 +131,10 @@ export function ProductionRunTaskCard({
   const routedGate = Boolean(view.gateKind && view.decisionHome === 'origin')
   // 取消是这张卡上唯一能点的东西（无主动作、无暂停）——推不动的坏 Run 就长这样。
   const onlyExit = !action && view.controls.length === 1 && view.controls[0] === 'cancel'
-  const hostLabel = t(`generationCommon.production.origin.${view.originHost}`)
+  // 内置客户端是产品专名（注册表 label，不进 i18n）；只有 nomi / external 两个通用词条走 i18n。
+  const hostLabel = isBuiltinMcpClient(view.originHost)
+    ? MCP_CLIENT_REGISTRY[view.originHost].label
+    : t(`generationCommon.production.origin.${view.originHost}`)
   const previewFocused = Boolean(focusedArtifactId && preview?.artifactId === focusedArtifactId)
   const gateCopyParams = view.gateJob ? {
     index: view.gateJob.index,
@@ -152,29 +156,31 @@ export function ProductionRunTaskCard({
             {t('generationCommon.production.runPanel.origin', { host: hostLabel })}
           </span>
         </span>
+        {/* 状态签 = 这张卡所在分组的名字（同一份 taskCenter.groups 文案）；颜色区分同组里的轻重。 */}
         <span
           data-production-tone={view.tone}
+          data-production-group={view.group}
           className={cn(
             'ml-auto inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-micro font-semibold',
             tonePill[view.tone],
           )}
         >
-          {view.tone === 'working' ? <NomiLoadingMark size={10} /> : null}
-          {t(`generationCommon.production.runTone.${view.tone}`)}
+          {view.group === 'running' ? <NomiLoadingMark size={10} /> : null}
+          {t(`taskCenter.groups.${view.group}`)}
         </span>
       </div>
 
       <div className={cn('grid gap-1')}>
         <h3 data-production-status-title className={cn('text-caption font-semibold leading-snug text-nomi-ink')}>
-          {t(`generationCommon.${view.titleKey}`, gateCopyParams)}
+          {t(view.titleKey, gateCopyParams)}
         </h3>
         <p className={cn('text-micro leading-relaxed text-nomi-ink-60')}>
-          {t(`generationCommon.${view.descriptionKey}`, gateCopyParams)}
+          {t(view.descriptionKey, gateCopyParams)}
         </p>
       </div>
 
       <div className={cn('flex flex-wrap gap-1')}>
-        <span className={cn('rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro text-nomi-ink-60')}>{playbookName}</span>
+        <span className={cn('rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro text-nomi-ink-60')}>{t(view.playbookLabelKey)}</span>
         {/* 一个阶段都没有时不挂「0 / 0 已完成」——那是在给一条根本不存在的流水线报进度（同 N4 无产物不渲染）。 */}
         {view.details.totalStages > 0 ? (
           <span className={cn('rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro text-nomi-ink-60')}>
@@ -183,6 +189,15 @@ export function ProductionRunTaskCard({
               total: view.details.totalStages,
             })}
           </span>
+        ) : null}
+        {view.unknownJob ? (
+          <>
+            <span data-production-unknown-provider className={cn('rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro text-nomi-ink-60')}>{view.unknownJob.provider}</span>
+            <span data-production-unknown-model className={cn('rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro text-nomi-ink-60')}>{view.unknownJob.model}</span>
+            <span data-production-unknown-time className={cn('rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro tabular-nums text-nomi-ink-60')}>
+              {t('generationCommon.production.reconcile.submittedAt', { time: new Date(view.unknownJob.at).toLocaleString() })}
+            </span>
+          </>
         ) : null}
         {typeof view.percent === 'number' ? (
           <span className={cn('rounded-full bg-nomi-ink-05 px-2 py-0.5 text-micro tabular-nums text-nomi-ink-60')}>
@@ -336,6 +351,10 @@ export function ProductionRunTaskCard({
           )
         ) : null}
       </div>
+
+      {actionError ? (
+        <p role="status" data-production-action-error className="text-caption text-workbench-danger">{actionError}</p>
+      ) : null}
 
       <details className={cn('group')}>
         <summary

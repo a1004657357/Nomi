@@ -5,7 +5,7 @@ import { subscribeWithSelector } from 'zustand/middleware'
 import type { Scene3DTimeline, Scene3DTrajectory, Scene3DTrajectoryBinding, Scene3DTrajectoryGroup } from '../scene3dTypes'
 
 export type Scene3DObjectRuntimeRef = {
-  ref: RefObject<THREE.Object3D>
+  ref: RefObject<THREE.Object3D | null>
   positionOffset?: THREE.Vector3
   followTangent?: boolean
 }
@@ -51,7 +51,7 @@ export const useScene3DTrajectoryRuntimeStore = create<Scene3DTrajectoryRuntimeS
 
 export function registerScene3DObjectRef(
   objectId: string,
-  ref: RefObject<THREE.Object3D>,
+  ref: RefObject<THREE.Object3D | null>,
   options: Omit<Scene3DObjectRuntimeRef, 'ref'> = {},
 ): void {
   const map = useScene3DTrajectoryRuntimeStore.getState().objectRefMap
@@ -64,7 +64,7 @@ export function registerScene3DObjectRef(
   map.set(objectId, current)
 }
 
-export function unregisterScene3DObjectRef(objectId: string, ref: RefObject<THREE.Object3D>): void {
+export function unregisterScene3DObjectRef(objectId: string, ref: RefObject<THREE.Object3D | null>): void {
   const map = useScene3DTrajectoryRuntimeStore.getState().objectRefMap
   const current = map.get(objectId)
   if (!current) return

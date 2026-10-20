@@ -1,6 +1,5 @@
 import { parseImageModelCatalogConfig, parseVideoModelCatalogConfig } from '../../../config/modelCatalogMeta'
 import {
-  getModelOptionRequestAlias,
   deriveModelCatalogStatus,
   findModelOptionByIdentifier as findCatalogModelOptionByIdentifier,
   useModelOptions,
@@ -11,8 +10,11 @@ import { normalizeOrientation, type Orientation } from '../../../utils/orientati
 import i18n from '../../../i18n'
 import { translateModelDisplayText } from '../../../i18n/modelDisplayText'
 import type { ModelOption, NodeKind } from '../../../config/models'
-import type { GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
-import { getGenerationNodeCatalogKind, isVideoLikeGenerationNodeKind } from '../model/generationNodeKinds'
+import type { ProfileKind } from '../../api/modelCatalogApi'
+import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
+import { getGenerationNodeCatalogKind } from '../model/generationNodeKinds'
+import { resolveGenerationReferences } from '../runner/generationReferenceResolver'
+import { resolveTaskKind } from '../runner/catalogTaskResolve'
 
 export function findModelOptionByIdentifier(
   options: readonly ModelOption[],
@@ -22,20 +24,12 @@ export function findModelOptionByIdentifier(
   return findCatalogModelOptionByIdentifier(options, value, vendor)
 }
 
-export type GenerationModelSelection = {
-  modelValue: string
-  modelAlias: string
-  vendor: string | null
-  modelLabel: string
-  meta: unknown
+export function useGenerationModelOptions(kind: GenerationNodeKind, requiredMode?: ProfileKind): ModelOption[] {
+  return useModelOptions(toCatalogNodeKind(kind, requiredMode), requiredMode)
 }
 
-export function useGenerationModelOptions(kind: GenerationNodeKind): ModelOption[] {
-  return useModelOptions(toCatalogNodeKind(kind))
-}
-
-export function useGenerationModelOptionsState(kind: GenerationNodeKind): ModelOptionsState {
-  return useModelOptionsState(toCatalogNodeKind(kind))
+export function useGenerationModelOptionsState(kind: GenerationNodeKind, requiredMode?: ProfileKind): ModelOptionsState {
+  return useModelOptionsState(toCatalogNodeKind(kind, requiredMode), requiredMode)
 }
 
 export function deriveGenerationModelCatalogStatus(kind: GenerationNodeKind, state: ModelOptionsState) {
@@ -49,26 +43,24 @@ export function deriveGenerationModelCatalogStatus(kind: GenerationNodeKind, sta
   })
 }
 
-function toCatalogNodeKind(kind: GenerationNodeKind): NodeKind {
+function toCatalogNodeKind(kind: GenerationNodeKind, requiredMode?: ProfileKind): NodeKind {
+  if (requiredMode === 'image_edit') return 'imageEdit'
   return getGenerationNodeCatalogKind(kind)
 }
 
-export function resolveGenerationModelSelection(
-  options: readonly ModelOption[],
-  value: string | null | undefined,
-): GenerationModelSelection {
-  const matched = findModelOptionByIdentifier(options, value)
-  const fallbackValue = String(value || '').trim()
-  const modelValue = matched?.value || fallbackValue
-  const modelAlias = getModelOptionRequestAlias(options, modelValue)
-  const vendor = matched?.vendor || null
-  const modelLabel = matched?.label || modelValue || modelAlias
-  return {
-    modelValue,
-    modelAlias,
-    vendor,
-    modelLabel,
-    meta: matched?.meta,
+export function requiredModeForGenerationNode(
+  node: GenerationCanvasNode,
+  context: { nodes?: GenerationCanvasNode[]; edges?: GenerationCanvasEdge[] } = {},
+): ProfileKind {
+  try {
+    return resolveTaskKind(node, resolveGenerationReferences(node, context)) as ProfileKind
+  } catch {
+    const kind = getGenerationNodeCatalogKind(node.kind)
+    if (kind === 'image') return 'text_to_image'
+    if (kind === 'video') return 'text_to_video'
+    if (kind === 'audio') return 'text_to_audio'
+    if (kind === 'model3d') return 'text_to_3d'
+    return 'chat'
   }
 }
 
@@ -84,23 +76,6 @@ export function getNodeSelectedModelValue(node: GenerationCanvasNode): string {
   return String(
     node.meta?.modelKey || node.meta?.modelAlias || node.meta?.imageModel || node.meta?.videoModel || '',
   ).trim()
-}
-
-export function updateNodeModelMeta(
-  node: GenerationCanvasNode,
-  selection: GenerationModelSelection,
-): Record<string, unknown> {
-  const base: Record<string, unknown> = {
-    modelKey: selection.modelValue || null,
-    modelAlias: selection.modelAlias || null,
-    modelVendor: selection.vendor || null,
-    vendor: selection.vendor || null,
-    modelLabel: selection.modelLabel,
-    ...(isVideoLikeGenerationNodeKind(node.kind)
-      ? { videoModel: selection.modelValue || null, videoModelVendor: selection.vendor || null }
-      : { imageModel: selection.modelValue || null, imageModelVendor: selection.vendor || null }),
-  }
-  return base
 }
 
 export function updateNodeModelParams(
@@ -167,9 +142,4 @@ export function getVideoModelControlLabels(option: ModelOption | null | undefine
       translateModelDisplayText(config?.controls.find((control) => control.binding === 'orientation')?.label || '') ||
       i18n.t('runtime.modelCatalog.control.orientation'),
   }
-}
-
-export function useGenerationModelSelection(kind: GenerationNodeKind, value: string | null | undefined) {
-  const options = useGenerationModelOptions(kind)
-  return resolveGenerationModelSelection(options, value)
 }

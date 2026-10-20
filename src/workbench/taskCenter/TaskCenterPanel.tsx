@@ -2,58 +2,66 @@
 // 方案：docs/plan/2026-08-02-task-center-queue.md，样张 2026-08-02 拍板。
 //
 // 只负责画；分组/排序/可取消性判定全在纯函数 taskCenterEntries.ts（可单测）。
-import React from 'react'
+import React, { type JSX } from 'react'
+import { useGenerationFeedbackClock } from '../observability/useGenerationFeedback'
 import { useTranslation } from 'react-i18next'
 import { Portal } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconClock, IconProgress, IconLoader2, IconLock, IconX } from '@tabler/icons-react'
+import type { ExportJobSnapshot } from '../../../electron/shared/contracts/exportJobManager'
+import { runExportJobTaskAction } from './exportJobTaskAction'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
+import { selectStableCanvasNodes } from '../generationCanvas/store/canvasNodeProjection'
 import { useGenerationQueueStore } from '../generationCanvas/runner/generationQueueStore'
 import { requestTaskCancel } from '../generationCanvas/runner/localTaskControl'
 // 重试复用既有链路（单发 confirmAndRunNode / 批量 confirmAndRunPlan），不另起一套付费路径。
 import { confirmAndRunNode } from '../generationCanvas/runner/generationRunController'
+// 重新拉取与节点上那颗按钮同一条路（查询，不花钱），项目身份在点击这一刻签发。
+import { recoverNodeResult } from '../generationCanvas/runner/recoverTaskActions'
+import { withProjectAction } from '../project/projectCanvasReadSurface'
 import { confirmAndRunPlan } from '../generationCanvas/components/batchPlanPreview'
 import { buildDependencyWaves } from '../generationCanvas/runner/dependencyWaves'
-import { buildTaskCenterView, formatElapsed, type TaskCenterRow } from './taskCenterEntries'
+import { buildTaskCenterView, formatElapsed, summarizeTaskCenterRows, type TaskCenterRow } from './taskCenterEntries'
+import { notify } from '../../ui/notificationPolicy'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../design'
 import { currentWorkbenchFloatingTopOffset } from '../../ui/app-shell/windowChrome'
 import type { ProductionRunSummary } from '../../../electron/productionRun/productionRunTypes'
-import type { TaskCenterProjection } from './taskCenterProjection'
-import { buildProductionRunTaskRows } from './productionRunTaskCenter'
+import { TASK_CENTER_GROUPS, type TaskCenterGroup, type TaskCenterProjection } from './taskCenterProjection'
+import { buildProductionRunTaskRows, productionRunTaskLabels } from './productionRunTaskCenter'
+import { buildExportJobTaskRows, exportJobTaskLabels } from './exportJobTaskCenter'
 import { ProductionRunTaskCard } from '../production/ProductionRunTaskCard'
 import { useProductionStatus } from '../production/useProductionStatus'
+import { logRendererError } from '../../desktop/rendererLog'
 
 const PANEL_WIDTH = 380
 const RIGHT_OFFSET = 12
-/** 进行中的已跑时长要走字，1s 一跳就够（别 rAF，白烧 CPU）。 */
-const TICK_MS = 1000
 
 type Props = {
   opened: boolean
   onClose: () => void
   productionRuns: readonly ProductionRunSummary[]
+  exportJobs: readonly ExportJobSnapshot[]
   onRevealProductionRun?: (projectId: string, runId: string) => void
   /** 点某一行 → 切到生成区并选中该节点。 */
   onRevealNode?: (nodeId: string) => void
 }
 
-export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProductionRun, onRevealNode }: Props): JSX.Element | null {
+export function TaskCenterPanel({ opened, onClose, productionRuns, exportJobs, onRevealProductionRun, onRevealNode }: Props): JSX.Element | null {
   const { t } = useTranslation()
   const panelRef = React.useRef<HTMLDivElement>(null)
+  const [actionErrors, setActionErrors] = React.useState<Record<string, string>>({})
   // 渲染时现算，别提到模块作用域：模块常量在 import 那一刻定死，拿不到 platform 就悄悄
   // 回落成 mac 的 64px，Windows 上浮卡上移 32px 贴进自绘窗口栏（issue #58 同因）。
   const topOffset = currentWorkbenchFloatingTopOffset()
   const entries = useGenerationQueueStore((state) => state.entries)
   const batches = useGenerationQueueStore((state) => state.batches)
-  const nodes = useGenerationCanvasStore((state) => state.nodes)
-  const [now, setNow] = React.useState(() => Date.now())
+  // 面板全程挂载（关着也订阅，见 TaskCenterButton）；只按 id 取任务行数据、不读 position
+  // → 位置稳定投影，拖动期这个常挂订阅者不再每帧重渲（suspect #1）。cancel/retry 处理器仍走
+  // getState().nodes 拿真节点，不受投影影响。
+  const nodes = useGenerationCanvasStore(selectStableCanvasNodes)
+  const now = useGenerationFeedbackClock(opened)
   // N1：制作任务的家搬到这里（原先在画布助手面板里，见 plan 2026-08-11-nomi-side-viewer-and-fallback）。
   // 只在面板打开时加载/轮询完整 run——关着时徽标由 TaskCenterButton 的 summary 轮询维持。
   const production = useProductionStatus({ enabled: opened })
-
-  React.useEffect(() => {
-    if (!opened) return
-    const id = window.setInterval(() => setNow(Date.now()), TICK_MS)
-    return () => window.clearInterval(id)
-  }, [opened])
 
   React.useEffect(() => {
     if (!opened) return
@@ -85,47 +93,32 @@ export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProdu
     () => buildTaskCenterView({ entries, batches, nodes, fallbackTitle: t('taskCenter.untitledShot'), now }),
     [entries, batches, nodes, t, now],
   )
-  const productionRows = React.useMemo(() => buildProductionRunTaskRows(productionRuns, {
-    title: t('taskCenter.productionRun.title'),
-    statuses: {
-      draft: t('taskCenter.productionRun.statuses.draft'),
-      awaiting_direction: t('taskCenter.productionRun.statuses.awaitingDirection'),
-      awaiting_script_review: t('taskCenter.productionRun.statuses.awaitingScriptReview'),
-      awaiting_storyboard_review: t('taskCenter.productionRun.statuses.awaitingStoryboardReview'),
-      awaiting_contract: t('taskCenter.productionRun.statuses.awaitingContract'),
-      ready: t('taskCenter.productionRun.statuses.ready'),
-      running: t('taskCenter.productionRun.statuses.running'),
-      pausing: t('taskCenter.productionRun.statuses.pausing'),
-      paused: t('taskCenter.productionRun.statuses.paused'),
-      needs_attention: t('taskCenter.productionRun.statuses.needsAttention'),
-      awaiting_rough_cut_review: t('taskCenter.productionRun.statuses.awaitingRoughCutReview'),
-      awaiting_export: t('taskCenter.productionRun.statuses.awaitingExport'),
-      exporting: t('taskCenter.productionRun.statuses.exporting'),
-      completed: t('taskCenter.productionRun.statuses.completed'),
-      cancelled: t('taskCenter.productionRun.statuses.cancelled'),
-    },
-  }), [productionRuns, t])
+  // 打开成整卡的那份 Run：分组取自它完整的判断，卡放在哪一组和卡上的状态签是同一件事。
+  const openedRunId = production.view ? production.production.run?.runId : undefined
+  const openedGroup = production.view?.group
+  const productionRows = React.useMemo(
+    () => buildProductionRunTaskRows(
+      productionRuns,
+      productionRunTaskLabels((key, options) => t(key, options)),
+      openedRunId && openedGroup ? { runId: openedRunId, group: openedGroup } : undefined,
+    ),
+    [productionRuns, t, openedRunId, openedGroup],
+  )
+  const exportRows = React.useMemo(() => buildExportJobTaskRows(exportJobs, exportJobTaskLabels((key) => t(key))), [exportJobs, t])
 
   if (!opened) return null
 
-  const generationRows = view.rows
-  const rows: TaskCenterProjection[] = [...generationRows, ...productionRows].sort((left, right) => {
-    const order = { running: 0, queued: 1, done: 2 }
-    return order[left.group] - order[right.group]
-  })
-  const summary = {
-    ...view.summary,
-    running: view.summary.running + productionRows.filter((row) => row.group === 'running').length,
-    queued: view.summary.queued + productionRows.filter((row) => row.group === 'queued').length,
-  }
-  const running = rows.filter((row) => row.group === 'running')
-  const queued = rows.filter((row) => row.group === 'queued')
-  const done = rows.filter((row) => row.group === 'done')
+  // 不排序：下面按 TASK_CENTER_GROUPS 逐组筛出来渲染，组的先后由那一份顺序决定，组内保持各映射给的顺序。
+  const rows: TaskCenterProjection[] = [...view.rows, ...productionRows, ...exportRows]
+  const summary = summarizeTaskCenterRows(rows, view.summary.pausedBatchId)
+  const rowsIn = (group: TaskCenterGroup) => rows.filter((row) => row.group === group)
+  const queued = rowsIn('queued')
+  const done = rowsIn('done')
 
   const cancelQueued = (row: TaskCenterRow) => useGenerationQueueStore.getState().cancelEntry(row.batchId, row.nodeId)
   const interruptRunning = (row: TaskCenterRow) => {
     const node = nodes.find((candidate) => candidate.id === row.nodeId)
-    if (node) requestTaskCancel(node)
+    if (node) requestTaskCancel(node, (message) => setActionErrors((previous) => ({ ...previous, [row.id]: message })))
   }
   const cancelAllQueued = () => {
     const batchIds = new Set(queued.filter((row): row is TaskCenterRow => row.kind === 'generation').map((row) => row.batchId))
@@ -140,6 +133,7 @@ export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProdu
         failedRows.map((row) => row.nodeId),
         { nodes: state.nodes, edges: state.edges },
       ),
+      { initiator: 'user' },
     )
   }
   const reveal = (row: TaskCenterProjection) => {
@@ -164,25 +158,47 @@ export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProdu
           <ProductionRunTaskCard
             projectId={run.projectId}
             view={production.view}
-            playbookName={run.playbook.name}
             artifacts={run.artifacts}
             focusedArtifactId={production.focusedArtifactId}
-            onPrimaryAction={(action) => { void production.onPrimaryAction(action) }}
-            onControl={(action) => { void production.onControl(action) }}
+            actionError={production.actionError}
+            onPrimaryAction={production.onPrimaryAction}
+            onControl={production.onControl}
             onOpenPreview={() => reveal(row)}
           />
         </div>
       )
     }
-    return <TaskRow key={row.id} row={row} onReveal={reveal} onAction={() => void runAction(row)} />
+    return <TaskRow key={row.id} row={row} actionError={actionErrors[row.id]} onReveal={reveal} onAction={() => void runAction(row)} />
   }
 
+  /**
+   * 行上那颗操作钮（取消 / 中断 / 重试 / 取消导出）里有两条通到主进程，会失败。
+   * 此前整个 Promise 被裸 `void` 丢掉：用户点「取消导出」，行还在跑、按钮还在那儿、
+   * 一个字的解释也没有（设计系统 §4.1 C1）。失败就说一句，别让人对着不动的行猜。
+   */
   const runAction = async (row: TaskCenterProjection): Promise<void> => {
     const action = row.action
     if (!action) return
-    if (action.kind === 'cancel_generation_queue') cancelQueued(row as TaskCenterRow)
-    else if (action.kind === 'interrupt_generation') interruptRunning(row as TaskCenterRow)
-    else if (action.kind === 'retry_generation') await confirmAndRunNode(action.nodeId)
+    setActionErrors((current) => { const next = { ...current }; delete next[row.id]; return next })
+    try {
+      // 项目身份在点击这一刻签发（projectActionIssuance 契约：签发前不许有任何 await），所以这一支排最前。
+      if (action.kind === 'recover_generation') await withProjectAction((project) => recoverNodeResult(action.nodeId, project))
+      else if (action.kind === 'cancel_generation_queue') cancelQueued(row as TaskCenterRow)
+      else if (action.kind === 'interrupt_generation') interruptRunning(row as TaskCenterRow)
+      else if (action.kind === 'retry_generation') await confirmAndRunNode(action.nodeId, { initiator: 'user' })
+      else if (row.kind === 'export_job') {
+        if (!(await runExportJobTaskAction(row.action))) throw new Error('Export destination unavailable')
+        if (row.action.kind === 'return_to_export') onClose()
+      }
+    } catch (error) {
+      logRendererError('task-center-action-failed', error)
+      notify({
+        identity: row.id, reason: action.kind, level: 'inline', type: 'error',
+        message: row.kind === 'export_job' ? t('taskCenter.actionFailed')
+          : `${t('taskCenter.actionFailed')}: ${error instanceof Error ? error.message : String(error)}`,
+        present: (message) => setActionErrors((current) => ({ ...current, [row.id]: message })),
+      })
+    }
   }
 
   return (
@@ -214,7 +230,7 @@ export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProdu
             type="button"
             aria-label={t('taskCenter.close')}
             onClick={onClose}
-            className="inline-flex items-center justify-center size-6 rounded-nomi-sm text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink transition-[background,color] duration-[var(--nomi-transition-fast)]"
+            className="inline-flex items-center justify-center size-6 rounded-nomi-sm text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink transition-[background,color] duration-nomi-fast ease-nomi-fast"
           >
             <IconX size={15} stroke={1.8} />
           </button>
@@ -231,24 +247,22 @@ export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProdu
         />
 
         <div className="flex-1 min-h-0 overflow-y-auto py-1">
-          {running.length > 0 ? (
-            <SectionHeader icon={<IconLoader2 size={13} stroke={1.8} />} label={t('taskCenter.sections.running', { count: running.length })} />
-          ) : null}
-          {running.map((row) => renderRow(row))}
-
-          {queued.length > 0 ? (
-            <SectionHeader
-              icon={<IconClock size={13} stroke={1.8} />}
-              label={t('taskCenter.sections.queued', { count: queued.length })}
-              note={t('taskCenter.freeToCancel')}
-            />
-          ) : null}
-          {queued.map((row) => renderRow(row))}
-
-          {done.length > 0 ? (
-            <SectionHeader icon={<IconCheck size={13} stroke={1.8} />} label={t('taskCenter.sections.done', { count: done.length })} />
-          ) : null}
-          {done.map((row) => renderRow(row))}
+          {TASK_CENTER_GROUPS.map((group) => {
+            const groupRows = rowsIn(group)
+            if (groupRows.length === 0) return null
+            return (
+              <section key={group} data-task-group={group}>
+                <SectionHeader
+                  group={group}
+                  icon={SECTION_ICONS[group]}
+                  label={t(`taskCenter.groups.${group}`)}
+                  count={groupRows.length}
+                  {...(group === 'queued' ? { note: t('taskCenter.freeToCancel') } : {})}
+                />
+                {groupRows.map((row) => renderRow(row))}
+              </section>
+            )
+          })}
 
           {rows.length === 0 ? (
             <div className="px-3.5 py-9 text-center text-caption text-nomi-ink-40 leading-relaxed">
@@ -271,11 +285,19 @@ export function TaskCenterPanel({ opened, onClose, productionRuns, onRevealProdu
   )
 }
 
-function SectionHeader({ icon, label, note }: { icon: React.ReactNode; label: string; note?: string }): JSX.Element {
+const SECTION_ICONS: Record<TaskCenterGroup, React.ReactNode> = {
+  running: <IconLoader2 size={13} stroke={1.8} />,
+  attention: <IconAlertTriangle size={13} stroke={1.8} />,
+  queued: <IconClock size={13} stroke={1.8} />,
+  done: <IconCheck size={13} stroke={1.8} />,
+}
+
+function SectionHeader({ group, icon, label, count, note }: { group: TaskCenterGroup; icon: React.ReactNode; label: string; count: number; note?: string }): JSX.Element {
   return (
-    <div className="flex items-center gap-1.5 px-3.5 pt-2 pb-1 text-micro text-nomi-ink-60">
+    <div data-task-section={group} className="flex items-center gap-1.5 px-3.5 pt-2 pb-1 text-micro text-nomi-ink-60">
       <span className="inline-flex text-nomi-ink-40">{icon}</span>
-      {label}
+      <span>{label}</span>
+      <span className="tabular-nums">{count}</span>
       {note ? <span className="text-nomi-accent">· {note}</span> : null}
     </div>
   )
@@ -311,7 +333,9 @@ function TaskCenterSummaryBar({
       </div>
     )
   }
+  // 与分组同序（TASK_CENTER_GROUPS）：要你动手的先说。
   const parts: string[] = []
+  if (summary.attention > 0) parts.push(t('taskCenter.summary.attention', { count: summary.attention }))
   if (summary.running > 0) parts.push(t('taskCenter.summary.running', { count: summary.running }))
   if (summary.queued > 0) parts.push(t('taskCenter.summary.queued', { count: summary.queued }))
   if (summary.failed > 0) parts.push(t('taskCenter.summary.failed', { count: summary.failed }))
@@ -334,62 +358,71 @@ function SummaryAction({ label, onClick }: { label: string; onClick: () => void 
     <button
       type="button"
       onClick={onClick}
-      className="shrink-0 text-micro text-nomi-ink-60 border border-nomi-line rounded-full px-2 py-0.5 hover:text-nomi-ink hover:border-nomi-ink-40 transition-[color,border-color] duration-[var(--nomi-transition-fast)]"
+      className="shrink-0 text-micro text-nomi-ink-60 border border-nomi-line rounded-full px-2 py-0.5 hover:text-nomi-ink hover:border-nomi-ink-40 transition-[color,border-color] duration-nomi-fast ease-nomi-fast"
     >
       {label}
     </button>
   )
 }
 
-function TaskRow({
+/**
+ * 行动作的悬停说明（样张 D1-A）。「重新拉取」与付费的「重试」同一种小胶囊，悬停必须说清它只查不花钱；
+ * 浮层走设计系统 Tooltip，层级取 popover 档——面板本身在 floatingPanel 档，不抬上去就被面板盖住。
+ */
+function RowActionHint({ hint, children }: { hint?: string; children: React.ReactElement }): JSX.Element {
+  if (!hint) return children
+  return (
+    <TooltipProvider delayDuration={250} disableHoverableContent>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent side="left" className="z-popover" data-task-action-hint>{hint}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+export function TaskRow({
   row,
+  actionError,
   onReveal,
   onAction,
 }: {
   row: TaskCenterProjection
+  actionError?: string
   onReveal?: (row: TaskCenterProjection) => void
   onAction?: () => void
 }): JSX.Element {
   const { t } = useTranslation()
   const failed = row.outcome === 'error' && !row.recoverable
+  const revealable = row.kind !== 'export_job' && Boolean(onReveal)
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={() => onReveal?.(row)}
+      data-task-id={row.id}
+      data-task-node-id={row.kind === 'generation' ? row.nodeId : undefined}
+      data-task-group={row.group}
+      role={revealable ? 'button' : undefined}
+      tabIndex={revealable ? 0 : undefined}
+      onClick={() => { if (revealable) onReveal?.(row) }}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') onReveal?.(row)
+        if (revealable && (event.key === 'Enter' || event.key === ' ')) onReveal?.(row)
       }}
-      className="flex gap-2.5 px-3.5 py-2 items-start cursor-pointer hover:bg-nomi-ink-05 transition-[background] duration-[var(--nomi-transition-fast)]"
+      className={`flex gap-2.5 px-3.5 py-2 items-start transition-[background] duration-nomi-fast ease-nomi-fast ${revealable ? 'cursor-pointer hover:bg-nomi-ink-05' : ''}`}
     >
       <div className="flex-1 min-w-0">
         <div className={['text-body-sm truncate', failed ? 'text-nomi-ink' : 'text-nomi-ink-80'].join(' ')}>{row.title}</div>
         <div className={['text-micro mt-0.5 truncate', failed ? 'text-nomi-danger' : 'text-nomi-ink-60'].join(' ')}>
-          {row.group === 'queued'
-            ? row.kind === 'generation'
-              ? row.waveIndex > 0
-                ? t('taskCenter.row.waitingWave', { wave: row.waveIndex + 1 })
-                : t('taskCenter.row.waitingSlot')
-              : row.phaseText
+          {row.kind === 'generation' ? <span data-generation-message>{row.phaseText}</span>
             : row.group === 'running'
-              ? [row.phaseText, row.elapsedMs !== undefined ? t('taskCenter.row.elapsed', { time: formatElapsed(row.elapsedMs) }) : '']
-                  .filter(Boolean)
-                  .join(' · ')
-              : row.kind === 'production_run'
-                ? row.phaseText
-              : row.outcome === 'cancelled'
-                ? t('taskCenter.row.cancelled')
-                : row.recoverable
-                  ? t('taskCenter.row.recoverable')
-                  : failed
-                    ? row.error || t('taskCenter.row.failed')
-                    : t('taskCenter.row.took', { time: formatElapsed(row.elapsedMs) })}
+              ? [row.phaseText, row.elapsedMs !== undefined ? t('taskCenter.row.elapsed', { time: formatElapsed(row.elapsedMs) }) : ''].filter(Boolean).join(' · ')
+              : row.phaseText}
         </div>
+        {row.kind === 'export_job' && row.error ? <div data-task-result-reason className="mt-1 text-micro text-nomi-danger">{row.error}</div> : null}
+        {actionError ? <div role="status" data-task-action-error className="mt-1 text-micro text-workbench-danger">{actionError}</div> : null}
         {/* 只有真拿到百分比才画进度条。很多厂商不报进度，画一条永远空的槽会被读成分隔线（走查实锤），
             也是在假装知道进度。没数就不画，靠区段标题 + 已跑时长表达「在跑」。 */}
         {row.group === 'running' && typeof row.percent === 'number' ? (
           <div className="h-[3px] bg-nomi-ink-10 rounded-full mt-1.5 overflow-hidden">
-            <div className="h-full bg-nomi-accent rounded-full transition-[width] duration-[var(--nomi-transition-fast)]" style={{ width: `${row.percent}%` }} />
+            <div className="h-full bg-nomi-accent rounded-full transition-[width] duration-nomi-fast ease-nomi-fast" style={{ width: `${row.percent}%` }} />
           </div>
         ) : null}
         {row.kind === 'generation' && row.cancel === 'none' && row.group === 'running' ? (
@@ -401,20 +434,29 @@ function TaskRow({
         ) : null}
       </div>
       {row.action && onAction ? (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            onAction()
-          }}
-          className="shrink-0 text-micro text-nomi-ink-60 border border-nomi-line rounded-full px-2 py-0.5 hover:text-nomi-ink hover:border-nomi-ink-40 transition-[color,border-color] duration-[var(--nomi-transition-fast)]"
-        >
-          {row.action.kind === 'retry_generation'
-            ? t('taskCenter.row.retry')
-            : row.cancel === 'free'
-              ? t('taskCenter.row.cancel')
-              : t('taskCenter.row.interrupt')}
-        </button>
+        <RowActionHint hint={row.action.kind === 'recover_generation' ? t('taskCenter.row.recoverHint') : undefined}>
+          <button
+            type="button"
+            data-task-action={row.action.kind}
+            onClick={(event) => {
+              event.stopPropagation()
+              onAction()
+            }}
+            className="shrink-0 text-micro text-nomi-ink-60 border border-nomi-line rounded-full px-2 py-0.5 hover:text-nomi-ink hover:border-nomi-ink-40 transition-[color,border-color] duration-nomi-fast ease-nomi-fast"
+          >
+            {row.action.kind === 'reveal_export_output'
+              ? t('taskCenter.exportJob.revealOutput')
+              : row.action.kind === 'return_to_export'
+                ? t('taskCenter.exportJob.returnToExport')
+                : row.action.kind === 'retry_generation'
+              ? t('taskCenter.row.retry')
+              : row.action.kind === 'recover_generation'
+                ? t('generationCommon.recoverable.recover')
+              : row.cancel === 'free'
+                ? t('taskCenter.row.cancel')
+                : t('taskCenter.row.interrupt')}
+          </button>
+        </RowActionHint>
       ) : null}
     </div>
   )

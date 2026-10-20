@@ -7,10 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   writeAsset: vi.fn(),
+  captureAssetWriteContext: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("../runtime", () => ({ writeAsset: mocks.writeAsset }));
+vi.mock("../assets/assetWriteContext", () => ({ captureAssetWriteContext: mocks.captureAssetWriteContext }));
 
 import {
   activeBlenderSceneRenderCount,
@@ -24,7 +26,9 @@ const tempDirs: string[] = [];
 beforeEach(() => {
   mocks.spawn.mockReset();
   mocks.writeAsset.mockReset();
-  mocks.writeAsset.mockImplementation((_projectId: string, _bytes: Buffer, fileName: string) => ({
+  mocks.captureAssetWriteContext.mockReset();
+  mocks.captureAssetWriteContext.mockResolvedValue({ root: "/project-dir", assertCurrent: vi.fn() });
+  mocks.writeAsset.mockImplementation(async (_projectId: string, _bytes: Buffer, fileName: string) => ({
     id: `asset-${fileName}`,
     name: fileName,
     data: { url: `nomi-local://asset/project/${fileName}` },

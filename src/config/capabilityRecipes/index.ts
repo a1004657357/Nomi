@@ -6,7 +6,7 @@ import type {
   ArchetypeTransportTaskKind,
   ModelArchetype,
   ModelCapabilityTier,
-} from '../modelArchetypes/types'
+} from '../../../electron/shared/modelArchetypes/types'
 
 export type CapabilityRecipeCategory = 'multiview' | 'panorama' | 'portrait' | 'style' | 'video'
 

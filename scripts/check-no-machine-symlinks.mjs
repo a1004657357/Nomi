@@ -2,9 +2,9 @@
 // ============================================================================
 // 门岗：防「本机绝对路径的符号链接」进 git（会让别人 checkout 出来就是坏链）。
 //
-// 为什么：本机按 CLAUDE.md 用 `ln -s /Users/<me>/Desktop/Nomi/node_modules node_modules`
-//   让 20+ 并行 worktree 复用主仓依赖。这链接**只在本机成立**，进了 git 就是给协作者
-//   发一条指向不存在路径的死链。
+// 历史上曾把 worktree 的 node_modules 软链到主仓。除了链接一旦进 git 会成为坏链，
+// 共享依赖本身也会把 pnpm 相对链接解析到旧 worktree，造成声明 Electron 43、实际运行 31。
+// 现在每个 worktree 都必须独立 `pnpm install --prefer-offline`；pnpm store 仍会复用包内容。
 //
 // 为什么 .gitignore 挡不住（这坑已复发过一次，2026-08-08 修掉、08-11 又回来）：
 //   ① 带斜杠的 `node_modules/` 只匹配目录，匹配不上符号链接（符号链接在 git 眼里是文件）
@@ -20,19 +20,24 @@
 // 用法：node scripts/check-no-machine-symlinks.mjs
 // 命中 → 打印详情 + 修复命令 + exit 1。干净 → exit 0。
 // ============================================================================
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
+import { splitNulPaths } from "./lib/gitPaths.mjs";
 import path from "node:path";
 
 const SYMLINK_MODE = "120000"; // git 里符号链接的 mode
 
 function listTrackedSymlinks() {
   // -s 给出 mode，据此筛出符号链接；object id 拿来读链接目标（blob 内容就是目标路径）
-  const out = execSync("git ls-files -s", { encoding: "utf8" });
-  return out
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [meta, file] = line.split("\t");
+  // `-z`：记录用 NUL 分隔，路径原样输出。默认 quotePath 下非 ASCII 路径会被转义并加引号，
+  // 后面 `git cat-file` / 报错行拿到的都不是真路径。
+  // `maxBuffer` 必须显式给（2026-09-17）：Node 的默认值是 **1 MiB**，而这条命令的输出是
+  // 「整个 index 的每一行」——本仓 2026-09-17 合进走查截图后就到了 1,050,944 字节，
+  // 越过默认值 2 KB，门岗当场 `ENOBUFS` 崩掉。那个默认值在这里**悄悄变成了一条仓库大小上限**，
+  // 而它和这道门要守的不变量（git 里不许有本机绝对路径的软链）毫无关系。
+  // 给一个只受内存约束的上限，让它回到「传输容量」的本分；仓库再长大也不会把门岗变成假红。
+  return splitNulPaths(execFileSync("git", ["ls-files", "-s", "-z"], { encoding: "utf8", maxBuffer: 1024 * 1024 * 1024 }))
+    .map((record) => {
+      const [meta, file] = record.split("\t");
       const [mode, oid] = meta.split(" ");
       return { mode, oid, file };
     })

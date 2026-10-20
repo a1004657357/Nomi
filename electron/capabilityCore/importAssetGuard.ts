@@ -15,14 +15,17 @@
 
 import path from 'node:path'
 
-/** 只收这些扩展名（小写比对）。图 + 视频——素材导入的全部合法用途。 */
-export const IMPORT_ALLOWED_EXTENSIONS = [
-  '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff', '.heic',
-  '.mp4', '.mov', '.webm', '.m4v',
-] as const
+import { contentTypeFromExtension, MEDIA_TYPES } from '../assets/mediaTypes'
+import { MEDIA_IMPORT_SURFACES } from '../shared/contracts/mediaImportPolicy'
 
-/** 默认大小上限（字节）。64MB：4K 图与短视频素材够用，又不至于让单次导入打爆内存/磁盘。 */
-export const IMPORT_MAX_BYTES = 64 * 1024 * 1024
+/**
+ * 只收这些扩展名（小写比对）——**从素材库面的 kinds 派生**，不再手维护第二份清单。
+ * 2026-09-14 之前这里是一份写死的 12 项，比素材库窄（没有 .avif/.mkv/.avi，也没有任何音频），
+ * 于是「Agent 能导入的素材」和「用户能导入的素材」悄悄是两套。
+ */
+export const IMPORT_ALLOWED_EXTENSIONS: readonly string[] = MEDIA_TYPES
+  .filter((entry) => (MEDIA_IMPORT_SURFACES['asset-library'].kinds as readonly string[]).includes(entry.kind))
+  .map((entry) => entry.ext)
 
 /**
  * 敏感路径段 deny-list。命中即拒——**先于白名单判**（哪怕有人把私钥改名叫 .png 也进不来）。
@@ -48,8 +51,6 @@ export type ImportGuardInput = {
   sizeBytes: number | null
   /** 是否常规文件（接线层 stat().isFile()）。 */
   isFile: boolean
-  /** 上限覆盖（测试/未来配置用；缺省 IMPORT_MAX_BYTES）。 */
-  maxBytes?: number
 }
 
 export type ImportGuardVerdict =
@@ -59,7 +60,7 @@ export type ImportGuardVerdict =
 function hasDeniedSegment(absolute: string): boolean {
   const lower = absolute.toLowerCase()
   if (DENY_PREFIXES.some((prefix) => lower.startsWith(prefix.toLowerCase()))) return true
-  const segments = lower.split(path.sep).filter(Boolean)
+  const segments = lower.split(/[\\/]+/).filter(Boolean)
   return segments.some((segment) => DENY_PATH_SEGMENTS.includes(segment))
 }
 
@@ -70,15 +71,19 @@ function hasDeniedSegment(absolute: string): boolean {
 export function checkImportAsset(input: ImportGuardInput): ImportGuardVerdict {
   const raw = String(input.rawPath || '').trim()
   if (!raw) return { ok: false, reason: '没给文件路径。请传本机文件的**绝对路径**（如 /Users/你/Desktop/参考.png）。' }
-  if (!path.isAbsolute(raw)) {
+  if (!path.posix.isAbsolute(raw) && !path.win32.isAbsolute(raw)) {
     return { ok: false, reason: `路径必须是绝对路径（收到「${raw}」）。相对路径依赖当前工作目录、结果不可预期，请传完整路径。` }
   }
   if (!input.realPath) {
     return { ok: false, reason: `找不到这个文件（「${raw}」）。确认路径拼写与文件是否还在原处。` }
   }
-  const real = path.normalize(input.realPath)
+  const normalizePortable = (value: string): string => {
+    if (path.win32.isAbsolute(value) && !path.posix.isAbsolute(value)) return path.win32.normalize(value)
+    return path.posix.normalize(value)
+  }
+  const real = normalizePortable(input.realPath)
   // ⑤+④：deny 段对**解析后**的真实路径再查一遍——软链指向 ~/.ssh 之类的绕法在此断掉。
-  if (hasDeniedSegment(real) || hasDeniedSegment(path.normalize(raw))) {
+  if (hasDeniedSegment(real) || hasDeniedSegment(normalizePortable(raw))) {
     return { ok: false, reason: '这个位置的文件不允许作为素材导入（系统/凭据/配置目录）。请把素材放到普通目录（如桌面或项目文件夹）再导入。' }
   }
   if (!input.isFile) {
@@ -91,32 +96,16 @@ export function checkImportAsset(input: ImportGuardInput): ImportGuardVerdict {
       reason: `只支持导入图片或视频素材（${IMPORT_ALLOWED_EXTENSIONS.join(' / ')}），收到的是「${extension || '无扩展名'}」。`,
     }
   }
-  const max = input.maxBytes ?? IMPORT_MAX_BYTES
+  // 「多大算大」一个字都不在这里判：那是准入闸的事（admitMediaImport，按磁盘余量 + 每面硬顶），
+  // 而它的拒绝已经带着数字回到调用方（core.ts 的 mcpImportRejectionMessage）。这里只判
+  // 「这个文件读不读得出来」——空文件/读不到大小是路径问题，不是体积问题。
   if (typeof input.sizeBytes !== 'number' || input.sizeBytes <= 0) {
     return { ok: false, reason: '这个文件是空的或读不到大小，无法导入。' }
-  }
-  if (input.sizeBytes > max) {
-    const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)}MB`
-    return { ok: false, reason: `文件太大（${mb(input.sizeBytes)}，上限 ${mb(max)}）。请先压缩或裁剪后再导入。` }
   }
   return { ok: true, realPath: real, extension }
 }
 
-/** 扩展名 → contentType（落资产 sidecar 用；未知回落通用二进制由调用方兜）。 */
+/** 扩展名 → contentType。从 mediaTypes 单源派生（此前是本文件自己的第二份 switch 表）。 */
 export function contentTypeForExtension(extension: string): string {
-  switch (extension.toLowerCase()) {
-    case '.png': return 'image/png'
-    case '.jpg':
-    case '.jpeg': return 'image/jpeg'
-    case '.webp': return 'image/webp'
-    case '.gif': return 'image/gif'
-    case '.bmp': return 'image/bmp'
-    case '.tiff': return 'image/tiff'
-    case '.heic': return 'image/heic'
-    case '.mp4':
-    case '.m4v': return 'video/mp4'
-    case '.mov': return 'video/quicktime'
-    case '.webm': return 'video/webm'
-    default: return 'application/octet-stream'
-  }
+  return contentTypeFromExtension(extension) ?? 'application/octet-stream'
 }

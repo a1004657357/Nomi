@@ -3,6 +3,8 @@
 // plan.detach-shot-nodes：用户把占位从画布删掉（整批 Cmd+Z / 手动删）→ 记 canvasDetached、清 nodeId（撤销事实优先）。
 import type { ProductionCommandEffect } from "./productionRunReducer";
 import type { ProductionRun, RunCommand } from "./productionRunTypes";
+import { transitionJob } from "./productionRunState";
+import { isUnsubmittedJobStatus } from "../shared/productionShotJobs";
 
 /**
  * 把「shotId → 画布占位节点 id」写进对应镜。幂等：同 shotId 重复绑同一 nodeId 无实质改动（跑两次补齐不重复）。
@@ -11,7 +13,7 @@ import type { ProductionRun, RunCommand } from "./productionRunTypes";
 export function bindShotNodes(current: ProductionRun, command: RunCommand, now: string): ProductionCommandEffect {
   const eventType = "plan.shot-nodes.bound";
   const currentPlan = current.generationPlan;
-  if (!currentPlan?.shots || currentPlan.shots.length === 0) return { run: current, eventType, message: current.runId };
+  if (!currentPlan) return { run: current, eventType, message: current.runId };
   const rawBindings = Array.isArray(command.payload.bindings) ? command.payload.bindings : [];
   const bindByShot = new Map<string, string>();
   for (const raw of rawBindings) {
@@ -22,6 +24,40 @@ export function bindShotNodes(current: ProductionRun, command: RunCommand, now: 
     if (shotId && nodeId) bindByShot.set(shotId, nodeId);
   }
   if (bindByShot.size === 0) return { run: current, eventType, message: current.runId };
+
+  // Single-shot semantic plans intentionally keep the historical top-level
+  // candidate shape (no `shots[]`).  They still need the same durable binding
+  // so a provider result can be attached to the placeholder and a later
+  // reconciliation pass cannot lose the node identity.  Use the candidate id
+  // as the stable shot address, exactly as the landing projection does.
+  if (!currentPlan.shots || currentPlan.shots.length === 0) {
+    const shotId = currentPlan.candidate.candidateId;
+    const nodeId = bindByShot.get(shotId);
+    if (!nodeId) return { run: current, eventType, message: current.runId };
+    const samePlanBinding = currentPlan.nodeId === nodeId && !currentPlan.canvasDetached;
+    let changed = !samePlanBinding;
+    const nextPlan = samePlanBinding
+      ? currentPlan
+      : (() => {
+          const next = { ...currentPlan, nodeId, updatedAt: now };
+          delete (next as { canvasDetached?: boolean }).canvasDetached;
+          return next;
+        })();
+    const jobs = current.jobs.map((job) => {
+      // A single plan has one generation lineage (including explicit rework
+      // attempts); every attempt points at the same canvas result node.
+      if (job.stageId !== "generate" || job.nodeId === nodeId) return job;
+      changed = true;
+      return { ...job, nodeId, updatedAt: now };
+    });
+    if (!changed) return { run: current, eventType, message: current.runId };
+    return {
+      run: { ...current, generationPlan: nextPlan, jobs, updatedAt: now },
+      eventType,
+      message: current.runId,
+    };
+  }
+
   let changed = false;
   const shots = currentPlan.shots.map((shot) => {
     const nodeId = bindByShot.get(shot.shotId);
@@ -57,6 +93,26 @@ export function detachShotNodes(current: ProductionRun, command: RunCommand, now
   const detached = new Set(rawNodeIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()));
   if (detached.size === 0) return { run: current, eventType, message: current.runId };
   let changed = false;
+  if (currentPlan && (!currentPlan.shots || currentPlan.shots.length === 0)
+    && currentPlan.nodeId && detached.has(currentPlan.nodeId)) {
+    const nextPlan = { ...currentPlan, canvasDetached: true, updatedAt: now };
+    delete (nextPlan as { nodeId?: string }).nodeId;
+    const jobs = current.jobs.map((job) => {
+      if (job.stageId !== "generate" || !job.nodeId) return job;
+      const next = { ...job, updatedAt: now };
+      const cancelled = isUnsubmittedJobStatus(job.status)
+        ? { ...transitionJob(job, "detached", now), errorCode: "canvas_detached", errorMessage: "Canvas node detached", updatedAt: now }
+        : next;
+      delete (next as { nodeId?: string }).nodeId;
+      delete (cancelled as { nodeId?: string }).nodeId;
+      return cancelled;
+    });
+    return {
+      run: { ...current, generationPlan: nextPlan, jobs, updatedAt: now },
+      eventType,
+      message: current.runId,
+    };
+  }
   const shots = currentPlan?.shots?.map((shot) => {
     if (!shot.nodeId || !detached.has(shot.nodeId)) return shot;
     changed = true;
@@ -67,7 +123,9 @@ export function detachShotNodes(current: ProductionRun, command: RunCommand, now
   const jobs = current.jobs.map((job) => {
     if (!job.nodeId || !detached.has(job.nodeId)) return job;
     changed = true;
-    const next = { ...job, updatedAt: now };
+    const next = isUnsubmittedJobStatus(job.status)
+      ? { ...transitionJob(job, "detached", now), errorCode: "canvas_detached", errorMessage: "Canvas node detached", updatedAt: now }
+      : { ...job, updatedAt: now };
     delete (next as { nodeId?: string }).nodeId;
     return next;
   });

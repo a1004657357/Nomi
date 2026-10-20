@@ -1,12 +1,17 @@
 // 渲染层调 skill IPC 的唯一入口（镜像 modelCatalogApi 的 requireDesktopRuntime 范式）。
 // 能力派生的「权威逻辑」在 electron（deriveSkillNeeds 算 neededProviders 进 DTO）；这里只做
 // 「needs − available」的平凡差集，不重复派生逻辑（P1）。
+import type { SkillCuration } from '../../../electron/shared/skillCuration'
 import { getDesktopBridge, type DesktopBridge } from '../../desktop/bridge'
 import { getWorkbenchModelCatalogHealth } from './modelCatalogApi'
 
 export type SkillProviderKind = 'text' | 'image' | 'video' | 'model3d'
 
 export type SkillListItemDto = {
+  cover?: string
+  preview?: { url: string; type: 'image' | 'video' }
+  curation?: SkillCuration
+  body?: string
   directoryName: string
   name: string
   label: string
@@ -22,12 +27,16 @@ export type SkillListItemDto = {
   canvas: { recipeIds: string[]; defaultRecipeId: string | null } | null
   /** 'user'=可写用户目录（可删/可导出）；'builtin'=安装随附（只读、禁删）。 */
   origin: 'builtin' | 'user'
+  packageVersion: string
+  contentHash: string
 }
 
 export type SkillImportResultDto = {
   ok: boolean
   dirName?: string
   skillName?: string
+  /** Provider modalities the saved skill declares (derived in the main process). */
+  neededProviders?: SkillProviderKind[]
   error?: string
 }
 
@@ -43,11 +52,12 @@ function requireDesktopRuntime(feature: string): DesktopBridge {
   return desktop
 }
 
-export function listWorkbenchSkills(): SkillListItemDto[] {
-  return requireDesktopRuntime('skill library').skill.list() as SkillListItemDto[]
+/** 每次调用主进程都重扫技能目录（pi 的加载器，async）：刚导入/删除的技能这一次就是新的。 */
+export async function listWorkbenchSkills(): Promise<SkillListItemDto[]> {
+  return (await requireDesktopRuntime('skill library').skill.list()) as SkillListItemDto[]
 }
 
-export function exportWorkbenchSkill(dirName: string): unknown {
+export function exportWorkbenchSkill(dirName: string): Promise<unknown> {
   return requireDesktopRuntime('skill export').skill.exportPackage(dirName)
 }
 

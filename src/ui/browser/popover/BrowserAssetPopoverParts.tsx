@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../i18n'
 import { IconCheck, IconPhoto, IconPlayerPlayFilled, IconVideo } from '../../../vendor/tablerIcons'
@@ -89,7 +89,7 @@ export const BrowserAssetTile = React.memo(function BrowserAssetTile({
         {...commonProps}
         className={cn(
           'group relative flex h-11 min-w-0 items-center gap-2 rounded-nomi-sm border px-2 outline-none',
-          'cursor-pointer select-none transition-[background,border-color,box-shadow,color] duration-[var(--nomi-transition-fast)]',
+          'cursor-pointer select-none transition-[background,border-color,box-shadow,color] duration-nomi-fast ease-nomi-fast',
           selected
             ? 'border-nomi-accent-soft bg-nomi-accent-soft text-nomi-ink shadow-nomi-sm'
             : 'border-transparent text-nomi-ink-80 hover:border-nomi-line-soft hover:bg-nomi-ink-05 focus-visible:border-nomi-accent focus-visible:bg-nomi-ink-05',
@@ -157,7 +157,7 @@ export const BrowserAssetTile = React.memo(function BrowserAssetTile({
       {...commonProps}
       className={cn(
         'group relative isolate min-w-0 select-none rounded-nomi p-1 outline-none',
-        'cursor-pointer transition-[background,box-shadow,transform] duration-[var(--nomi-transition-fast)]',
+        'cursor-pointer transition-[background,box-shadow,transform] duration-nomi-fast ease-nomi-fast',
         'hover:bg-nomi-ink-05 focus-visible:bg-nomi-ink-05',
         selected && 'bg-nomi-accent-soft/55 shadow-nomi-sm',
       )}
@@ -208,7 +208,7 @@ export const BrowserAssetTile = React.memo(function BrowserAssetTile({
           </span>
         ) : null}
         {asset.duration ? (
-          <span className="absolute bottom-1 right-1 rounded-nomi-sm bg-nomi-overlay-chip-strong px-1.5 py-0.5 text-micro leading-none text-nomi-paper">
+          <span className="absolute bottom-1 right-1 rounded-nomi-sm bg-nomi-overlay-chip-strong px-1.5 py-0.5 text-micro leading-none text-nomi-media-ink">
             {asset.duration}
           </span>
         ) : null}
@@ -284,7 +284,7 @@ export const BrowserAssetFilterPopover = React.memo(function BrowserAssetFilterP
                 disabled={disabled}
                 className={cn(
                   'grid h-8 grid-cols-[18px_minmax(0,1fr)_auto] items-center gap-2 rounded-nomi-sm border-0 px-1.5',
-                  'bg-transparent text-left text-caption transition-colors duration-[var(--nomi-transition-fast)]',
+                  'bg-transparent text-left text-caption transition-colors duration-nomi-fast ease-nomi-fast',
                   disabled
                     ? 'cursor-default text-nomi-ink-30'
                     : 'cursor-pointer text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink',

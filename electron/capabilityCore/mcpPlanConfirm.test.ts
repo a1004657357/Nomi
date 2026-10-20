@@ -26,9 +26,10 @@ class PlanHarness {
     // 加节点 invoke 返回稳定 ids；记录 method/params/options 供断言。
     this.invoke = vi.fn(async (method: string, params: Record<string, unknown>, options?: McpInvokeOptions) => {
       this.invokeCalls.push({ method, params, options })
-      if (method === 'canvas.addNodes') {
+      if (method === 'canvas.write') {
         const count = Array.isArray(params.nodes) ? params.nodes.length : 0
-        return { ids: Array.from({ length: count }, (_, i) => `n${i}`) }
+        const ids = Array.from({ length: count }, (_, i) => `n${i}`)
+        return { applied: true, proposalId: 'proposal-test', operation: 'create_canvas_nodes', affectedNodeIds: ids, affectedEdgeIds: [], clientIdToNodeId: {}, connectedCount: 0, skippedEdges: [], reconciliation: { ok: true, deviationCount: 0 } }
       }
       throw new Error(`unexpected invoke: ${method}`)
     })
@@ -79,14 +80,14 @@ class PlanHarness {
       id,
       method: 'tools/call',
       params: {
-        name: 'nomi_add_nodes',
-        arguments: { projectId, nodes: Array.from({ length: count }, (_, i) => ({ kind: 'image', title: `镜 ${i + 1}` })) },
+        name: 'nomi_canvas_edit',
+        arguments: { leaseHandle: 'lease-a', projectId, operation: 'create_canvas_nodes', summary: '创建画布节点', nodes: Array.from({ length: count }, (_, i) => ({ clientId: `client-${i + 1}`, kind: 'image', title: `镜 ${i + 1}`, prompt: `镜头 ${i + 1}` })) },
       },
     })
   }
 
   addNodeCalls(): InvokeCall[] {
-    return this.invokeCalls.filter((call) => call.method === 'canvas.addNodes')
+    return this.invokeCalls.filter((call) => call.method === 'canvas.write')
   }
 }
 
@@ -145,7 +146,7 @@ describe('nomi-mcp · 画布方案确认 elicitation-first（App 开着）', () 
     expect(calls).toHaveLength(2)
     expect(calls[1].options?.planConfirmed).toBe(true)
     // 全程只发过一次 elicitation。
-    expect(harness.invokeCalls.filter((c) => c.method === 'canvas.addNodes')).toHaveLength(2)
+    expect(harness.invokeCalls.filter((c) => c.method === 'canvas.write')).toHaveLength(2)
   })
 
   it('c. 同会话不同项目：重新弹确认（信任按项目隔离）', async () => {
@@ -182,6 +183,7 @@ describe('nomi-mcp · 画布方案确认 elicitation-first（App 开着）', () 
 
     const toolRes = await harness.next()
     expect(toolRes.id).toBe(2)
+    expect(JSON.parse((toolRes.result as { content?: Array<{ text?: string }> }).content?.[0]?.text || '{}')).toMatchObject({ cancelled: true, reason: 'declined' })
     // caller（core→dispatcher→outcome）会把 cancelled 转述成文本；协议层这里断言不 invoke + 未落节点。
     expect(harness.addNodeCalls()).toHaveLength(0)
   })
@@ -261,8 +263,11 @@ describe('nomi-mcp · 画布方案确认：不声明 elicitation / headless → 
   })
 })
 
-// dispatch 层：planConfirmed 透传 → canvas.addNodes 预批准方案门（渲染层弹窗不再触发，免双问）。
-// 这补上协议层假 transport 覆盖不到的下游一段：真人在聊天 accept 后，App 侧网关 confirmPlan 不该再被调。
+// dispatch 层：planConfirmed 透传 → `canvas.write` 的 create_canvas_nodes 预批准方案门
+//（渲染层弹窗不再触发，免双问）。这补上协议层假 transport 覆盖不到的下游一段：真人在聊天 accept 后，
+// App 侧网关 confirmPlan 不该再被调。
+// 2026-09-21：原来打的是 legacy `canvas.addNodes`（无租约、裸 bearer 可达，已删）。同一段行为现在只在
+// 租约路上验——**预批准的是方案门，不是租约**：没有会话/租约，这两条都到不了 confirmPlan 那一步。
 describe('nomi-mcp · dispatch 层 planConfirmed 预批准方案门', () => {
   function spyGateway() {
     const planCalls: PlanConfirmInfo[] = []
@@ -284,29 +289,38 @@ describe('nomi-mcp · dispatch 层 planConfirmed 预批准方案门', () => {
         readArtifactProjection: vi.fn(), readFull: vi.fn(), command: vi.fn(),
       },
       origin: { host: 'external' as const },
+      // 租约是这条路的前提（legacy 无租约那条已删）：这里给一份已验证的会话，
+      // 好让断言落在 confirmPlan 上而不是停在 403。
+      projectSession: {
+        connection: { client: 'codex' },
+        authority: { verifyLease: async () => ({ projectId: 'proj-a', scope: 'canvas:write' }) },
+      },
       ...(planConfirmed ? { planConfirmed: true } : {}),
     }
   }
 
-  it('planConfirmed=true：≥2 节点批量 add 不再调 gateway.confirmPlan（App 弹窗被跳过），仍落节点', async () => {
+  const writeParams = {
+    leaseHandle: 'lease-a',
+    projectId: 'proj-a',
+    operation: 'create_canvas_nodes',
+    summary: '创建画布节点',
+    nodes: [
+      { clientId: 'c-1', kind: 'image', title: '镜 1', prompt: '镜头 1' },
+      { clientId: 'c-2', kind: 'image', title: '镜 2', prompt: '镜头 2' },
+    ],
+  }
+
+  it('planConfirmed=true：≥2 节点批量建节点不再调 gateway.confirmPlan（App 弹窗被跳过），仍落节点', async () => {
     const spy = spyGateway()
-    const result = await dispatch(
-      'canvas.addNodes',
-      { projectId: 'proj-a', nodes: [{ kind: 'image' }, { kind: 'image' }] },
-      ctxWith(spy.gateway, true) as never,
-    )
+    const result = await dispatch('canvas.write', { ...writeParams }, ctxWith(spy.gateway, true) as never)
     expect(spy.planCalls).toHaveLength(0) // 关键：confirmPlan 未被调 → 渲染层不弹卡
     expect(spy.getApplied()).toBe(1)
-    expect((result as { ids: string[] }).ids).toHaveLength(2)
+    expect((result as { affectedNodeIds: string[] }).affectedNodeIds).toHaveLength(2)
   })
 
-  it('planConfirmed 未设：≥2 节点批量 add 照常调 gateway.confirmPlan（老路径不变）', async () => {
+  it('planConfirmed 未设：≥2 节点批量建节点照常调 gateway.confirmPlan（老路径不变）', async () => {
     const spy = spyGateway()
-    await dispatch(
-      'canvas.addNodes',
-      { projectId: 'proj-a', nodes: [{ kind: 'image' }, { kind: 'image' }] },
-      ctxWith(spy.gateway, false) as never,
-    )
+    await dispatch('canvas.write', { ...writeParams }, ctxWith(spy.gateway, false) as never)
     expect(spy.planCalls).toHaveLength(1) // 未预批准 → 走原网关确认（App 弹窗 / headless 放行）
     expect(spy.planCalls[0]).toMatchObject({ nodeCount: 2, projectId: 'proj-a' })
   })

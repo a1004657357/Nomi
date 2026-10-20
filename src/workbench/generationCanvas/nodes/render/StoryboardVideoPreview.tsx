@@ -1,10 +1,10 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { IconPlayerPlayFilled, IconVideo } from '@tabler/icons-react'
 import { localAssetThumbnailUrl } from '../../../../design/localAssetThumbnail'
-import {
-  getDesktopHydratedProjectId,
-  subscribeDesktopHydratedProjectId,
-} from '../../../../desktop/activeProject'
+import { isProjectExecutionContextCurrent, withProjectAction, type ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
+import { useOpenProjectId } from '../../../project/useOpenProjectId'
+import { sameProjectAgentBinding } from '../../../../../electron/shared/projectBinding'
 import { getDesktopBridge } from '../../../../desktop/bridge'
 import { buildVideoPlaybackUrl } from '../../../../media/videoPlaybackUrl'
 import { cn } from '../../../../utils/cn'
@@ -25,8 +25,8 @@ import {
 const COMPACT_PREVIEW_SIZE = { width: 160, height: 160 } as const
 const EXPANDED_PREVIEW_SIZE = { width: 320, height: 320 } as const
 const LIGHTBOX_POSTER_SIZE = { width: 512, height: 512 } as const
-const posterCache = new Map<string, string>()
-const posterRequests = new Map<string, Promise<string>>()
+const posterCache = new Map<string, { binding: ProjectExecutionContext['binding']; url: string }>()
+const posterRequests = new Map<string, { project: ProjectExecutionContext; request: Promise<string> }>()
 
 type Props = {
   node: GenerationCanvasNode
@@ -40,38 +40,46 @@ function posterCacheKey(projectId: string, videoUrl: string): string {
   return `${projectId}::${videoUrl}`
 }
 
-function requestVideoPoster(projectId: string, videoUrl: string): Promise<string> {
+function requestVideoPoster(project: ProjectExecutionContext, videoUrl: string): Promise<string> {
+  project.assertCurrent()
+  const projectId = project.binding.projectId
   const key = posterCacheKey(projectId, videoUrl)
   const cached = posterCache.get(key)
-  if (cached) return Promise.resolve(cached)
+  if (cached && sameProjectAgentBinding(cached.binding, project.binding)) return Promise.resolve(cached.url)
   const pending = posterRequests.get(key)
-  if (pending) return pending
+  if (pending && isProjectExecutionContextCurrent(pending.project)) return pending.request.then(url => { project.assertCurrent(); return url })
 
   const extractFrame = getDesktopBridge()?.video?.extractFrame
   if (!extractFrame) return Promise.reject(new Error('当前环境不支持视频抽帧'))
 
   const request = new Promise<string>((resolve, reject) => {
     requestDeferredNodeMediaSlot('video', (release) => {
-      void extractFrame({ videoUrl, which: 'first', projectId })
+      void Promise.resolve().then(() => {
+        project.assertCurrent()
+        return extractFrame({ videoUrl, which: 'first', projectId, projectBinding: project.binding })
+      })
         .then((result) => {
+          project.assertCurrent()
           const url = String(result?.url || '').trim()
           if (!url) throw new Error('视频抽帧没有返回图片')
-          posterCache.set(key, url)
+          posterCache.set(key, { binding: project.binding, url })
           resolve(url)
         })
         .catch(reject)
         .finally(release)
     })
   })
-  posterRequests.set(key, request)
+  posterRequests.set(key, { project, request })
+  const removeRequest = () => { if (posterRequests.get(key)?.request === request) posterRequests.delete(key) }
   void request.then(
-    () => posterRequests.delete(key),
-    () => posterRequests.delete(key),
+    removeRequest,
+    removeRequest,
   )
   return request
 }
 
-function persistVideoPoster(nodeId: string, videoUrl: string, posterUrl: string): void {
+function persistVideoPoster(project: ProjectExecutionContext, nodeId: string, videoUrl: string, posterUrl: string): void {
+  project.assertCurrent()
   const store = useGenerationCanvasStore.getState()
   const current = store.nodes.find((candidate) => candidate.id === nodeId)
   if (!current?.result || current.result.thumbnailUrl) return
@@ -89,14 +97,10 @@ export function StoryboardVideoPreview({
   compact,
   visibilityRoot,
 }: Props): JSX.Element {
-  const projectId = React.useSyncExternalStore(
-    subscribeDesktopHydratedProjectId,
-    getDesktopHydratedProjectId,
-    () => '',
-  )
+  const projectId = useOpenProjectId()
   const key = projectId ? posterCacheKey(projectId, videoUrl) : ''
   const configuredAspectRatio = readStoryboardMediaAspectRatio(node)
-  const [extractedPosterUrl, setExtractedPosterUrl] = React.useState(() => (key ? posterCache.get(key) || '' : ''))
+  const [extractedPosterUrl, setExtractedPosterUrl] = React.useState('')
   const [previewElement, setPreviewElement] = React.useState<HTMLElement | null>(null)
   const [aspectRatio, setAspectRatio] = React.useState(configuredAspectRatio)
   const [playing, setPlaying] = React.useState(false)
@@ -105,7 +109,7 @@ export function StoryboardVideoPreview({
   const resolvedPosterUrl = posterUrl || extractedPosterUrl
 
   React.useEffect(() => {
-    setExtractedPosterUrl((key && posterCache.get(key)) || '')
+    setExtractedPosterUrl('')
     setAspectRatio(configuredAspectRatio)
     setPlaying(false)
     setLightboxOpen(false)
@@ -121,17 +125,21 @@ export function StoryboardVideoPreview({
 
   React.useEffect(() => {
     if (resolvedPosterUrl || !projectId || !videoUrl || !previewElement || visibilityRoot === null) return undefined
+    return withProjectAction(project => {
+    project.assertCurrent()
+    if (project.binding.projectId !== projectId) return undefined
     let cancelled = false
     let cancelPaintWait = () => {}
     const stopObserving = observeDeferredNodeMediaVisibility(
       previewElement,
       () => {
         cancelPaintWait = scheduleAfterCanvasShellPaint(() => {
-          void requestVideoPoster(projectId, videoUrl)
+          void Promise.resolve().then(() => requestVideoPoster(project, videoUrl))
             .then((url) => {
               if (cancelled) return
+              project.assertCurrent()
               setExtractedPosterUrl(url)
-              persistVideoPoster(node.id, videoUrl, url)
+              persistVideoPoster(project, node.id, videoUrl, url)
             })
             .catch(() => {
               // The play affordance remains usable when poster extraction fails.
@@ -145,6 +153,7 @@ export function StoryboardVideoPreview({
       stopObserving()
       cancelPaintWait()
     }
+    })
   }, [node.id, previewElement, projectId, resolvedPosterUrl, videoUrl, visibilityRoot])
 
   const previewSrc = buildVideoPlaybackUrl(videoUrl)

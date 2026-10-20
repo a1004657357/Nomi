@@ -1,3 +1,5 @@
+import { sensitiveRequestHeaderValues } from "../requestPipeline";
+
 /** Public model-discovery diagnostics never contain a credential-bearing URL. */
 export function publicModelListUrl(raw: string): string {
   try {
@@ -41,7 +43,7 @@ export function modelListErrorRedactor(
   headers: Record<string, string>,
   query: Record<string, string> = {},
 ): (message: string) => string {
-  const secrets = [...Object.values(headers), ...Object.values(query)];
+  const secrets = [...sensitiveRequestHeaderValues(headers), ...Object.values(query)];
   for (const [key, value] of Object.entries(headers)) {
     if (/authorization/i.test(key)) secrets.push(value.replace(/^\S+\s+/, ""));
   }
@@ -66,7 +68,7 @@ export function modelListErrorRedactor(
   return (message) => {
     let safe = message;
     // Remove complete secrets before punctuation/quotes or the length limit can split them.
-    for (const value of ordered) safe = safe.replaceAll(value, "[REDACTED]");
+    for (const value of ordered) safe = safe.split(value).join("[REDACTED]");
     // Known values can destroy a URL scheme (e.g. X-Forwarded-Proto:https) or private-part
     // delimiter. Fail closed so unknown credentials cannot turn into a public URL/path.
     const urlStructure = /https?:\/\/|[?@#]/gi;

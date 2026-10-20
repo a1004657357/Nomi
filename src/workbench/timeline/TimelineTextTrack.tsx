@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconLetterCase } from '@tabler/icons-react'
 import { useWorkbenchStore } from '../workbenchStore'
@@ -154,7 +154,6 @@ export default function TimelineTextTrack(): JSX.Element {
               'text-[var(--nomi-ink-40)] leading-none text-micro font-medium pointer-events-none',
             )}
           >
-            {t('timelineEditor.textTrack.emptyHint')}
           </div>
         ) : null}
         {textClips.map((clip) => {
@@ -175,6 +174,7 @@ export default function TimelineTextTrack(): JSX.Element {
                   : 'border-[color-mix(in_oklch,var(--workbench-text)_36%,transparent)]',
               )}
               style={{ left: `${left}px`, width: `${width}px` }}
+              data-text-clip-id={clip.id}
               title={
                 clip.style === 'title' ? t('timelineEditor.textTrack.titleCard') : t('timelineEditor.textTrack.caption')
               }

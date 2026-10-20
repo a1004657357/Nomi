@@ -1,9 +1,12 @@
-import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import { isNodeGenerationOwnedByProduction, type ProductionRunsById } from '../../production/productionShotOwnership'
+import type { ProfileKind } from '../../api/modelCatalogApi'
+import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
 import {
   getGenerationNodeExecutionKind,
   type GenerationNodeExecutionKind,
   type GenerationNodeKind,
 } from '../model/generationNodeKinds'
+import { requiredModeForGenerationNode } from '../adapters/modelOptionsAdapter'
 
 export const CANVAS_BATCH_CONCURRENCY_STORAGE_KEY = 'nomi.canvas.batch-concurrency'
 export const DEFAULT_CANVAS_BATCH_CONCURRENCY = 6
@@ -70,11 +73,14 @@ export function nodesInCanvasProductionScope(
 export function eligibleGenerationNodeIds(
   nodes: readonly GenerationCanvasNode[],
   scope: CanvasGenerationScope = {},
+  productionRuns: ProductionRunsById = {},
 ): string[] {
   return nodesInCanvasProductionScope(nodes, scope)
     .filter((node) => {
       if (node.meta?.excludedFromBatch === true) return false
       if (!getGenerationNodeExecutionKind(node.kind)) return false
+      // 归制作流程生成的镜头（报价卡等确认 / 排队 / 生成中）节点状态仍是 idle——再算进「生成全部」就是重复扣费。
+      if (isNodeGenerationOwnedByProduction(node, productionRuns)) return false
       const status = node.status ?? 'idle'
       return status === 'idle' || status === 'error'
     })
@@ -94,23 +100,31 @@ export function shouldShowCanvasBatchGenerateDock(input: {
 
 export type CanvasGenerationExecutionGroup = {
   executionKind: GenerationNodeExecutionKind
+  requiredMode: ProfileKind
   nodeIds: string[]
   representativeKind: GenerationNodeKind
 }
 
 export function groupGenerationNodesByExecutionKind(
   nodes: readonly GenerationCanvasNode[],
+  edges: readonly GenerationCanvasEdge[] = [],
+  contextNodes: readonly GenerationCanvasNode[] = nodes,
 ): CanvasGenerationExecutionGroup[] {
-  const groups = new Map<GenerationNodeExecutionKind, CanvasGenerationExecutionGroup>()
+  const groups = new Map<string, CanvasGenerationExecutionGroup>()
   for (const node of nodes) {
     const executionKind = getGenerationNodeExecutionKind(node.kind)
     if (!executionKind) continue
-    const existing = groups.get(executionKind)
+    const requiredMode = requiredModeForGenerationNode(node, {
+      nodes: contextNodes as GenerationCanvasNode[],
+      edges: edges as GenerationCanvasEdge[],
+    })
+    const groupKey = `${executionKind}:${requiredMode}`
+    const existing = groups.get(groupKey)
     if (existing) {
       existing.nodeIds.push(node.id)
       continue
     }
-    groups.set(executionKind, { executionKind, nodeIds: [node.id], representativeKind: node.kind })
+    groups.set(groupKey, { executionKind, requiredMode, nodeIds: [node.id], representativeKind: node.kind })
   }
   return [...groups.values()]
 }

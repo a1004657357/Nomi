@@ -1,3 +1,6 @@
+import type { ProjectBinding } from '../../electron/shared/projectBinding'
+import type { DeconstructionProgress, ShotCutCoverage } from '../../electron/shared/canvas/shotTable'
+import type { VideoDepthMainOwnedPhase } from '../../electron/shared/canvas/videoDepthRun'
 /**
  * 媒体类桥口（抽帧 / 胶片条 / 按镜头拆 / 全局截图）的类型。
  * 从 bridge.ts 摘出来：那个文件已经顶到 800 行上限（R9），而这几口本来就自成一族（都走 electron/video、
@@ -20,6 +23,8 @@ export type DesktopMediaBridge = {
       videoUrl: string
       which: 'first' | 'last' | number
       projectId: string
+      /** 交互动作签发的原项目绑定：主进程据此在落盘前复验，换项目即取消发布。不带 = 明确项目的后台 IO。 */
+      projectBinding?: ProjectBinding
       forceRerun?: boolean
     }) => Promise<{ url: string }>
     /** 批量指定秒抽帧：只解析/下载一次源视频。 */
@@ -43,12 +48,67 @@ export type DesktopMediaBridge = {
       videoUrl: string
       projectId: string
     }) => Promise<{
+      /** 第 i 刀恒是联系表第 i 格——联系表按这份清单的 pts 点名拼出来，由构造保证。 */
       cuts: { seconds: number; score: number }[]
       durationSeconds: number
       sheetUrl: string | null
       sheetColumns: number
+      /** 联系表行数：主进程算好下发，渲染层**不许自己推**（两份算式会分叉，整张图会压扁）。 */
+      sheetRows: number
       sheetTileHeight: number
-      truncated: boolean
+      /** 这次给全了没有（超上限时按分数抬阈值，全片覆盖不变）。见 ShotCutCoverage。 */
+      coverage: ShotCutCoverage
+    }>
+    /**
+     * 视频拆解：切镜 + 每镜多帧读图 + 音轨转写 → 结构化分镜表。见 electron/video/deconstructVideo.ts。
+     * 与 detectShotCuts 的区别：那个只找切点（本地 ffmpeg、秒级、零成本），这个**读得懂内容**（要调模型、慢、花钱）。
+     * `failedShotIndexes` 是画面分析没成功的镜号——诚实回报，那几镜其余字段（如对白）仍可用。
+     */
+    onDeconstructionProgress: (callback: (event: DeconstructionProgress) => void) => () => void
+    deconstruct: (payload: {
+      requestId?: string
+      videoUrl: string
+      projectId: string
+      /**
+       * 这次对白走哪条转写线。不给 = 沿用自动解析（跟着文本大脑那家的音频线走）。
+       * `'cloud'` 是本地那条挂了之后用户点「改用云端重试」传进来的显式动作。
+       */
+      transcribe?: { vendorKey: string; modelKey: string } | 'cloud'
+      threshold?: number
+      framesPerShot?: number
+      customColumns?: { name: string; hint?: string }[]
+      concurrency?: number
+      shotIndexes?: number[]
+      /** 这次拆解挂在哪个分镜表节点上：付费令牌按它记预算，报价卡也按它说是哪张表。 */
+      nodeId?: string
+    }) => Promise<{
+      shots: {
+        index: number
+        startSeconds: number
+        endSeconds: number
+        durationSeconds: number
+        sourceFrameUrl: string
+        shotSize: string
+        mood: string
+        visual: string
+        onScreenText: string
+        dialogue: string
+        carriedOver: boolean
+        imagePrompt: string
+        motionPrompt: string
+        custom: Record<string, string>
+        visionFailed?: boolean
+        failureReason?: string
+      }[]
+      durationSeconds: number
+      hasAudio: boolean
+      /** 这张表是不是整条片子（超上限时自动抬了阈值，全片覆盖不变但行变少）。 */
+      cutCoverage: ShotCutCoverage
+      failedShotIndexes: number[]
+      /** 整次拆解层面的原因（如「对白没取到」）；UI 顶部一行显示，不摊进每一格。 */
+      failureReason?: string
+      /** 失败类别（机器可读）。`local-speech` = 本地离线转写那一路挂了，UI 据此给「改用云端重试」。 */
+      failureKind?: 'local-speech'
     }>
   }
   /**
@@ -60,11 +120,71 @@ export type DesktopMediaBridge = {
     get: () => Promise<ScreenshotHotkeyStatus>
     set: (payload: { enabled: boolean; accelerator: string }) => Promise<ScreenshotHotkeyStatus>
     openPermissionSettings: () => Promise<{ ok: boolean }>
-    setProjectId: (projectId: string) => Promise<{ ok: boolean }>
     /** 走查专用：handler 只在主进程 NOMI_E2E=1 时注册（全局热键是 OS 级按键，Playwright 发不出去）。 */
     e2eCapture?: () => Promise<{ ok: boolean }>
-    onCaptured: (cb: (payload: { url: string; width: number; height: number }) => void) => () => void
+    /** surfaceBinding：主进程抓屏前固定的项目面绑定，渲染层据此判断是否仍是原项目（不当授权用）。 */
+    onCaptured: (cb: (payload: { url: string; width: number; height: number; surfaceBinding: unknown }) => void) => () => void
     onDenied: (cb: (payload: { screenAccess: string }) => void) => () => void
     onFailed: (cb: (payload: { reason: string }) => void) => () => void
   }
+}
+
+/**
+ * 「提取深度」的主进程原语。
+ *
+ * 编排在渲染层（推理必须在 WebGPU 所在的渲染进程里跑），所以这五个方法都是渲染层
+ * 主动调的单向 invoke；主进程只在 prepare 期间往回推「下载/抽帧」两段进度——那两段
+ * 渲染层看不见，其余阶段的进度它自己就有。契约见 electron/video/depthVideoJob.ts。
+ */
+export type DesktopVideoDepthBridge = {
+  videoDepth: {
+    prepare: (payload: {
+      projectId: string
+      nodeId: string
+      sourceUrl: string
+    }) => Promise<{
+      jobId: string
+      totalFrames: number
+      outWidth: number
+      outHeight: number
+      depthModelUrl: string
+      ortWasmBaseUrl: string
+    }>
+    readFrames: (payload: { jobId: string; firstIndex: number; count: number }) => Promise<{ frames: Uint8Array[] }>
+    writeFrames: (payload: { jobId: string; frames: Uint8Array[] }) => Promise<{ ok: true }>
+    finish: (payload: { jobId: string }) => Promise<{ url: string; assetId?: string; frames: number }>
+    cancel: (payload: { jobId: string }) => Promise<{ ok: true }>
+    onEvent: (
+      callback: (event: {
+        jobId: string
+        nodeId: string
+        phase: VideoDepthMainOwnedPhase
+        doneBytes?: number
+        totalBytes?: number
+      }) => void,
+    ) => () => void
+  }
+}
+
+export type DesktopAssetDto = {
+  id: string
+  name: string
+  userId: string
+  projectId?: string | null
+  createdAt: string
+  updatedAt: string
+  data: Record<string, unknown>
+}
+
+export type DesktopAssetFolder = {
+  id: string
+  label: string
+  order: number
+}
+
+export type DesktopAssetFoldersState = {
+  version: 1
+  folders: DesktopAssetFolder[]
+  /** 素材 renderUrl → folderId。 */
+  assignments: Record<string, string>
 }

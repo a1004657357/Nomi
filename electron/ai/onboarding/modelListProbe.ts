@@ -9,24 +9,59 @@
  * 从 onboardingIpc.ts 移出——那份是 IPC 面，这份是领域原语（R9 分层）。
  */
 import type { AiSdkProviderKind } from "../../catalog/types";
+import { appFetch } from "../../appFetch";
+import {
+  appendQueryParams,
+  authHeaders,
+  buildHttpRequest,
+  type AuthType,
+  type BuiltRequest,
+  type VendorAuthSpec,
+} from "../requestPipeline";
 import { describeIllegalHeader, findIllegalHeader, isJsonRecord, mergeHeadersCaseInsensitive, pickUpstreamMessage } from "../../jsonUtils";
-import { parseModelListPage, type ModelListFailureKind } from "./modelListResponse";
+import { parseModelListPage, type ModelListResult, type ModelListDescriptor, type ModelListFailureKind } from "./modelListResponse";
 import { modelListErrorRedactor } from "./modelListSafety";
+import { createExplicitProxyDispatcher } from "../../systemProxy";
+import { desktopT } from "../../desktopStrings";
+import { isRedirectRefusal, safeNetworkUrl } from "../../networkErrorDetails";
+import type { Dispatcher } from "undici";
 export type { ModelListFailureKind } from "./modelListResponse";
 
+function redirectRefusalMessage(location: string | null, from: URL): string {
+  if (location) {
+    try {
+      return desktopT("network.credentialRedirectTo", { target: safeNetworkUrl(new URL(location, from).toString()) });
+    } catch { /* 不可解析的 Location：退回不带地址的那句 */ }
+  }
+  return desktopT("network.credentialRedirect");
+}
+
 export async function describeNetworkErrorLazy(error: unknown): Promise<string> {
+  if (isRedirectRefusal(error)) return desktopT("network.credentialRedirect");
   const { describeNetworkError } = await import("../../systemProxy");
-  return describeNetworkError(error);
+  // 这句话直接出现在设置页地址栏下面（连接状态说明），不能是英文原话（2026-09-29）。
+  return desktopT("network.unreachable", { reason: describeNetworkError(error) });
 }
 
 /** 上游失败体 → 那句人话。键优先级表住 jsonUtils（全仓唯一），挑不出来才退回原文/HTTP 码。 */
+function nextStepForUpstreamError(status: number, message: string): string {
+  if (status === 401 || status === 403 || /api[_ -]?key|auth|forbidden|permission/i.test(message)) return 'check the API key, auth header, and relay permissions, then retry'
+  if (status === 404 || status === 405) return 'check the saved base URL and that its /models route is enabled'
+  if (status === 429) return 'wait for the provider rate limit to reset, then retry'
+  if (status >= 500) return 'check the relay/provider status and retry when the upstream is healthy'
+  return 'check the endpoint response and authentication settings, then retry'
+}
+
+/** Keep status, safe provider-body context, and a repair action together at the shared error boundary. */
 export function upstreamErrorText(bodyText: string, status: number, sanitize?: (message: string) => string): string {
   let parsed: unknown;
   try { parsed = bodyText ? JSON.parse(bodyText) : null; } catch { parsed = null; }
   const said = isJsonRecord(parsed) ? pickUpstreamMessage(parsed, sanitize) : "";
-  if (/^no message available[.!]?$/i.test(said || bodyText.trim())) return `HTTP ${status}`;
-  const message = said || bodyText.trim() || `HTTP ${status}`;
-  return (sanitize ? sanitize(message) : message).slice(0, 300);
+  const rawBody = sanitize ? sanitize(bodyText.trim()) : bodyText.trim();
+  const usableMessage = said && !/^no message available[.!]?$/i.test(said) ? said : '';
+  const bodySummary = usableMessage || (rawBody ? 'provider returned no usable error message' : 'provider returned an empty error body');
+  const safeSummary = bodySummary.slice(0, 220);
+  return `HTTP ${status}: provider returned ${safeSummary}. Next: ${nextStepForUpstreamError(status, safeSummary)}.`.slice(0, 500);
 }
 
 /** payload.headers（用户自填的中转请求头）→ 干净的 kv。 */
@@ -42,27 +77,36 @@ export function readExtraHeaders(raw: unknown): Record<string, string> {
   return out;
 }
 
-/** 按协议给鉴权头（anthropic 用 x-api-key + 版本；其余 Bearer）。拉模型/可达性探测共用。 */
+/**
+ * 按协议给鉴权头（anthropic 用 x-api-key + 版本；其余 Bearer）。拉模型/可达性探测共用。
+ *
+ * 2026-09-21：这里原来自己写死 `authorization: Bearer ${apiKey}` —— 全仓第二处拼鉴权头的地方，
+ * 于是 vendor.authScheme（Higgsfield 的 `Key id:secret`）在「测试连接 / 可达性探测」这条路上
+ * 根本没有出现的机会。现在头由 requestPipeline.authHeaders 这一个 owner 拼；`auth` 给了就以它为准
+ * （调用方从已保存的连接派生，见 catalog/vendorAuthSpec.connectionAuthSpec），没给才按协议缺省。
+ */
 export function buildAuthHeaders(
   providerKind: AiSdkProviderKind,
   apiKey: string,
   extraHeaders: Record<string, string>,
+  auth?: VendorAuthSpec,
 ): Record<string, string> {
+  const spec: VendorAuthSpec = auth
+    ?? (providerKind === "anthropic" ? { authType: "x-api-key", headerName: "x-api-key" } : { authType: "bearer" });
   return mergeHeadersCaseInsensitive(
-    providerKind === "anthropic"
-      ? { "anthropic-version": "2023-06-01", ...(apiKey ? { "x-api-key": apiKey } : {}) }
-      : { ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+    {
+      ...(providerKind === "anthropic" ? { "anthropic-version": "2023-06-01" } : {}),
+      ...authHeaders(spec, apiKey),
+    },
     extraHeaders,
   );
 }
 
-export type ModelListResult =
-  | { ok: true; models: string[]; statuses: number[]; partial?: boolean }
-  | { ok: false; status?: number; error: string; statuses: number[]; failureKind?: ModelListFailureKind };
+export type { ModelListResult } from "./modelListResponse";
 
 type Failure = Extract<ModelListResult, { ok: false }> & { failureKind: ModelListFailureKind };
 const FAILURE_PRIORITY: Record<ModelListFailureKind, number> = {
-  unsupported: 0, invalid_response: 1, upstream: 2, network: 3, rate_limit: 4, auth: 5,
+  unsupported: 0, invalid_response: 1, upstream: 2, network: 3, redirect: 3, rate_limit: 4, auth: 5,
 };
 const MAX_PAGES = 10;
 const MAX_MODELS = 2000;
@@ -75,19 +119,38 @@ function failureKindForStatus(status: number): ModelListFailureKind {
   return "upstream";
 }
 
-function modelListCandidates(providerKind: AiSdkProviderKind, baseUrl: string, query: Record<string, string>): URL[] {
+export function buildModelListRequests(input: {
+  providerKind: AiSdkProviderKind;
+  baseUrl: string;
+  authType: AuthType;
+  apiKey: string;
+  authHeader?: string;
+  authQueryParam?: string;
+  headers: Record<string, string>;
+  query?: Record<string, string>;
+}): BuiltRequest[] {
+  const { providerKind, baseUrl } = input;
   const base = new URL(baseUrl);
   if (!/^https?:$/.test(base.protocol) || base.username || base.password) throw new Error("Invalid API address");
   base.hash = "";
+  const baseQuery = Object.fromEntries(base.searchParams);
+  base.search = "";
   const path = base.pathname.replace(/\/+$/, "");
   const versioned = /\/v\d+(?:[a-z]+\d*)?$/i.test(path);
-  const paths = /\/models$/i.test(path) ? [path] : versioned ? [`${path}/models`]
-    : providerKind === "anthropic" ? [`${path}/v1/models`] : [`${path}/models`, `${path}/v1/models`];
-  return paths.map((pathname) => {
-    const url = new URL(base);
-    url.pathname = pathname;
-    for (const [key, value] of Object.entries(query)) if (key && value) url.searchParams.set(key, value);
-    return url;
+  const paths = /\/models$/i.test(path) ? ["/models"] : versioned ? ["/models"]
+    : providerKind === "anthropic" ? ["/v1/models"] : ["/models", "/v1/models"];
+  return paths.map((operationPath) => {
+    const built = buildHttpRequest({
+      baseUrl: base.toString(),
+      authType: input.authType,
+      authHeaderName: input.authHeader,
+      authQueryParam: input.authQueryParam,
+      apiKey: input.apiKey,
+      context: {},
+      operation: { method: "GET", path: operationPath, query: { ...baseQuery, ...(input.query || {}) } },
+      extraHeaders: input.headers,
+    });
+    return { ...built, url: appendQueryParams(built.url, built.query) };
   });
 }
 
@@ -111,7 +174,7 @@ export async function fetchModelList(
   baseUrl: string,
   headers: Record<string, string>,
   signal: AbortSignal,
-  options: { query?: Record<string, string> } = {},
+  options: { query?: Record<string, string>; proxyUrl?: string; validator?: { url: string; etag: string } } = {},
 ): Promise<ModelListResult> {
   const query = options.query || {};
   const redact = modelListErrorRedactor(baseUrl, headers, query);
@@ -119,10 +182,27 @@ export async function fetchModelList(
   const failure = (failureKind: ModelListFailureKind, error: string, status?: number): Failure => ({
     ok: false, failureKind, ...(status !== undefined ? { status } : {}), error: redact(error), statuses,
   });
+  let dispatcher: Dispatcher | undefined;
+  try {
+    dispatcher = options.proxyUrl ? createExplicitProxyDispatcher(options.proxyUrl) : undefined;
+  } catch (error) {
+    return failure("invalid_response", error instanceof Error ? error.message : "Invalid provider proxy URL");
+  }
+  try {
+    return await (async (): Promise<ModelListResult> => {
   const headerProblem = findIllegalHeader(headers);
   if (headerProblem) return failure("auth", describeIllegalHeader(headerProblem).message);
-  let candidates: URL[];
-  try { candidates = modelListCandidates(providerKind, baseUrl, query); }
+  let candidates: BuiltRequest[];
+  try {
+    candidates = buildModelListRequests({
+      providerKind,
+      baseUrl,
+      authType: "none",
+      apiKey: "",
+      headers,
+      query,
+    });
+  }
   catch { return failure("invalid_response", "Invalid API address"); }
   let strongest: Failure | undefined;
   const remember = (failed: Failure): Failure => {
@@ -131,9 +211,10 @@ export async function fetchModelList(
   };
   let sawEmptyList = false;
   for (const candidate of candidates) {
-    let url = candidate;
+    let url = new URL(candidate.url);
     const seenPages = new Set<string>();
     const models = new Set<string>();
+    const descriptors = new Map<string, ModelListDescriptor>();
     for (let pageNumber = 0; pageNumber < MAX_PAGES; pageNumber += 1) {
       seenPages.add(pageIdentity(url));
       let res: Response;
@@ -141,16 +222,25 @@ export async function fetchModelList(
       let status: number | undefined;
       try {
         // Never auto-follow redirects with arbitrary gateway auth headers/query credentials.
-        res = await fetch(url.toString(), { method: "GET", headers, signal, redirect: "manual" });
+        res = await appFetch(url.toString(), { method: candidate.method, headers: { ...candidate.headers, ...(pageNumber === 0 && options.validator?.url === url.toString() ? { "If-None-Match": options.validator.etag } : {}) }, signal, redirect: "manual", ...(dispatcher ? { dispatcher } : {}) });
         statuses.push(res.status);
         status = res.status;
         body = await res.text();
       } catch (error) {
         const failed = status === 401 || status === 403 || status === 429
-          ? failure(failureKindForStatus(status), `HTTP ${status}`, status)
+          ? failure(failureKindForStatus(status), upstreamErrorText('', status, redact), status)
           : failure("network", await describeNetworkErrorLazy(error), status);
         const best = remember(failed);
         if (pageNumber > 0 || signal.aborted) return best;
+        break;
+      }
+      if (res.status === 304 && pageNumber === 0 && options.validator?.url === url.toString()) {
+        return { ok: true, models: [], statuses, notModified: true, validator: options.validator };
+      }
+      if (res.status >= 300 && res.status < 400) {
+        // 手动模式把 3xx 原样交回来：不跟随，但这里拿得到 Location，就把目标地址告诉用户（只给主机和路径，不带查询串）。
+        const failed = remember(failure("redirect", redirectRefusalMessage(res.headers.get("location"), url), res.status));
+        if (pageNumber > 0) return failed;
         break;
       }
       if (!res.ok) {
@@ -160,30 +250,32 @@ export async function fetchModelList(
       }
       const page = parseModelListPage(body, redact);
       if (!page.ok) {
-        const failed = remember(failure(page.failureKind, page.error || "Response is not a valid model list", res.status));
+        const failed = remember(failure(page.failureKind, upstreamErrorText(body, res.status, redact), res.status));
         if (pageNumber > 0) return failed;
         break;
       }
       for (const id of page.models) models.add(id);
+      for (const descriptor of page.descriptors || []) descriptors.set(descriptor.id, descriptor);
       let next: URL | undefined;
       if (page.next || page.afterId) {
         try {
           next = page.next ? new URL(page.next, url) : new URL(url);
           if (page.afterId) next.searchParams.set("after_id", page.afterId);
-          if (next.origin !== candidate.origin || next.pathname !== candidate.pathname || next.username || next.password || next.hash) {
+          const candidateUrl = new URL(candidate.url);
+          if (next.origin !== candidateUrl.origin || next.pathname !== candidateUrl.pathname || next.username || next.password || next.hash) {
             return remember(failure("invalid_response", "Unsafe model-list pagination link", res.status));
           }
           // Keep saved base/query authentication when next contains only its cursor.
-          for (const [key, value] of candidate.searchParams) if (!next.searchParams.has(key)) next.searchParams.set(key, value);
+          for (const [key, value] of candidateUrl.searchParams) if (!next.searchParams.has(key)) next.searchParams.set(key, value);
           for (const [key, value] of Object.entries(query)) if (key && value) next.searchParams.set(key, value);
           if (seenPages.has(pageIdentity(next))) return remember(failure("invalid_response", "Repeated model-list pagination cursor", res.status));
         } catch { return remember(failure("invalid_response", "Invalid model-list pagination link", res.status)); }
       }
       if (models.size > MAX_MODELS || (next && (models.size >= MAX_MODELS || pageNumber + 1 === MAX_PAGES))) {
-        return { ok: true, models: [...models].slice(0, MAX_MODELS), statuses, partial: true };
+        return { ok: true, models: [...models].slice(0, MAX_MODELS), ...(descriptors.size ? { descriptors: [...descriptors.values()].slice(0, MAX_MODELS) } : {}), statuses, partial: true };
       }
       if (next) { url = next; continue; }
-      if (models.size > 0) return { ok: true, models: [...models], statuses };
+      if (models.size > 0) return { ok: true, ...(pageNumber === 0 && res.headers.get("etag") ? { validator: { url: url.toString(), etag: res.headers.get("etag")! } } : {}), models: [...models], ...(descriptors.size ? { descriptors: [...descriptors.values()] } : {}), statuses };
       sawEmptyList = true;
       break;
     }
@@ -192,4 +284,8 @@ export async function fetchModelList(
     return { ok: true, models: [], statuses };
   }
   return strongest || failure("invalid_response", "Unable to retrieve a model list");
+    })();
+  } finally {
+    if (dispatcher) await dispatcher.close().catch(() => undefined);
+  }
 }

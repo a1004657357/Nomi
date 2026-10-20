@@ -1,0 +1,34 @@
+{
+  "anchorBytes": 48132,
+  "anchorNote": "2026-09-21 立账。此前每一次抬基线的理由写在 scripts/mcp-payload-baseline.json 的 `reason` 散文里——那段散文已经长到没人逐条读得完，也没有任何机器判据能确认「这一次涨的字节买到了什么」。从这个锚点起，**每一次抬基线都必须在这里逐条记账**：哪个工具、多少字节、凭哪条用户拍板。门岗校验这条链首尾相接、末条等于当前基线。",
+  "raises": [
+    {
+      "tool": "nomi_model_setup",
+      "fromBytes": 48132,
+      "toBytes": 50534,
+      "bytes": 2402,
+      "decision": "用户 2026-09-21 拍板「MCP 接模型必须发版前解决」（memory decisions；方案 docs/plan/2026-09-18-agent-model-onboarding.md），实现在 commit d72e0b7b1 / 4b43f3ac9。主会话 2026-09-22 授权本次抬一次并逐条记账。",
+      "why": "这 2402 字节是 F1–F6「接模型换成从动词声明派生」那一刀的**净**增量，逐条实测（measureMcpToolsListPayload 逐个摘掉工具再测）：新上三口 nomi_model_setup 3919 B、nomi_try_model 1368 B、nomi_remove_provider 1140 B，合计 6427 B；同 commit 退役两口手写传输目录（nomi_integration / nomi_integration_manage）与 catalogManagement.ts，退回 4025 B。6427 − 4025 = 2402。买到的是三件对外宿主此前拿不到的东西：① 接一家供应商的五个动作从**动词声明派生**（schema/必填/注解全是算出来的，check:tool-face 与 check:model-schema 因此各减两条基线而不是新增）；② 撤不回的删除单独成口（nomi_remove_provider），跨格必拆——合进去等于让「接一家」和「删一家」在宿主的审批面上长得一样；③ nomi_try_model 让宿主能在**接完之后真跑一次**，而 09-15 真机四轮零产出的根因正是「没跑过就说接好了」。这不是散文漂移：三口的描述全部由 verbDeclarations 派生，没有一个字节花在手写摘要上。**账本形状的一处已知限制**：它只记得下「抬」，记不下同一刀里的退役credit，所以上面这条按净值记，而三个新口与两个旧口的实测字节写在这里；下一次改这个门岗时值得把 retirements 一起做进去。"
+    },
+    {
+      "tool": "nomi_canvas_edit", "fromBytes": 50534, "toBytes": 51536, "bytes": 1002,
+      "decision": "2026-10-20 user-requested official merge preserving customized storyboard-table editing; docs/plan/2026-10-20-official-v0232-custom-integration.md.",
+      "why": "Restore twelve typed storyboard columns to the canonical patch_shots boundary, rather than retaining the obsolete Agent engine. Image/video prompts, scene, framing, camera, performance, dialogue, props, sound and notes become discoverable and validated. Exact per-tool schema delta is 1002 UTF-8 bytes against official v0.23.2; storyboardPatchShots.test.ts verifies table edits reach the real outbound compiler."
+    },
+    {
+      "tool": "nomi_operation_plan", "fromBytes": 51536, "toBytes": 52815, "bytes": 1279,
+      "decision": "2026-10-20 user-requested merge retaining authored storyboard content and generation behavior; same integration plan.",
+      "why": "Preserve the customized storyboard author fields through the official candidate planning schema, persistence and media-prompt compiler. The same source schema now describes these fields to internal and external Agents; there is no parallel MCP schema. Measured per-tool delta is 1279 bytes; storyboardPlanProvenance.test.ts covers preservation and independent image/video prompt compilation."
+    },
+    {
+      "tool": "nomi_render_director", "fromBytes": 52815, "toBytes": 53483, "bytes": 668,
+      "decision": "2026-10-20 merge preserving customized Blender Director MCP integration; same integration plan.",
+      "why": "Retain the customized local director rendering entry through the official project-lease and approval dispatcher, without reviving the legacy unbound canvas route. Measured tool payload is 667 bytes plus one tools-array separator, including desktop-only limitations and node-ID output semantics. customLocalCanvasDispatcher and the focused MCP lease tests verify refusal and guarded dispatch."
+    },
+    {
+      "tool": "nomi_generate_batch", "fromBytes": 53483, "toBytes": 54083, "bytes": 600,
+      "decision": "2026-10-20 merge preserving customized batch generation confirmation; same integration plan.",
+      "why": "Retain the customized batch-planning entry with a project lease and separate user spend confirmation; this entry does not itself authorize paid generation. Measured tool payload is 599 bytes plus one tools-array separator, including pending-confirmation and no-media-output semantics. Shared dispatcher regression coverage prevents direct unapproved dispatch and preserves the original 17-byte locale-independent baseline slack."
+    }
+  ]
+}

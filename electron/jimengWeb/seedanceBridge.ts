@@ -669,7 +669,7 @@ export async function queryJimengWebTask(input: {
         sourceServerUrl: serverUrl,
         sourceFileId: file.fileId,
         sourceQuality: file.quality || null,
-      }) as { id?: string; name?: string; data?: { url?: string } };
+      }, mediaType) as { id?: string; name?: string; data?: { url?: string } };
       const url = trim(saved.data?.url);
       if (!url) throw new Error("即梦 Web 结果已生成，但写入 Nomi 项目资产失败");
       return {

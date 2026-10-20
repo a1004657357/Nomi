@@ -2,7 +2,7 @@
 // （app 二进制 NOMI_MCP_STDIO）吐出的 widget，在一个符合 MCP Apps 规范的宿主里真的能渲染。
 // 绕开 Claude 桌面版当前的 #671 前端 bug（custom server 不渲 iframe，Claude 侧未修）——那不是我们的问题。
 //
-// 流程：起真 stdio server → initialize(声明 io.modelcontextprotocol/ui) → tools/list 拿 nomi_generate 的
+// 流程：起真 stdio server → initialize(声明 io.modelcontextprotocol/ui) → tools/list 拿 nomi_run_start 的
 // _meta.ui.resourceUri → resources/read 取**server 真吐的 widget HTML** → 在 chromium 里当 iframe 装进一个
 // 迷你宿主页（做 ui/initialize↔tool-result postMessage 握手）→ 注入 canonical nomiRun → 截图。零生成、零额度。
 // 用法：pnpm run build && node tests/ux/mcp-apps-host-render.e2e.mjs
@@ -29,9 +29,39 @@ const ok = (c, l) => { if (!c) throw new Error(`FAIL: ${l}`); passed += 1; conso
 const UI_EXT = 'io.modelcontextprotocol/ui'
 const MIME = 'text/html;profile=mcp-app'
 
-const child = spawn(require('electron'), withLinuxNoSandbox([repoRoot, '--disable-gpu']), {
-  cwd: repoRoot,
-  env: { ...process.env, NOMI_MCP_STDIO: '1', NOMI_SETTINGS_DIR: tmp, NOMI_ELECTRON_USER_DATA_DIR: tmp, NOMI_PROJECTS_DIR: path.join(tmp, 'projects'), NOMI_CAPABILITY_DIR: path.join(tmp, 'cap') },
+const appBundle = process.env.NOMI_APP_PATH || path.join(repoRoot, 'release', 'mac-arm64', 'Nomi.app')
+const packaged = process.platform === 'darwin' && fs.existsSync(path.join(appBundle, 'Contents', 'MacOS', 'Nomi'))
+const appExecutable = packaged ? path.join(appBundle, 'Contents', 'MacOS', 'Nomi') : require('electron')
+const appArgs = packaged ? [] : withLinuxNoSandbox([repoRoot, '--disable-gpu'])
+// 打包版 MCP 入口必须经过同 bundle 的 bare-Node launcher。直接执行 Electron 主进程会
+// 启动 GUI/单实例路径而不是把 stdio 接口交给宿主；发布冒烟使用同一条已验证路径。
+const launcherScript = packaged
+  ? path.join(appBundle, 'Contents', 'Resources', 'app.asar', 'dist-electron', 'capabilityCore', 'mcpNodeLauncher.js')
+  : null
+const spawnCommand = packaged
+  ? path.join(appBundle, 'Contents', 'Frameworks', 'Nomi Helper.app', 'Contents', 'MacOS', 'Nomi Helper')
+  : appExecutable
+const spawnArgs = packaged ? [launcherScript] : appArgs
+
+const child = spawn(spawnCommand, spawnArgs, {
+  cwd: packaged ? tmp : repoRoot,
+  env: {
+    ...process.env,
+    NOMI_E2E: '1',
+    NOMI_E2E_ALLOW_MULTI_INSTANCE: '1',
+    NOMI_MCP_STDIO: '1',
+    NOMI_SETTINGS_DIR: tmp,
+    NOMI_ELECTRON_USER_DATA_DIR: tmp,
+    NOMI_PROJECTS_DIR: path.join(tmp, 'projects'),
+    NOMI_CAPABILITY_DIR: path.join(tmp, 'cap'),
+    ...(packaged
+      ? {
+          ELECTRON_RUN_AS_NODE: '1',
+          NOMI_MCP_APP_COMMAND: appExecutable,
+          NOMI_MCP_APP_ARGS: '[]',
+        }
+      : {}),
+  },
   stdio: ['pipe', 'pipe', 'inherit'],
 })
 const pending = new Map()
@@ -51,15 +81,18 @@ try {
   // 1) initialize —— 声明 UI 扩展（像一个真 MCP Apps 宿主）。
   let init = null
   for (let i = 0; i < 20 && !init; i++) {
-    try { init = await rpc('initialize', { protocolVersion: '2026-01-26', capabilities: { extensions: { [UI_EXT]: { mimeTypes: [MIME] } } } }, 4000) } catch { await new Promise((r) => setTimeout(r, 1000)) }
+    // MCP Apps 的 UI 扩展独立于核心协议版本协商；Nomi 当前支持的核心版本是
+    // 2025-11-25，不能把扩展规范日期误当成 initialize.protocolVersion。
+    try { init = await rpc('initialize', { protocolVersion: '2025-11-25', capabilities: { extensions: { [UI_EXT]: { mimeTypes: [MIME] } } } }, 4000) } catch { await new Promise((r) => setTimeout(r, 1000)) }
   }
   ok(init?.result, '真 Nomi stdio server 起来了（app 二进制 NOMI_MCP_STDIO）')
 
-  // 2) tools/list —— nomi_generate 应带 _meta.ui.resourceUri。
+  // 2) tools/list —— 面收敛后挂活 widget 的是 nomi_run_start（+ nomi_read 按 target 运行时决定），
+  //    tools/list 预声明 _meta.ui.resourceUri（mcpProtocol.WIDGET_TOOL_NAMES）。
   const tools = (await rpc('tools/list', {})).result.tools
-  const gen = tools.find((t) => t.name === 'nomi_generate')
+  const gen = tools.find((t) => t.name === 'nomi_run_start')
   const uri = gen?._meta?.ui?.resourceUri
-  ok(uri && uri.startsWith('ui://'), `nomi_generate 带 _meta.ui.resourceUri（${uri}）`)
+  ok(uri && uri.startsWith('ui://'), `nomi_run_start 带 _meta.ui.resourceUri（${uri}）`)
 
   // 3) resources/read —— 取 server 真吐的 widget HTML（不是读 .ts，是走协议拿）。
   const read = (await rpc('resources/read', { uri })).result
@@ -163,8 +196,9 @@ try {
   await gateCtx.frame.click('#decideBtn')
   await gateCtx.page.waitForTimeout(400)
   const toolCalls = await gateCtx.page.evaluate(() => window.__toolCalls)
-  ok(toolCalls.length === 1 && toolCalls[0].name === 'nomi_decide_gate', '卡内批准发出 tools/call nomi_decide_gate（SEP-1865 代理）')
-  ok(toolCalls[0].arguments.choiceKey === 'kinetic' && toolCalls[0].arguments.decision === 'approved', '决议参数带选中的 choiceKey')
+  // 面收敛：可逆创意门表态并入 nomi_run_gate（action=decide）——widget decideGate 发的就是它（mcpAppWidget.ts）。
+  ok(toolCalls.length === 1 && toolCalls[0].name === 'nomi_run_gate', '卡内批准发出 tools/call nomi_run_gate（SEP-1865 代理）')
+  ok(toolCalls[0].arguments.action === 'decide' && toolCalls[0].arguments.choiceKey === 'kinetic' && toolCalls[0].arguments.decision === 'approved', '决议参数带 action=decide 与选中的 choiceKey')
   const afterDecide = await gateCtx.frame.evaluate(() => ({
     gateHidden: document.querySelector('#gate')?.hidden === true,
     msg: document.querySelector('#msg')?.textContent || '',

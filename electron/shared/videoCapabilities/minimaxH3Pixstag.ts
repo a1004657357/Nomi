@@ -87,6 +87,6 @@ export const MINIMAX_H3_PIXSTAG_ARCHETYPE: ModelArchetype = {
   ],
   defaultModeId: "t2v",
   transportTaskKind: "text_to_video",
-  identifierPatterns: ["MiniMax-H3"],
+  identifierPatterns: ["pixstag/MiniMax-H3"],
   modes: MODES,
 };

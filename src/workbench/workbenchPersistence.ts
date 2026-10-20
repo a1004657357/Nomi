@@ -1,10 +1,13 @@
+import { normalizeShotTableMeta } from '../../electron/shared/canvas/shotTable'
 import { normalizeWorkbenchDocument, type WorkbenchDocument } from './workbenchTypes'
 import { createDefaultTimeline, normalizeTimeline } from './timeline/timelineMath'
 import type { TimelineState } from './timeline/timelineTypes'
 import type { GenerationCanvasSnapshot } from './generationCanvas/model/generationCanvasTypes'
 
 export type SerializedWorkbenchState = {
-  workbenchDocument: WorkbenchDocument
+  /** P2 多文档：原稿集合。旧单文档字段 workbenchDocument 不再产出（读侧兼容见 projectNormalize）。 */
+  workbenchDocuments: WorkbenchDocument[]
+  activeDocumentId: string
   timeline: TimelineState
   generationCanvas: GenerationCanvasSnapshot
 }
@@ -16,8 +19,10 @@ export function serializeWorkbenchState(input: {
   timeline?: unknown
   generationCanvas?: unknown
 }): SerializedWorkbenchState {
+  const doc = normalizeWorkbenchDocument(input.workbenchDocument)
   return {
-    workbenchDocument: normalizeWorkbenchDocument(input.workbenchDocument),
+    workbenchDocuments: [doc],
+    activeDocumentId: doc.id,
     timeline: input.timeline ? normalizeTimeline(input.timeline) : createDefaultTimeline(),
     generationCanvas: normalizeGenerationCanvasSnapshot(input.generationCanvas),
   }
@@ -40,6 +45,9 @@ export function normalizeGenerationCanvasSnapshot(input: unknown): GenerationCan
   }
   return {
     ...input,
+    nodes: input.nodes.map((node) => node.kind === 'shot_table'
+      ? { ...node, meta: normalizeShotTableMeta(node.meta) }
+      : node),
     groups: Array.isArray(input.groups) ? input.groups : [],
   }
 }

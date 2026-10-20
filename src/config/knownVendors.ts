@@ -11,6 +11,7 @@
  */
 
 import i18n from '../i18n'
+import { VENDOR_LOGOS } from '../assets/vendor-logos'
 
 export type KnownVendorPromo = {
   /** 卡片底部话术正文。 */
@@ -69,12 +70,19 @@ export type KnownVendor = {
   /** 「新手推荐」软标：仅未接入时显示，帮纯新人在多家里有个默认起点（聚合中转一个 key 全解锁）。
    *  软提示，不钦点、不占 C 位（用户拍板：留但只当软提示）。 */
   recommended?: boolean
+  /**
+   * 该供应商支持「先填 key → 继续验证」的两步接入流程（KnownVendorKeyConnectPage → openWizard）。
+   * 缺省 true（当前全部已知供应商均支持 wizard 验证晋级）；
+   * 设为 false 的供应商保存 key 后直接可用，不需要经过认证运行。
+   * 推导规则：availableKnown 行的 onOpen 由此字段 derive，不再硬编码 vendorKey 白名单。
+   */
+  usesPlatformConnect?: boolean
 }
 
 export const KNOWN_VENDORS: readonly KnownVendor[] = [
   {
     vendorKey: 'apimart',
-    logo: new URL('../assets/vendor-logos/apimart.png', import.meta.url).href,
+    logo: VENDOR_LOGOS.apimart,
     glyph: 'A',
     tagline: '一个 key，解锁全部预置模型',
     recommended: true, // 聚合中转，一个 key 解锁图/视频/文本/配音 → 新手最省事的起点
@@ -88,6 +96,7 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
   {
     // Official default-account effective rates; paid plans have separate limits (checked 2026-09-12).
     vendorKey: 'agnes',
+    logo: VENDOR_LOGOS.agnes,
     glyph: 'Ag',
     tagline: '文本、图片与视频 · 可用模型以当前账户为准',
     credentialPlaceholder: '粘贴 Agnes API Key',
@@ -115,7 +124,7 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
   },
   {
     vendorKey: 'kie',
-    logo: new URL('../assets/vendor-logos/kie.png', import.meta.url).href,
+    logo: VENDOR_LOGOS.kie,
     glyph: 'K',
     tagline: '一个 key，解锁内置模型',
     promo: {
@@ -126,7 +135,7 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
   },
   {
     vendorKey: 'modelscope',
-    logo: new URL('../assets/vendor-logos/modelscope.png', import.meta.url).href,
+    logo: VENDOR_LOGOS.modelscope,
     glyph: '魔',
     tagline: '官方原生 · 绑定阿里云每天免费额度',
     promo: {
@@ -137,7 +146,7 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
   },
   {
     vendorKey: 'volcengine',
-    logo: new URL('../assets/vendor-logos/volcengine.png', import.meta.url).href,
+    logo: VENDOR_LOGOS.volcengine,
     glyph: '火',
     tagline: '官方原生 · 豆包 Seedream / Seedance',
     promo: {
@@ -147,11 +156,74 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
     },
   },
   {
+    vendorKey: 'minimax',
+    logo: VENDOR_LOGOS.minimax,
+    glyph: 'M',
+    tagline: '官方原生 · M3 文本、H3 视频与 Speech 2.8',
+    credentialPlaceholder: '粘贴 MiniMax API Key',
+    promo: {
+      text: 'MiniMax 官方 API，提供 M3 文本与 Agent、H3 多模态视频和 Speech 2.8 高保真配音。',
+      ctaLabel: '打开 MiniMax 平台',
+      url: 'https://platform.minimax.io',
+    },
+  },
+  {
+    vendorKey: 'elevenlabs',
+    logo: VENDOR_LOGOS.elevenlabs,
+    glyph: 'E',
+    tagline: '官方原生 · 配音、音乐、音效与转写',
+    credentialPlaceholder: '粘贴 ElevenLabs API Key',
+    promo: {
+      text: 'ElevenLabs 官方 API，覆盖 Eleven v3、Music v2、Sound Effects v2 与 Scribe v2。',
+      ctaLabel: '打开 ElevenLabs',
+      url: 'https://elevenlabs.io/app/developers/api-keys',
+    },
+  },
+  {
+    vendorKey: 'meshy',
+    logo: VENDOR_LOGOS.meshy,
+    glyph: 'M',
+    tagline: '官方原生 · Meshy 7 单图生成带纹理 3D',
+    credentialPlaceholder: '粘贴 Meshy API Key',
+    promo: {
+      text: 'Meshy 官方 API，可从单张物体图生成带 PBR 材质的 GLB 资产。',
+      ctaLabel: '打开 Meshy 控制台',
+      url: 'https://www.meshy.ai/settings/api',
+    },
+  },
+  {
+    vendorKey: 'fal',
+    logo: VENDOR_LOGOS.fal,
+    glyph: 'F',
+    tagline: '官方队列 · 图片、视频、音频与 3D 模型',
+    credentialPlaceholder: '粘贴 fal.ai API Key',
+    credentialHint: '在 fal.ai Dashboard 创建 API Key。不同模型的价格、限额和可用区域以当前账户为准。凭证本地加密存储。',
+    promo: {
+      text: 'fal.ai 官方队列，统一提交、状态和结果生命周期；本目录只保留已对账的旗舰模型。',
+      ctaLabel: '打开 fal.ai',
+      url: 'https://fal.ai/dashboard/keys',
+    },
+  },
+  {
+    vendorKey: 'runway',
+    logo: VENDOR_LOGOS.runway,
+    glyph: 'Rw',
+    tagline: '官方原生 · Gen-4.5 与 Gen-4 Turbo 视频',
+    credentialPlaceholder: '粘贴 Runway API Key',
+    credentialHint: '在 Runway Dev 创建 API Key。生成会消耗 credits；凭证本地加密存储。',
+    promo: {
+      text: 'Runway Dev 官方 API，提供 Gen-4.5 文生/图生视频与 Gen-4 Turbo 图生视频。',
+      ctaLabel: '打开 Runway Dev',
+      url: 'https://dev.runwayml.com',
+    },
+  },
+  {
     // RunningHub 标准模型 API（openapi/v2）：一个 key 解锁 355+ 模型（Seedance/可灵/Veo/混元3D/Meshy…）。
     // ⚠️ 实测（2026-06-27）：标准模型 API **仅限 Enterprise-Shared（企业级-共享）key**，Consumer/个人 key
     // 会报错误码 1014「访问被拒绝」。故 credentialHint 明着标，免得用户拿个人 key 填进来被 1014 蒙（D4 诚实）。
     vendorKey: 'runninghub',
-    glyph: 'R',
+    logo: VENDOR_LOGOS.runninghub,
+    glyph: 'RH',
     tagline: '一个 key，解锁 355+ 标准模型（Seedance / 可灵 / 混元3D / Meshy…）',
     credentialPlaceholder: '粘贴 RunningHub API Key（32 位）',
     credentialHint:
@@ -167,7 +239,7 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
     // 故必须独立成卡：否则豆包语音音色被归进「其他模型」且写死「已配置」，
     // 用户既无处填 APP_ID:ACCESS_KEY，又被误导以为已连通（真实坑，2026-06-25 用户反馈）。
     vendorKey: 'volcengine-speech',
-    logo: new URL('../assets/vendor-logos/doubao.png', import.meta.url).href,
+    logo: VENDOR_LOGOS.doubao,
     glyph: '声',
     tagline: '官方原生 · 豆包语音 2.0 配音（自然语言情感控制）',
     // 火山语音需要两段凭证（App ID + Access Token），声明成两个独立框，别让用户自己拼冒号
@@ -198,7 +270,8 @@ export const KNOWN_VENDORS: readonly KnownVendor[] = [
     // Replicate：图片「元素拆解」(qwen-image-layered) 的托管端点。本机跑不动 57GB 模型，必须走云；
     // 一把 r8_ token 即可（按量付费，约 $0.05/张）。见 docs/plan/2026-06-28-element-decomposition-feature.md。
     vendorKey: 'replicate',
-    glyph: 'R',
+    logo: VENDOR_LOGOS.replicate,
+    glyph: 'Rp',
     tagline: '一个 token，解锁「元素拆解」（一张图拆成可编辑图层）',
     credentialPlaceholder: '粘贴 Replicate API Token（r8_…）',
     credentialHint:

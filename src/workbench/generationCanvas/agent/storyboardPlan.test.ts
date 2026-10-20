@@ -1,14 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import {
-  buildAnchorSheetPrompt,
-  buildDetailedStoryboardShotVideoPrompt,
-  parseStoryboardPlan,
-  storyboardPlanSchema,
-  storyboardPlanToCreateNodesArgs,
-  storyboardShotImagePrompt,
-  storyboardShotVideoPrompt,
-  type StoryboardPlan,
-} from './storyboardPlan'
+import { effectiveShotDurationSec, storyboardPlanToCreateNodesArgs, storyboardShotToCreateNodesArgs, type StoryboardPlan } from './storyboardPlan'
+import { buildAnchorSheetPrompt } from './storyboardPromptCompiler'
+import { parseStoryboardPlan, storyboardPlanSchema } from './storyboardPlanSchema'
+import { storyboardProfileForKey } from './storyboardProfiles'
 
 const PLAN: StoryboardPlan = {
   title: '雨夜追凶',
@@ -44,25 +38,18 @@ describe('storyboardPlanToCreateNodesArgs', () => {
       carrier: 'visual',
       variants: ['成年', '童年'],
     })
-    expect(p).toContain('角色定妆参考卡')
+    expect(p).toContain('Character reference sheet')
     expect(p).toContain('林夏')
     expect(p).toContain('齐肩黑发')
-    expect(p).toContain('正面全身 A-Pose')
-    expect(p).toContain('变体行：成年、童年')
-    expect(p).not.toContain('横向版面')
+    expect(p).toContain('full-body front A-pose')
+    expect(p).toContain('Variants: 成年, 童年')
   })
 
   it('场景卡提示词：含多角度（远景/近景/俯视），无变体则不出变体行', () => {
-    const p = buildAnchorSheetPrompt({
-      id: 's',
-      kind: 'scene',
-      name: '天台',
-      description: '夜晚霓虹',
-      carrier: 'visual',
-    })
-    expect(p).toContain('场景参考卡')
-    expect(p).toContain('远景 establishing')
-    expect(p).not.toContain('变体行')
+    const p = buildAnchorSheetPrompt({ id: 's', kind: 'scene', name: '天台', description: '夜晚霓虹', carrier: 'visual' })
+    expect(p).toContain('Environment reference sheet')
+    expect(p).toContain('distant establishing view')
+    expect(p).not.toContain('Variants:')
   })
 
   it('视觉锚落画布用定妆卡提示词 + 锁 GPT Image 2（defaultImageModelKey 注入）', () => {
@@ -72,7 +59,7 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     })
     const linxia = nodes.find((n) => n.clientId === 'a-linxia')
     expect(linxia?.modelKey).toBe('gpt-image-2')
-    expect(linxia?.prompt).toContain('角色定妆参考卡')
+    expect(linxia?.prompt).toContain('Character reference sheet')
     // 文本锚（风格）仍不建节点
     expect(nodes.some((n) => n.clientId === 'a-style')).toBe(false)
   })
@@ -81,25 +68,51 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     expect(storyboardPlanToCreateNodesArgs(PLAN).groupCategoryId).toBe('shots')
   })
 
+  it('落画布节点保留原稿和分镜设计来源', () => {
+    const { nodes } = storyboardPlanToCreateNodesArgs(PLAN, {
+      creationDocumentId: 'doc-a',
+      storyboardDesignId: 'storyboard-b',
+    })
+    expect(nodes).not.toHaveLength(0)
+    expect(nodes.every((node) => (
+      node.metadata?.creationDocumentId === 'doc-a'
+      && node.metadata?.storyboardDesignId === 'storyboard-b'
+    ))).toBe(true)
+  })
+
   // ⚠️ 现状固化，不是「期望行为」：2026-08-18 修「批量选不了供应商」时实查到的缺口。
   // 画布框选那条链已经能把 vendor 一路写进节点；分镜这条**不能**——PlanShot 只有 modelKey，
   // 没有 vendor 字段，storyboardPlanToCreateNodesArgs 自然也传不出去。落地时 buildPlannedNodeMeta
   // 用 entryByKey.get(modelKey) 反查厂商，而 buildAgentModelEntries 按 modelKey 首次出现去重
-  // （见 availableModels.ts 的 seen 集合）→ 同一 modelKey 多家可用时**首家胜出**，与用户所选无关。
-  // 这条测试就是那个缺口的记录：等 PlanShot/PlanCreatedNode 补上 vendor 字段时，改这条即可。
-  it('厂商在 plan→canvas 落地路径上被丢弃：PlanShot 存不下 vendor，节点参数里也没有', () => {
+  // 2026-09-03：缺口已修。身份唯一键是 (vendor, modelKey)——同名模型来自不同供应商是两个模型。
+  // 本条从「固化错误行为」反转为「钉住正确行为」（P1：错误行为的留痕不能继续冒充规格）。
+  // 缺口真实代价：2026-09-03 首次真实付费闭环走查，用户选 APIMart Qwen-Image，请求发去
+  // code-newcli-com HTTP 400，全链阻断（docs/plan/2026-09-03-storyboard-entry-vendor-identity.md）。
+  it('厂商随模型一起落到节点：PlanShot.modelVendor 贯通 plan→canvas，不再按 key 反查取首家', () => {
     const plan: StoryboardPlan = {
       ...PLAN,
-      shots: [{ index: 1, durationSec: 5, anchorIds: [], prompt: '镜一', modelKey: 'nano-banana' }],
+      shots: [{ index: 1, durationSec: 5, anchorIds: [], prompt: '镜一', modelKey: 'nano-banana', modelVendor: 'apimart' }],
     }
     const { nodes } = storyboardPlanToCreateNodesArgs(plan)
     const shot = nodes.find((n) => n.prompt === '镜一')
 
-    // 用户选的模型确实传下去了……
     expect(shot?.modelKey).toBe('nano-banana')
-    // ……但「哪一家」没有：PlanCreatedNode 上根本不存在 vendor 槽（多家可用时落地取目录首家）。
-    expect(shot).not.toHaveProperty('vendor')
-    expect(Object.keys(shot ?? {})).not.toContain('modelVendor')
+    // 「哪一家」现在跟着走：落地不再靠 modelKey 反查目录首家。
+    expect(shot?.modelVendor).toBe('apimart')
+  })
+
+  it('没选模型时用默认模型的厂商，不与用户所选混搭', () => {
+    const plan: StoryboardPlan = {
+      ...PLAN,
+      shots: [{ index: 1, durationSec: 5, anchorIds: [], prompt: '镜一' }],
+    }
+    const { nodes } = storyboardPlanToCreateNodesArgs(plan, {
+      defaultVideoModelKey: 'seedance-1.5',
+      defaultVideoModelVendor: 'kie',
+    })
+    const shot = nodes.find((n) => n.prompt === '镜一')
+    expect(shot?.modelKey).toBe('seedance-1.5')
+    expect(shot?.modelVendor).toBe('kie')
   })
 
   it('anchorCount = 分镜组总控卡 + 视觉锚数（落画布布局据此分「参考行 / 镜头网格」）', () => {
@@ -173,323 +186,55 @@ describe('storyboardPlanToCreateNodesArgs', () => {
     expect(shots[2]).toMatchObject({ modelKey: 'seedance-2', modeId: 'seedance-i2v' }) // 没选 → 默认模型+默认模式
   })
 
-  it('分镜方案中的型号 variantId 会随镜头节点落到 create_canvas_nodes', () => {
+  it('未指定模型且调用方没有 Nomi 默认值 → 保持未选择，不擅自套测试最低价模型', () => {
     const plan: StoryboardPlan = {
-      title: '即梦型号',
+      title: '用户目标',
       anchors: [],
-      shots: [
-        {
-          index: 1,
-          shotKind: 'image',
-          durationSec: 0,
-          anchorIds: [],
-          prompt: '夏日街道',
-          modelKey: 'jimeng-web-image',
-          variantId: 'v5_0_lite',
-          modeId: 't2i',
-          params: { ratio: '9:16', resolution_type: '4K' },
-        },
-      ],
+      shots: [{ index: 1, durationSec: 5, anchorIds: [], prompt: '镜一', shotKind: 'video' }],
     }
     const { nodes } = storyboardPlanToCreateNodesArgs(plan)
-    const shot = nodes.find((node) => node.clientId === 'shot-1')
-
-    expect(shot).toMatchObject({
-      modelKey: 'jimeng-web-image',
-      variantId: 'v5_0_lite',
-      modeId: 't2i',
-      params: { ratio: '9:16', resolution_type: '4K' },
-    })
+    expect(nodes[0]).not.toHaveProperty('modelKey')
+    expect(nodes[0]).not.toHaveProperty('modeId')
   })
 
-  it('文本锚描述拼进引用它的镜头 prompt（不建边）', () => {
+  // ── 一镜发出去的 = 行上的提示词 + 行上看得见的参考图（2026-09-30，「巨龙」变人物的根因合同）──
+  it('引用锚不再追加任何字：文本锚整段、视觉锚身份特征都不进镜头 prompt，逐字等于行上写的', () => {
     const { nodes } = storyboardPlanToCreateNodesArgs(PLAN)
-    const shot1 = nodes.find((n) => n.clientId === 'shot-1')!
-    expect(shot1.prompt).toContain('林夏倚护栏远望，镜头缓推')
-    expect(shot1.prompt).toContain('全片风格：冷色调、胶片颗粒') // style 文本锚拼入
-    const shot2 = nodes.find((n) => n.clientId === 'shot-2')!
-    expect(shot2.prompt).toBe('林夏背起书包向楼梯走，跟拍') // 镜2 没引用 style → prompt 不变
+    expect(nodes.find((n) => n.clientId === 'shot-1')!.prompt).toBe('林夏倚护栏远望，镜头缓推')
+    expect(nodes.find((n) => n.clientId === 'shot-2')!.prompt).toBe('林夏背起书包向楼梯走，跟拍')
   })
 
-  it('镜头提示词优先使用 imagePrompt / videoPrompt，prompt 只做旧字段兜底', () => {
-    const plan: StoryboardPlan = {
-      title: '提示词双轨',
-      anchors: [],
-      shots: [
-        { index: 1, shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '旧字段', imagePrompt: '静态关键帧' },
-        {
-          index: 2,
-          shotKind: 'video',
-          durationSec: 5,
-          anchorIds: [],
-          prompt: '旧字段',
-          imagePrompt: '首帧图',
-          videoPrompt: '镜头缓慢推进',
-        },
-      ],
-    }
-    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
-    expect(nodes.find((n) => n.clientId === 'shot-1')?.prompt).toBe('静态关键帧')
-    expect(nodes.find((n) => n.clientId === 'shot-2')?.prompt).toBe('镜头缓慢推进')
-    expect(nodes.find((n) => n.clientId === 'storyboard-group')?.prompt).toContain('图片提示词：首帧图')
-    expect(nodes.find((n) => n.clientId === 'storyboard-group')?.prompt).toContain('视频提示词：镜头缓慢推进')
-  })
-
-  it('imagePrompt / videoPrompt 为空字符串时，从结构化分镜列兜底生成提示词', () => {
-    const shot = {
-      index: 1,
-      shotKind: 'video' as const,
-      durationSec: 5,
-      anchorIds: [],
-      prompt: '',
-      imagePrompt: '',
-      videoPrompt: '',
-      scene: '咖啡馆窗边',
-      shotSize: '中近景',
-      cameraAngle: '正面平视',
-      cameraMove: '缓慢推进',
-      characters: '咖啡师',
-      performance: '端起咖啡闻香，微笑看向窗外',
-      dialogue: '今天的第一杯，给自己。',
-      props: '白瓷咖啡杯、木桌',
-      sound: '轻柔爵士乐',
-      notes: '手机背面朝向镜头时禁止写屏幕内容',
-    }
-    expect(storyboardShotImagePrompt(shot)).toContain('景别：中近景')
-    expect(storyboardShotImagePrompt(shot)).toContain('表演：端起咖啡闻香，微笑看向窗外')
-    expect(storyboardShotVideoPrompt(shot)).toContain('运镜响应：缓慢推进')
-    expect(storyboardShotVideoPrompt(shot)).toContain('对白表演：角色说「今天的第一杯，给自己。」')
-
-    const { nodes } = storyboardPlanToCreateNodesArgs({ title: '结构化列', anchors: [], shots: [shot] })
-    const shotNode = nodes.find((n) => n.clientId === 'shot-1')!
-    expect(shotNode.prompt).toContain('运镜响应：缓慢推进')
-    expect(shotNode.prompt).toContain('声音节奏参考：轻柔爵士乐')
-  })
-
-  it('缺少 videoPrompt 时不把静态图片提示词直接当视频提示词', () => {
-    const imagePrompt = '9:16 竖屏，老板站在工作台前拿着一盒月饼，静态中景构图。'
-    const prompt = storyboardShotVideoPrompt({
-      index: 3,
-      shotKind: 'video',
-      durationSec: 6,
-      anchorIds: [],
-      prompt: imagePrompt,
-      imagePrompt,
-      scene: '月饼工作室',
-      cameraMove: '跟随老板向货架横移',
-      characters: '老板',
-      performance: '老板拿起月饼盒走到空货架前，停下并确认缺货',
-      props: '一盒月饼、空货架',
-      modeId: 'i2v',
-    })
-
-    expect(prompt).not.toBe(imagePrompt)
-    expect(prompt).toContain('图生视频导演提示词：镜头 3')
-    expect(prompt).toContain('动作时间线')
-    expect(prompt).toContain('不是照片动效')
-    expect(prompt).toContain('道具不瞬移、不变形、不凭空增减')
-  })
-
-  it('可把表格列作为关键词润色成十分具体的视频生成提示词', () => {
-    const prompt = buildDetailedStoryboardShotVideoPrompt({
-      index: 4,
-      shotKind: 'image',
-      durationSec: 6,
-      anchorIds: [],
-      prompt: '咖啡师把刚做好的拿铁推到顾客面前',
-      imagePrompt: '暖色咖啡馆吧台，中近景，咖啡师双手推杯',
-      modeId: 'omni',
-      scene: '清晨咖啡馆吧台，窗外有柔和自然光',
-      shotSize: '中近景',
-      cameraAngle: '吧台正面平视',
-      cameraMove: '缓慢推近后轻微下摇到咖啡杯',
-      characters: '咖啡师、顾客的手部',
-      performance: '咖啡师双手稳稳推杯，顾客手指轻轻接住杯碟',
-      dialogue: '您的拿铁好了。',
-      props: '白瓷拿铁杯、杯碟、木质吧台、拉花',
-      sound: '轻柔爵士乐、咖啡机低频蒸汽声',
-      notes: '商业广告质感，动作干净，杯子不能变形',
-    })
-
-    expect(prompt).toContain('全能参考视频导演提示词：镜头 4，时长 6 秒')
-    expect(prompt).toContain('分镜图片只表达景别、机位、空间关系和动作意图，不作为首帧')
-    expect(prompt).toContain('最强、最清楚的主体动作立即开始')
-    expect(prompt).toContain('这是一段真实叙事视频，不是照片动效')
-    expect(prompt).not.toContain('首帧基准：暖色咖啡馆吧台，中近景，咖啡师双手推杯')
-    expect(prompt).toContain('表演动机：主体为「咖啡师、顾客的手部」')
-    expect(prompt).toContain('动作时间线：0-0.9 秒')
-    expect(prompt).toContain('运镜响应：缓慢推近后轻微下摇到咖啡杯')
-    expect(prompt).toContain('道具物理：涉及「白瓷拿铁杯、杯碟、木质吧台、拉花」')
-    expect(prompt).toContain('对白表演：角色说「您的拿铁好了。」')
-    expect(prompt).toContain('连续性约束：锁定参考图中的脸型、服装、道具造型、场景参照物')
-  })
-
-  it('画外音不驱动人物口型，图生视频提示词不重复完整图片提示词', () => {
-    const imagePrompt = '9:16竖屏，海军蓝围裙老板站在工作台前，左侧馅料盒见底，背景是未完成礼盒。'
-    const prompt = buildDetailedStoryboardShotVideoPrompt({
-      index: 2,
-      shotKind: 'video',
-      durationSec: 8,
-      anchorIds: [],
-      prompt: '团购做到一半突然缺料',
-      imagePrompt,
-      scene: '私房烘焙工作室',
-      shotSize: '中近景',
-      cameraAngle: '平视',
-      cameraMove: '固定机位',
-      characters: '海军蓝围裙老板',
-      performance: '只完成一次压模，看到见底馅料盒后停住',
-      dialogue: '画外音：做到一半馅料不够。',
-      props: '月饼模具、见底馅料盒',
-    })
-
-    expect(prompt).not.toContain(imagePrompt)
-    expect(prompt).toContain('声音与口型：画外音：做到一半馅料不够。')
-    expect(prompt).toContain('这是后期声音，不驱动角色口型')
-    expect(prompt).not.toContain('角色说「画外音')
-  })
-
-  it('没有图片参考时保留场景与构图建立信息', () => {
-    const prompt = buildDetailedStoryboardShotVideoPrompt({
-      index: 1,
-      shotKind: 'video',
-      durationSec: 5,
-      anchorIds: [],
-      prompt: '人物走进空旷仓库',
-      scene: '清晨空旷仓库',
-      shotSize: '全景',
-      cameraAngle: '平视',
-      performance: '人物沿安全线走到货架前停住',
-    })
-
-    expect(prompt).toContain('文生视频导演提示词：镜头 1，时长 5 秒')
-    expect(prompt).toContain('视觉建立：地点为「清晨空旷仓库」；使用「全景，平视」')
-    expect(prompt).not.toContain('首帧继承')
-  })
-
-  it('极短镜头的动作时间线仍保持正序', () => {
-    const prompt = buildDetailedStoryboardShotVideoPrompt({
-      index: 1,
-      shotKind: 'video',
-      durationSec: 1,
-      anchorIds: [],
-      prompt: '人物抬眼',
-      imagePrompt: '人物低头的首帧',
-      performance: '人物抬眼看向镜头外',
-    })
-
-    expect(prompt).toContain('动作时间线：0-0.2 秒')
-    expect(prompt).toContain('0.2-0.8 秒')
-    expect(prompt).toContain('0.8-1 秒')
-  })
-
-  it('涉及手机/电脑屏幕的镜头 prompt 自动附加屏幕朝向可见性规则', () => {
-    const plan: StoryboardPlan = {
-      title: '手机误朝向回归',
-      anchors: [],
-      shots: [
-        {
-          index: 1,
-          shotKind: 'image',
-          durationSec: 0,
-          anchorIds: [],
-          prompt: '正面中景拍摄林微，她低头看手机，手机背面朝向镜头，手机屏幕显示匿名消息。',
-        },
-      ],
-    }
-
-    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
-    const shot = nodes.find((n) => n.clientId === 'shot-1')!
-    expect(shot.prompt).toContain('屏幕可见性硬规则')
-    expect(shot.prompt).toContain('如果人物正面面对镜头，而手机/电脑背面或侧面朝向镜头，屏幕不可见')
-    expect(shot.prompt).toContain('改成单独的屏幕特写/过肩镜头')
-  })
-
-  it('只有全片风格提到屏幕冷光时，不给无设备镜头追加屏幕规则', () => {
-    const plan: StoryboardPlan = {
-      title: '屏幕风格词不误触发',
-      anchors: [
-        {
-          id: 'style',
-          kind: 'style',
-          name: '全片风格',
-          description: '城市夜景霓虹光感与屏幕冷光对比室内暖黄灯光。',
-          carrier: 'text',
-        },
-      ],
-      shots: [
-        {
-          index: 1,
-          shotKind: 'image',
-          durationSec: 0,
-          anchorIds: ['style'],
-          prompt: '清晨画室全景，两个人坐在地上看画，阳光从窗户照入。',
-        },
-      ],
-    }
-
-    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
-    const shot = nodes.find((n) => n.clientId === 'shot-1')!
-    expect(shot.prompt).toContain('全片风格：城市夜景霓虹光感与屏幕冷光对比室内暖黄灯光。')
-    expect(shot.prompt).not.toContain('屏幕可见性硬规则')
-  })
-
-  it('否定句里的手机/屏幕词不触发屏幕朝向规则', () => {
-    const plan: StoryboardPlan = {
-      title: '无设备镜头',
-      anchors: [],
-      shots: [
-        {
-          index: 1,
-          shotKind: 'image',
-          durationSec: 0,
-          anchorIds: [],
-          prompt: '门打开，两人面对面，没有手机、没有屏幕，只有走廊冷光与画室暖光。',
-        },
-      ],
-    }
-
-    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
-    const shot = nodes.find((n) => n.clientId === 'shot-1')!
-    expect(shot.prompt).not.toContain('屏幕可见性硬规则')
-  })
-
-  it('定妆卡 → 镜头参考边（角色 character_ref / 场景 style_ref / 道具 reference）；B-clean 不连 shot→shot 链', () => {
+  it('引用锚不再自动连成参考边：整份方案落画布没有任何锚 → 镜头的边（B-clean 也不连 shot→shot 链）', () => {
     const { edges } = storyboardPlanToCreateNodesArgs(PLAN)
-    expect(edges).toEqual([
-      { sourceClientId: 'a-linxia', targetClientId: 'shot-1', mode: 'character_ref' },
-      { sourceClientId: 'a-roof', targetClientId: 'shot-1', mode: 'style_ref' },
-      // a-style 是文本锚 → 不连边（拼进 prompt 了）
-      { sourceClientId: 'a-linxia', targetClientId: 'shot-2', mode: 'character_ref' },
-      { sourceClientId: 'a-bag', targetClientId: 'shot-2', mode: 'reference' },
-      // B-clean：不再连 shot→shot 时序链（视频→视频会落到未实现的首帧接力；连贯靠共享定妆卡参考）
-    ])
+    expect(edges).toEqual([])
   })
 
-  it('引用了不存在的锚 id → 忽略，不崩不连', () => {
+  it('anchorIds 里有不存在的锚 id：与有效的一样不产生任何作用，不崩、不连、不拦', () => {
     const plan: StoryboardPlan = {
       title: 't',
       anchors: [{ id: 'a1', kind: 'character', name: 'A', description: 'd', carrier: 'visual' }],
       shots: [{ index: 1, durationSec: 5, anchorIds: ['a1', 'ghost'], prompt: 'p' }],
     }
-    const { edges } = storyboardPlanToCreateNodesArgs(plan)
-    expect(edges).toEqual([{ sourceClientId: 'a1', targetClientId: 'shot-1', mode: 'character_ref' }])
+    const { edges, nodes } = storyboardPlanToCreateNodesArgs(plan)
+    expect(edges).toEqual([])
+    expect(nodes.find((n) => n.clientId === 'shot-1')!.prompt).toBe('p')
+  })
+
+  it('锚自带的素材（referenceUrl）不再写进镜头节点的 referenceImageUrls：参考图只来自行上的 referenceBindings', () => {
+    const first = 'https://cdn.example/first.png'
+    const plan: StoryboardPlan = {
+      title: '外部参考',
+      anchors: [{ id: 'first', kind: 'prop', name: '第一张', description: '', carrier: 'visual', referenceUrl: first, referenceKind: 'image', referenceSourceNodeId: 'canvas-node' }],
+      shots: [{ index: 1, durationSec: 5, anchorIds: ['first'], prompt: `先 @[asset:${encodeURIComponent(first)}]` }],
+    }
+    const { edges, nodes } = storyboardPlanToCreateNodesArgs(plan)
+    expect(edges).toEqual([])
+    expect(nodes.find((node) => node.clientId === 'shot-1')?.metadata).not.toHaveProperty('referenceImageUrls')
   })
 
   it('产出的节点种类都是画布支持的（结构保证：防 prop/style 等非节点种类漏进去崩 defaultSize）', () => {
     // 画布 registry 支持的种类（src/workbench/generationCanvas/nodes/registry.ts）。
-    const VALID_NODE_KINDS = new Set([
-      'text',
-      'character',
-      'scene',
-      'image',
-      'keyframe',
-      'video',
-      'shot',
-      'output',
-      'panorama',
-      'scene3d',
-    ])
+    const VALID_NODE_KINDS = new Set(['text', 'character', 'scene', 'image', 'keyframe', 'video', 'shot', 'output', 'panorama', 'director'])
     const { nodes } = storyboardPlanToCreateNodesArgs(PLAN)
     for (const node of nodes) expect(VALID_NODE_KINDS.has(node.kind)).toBe(true)
   })
@@ -553,10 +298,9 @@ describe('图片分镜（shotKind=image，用户拍板 2026-07-02 image-first）
     expect(shot2.params?.duration).toBe(6)
   })
 
-  it('图片镜头仍连定妆卡参考边（锁身份），与视频镜头同语义', () => {
+  it('图片镜头同样不连锚边：图片镜与视频镜同一个出口', () => {
     const { edges } = storyboardPlanToCreateNodesArgs(IMAGE_PLAN)
-    expect(edges).toContainEqual({ sourceClientId: 'a-ye', targetClientId: 'shot-1', mode: 'character_ref' })
-    expect(edges).toContainEqual({ sourceClientId: 'a-market', targetClientId: 'shot-1', mode: 'style_ref' })
+    expect(edges).toEqual([])
   })
 
   it('缺省 shotKind → 按 video 兜底（旧草稿兼容，行为不变）', () => {
@@ -581,23 +325,23 @@ describe('ffDesc/lfDesc 静态首尾帧分解（W2 §4.1，对齐 ViMax ff_desc/
     defaultVideoModelKey: 'vid-model', defaultVideoModeId: 'vid-i2v',
   }
 
-  it('有 ffDesc 无 keyframe.prompt → 首帧图用 ffDesc（不被镜头的运动词污染）', () => {
+  it('有静态首帧描述时不把运动提示词误用为图片提示词', () => {
     const plan: StoryboardPlan = {
       ...base,
       shots: [{
         index: 1, shotKind: 'video', durationSec: 6, anchorIds: ['a-hero'],
         ffDesc: '中近景静态：主角坐在电脑前，冷蓝屏幕光照亮侧脸',
-        prompt: '镜头缓慢推近，他抬手点击连接', // 运动描述——不该当首帧图提示词
+        prompt: '镜头缓慢推近，他抬手点击连接',
         keyframe: { enabled: true },
       }],
     }
     const { nodes } = storyboardPlanToCreateNodesArgs(plan, opts)
     const kf = nodes.find((n) => n.clientId === 'shot-1-keyframe')
-    expect(kf?.prompt).toContain('中近景静态')
-    expect(kf?.prompt).not.toContain('缓慢推近') // ★首帧不吃运动词
+    expect(kf?.prompt).toBe('中近景静态：主角坐在电脑前，冷蓝屏幕光照亮侧脸')
+    expect(kf?.prompt).not.toContain('抬手点击连接')
   })
 
-  it('keyframe.prompt（用户手改）优先级高于 ffDesc', () => {
+  it('keyframe.prompt（行上首帧提示词框里的字）就是首帧图的提示词，ffDesc 不参与', () => {
     const plan: StoryboardPlan = {
       ...base,
       shots: [{
@@ -607,7 +351,7 @@ describe('ffDesc/lfDesc 静态首尾帧分解（W2 §4.1，对齐 ViMax ff_desc/
       }],
     }
     const { nodes } = storyboardPlanToCreateNodesArgs(plan, opts)
-    expect(nodes.find((n) => n.clientId === 'shot-1-keyframe')?.prompt).toContain('用户手改的首帧')
+    expect(nodes.find((n) => n.clientId === 'shot-1-keyframe')?.prompt).toBe('用户手改的首帧')
   })
 
   it('两者都没有 → 退回 shot.prompt（今天的行为，零退化）', () => {
@@ -681,7 +425,7 @@ describe('图片+视频分镜（video shot + keyframe.enabled）', () => {
     ])
     expect(nodes.find((node) => node.clientId === 'shot-1-keyframe')).toMatchObject({
       modelKey: 'img-model',
-      modeId: 'img-i2i',
+      modeId: 'img-t2i',
       params: { aspect_ratio: '16:9' },
     })
     expect(nodes.find((node) => node.clientId === 'shot-1')).toMatchObject({
@@ -689,19 +433,17 @@ describe('图片+视频分镜（video shot + keyframe.enabled）', () => {
       modeId: 'vid-i2v',
       params: { duration: 6 },
     })
+    // 只剩首帧图 → 视频这一种边：定妆卡不再自动连给任何镜。
     expect(edges).toEqual([
-      { sourceClientId: 'a-hero', targetClientId: 'shot-1-keyframe', mode: 'character_ref' },
-      { sourceClientId: 'a-room', targetClientId: 'shot-1-keyframe', mode: 'style_ref' },
       { sourceClientId: 'shot-1-keyframe', targetClientId: 'shot-1', mode: 'first_frame' },
-      { sourceClientId: 'a-hero', targetClientId: 'shot-2-keyframe', mode: 'character_ref' },
       { sourceClientId: 'shot-2-keyframe', targetClientId: 'shot-2', mode: 'first_frame' },
     ])
   })
 
-  it('文本锚同时拼进首帧 prompt 和视频 prompt', () => {
+  it('首帧图的提示词是首帧提示词框里的字，视频的提示词是视频提示词框里的字，各自一字不差', () => {
     const { nodes } = storyboardPlanToCreateNodesArgs(IMAGE_VIDEO_PLAN)
-    expect(nodes.find((node) => node.clientId === 'shot-1-keyframe')?.prompt).toContain('全片风格：低饱和电影感')
-    expect(nodes.find((node) => node.clientId === 'shot-1')?.prompt).toContain('全片风格：低饱和电影感')
+    expect(nodes.find((node) => node.clientId === 'shot-1-keyframe')?.prompt).toBe('主角坐在电脑前，冷蓝屏幕光照亮侧脸，中近景静态构图')
+    expect(nodes.find((node) => node.clientId === 'shot-1')?.prompt).toBe('镜头从电脑屏幕缓慢推近主角侧脸，他抬手点击连接')
   })
 
   it('首帧图带 storyboardKeyframe 身份标记（不占镜号，落地后共用所属视频镜号）；视频不带', () => {
@@ -779,8 +521,8 @@ describe('W2 圣经字段（static/dynamic 落 meta + 卡片 prompt 分区）', 
     expect(p).toContain('身份特征（跨镜保持一致）：鹅蛋脸、左眉一颗痣')
     expect(p).toContain('服装与状态：红色校服 / 雨夜披深蓝雨衣')
     // 仍是角色定妆卡骨架（多视图/身份锁没丢）。
-    expect(p).toContain('角色定妆参考卡')
-    expect(p).toContain('正面全身 A-Pose')
+    expect(p).toContain('Character reference sheet')
+    expect(p).toContain('full-body front A-pose')
   })
 
   it('buildAnchorSheetPrompt 无 static/dynamic 时退化到 description（旧行为不变）', () => {
@@ -792,5 +534,198 @@ describe('W2 圣经字段（static/dynamic 落 meta + 卡片 prompt 分区）', 
   it('parseStoryboardPlan 接受带 static/dynamic 的方案（schema 同步）', () => {
     expect(() => parseStoryboardPlan(BIBLE_PLAN)).not.toThrow()
     expect(parseStoryboardPlan(BIBLE_PLAN).anchors[0].staticFeatures).toBe('鹅蛋脸、左眉一颗痣、单眼皮、身高约 165')
+  })
+})
+
+// 定妆卡的身份文字下发给镜头（2026-09-02 实测后加，见 anchorPromptBits 注释里的 0/4 vs 3/4）。
+describe('引用锚的身份特征不进镜头 prompt（2026-09-30 之前会追加，「巨龙」因此变成人物）', () => {
+  const planWithBible = {
+    title: '身份下发',
+    anchors: [
+      {
+        id: 'a-maren', kind: 'character' as const, name: 'Maren', description: '灯塔看守人的女儿',
+        carrier: 'visual' as const,
+        staticFeatures: '12 岁女孩、鹅蛋脸、灰蓝色杏眼、左眉尾一道浅疤',
+        dynamicFeatures: '黄色油布外套、深蓝裙、黑胶靴',
+      },
+      { id: 'a-style', kind: 'style' as const, name: '全片风格', description: '冷色调、胶片颗粒', carrier: 'text' as const },
+    ],
+    shots: [
+      { index: 1, durationSec: 5, anchorIds: ['a-maren', 'a-style'], prompt: '一条巨龙盘在山顶', ffDesc: '静态首帧：火柴刚亮' },
+    ],
+  }
+  const shotNode = () => storyboardPlanToCreateNodesArgs(parseStoryboardPlan(planWithBible)).nodes.find((n) => n.clientId === 'shot-1')!
+
+  it('行上写「巨龙」，节点提示词就是「巨龙」：没有身份特征、没有服装状态、没有风格整段', () => {
+    expect(shotNode().prompt).toBe('一条巨龙盘在山顶')
+  })
+
+  it('也不连参考边、不写参考 metadata', () => {
+    const { edges } = storyboardPlanToCreateNodesArgs(parseStoryboardPlan(planWithBible))
+    expect(edges).toEqual([])
+    expect(shotNode().metadata).not.toHaveProperty('referenceImageUrls')
+  })
+
+  it('视频镜的首帧图同样只拿首帧提示词框里的字', () => {
+    const videoPlan = {
+      ...planWithBible,
+      shots: [{
+        index: 1, durationSec: 5, anchorIds: ['a-maren'], shotKind: 'video' as const,
+        prompt: '她划亮火柴，镜头缓推',
+        keyframe: { enabled: true, prompt: '静态首帧：火柴刚亮' },
+      }],
+    }
+    const { nodes } = storyboardPlanToCreateNodesArgs(parseStoryboardPlan(videoPlan))
+    const keyframe = nodes.find((n) => n.clientId === 'shot-1-keyframe')
+    expect(keyframe, '没建出首帧节点——这条断言会空转').toBeTruthy()
+    expect(keyframe!.prompt).toBe('静态首帧：火柴刚亮')
+  })
+})
+
+describe('v5 IR 扩展（sceneId / scenes / profileKey / 图片镜停留时长）', () => {
+  const V5_PLAN: StoryboardPlan = {
+    title: '夜风',
+    profileKey: 'genre.short-drama',
+    scenes: [
+      { id: 'scene-1', title: '天台 · 夜' },
+      { id: 'scene-2', title: '天台 · 雨后' },
+    ],
+    anchors: [],
+    shots: [
+      { index: 1, sceneId: 'scene-1', shotKind: 'video', durationSec: 5, anchorIds: [], prompt: '远景缓推' },
+      { index: 2, sceneId: 'scene-2', shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '旧照定格' },
+      { index: 3, sceneId: 'scene-2', shotKind: 'image', durationSec: 6, anchorIds: [], prompt: '空镜收尾' },
+    ],
+  }
+
+  it('parseStoryboardPlan 接受并保留 sceneId/scenes/profileKey（schema 同步、不剥字段）', () => {
+    const parsed = parseStoryboardPlan(V5_PLAN)
+    expect(parsed.profileKey).toBe('genre.short-drama')
+    expect(parsed.scenes).toEqual(V5_PLAN.scenes)
+    expect(parsed.shots.map((s) => s.sceneId)).toEqual(['scene-1', 'scene-2', 'scene-2'])
+  })
+
+  it('全可选=向后兼容：旧 plan（无新字段）照常通过', () => {
+    expect(() => parseStoryboardPlan(PLAN)).not.toThrow()
+    const parsed = parseStoryboardPlan(PLAN)
+    expect(parsed.scenes).toBeUndefined()
+    expect(parsed.profileKey).toBeUndefined()
+  })
+
+  it('effectiveShotDurationSec：图片镜停留（0 → 默认 3、显式值原样）；视频镜原值', () => {
+    expect(effectiveShotDurationSec(V5_PLAN.shots[1])).toBe(3)
+    expect(effectiveShotDurationSec(V5_PLAN.shots[2])).toBe(6)
+    expect(effectiveShotDurationSec(V5_PLAN.shots[0])).toBe(5)
+  })
+
+  it('落画布：图片镜把停留时长写进 metadata.imageDurationSec（只写入；视频镜不写）', () => {
+    const { nodes } = storyboardPlanToCreateNodesArgs(V5_PLAN)
+    const image1 = nodes.find((n) => n.clientId === 'shot-2')!
+    expect(image1.metadata?.imageDurationSec).toBe(3) // 旧 planner 的 0 → 默认停留
+    expect(image1.params?.duration).toBeUndefined() // 停留不是生成参数
+    const image2 = nodes.find((n) => n.clientId === 'shot-3')!
+    expect(image2.metadata?.imageDurationSec).toBe(6)
+    const video = nodes.find((n) => n.clientId === 'shot-1')!
+    expect(video.metadata).not.toHaveProperty('imageDurationSec')
+    expect(video.params?.duration).toBe(5)
+  })
+})
+
+describe('v5 C2 storyboard profiles', () => {
+  it('内置短剧 profile 是 9:16 + 台词 + 骨架，自由 profile 无骨架', () => {
+    const shortDrama = storyboardProfileForKey('genre.short-drama')
+    expect(shortDrama).toMatchObject({ aspect: '9:16', dialogue: true })
+    expect(shortDrama.promptSkeleton.map((segment) => segment.key)).toEqual(['shotSize', 'emotion'])
+    expect(storyboardProfileForKey('genre.free-form')).toMatchObject({ aspect: '16:9', dialogue: false, promptSkeleton: [] })
+  })
+
+  it('storyboardProfile schema 与 promptSegments 可选且不剥除文本真相', () => {
+    const profile = storyboardProfileForKey('genre.short-drama')
+    const parsed = parseStoryboardPlan({
+      title: 't',
+      profileKey: 'genre.short-drama',
+      storyboardProfile: profile,
+      anchors: [],
+      shots: [{ index: 1, durationSec: 5, anchorIds: [], prompt: '远景，雨夜', promptSegments: [{ key: 'shotSize', start: 0, end: 2 }] }],
+    })
+    expect(parsed.storyboardProfile).toEqual(profile)
+    expect(parsed.shots[0].prompt).toBe('远景，雨夜')
+  })
+})
+
+/**
+ * 整片默认画幅**真的到得了画布**（2026-09-12 根因合同）。
+ *
+ * 修之前：用户在批量条上把整片画幅设成 9:16，分镜表每一格也画成竖的，落画布的节点 params 里
+ * 却**一个 aspect_ratio 都没有**——继承整片默认的行（也就是 95% 的行）在这里静默掉队，
+ * 出片回落成模型档案默认（`auto` / `16:9`）。现有测试只覆盖逐镜写死 params 的那条路，看不见它。
+ */
+describe('整片默认 → 落画布节点参数（film-level passthrough）', () => {
+  const filmPlan = (aspectRatio?: string, extra?: Partial<StoryboardPlan>): StoryboardPlan => ({
+    title: '整片画幅',
+    anchors: [],
+    shots: [
+      { index: 1, shotKind: 'video', durationSec: 5, anchorIds: [], prompt: '镜一' },
+      { index: 2, shotKind: 'video', durationSec: 5, anchorIds: [], prompt: '镜二', params: { aspect_ratio: '16:9' } },
+      { index: 3, shotKind: 'image', durationSec: 0, anchorIds: [], prompt: '镜三' },
+    ],
+    ...(aspectRatio !== undefined ? { aspectRatio } : {}),
+    ...extra,
+  })
+
+  it('整份方案落画布：继承的行带上整片画幅，覆盖的行按自己的来', () => {
+    const { nodes } = storyboardPlanToCreateNodesArgs(filmPlan('9:16'))
+    const byPrompt = (prompt: string) => nodes.find((node) => node.prompt === prompt)
+    expect(byPrompt('镜一')?.params?.aspect_ratio).toBe('9:16')
+    expect(byPrompt('镜二')?.params?.aspect_ratio).toBe('16:9')
+    // 图片镜同样是整片画幅的作用域（分镜表把它也画成竖的）。
+    expect(byPrompt('镜三')?.params?.aspect_ratio).toBe('9:16')
+  })
+
+  it('单行 materialize 走同一个 resolver（行内「生成」与整份落画布不许有两种画幅）', () => {
+    const plan = filmPlan('9:16')
+    const { nodes } = storyboardShotToCreateNodesArgs(plan, plan.shots[0])
+    expect(nodes.find((node) => node.prompt === '镜一')?.params?.aspect_ratio).toBe('9:16')
+  })
+
+  it('图片+视频镜：首帧图与视频同画幅（首帧被裁/被拉，运动落点从第一帧就偏）', () => {
+    const plan: StoryboardPlan = {
+      title: '首帧',
+      anchors: [],
+      aspectRatio: '9:16',
+      shots: [{ index: 1, shotKind: 'video', durationSec: 5, anchorIds: [], prompt: '镜一', keyframe: { enabled: true, prompt: '首帧' } }],
+    }
+    const { nodes } = storyboardPlanToCreateNodesArgs(plan)
+    const media = nodes.filter(node => node.kind === 'image' || node.kind === 'video')
+    expect(media).toHaveLength(2)
+    expect(media.every((node) => node.params?.aspect_ratio === '9:16')).toBe(true)
+  })
+
+  it('整片默认未定 → 节点不带 aspect_ratio（诚实缺席，交回模型档案默认）', () => {
+    const { nodes } = storyboardPlanToCreateNodesArgs(filmPlan())
+    expect(nodes.find((node) => node.prompt === '镜一')?.params?.aspect_ratio).toBeUndefined()
+    expect(nodes.find((node) => node.prompt === '镜二')?.params?.aspect_ratio).toBe('16:9')
+  })
+
+  it('片种模板声明的画幅也落得到画布（选了短剧就是竖屏）', () => {
+    const { nodes } = storyboardPlanToCreateNodesArgs(filmPlan(undefined, { profileKey: 'genre.short-drama' }))
+    expect(nodes.find((node) => node.prompt === '镜一')?.params?.aspect_ratio).toBe('9:16')
+  })
+
+  it('duration 仍只写视频镜，且不被 resolver 挤掉', () => {
+    const { nodes } = storyboardPlanToCreateNodesArgs(filmPlan('9:16'))
+    expect(nodes.find((node) => node.prompt === '镜一')?.params?.duration).toBe(5)
+    expect(nodes.find((node) => node.prompt === '镜三')?.params?.duration).toBeUndefined()
+  })
+
+  it('规划师在方案顶层写的整片画幅活得过 parseStoryboardPlan（zod 默认丢未知键）', () => {
+    const parsed = parseStoryboardPlan({
+      title: 't',
+      aspectRatio: '9:16',
+      anchors: [],
+      shots: [{ index: 1, durationSec: 5, anchorIds: [], prompt: 'p' }],
+    })
+    expect(parsed.aspectRatio).toBe('9:16')
+    expect(storyboardPlanToCreateNodesArgs(parsed).nodes.find(node => node.kind === 'video')?.params?.aspect_ratio).toBe('9:16')
   })
 })

@@ -1,5 +1,7 @@
 import { normalizeTimeline } from '../timeline/timelineMath'
 import { normalizeWorkbenchDocument } from '../workbenchPersistence'
+import { createDefaultWorkbenchDocument, type StoryboardDesign, type WorkbenchDocument } from '../workbenchTypes'
+import { logRendererWarn } from '../../desktop/rendererLog'
 import {
   createDefaultWorkbenchProjectPayload,
   workbenchProjectPayloadSchema,
@@ -10,6 +12,7 @@ import {
   type WorkbenchProjectSummary,
 } from './projectRecordSchema'
 import { normalizeCategories } from './projectCategories'
+import { storyboardPlanSchema } from '../generationCanvas/agent/storyboardPlanSchema'
 import i18n from '../../i18n'
 
 // 封面派生已收口到 ./projectCoverDerive（媒体类型分流版，2026-08-01）：
@@ -77,8 +80,69 @@ export function normalizePayload(input: unknown): WorkbenchProjectPayload {
     throw new Error(i18n.t('runtime.project.corruptPayload'))
   }
   const payload = parsed.data
+  // P2 多文档迁移：优先读新字段 workbenchDocuments；老项目只有 workbenchDocument → 包装成单元素集合。
+  const legacyDoc = payload.workbenchDocument
+  const documents = Array.isArray(payload.workbenchDocuments) && payload.workbenchDocuments.length
+    ? payload.workbenchDocuments
+    : legacyDoc
+      ? [legacyDoc]
+      : [createDefaultWorkbenchDocument()]
+  const activeId = payload.activeDocumentId
+  const normalizedDocuments = documents.map(normalizeWorkbenchDocument)
+  const firstDocumentId = normalizedDocuments[0].id
+  const activeDocumentId = activeId && documents.some((d) => (d as WorkbenchDocument).id === activeId)
+    ? activeId
+    : firstDocumentId
+  const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+  const legacyMapKey = ['storyboard', 'Plans'].join('')
+  const legacyPlanKey = ['storyboard', 'Plan'].join('')
+  const legacyCommittedKey = ['storyboard', 'Plan', 'Committed'].join('')
+  const legacyMap = raw[legacyMapKey] && typeof raw[legacyMapKey] === 'object' ? raw[legacyMapKey] as Record<string, unknown> : undefined
+  const owner = payload.storyboardDesignsByDocumentId
+    ? payload.storyboardDesignsByDocumentId
+    : (() => {
+        const migrated: Record<string, StoryboardDesign[]> = {}
+        // 迁移读不动一份旧方案时，用户失去的是整份分镜——那件事不许静默发生。schema 这一侧
+        // 已经回到「剥离未知键」（见 storyboardPlanSchema 头注释），所以走到这里只剩真正残缺的
+        // 记录；至少把是谁、缺哪个字段留在控制台，别让它变成「打开项目分镜就没了」的谜。
+        const reportUnreadablePlan = (documentId: string, issues: readonly { path: PropertyKey[]; message: string }[]): void => {
+          logRendererWarn('storyboard-plan-migration-skipped',
+            { documentId, issues: issues.slice(0, 8).map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ') })
+        }
+        const legacyEntries = legacyMap
+          ? Object.entries(legacyMap).flatMap(([documentId, value]) => {
+              if (!value || typeof value !== 'object') return []
+              const entry = value as Record<string, unknown>
+              const plan = storyboardPlanSchema.safeParse(entry.plan)
+              if (!plan.success) { reportUnreadablePlan(documentId, plan.error.issues); return [] }
+              return [[documentId, { plan: plan.data, committed: entry.committed === true }] as const]
+            })
+          : (() => {
+              if (raw[legacyPlanKey] === undefined) return []
+              const plan = storyboardPlanSchema.safeParse(raw[legacyPlanKey])
+              if (!plan.success) { reportUnreadablePlan(activeDocumentId, plan.error.issues); return [] }
+              return [[activeDocumentId, { plan: plan.data, committed: raw[legacyCommittedKey] === true }] as const]
+            })()
+        for (const [documentId, entry] of legacyEntries) {
+          const document = normalizedDocuments.find((item) => item.id === documentId)
+          const now = Date.now()
+          migrated[documentId] = [{
+            id: `migrated-${documentId}`,
+            documentId,
+            title: entry.plan.title.trim(),
+            plan: entry.plan,
+            committed: entry.committed,
+            status: entry.committed ? 'committed' : 'draft',
+            sourceDocumentUpdatedAt: document?.updatedAt ?? now,
+            createdAt: now,
+            updatedAt: now,
+          }]
+        }
+        return migrated
+      })()
   return {
-    workbenchDocument: normalizeWorkbenchDocument(payload.workbenchDocument),
+    workbenchDocuments: normalizedDocuments,
+    activeDocumentId,
     timeline: normalizeTimeline(payload.timeline),
     generationCanvas: payload.generationCanvas,
     categories: normalizeCategories(payload.categories),
@@ -89,6 +153,8 @@ export function normalizePayload(input: unknown): WorkbenchProjectPayload {
     storyboardPlanCommitted: payload.storyboardPlanCommitted ?? false,
     // Gate 1:Film Bible 是项目级唯一真相源；字段重建式 normalizer 必须显式透传。
     filmBible: payload.filmBible ?? null,
+    ...(payload.editingPanelLayout ? { editingPanelLayout: payload.editingPanelLayout } : {}),
+    ...(Object.values(owner).some((designs) => designs.length > 0) ? { storyboardDesignsByDocumentId: owner } : {}),
   }
 }
 
@@ -109,12 +175,27 @@ function recordHasPersistedContent(raw: unknown): boolean {
   )
 }
 
+/**
+ * 从原始 record 上取未经 zod 剥离的 payload；取不到就退回 undefined，让
+ * normalizePayload 自己走「缺字段」的既有兜底（它第一步就 safeParse）。
+ */
+function readRawPayload(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return undefined
+  return (raw as { payload?: unknown }).payload
+}
+
 export function normalizeRecord(summary: WorkbenchProjectSummary, raw: unknown): WorkbenchProjectRecordV1 {
   const legacyParsed = workbenchProjectRecordSchema.safeParse(raw)
   if (legacyParsed.success) {
     return {
       ...legacyParsed.data,
-      payload: normalizePayload(legacyParsed.data.payload),
+      // 迁移必须吃**原始** payload，不能吃 zod 解析后的那份：payload schema 是普通
+      // z.object，会把它不认识的键默默剥掉——而已退役的那三个老键（见上面
+      // legacyMapKey / legacyPlanKey / legacyCommittedKey 三处拼装）恰恰就不在 schema 里。
+      // 喂解析后的那份，兼容读取就永远看不见它们：老项目的分镜方案打开即静默消失，
+      // 随后任何一次自动保存会把它从盘上永久抹掉。
+      // normalizePayload 自己第一步就重新 safeParse，喂原始值不会放宽任何校验。
+      payload: normalizePayload(readRawPayload(raw)),
     }
   }
   // Freshly-initialized workspace (existing folder opened via "打开文件夹",

@@ -21,6 +21,7 @@ import { mkdirSync, mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findCanvasBlankPoint } from './_canvasHit.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const shotsDir = path.join(repoRoot, 'tests/ux/shots/canvas-context-menu-click')
@@ -81,23 +82,11 @@ async function resize(width, height) {
 const countNodes = () => getWin().evaluate(() => document.querySelectorAll('.generation-canvas-v2-node').length)
 
 // 找一块「真·空白」：命中 stage 本身、不落在任何节点/工具条/菜单上。
+// 空白点判据住在 `_canvasHit.mjs`（单一 owner）：最顶层元素就是 React Flow pane。
 async function findBlankPoint() {
-  return getWin().evaluate(() => {
-    const stage = document.querySelector('.generation-canvas-v2__stage')
-    if (!stage) return null
-    const rect = stage.getBoundingClientRect()
-    for (const ry of [0.3, 0.45, 0.6, 0.72, 0.85]) {
-      for (const rx of [0.55, 0.65, 0.75, 0.85, 0.45, 0.35]) {
-        const x = rect.left + rect.width * rx
-        const y = rect.top + rect.height * ry
-        const hit = document.elementFromPoint(x, y)
-        if (!hit || !stage.contains(hit)) continue
-        if (hit.closest('.generation-canvas-v2-node, .generation-canvas-v2-toolbar, .generation-canvas-v2__zoom-bar, .generation-canvas-v2__selection-toolbar, .generation-canvas-v2__minimap, .generation-canvas-v2__navigation-stack, button, input, textarea, [role="menu"]')) continue
-        return { x: Math.round(x), y: Math.round(y) }
-      }
-    }
-    return null
-  })
+  const point = await findCanvasBlankPoint(getWin())
+  if (!point) throw new Error('画布上找不到任何空白点（stage 被浮层占满）')
+  return point
 }
 
 try {
@@ -156,10 +145,12 @@ try {
 
   // ── 反向对照：点真空白仍然要收起菜单 ──────────────────────────────────
   const blank2 = await findBlankPoint()
+  assert(Boolean(blank2), '新增节点后仍找得到画布空白', JSON.stringify(blank2))
   await getWin().mouse.click(blank2.x, blank2.y, { button: 'right' })
   await getWin().waitForTimeout(400)
   await expectVisible(menu, '再次右键弹出菜单')
   const blank3 = await findBlankPoint()
+  assert(Boolean(blank3), '菜单打开后仍找得到画布空白', JSON.stringify(blank3))
   await getWin().mouse.click(blank3.x, blank3.y)
   await getWin().waitForTimeout(500)
   await expect(menu, '左键点空白仍然收起菜单（没有因为豁免而卡住不收）')

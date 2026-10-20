@@ -1,10 +1,11 @@
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
 
-import { getMainWindow } from "../mainWindowRegistry";
+import { getMainWindow } from "../appWindowRegistry";
 import { loadOrCreateArtifactPreviewSecret } from "./artifactProjection";
 import { resolveProductionDeepLink, type ProductionDeepLinkTarget } from "./productionDeepLink";
 import { createProductionRunRepository } from "./productionRunRepository";
+import { logError, logWarn } from "../logging/logger";
 
 type InstallArgs = {
   isMcpStdio: boolean;
@@ -12,6 +13,8 @@ type InstallArgs = {
   hasSingleInstanceLock: boolean;
   /** 零窗口时把主窗口建回来（main.ts 收口的唯一入口）。 */
   ensureMainWindow: () => void | Promise<void>;
+  /** Optional diagnostic sink for startup failures (kept injectable for tests). */
+  log?: (message: string) => void;
 };
 
 export function installProductionRunDesktopLifecycle(args: InstallArgs): {
@@ -48,7 +51,7 @@ export function installProductionRunDesktopLifecycle(args: InstallArgs): {
       const target = resolveProductionDeepLink(rawUrl, createProductionRunRepository());
       deliverProductionDeepLink(target);
     } catch (error) {
-      console.warn("[nomi:desktop] ignored invalid production deep link", error instanceof Error ? error.message : String(error));
+      logWarn("production-run", "invalid-deep-link-ignored", undefined, error);
     }
   }
 
@@ -60,7 +63,7 @@ export function installProductionRunDesktopLifecycle(args: InstallArgs): {
   }
 
   function ensureArtifactPreviewSecret(): void {
-    if (String(process.env.NOMI_ARTIFACT_PREVIEW_SECRET || '').trim()) return;
+    if (String(process.env.NOMI_ARTIFACT_PREVIEW_SECRET || "").trim()) return;
     try {
       process.env.NOMI_ARTIFACT_PREVIEW_SECRET = loadOrCreateArtifactPreviewSecret(
         path.join(app.getPath("userData"), "capability-core", "artifact-preview.key"),
@@ -77,6 +80,12 @@ export function installProductionRunDesktopLifecycle(args: InstallArgs): {
 
   if (!args.isMcpStdio && !args.allowE2eMultiInstance) {
     if (!args.hasSingleInstanceLock) {
+      // Electron otherwise exits with code 0 and no window, which looks like a
+      // renderer crash when another Nomi instance owns the profile lock.
+      (args.log ?? ((message: string) => logError("main", "single-instance-exit", undefined, { reason: message })))(
+        "[nomi:desktop] another Nomi instance is already using this profile; this process is exiting. " +
+          "Close the running Nomi app, or set NOMI_ELECTRON_USER_DATA_DIR to an isolated directory for development.",
+      );
       app.quit();
     } else {
       // 用户再次启动 app（双击图标 / 点任务栏），我们是唯一实例 → 必须让他看见一个窗口。
@@ -87,13 +96,19 @@ export function installProductionRunDesktopLifecycle(args: InstallArgs): {
         if (deepLink) handleProductionDeepLink(deepLink);
         const [existing] = BrowserWindow.getAllWindows();
         if (!existing) {
-          void args.ensureMainWindow();
+          void Promise.resolve(args.ensureMainWindow()).then(() => {
+            const [created] = BrowserWindow.getAllWindows();
+            if (!created || created.isDestroyed()) return;
+            if (created.isMinimized()) created.restore();
+                    created.show();
+            created.focus();
+                  });
           return;
         }
         if (existing.isMinimized()) existing.restore();
-        existing.show(); // 窗口被隐藏时同样「打不开」，与 deliverProductionDeepLink 保持一致
+            existing.show(); // 窗口被隐藏时同样「打不开」，与 deliverProductionDeepLink 保持一致
         existing.focus();
-      });
+          });
     }
   }
 

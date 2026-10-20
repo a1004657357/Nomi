@@ -1,8 +1,8 @@
 import { getDesktopBridge } from '../../../desktop/bridge'
 import {
-  getActiveWorkbenchProjectId,
   persistActiveWorkbenchProjectNow,
 } from '../../project/workbenchProjectSession'
+import { isProjectExecutionContextCurrent, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import { normalizeScene3DState } from '../nodes/scene3d/scene3dSerializer'
 import type { Scene3DObject } from '../nodes/scene3d/scene3dTypes'
 import {
@@ -18,6 +18,7 @@ export type Model3dHandoffTarget = 'scene3d' | 'vibingDirector'
 
 type ImportDirectorAssetInput = {
   projectId: string
+  projectBinding: ProjectExecutionContext['binding']
   directorNodeId: string
   sourceUrl: string
   source: 'local'
@@ -30,10 +31,10 @@ type ImportDirectorAssetResult = {
 }
 
 export type HandoffModel3dNodeOptions = {
+  project: ProjectExecutionContext
   sourceNodeId: string
   target: Model3dHandoffTarget
   targetNodeId?: string
-  projectId?: string
   license?: string
   importDirectorAsset?: (input: ImportDirectorAssetInput) => Promise<ImportDirectorAssetResult>
   inspectModel3d?: (input: { url: string }) => Promise<Model3dValidationSummary>
@@ -125,6 +126,8 @@ function latestScene3dTransform(nodes: GenerationCanvasNode[], sourceNodeId: str
 }
 
 export async function handoffModel3dNode(options: HandoffModel3dNodeOptions): Promise<Model3dHandoffOutcome> {
+  const { project } = options
+  project.assertCurrent()
   const initialStore = useGenerationCanvasStore.getState()
   const source = initialStore.nodes.find((node) => node.id === options.sourceNodeId)
   if (!source) throw new Error('3D 源节点不存在')
@@ -132,6 +135,7 @@ export async function handoffModel3dNode(options: HandoffModel3dNodeOptions): Pr
     throw new Error('请先在 3D 模型节点生成可用的 GLB 结果')
   }
   const validation = await validatedSourceResult(source, options.inspectModel3d)
+  project.assertCurrent()
 
   const existingTarget = options.targetNodeId
     ? initialStore.nodes.find((node) => node.id === options.targetNodeId)
@@ -141,13 +145,13 @@ export async function handoffModel3dNode(options: HandoffModel3dNodeOptions): Pr
     throw new Error(`目标节点类型不匹配：需要 ${options.target}`)
   }
 
-  const projectId = options.target === 'vibingDirector'
-    ? String(options.projectId || getActiveWorkbenchProjectId() || '').trim()
-    : ''
-  if (options.target === 'vibingDirector' && !projectId) throw new Error('请先打开一个本地项目')
+  const projectId = project.binding.projectId
 
   const now = options.now?.() ?? Date.now()
-  const mutate = options.mutate ?? (<T,>(operation: () => T) => operation())
+  const mutate = <T,>(operation: () => T): T => {
+    project.assertCurrent()
+    return options.mutate ? options.mutate(operation) : operation()
+  }
   const objectId = `handoff-${safeId(source.id)}-${now}`
   let createdTarget = false
   const inheritedTransform = latestScene3dTransform(initialStore.nodes, source.id)
@@ -208,11 +212,13 @@ export async function handoffModel3dNode(options: HandoffModel3dNodeOptions): Pr
     } else {
       const imported = await (options.importDirectorAsset ?? defaultImportDirectorAsset)({
         projectId,
+        projectBinding: project.binding,
         directorNodeId: target.id,
         sourceUrl: source.result.url,
         source: 'local',
         ...(options.license?.trim() ? { license: options.license.trim() } : {}),
       })
+      project.assertCurrent()
       const director = normalizeVibingDirectorState(targetMeta.vibingDirectorState)
       const importedAsset = imported.asset.model3dValidation
         ? imported.asset
@@ -248,9 +254,10 @@ export async function handoffModel3dNode(options: HandoffModel3dNodeOptions): Pr
       latestStore.selectNode(target.id)
     })
     await (options.persist ?? persistActiveWorkbenchProjectNow)()
+    project.assertCurrent()
     return { targetNodeId: target.id, objectId, createdTarget }
   } catch (error) {
-    if (createdTarget) mutate(() => useGenerationCanvasStore.getState().deleteNode(target.id))
+    if (createdTarget && isProjectExecutionContextCurrent(project)) mutate(() => useGenerationCanvasStore.getState().deleteNode(target.id))
     throw error
   }
 }

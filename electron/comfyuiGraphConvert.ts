@@ -15,6 +15,7 @@
 // 开 contextIsolation；只执行一段取图的脚本，不留驻、不导航别处。
 import { BrowserWindow } from "electron";
 import { normalizeComfyuiBaseUrl } from "./comfyui/endpointResolver";
+import { registerAppWindow } from "./appWindowRegistry";
 
 /** 前端就绪 + 转换的总超时（首次要下载 ComfyUI 前端资源，给足）。实测冷启 ~1.5s、热 ~0.4s。 */
 const CONVERT_TIMEOUT_MS = 45_000;
@@ -74,6 +75,9 @@ function ensureWindow(base: string): Holder {
       partition: CONVERTER_PARTITION,
     },
   });
+  // 显式登记成 untrusted：这个窗口装的是**第三方 ComfyUI 网页**，不挂 preload、不该有任何 IPC 权限。
+  // 写下来而不是「不登记」——漏登记和有意不给权限在代码里长得一样，在审计时含义相反。
+  registerAppWindow(win, "untrusted", base);
   win.on("closed", () => windowsByBase.delete(base));
   // 隐藏窗口绝不能弹任何原生框：ComfyUI 前端会挂 beforeunload（「工作流未保存」）等对话框，
   // 弹出来会**卡死整个转换**且用户根本看不见（窗口是隐藏的）。全部静默放行。
@@ -97,6 +101,9 @@ function ensureWindow(base: string): Holder {
       // 等 ComfyUI 前端把 app 挂到 window 上（版本差异靠能力探测，不靠版本号猜）。
       const deadline = Date.now() + CONVERT_TIMEOUT_MS;
       while (Date.now() < deadline) {
+        // 窗口被 closeConverterWindow 销毁后别再空转轮询（每 400ms 对已销毁 webContents
+        // executeJavaScript，throw 被 catch 成 false，白转到 deadline）。
+        if (win.isDestroyed()) return false;
         const ok = await win.webContents
           .executeJavaScript(`Boolean(window.app && window.app.graphToPrompt && window.app.loadGraphData)`)
           .catch(() => false);
@@ -136,10 +143,15 @@ export async function convertUiWorkflowToApi(baseUrl: string, uiWorkflowText: st
   }
 
   const holder = ensureWindow(base);
-  const ready = await Promise.race([
-    holder.ready,
-    new Promise<boolean>((r) => setTimeout(() => r(false), CONVERT_TIMEOUT_MS)),
-  ]);
+  // race 的超时 timer 必须 clear：ready 先成时留着它就是 CONVERT_TIMEOUT_MS 的空挂定时器。
+  let raceTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<boolean>((r) => { raceTimer = setTimeout(() => r(false), CONVERT_TIMEOUT_MS); });
+  let ready: boolean;
+  try {
+    ready = await Promise.race([holder.ready, timeout]);
+  } finally {
+    clearTimeout(raceTimer);
+  }
   if (!ready) {
     closeConverterWindow(base);
     return { ok: false, error: `连不上 ComfyUI 网页（${base}），无法自动转换格式` };

@@ -1,3 +1,4 @@
+import { revalidatePendingCredential } from './catalog/validateCandidateCredential';
 // 文本任务执行引擎（从 runtime.ts 抽出——规则 12 巨壳门岗：runtime.ts 已逼近 800 行硬上限，
 // 文本任务这块自成一单元）。方案 A：路径 B 文本生成统一走 AI SDK streamTextTask。
 //
@@ -6,7 +7,7 @@
 // 无加载期互调）。
 import crypto from "node:crypto";
 import { streamTextTask } from "./ai/streamTextTask";
-import { firstReferenceImage } from "./catalog/taskParams";
+import { allReferenceImages } from "./catalog/taskParams";
 import { firstString, trim } from "./jsonUtils";
 import { billingKindForTaskKind, findExecutableModelForTask, type TaskRequest, type TaskResult } from "./runtime";
 import type { Model, Vendor } from "./catalog/types";
@@ -23,24 +24,29 @@ export async function executeTextTask(input: {
   onDelta?: (delta: string) => void;
   abortSignal?: AbortSignal;
 }): Promise<TaskResult> {
-  const imageUrl = input.kind === "image_to_prompt"
-    ? firstReferenceImage(input.request, { vendorKey: input.vendor.key, modelKey: input.model.modelKey })
-    : "";
+  // image_to_prompt 走**多图**：视频拆解一次喂一镜的 3 帧（单帧会漏掉「出现又消失」的字幕/角标，
+  // 实测同一镜 3 帧里下载弹窗只在第 3 帧）。单图调用方（浏览器「画面复刻」）传的 referenceImages 只有
+  // 一个元素，行为完全不变。保留 main 的 {vendorKey, modelKey} 选择参数（ComfyUI 参考契约感知）。
+  const imageUrls = input.kind === "image_to_prompt"
+    ? allReferenceImages(input.request, { vendorKey: input.vendor.key, modelKey: input.model.modelKey })
+    : [];
   const maxTokensValue = Number(input.request.extras?.maxTokens ?? input.request.extras?.max_tokens);
   const temperatureValue = Number(input.request.extras?.temperature);
-  const { raw } = await streamTextTask(
+  const { raw, finishReason } = await streamTextTask(
     {
       vendor: input.vendor,
       model: input.model,
       apiKey: input.apiKey,
       prompt: input.request.prompt,
-      ...(imageUrl ? { imageUrl } : {}),
+      ...(imageUrls.length ? { imageUrls } : {}),
       ...(Number.isFinite(temperatureValue) ? { temperature: temperatureValue } : {}),
       ...(Number.isFinite(maxTokensValue) && maxTokensValue > 0 ? { maxTokens: maxTokensValue } : {}),
     },
     { ...(input.onDelta ? { onDelta: input.onDelta } : {}), ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}) },
   );
-  return { id: input.taskId, kind: input.kind, status: "succeeded", assets: [], raw };
+  // finishReason 必须带出去：截断（`length`）这一类问题在下游**只能**靠它自证。
+  // 2026-09-12 诊断里「候选 C 截断」之所以两轮都证伪不了，就是因为它被原地丢在了这一行。
+  return { id: input.taskId, kind: input.kind, status: "succeeded", assets: [], raw, ...(finishReason ? { finishReason } : {}) };
 }
 
 /**
@@ -60,6 +66,7 @@ export async function runTextTaskStream(
   const wantedKind = billingKindForTaskKind(kind);
   if (wantedKind !== "text") throw new Error(`runTextTaskStream 只处理文本任务，收到 kind=${kind}`);
   const modelKey = firstString(request.extras?.modelKey, request.extras?.modelAlias);
+  await revalidatePendingCredential(vendorKey);
   const { vendor, model, apiKey } = findExecutableModelForTask(vendorKey, modelKey, wantedKind);
   const taskId = `task-${crypto.randomUUID()}`;
   return executeTextTask({

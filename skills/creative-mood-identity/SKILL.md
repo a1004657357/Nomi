@@ -1,6 +1,64 @@
 ---
-name: creative.mood-identity
-description: 5×5 情绪坐标与身份保护表演控制 playbook
+name: creative-mood-identity
+description: 用能量、亲和度和表情强度生成身份一致的情绪版本。当用户提到情绪矩阵、5×5 表情、开心或冷淡程度、角色表演变化且不能换脸时使用。
+metadata:
+  nomi:
+    selectable-in-workbench: true
+    version: 1.0.0
+    label: 5×5 情绪与身份保护
+    author: '@nomi'
+    canvas:
+      recipeIds:
+        - portrait.mood
+      defaultRecipeId: portrait.mood
+    inputs:
+      - name: portraitAndMood
+        description: 清晰人物节点，以及目标能量、亲和度、表情强度或表演意图。
+        required: true
+    tools:
+      - look_at_canvas
+      - look_at_media
+      - list_models
+      - make_artifact
+      - draft_shots
+      - generate
+      - check_job
+    required-providers:
+      - image
+    stages:
+      - id: inspect
+        goal: 读取人物素材，确认身份锚、基础表情和表演边界。
+        tools:
+          - look_at_canvas
+          - look_at_media
+          - list_models
+        pause: true
+      - id: coordinates
+        goal: 把自然语言表演意图映射为 0 到 4 的能量、亲和度与表情强度。
+        tools:
+          - make_artifact
+        depends-on:
+          - inspect
+        pause: true
+      - id: generate
+        goal: 用明确坐标标注的图像编辑草稿生成 1、5 或 25 个情绪版本。
+        tools:
+          - draft_shots
+          - generate
+          - check_job
+        depends-on:
+          - coordinates
+        pause: true
+        model-prefs:
+          - kind: image
+      - id: save
+        goal: 把用户选定的结果素材身份和情绪坐标保存为画布说明，资源库登记由用户完成。
+        tools:
+          - look_at_media
+          - make_artifact
+        depends-on:
+          - generate
+        pause: true
 ---
 
 # 5×5 情绪与身份保护
@@ -9,10 +67,10 @@ description: 5×5 情绪坐标与身份保护表演控制 playbook
 
 ## 流程规划
 
-1. `inspect`：确认人物、基础表情、身份锚和镜头可见范围。
-2. `coordinates`：向用户回显能量、亲和度和表情强度，等确认。
-3. `generate`：先用 `sample5` 做五格试跑；需要完整覆盖时再用 `matrix5x5` 生成 25 格。
-4. `save`：用户选定后再保存身份资源，不把每个试验版本都设为主身份。
+1. `inspect`：用 `look_at_canvas`、`look_at_media` 取得同一人物的参考素材，用 `list_models` 核对图像编辑模式。
+2. `coordinates`：回显能量、亲和度和表情强度；需要留档时用 `make_artifact` 保存坐标说明。
+3. `generate`：单点、五格试跑、完整矩阵分别用 `draft_shots` 显式规划 1、5、25 张独立图片。每张标题与提示词标注坐标，并引用同一原图。根据用户要求调用 `generate`，后续只用 `check_job` 跟进，不因状态未定而重提。
+4. `save`：用户选定后，用 `make_artifact` 记录该结果的素材身份与坐标，后续镜头引用该素材；这不是 CreativeResource 注册，入资源库仍由用户在画布完成。
 
 ## 素材分析
 
@@ -33,7 +91,7 @@ description: 5×5 情绪坐标与身份保护表演控制 playbook
 - 单个目标情绪只生成一个新版本；不确定强度时先做五格试跑，用户要求完整矩阵时再按 25 个有序结果执行并保留坐标标签。
 - 身份锁定默认开启，变化只作用于表情肌、眼神和轻微姿态。
 - Provider 由兼容层根据图像能力选择，不在 Skill 中写死。
-- 付费调用前展示计划、输出数量、独立请求数和最多 2 路并发，等待用户确认。
+- 在生成前说明输出数量；执行与并发遵循统一运行器及其真实确认回执，技能不自行承诺并发上限，也不在模型参数里传旧配方的 sample5 / matrix5x5 控件。
 
 ## 提示词写法
 
@@ -47,3 +105,12 @@ description: 5×5 情绪坐标与身份保护表演控制 playbook
 - 情绪图可作为关键帧或角色表演参考，视频提示词需描述从上一坐标到下一坐标的过渡。
 - 关键情绪变化要由对白、动作或事件触发，不能只靠切镜解释。
 - 剪辑检查身份、视线方向和情绪强度是否连续，并去除突变版本。
+
+## 输入
+
+- **portraitAndMood**（必填）：清晰人物节点，以及目标能量、亲和度、表情强度或表演意图。
+
+## 示例
+
+- **克制但疏离**
+  > 保持这个演员不变，生成低能量、高疏离、轻微克制不悦的版本。

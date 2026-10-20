@@ -1,4 +1,5 @@
-import { deriveVendorKeyFromBaseUrl } from "../catalog/catalogCommit";
+import { resolveHostVendorKey } from "../catalog/connectionVendorKey";
+import { normalizeProviderProxyUrl } from "../providerNetwork";
 import type { ProviderAdapterCatalogPort } from "./serviceCatalog";
 import type {
   ProviderAdapterConnectionInput,
@@ -15,6 +16,7 @@ export function normalizeProviderAdapterInput<T extends ProviderAdapterConnectio
   const baseUrl = String(rawInput.baseUrl || "").trim().replace(/\/+$/, "");
   if (!/^https?:\/\//i.test(baseUrl)) throw new Error("Provider base URL must begin with http:// or https://");
   const apiKey = String(rawInput.apiKey || "").trim();
+  const proxyUrl = normalizeProviderProxyUrl(rawInput.proxyUrl);
   const mayKeepCredential = purpose === "register" &&
     (rawInput as ProviderAdapterRegisterInput).preserveExistingCredential === true;
   if (rawInput.authType !== "none" && !apiKey && !mayKeepCredential) throw new Error("API key is required");
@@ -27,7 +29,7 @@ export function normalizeProviderAdapterInput<T extends ProviderAdapterConnectio
     }))
     .filter((model) => model.modelKey && !seen.has(model.modelKey) && seen.add(model.modelKey));
   if (purpose === "verify" && models.length === 0) throw new Error("Select at least one model to verify");
-  return { ...rawInput, baseUrl, apiKey, models };
+  return { ...rawInput, baseUrl, apiKey, ...(proxyUrl ? { proxyUrl } : {}), models };
 }
 
 export function registerProviderConnection(input: {
@@ -36,9 +38,13 @@ export function registerProviderConnection(input: {
   now: () => string;
 }): ProviderAdapterRegistration {
   const normalized = normalizeProviderAdapterInput(input.rawInput, "register");
-  const vendorKey = String(normalized.catalogVendorKey || "").trim() ||
-    deriveVendorKeyFromBaseUrl(normalized.baseUrl);
-  if (!vendorKey) throw new Error("Unable to derive a provider id from the API base URL");
+  // 这里只解析到「这一族的 root」。落在哪条兄弟连接上（#831：同域名可以有多条）由目录写入侧
+  // 的 `defaultCatalog.register` 按「域名 + 连接名」决定 —— 身份判据只许有一个 owner，
+  // 而它必须是**读得到目录**的那一层。
+  const vendorKey = resolveHostVendorKey({
+    baseUrl: normalized.baseUrl,
+    catalogVendorKey: normalized.catalogVendorKey,
+  });
   const savedAt = input.now();
   const registered = input.catalog.register({ ...normalized, vendorKey, savedAt });
   return {
@@ -46,12 +52,15 @@ export function registerProviderConnection(input: {
     vendorName: registered.vendor.name,
     state: "configured",
     selectedModelKeys: normalized.models.map((model) => model.modelKey),
-    models: registered.models.map((model) => ({
-      modelKey: model.modelKey,
-      labelZh: model.labelZh,
-      kind: model.kind,
-      state: "unverified",
-    })),
+    models: normalized.models.map((candidate) => {
+      const active = registered.models.find((model) => model.modelKey === candidate.modelKey);
+      return {
+        modelKey: candidate.modelKey,
+        labelZh: candidate.labelZh || active?.labelZh || candidate.modelKey,
+        kind: candidate.kind,
+        state: "unverified",
+      };
+    }),
     savedAt,
   };
 }

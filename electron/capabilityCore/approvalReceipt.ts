@@ -35,7 +35,11 @@ export type HumanApprovalChallengeInput = {
   revocationEpoch?: number;
   costScope: string;
   pricingSnapshotHash: string;
-  reservationPreview: { currency: string; maximum: number };
+  /**
+   * 这次要冻住的额度。`maximum` 只说**已知价**那部分；`unknownJobCount > 0` 表示另有 N 笔
+   * 价格未知（2026-09-21 开闸）——它进 MAC，所以确认面上那句「另有 N 镜价格未知」同样篡改不了。
+   */
+  reservationPreview: { currency: string; maximum: number; unknownJobCount?: number };
   display?: HumanApprovalDisplay;
   ttlMs?: number;
 };
@@ -68,6 +72,76 @@ export type MainProcessGestureAttestationV1 = {
   mac: string;
 };
 
+/**
+ * Attestation produced by a registered MCP client that has confirmed a generation
+ * gate via the MCP elicitation protocol (2025-06-18+). Recorded in the receipt's
+ * gestureAttestation field in lieu of a main-process GUI gesture attestation when
+ * the confirmation surface is the calling client, not a Nomi application window.
+ *
+ * Fields prove: which authenticated client spoke (authenticatedClient), over which
+ * challenge (challengeId / gestureNonce), with what decision, and when. The HMAC
+ * is computed by the main process using its own macKey — the client never sees the
+ * key, so this is not a client-self-issued attestation.
+ */
+export type ClientElicitationAttestationV1 = {
+  kind: "client_elicitation";
+  issuer: "nomi-main";
+  keyId: string;
+  challengeId: string;
+  decision: "accept";
+  authenticatedClient: string;
+  gestureNonce: string;
+  issuedAt: string;
+  expiresAt: string;
+  mac: string;
+};
+
+/**
+ * 「全自动」档里那次**没有人点**的放行（2026-09-12 用户拍板：全自动下付费生成不出报价卡）。
+ *
+ * 为什么它是一种 attestation 而不是「跳过收据」：跳过收据就等于让付费门在某一档上没人守，
+ * 而档位说的是「要不要停下来问」，不是「要不要验证」。这一条记的是一件**真事**——
+ * 用户此前在面板上亲手把档位切到了「全自动」（切进去本身还要二次确认，
+ * `useAgentPanelAutoMode.ts`），于是这一次由那条策略代答。主进程用自己的 macKey 签它，
+ * 调用方伪造不出来，账本上也看得出这一笔是策略批的、不是谁点的（收据的 `decidedBy`）。
+ *
+ * `policyMode` 只能是 `project`：别的档位下这种 attestation 铸不出来（`verifyGesture` fail-closed），
+ * 所以「把某个档位偷偷提成全自动」不会在这一层悄悄发生。
+ */
+export type PolicyDecisionAttestationV1 = {
+  kind: "policy_decision";
+  issuer: "nomi-main";
+  keyId: string;
+  challengeId: string;
+  decision: "accept";
+  /** 授权这次免卡放行的档位。恒 `project`（全自动）——见类型注释。 */
+  policyMode: "project";
+  /** 哪个宿主面按这条策略代答的（`agent-lane` 等）。进账本，便于事后回溯。 */
+  policySurface: string;
+  gestureNonce: string;
+  issuedAt: string;
+  expiresAt: string;
+  mac: string;
+};
+
+export type GestureAttestationV1 =
+  | MainProcessGestureAttestationV1
+  | ClientElicitationAttestationV1
+  | PolicyDecisionAttestationV1;
+
+/**
+ * 这张收据是**谁**决定的。三个值与 `gestureAttestation.kind` 一一对应，在铸造时派生
+ * （不是第二个真相源），写进被 MAC 覆盖的载荷里，好让账本只读一个字段就说得清。
+ */
+export const APPROVAL_DECIDED_BY = ["human:gesture", "human:elicitation", "policy:full_auto"] as const;
+export type ApprovalDecidedBy = (typeof APPROVAL_DECIDED_BY)[number];
+
+export function approvalDecidedByOf(attestation: GestureAttestationV1): ApprovalDecidedBy {
+  if (attestation.kind === "client_elicitation") return "human:elicitation";
+  if (attestation.kind === "policy_decision") return "policy:full_auto";
+  return "human:gesture";
+}
+
 export type HumanApprovalReceiptV1 = {
   version: typeof HUMAN_APPROVAL_VERSION;
   keyId: string;
@@ -88,7 +162,9 @@ export type HumanApprovalReceiptV1 = {
   costScope: string;
   pricingSnapshotHash: string;
   humanActor: string;
-  gestureAttestation: MainProcessGestureAttestationV1;
+  /** 谁决定的（人点的 / 客户端 elicitation / 「全自动」策略代答）。见 `ApprovalDecidedBy`。 */
+  decidedBy: ApprovalDecidedBy;
+  gestureAttestation: GestureAttestationV1;
   receiptNonce: string;
   audience: typeof HUMAN_APPROVAL_AUDIENCE;
   issuedAt: string;
@@ -128,7 +204,19 @@ export type ApprovalReceiptAuthorityDeps = {
   lock?: ProductionRunLock;
   now?: () => string;
   randomId?: () => string;
+  /** 挑战 TTL：**人**要多久发现并点下去。 */
   defaultTtlMs?: number;
+  /**
+   * 收据 TTL：人点完之后，调用方还有多久可以把它花掉。从**铸造时刻**（＝人点下去那一刻）起算。
+   *
+   * 为什么必须和挑战 TTL 分开：修复前收据直接继承挑战的 `expiresAt`，于是「人要多久发现」
+   * 和「agent 多久花掉」共用同一段 5 分钟。2026-09-10 的真实宿主实测里这一关走不通——
+   * 一个 agent 回合本身就要 30–120s，人还得自己发现队列里躺着一条待确认再翻到设置页，
+   * 三件事塞不进同一个 5 分钟，`start` 拿到的是 `receipt_expired`。
+   * 两段各自计时是同类流程的标准形状（GitHub device flow 的 user code 与换 token 也是两段）。
+   * 默认值不新增魔法数：与挑战同为 `defaultTtlMs`，改变的是**起点**而不是长度。
+   */
+  receiptTtlMs?: number;
 };
 
 export type ReceiptReplayResult = { receipt: HumanApprovalReceiptV1; replayed: boolean };
@@ -232,6 +320,7 @@ export function createApprovalReceiptAuthority(deps: ApprovalReceiptAuthorityDep
   const now = deps.now ?? (() => new Date().toISOString());
   const randomId = deps.randomId ?? (() => crypto.randomUUID());
   const defaultTtlMs = deps.defaultTtlMs ?? 5 * 60_000;
+  const receiptTtlMs = deps.receiptTtlMs ?? defaultTtlMs;
 
   function readState(): ApprovalReceiptState {
     if (!fs.existsSync(deps.filePath)) return emptyState(keyId);
@@ -301,6 +390,17 @@ export function createApprovalReceiptAuthority(deps: ApprovalReceiptAuthorityDep
     return challenge;
   }
 
+  /** Resolve a challenge handle for the trusted Nomi UI without exposing the
+   * signed token to MCP clients or persisting it in the handoff queue. */
+  function resolveChallengeToken(challengeId: string): string {
+    const normalized = typeof challengeId === "string" ? challengeId.trim() : "";
+    if (!normalized) throw new ReceiptScopeError("Challenge id is required");
+    const record = readState().challenges[normalized];
+    if (!record) throw new ReceiptScopeError("Challenge is not registered");
+    verifyChallenge(record.token);
+    return record.token;
+  }
+
   function requestChallenge(input: HumanApprovalChallengeInput): { input: HumanApprovalChallengeInput; token: string; challenge: HumanApprovalChallengeV1 } {
     return mutate<{ input: HumanApprovalChallengeInput; token: string; challenge: HumanApprovalChallengeV1 }>((state) => {
       const existing = Object.values(state.challenges).find((record) => record.input.challengeKey === input.challengeKey);
@@ -315,7 +415,9 @@ export function createApprovalReceiptAuthority(deps: ApprovalReceiptAuthorityDep
         || !input.contractHash || input.targetHash !== input.contractHash || !Number.isInteger(input.projectRevision)
         || (input.revocationEpoch !== undefined && !Number.isInteger(input.revocationEpoch))
         || !input.costScope || !input.pricingSnapshotHash || !input.reservationPreview.currency
-        || !Number.isFinite(input.reservationPreview.maximum) || input.reservationPreview.maximum < 0) {
+        || !Number.isFinite(input.reservationPreview.maximum) || input.reservationPreview.maximum < 0
+        || (input.reservationPreview.unknownJobCount !== undefined
+          && (!Number.isSafeInteger(input.reservationPreview.unknownJobCount) || input.reservationPreview.unknownJobCount < 0))) {
         throw new ReceiptScopeError("Challenge input is incomplete");
       }
       const withoutMac: Omit<HumanApprovalChallengeV1, "mac"> = {
@@ -373,10 +475,91 @@ export function createApprovalReceiptAuthority(deps: ApprovalReceiptAuthorityDep
     return { ...withoutMac, mac: sign(withoutMac, deps.macKey) };
   }
 
-  function verifyGesture(token: string, value: unknown): MainProcessGestureAttestationV1 {
+  /**
+   * Create a client_elicitation attestation for a registered MCP client that has
+   * confirmed a generation gate via the elicitation protocol. The main process
+   * issues and signs this — the client never handles the macKey — so the audit
+   * chain is honest: "a registered MCP client confirmed this gate over elicitation".
+   */
+  function createClientElicitationAttestation(token: string, authenticatedClient: string): ClientElicitationAttestationV1 {
+    const challenge = verifyChallenge(token);
+    if (typeof authenticatedClient !== "string" || !authenticatedClient.trim()) {
+      throw new ReceiptScopeError("Authenticated client identity is required for client elicitation attestation");
+    }
+    const withoutMac: Omit<ClientElicitationAttestationV1, "mac"> = {
+      kind: "client_elicitation",
+      issuer: "nomi-main",
+      keyId,
+      challengeId: challenge.challengeId,
+      decision: "accept",
+      authenticatedClient: authenticatedClient.trim(),
+      gestureNonce: challenge.nonce,
+      issuedAt: now(),
+      expiresAt: challenge.expiresAt,
+    };
+    return { ...withoutMac, mac: sign(withoutMac, deps.macKey) };
+  }
+
+  /**
+   * 「全自动」档那次免卡放行的 attestation。**只有 `project` 档铸得出来**——传别的档位当场抛，
+   * 于是「悄悄把某一档当成全自动」在这一层就走不通。签名同样由主进程的 macKey 出，
+   * 调用方（渲染层、MCP 客户端）永远拿不到这把钥匙。
+   */
+  function createPolicyDecisionAttestation(token: string, input: {
+    policyMode: "project";
+    policySurface: string;
+  }): PolicyDecisionAttestationV1 {
+    const challenge = verifyChallenge(token);
+    if (input.policyMode !== "project") {
+      throw new ReceiptScopeError("Only the full-auto approval mode may decide a paid gate without a human gesture");
+    }
+    const policySurface = typeof input.policySurface === "string" ? input.policySurface.trim() : "";
+    if (!policySurface) throw new ReceiptScopeError("Policy decision attestation requires the deciding host surface");
+    const withoutMac: Omit<PolicyDecisionAttestationV1, "mac"> = {
+      kind: "policy_decision",
+      issuer: "nomi-main",
+      keyId,
+      challengeId: challenge.challengeId,
+      decision: "accept",
+      policyMode: "project",
+      policySurface,
+      gestureNonce: challenge.nonce,
+      issuedAt: now(),
+      expiresAt: challenge.expiresAt,
+    };
+    return { ...withoutMac, mac: sign(withoutMac, deps.macKey) };
+  }
+
+  function verifyGesture(token: string, value: unknown): GestureAttestationV1 {
     const challenge = verifyChallenge(token);
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new HumanApprovalRequiredError();
-    const attestation = value as MainProcessGestureAttestationV1;
+    const raw = value as Record<string, unknown>;
+    if (raw.kind === "policy_decision") {
+      const attestation = raw as PolicyDecisionAttestationV1;
+      if (attestation.issuer !== "nomi-main" || attestation.keyId !== keyId
+        || attestation.challengeId !== challenge.challengeId || attestation.gestureNonce !== challenge.nonce
+        || attestation.decision !== "accept" || attestation.policyMode !== "project"
+        || typeof attestation.policySurface !== "string" || !attestation.policySurface
+        || typeof attestation.mac !== "string"
+        || !timingEqual(attestation.mac, sign({ ...attestation, mac: undefined }, deps.macKey))) {
+        throw new HumanApprovalRequiredError();
+      }
+      assertNotExpired(attestation, now());
+      return attestation;
+    }
+    if (raw.kind === "client_elicitation") {
+      const attestation = raw as ClientElicitationAttestationV1;
+      if (attestation.issuer !== "nomi-main" || attestation.keyId !== keyId
+        || attestation.challengeId !== challenge.challengeId || attestation.gestureNonce !== challenge.nonce
+        || attestation.decision !== "accept" || typeof attestation.authenticatedClient !== "string" || !attestation.authenticatedClient
+        || typeof attestation.mac !== "string"
+        || !timingEqual(attestation.mac, sign({ ...attestation, mac: undefined }, deps.macKey))) {
+        throw new HumanApprovalRequiredError();
+      }
+      assertNotExpired(attestation, now());
+      return attestation;
+    }
+    const attestation = raw as MainProcessGestureAttestationV1;
     if (attestation.kind !== "main_process_gesture" || attestation.issuer !== "nomi-main" || attestation.keyId !== keyId
       || attestation.challengeId !== challenge.challengeId || attestation.gestureNonce !== challenge.nonce
       || attestation.decision !== "accept" || !Number.isInteger(attestation.webContentsId) || !Number.isInteger(attestation.frameId)
@@ -391,6 +574,7 @@ export function createApprovalReceiptAuthority(deps: ApprovalReceiptAuthorityDep
   function mintReceipt(token: string, gesture: unknown): { token: string; receipt: HumanApprovalReceiptV1 } {
     const challenge = verifyChallenge(token);
     const attestation = verifyGesture(token, gesture);
+    const issuedAt = now();
     const state = readState();
     const challengeRecord = state.challenges[challenge.challengeId];
     if (!challengeRecord) throw new HumanApprovalRequiredError();
@@ -417,12 +601,20 @@ export function createApprovalReceiptAuthority(deps: ApprovalReceiptAuthorityDep
       projectRevision: challenge.projectRevision,
       costScope: challenge.costScope,
       pricingSnapshotHash: challenge.pricingSnapshotHash,
-      humanActor: `web_contents:${attestation.webContentsId}:${attestation.frameId}:${attestation.origin}`,
+      humanActor: attestation.kind === "client_elicitation"
+        ? `mcp_client:${attestation.authenticatedClient}`
+        : attestation.kind === "policy_decision"
+          // 没有人点，所以这里记的是**那条策略**，不是编一个人出来。读账本的人一眼看得出
+          // 这一笔是谁批的；`decidedBy` 则让机器不必去解析这个字符串。
+          ? `policy:${attestation.policyMode}:${attestation.policySurface}`
+          : `web_contents:${attestation.webContentsId}:${attestation.frameId}:${attestation.origin}`,
+      decidedBy: approvalDecidedByOf(attestation),
       gestureAttestation: attestation,
       receiptNonce: randomId(),
       audience: HUMAN_APPROVAL_AUDIENCE,
-      issuedAt: now(),
-      expiresAt: challenge.expiresAt,
+      issuedAt,
+      // 从人点下去那一刻起算，不继承挑战的剩余时间。
+      expiresAt: expiresAt(issuedAt, undefined, receiptTtlMs),
     };
     const receipt: HumanApprovalReceiptV1 = { ...receiptWithoutMac, mac: sign(receiptWithoutMac, deps.macKey) };
     const receiptToken = encode(receipt);
@@ -473,7 +665,10 @@ export function createApprovalReceiptAuthority(deps: ApprovalReceiptAuthorityDep
     filePath: deps.filePath,
     requestChallenge,
     verifyChallenge,
+    resolveChallengeToken,
     createMainProcessGestureAttestation,
+    createClientElicitationAttestation,
+    createPolicyDecisionAttestation,
     mintReceipt,
     verifyReceipt,
     resolveReceiptToken,

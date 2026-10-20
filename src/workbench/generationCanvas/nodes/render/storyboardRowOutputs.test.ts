@@ -288,12 +288,12 @@ describe('storyboard row outputs', () => {
     })
     await ensureStoryboardRowVideoOutput({
       tableNode,
-      shot: { ...shot, modelKey: 'sora-2', modeId: undefined },
+      shot: { ...shot, modelKey: 'agnes-video-v2.0', modeId: undefined },
     })
     const video = useGenerationCanvasStore.getState().nodes.find((node) => node.id === first.nodeId)!
     expect(video.meta).toMatchObject({
-      modelKey: 'sora-2',
-      archetype: { id: 'sora-2', modeId: 'i2v' },
+      modelKey: 'agnes-video-v2.0',
+      archetype: { id: 'agnes-video', modeId: 'keyframes' },
     })
   })
 

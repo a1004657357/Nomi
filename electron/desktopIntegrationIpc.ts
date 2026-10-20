@@ -1,9 +1,5 @@
 import { dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
-import { createProject, readProject } from './projects/repository'
-import { openWorkspaceFolder, selectWorkspaceFolder } from './workspace/workspaceIpc'
-import { listWorkspaceFiles, resolveWorkspaceFilePath } from './workspace/workspaceFileIndex'
-import { registerWorkspaceFileDeleteIpc } from './workspace/workspaceFileDelete'
 import { getSettingsRoot } from './runtimePaths'
 import { assertTrustedSender } from './ipcSenderGuard'
 
@@ -12,31 +8,32 @@ type RegisterDesktopIntegrationIpcOptions = {
 }
 
 function registerProviderLoginIpc(): void {
-  ipcMain.handle('nomi:dreamina:status', async (event) => {
-    assertTrustedSender(event)
-    const { dreaminaStatus } = await import('./catalog/dreaminaLoginIpc')
-    return dreaminaStatus()
-  })
-  ipcMain.handle('nomi:dreamina:login-start', async (event) => {
-    assertTrustedSender(event)
-    const { dreaminaLoginStart } = await import('./catalog/dreaminaLoginIpc')
-    return dreaminaLoginStart()
-  })
-  ipcMain.handle('nomi:dreamina:login-poll', async (event, deviceCode: unknown) => {
-    assertTrustedSender(event)
-    const { dreaminaLoginPoll } = await import('./catalog/dreaminaLoginIpc')
-    return dreaminaLoginPoll(String(deviceCode || ''))
-  })
-  ipcMain.handle('nomi:dreamina:logout', async (event) => {
-    assertTrustedSender(event)
-    const { dreaminaLogout } = await import('./catalog/dreaminaLoginIpc')
-    return dreaminaLogout()
-  })
-  ipcMain.handle('nomi:dreamina:install', async (event) => {
-    assertTrustedSender(event)
-    const { dreaminaInstall } = await import('./catalog/dreaminaLoginIpc')
-    return dreaminaInstall()
-  })
+  // 即梦会员（dreamina CLI）：设备码登录/账户检测/安装（异步，spawn 本地 CLI）。
+  ipcMain.handle("nomi:dreamina:status", async (event) => {
+    assertTrustedSender(event);
+    const { dreaminaStatus } = await import("./catalog/dreaminaLoginIpc");
+    return dreaminaStatus();
+  });
+  ipcMain.handle("nomi:dreamina:login-start", async (event) => {
+    assertTrustedSender(event);
+    const { dreaminaLoginStart } = await import("./catalog/dreaminaLoginIpc");
+    return dreaminaLoginStart();
+  });
+  ipcMain.handle("nomi:dreamina:login-poll", async (event, deviceCode: unknown) => {
+    assertTrustedSender(event);
+    const { dreaminaLoginPoll } = await import("./catalog/dreaminaLoginIpc");
+    return dreaminaLoginPoll(String(deviceCode || ""));
+  });
+  ipcMain.handle("nomi:dreamina:logout", async (event) => {
+    assertTrustedSender(event);
+    const { dreaminaLogout } = await import("./catalog/dreaminaLoginIpc");
+    return dreaminaLogout();
+  });
+  ipcMain.handle("nomi:dreamina:install", async (event) => {
+    assertTrustedSender(event);
+    const { dreaminaInstall } = await import("./catalog/dreaminaLoginIpc");
+    return dreaminaInstall();
+  });
   ipcMain.handle('nomi:jimeng-web:status', async (event) => {
     assertTrustedSender(event)
     const { jimengWebStatus } = await import('./jimengWeb/ipc')
@@ -86,66 +83,6 @@ function registerProviderLoginIpc(): void {
     assertTrustedSender(event)
     const { pavoWebStopExtensionRunner } = await import('./pavoWeb/ipc')
     return pavoWebStopExtensionRunner()
-  })
-}
-
-function registerWorkspaceIpc(): void {
-  const selectedWorkspaceRoots = new Set<string>()
-  ipcMain.handle('nomi:workspace:select-folder', async (event) => {
-    assertTrustedSender(event)
-    const selection = await selectWorkspaceFolder({ showOpenDialog: (options) => dialog.showOpenDialog(options) })
-    if (!selection.canceled) selectedWorkspaceRoots.add(selection.rootPath)
-    return selection
-  })
-  ipcMain.handle('nomi:workspace:open-folder', (event, payload) => {
-    assertTrustedSender(event)
-    return openWorkspaceFolder(payload, {
-      createProject,
-      selectedRootPaths: selectedWorkspaceRoots,
-      confirmInitialize: async (rootPath) => {
-        const result = await dialog.showMessageBox({
-          type: 'question',
-          buttons: ['取消', '初始化'],
-          defaultId: 1,
-          cancelId: 0,
-          message: '初始化 Nomi 项目文件夹？',
-          detail: `Nomi 会在此文件夹创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/.\n\n${rootPath}`,
-        })
-        return result.response === 1
-      },
-    })
-  })
-  ipcMain.handle('nomi:workspace:list-files', (event, payload) => {
-    assertTrustedSender(event)
-    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || '').trim()
-    if (!projectId) throw new Error('projectId is required')
-    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null
-    const rootPath = typeof project?.lastKnownRootPath === 'string' ? project.lastKnownRootPath : ''
-    if (!rootPath) throw new Error('Project folder is unavailable')
-    const limit = (payload as { limit?: unknown } | null)?.limit
-    return listWorkspaceFiles({ rootPath, maxFiles: typeof limit === 'number' ? limit : undefined })
-  })
-  ipcMain.handle('nomi:workspace:reveal-file', (event, payload) => {
-    assertTrustedSender(event)
-    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || '').trim()
-    const relativePath = String((payload as { relativePath?: unknown } | null)?.relativePath || '').trim()
-    if (!projectId) throw new Error('projectId is required')
-    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null
-    const rootPath = typeof project?.lastKnownRootPath === 'string' ? path.resolve(project.lastKnownRootPath) : ''
-    if (!rootPath) throw new Error('Project folder is unavailable')
-    shell.showItemInFolder(resolveWorkspaceFilePath(rootPath, relativePath))
-    return { ok: true }
-  })
-  registerWorkspaceFileDeleteIpc({ readProject })
-  ipcMain.handle('nomi:workspace:reveal-project-folder', (event, payload) => {
-    assertTrustedSender(event)
-    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || '').trim()
-    if (!projectId) throw new Error('projectId is required')
-    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null
-    const rootPath = typeof project?.lastKnownRootPath === 'string' ? path.resolve(project.lastKnownRootPath) : ''
-    if (!rootPath) throw new Error('Project folder is unavailable')
-    void shell.openPath(rootPath)
-    return { ok: true }
   })
 }
 
@@ -254,7 +191,19 @@ function registerDirectorIpc(setCancelBlenderRendersOnQuit: (cancel: () => numbe
 }
 
 export function registerDesktopIntegrationIpc(options: RegisterDesktopIntegrationIpcOptions): void {
+  ipcMain.handle('nomi:files:extract-text', async (event, payload) => {
+    assertTrustedSender(event)
+    const raw = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+    const source = raw.bytes
+    const bytes = source instanceof ArrayBuffer ? Buffer.from(source)
+      : ArrayBuffer.isView(source) ? Buffer.from(source.buffer, source.byteOffset, source.byteLength) : null
+    if (!bytes?.byteLength) throw new Error('文件内容为空')
+    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error('剧本文件不能超过 20 MB')
+    const { extractTextFromBytes } = await import('./files/extractText')
+    const text = await extractTextFromBytes(bytes, typeof raw.contentType === 'string' ? raw.contentType : '', typeof raw.fileName === 'string' ? raw.fileName : 'script.txt')
+    if (!text?.trim()) throw new Error('当前文件格式不支持，或没有可读取的文字')
+    return { text }
+  })
   registerProviderLoginIpc()
-  registerWorkspaceIpc()
   registerDirectorIpc(options.setCancelBlenderRendersOnQuit)
 }

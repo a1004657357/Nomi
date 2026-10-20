@@ -8,9 +8,9 @@
  *
  * 渲染在 React 树内（**不 BodyPortal**——portal 到 body 会丢 --nomi-* token 作用域）。
  * framer-motion AnimatePresence + motion 内联模式，
- * 缓动 [0.22,1,0.36,1]（抄 Scene3DFullscreen.tsx:3680）。token-only，禁非 token px/hex。
+ * 缓动 [0.22,1,0.36,1]（与导演台全屏壳同一缓动）。token-only，禁非 token px/hex。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import { cn } from '../../utils/cn'

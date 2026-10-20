@@ -1,3 +1,16 @@
+// Fixture user accepts the quote card; the real taskSpend guard still runs.
+vi.mock("./capabilityCore/rendererBridge", () => ({
+  // 付费确认等的是**人**，走没有墙钟期限的那条（2026-09-11 拍板：审批卡永不因空闲超时）。
+  requestRendererDecision: vi.fn(async (operation: string) => {
+    if (operation !== "spend.confirm") throw new Error(`Unexpected renderer operation: ${operation}`);
+    return { confirmed: true };
+  }),
+  // 带超时的那条是给「渲染层自己干活」用的。付费路径再走到它就是回归，所以这里直接炸。
+  requestRenderer: vi.fn(async (operation: string) => {
+    throw new Error(`Spend confirmation must not use the timeout-bound bridge: ${operation}`);
+  }),
+}));
+
 /**
  * runTask 的 image/video **fallback 路径**（无 curated mapping 时走的
  * `/v1/{images,videos}/generations` OpenAI 兼容形状）回归。覆盖两个机制审计 P1：
@@ -39,7 +52,7 @@ vi.mock("electron", () => ({
     getAppPath: () => process.cwd(),
   },
   safeStorage: {
-    isEncryptionAvailable: () => false,
+    isEncryptionAvailable: () => true,
     encryptString: (s: string) => Buffer.from(s),
     decryptString: (b: Buffer) => b.toString(),
   },
@@ -109,7 +122,10 @@ async function seedFallbackImageVendor(): Promise<void> {
     meta: { extraHeaders: { "HTTP-Referer": "https://nomi.app", "X-Title": "Nomi" } },
   });
   store.upsertModelCatalogVendorApiKey("relay", { apiKey: "sk-relay" });
-  store.upsertModelCatalogModel({ vendorKey: "relay", modelKey: "some-image-model", kind: "image", enabled: true });
+  store.upsertModelCatalogModel({
+    vendorKey: "relay", modelKey: "some-image-model", kind: "image", enabled: true,
+    meta: { adapter: { state: "verified", activeRevision: "fallback-certified", modes: [{ taskKind: "text_to_image", state: "verified" }] } },
+  });
 }
 
 async function seedAgnesImageVendorWithMapping(): Promise<void> {
@@ -449,5 +465,18 @@ describe("fetchTaskResult — 缓存 miss 无状态重建续查（重启/驱逐�
     const miss = await fetchTaskResult({ vendor: "asyncv", taskId: "no-context-id", taskKind: "text_to_video" });
     expect(miss.result.status).toBe("failed");
     expect((miss.result.raw as { code?: string }).code).toBe("task_unknown");
+  });
+
+  it("重启后重建查询遇到网络/上游错误必须冒泡为可重试错误，不能伪装 task_tracking_lost", async () => {
+    await seedAsyncVideoVendorWithMapping();
+    const upstreamError = new Error("proxy connection reset");
+    stubFetch(() => Promise.reject(upstreamError));
+    const { fetchTaskResult } = await import("./runtime");
+    await expect(fetchTaskResult({
+      vendor: "asyncv",
+      taskId: "upstream-retryable-123",
+      taskKind: "text_to_video",
+      modelKey: "vid-model",
+    })).rejects.toThrow("proxy connection reset");
   });
 });

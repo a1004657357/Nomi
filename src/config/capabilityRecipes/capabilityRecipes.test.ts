@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { ModelArchetype } from '../modelArchetypes/types'
-import { HITEM3D_ARCHETYPE } from '../modelArchetypes/hitem3d'
-import { HUNYUAN3D_ARCHETYPE } from '../modelArchetypes/hunyuan3d'
-import { MESHY6_ARCHETYPE } from '../modelArchetypes/meshy6'
-import { HAPPYHORSE_ARCHETYPE } from '../modelArchetypes/happyhorse'
+import type { ModelArchetype } from '../../../electron/shared/modelArchetypes/types'
+import { HITEM3D_ARCHETYPE } from '../../../electron/shared/modelArchetypes/hitem3d'
+import { HUNYUAN3D_ARCHETYPE } from '../../../electron/shared/modelArchetypes/hunyuan3d'
+import { MESHY6_ARCHETYPE } from '../../../electron/shared/modelArchetypes/meshy6'
+import { HAPPYHORSE_ARCHETYPE } from '../../../electron/shared/videoCapabilities/happyhorse'
 import {
   BUILTIN_CAPABILITY_RECIPES,
   buildRecipeRunPlan,

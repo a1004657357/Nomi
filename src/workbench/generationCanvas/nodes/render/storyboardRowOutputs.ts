@@ -411,6 +411,8 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
     shot,
     expanded: input.expanded,
   })
+  // The row image is a paired frame, not a second owner of the video's shot number.
+  store.updateNode(image.nodeId, { meta: { ...image.node.meta, storyboardKeyframe: true } })
   const prompt = storyboardShotVideoPrompt(shot)
 
   if (existing) {

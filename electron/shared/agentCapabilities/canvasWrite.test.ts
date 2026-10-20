@@ -1,0 +1,250 @@
+import { describe, expect, it } from "vitest";
+import { zodToJsonSchema } from "zod-to-json-schema";
+
+import {
+  CANVAS_WRITE_ALIASES,
+  CANVAS_WRITE_CAPABILITY,
+  CANVAS_WRITE_OPERATION_ALIASES,
+  CANVAS_WRITE_MAX_PROMPT_CHARS,
+  canvasWritePiInputSchemaForAlias,
+  canvasWriteResultSchema,
+  canvasWriteSemanticInputSchema,
+  canvasWriteOperationForAlias,
+} from "./canvasWrite";
+
+describe("canvas.write canonical contract", () => {
+  it("owns set_node_prompt as an internal reversible proposal capability", () => {
+    expect(CANVAS_WRITE_CAPABILITY).toEqual({
+      id: "canvas.write",
+      version: 1,
+      // `pi` surface 上只放模型可见的三个动词；operation 值是 schema 枚举，不是别名。
+      aliases: { pi: "arrange_canvas", mcp: "nomi_canvas_edit", ui: "nomi_canvas_plan" },
+      additionalAliases: {
+        pi: ["make_artifact", "stage_shot"],
+      },
+      inputSchema: canvasWriteSemanticInputSchema,
+      outputSchema: canvasWriteResultSchema,
+      effect: "reversible_write",
+      effectClass: "reversible_local",
+      operationEffectClasses: {
+        create_canvas_nodes: "reversible_local",
+        connect_canvas_edges: "reversible_local",
+        tidy_canvas: "reversible_local",
+        propose_storyboard_plan: "reversible_local",
+        patch_shots: "reversible_local",
+        arrange_storyboard_to_timeline: "reversible_local",
+        create_staging_reference: "reversible_local",
+        create_camera_move: "reversible_local",
+        set_node_prompt: "reversible_local",
+      },
+      operationPlanReview: {
+        propose_storyboard_plan: { allowReuse: false },
+        patch_shots: { allowReuse: false },
+      },
+      execution: { port: "canvas", availability: "renderer_required" },
+      exposure: "mcp_safe",
+      requiredScope: "canvas:write",
+      targetKind: "canvas",
+    });
+    expect(CANVAS_WRITE_CAPABILITY.aliases.mcp).toBe("nomi_canvas_edit");
+  });
+
+  it("accepts the strict reversible operation union", () => {
+    expect(
+      canvasWriteSemanticInputSchema.parse({
+        operation: "set_node_prompt",
+        nodeId: "  node-a  ",
+        prompt: "new prompt",
+      }),
+    ).toEqual({ operation: "set_node_prompt", nodeId: "node-a", prompt: "new prompt" });
+
+    const whitespacePrompt = canvasWriteSemanticInputSchema.parse({
+      operation: "set_node_prompt",
+      nodeId: "node-a",
+      prompt: "  preserve prompt whitespace  ",
+    });
+    expect(whitespacePrompt.operation).toBe("set_node_prompt");
+    if (whitespacePrompt.operation !== "set_node_prompt") throw new Error("Expected prompt operation");
+    expect(whitespacePrompt.prompt).toBe("  preserve prompt whitespace  ");
+
+    expect(
+      canvasWriteSemanticInputSchema.safeParse({
+        operation: "set_node_prompt",
+        nodeId: "node-a",
+        prompt: "x".repeat(CANVAS_WRITE_MAX_PROMPT_CHARS),
+      }).success,
+    ).toBe(true);
+    expect(
+      canvasWriteSemanticInputSchema.safeParse({
+        operation: "set_node_prompt",
+        nodeId: "node-a",
+        prompt: "x".repeat(CANVAS_WRITE_MAX_PROMPT_CHARS + 1),
+      }).success,
+    ).toBe(false);
+
+    for (const rejected of [
+      { operation: "set_node_prompt", nodeId: "", prompt: "new prompt" },
+      { operation: "set_node_prompt", nodeId: "   ", prompt: "new prompt" },
+      { operation: "set_node_prompt", nodeId: "node-a", prompt: "" },
+      { operation: "set_node_prompt", nodeId: "node-a", prompt: "   " },
+      { operation: "set_node_prompt", nodeId: "node-a", prompt: "new prompt", projectId: "project-a" },
+      { operation: "delete_canvas_nodes", nodeId: "node-a", prompt: "new prompt" },
+    ]) {
+      expect(canvasWriteSemanticInputSchema.safeParse(rejected).success).toBe(false);
+    }
+    expect(
+      canvasWriteSemanticInputSchema.safeParse({
+        operation: "create_canvas_nodes",
+        summary: "Add two shots",
+        nodes: [{ clientId: "n1", kind: "image", title: "Shot 1", prompt: "wide shot" }],
+        edges: [],
+      }).success,
+    ).toBe(true);
+    expect(
+      canvasWriteSemanticInputSchema.safeParse({
+        operation: "connect_canvas_edges",
+        edges: [{ sourceClientId: "node-a", targetClientId: "node-b", mode: "reference" }],
+      }).success,
+    ).toBe(true);
+    expect(canvasWriteSemanticInputSchema.safeParse({ operation: "tidy_canvas", categoryId: "shots" }).success).toBe(
+      true,
+    );
+    expect(
+      canvasWriteSemanticInputSchema.safeParse({
+        operation: "patch_shots",
+        select: { kind: "indexes", indexes: [2, 4] },
+        patch: { promptAppend: "雨天", durationSec: 8 },
+      }).success,
+    ).toBe(true);
+    expect(canvasWriteSemanticInputSchema.safeParse({
+      operation: "patch_shots",
+      select: { kind: "all" },
+      patch: { prompt: "新的镜头提示词" },
+    }).success).toBe(true);
+    for (const rejected of [
+      { operation: "patch_shots", select: { kind: "all" }, patch: {} },
+      { operation: "patch_shots", select: { kind: "all" }, patch: { prompt: "a", promptAppend: "b" } },
+      { operation: "patch_shots", select: { kind: "indexes", indexes: [0] }, patch: { prompt: "a" } },
+      { operation: "patch_shots", select: { kind: "indexes", indexes: [1] }, patch: { modelKey: "model-only" } },
+      { operation: "unknown_operation", select: { kind: "all" }, patch: { prompt: "a" } },
+    ]) {
+      expect(canvasWriteSemanticInputSchema.safeParse(rejected).success).toBe(false);
+    }
+  });
+
+  it("keeps create/connect bounds and confirmation guidance on canonical Pi projections", () => {
+    const createSchema = canvasWritePiInputSchemaForAlias("create_canvas_nodes");
+    const connectSchema = canvasWritePiInputSchemaForAlias("connect_canvas_edges");
+    expect(createSchema).toBeDefined();
+    expect(connectSchema).toBeDefined();
+
+    const node = { clientId: "n1", kind: "image", title: "Shot 1", prompt: "A still frame" };
+    expect(createSchema?.safeParse({ summary: "ok", nodes: [node] }).success).toBe(true);
+    expect(createSchema?.safeParse({ summary: "ok", nodes: [] }).success).toBe(false);
+    expect(
+      createSchema?.safeParse({
+        summary: "ok",
+        nodes: Array.from({ length: 25 }, (_, i) => ({ ...node, clientId: `n${i}` })),
+      }).success,
+    ).toBe(false);
+    expect(connectSchema?.safeParse({ edges: [{ sourceClientId: "n1", targetClientId: "n2" }] }).success).toBe(true);
+    expect(connectSchema?.safeParse({ edges: [] }).success).toBe(false);
+    expect(
+      connectSchema?.safeParse({
+        edges: Array.from({ length: 49 }, (_, i) => ({ sourceClientId: `s${i}`, targetClientId: `t${i}` })),
+      }).success,
+    ).toBe(false);
+    // The resident generation editor returns the explicit model identity that
+    // the user selected. These are capability fields (not renderer-only
+    // decoration): re-preparing an approved proposal must accept them so the
+    // selected vendor/variant can reach the canvas domain owner.
+    expect(
+      createSchema?.safeParse({
+        summary: "Use the selected generation model",
+        nodes: [{ ...node, vendor: "apimart", variantId: "mini" }],
+      }).success,
+    ).toBe(true);
+    expect(
+      createSchema?.safeParse({
+        summary: "Reject contradictory provider aliases",
+        nodes: [{ ...node, vendor: "apimart", modelVendor: "kie" }],
+      }).success,
+    ).toBe(false);
+
+    const wire = JSON.parse(JSON.stringify(zodToJsonSchema(createSchema!, { $refStrategy: "none", effectStrategy: "input" }))) as {
+      required?: string[];
+      properties?: Record<string, { description?: string; anyOf?: Array<{ type?: string; description?: string }> }>;
+    };
+    expect(wire.required).toEqual(expect.arrayContaining(["summary", "nodes"]));
+    expect(wire.properties?.summary?.description).toContain("shown to the user before confirmation");
+    // `nodes` / `edges` 现在是「数组 ∪ 同一个数组的 JSON 文本」（`jsonArgTolerance`）。
+    // 结构化那一支必须**排在前面**：模型是按顺序读 anyOf 的，把字符串那支排前面
+    // 等于在教它二次序列化——正是这次要修的那个 bug。原本写给模型的边说明留在数组那支上。
+    const edges = wire.properties?.edges?.anyOf ?? [];
+    expect(edges[0]?.type).toBe("array");
+    expect(edges[0]?.description).toContain("same call");
+    expect(edges[1]?.type).toBe("string");
+    expect(edges[1]?.description).toContain("not a string containing it");
+  });
+
+  it("projects a strict safe receipt without Canvas store objects", () => {
+    const result = {
+      applied: true,
+      proposalId: "prop-a",
+      operation: "set_node_prompt",
+      affectedNodeIds: ["node-a"],
+      reconciliation: { ok: true, deviationCount: 0 },
+    } as const;
+    expect(canvasWriteResultSchema.parse(result)).toEqual(result);
+    expect(canvasWriteResultSchema.safeParse({ ...result, raw: { nodes: [] } }).success).toBe(false);
+    expect(canvasWriteResultSchema.safeParse({ ...result, proposalId: "   " }).success).toBe(false);
+    expect(canvasWriteResultSchema.safeParse({ ...result, affectedNodeIds: [] }).success).toBe(false);
+    expect(canvasWriteResultSchema.safeParse({ ...result, affectedNodeIds: ["node-a", "node-b"] }).success).toBe(false);
+    expect(canvasWriteResultSchema.safeParse({ ...result, affectedNodeIds: ["node-a", "node-a"] }).success).toBe(false);
+    expect(
+      canvasWriteResultSchema.safeParse({ ...result, reconciliation: { ok: false, deviationCount: -1 } }).success,
+    ).toBe(false);
+  });
+
+  it("maps only the Registry-owned Pi operation aliases", () => {
+    expect(canvasWriteOperationForAlias(CANVAS_WRITE_ALIASES.setNodePrompt)).toBe("set_node_prompt");
+    expect(canvasWriteOperationForAlias(CANVAS_WRITE_OPERATION_ALIASES.createCanvasNodes)).toBe("create_canvas_nodes");
+    expect(canvasWriteOperationForAlias(CANVAS_WRITE_OPERATION_ALIASES.connectCanvasEdges)).toBe(
+      "connect_canvas_edges",
+    );
+    expect(canvasWriteOperationForAlias(CANVAS_WRITE_OPERATION_ALIASES.tidyCanvas)).toBe("tidy_canvas");
+    expect(canvasWriteOperationForAlias("nomi_set_node_prompt")).toBeUndefined();
+    expect(canvasWriteOperationForAlias("patch_shots")).toBeUndefined();
+  });
+
+  it("keeps storyboard-side tools inside the canonical executable capability", () => {
+    const plan = canvasWritePiInputSchemaForAlias("propose_storyboard_plan");
+    const arrange = canvasWritePiInputSchemaForAlias("arrange_storyboard_to_timeline");
+    const staging = canvasWritePiInputSchemaForAlias("create_staging_reference");
+    const camera = canvasWritePiInputSchemaForAlias("create_camera_move");
+    expect(plan?.safeParse({ title: "猫", anchors: [], shots: [{ index: 1, durationSec: 0, anchorIds: [], prompt: "猫在窗台上" }] }).success).toBe(true);
+    expect(arrange?.safeParse({ nodeIds: ["shot-1"] }).success).toBe(true);
+    expect(staging?.safeParse({ characters: [{ name: "猫" }] }).success).toBe(true);
+    expect(camera?.safeParse({ shotClientId: "shot-1", move: "push_in" }).success).toBe(true);
+    expect(canvasWriteOperationForAlias("propose_storyboard_plan")).toBe("propose_storyboard_plan");
+    expect(canvasWriteOperationForAlias("arrange_storyboard_to_timeline")).toBe("arrange_storyboard_to_timeline");
+    expect(canvasWriteOperationForAlias("create_staging_reference")).toBe("create_staging_reference");
+    expect(canvasWriteOperationForAlias("create_camera_move")).toBe("create_camera_move");
+    expect(plan?.safeParse({ title: "猫", anchors: [], shots: [{ index: 1 }], extra: true }).success).toBe(false);
+    expect(camera?.safeParse({ shotClientId: "shot-1" }).success).toBe(false);
+  });
+
+  it("validates a canonical storyboard patch receipt without accepting a legacy tool name", () => {
+    const result = {
+      applied: true,
+      proposalId: "prop-patch-a",
+      operation: "patch_shots",
+      changedShotIndexes: [2, 4],
+      changedFields: ["prompt", "durationSec"],
+      result: { status: "applied" },
+      reconciliation: { ok: true, deviationCount: 0 },
+    } as const;
+    expect(canvasWriteResultSchema.parse(result)).toEqual(result);
+    expect(canvasWriteResultSchema.safeParse({ ...result, directTool: "patch_shots" }).success).toBe(false);
+  });
+});

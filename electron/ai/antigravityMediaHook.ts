@@ -110,9 +110,23 @@ process.stdin.on('end', () => {
 `;
 }
 
-/** Hooks run through the CLI's shell; only constant args and trusted paths appear. */
-export function antigravityHookCommand(executable: string, script: string): string {
+/** Batch paths are quoted once, without CALL's second expansion. */
+export function antigravityHookWrapper(executable: string, script: string): string {
+  const quote = (value: string) => {
+    if (/["\r\n\0]/.test(value)) throw new Error("ANTIGRAVITY_HOOK_PATH_INVALID");
+    return '"' + value.replace(/%/g, "%%") + '"';
+  };
+  return ['@echo off', 'setlocal DisableDelayedExpansion', 'set "ELECTRON_RUN_AS_NODE=1"',
+    `${quote(executable)} ${quote(script)} %1`, 'exit /b %errorlevel%', ''].join("\r\n");
+}
+
+/** Hooks run through the CLI shell. Windows resolves the wrapper from hooks.json cwd. */
+export function antigravityHookCommand(executable: string, script: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") {
+    // Reject command-line expansion characters. The generated relative command below avoids them.
+    if (/[%!"\r\n\0]/.test(script)) throw new Error("ANTIGRAVITY_HOOK_PATH_INVALID");
+    return '"' + script.replace(/\.cjs$/, ".cmd") + '"';
+  }
   const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
-  // Electron's packaged executable must run as Node, not start another app window.
   return "ELECTRON_RUN_AS_NODE=1 " + quote(executable) + " " + quote(script);
 }

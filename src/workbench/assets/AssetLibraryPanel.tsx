@@ -7,41 +7,50 @@
  * 右侧浮动抽屉壳已删（2026-07-22 方案一重执行）：`nomi-open-asset-library` 事件全仓无发送方，
  * 是素材库 v1 纯抽屉时代的孤儿面——素材库唯一的门＝侧栏 tab（一个能力一个门）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import i18n from '../../i18n'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { IconChevronLeft, IconFilter, IconFolderPlus, IconPhoto, IconPlus, IconTrash, IconX } from '@tabler/icons-react'
+import { IconPhoto, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
 import { useAssetPool } from './useAssetPool'
-import { useAllProjectAssets } from './useAllProjectAssets'
+import { assetTimeValue, mergeAssetRefs, useAllProjectAssets } from './useAllProjectAssets'
 import { assetsForFolderScope, folderCountsForAssets, useAssetFolderInteractions, useAssetFolders } from './useAssetFolders'
-import { filterAssets, type AssetKind, type AssetRef } from './assetTypes'
+import { filterAssets, type AssetRef } from './assetTypes'
 import { ASSET_LIBRARY_DRAG_MIME, serializeAssetLibraryDrag } from './assetLibraryDrag'
-import { importAudioFilesToLibrary, type AudioImportResult } from './importAudioToLibrary'
-import type { GenerationAssetImportResult } from '../generationCanvas/adapters/assetImportAdapter'
+import { importAudioFilesToLibrary } from './importAudioToLibrary'
+import { importLocalMediaFilesToGenerationCanvas } from '../generationCanvas/adapters/assetImportAdapter'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
 import { useWorkbenchStore } from '../workbenchStore'
-import { confirmDialog, DesignEmptyState, DesignSearchInput, TooltipProvider } from '../../design'
-import { acceptAttrForKinds, mediaKindFromExtension } from '../../../electron/assets/mediaTypes'
-import { toast } from '../../ui/toast'
+import { visibleInsertionPoint } from '../generationCanvas/store/canvasVisibleArea'
+import { confirmDialog, DesignEmptyState, NomiLoadingMark, promptDialog, TooltipProvider } from '../../design'
+import { FindReferenceSection } from './FindReferenceSection'
+import type { ReferencePlatform } from '../../../electron/shared/contracts/referenceSearch'
+import { acceptAttrForSurface } from '../../../electron/shared/contracts/mediaImportPolicy'
+import { notify } from '../../ui/notificationPolicy'
+import { FeedbackButton } from '../../ui/community/FeedbackButton'
+import { rejectionOf, reportAudioImport, reportMediaImport, unsupportedKindRejection, type AssetImportRejectionReport } from './assetImportRejection'
 import {
   AssetGridCell,
-  AssetKindFilterMenu,
   FolderGridCell,
-  NewFolderInput,
 } from './AssetLibraryPanelParts'
+import { AssetLibraryToolbar } from './AssetLibraryToolbar'
 import { AssetPreviewDialog } from './AssetPreviewDialog'
-import { ASSET_KIND_FILTER_VALUES, FILTER_OPTIONS, type FilterValue } from './assetLibraryPanelFilters'
-import { filterImageVideoAssets, filterPlayableAssets } from './assetLibrarySources'
+import type { FilterValue } from './assetLibraryPanelFilters'
+import { assetProvenanceOf, countAssetProvenance } from './assetProvenance'
+import { useAssetLibraryFilters } from './useAssetLibraryFilters'
+import { filterCanvasLibraryAssets, filterPlayableAssets } from './assetLibrarySources'
 import { deleteAssetResult } from './deleteAssetResult'
-import { addAssetToTimelineEnd } from '../timeline/addAssetToTimeline'
+import { addAssetToTimelineEnd, assetRefFromDragPayload } from '../timeline/addAssetToTimeline'
+import { materializeAssetLibraryItems } from './assetLibraryMaterialize'
 import { useAssetLibraryLocalImport } from './assetLibraryLocalImport'
+import { logRendererError } from '../../desktop/rendererLog'
 import {
   assetToDragPayload,
   assetsForLibraryDrag,
+  assetBelongsToProject,
   canManageAssetFolders,
+  nextAssetSelection,
   resolveAssetLibraryItemAction,
   shouldRunAssetItemAction,
   sourceOptionsForUsage,
@@ -49,59 +58,20 @@ import {
   type AssetLibraryUsageContext,
   type AssetGridActivationEvent,
 } from './assetLibraryUsage'
+import { markLibraryUsed, sortByLibraryUsage, useLibraryUsageVersion } from '../library/libraryDiscovery'
+import { runPasteShareLinkImport } from './pasteShareLinkImport'
+import { isProjectExecutionContextCurrent, isProjectImportCancellation, withProjectAction } from '../project/projectCanvasReadSurface'
 
 const DEFAULT_GRID_COLS = 3
 const ESTIMATED_ROW_HEIGHT = 121
 const COMPACT_ESTIMATED_ROW_HEIGHT = 113
 
-// 从媒体类型单一真相源派生（通配 + 显式扩展名，见 mediaTypes.acceptAttrForKinds 注释）。
-// 素材库三类：图 / 视频 / 音频。accept 放行的每个格式下游都接得住（同源,不再漂移）。
-const UPLOAD_ACCEPT = acceptAttrForKinds(['image', 'video', 'audio'])
+// 从准入 owner 派生：这个面收哪些 kind 由 MEDIA_IMPORT_SURFACES 声明（不许自己写 accept 字面量）。
+const UPLOAD_ACCEPT = acceptAttrForSurface('asset-library')
 
-// 上传文件分流（纯函数便于单测）。kind 判定：MIME 优先，缺/不匹配回落扩展名——与音频分支对称，
-// 修「空 MIME 的图/视频被静默丢」(Gap B)。图/视频走画布节点(可拖画布)，音频落项目文件进库。
-export type UploadClassification = {
-  mediaFiles: File[]   // image / video → 画布素材节点
-  audioFiles: File[]   // audio → 项目文件源（音频 tab）
-  unsupported: File[]  // 既非图/视频也非音频 → 跳过并提示
-}
-
-export function classifyUploadFiles(files: File[]): UploadClassification {
-  const mediaFiles: File[] = []
-  const audioFiles: File[] = []
-  const unsupported: File[] = []
-  for (const file of files) {
-    const mime = (file.type || '').toLowerCase()
-    const kind = mime.startsWith('image/') ? 'image'
-      : mime.startsWith('video/') ? 'video'
-      : mime.startsWith('audio/') ? 'audio'
-      : mediaKindFromExtension(file.name) // 空/未知 MIME → 扩展名兜底
-    if (kind === 'image' || kind === 'video') mediaFiles.push(file)
-    else if (kind === 'audio') audioFiles.push(file)
-    else unsupported.push(file)
-  }
-  return { mediaFiles, audioFiles, unsupported }
-}
-
-// 导入结果 → 用户反馈（Gap C：此前计数全被丢弃，超大/重复/失败/超上限零提示）。
-function reportMediaImport(result: GenerationAssetImportResult): void {
-  if (result.created.length) toast(i18n.t('assetLibrary.importedAssets', { count: result.created.length }), 'success')
-  const skipped: string[] = []
-  if (result.skippedTooLargeCount) skipped.push(i18n.t('assetLibrary.skippedTooLarge', { count: result.skippedTooLargeCount }))
-  if (result.skippedOverLimitCount) skipped.push(i18n.t('assetLibrary.skippedOverLimit', { count: result.skippedOverLimitCount }))
-  if (result.skippedDuplicateCount) skipped.push(i18n.t('assetLibrary.skippedDuplicate', { count: result.skippedDuplicateCount }))
-  if (result.failedCount) skipped.push(i18n.t('assetLibrary.skippedFailed', { count: result.failedCount }))
-  if (skipped.length) toast(i18n.t('assetLibrary.skippedSummary', { items: skipped.join(i18n.t('assetLibrary.listSeparator')) }), result.failedCount ? 'error' : 'warning')
-}
-
-function reportAudioImport(result: AudioImportResult): void {
-  if (result.uploadedCount) toast(i18n.t('assetLibrary.importedAudio', { count: result.uploadedCount }), 'success')
-  const skipped: string[] = []
-  if (result.skippedTooLargeCount) skipped.push(i18n.t('assetLibrary.skippedTooLarge', { count: result.skippedTooLargeCount }))
-  if (result.skippedDuplicateCount) skipped.push(i18n.t('assetLibrary.skippedDuplicate', { count: result.skippedDuplicateCount }))
-  if (result.failedCount) skipped.push(i18n.t('assetLibrary.skippedFailed', { count: result.failedCount }))
-  if (skipped.length) toast(i18n.t('assetLibrary.skippedSummary', { items: skipped.join(i18n.t('assetLibrary.listSeparator')) }), result.failedCount ? 'error' : 'warning')
-}
+// 上传文件分流住在 ./uploadClassification（R9：面板是壳）；re-export 保住既有 import 面。
+export { classifyUploadFiles, type UploadClassification } from './uploadClassification'
+import { classifyUploadFiles } from './uploadClassification'
 
 type AssetLibraryContentProps = {
   projectId: string | null
@@ -129,18 +99,32 @@ export function AssetLibraryContent({
   className,
 }: AssetLibraryContentProps): JSX.Element {
   const { t } = useTranslation()
+  const [feedback, setFeedback] = React.useState<Record<string, string[]>>({})
+  const feedbackOwner = projectId ?? ''
+  const present = React.useCallback((message: string) => {
+    setFeedback((current) => ({ ...current, [feedbackOwner]: message
+      ? [...new Set([...(current[feedbackOwner] ?? []), message])] : [] }))
+  }, [feedbackOwner])
+  // 导入被拒是四个失败面之一；这条内联行是它唯一的常驻落点，所以那颗「反馈」钮挂在这儿，
+  // 而不是把 notify 从 inline 改成 background（那会把安静的内联提示变成飘出来的 toast）。
+  // 码与人话都由 `assetImportRejection.ts` 派生——这里不做第二份判断。
+  const [rejection, setRejection] = React.useState<AssetImportRejectionReport | null>(null)
+  const report = React.useCallback((message: string, type: 'info' | 'warning' | 'error' = 'warning') => {
+    notify({ identity: `asset-library:${feedbackOwner}`, reason: 'operation', message, type, level: 'inline', present })
+  }, [feedbackOwner, present])
   const uploadInputRef = React.useRef<HTMLInputElement>(null)
   const filterButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const filterMenuRef = React.useRef<HTMLDivElement | null>(null)
   const [previewAsset, setPreviewAsset] = React.useState<AssetRef | null>(null)
   const [sourceFilter, setSourceFilter] = React.useState<AssetLibrarySourceFilter>('all')
-  const [visibleKinds, setVisibleKinds] = React.useState<Set<AssetKind>>(() => new Set(ASSET_KIND_FILTER_VALUES))
+  const filters = useAssetLibraryFilters()
   const [filterOpen, setFilterOpen] = React.useState(false)
   const [query, setQuery] = React.useState('')
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set())
   // 文件夹（素材面收敛 2026-07-22 转正）：只在「项目素材」tab 生效,搜索时退成全量平铺。
   const [activeFolderId, setActiveFolderId] = React.useState<string | null>(null)
   const [newFolderOpen, setNewFolderOpen] = React.useState(false)
+  const usageVersion = useLibraryUsageVersion()
   const lastSelectedIdRef = React.useRef<string | null>(null)
   const selectedIdsRef = React.useRef(selectedIds)
   selectedIdsRef.current = selectedIds
@@ -148,28 +132,41 @@ export function AssetLibraryContent({
 
   const {
     canvasAssets,
+    projectAssets: workspaceProjectAssets,
     refresh: refreshProjectAssets,
   } = useAssetPool(projectId)
-  const { assets: allProjectAssets, refresh: refreshAllProjectAssets } = useAllProjectAssets()
-  const localImport = useAssetLibraryLocalImport({ projectId, refreshProjectAssets, refreshAllProjectAssets })
+  const {
+    assets: allProjectAssets,
+    loading: allProjectAssetsLoading,
+    partial: allProjectAssetsPartial,
+    refresh: refreshAllProjectAssets,
+  } = useAllProjectAssets()
+  const localImport = useAssetLibraryLocalImport({ projectId, refreshProjectAssets, refreshAllProjectAssets, present })
   const folderApi = useAssetFolders(projectId)
   const allSourceAssets = React.useMemo(
-    () => (includeAudio ? filterPlayableAssets(allProjectAssets) : filterImageVideoAssets(allProjectAssets)),
+    () => (includeAudio ? filterPlayableAssets(allProjectAssets) : filterCanvasLibraryAssets(allProjectAssets)),
     [allProjectAssets, includeAudio],
   )
-  const projectSourceAssets = React.useMemo(
-    () => (includeAudio ? filterPlayableAssets(canvasAssets) : filterImageVideoAssets(canvasAssets)),
-    [canvasAssets, includeAudio],
+  const currentProjectAssets = React.useMemo(
+    () => mergeAssetRefs(canvasAssets, workspaceProjectAssets),
+    [canvasAssets, workspaceProjectAssets],
   )
-
+  const projectSourceAssets = React.useMemo(
+    () => (includeAudio ? filterPlayableAssets(currentProjectAssets) : filterCanvasLibraryAssets(currentProjectAssets)),
+    [currentProjectAssets, includeAudio],
+  )
   const sourceFilteredAssets = React.useMemo(
-    () => (sourceFilter === 'project' ? projectSourceAssets : allSourceAssets),
-    [allSourceAssets, projectSourceAssets, sourceFilter],
+    () => {
+      void usageVersion
+      return sortByLibraryUsage(sourceFilter === 'project' ? projectSourceAssets : allSourceAssets, 'asset', (asset) => asset.id, assetTimeValue)
+    },
+    [allSourceAssets, projectSourceAssets, sourceFilter, usageVersion],
   )
   const filterBaseAssets = React.useMemo(
     () => filterAssets(sourceFilteredAssets, { query }),
     [sourceFilteredAssets, query],
   )
+  const provenanceCounts = React.useMemo(() => countAssetProvenance(filterBaseAssets), [filterBaseAssets])
   const filterCounts = React.useMemo(() => {
     const next = new Map<FilterValue, number>()
     next.set('all', filterBaseAssets.length)
@@ -189,8 +186,10 @@ export function AssetLibraryContent({
     })
   }, [projectId, refreshAllProjectAssets, refreshProjectAssets])
   const visible = React.useMemo(
-    () => filterBaseAssets.filter((asset) => visibleKinds.has(asset.kind)),
-    [filterBaseAssets, visibleKinds],
+    () => filterBaseAssets.filter(
+      (asset) => filters.visibleKinds.has(asset.kind) && filters.visibleProvenances.has(assetProvenanceOf(asset)),
+    ),
+    [filterBaseAssets, filters.visibleKinds, filters.visibleProvenances],
   )
   const itemAction = resolveAssetLibraryItemAction(
     usageContext,
@@ -215,12 +214,6 @@ export function AssetLibraryContent({
   }, [activeFolder, activeFolderId])
   const visibleAssetsRef = React.useRef(scopedAssets)
   visibleAssetsRef.current = scopedAssets
-  const selectedKindValues = React.useMemo(
-    () => ASSET_KIND_FILTER_VALUES.filter((kind) => visibleKinds.has(kind)),
-    [visibleKinds],
-  )
-  const allKindsSelected = selectedKindValues.length === ASSET_KIND_FILTER_VALUES.length
-  const filterActive = !allKindsSelected
   const visibleIds = React.useMemo(() => scopedAssets.map((asset) => asset.id), [scopedAssets])
   const selectedAssets = React.useMemo(
     () => scopedAssets.filter((asset) => selectedIds.has(asset.id)),
@@ -251,58 +244,89 @@ export function AssetLibraryContent({
   })
 
   const handleUploadFiles = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    present('')
     const all = Array.from(event.currentTarget.files || [])
     event.currentTarget.value = ''
     const { mediaFiles, audioFiles, unsupported } = classifyUploadFiles(all)
-    if (mediaFiles.length) {
-      void import('../generationCanvas/adapters/assetImportAdapter')
-        .then(({ importLocalMediaFilesToGenerationCanvas }) =>
-          importLocalMediaFilesToGenerationCanvas(mediaFiles, { basePosition: { x: 120, y: 90 } }))
+    if (mediaFiles.length) withProjectAction((projectContext) => {
+      const activeCategoryId = useWorkbenchStore.getState().activeCategoryId
+      void importLocalMediaFilesToGenerationCanvas(mediaFiles, { projectContext, basePosition: visibleInsertionPoint(activeCategoryId) ?? { x: 120, y: 90 } })
         .then((result) => {
+          if (result.cancelled) return
           refreshProjectAssets()
           refreshAllProjectAssets()
-          reportMediaImport(result)
-          // 落点可见性（2026-08-07 飞书反馈「上传传到另一个位置没看到」）：选中首个新节点 +
-          // 请求画布 fit 平移视口过去（复用 Scene3DEditor 同款组合，不造第二套）。
+          reportMediaImport(result, report, setRejection)
+          // 落点可见性（2026-08-07 飞书反馈「上传传到另一个位置没看到」）：以前是写死 (120, 90) 再请求 fit
+          // 把画布挪过去；2026-09-25 起直接落在用户此刻看得见的地方，不挪画布。落不下（整批太大）的部分
+          // 由画布边缘提示告诉用户在哪。选中首个新节点保留——那是「这就是刚导入的」的原地回执。
           const firstNode = result.created[0]?.node
-          if (firstNode) {
-            useGenerationCanvasStore.getState().selectNode(firstNode.id)
-            useWorkbenchStore.getState().requestCanvasFit()
-          }
+          if (firstNode) useGenerationCanvasStore.getState().selectNode(firstNode.id)
         })
         .catch((error) => {
-          console.error('asset library upload failed', error)
-          toast(t('assetLibrary.importFailed'), 'error')
+          logRendererError('asset-import-failed', error)
+          report(t('assetLibrary.importFailed'), 'error')
+          setRejection(rejectionOf('failed', 1))
         })
-    }
-    if (audioFiles.length) {
-      void importAudioFilesToLibrary(audioFiles, { projectId })
+    })
+    if (audioFiles.length) withProjectAction((project) => {
+      void importAudioFilesToLibrary(audioFiles, project)
         .then((result) => {
+          if (!isProjectExecutionContextCurrent(project)) return
           refreshProjectAssets()
           refreshAllProjectAssets()
-          reportAudioImport(result)
+          reportAudioImport(result, report, setRejection)
         })
         .catch((error) => {
-          console.error('asset library audio upload failed', error)
-          toast(t('assetLibrary.audioImportFailed'), 'error')
+          if (!isProjectExecutionContextCurrent(project) || isProjectImportCancellation(error)) return
+          logRendererError('asset-audio-import-failed', error)
+          report(t('assetLibrary.audioImportFailed'), 'error')
+          setRejection(rejectionOf('failed', 1))
         })
-    }
+    })
     if (unsupported.length) {
-      toast(t('assetLibrary.skippedUnsupported', { count: unsupported.length }), 'warning')
+      for (const f of unsupported) report(t('assetLibrary.rejectedUnsupportedUnknown', { name: f.name || t('assetLibrary.unnamedFile') }), 'warning')
+      // 策略拒收：用户想导的那个文件真的没进来，所以给反馈入口（重复素材不给，那份已在库里）。
+      // 摘要用**第一个**被挡住的文件名，与上面那句内联行逐字同源（2026-09-17 W-02）。
+      setRejection(unsupportedKindRejection(unsupported[0]?.name || ''))
     }
-  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, t])
+  }, [refreshAllProjectAssets, refreshProjectAssets, present, report, t])
+
+  /** 工具栏那颗 🔗 = 「找参考」的家（一功能一个家）：开合内嵌面板，不弹层。 */
+  const handleToggleFind = React.useCallback(() => {
+    setImportedInFind(0)
+    setFindOpen((open) => !open)
+  }, [])
+
+  // 贴链接导入（TikHub）：分享链接 → 无水印直链 → 落成项目视频素材。落库后回流刷新，
+  // 素材即出现在库里供用户用现有节点拆解。失败态三段式在 pasteShareLinkImport 里。
+  /**
+   * 贴链接导入。`presetText` 有值时**跳过弹框**（用户已经在找参考面板里把链接输进来了）——
+   * 这是卡点表「能不能少一步」砍掉的那一步：看到即可用，不再多开一层弹层。
+   */
+  const handlePasteLink = React.useCallback((presetText?: string) => {
+    void runPasteShareLinkImport(projectId, {
+      prompt: presetText ? async () => presetText : promptDialog,
+      present,
+      t,
+      onImported: () => {
+        refreshProjectAssets()
+        refreshAllProjectAssets()
+      },
+      onNeedKey: () => {
+        // TikHub 卡的家在设置「模型」tab 的「数据源」区（2026-09-01 归位：它是数据源接入，不是 AI 策略）。
+        window.dispatchEvent(new CustomEvent('nomi-open-settings', { detail: { tab: 'models', section: 'tikhub-connector' } }))
+      },
+    })
+  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, present, t])
 
   const isEmpty = scopedAssets.length === 0 && visibleFolders.length === 0
+  // 「找参考」面板：由工具栏那颗 🔗 开合。平台是**项目级设定**（设计拍板），
+  // 当前先用会话态承载，接进项目设置是随后一步——UI 契约已经按「项目设定」画好。
+  const [findOpen, setFindOpen] = React.useState(false)
+  // 这一趟「找参考」拿了几条：决定返回条上写什么、以及回去后落在哪个筛选态。
+  const [importedInFind, setImportedInFind] = React.useState(0)
+  const [referencePlatform, setReferencePlatform] = React.useState<ReferencePlatform>('douyin')
   const sourceEmpty = sourceFilteredAssets.length === 0
-  const filterLabelByValue = React.useMemo(
-    () => new Map<FilterValue, string>(FILTER_OPTIONS.map((option) => [option.value, t(option.labelKey)])),
-    [t],
-  )
-  const activeFilterLabel = allKindsSelected
-    ? t('assetLibrary.all')
-    : selectedKindValues.length > 0
-      ? selectedKindValues.map((kind) => filterLabelByValue.get(kind) ?? kind).join(t('assetLibrary.listSeparator'))
-      : t('assetLibrary.noCategories')
 
   React.useEffect(() => {
     if (!filterOpen) return
@@ -333,29 +357,11 @@ export function AssetLibraryContent({
   }, [visibleIds])
 
   const selectAsset = React.useCallback((asset: AssetRef, event: AssetGridActivationEvent): void => {
-    const visibleAssets = visibleAssetsRef.current
-    const additive = event.metaKey || event.ctrlKey
+    const visibleIds = visibleAssetsRef.current.map((candidate) => candidate.id)
     const anchorId = lastSelectedIdRef.current
     setSelectedIds((current) => {
-      if (event.shiftKey && anchorId) {
-        const anchorIndex = visibleAssets.findIndex((candidate) => candidate.id === anchorId)
-        const targetIndex = visibleAssets.findIndex((candidate) => candidate.id === asset.id)
-        if (anchorIndex >= 0 && targetIndex >= 0) {
-          const start = Math.min(anchorIndex, targetIndex)
-          const end = Math.max(anchorIndex, targetIndex)
-          const next = additive ? new Set(current) : new Set<string>()
-          for (let index = start; index <= end; index += 1) next.add(visibleAssets[index].id)
-          return next
-        }
-      }
-      if (additive) {
-        const next = new Set(current)
-        if (next.has(asset.id)) next.delete(asset.id)
-        else next.add(asset.id)
-        return next
-      }
-      if (current.size === 1 && current.has(asset.id)) return current
-      return new Set([asset.id])
+      const next = nextAssetSelection(current, visibleIds, asset.id, anchorId, event)
+      return next === current ? current : new Set(next)
     })
     lastSelectedIdRef.current = asset.id
   }, [])
@@ -363,30 +369,41 @@ export function AssetLibraryContent({
   const activateAsset = React.useCallback((asset: AssetRef, event: AssetGridActivationEvent): void => {
     if (!shouldRunAssetItemAction(itemAction, event.detail)) return
     if (itemAction === 'append') {
-      void addAssetToTimelineEnd(asset)
+      // 别的项目的素材先复制进本项目（与拖放同一个关口 materializeAssetLibraryItems），
+      // 时间轴只写本项目自己的地址。
+      withProjectAction((project) => {
+        void materializeAssetLibraryItems([assetToDragPayload(asset)], project).then(({ items }) => {
+          const local = items[0] ? assetRefFromDragPayload(items[0]) : null
+          if (!local) {
+            if (isProjectExecutionContextCurrent(project)) report(t('assetLibrary.copyIntoProjectFailed', { count: 1 }), 'warning')
+            return
+          }
+          return addAssetToTimelineEnd(local, project).then((added) => {
+            if (added) markLibraryUsed('asset', asset.id)
+          })
+        })
+      })
       return
     }
     if (itemAction === 'preview') {
       setPreviewAsset(asset)
+      if (assetBelongsToProject(asset, projectId)) markLibraryUsed('asset', asset.id)
       return
     }
     selectAsset(asset, event)
-  }, [itemAction, selectAsset])
+  }, [itemAction, projectId, report, selectAsset, t])
 
-  const showAllAssetKinds = React.useCallback((): void => {
-    setVisibleKinds(new Set(ASSET_KIND_FILTER_VALUES))
-  }, [])
+  // 对勾是开关：点一下加进 / 移出选择，不动其它已选——和 ⌘/Ctrl 点同一条选择逻辑（selectAsset 唯一 owner）。
+  // 此前对勾只是装饰，点它等于普通点击＝换选：选不了第二张，也取消不了（2026-09-25 用户反馈）。
+  const toggleAssetSelection = React.useCallback((asset: AssetRef): void => {
+    selectAsset(asset, { metaKey: false, ctrlKey: true, shiftKey: false, detail: 1 })
+  }, [selectAsset])
 
-  const toggleVisibleKind = React.useCallback((kind: AssetKind): void => {
-    setVisibleKinds((current) => {
-      const next = new Set(current)
-      if (next.has(kind)) next.delete(kind)
-      else next.add(kind)
-      return next
-    })
-  }, [])
 
+  // 两个 tab 同一份拖拽载荷：落在画布 / 时间轴＝用它（别的项目的先复制进来，见 assetLibraryMaterialize），
+  // 落在文件夹＝归类。不再按 tab 分两种拖拽（此前项目素材 tab 只发归类专用的 MIME，拖到画布没反应）。
   const handleAssetDragStart = React.useCallback((asset: AssetRef, event: React.DragEvent<HTMLDivElement>): void => {
+    present('')
     const currentSelection = selectedIdsRef.current
     const selectedForDrag = assetsForLibraryDrag(visibleAssetsRef.current, currentSelection, asset)
     if (!currentSelection.has(asset.id)) {
@@ -404,34 +421,29 @@ export function AssetLibraryContent({
     event.dataTransfer.setData(ASSET_LIBRARY_DRAG_MIME, serializeAssetLibraryDrag(payloads))
     event.dataTransfer.effectAllowed = 'copy'
     event.dataTransfer.setData('text/plain', payloads.length > 1 ? `${payloads.length} 个素材` : asset.name)
-  }, [])
+  }, [present])
 
-  // 项目素材 tab 的格子拖拽=归类进夹（独立 MIME,画布 drop 端不认识,不会误建重复节点）。
-  // 三件套 handler 抽在 useAssetFolderInteractions（R9 防巨壳）。
-  const { handleFolderAssignDragStart, handleFolderDropAssets, handleDeleteFolder } = useAssetFolderInteractions({
-    folderApi,
-    visibleAssetsRef,
-    selectedIdsRef,
-    setSelectedIds,
-    lastSelectedIdRef,
-    setActiveFolderId,
-    collectSelection: assetsForLibraryDrag,
-  })
+  // 落夹 / 删夹 handler 抽在 useAssetFolderInteractions（R9 防巨壳）。
+  const { handleFolderDropAssets, handleDeleteFolder } = useAssetFolderInteractions({ folderApi, setActiveFolderId })
   const assetDragHint = usageContext === 'timeline'
     ? t('timelineEditor.dragToTimeline')
     : projectSelectionEnabled
       ? t('assetLibrary.dragHintFolder')
       : undefined
-  const assetPreviewAction = itemAction === 'select' ? setPreviewAsset : undefined
-  const assetDragStartAction = projectSelectionEnabled ? handleFolderAssignDragStart : handleAssetDragStart
+  const assetPreviewAction = React.useMemo(() => itemAction === 'select' ? (asset: AssetRef) => {
+    setPreviewAsset(asset)
+    if (assetBelongsToProject(asset, projectId)) markLibraryUsed('asset', asset.id)
+  } : undefined, [itemAction, projectId])
 
   const deleteSelectedProjectAssets = React.useCallback(async (): Promise<void> => {
+    present('')
+    const loaded = withProjectAction((project) => project) ?? null
     if (!projectId) {
-      toast(t('assetLibrary.deleteNoProject'), 'warning')
+      report(t('assetLibrary.deleteNoProject'), 'warning')
       return
     }
     if (selectedProjectAssets.length === 0) {
-      toast(t('assetLibrary.selectToDelete'), 'warning')
+      report(t('assetLibrary.selectToDelete'), 'warning')
       return
     }
     const confirmed = await confirmDialog({
@@ -440,166 +452,50 @@ export function AssetLibraryContent({
       confirmLabel: t('assetLibrary.delete'),
       danger: true,
     })
-    if (!confirmed) return
+    if (!confirmed || (loaded && !isProjectExecutionContextCurrent(loaded))) return
     try {
       // 串行：同一关闭项目的多张结果必须一张张基于最新 record 改，Promise.all 会各读同一旧快照后互相覆盖。
       const outcomes: Awaited<ReturnType<typeof deleteAssetResult>>[] = []
-      for (const asset of selectedProjectAssets) outcomes.push(await deleteAssetResult(asset, projectId))
+      for (const asset of selectedProjectAssets) outcomes.push(await deleteAssetResult(asset, loaded))
       const removedCount = outcomes.reduce((total, outcome) => total + outcome.removedResultCount, 0)
       const deletedFileCount = outcomes.reduce((total, outcome) => total + outcome.deletedFileCount, 0)
       const failedFileCount = outcomes.reduce((total, outcome) => total + outcome.failedFileCount, 0)
       refreshProjectAssets()
       refreshAllProjectAssets()
       setSelectedIds(new Set())
-      if (removedCount > 0) toast(t('assetLibrary.deletedProjectAssets', { count: removedCount }), 'success')
-      else if (deletedFileCount > 0) toast(t('assetLibrary.deletedFiles', { count: deletedFileCount }), 'success')
-      else if (failedFileCount === 0) toast(t('assetLibrary.cannotDeleteSelected'), 'warning')
-      if (failedFileCount > 0) toast(t('assetLibrary.failedFiles', { count: failedFileCount }), 'warning')
+      if (removedCount === 0 && deletedFileCount === 0 && failedFileCount === 0) report(t('assetLibrary.cannotDeleteSelected'), 'warning')
+      if (failedFileCount > 0) report(t('assetLibrary.failedFiles', { count: failedFileCount }), 'warning')
     } catch (error) {
-      console.error('delete project assets failed', error)
-      toast(t('assetLibrary.deleteFailed'), 'error')
+      logRendererError('asset-delete-failed', error)
+      report(t('assetLibrary.deleteFailed'), 'error')
     }
-  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, selectedProjectAssets, t])
+  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, selectedProjectAssets, present, report, t])
 
   const deleteOneAsset = React.useCallback(async (asset: AssetRef): Promise<void> => {
+    present('')
+    const loaded = withProjectAction((project) => project) ?? null
+    if (!assetBelongsToProject(asset, projectId)) {
+      report(t('assetLibrary.externalAssetNoDelete'), 'info')
+      return
+    }
     const confirmed = await confirmDialog({
       title: t('assetLibrary.confirmDeleteTitle', { count: 1 }),
       message: t('assetLibrary.confirmDeleteMessage'),
       confirmLabel: t('assetLibrary.delete'),
       danger: true,
     })
-    if (!confirmed) return
+    if (!confirmed || (loaded && !isProjectExecutionContextCurrent(loaded))) return
     try {
-      const outcome = await deleteAssetResult(asset, projectId || '')
+      const outcome = await deleteAssetResult(asset, loaded)
       refreshProjectAssets()
       refreshAllProjectAssets()
       setPreviewAsset((current) => current?.id === asset.id ? null : current)
-      if (outcome.failedFileCount > 0) toast(t('assetLibrary.failedFiles', { count: outcome.failedFileCount }), 'warning')
-      else toast(t('assetLibrary.deletedProjectAssets', { count: 1 }), 'success')
+      if (outcome.failedFileCount > 0) report(t('assetLibrary.failedFiles', { count: outcome.failedFileCount }), 'warning')
     } catch (error) {
-      console.error('delete asset result failed', error)
-      toast(t('assetLibrary.deleteFailed'), 'error')
+      logRendererError('asset-result-delete-failed', error)
+      report(t('assetLibrary.deleteFailed'), 'error')
     }
-  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, t])
-
-  const uploadButton = (
-    <button
-      type="button"
-      className={cn(
-        'inline-flex items-center justify-center gap-1.5 rounded-full cursor-pointer',
-        'bg-nomi-ink text-nomi-paper text-caption font-semibold border-0',
-        'transition-[background] duration-[var(--nomi-transition-fast)] hover:bg-nomi-ink-80',
-        compact ? 'h-[30px] px-2.5 shrink-0' : 'h-7 px-3',
-      )}
-      aria-label={t('assetLibrary.uploadAssets')}
-      onClick={() => uploadInputRef.current?.click()}
-    >
-      <IconPlus size={compact ? 12 : 13} stroke={2} />
-      {t('assetLibrary.upload')}
-    </button>
-  )
-
-  const deleteSelectedButton = projectSelectionEnabled ? (
-    <button
-      type="button"
-      className={cn(
-        'inline-flex h-8 min-w-10 shrink-0 items-center justify-center gap-1.5 rounded-nomi-sm border text-caption font-semibold tabular-nums',
-        'transition-[background,color,border-color] duration-[var(--nomi-transition-fast)]',
-        selectedProjectAssets.length > 0
-          ? 'cursor-pointer border-workbench-danger/20 bg-workbench-danger-soft px-2 text-workbench-danger hover:bg-workbench-danger-soft/80'
-          : 'cursor-default border-nomi-line bg-nomi-ink-05 px-2 text-nomi-ink-30',
-      )}
-      disabled={selectedProjectAssets.length === 0}
-      aria-disabled={selectedProjectAssets.length === 0}
-      aria-label={selectedProjectAssets.length > 0 ? t('assetLibrary.deleteSelection', { count: selectedProjectAssets.length }) : t('assetLibrary.deleteProjectAsset')}
-      title={selectedProjectAssets.length > 0 ? t('assetLibrary.deleteSelection', { count: selectedProjectAssets.length }) : t('assetLibrary.selectProjectAssetFirst')}
-      onMouseDown={(event) => event.stopPropagation()}
-      onClick={() => {
-        void deleteSelectedProjectAssets()
-      }}
-    >
-      <IconTrash size={15} stroke={2} aria-hidden="true" />
-      <span>{selectedProjectAssets.length}</span>
-    </button>
-  ) : null
-
-  const sourceTabs = (
-    <div
-      className={cn(
-        'inline-flex bg-nomi-ink-05 rounded-full p-0.5',
-        compact ? 'min-w-0 flex-1' : 'shrink-0',
-      )}
-      role="tablist"
-      aria-label={t('assetLibrary.sourceFilter')}
-    >
-      {sourceOptions.map((option) => {
-        const active = sourceFilter === option.value
-        return (
-          <button
-            key={option.value}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            className={cn(
-              'rounded-full text-caption cursor-pointer border-0 bg-transparent whitespace-nowrap',
-              'transition-[background,color] duration-[var(--nomi-transition-fast)]',
-              compact ? 'min-w-0 flex-1 px-1.5 py-1' : 'px-2.5 py-1',
-              active
-                ? 'bg-nomi-paper text-nomi-ink font-semibold shadow-nomi-sm'
-                : 'text-nomi-ink-60 hover:text-nomi-ink',
-            )}
-            onClick={() => {
-              setSourceFilter(option.value)
-              setSelectedIds(new Set())
-              lastSelectedIdRef.current = null
-              showAllAssetKinds()
-              setFilterOpen(false)
-              setActiveFolderId(null)
-              setNewFolderOpen(false)
-            }}
-          >
-            {t(option.labelKey)}
-          </button>
-        )
-      })}
-    </div>
-  )
-
-  const categoryFilterButton = (
-    <div className="relative shrink-0">
-      <button
-        ref={filterButtonRef}
-        type="button"
-        className={cn(
-          'inline-flex items-center justify-center gap-1.5 rounded-nomi-sm border border-nomi-line bg-nomi-paper',
-          'cursor-pointer text-caption text-nomi-ink-65 transition-[background,color,border-color] duration-[var(--nomi-transition-fast)]',
-          'hover:border-nomi-ink-20 hover:bg-nomi-ink-05 hover:text-nomi-ink',
-          compact ? 'h-8 px-2.5' : 'h-8 px-3',
-          (filterOpen || filterActive) && 'border-nomi-ink-20 bg-nomi-ink-05 text-nomi-ink',
-        )}
-        aria-label={t('assetLibrary.categoryFilter')}
-        aria-haspopup="dialog"
-        aria-expanded={filterOpen}
-        aria-pressed={filterActive}
-        title={t('assetLibrary.categoryTitle', { label: activeFilterLabel })}
-        onClick={() => setFilterOpen((open) => !open)}
-      >
-        <IconFilter size={15} stroke={1.8} aria-hidden="true" />
-        {!compact ? <span>{activeFilterLabel}</span> : null}
-      </button>
-      {filterOpen ? (
-        <AssetKindFilterMenu
-          selectedKinds={visibleKinds}
-          counts={filterCounts}
-          setNodeRef={(node) => {
-            filterMenuRef.current = node
-          }}
-          onToggleKind={toggleVisibleKind}
-          onShowAll={showAllAssetKinds}
-        />
-      ) : null}
-    </div>
-  )
+  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, present, report, t])
 
   return (
     <TooltipProvider delayDuration={180} skipDelayDuration={80}>
@@ -608,7 +504,7 @@ export function AssetLibraryContent({
         {showHeader ? (
           <div className={cn('flex items-center gap-2 px-4 pt-3.5 pb-3 border-b border-nomi-line')}>
             <b className={cn('text-title font-bold text-nomi-ink')}>{t('assetLibrary.title')}</b>
-            <span className={cn('text-caption text-nomi-ink-40')}>· {sourceFilteredAssets.length}</span>
+            <span className={cn('text-caption text-nomi-ink-40')}>· {scopedAssets.length}</span>
             <span className={cn('flex-1')} />
             {onClose ? (
               <button
@@ -616,7 +512,7 @@ export function AssetLibraryContent({
                 className={cn(
                   'w-7 h-7 grid place-items-center rounded-nomi-sm cursor-pointer border-0 bg-transparent',
                   'text-nomi-ink-40 hover:text-nomi-ink hover:bg-nomi-ink-05',
-                  'transition-[background,color] duration-[var(--nomi-transition-fast)]',
+                  'transition-[background,color] duration-nomi-fast ease-nomi-fast',
                 )}
                 aria-label={t('assetLibrary.close')}
                 onClick={onClose}
@@ -636,62 +532,98 @@ export function AssetLibraryContent({
           onChange={handleUploadFiles}
         />
 
-        {/* 工具行：筛选 + 搜索 */}
-        <div className={cn('grid gap-2', compact ? 'px-3 py-3' : 'px-3 py-2.5')}>
-          <div className={cn('flex min-w-0 items-center gap-2')}>
-            {sourceTabs}
-            {uploadButton}
-          </div>
-          <div className="flex min-w-0 items-center gap-2">
-            <DesignSearchInput className="min-w-0 flex-1" placeholder={t('assetLibrary.search')} ariaLabel={t('assetLibrary.searchAria')} value={query} onChange={setQuery} />
-            {deleteSelectedButton}
-            {projectSelectionEnabled ? (
-              newFolderOpen ? (
-                <NewFolderInput onCreate={folderApi.createFolder} onCancel={() => setNewFolderOpen(false)} />
-              ) : (
-                <button
-                  type="button"
-                  className={cn(
-                    'inline-flex h-8 shrink-0 items-center justify-center rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2.5',
-                    'cursor-pointer text-nomi-ink-65 transition-[background,color,border-color] duration-[var(--nomi-transition-fast)]',
-                    'hover:border-nomi-ink-20 hover:bg-nomi-ink-05 hover:text-nomi-ink',
-                  )}
-                  aria-label={t('assetLibrary.newFolder')}
-                  title={t('assetLibrary.newFolder')}
-                  onClick={() => setNewFolderOpen(true)}
-                >
-                  <IconFolderPlus size={15} stroke={1.8} aria-hidden="true" />
-                </button>
-              )
+        {(feedback[feedbackOwner] ?? []).length > 0 ? (
+          <div role="status" aria-live="polite" className="shrink-0 border-b border-nomi-line px-3 py-2 text-caption text-nomi-ink-60" data-asset-library-feedback>
+            {feedback[feedbackOwner].map((message) => <p key={message}>{message}</p>)}
+            {rejection ? (
+              <div className="mt-1 flex flex-wrap items-center gap-1.5" data-asset-library-rejection={rejection.errorKind}>
+                <FeedbackButton request={{ intent: 'problem', surface: 'import', stage: 'upload', ...(projectId ? { projectId } : {}), ...rejection }} />
+              </div>
             ) : null}
-            {categoryFilterButton}
           </div>
-          {folderViewActive && activeFolder ? (
-            <div className="flex min-w-0 items-center gap-1.5">
-              <button
-                type="button"
-                className={cn(
-                  'inline-flex shrink-0 items-center gap-0.5 rounded-nomi-sm border-0 bg-transparent px-1.5 py-1',
-                  'cursor-pointer text-caption text-nomi-accent transition-colors duration-[var(--nomi-transition-fast)] hover:bg-nomi-ink-05',
-                )}
-                aria-label={t('assetLibrary.backToAllAssets')}
-                title={t(folderManagementEnabled ? 'assetLibrary.backDropToRemove' : 'assetLibrary.backToAllAssets')}
-                onClick={() => setActiveFolderId(null)}
-                onDragOver={folderManagementEnabled ? (event) => {
-                  event.preventDefault()
-                  event.dataTransfer.dropEffect = 'copy'
-                } : undefined}
-                onDrop={folderManagementEnabled ? (event) => handleFolderDropAssets(null, event) : undefined}
-              >
-                <IconChevronLeft size={14} stroke={2} aria-hidden="true" />
-                {t('common.back')}
-              </button>
-              <span className="min-w-0 truncate text-caption text-nomi-ink-40">／ {activeFolder.label} · {scopedAssets.length}</span>
+        ) : null}
+        <AssetLibraryToolbar
+          compact={compact}
+          uploadInputRef={uploadInputRef}
+          onPasteLink={handleToggleFind}
+          findOpen={findOpen}
+          sourceOptions={sourceOptions}
+          sourceFilter={sourceFilter}
+          onSourceFilterChange={setSourceFilter}
+          onResetSelection={() => {
+            setSelectedIds(new Set())
+            lastSelectedIdRef.current = null
+          }}
+          onResetKinds={filters.showAllKinds}
+          onCloseFilter={() => setFilterOpen(false)}
+          onResetFolder={() => setActiveFolderId(null)}
+          onCloseNewFolder={() => setNewFolderOpen(false)}
+          query={query}
+          onQueryChange={setQuery}
+          projectSelectionEnabled={projectSelectionEnabled}
+          selectedProjectAssetCount={selectedProjectAssets.length}
+          onDeleteSelected={() => {
+            void deleteSelectedProjectAssets()
+          }}
+          newFolderOpen={newFolderOpen}
+          onOpenNewFolder={() => setNewFolderOpen(true)}
+          onCreateFolder={folderApi.createFolder}
+          filterButtonRef={filterButtonRef}
+          filterMenuRef={filterMenuRef}
+          visibleKinds={filters.visibleKinds}
+          filterCounts={filterCounts}
+          visibleProvenances={filters.visibleProvenances}
+          provenanceCounts={provenanceCounts}
+          filterOpen={filterOpen}
+          filterActive={filters.filterActive}
+          activeFilterLabel={filters.activeFilterLabel}
+          onToggleFilter={() => setFilterOpen((open) => !open)}
+          onToggleKind={filters.toggleVisibleKind}
+          onShowAllKinds={filters.showAllKinds}
+          onToggleProvenance={filters.toggleVisibleProvenance}
+          folderViewActive={folderViewActive}
+          activeFolder={activeFolder}
+          folderManagementEnabled={folderManagementEnabled}
+          scopedAssetCount={scopedAssets.length}
+          onBackToAllAssets={() => setActiveFolderId(null)}
+          onDropToFolder={handleFolderDropAssets}
+        />
+
+        {/* 09-08 用户裁决：找参考接管素材区；返回条保留已有素材上下文。详见 FindReferenceSection。 */}
+        {findOpen ? (
+          <FindReferenceSection
+            projectId={projectId}
+            platform={referencePlatform}
+            assetCount={scopedAssets.length}
+            importedCount={importedInFind}
+            onPlatformChange={setReferencePlatform}
+            onShareLink={handlePasteLink}
+            onImported={() => {
+              setImportedInFind((count) => count + 1)
+              refreshProjectAssets()
+              refreshAllProjectAssets()
+            }}
+            onNeedKey={() => {
+              window.dispatchEvent(new CustomEvent('nomi-open-settings', { detail: { tab: 'models', section: 'tikhub-connector' } }))
+            }}
+            onBack={() => {
+              // 拿完回到「只看参考」，否则保持原筛选。
+              if (importedInFind > 0) {
+                filters.focusReferenceOnly()
+                setActiveFolderId(null)
+                setQuery('')
+              }
+              setImportedInFind(0)
+              setFindOpen(false)
+            }}
+          />
+        ) : (
+        <div ref={setScrollEl} className={cn('flex-1 overflow-y-auto', compact ? 'px-3 pb-3' : 'px-3.5 pb-4')}>
+          {sourceFilter === 'all' && allProjectAssetsPartial ? (
+            <div className="mb-2 rounded-nomi-sm border border-nomi-warning/25 bg-nomi-warning-soft px-2.5 py-2 text-micro text-nomi-warning" role="status">
+              {t('assetLibrary.partialResults')}
             </div>
           ) : null}
-        </div>
-
-        <div ref={setScrollEl} className={cn('flex-1 overflow-y-auto', compact ? 'px-3 pb-3' : 'px-3.5 pb-4')}>
           {visibleFolders.length > 0 ? (
             <div
               className="grid gap-2.5 pb-2.5"
@@ -713,15 +645,44 @@ export function AssetLibraryContent({
               ))}
             </div>
           ) : null}
-          {isEmpty ? (
+          {sourceFilter === 'all' && allProjectAssetsLoading && allProjectAssets.length === 0 ? (
+            <div className="grid min-h-32 place-items-center gap-2 py-8 text-caption text-nomi-ink-40" role="status" aria-busy="true">
+              <NomiLoadingMark size={24} label={t('assetLibrary.loading')} />
+              <span>{t('assetLibrary.loading')}</span>
+            </div>
+          ) : isEmpty ? (
             <DesignEmptyState
               density="inline"
               icon={<IconPhoto size={34} stroke={1.4} className="text-nomi-ink-30" />}
               title={sourceEmpty ? (sourceFilter === 'project' ? t('assetLibrary.noProjectAssets') : t('assetLibrary.noAssets')) : t('assetLibrary.noMatches')}
               description={
                 sourceEmpty
-                  ? t('assetLibrary.emptyDescription')
+                  ? t('assetLibrary.findReference.emptyDesc', {
+                      platform: t(`assetLibrary.findReference.platform.${referencePlatform}`),
+                    })
                   : t('assetLibrary.noMatchesDescription')
+              }
+              action={
+                !sourceEmpty && filters.filterActive ? (
+                  // 卡点③：筛空了不能只留一句「没有匹配」——原因看不见，出口也得就手。
+                  <button
+                    type="button"
+                    data-reset-filters
+                    className="h-8 rounded-full border border-nomi-line bg-nomi-paper px-4 text-body-sm text-nomi-ink hover:bg-nomi-ink-05"
+                    onClick={filters.showAll}
+                  >
+                    {t('assetLibrary.showAllFilters')}
+                  </button>
+                ) : sourceEmpty && !findOpen ? (
+                  <button
+                    type="button"
+                    data-find-reference-cta
+                    className="h-8 rounded-full bg-nomi-ink px-4 text-body-sm font-medium text-nomi-paper hover:bg-nomi-accent"
+                    onClick={handleToggleFind}
+                  >
+                    {t('assetLibrary.findReference.entry')}
+                  </button>
+                ) : undefined
               }
             />
           ) : compact ? (
@@ -732,13 +693,13 @@ export function AssetLibraryContent({
                   asset={asset}
                   compact
                   selectable={projectSelectionEnabled}
-                  draggable
                   selected={selectedIds.has(asset.id)}
-                  dragHint={assetDragHint}
+                  dragHint={assetBelongsToProject(asset, projectId) ? assetDragHint : t('assetLibrary.externalAssetHint')}
                   onSelect={activateAsset}
+                  onToggleSelect={projectSelectionEnabled ? toggleAssetSelection : undefined}
                   onPreview={assetPreviewAction}
-                  onDragStartAsset={assetDragStartAction}
-                  onDelete={usageContext === 'canvas' && sourceFilter === 'all' ? (assetToDelete) => void deleteOneAsset(assetToDelete) : undefined}
+                  onDragStartAsset={handleAssetDragStart}
+                  onDelete={usageContext === 'canvas' && sourceFilter === 'all' && assetBelongsToProject(asset, projectId) ? (assetToDelete) => void deleteOneAsset(assetToDelete) : undefined}
                 />
               ))}
             </div>
@@ -767,13 +728,13 @@ export function AssetLibraryContent({
                         key={asset.id}
                         asset={asset}
                         selectable={projectSelectionEnabled}
-                        draggable
                         selected={selectedIds.has(asset.id)}
-                        dragHint={assetDragHint}
+                        dragHint={assetBelongsToProject(asset, projectId) ? assetDragHint : t('assetLibrary.externalAssetHint')}
                         onSelect={activateAsset}
+                        onToggleSelect={projectSelectionEnabled ? toggleAssetSelection : undefined}
                         onPreview={assetPreviewAction}
-                        onDragStartAsset={assetDragStartAction}
-                        onDelete={usageContext === 'canvas' && sourceFilter === 'all' ? (assetToDelete) => void deleteOneAsset(assetToDelete) : undefined}
+                        onDragStartAsset={handleAssetDragStart}
+                        onDelete={usageContext === 'canvas' && sourceFilter === 'all' && assetBelongsToProject(asset, projectId) ? (assetToDelete) => void deleteOneAsset(assetToDelete) : undefined}
                       />
                     ))}
                   </div>
@@ -782,6 +743,7 @@ export function AssetLibraryContent({
             </div>
           )}
         </div>
+        )}
       </div>
       {previewAsset ? (
         <AssetPreviewDialog asset={previewAsset} onClose={() => setPreviewAsset(null)} />

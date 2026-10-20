@@ -5,9 +5,9 @@
 // 安全铁律(评审后端#7):自动批准必须过工具白名单;白名单外一律拒绝;
 // eval:score 兜底断言 zeroVendorCalls(评测环境绝不烧生成额度)。
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { buildNomiLaunchEnv, launchNomiApp } from "../../tests/ux/_launchApp.mjs";
+import { buildNomiLaunchEnv, launchNomiApp, prepareIsolatedCatalog } from "../../tests/ux/_launchApp.mjs";
+import { realNomiProfile, seedRealCredentials } from "../../tests/ux/_realProfile.mjs";
 
 /** 今天全部 5 个画布工具都免额度;将来出现 costy 工具(如 run_generation_batch)默认就被拒。 */
 export const TOOL_WHITELIST = new Set([
@@ -18,23 +18,30 @@ export const TOOL_WHITELIST = new Set([
   "delete_canvas_nodes",
 ]);
 
-export function realCatalogPath() {
-  return path.join(os.homedir(), "Library", "Application Support", "Nomi", "model-catalog.json");
-}
-
-/** 建一套全新隔离环境;requireCatalog=true 时拷入真实 catalog(safeStorage 加密 key 同机可解)。 */
+/**
+ * 建一套全新隔离环境;requireCatalog=true 时拷入真实 catalog 与凭据钥匙(同机可解)。
+ * 真实资料目录在哪、凭据由哪几份文件组成,只问 tests/ux/_realProfile.mjs——Windows 上钥匙是
+ * userData 里的 Local State,只拷 catalog 那份密文解不开。
+ */
 export function prepareIsolation(isoDir, { requireCatalog = true } = {}) {
   fs.rmSync(isoDir, { recursive: true, force: true });
-  for (const d of ["settings", "projects", "chromium"]) fs.mkdirSync(path.join(isoDir, d), { recursive: true });
-  const catalog = realCatalogPath();
-  if (requireCatalog && !fs.existsSync(catalog)) {
-    throw new Error(`真实 model-catalog.json 不存在(${catalog})——被测 agent 需要已配置的模型与 key`);
+  for (const d of ["settings", "projects", "chromium", "capability"]) fs.mkdirSync(path.join(isoDir, d), { recursive: true });
+  const profile = realNomiProfile();
+  if (requireCatalog && !fs.existsSync(profile.catalogPath)) {
+    throw new Error(`真实 model-catalog.json 不存在(${profile.catalogPath})——被测 agent 需要已配置的模型与 key`);
   }
-  if (fs.existsSync(catalog)) fs.copyFileSync(catalog, path.join(isoDir, "settings", "model-catalog.json"));
+  if (fs.existsSync(profile.catalogPath)) {
+    seedRealCredentials({ settingsDir: path.join(isoDir, "settings"), userDataDir: path.join(isoDir, "chromium"), profile });
+    const prepared = prepareIsolatedCatalog(path.join(isoDir, "settings"));
+    if (prepared.status === "quarantined" && requireCatalog) {
+      throw new Error(`真实 model-catalog.json 版本 ${prepared.diskVersion} 高于被测 app 版本 ${prepared.testedCatalogVersion}，已隔离到 ${prepared.quarantinePath}；需要兼容 catalog 才能继续`);
+    }
+  }
   return {
     projectsDir: path.join(isoDir, "projects"),
     settingsDir: path.join(isoDir, "settings"),
     chromiumDir: path.join(isoDir, "chromium"),
+    capabilityDir: path.join(isoDir, "capability"),
   };
 }
 
@@ -45,6 +52,7 @@ export function isolatedAppEnv(iso, baseEnv = process.env) {
     userDataDir: iso.chromiumDir,
     projectsDir: iso.projectsDir,
     settingsDir: iso.settingsDir,
+    capabilityDir: iso.capabilityDir,
   });
 }
 
@@ -55,6 +63,7 @@ export async function launchIsolatedApp(repoRoot, iso) {
     userDataDir: iso.chromiumDir,
     projectsDir: iso.projectsDir,
     settingsDir: iso.settingsDir,
+    capabilityDir: iso.capabilityDir,
   });
   return { app, win };
 }
@@ -94,7 +103,11 @@ export async function createBlankProject(win, projectsDir) {
 
 /** 打开生成区 AI 面板(若未开),返回输入框 locator 已可用。 */
 export async function openGenerationAiPanel(win) {
-  const input = win.locator('[aria-label="给生成助手发送消息"]');
+  // Agent v4 owns its composer contract through data-v4-control. The former
+  // generation-assistant aria label and launcher class were removed when the
+  // resident panel became the shared host, so looking them up makes every
+  // agent journey fail before its first message.
+  const input = win.locator('textarea[data-v4-control="input"]');
   if (await input.count()) return;
   // 空白项目默认落「创作」标签,生成 AI 面板在「生成」工作区——先切过去
   // (旧版直接点「Nomi 生成」文字在创作标签下找不到 → 整批评测 infra 超时)。
@@ -109,16 +122,15 @@ export async function openGenerationAiPanel(win) {
     await win.waitForTimeout(1200);
   }
   if (await input.count()) return;
-  // 开侧栏:点「生成区 AI 启动器」。Playwright 的 click(含 force) 对这个启动器**不稳**——
-  // 偶发不触发 onOpen(data-collapsed 仍为 true、输入框不挂载)。改用页面内原生 DOM .click():
-  // 它直接触发 React onClick(openPanel→setCollapsed(false)),无 actionability/坐标/遮挡判定的不确定性。
+  // 面板若处于收起态，点击顶栏唯一的 dock-open 入口。使用页面内原生 DOM
+  // click，避免顶栏 tooltip/拖拽层带来的 actionability 干扰。
   // 外裹重试轮询直到输入框真出现,绝不在超时上谎报。
   const deadline = Date.now() + 12_000;
   let opened = false;
   while (Date.now() < deadline) {
     if (await input.count()) { opened = true; break; }
     await win.evaluate(() => {
-      const btn = document.querySelector(".generation-canvas-v2-assistant__launcher");
+      const btn = document.querySelector('[data-v4-control="dock-open"]');
       if (btn) (btn).click();
     });
     await win.waitForTimeout(600);
@@ -144,8 +156,8 @@ export async function readAssistantModelLabel(win) {
 }
 
 export async function sendAgentMessage(win, message) {
-  await win.locator('[aria-label="给生成助手发送消息"]').first().fill(message, { timeout: 5000 });
-  await win.locator('[aria-label="生成 AI 发送"]').first().click({ timeout: 5000 });
+  await win.locator('textarea[data-v4-control="input"]').first().fill(message, { timeout: 5000 });
+  await win.locator('[data-v4-control="send"]').first().click({ timeout: 5000 });
 }
 
 export function readEventsLog(projectDir) {

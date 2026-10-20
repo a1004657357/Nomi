@@ -1,15 +1,28 @@
+import { assetIdentityOf, findProjectAssetById } from "./assetReferenceIdentity";
+import { contentHashForFile, isContentAddressedUpload, persistUploadBytes, persistUploadFile, storedAssetRecord } from './uploadContentStore';
+import { captureAssetWriteContext, type AssetWriteContext } from './assetWriteContext';
+import type { ProjectBinding } from '../shared/projectBinding';
+import type { ProjectAgentAttachmentClaim, ProjectAgentAttachmentRef } from '../shared/workbenchInput'
 import fs from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
-import { hardenedFetch } from "../hardenedFetch";
+import type { ProviderNetworkConfig } from "../providerNetwork";
+import { fetchProviderMedia } from "./providerMediaFetch";
 import { isJsonRecord, nowIso, type JsonRecord } from "../jsonUtils";
-import { projectDirById, sanitizeName } from "../projects/repository";
+import { projectDirById, sanitizeName, SANITIZED_NAME_MAX_LENGTH } from "../projects/repository";
 import { ensureDir } from "../runtimePaths";
 import { broadcastAssetsUpdated } from "./assetEvents";
+import { readAssetSidecarMeta, writeAssetSidecarMeta } from "./assetSidecar";
+import { absolutePathFromLocalAssetUrl } from "./localAssetFile";
+import { attachStoredAssetPreview, isStoredAssetPreviewPath, type StoredAssetPreview } from "./assetPreview";
+import { copyFileWithProgress, type AssetCopyProgress } from "./assetImportProgress";
+import { renameSyncWithRetry, retryOnSharingViolation } from "../jsonFile";
+import { reapAbandonedUploadStaging, removeScratchAfterUse, removeScratchAfterUseSync, UPLOAD_STAGING_PREFIX } from "./scratchCleanup";
 import { collectFilesRecursively, parseDataUrl } from "./assetBytes";
 import { absolutePathFromLocalAssetUrlAnyProject } from "./localAssetFile";
 import {
   assetBucketFromMeta,
+  type AssetBucket,
   canonicalAssetFileName,
   assetKindFromContentType,
   contentTypeFromPath,
@@ -21,7 +34,14 @@ import {
 } from "./assetPaths";
 import { inspectGlb, type GlbValidationReport } from "./glbValidation";
 import { runTechnicalCheck, type TechnicalCheckVerdict } from "../review/technicalCheck";
-import { contentTypeFromMagicBytes, resolveContentType } from "./mediaTypes";
+import { contentTypeFromMagicBytes, mediaKindFromContentType, resolveContentType } from "./mediaTypes";
+import { validateGlbStructure } from "./model3dValidation";
+import { validatedGenerated } from "./generatedAssetValidation";
+import { localizedAssetTypeOf, type LocalizedAssetType } from "./localizedAsset";
+import type { CertificationMediaEvidence } from "../providerAdapter/certificationMedia";
+
+import type { UsageStatus, IntendedRole } from "../connectors/connectorDefinition";
+import { ASSET_PROVENANCE_ALLOWED_USAGES, ASSET_PROVENANCE_ALLOWED_ROLES } from "../connectors/connectorDefinition";
 
 type LocalAssetRecord = {
   id: string;
@@ -40,29 +60,8 @@ type LocalAssetRecord = {
   } & JsonRecord;
 };
 
-function readAssetSidecarMeta(absolutePath: string): JsonRecord {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(`${absolutePath}.meta`, "utf8"));
-    return isJsonRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeAssetSidecarMeta(absolutePath: string, meta: JsonRecord): void {
-  const sidecar: JsonRecord = {};
-  for (const [key, value] of Object.entries(meta)) {
-    if (value !== undefined) sidecar[key] = value;
-  }
-  if (Object.keys(sidecar).length === 0) return;
-  try {
-    fs.writeFileSync(`${absolutePath}.meta`, JSON.stringify(sidecar));
-  } catch {
-    /* non-fatal */
-  }
-}
-
-function contentTypeFromStoredFile(absolutePath: string): string {
+/** 已落盘文件的内容类型：先按扩展名，认不出再嗅文件头。列表与补封面共用这一份判定。 */
+export function contentTypeFromStoredFile(absolutePath: string): string {
   const extensionType = contentTypeFromPath(absolutePath);
   if (extensionType !== "application/octet-stream") return extensionType;
   try {
@@ -90,6 +89,9 @@ function contentTypeFromStoredFile(absolutePath: string): string {
  */
 function effectiveContentType(fileName: string, declared: string, bytes?: Uint8Array): string {
   const normalized = String(declared || "").toLowerCase().split(";")[0].trim();
+  if (normalized.startsWith("model/") && normalized !== "model/gltf-binary") {
+    throw new Error("Unsupported 3D asset content type");
+  }
   // 声明本身没信息量（空 / octet-stream）：交给 resolveContentType（先文件头、再扩展名）。
   if (!normalized || normalized === "application/octet-stream") return resolveContentType(fileName, bytes);
   const sniffed = bytes ? contentTypeFromMagicBytes(bytes) : null;
@@ -97,32 +99,36 @@ function effectiveContentType(fileName: string, declared: string, bytes?: Uint8A
   return normalized;
 }
 
-async function writeAssetSidecarMetaAsync(absolutePath: string, meta: JsonRecord): Promise<void> {
-  const sidecar: JsonRecord = {};
-  for (const [key, value] of Object.entries(meta)) {
-    if (value !== undefined) sidecar[key] = value;
-  }
-  if (Object.keys(sidecar).length === 0) return;
-  try {
-    await fs.promises.writeFile(`${absolutePath}.meta`, JSON.stringify(sidecar));
-  } catch {
-    /* non-fatal */
-  }
+function validateStructuredAsset(contentType: string, bytes: Uint8Array): void {
+  if (contentType === "model/gltf-binary") validateGlbStructure(bytes);
+}
+
+/**
+ * 落盘文件名的**唯一**裁法：扩展名取自字节嗅出的内容类型（canonicalAssetFileName），**只截主干**；后缀不是
+ * 合法扩展名（`.[a-z0-9]{1,8}`）就整段算主干、另补 `.bin`。以前整段交给 sanitizeName 截到 90 字——供应商 URL 的
+ * 长 basename 连扩展名一起被截掉落成 `.bin`，出了 App（下载、双击、MCP 预览、再上传）就认不出（2026-09-26）。
+ */
+function storedAssetFileParts(fileName: string, contentType: string): { stem: string; ext: string } {
+  const parsed = path.parse(canonicalAssetFileName(fileName, contentType));
+  const ext = /^\.[a-z0-9]{1,8}$/i.test(parsed.ext) ? parsed.ext : ".bin";
+  const rawStem = ext === parsed.ext ? parsed.name : parsed.base;
+  const stem = sanitizeName(rawStem, "asset").slice(0, SANITIZED_NAME_MAX_LENGTH - ext.length).trim();
+  return { stem: stem || "asset", ext };
 }
 
 function uniqueAssetPath(
   projectId: string,
   fileName: string,
-  bucket: "generated" | "imported" = "generated",
+  contentType: string,
+  bucket: AssetBucket = "generated",
+  context?: AssetWriteContext,
 ): { absolutePath: string; relativePath: string } {
-  const projectDir = projectDirById(projectId);
+  const projectDir = context?.root ?? projectDirById(projectId);
   if (!projectDir) throw new Error("Project not found");
   const today = new Date().toISOString().slice(0, 10);
   const assetDir = path.join(projectDir, "assets", bucket, today);
   ensureDir(assetDir);
-  const parsed = path.parse(sanitizeName(fileName, "asset.bin"));
-  const base = parsed.name || "asset";
-  const ext = parsed.ext || ".bin";
+  const { stem: base, ext } = storedAssetFileParts(fileName, contentType);
   let absolutePath = path.join(assetDir, `${base}${ext}`);
   for (let index = 2; fs.existsSync(absolutePath); index += 1) {
     absolutePath = path.join(assetDir, `${base}-${index}${ext}`);
@@ -153,33 +159,24 @@ export function writeAsset(
   fileName: string,
   contentType: string,
   rawMeta: JsonRecord,
+  /** 生成产物该是哪一类（必填）；不是生成产物给 null。见 validatedGenerated。 */
+  expectedKind: LocalizedAssetType | null,
+  context?: AssetWriteContext,
 ): unknown {
   // 唯一 sidecar 写入者之一：capture 族 originalUrl 恒 null 的不变量在此收口（见 assetPaths）。
-  const meta = sanitizeAssetMetaForKind(rawMeta);
-  const actualContentType = effectiveContentType(fileName, contentType, bytes);
+  const checked = validatedGenerated(sanitizeAssetMetaForKind(rawMeta), contentType, bytes, expectedKind);
+  const meta = checked.meta;
+  const actualContentType = effectiveContentType(fileName, checked.contentType, bytes);
+  validateStructuredAsset(actualContentType, bytes);
   const storageFileName = canonicalAssetFileName(fileName, actualContentType);
-  const { absolutePath, relativePath } = uniqueAssetPath(projectId, storageFileName, assetBucketFromMeta(meta));
+  if (isContentAddressedUpload(meta)) return persistUploadBytes(projectId, bytes, storageFileName, actualContentType, meta, context);
+  context?.assertCurrent();
+  const { absolutePath } = uniqueAssetPath(projectId, storageFileName, actualContentType, assetBucketFromMeta(meta), context);
   fs.writeFileSync(absolutePath, bytes);
   writeAssetSidecarMeta(absolutePath, meta);
   broadcastAssetsUpdated(projectId);
-  const url = localAssetUrl(projectId, relativePath);
-  const t = nowIso();
-  return {
-    id: stableStoredAssetId(projectId, relativePath),
-    name: sanitizeName(fileName, "asset"),
-    userId: "local",
-    projectId,
-    createdAt: t,
-    updatedAt: t,
-    data: {
-      ...meta,
-      url,
-      relativePath,
-      absolutePath,
-      contentType: actualContentType,
-      size: bytes.byteLength,
-    },
-  };
+  const contentHash = crypto.createHash("sha256").update(bytes).digest("hex");
+  return storedAssetRecord(projectId, absolutePath, sanitizeName(fileName, "asset"), actualContentType, meta, contentHash, context);
 }
 
 /**
@@ -192,23 +189,25 @@ export function writeDeterministicAsset(
   fileName: string,
   contentType: string,
   rawMeta: JsonRecord,
+  expectedKind: LocalizedAssetType,
   materializationKey: string,
 ): unknown {
-  const meta = sanitizeAssetMetaForKind(rawMeta);
-  const actualContentType = effectiveContentType(fileName, contentType, bytes);
-  const storageFileName = canonicalAssetFileName(fileName, actualContentType);
-  const parsed = path.parse(sanitizeName(storageFileName, "asset"));
+  const checked = validatedGenerated(sanitizeAssetMetaForKind(rawMeta), contentType, bytes, expectedKind);
+  const meta = checked.meta;
+  const actualContentType = effectiveContentType(fileName, checked.contentType, bytes);
+  validateStructuredAsset(actualContentType, bytes);
+  const { stem, ext } = storedAssetFileParts(fileName, actualContentType);
   const keyHash = crypto.createHash("sha256").update(materializationKey).digest("hex").slice(0, 24);
   const projectDir = projectDirById(projectId);
   if (!projectDir) throw new Error("Project not found");
   const bucket = assetBucketFromMeta(meta);
-  const relativePath = path.posix.join("assets", bucket, "materialized", `${parsed.name || "asset"}-${keyHash}${parsed.ext || ".bin"}`);
+  const relativePath = path.posix.join("assets", bucket, "materialized", `${stem}-${keyHash}${ext}`);
   const absolutePath = path.join(projectDir, relativePath);
+  const contentHash = crypto.createHash("sha256").update(bytes).digest("hex");
   ensureDir(path.dirname(absolutePath));
   if (fs.existsSync(absolutePath)) {
     const existingHash = crypto.createHash("sha256").update(fs.readFileSync(absolutePath)).digest("hex");
-    const nextHash = crypto.createHash("sha256").update(bytes).digest("hex");
-    if (existingHash !== nextHash) throw new Error("Deterministic materialization key maps to different bytes");
+    if (existingHash !== contentHash) throw new Error("Deterministic materialization key maps to different bytes");
   } else {
     fs.writeFileSync(absolutePath, bytes);
   }
@@ -232,19 +231,33 @@ export function writeDeterministicAsset(
       absolutePath,
       contentType: actualContentType,
       size: bytes.byteLength,
+      contentHash,
     },
   };
 }
 
 /** Copy an existing native file into the project without materializing it as a main-process Buffer. */
+export type CopyAssetFileOptions = {
+  /** 拷贝流的字节回调：导入中节点的渐显靠它驱动（没有就走原来的整块 copyFile）。 */
+  onCopyProgress?: AssetCopyProgress
+  /** 与拷贝并行派生的那一帧预览；落盘后由 attachStoredAssetPreview 认领，不重派生。 */
+  preparedPreview?: StoredAssetPreview | Promise<StoredAssetPreview | undefined>
+};
+
 export async function copyAssetFile(
   projectId: string,
   sourcePath: string,
   fileName: string,
   contentType: string,
   rawMeta: JsonRecord,
+  /** 同 writeAsset：生成产物给它该是的那一类，其余给 null。 */
+  expectedKind: LocalizedAssetType | null,
+  captured?: AssetWriteContext,
+  options: CopyAssetFileOptions = {},
 ): Promise<unknown> {
-  const meta = sanitizeAssetMetaForKind(rawMeta);
+  const context = captured ?? await captureAssetWriteContext(projectId);
+  context.assertCurrent();
+  let meta = sanitizeAssetMetaForKind(rawMeta);
   // 文件头无条件读：声明对不对要靠字节验，只在 octet-stream 时读等于「只在声明已经认输时才查证」。
   const header = await (async () => {
     const handle = await fs.promises.open(sourcePath, "r");
@@ -256,31 +269,83 @@ export async function copyAssetFile(
       await handle.close();
     }
   })();
-  const actualContentType = effectiveContentType(fileName, contentType, header);
+  let declaredType = contentType;
+  if (String(meta.kind || "").toLowerCase() === "generated") ({ meta, contentType: declaredType } = validatedGenerated(meta, contentType, await fs.promises.readFile(sourcePath), expectedKind, sourcePath));
+  const actualContentType = effectiveContentType(fileName, declaredType, header);
+  if (actualContentType === "model/gltf-binary") validateStructuredAsset(actualContentType, await fs.promises.readFile(sourcePath));
   const storageFileName = canonicalAssetFileName(fileName, actualContentType);
-  const { absolutePath, relativePath } = uniqueAssetPath(projectId, storageFileName, assetBucketFromMeta(meta));
-  await fs.promises.copyFile(sourcePath, absolutePath);
-  const stat = await fs.promises.stat(absolutePath);
-  await writeAssetSidecarMetaAsync(absolutePath, meta);
-  broadcastAssetsUpdated(projectId);
-  const url = localAssetUrl(projectId, relativePath);
-  const t = nowIso();
-  return {
-    id: stableStoredAssetId(projectId, relativePath),
-    name: sanitizeName(fileName, "asset"),
-    userId: "local",
-    projectId,
-    createdAt: t,
-    updatedAt: t,
-    data: {
-      ...meta,
-      url,
-      relativePath,
-      absolutePath,
-      contentType: actualContentType,
-      size: stat.size,
-    },
-  };
+  const stored = isContentAddressedUpload(meta)
+    ? await persistUploadFile(projectId, sourcePath, storageFileName, actualContentType, meta, context, options.onCopyProgress)
+    : await copyNativeFileToBucket(context, sourcePath, fileName, storageFileName, actualContentType, meta, options.onCopyProgress);
+  // 原生路径拷贝是本地导入 / Finder 粘贴拖入 / MCP import_asset / 跨项目复制的共用门：预览在这里派生一次。
+  return attachStoredAssetPreview(stored, await options.preparedPreview);
+}
+
+// 拷贝仍然先落暂存、再 link 进桶（AssetWriteContext 那条「写回世代必须还是发起时那个项目」的规矩不动）；
+// 本次只把**字节回调**接进来：进度是拷贝过程的副产物，不是另一条写盘路（P1：不开第二条）。
+async function copyNativeFileToBucket(context: AssetWriteContext, sourcePath: string, fileName: string, storageFileName: string, contentType: string, meta: JsonRecord, onCopyProgress?: AssetCopyProgress): Promise<unknown> {
+  context.assertCurrent();
+  const { projectId } = context;
+  reapAbandonedUploadStaging(context.root);
+  const staging = fs.mkdtempSync(path.join(context.root, UPLOAD_STAGING_PREFIX));
+  const snapshot = path.join(staging, 'content');
+  try {
+    await copyFileWithProgress(sourcePath, snapshot, onCopyProgress);
+    const contentHash = await contentHashForFile(snapshot);
+    context.assertCurrent();
+    const { absolutePath } = uniqueAssetPath(projectId, storageFileName, contentType, assetBucketFromMeta(meta), context);
+    retryOnSharingViolation(() => fs.linkSync(snapshot, absolutePath));
+    writeAssetSidecarMeta(absolutePath, meta);
+    broadcastAssetsUpdated(projectId);
+    return storedAssetRecord(projectId, absolutePath, sanitizeName(fileName, "asset"), contentType, meta, contentHash, context);
+  } finally { await removeScratchAfterUse(staging); }
+}
+
+/**
+ * Copy an already stored project asset by project id + relative path.
+ *
+ * This is deliberately narrower than copy-files: renderer code never submits
+ * an arbitrary native path. The source project directory and realpath are
+ * checked in main before the existing media validation/copy boundary runs.
+ */
+export async function copyProjectAsset(input: {
+  sourceProjectId: string
+  targetProjectId: string
+  relativePath: string
+}): Promise<unknown> {
+  const sourceProjectId = String(input.sourceProjectId || '').trim()
+  const targetProjectId = String(input.targetProjectId || '').trim()
+  const relativePath = String(input.relativePath || '').replace(/\\/g, '/').trim()
+  if (!sourceProjectId || !targetProjectId || !relativePath) throw new Error('sourceProjectId, targetProjectId and relativePath are required')
+  if (path.posix.isAbsolute(relativePath) || relativePath.split('/').some((segment) => segment === '..')) {
+    throw new Error('asset relativePath is unsafe')
+  }
+  const sourceRoot = projectDirById(sourceProjectId)
+  if (!sourceRoot) throw new Error('Source project not found')
+  const targetRoot = projectDirById(targetProjectId)
+  if (!targetRoot) throw new Error('Target project not found')
+  const resolvedRoot = path.resolve(sourceRoot)
+  const sourcePath = path.resolve(resolvedRoot, relativePath)
+  if (sourcePath !== resolvedRoot && !sourcePath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new Error('asset path escapes source project')
+  }
+  const realRoot = await fs.promises.realpath(resolvedRoot)
+  const realSourcePath = await fs.promises.realpath(sourcePath)
+  if (realSourcePath !== realRoot && !realSourcePath.startsWith(`${realRoot}${path.sep}`)) {
+    throw new Error('asset path escapes source project')
+  }
+  const stat = await fs.promises.stat(realSourcePath)
+  if (!stat.isFile()) throw new Error('source asset is not a file')
+  const storedContentType = contentTypeFromStoredFile(realSourcePath)
+  return copyAssetFile(
+    targetProjectId,
+    realSourcePath,
+    path.basename(relativePath),
+    storedContentType,
+    readAssetSidecarMeta(realSourcePath),
+    // 跨项目复制一份已落过关的产物：它该是的就是它存着的那一类（关口照样重核字节）。
+    localizedAssetTypeOf(mediaKindFromContentType(storedContentType)),
+  )
 }
 
 export function moveAssetFile(
@@ -289,9 +354,10 @@ export function moveAssetFile(
   fileName: string,
   contentType: string,
   rawMeta: JsonRecord,
+  expectedKind: LocalizedAssetType | null,
 ): unknown {
   // 唯一 sidecar 写入者之二：与 writeAsset 同一道 capture 族隐私收口。
-  const meta = sanitizeAssetMetaForKind(rawMeta);
+  let meta = sanitizeAssetMetaForKind(rawMeta);
   // 同 copyAssetFile：无条件读文件头，否则撒谎的声明永远没人查证。
   const header = (() => {
     const handle = fs.openSync(sourcePath, "r");
@@ -303,15 +369,20 @@ export function moveAssetFile(
       fs.closeSync(handle);
     }
   })();
-  const actualContentType = effectiveContentType(fileName, contentType, header);
+  let declaredType = contentType;
+  if (String(meta.kind || "").toLowerCase() === "generated") ({ meta, contentType: declaredType } = validatedGenerated(meta, contentType, fs.readFileSync(sourcePath), expectedKind, sourcePath));
+  const actualContentType = effectiveContentType(fileName, declaredType, header);
+  if (actualContentType === "model/gltf-binary") validateStructuredAsset(actualContentType, fs.readFileSync(sourcePath));
   const storageFileName = canonicalAssetFileName(fileName, actualContentType);
-  const { absolutePath, relativePath } = uniqueAssetPath(projectId, storageFileName, assetBucketFromMeta(meta));
+  const { absolutePath, relativePath } = uniqueAssetPath(projectId, storageFileName, actualContentType, assetBucketFromMeta(meta));
   try {
-    fs.renameSync(sourcePath, absolutePath);
+    // 刚下载 / 刚生成的文件常被杀毒实时扫描短暂开着：改名先按共享冲突退避重试。
+    renameSyncWithRetry(sourcePath, absolutePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
     fs.copyFileSync(sourcePath, absolutePath);
-    fs.rmSync(sourcePath, { force: true });
+    // 已经拷进项目：删源文件只是收尾，删不掉不能把这次落盘报成失败。
+    removeScratchAfterUseSync(sourcePath);
   }
   const stat = fs.statSync(absolutePath);
   writeAssetSidecarMeta(absolutePath, meta);
@@ -337,17 +408,145 @@ export function moveAssetFile(
 }
 
 type RemoteAssetImportOptions = {
+  assertCurrent?: () => void;
   /** 仅供 main 进程内部已配置的本地生成服务使用；renderer IPC 无法注入第二参数。 */
   trustedPrivateOrigin?: string;
+  certificationEvidence?: CertificationMediaEvidence;
+  /**
+   * 产出这条 URL 的那家 vendor 的自有线路配置（`Vendor.network`）。
+   *
+   * 不带它就是 2026-09-06 验收那个不对称的另一半：给某家供应商单独配了代理时，提交走那条代理、
+   * 取回却走应用默认线路——同一次生成的两半在两条路上。谁产的 URL 就用谁的路。
+   * 传配置而不是传 dispatcher，是为了让连接池的生命周期收在本模块内（建了必关，只属于这一次下载），
+   * 不散给每一个调用方各记一遍。
+   */
+  providerNetwork?: ProviderNetworkConfig;
 };
 
-export async function importRemoteAsset(payload: unknown, options: RemoteAssetImportOptions = {}): Promise<unknown> {
+// 运行时白名单：从 connectorDefinition.ts 导入，单一真相源，不在此处重复成员列表。
+const VALID_USAGE_STATUSES = ASSET_PROVENANCE_ALLOWED_USAGES;
+const VALID_INTENDED_ROLES = ASSET_PROVENANCE_ALLOWED_ROLES;
+
+/**
+ * Sanitize a caller-supplied source-evidence record into the provenance shape
+ * (docs/plan/2026-09-03-creative-resource-chain-epic.md P0-1).
+ *
+ * 三类来源：
+ *   · connector  : 经 ConnectorDefinition 摄取；必须有 connectorId；
+ *                  旧 sidecar 的 rightsStatus:"unknown" 自动迁移成 usageStatus:"rights_unknown"。
+ *   · browser    : 用户从浏览器手工导入；usageStatus 强制为 reference_only（诚实默认）。
+ *   · user       : 用户从本地文件导入；usageStatus 强制为 reference_only。
+ *
+ * 只有白名单字段能穿越到 sidecar，防止 untrusted payload 污染。
+ * 新写入路径必须带 usageStatus，缺失时按 source 类型降到最保守的默认值（fail-closed）。
+ */
+export function sanitizeSourceEvidence(raw: unknown): JsonRecord | undefined {
+  if (!isJsonRecord(raw)) return undefined;
+  const source = String(raw.source || "").trim();
+
+  // ── connector 来源 ───────────────────────────────────────────────────────
+  if (source === "connector") {
+    const connectorId = String(raw.connectorId || "").trim();
+    if (!connectorId) return undefined;
+
+    // 旧 sidecar 迁移：rightsStatus:"unknown" → usageStatus:"rights_unknown"
+    let usageStatus: string = "rights_unknown";
+    if (raw.usageStatus && VALID_USAGE_STATUSES.has(raw.usageStatus as UsageStatus)) {
+      usageStatus = String(raw.usageStatus);
+    } else if (raw.rightsStatus === "unknown") {
+      usageStatus = "rights_unknown";
+    }
+
+    const result: JsonRecord = {
+      source: "connector",
+      connectorId,
+      originalUrl: String(raw.originalUrl || "").trim(),
+      resolvedUrl: String(raw.resolvedUrl || "").trim(),
+      platform: String(raw.platform || "").trim(),
+      usageStatus,
+      fetchedAt: String(raw.fetchedAt || "").trim() || nowIso(),
+    };
+    // 可选扩展字段（白名单）
+    if (raw.creator) result.creator = String(raw.creator).trim();
+    if (raw.licenseId) result.licenseId = String(raw.licenseId).trim();
+    if (raw.licenseUrl) result.licenseUrl = String(raw.licenseUrl).trim();
+    if (raw.attribution) result.attribution = String(raw.attribution).trim();
+    if (isJsonRecord(raw.licenseSnapshot)) {
+      const snap: JsonRecord = { termsUrl: String(raw.licenseSnapshot.termsUrl || "").trim(), checkedAt: String(raw.licenseSnapshot.checkedAt || "").trim() };
+      if (raw.licenseSnapshot.termsHash) snap.termsHash = String(raw.licenseSnapshot.termsHash).trim();
+      result.licenseSnapshot = snap;
+    }
+    if (Array.isArray(raw.intendedRoles)) {
+      result.intendedRoles = raw.intendedRoles.filter((r) => VALID_INTENDED_ROLES.has(r as IntendedRole));
+    }
+    return result;
+  }
+
+  // ── browser 来源 ─────────────────────────────────────────────────────────
+  if (source === "browser") {
+    const pageUrl = String(raw.pageUrl || "").trim();
+    const capturedAt = String(raw.capturedAt || "").trim() || nowIso();
+    // 浏览器导入：usageStatus 强制为 reference_only（诚实默认，没核实过许可不能当作可商用）
+    const result: JsonRecord = {
+      source: "browser",
+      pageUrl,
+      capturedAt,
+      usageStatus: "reference_only",
+    };
+    if (raw.creator) result.creator = String(raw.creator).trim();
+    if (raw.licenseId) result.licenseId = String(raw.licenseId).trim();
+    if (raw.licenseUrl) result.licenseUrl = String(raw.licenseUrl).trim();
+    if (Array.isArray(raw.intendedRoles)) {
+      result.intendedRoles = raw.intendedRoles.filter((r) => VALID_INTENDED_ROLES.has(r as IntendedRole));
+    }
+    return result;
+  }
+
+  // ── user（本地文件）来源 ─────────────────────────────────────────────────
+  if (source === "user") {
+    // 本地文件导入：usageStatus 强制为 reference_only（来源不明，不推断可商用）
+    const result: JsonRecord = {
+      source: "user",
+      capturedAt: String(raw.capturedAt || "").trim() || nowIso(),
+      usageStatus: "reference_only",
+    };
+    if (raw.creator) result.creator = String(raw.creator).trim();
+    if (Array.isArray(raw.intendedRoles)) {
+      result.intendedRoles = raw.intendedRoles.filter((r) => VALID_INTENDED_ROLES.has(r as IntendedRole));
+    }
+    return result;
+  }
+
+  return undefined;
+}
+
+/**
+ * 远端（http / data: / nomi-local）导入的载荷。expectedKind 必填：kind 缺省即生成产物，生成产物给它该是的那一类，
+ * 其余（reference / upload）给 null。渲染层经 IPC 来的载荷不过类型系统，主进程照样按 localizedAssetTypeOf 再读一遍。
+ */
+export type RemoteAssetImportPayload = JsonRecord & { projectId: string; url: string; expectedKind: LocalizedAssetType | null };
+
+export async function importRemoteAsset(payload: RemoteAssetImportPayload, options: RemoteAssetImportOptions = {}): Promise<unknown> {
+  // 画布预览（图片缩略 / 视频 poster）在落盘边界统一派生：三种来源（项目内引用 / data: / http(s)）出同一扇门。
+  return attachStoredAssetPreview(await importRemoteAssetToStore(payload, options));
+}
+
+async function importRemoteAssetToStore(payload: unknown, options: RemoteAssetImportOptions): Promise<unknown> {
   const raw = payload as JsonRecord;
   const projectId = String(raw.projectId || "").trim();
   const url = String(raw.url || "").trim();
   if (!projectId) throw new Error("projectId is required");
   if (!url) throw new Error("url is required");
+  const context = await captureAssetWriteContext(projectId, raw.projectBinding as ProjectBinding | undefined, options.assertCurrent);
+  const sourceEvidence = sanitizeSourceEvidence(raw.sourceEvidence);
+  // 生成产物应是哪一类，由调用方说（渲染层 / 主进程都一样）；没说或说不清，生成产物在关口被拒。
+  const expectedKind = localizedAssetTypeOf(raw.expectedKind);
   if (url.startsWith("nomi-local://")) {
+    // 已在项目里的文件（自定义调用 / 本地流程产物经 localizeTaskAsset 回到这里）：不复制，
+    // 但同样走一次预览派生，画布对它和远端产物一视同仁。
+    const absolutePath = absolutePathFromLocalAssetUrl(url, projectId);
+    context.assertCurrent();
+    const relativePath = absolutePath ? path.relative(context.root, absolutePath).replace(/\\/g, "/") : "";
     return {
       id: stableLocalReferenceId(projectId, url),
       name: String(raw.fileName || "local asset"),
@@ -355,7 +554,11 @@ export async function importRemoteAsset(payload: unknown, options: RemoteAssetIm
       projectId,
       createdAt: nowIso(),
       updatedAt: nowIso(),
-      data: { url, kind: raw.kind || "local" },
+      data: {
+        url,
+        kind: raw.kind || "local",
+        ...(absolutePath && relativePath ? { absolutePath, relativePath, contentType: contentTypeFromStoredFile(absolutePath) } : {}),
+      },
     };
   }
   if (url.startsWith("data:")) {
@@ -369,28 +572,30 @@ export async function importRemoteAsset(payload: unknown, options: RemoteAssetIm
       projectId,
       parsed.bytes,
       fileName,
-      parsed.contentType,
+      options.certificationEvidence?.contentType || parsed.contentType,
       {
         kind: raw.kind || "generated",
         originalUrl: null,
         ...(typeof raw.mediaType === "string" ? { mediaType: raw.mediaType } : {}),
         ...(model3dValidation ? { model3dValidation } : {}),
+        ...(sourceEvidence ? { sourceEvidence } : {}),
+        ...(options.certificationEvidence ? { certificationEvidence: options.certificationEvidence } : {}),
       },
+      expectedKind,
+      context,
     );
   }
   if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s), data, and nomi-local assets are supported");
-  const fetched = await hardenedFetch(url, {
-    timeoutMs: 60_000,
-    maxBytes: 200 * 1024 * 1024,
-    allowContentTypes: ["image/", "video/", "audio/", "model/", "application/gltf", "application/octet-stream"],
-    allowedPrivateOrigins: options.trustedPrivateOrigin ? [options.trustedPrivateOrigin] : [],
+  const fetched = await fetchProviderMedia(url, {
+    ...(options.trustedPrivateOrigin ? { trustedPrivateOrigin: options.trustedPrivateOrigin } : {}),
+    ...(options.providerNetwork ? { providerNetwork: options.providerNetwork } : {}),
   });
   const bytes = fetched.bytes;
   const hintedContentType = fetched.contentType || "application/octet-stream";
   const rawFileName = String(raw.fileName || path.basename(new URL(url).pathname) || "").trim();
-  const contentType = hintedContentType.toLowerCase().split(";")[0] === "application/octet-stream"
+  const contentType = options.certificationEvidence?.contentType || (hintedContentType.toLowerCase().split(";")[0] === "application/octet-stream"
     ? resolveContentType(rawFileName || url, bytes)
-    : hintedContentType;
+    : hintedContentType);
   const ext = extensionFromMime(contentType, extensionFromUrl(url));
   const fileName = rawFileName || `asset-${Date.now()}.${ext}`;
   const model3dValidation = shouldValidateGlb(raw, fileName, contentType)
@@ -402,7 +607,9 @@ export async function importRemoteAsset(payload: unknown, options: RemoteAssetIm
     ownerNodeId: raw.ownerNodeId || null,
     ...(typeof raw.mediaType === "string" ? { mediaType: raw.mediaType } : {}),
     ...(model3dValidation ? { model3dValidation } : {}),
-  });
+    ...(sourceEvidence ? { sourceEvidence } : {}),
+    ...(options.certificationEvidence ? { certificationEvidence: options.certificationEvidence } : {}),
+  }, expectedKind, context);
 }
 
 function shouldValidateGlb(raw: JsonRecord, fileName: string, contentType: string): boolean {
@@ -450,7 +657,8 @@ export function listProjectAssets(payload: unknown): { items: LocalAssetRecord[]
   const records = collectFilesRecursively(assetsDir)
     .flatMap((absolutePath): LocalAssetRecord[] => {
       try {
-        if (absolutePath.endsWith(".meta")) return [];
+        // 画布预览是源文件的派生物，不是独立素材：留在源旁边便于本地解析，但不进素材库列表。
+        if (absolutePath.endsWith(".meta") || isStoredAssetPreviewPath(absolutePath)) return [];
         const stat = fs.statSync(absolutePath);
         const relativePath = path.relative(projectDir, absolutePath).replace(/\\/g, "/");
         const contentType = contentTypeFromStoredFile(absolutePath);
@@ -498,4 +706,87 @@ export function listProjectAssets(payload: unknown): { items: LocalAssetRecord[]
     items,
     cursor: nextOffset < records.length ? String(nextOffset) : null,
   };
+}
+
+function projectAgentAttachmentClaim(value: unknown): ProjectAgentAttachmentClaim {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("project_agent_attachment_invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).some((key) => key !== "assetId" && key !== "version") ||
+    typeof record.assetId !== "string" ||
+    !record.assetId.trim() ||
+    record.version !== 1
+  ) {
+    throw new Error("project_agent_attachment_invalid");
+  }
+  return Object.freeze({ assetId: record.assetId, version: 1 });
+}
+
+/**
+ * 一份项目素材的**可引用身份**（内容哈希 + 版本）。全仓只此一处算它。
+ *
+ * 版本恒 1 是内容寻址的推论，不是占位：素材按 `sha256/<hash>/` 落盘，改内容就是另一份素材、另一个
+ * `assetId`（`core.ts` 导入那条路同样写死 1）。
+ */
+
+/**
+ * assetId → 可引用身份。**模型只知道 assetId**（`look_at_media` 返回的就是它），内容哈希与版本
+ * 归项目素材库管；生成计划的参考素材由宿主在这里补齐，而不是要求模型发明它拿不到的字段
+ * （2026-09-18 根因，与「多镜不再要求模型发明 candidate」同一条纪律）。
+ * 素材不属于本项目、或文件已经不在盘上 → `undefined`，由调用方给出人话拒绝。
+ */
+export function resolveProjectAssetReferenceIdentity(
+  projectId: string,
+  assetId: string,
+): Readonly<{ contentHash: string; version: 1 }> | undefined {
+  const wanted = assetId.trim();
+  if (!wanted) return undefined;
+  const asset = findProjectAssetById(wanted, cursor => listProjectAssets({ projectId, limit: 500, cursor }));
+  if (!asset || asset.projectId !== projectId) return undefined;
+  return assetIdentityOf(asset);
+}
+
+/** Resolve untrusted renderer claims against the exact main-owned project asset index. */
+export function resolveProjectAgentAttachmentClaims(
+  projectId: string,
+  rawClaims: readonly unknown[],
+): readonly ProjectAgentAttachmentRef[] {
+  if (!Array.isArray(rawClaims)) throw new Error("project_agent_attachment_invalid");
+  const claims = rawClaims.map(projectAgentAttachmentClaim);
+  const claimedIds = new Set<string>();
+  const assets = listProjectAssets({ projectId, limit: 500 }).items;
+  const byId = new Map(assets.map((asset) => [asset.id, asset]));
+  return Object.freeze(claims.map((claim) => {
+    if (claimedIds.has(claim.assetId)) throw new Error("project_agent_attachment_invalid");
+    claimedIds.add(claim.assetId);
+    const asset = byId.get(claim.assetId);
+    if (!asset || asset.projectId !== projectId) throw new Error("project_agent_attachment_invalid");
+    const absolutePath = asset.data.absolutePath;
+    const relativePath = asset.data.relativePath;
+    if (typeof absolutePath !== "string" || typeof relativePath !== "string") {
+      throw new Error("project_agent_attachment_invalid");
+    }
+    const identity = assetIdentityOf(asset);
+    if (!identity) throw new Error("project_agent_attachment_invalid");
+    const { contentHash } = identity;
+    const contentType = asset.data.contentType;
+    const size = asset.data.size;
+    if (typeof contentType !== "string" || !Number.isSafeInteger(size) || (size as number) < 0) {
+      throw new Error("project_agent_attachment_invalid");
+    }
+    return Object.freeze({
+      assetId: asset.id,
+      contentHash,
+      version: identity.version,
+      display: Object.freeze({
+        url: localAssetUrl(projectId, relativePath),
+        fileName: path.basename(absolutePath),
+        contentType,
+        sizeBytes: size as number,
+        kind: contentType.startsWith("image/") ? "image" as const : "file" as const,
+      }),
+    });
+  }));
 }

@@ -4,7 +4,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 import { pavoExtensionCandidates, resolvePavoExtensionDir, pavoWebServerProcessEnv } from "./runner";
-import { resolveArchetypeForModel } from "../../src/config/modelArchetypes";
+import { resolveArchetypeForModel } from "../shared/modelArchetypes";
 
 describe("Nomi bundled Pavo runtime", () => {
   it("does not overwrite host connection settings when installation initialization finishes late", () => {

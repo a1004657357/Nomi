@@ -1,3 +1,4 @@
+import { backfillShotIndexes, isShotNumberedNode } from '../generationCanvas/model/shotNumbering'
 /**
  * Migration v0.5.1 → v0.6.0
  *
@@ -8,8 +9,7 @@
  * 1. 节点 renderKind 补齐 — 按 categoryId 推断默认值（spec §5.1 决策 4）
  * 2. derivedFrom 语义分流 — 同分类源 → regeneratedFrom；不同分类源 → 保留为 derivedFrom；
  *    源不存在 → 清空（孤立副本，日志记录）（spec §5.3 + 决策 3）
- * 3. 分镜节点 shotIndex 修复/补齐 — 清掉参考卡误编号，按 storyboardPlan 纠偏，
- *    再只给真正的镜头内容节点补号（spec §6.4）
+ * 3. 分镜节点 shotIndex 补齐 — 按 position.y 升序排列后赋值（spec §6.4）
  * 4. 数组参考 meta→有序边 — 旧 meta.referenceImageUrls（有序、不画线）反查源节点建成
  *    有序 character_ref 边（audit 2026-06-16 §1d「数组参考收口到有序边」）；反查不到源的
  *    URL 保留在 meta，绝不丢已存参考。**这一步动 edges**。
@@ -19,9 +19,7 @@
  */
 import type { WorkbenchProjectRecordV1 } from './projectRecordSchema'
 import type { GenerationCanvasNode } from '../generationCanvas/model/generationCanvasTypes'
-import { migrateReferenceImageUrlsToEdges } from '../generationCanvas/model/referenceImageUrlsToEdges'
-import { isShotNumberedNode, nextShotIndex } from '../generationCanvas/model/shotNumbering'
-import type { PlanShot, StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
+import { hasMigratableReferenceImageUrls, migrateReferenceImageUrlsToEdges } from '../generationCanvas/model/referenceImageUrlsToEdges'
 import {
   BUILTIN_CATEGORIES,
   type NodeRenderKind,
@@ -42,10 +40,6 @@ export type V51ToV60Diagnostic = {
   derivedFromMovedToRegeneratedFrom: number
   derivedFromClearedOrphan: number
   shotIndicesAssigned: number
-  /** 清掉旧迁移误写到角色/场景/参考卡上的 shotIndex。 */
-  shotIndicesCleared: number
-  /** 按 storyboardPlan + 标题镜号修正旧项目里被参考卡整体挤偏的 shotIndex。 */
-  shotIndicesRepaired: number
   /** 数组参考 meta.referenceImageUrls 反查源建成的有序 character_ref 边数。 */
   referenceEdgesCreated: number
 }
@@ -57,8 +51,6 @@ const EMPTY_DIAGNOSTIC: V51ToV60Diagnostic = {
   derivedFromMovedToRegeneratedFrom: 0,
   derivedFromClearedOrphan: 0,
   shotIndicesAssigned: 0,
-  shotIndicesCleared: 0,
-  shotIndicesRepaired: 0,
   referenceEdgesCreated: 0,
 }
 
@@ -67,61 +59,17 @@ function inferRenderKind(categoryId: string | undefined): NodeRenderKind | undef
   return DEFAULT_RENDER_KIND_BY_CATEGORY[categoryId]
 }
 
-function titleShotIndex(node: GenerationCanvasNode): number | null {
-  const match = String(node.title || '').match(/^镜头\s*([0-9]+)/)
-  if (!match) return null
-  const index = Number(match[1])
-  return Number.isFinite(index) ? index : null
-}
-
-function compactPrompt(value: string | undefined): string {
-  return String(value || '').replace(/\s+/g, ' ').trim()
-}
-
-function promptLooksLikePlanShot(node: GenerationCanvasNode, shot: PlanShot): boolean {
-  const shotPrompt = compactPrompt(shot.prompt)
-  if (!shotPrompt) return true
-  const nodePrompt = compactPrompt(node.prompt)
-  if (!nodePrompt) return true
-  const probe = shotPrompt.slice(0, Math.min(40, shotPrompt.length))
-  return Boolean(probe) && nodePrompt.includes(probe)
-}
-
-function repairIndexFromStoryboardTitle(
-  node: GenerationCanvasNode,
-  nodes: readonly GenerationCanvasNode[],
-  plan: StoryboardPlan | null | undefined,
-): number | null {
-  if (!plan || !isShotNumberedNode(node)) return null
-  const titleIndex = titleShotIndex(node)
-  if (titleIndex === null || node.shotIndex === titleIndex) return null
-
-  const shot = plan.shots.find((candidate) => candidate.index === titleIndex)
-  if (!shot || !promptLooksLikePlanShot(node, shot)) return null
-
-  // 已有可信节点占着这个镜号时，不把副本/变体强行折回原镜号。
-  const hasTrustedOccupant = nodes.some(
-    (candidate) =>
-      candidate.id !== node.id &&
-      isShotNumberedNode(candidate) &&
-      candidate.shotIndex === titleIndex &&
-      titleShotIndex(candidate) === titleIndex,
-  )
-  return hasTrustedOccupant ? null : titleIndex
-}
-
-function recordNeedsV51ToV60Migration(
-  nodes: readonly GenerationCanvasNode[],
-  storyboardPlan: StoryboardPlan | null | undefined,
-): boolean {
+function recordNeedsV51ToV60Migration(nodes: readonly GenerationCanvasNode[]): boolean {
   const derivedFromCandidates: GenerationCanvasNode[] = []
   for (const node of nodes) {
+    if (!isShotNumberedNode(node) && node.shotIndex !== undefined) return true
     if (!node.renderKind && inferRenderKind(node.categoryId)) return true
     if (isShotNumberedNode(node) && typeof node.shotIndex !== 'number') return true
-    if (!isShotNumberedNode(node) && typeof node.shotIndex === 'number') return true
-    if (repairIndexFromStoryboardTitle(node, nodes, storyboardPlan) !== null) return true
     if (node.derivedFrom && !node.regeneratedFrom) derivedFromCandidates.push(node)
   }
+  // 步骤 4 的目标数据：数组参考 meta.referenceImageUrls → 边。旧闸漏查它，导致
+  // 「其余字段干净、只剩数组参考」的记录被误判 alreadyMigrated、永不收敛成边。
+  if (hasMigratableReferenceImageUrls(nodes)) return true
   if (!derivedFromCandidates.length) return false
 
   const categoryById = new Map<string, string | undefined>()
@@ -141,8 +89,7 @@ export function migrateProjectV51ToV60(record: WorkbenchProjectRecordV1): {
   if (!canvas || !Array.isArray(canvas.nodes) || canvas.nodes.length === 0) {
     return { record, diagnostic: EMPTY_DIAGNOSTIC }
   }
-  const storyboardPlan = record.payload?.storyboardPlan
-  if (!recordNeedsV51ToV60Migration(canvas.nodes as GenerationCanvasNode[], storyboardPlan)) {
+  if (!recordNeedsV51ToV60Migration(canvas.nodes as GenerationCanvasNode[])) {
     return { record, diagnostic: EMPTY_DIAGNOSTIC }
   }
 
@@ -158,8 +105,6 @@ export function migrateProjectV51ToV60(record: WorkbenchProjectRecordV1): {
   let derivedFromMovedToRegeneratedFrom = 0
   let derivedFromClearedOrphan = 0
   let shotIndicesAssigned = 0
-  let shotIndicesCleared = 0
-  let shotIndicesRepaired = 0
 
   const upgradedNodes: GenerationCanvasNode[] = canvas.nodes.map((rawNode) => {
     const node = rawNode as GenerationCanvasNode
@@ -194,58 +139,29 @@ export function migrateProjectV51ToV60(record: WorkbenchProjectRecordV1): {
       }
     }
 
-    // 旧迁移曾只看 categoryId='shots'，把角色/场景/参考卡也写上 shotIndex。
-    // 这些编号会把真正镜头整体挤偏，必须在后续补号/排片前清掉。
-    if (!isShotNumberedNode(next) && typeof next.shotIndex === 'number') {
-      const { shotIndex: _shotIndex, ...rest } = next
-      next = rest as GenerationCanvasNode
-      shotIndicesCleared += 1
-    }
-
     return next
   })
 
-  // 3a. storyboard 旧项目纠偏：真实镜头标题仍是「镜头 N」，但 shotIndex 被参考卡挤成 N+k。
-  const repairedStoryboardNodes = upgradedNodes.map((node) => {
-    const repairedIndex = repairIndexFromStoryboardTitle(node, upgradedNodes, storyboardPlan)
-    if (repairedIndex === null) return node
-    shotIndicesRepaired += 1
-    return { ...node, shotIndex: repairedIndex }
-  })
-
-  // 3b. shotIndex 补齐（仅真正的镜头内容节点；参考卡不参与）
-  const missingShotNodes = repairedStoryboardNodes
-    .map((node, idx) => ({ node, idx }))
-    .filter(({ node }) => isShotNumberedNode(node) && typeof node.shotIndex !== 'number')
-    .sort((a, b) => {
-      const ay = a.node.position?.y ?? 0
-      const by = b.node.position?.y ?? 0
-      if (ay !== by) return ay - by
-      // tie-break by id for determinism
-      return a.node.id.localeCompare(b.node.id)
-    })
-
-  let nextMissingShotIndex = nextShotIndex(repairedStoryboardNodes)
-  missingShotNodes.forEach(({ node, idx }) => {
-    repairedStoryboardNodes[idx] = { ...node, shotIndex: nextMissingShotIndex++ }
-    shotIndicesAssigned += 1
+  // 3. Missing shot identities use the same owner as normal hydration; views never receive numbers.
+  const numbered = backfillShotIndexes(upgradedNodes, Array.isArray(canvas.edges) ? canvas.edges : [])
+  numbered.nodes.forEach((node, index) => {
+    if (node.shotIndex !== upgradedNodes[index].shotIndex) shotIndicesAssigned += 1
+    upgradedNodes[index] = node
   })
 
   // 4. 数组参考 meta.referenceImageUrls → 有序 character_ref 边（反查不到源的 URL 保留 meta）。
   const existingEdges = Array.isArray(canvas.edges) ? canvas.edges : []
-  const refEdgeResult = migrateReferenceImageUrlsToEdges(repairedStoryboardNodes, existingEdges)
+  const refEdgeResult = migrateReferenceImageUrlsToEdges(upgradedNodes, existingEdges)
   const referenceEdgesCreated = refEdgeResult.edgesCreated
   // 节点 meta 被参考迁移改过（清掉已表达成边的 URL）——即便 edgesCreated=0（边已存在、纯去重）也算变化，
   // 否则 meta 残留的旧 URL 会和边重复显示。
   const referenceMetaChanged = refEdgeResult.nodes !== upgradedNodes
 
-  const anyChange =
+  const anyChange = numbered.changed ||
     renderKindBackfilled +
       derivedFromMovedToRegeneratedFrom +
       derivedFromClearedOrphan +
       shotIndicesAssigned +
-      shotIndicesCleared +
-      shotIndicesRepaired +
       referenceEdgesCreated >
       0 || referenceMetaChanged
 
@@ -283,8 +199,6 @@ export function migrateProjectV51ToV60(record: WorkbenchProjectRecordV1): {
       derivedFromMovedToRegeneratedFrom,
       derivedFromClearedOrphan,
       shotIndicesAssigned,
-      shotIndicesCleared,
-      shotIndicesRepaired,
       referenceEdgesCreated,
     },
   }

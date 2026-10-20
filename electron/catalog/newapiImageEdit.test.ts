@@ -2,18 +2,27 @@ import { describe, it, expect } from "vitest";
 import { NEWAPI_IMAGE_EDIT_OP, NEWAPI_IMAGE_CREATE_OP, NEWAPI_IMAGE_PARAM_MAP, NEWAPI_VIDEO_CREATE_OP, NEWAPI_VIDEO_QUERY_OP, NEWAPI_AUDIO_TTS_OP, newapiImageEditProfileForModel } from "./newapiTransport";
 import { taskTemplateParams } from "./taskParams";
 import { applyParamMap } from "./paramTranslate";
-import { valuesFromMapping } from "../tasks/responseParsing";
+import { collectAssetUrls, valuesFromMapping } from "../tasks/responseParsing";
 import { renderTemplateValue, buildTemplateContext } from "../ai/requestPipeline";
 import type { HttpOperation } from "./types";
 
 type AnyRec = Record<string, unknown>;
 
+const RENDER_MODEL_KEY = "gemini-2.5-flash-image";
+
+/**
+ * 渲染一次 create body。**必须与生产的 profileHttpRequest.templateContext 同构**：
+ * 中转 op 的 model 现在读 `{{request.params.model}}`（变体轴要活就只能这么写），而
+ * `params.model` 的回落由 taskTemplateParams 按 `selected.wireModelKey` 补。
+ * 本 helper 手工拼 context，故在此把同一个身份补进 params —— 调用方传进来的 params
+ * 若自带 model（模拟选了变体）会盖过它，与生产同序。
+ */
 function renderBody(op: HttpOperation, prompt: string, params: AnyRec): AnyRec {
   const ctx = buildTemplateContext({
     request: { prompt },
-    params,
+    params: { model: RENDER_MODEL_KEY, ...params },
     model: {},
-    modelKey: "gemini-2.5-flash-image",
+    modelKey: RENDER_MODEL_KEY,
     apiKey: "sk-test",
   });
   return renderTemplateValue(op.body, ctx) as AnyRec;
@@ -126,6 +135,15 @@ describe("通用中转 text_to_image 分辨率派生（治「只能出 1K」）"
   it("body 不再钉死 1024：2K/4K 能选出", () => {
     expect(derive("1:1", "2K")).not.toBe("1024x1024");
   });
+
+  it("Auto · 1K → 不发送空的 size（避免 OpenAI-compatible 返回 Invalid size）", () => {
+    const params = applyParamMap(
+      NEWAPI_IMAGE_PARAM_MAP,
+      taskTemplateParams({ extras: { aspect_ratio: "auto", resolution: "1K" } }),
+    );
+    const body = renderBody(NEWAPI_IMAGE_CREATE_OP, "一只小猪", params);
+    expect(body).not.toHaveProperty("size");
+  });
 });
 
 describe("通用中转路径夯实（输出多资产 + 参数广度 + i2v 断链）", () => {
@@ -154,7 +172,10 @@ describe("通用中转路径夯实（输出多资产 + 参数广度 + i2v 断链
 
   it("视频轮询 data[*].url 取回全部视频", () => {
     const resp = { data: [{ url: "https://x/a.mp4" }, { url: "https://x/b.mp4" }] };
-    expect(valuesFromMapping(resp, NEWAPI_VIDEO_QUERY_OP.response_mapping ?? null, "video_url")).toEqual([
+    // 断言读消费者真拿到的产物集合（buildProfileTaskResult 同款：collectAssetUrls 摊平 + 去重）：
+    // video_url 现在是一张位置表（#1213 官方 new-api 信封），同一地址可能被多个位置命中。
+    const urls = Array.from(new Set(valuesFromMapping(resp, NEWAPI_VIDEO_QUERY_OP.response_mapping ?? null, "video_url").flatMap(collectAssetUrls)));
+    expect(urls).toEqual([
       "https://x/a.mp4",
       "https://x/b.mp4",
     ]);

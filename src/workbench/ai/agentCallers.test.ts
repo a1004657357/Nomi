@@ -1,0 +1,163 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const deps = vi.hoisted(() => ({
+  project: 'A',
+  send: vi.fn(),
+  frame: vi.fn(),
+  assets: vi.fn(),
+  planner: vi.fn(),
+  landing: vi.fn(),
+  captureSurface: vi.fn(),
+  sealSurfaceSnapshot: vi.fn(),
+}))
+vi.mock('./agentLoopMode', () => ({ runSingleShotAgent: deps.send }))
+vi.mock('../windowUrlParam', () => ({ readWindowUrlParam: () => deps.project }))
+vi.mock('../../desktop/bridge', () => ({ getDesktopBridge: () => ({
+  video: { extractFrame: deps.frame },
+  assets: { list: deps.assets },
+}) }))
+vi.mock('../generationCanvas/agent/runStoryboardPlanner', () => ({ runStoryboardPlanner: deps.planner }))
+vi.mock('../capability/multiShotCanvasLanding', () => ({ handleMultiShotCanvasLandingOp: deps.landing }))
+vi.mock('../project/projectCanvasReadSurface', () => {
+  // 签发点替身：deps.project 就是此刻窗口里打开的项目；上下文在它变化后失效。
+  const issue = () => {
+    const projectId = deps.project
+    return { binding: { projectId, immutableProjectUuid: `uuid-${projectId}`, projectGeneration: 1 }, signal: new AbortController().signal,
+      assertCurrent: () => { if (deps.project !== projectId) throw Object.assign(new Error('project_binding_stale'), { code: 'project_binding_stale' }) } }
+  }
+  return {
+    captureCurrentProjectCanvasReadSurfaceBinding: deps.captureSurface,
+    sealCurrentProjectCanvasReadSnapshot: deps.sealSurfaceSnapshot,
+    withProjectAction: <R>(run: (project: ReturnType<typeof issue>) => R, unavailable?: () => R) => deps.project ? run(issue()) : unavailable?.(),
+    isProjectExecutionContextCurrent: (context?: ReturnType<typeof issue>) => { try { context?.assertCurrent(); return Boolean(context) } catch { return false } },
+  }
+})
+import { runDirectionPlanner } from '../generationCanvas/agent/runDirectionPlanner'
+import { makeShotVerifyDeps } from '../generationCanvas/agent/shotVerifyJudge'
+import { handleCapabilityApply } from '../capability/capabilityApplyHandler'
+import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
+import { useWorkbenchStore } from '../workbenchStore'
+import { withProjectAction } from '../project/projectCanvasReadSurface'
+
+const plan = { title: 'this operation', anchors: [], shots: [{ index: 1, shotId: 'shot-1', shotKind: 'video' as const, durationSec: 3, anchorIds: [], prompt: 'rain' }] }
+const candidates = [{ key: 'a', title: 'first', oneLiner: 'one' }, { key: 'b', title: 'second', oneLiner: 'two' }]
+const snapshot = (id: string) => ({
+  nodes: [{ id, title: id, kind: 'image' as const, prompt: id, position: { x: 0, y: 0 } }],
+  edges: [],
+  groups: [],
+  selectedNodeIds: [id],
+})
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  deps.project = 'A'
+  deps.landing.mockResolvedValue(null)
+  deps.captureSurface.mockReturnValue({
+    version: 1,
+    bindingId: 'binding-A',
+    binding: { projectId: 'A', immutableProjectUuid: 'uuid-A', projectGeneration: 1 },
+    webContentsId: 1,
+    processId: 2,
+    frameRoutingId: 3,
+    origin: 'file://',
+    surfaceInstanceId: 'surface-A',
+    portRevision: 1,
+    nonce: 'binding-nonce-A',
+  })
+  deps.sealSurfaceSnapshot.mockResolvedValue({
+    version: 1,
+    handleId: 'captured-A',
+    nonce: 'captured-nonce-A',
+  })
+  deps.send.mockResolvedValue({ id: 'r', status: 'finished', text: 'actual', toolCalls: [], artifacts: [], finishReason: 'stop',
+    usage: { promptTokens: 2, completionTokens: 1, cachedPromptTokens: 0, totalTokens: 3 } })
+  useGenerationCanvasStore.getState().restoreSnapshot(snapshot('A-node'))
+  useGenerationCanvasStore.setState({ selectedNodeIds: ['A-node'] })
+  useWorkbenchStore.setState({ storyboardDesignsByDocumentId: {}, workspaceMode: 'creation' })
+})
+
+describe('remaining production callers use the explicit shared Agent profile', () => {
+  it('direction uses the supplied project, the single-shot capability and original domain parsing', async () => {
+    deps.send.mockResolvedValueOnce({ text: JSON.stringify({ candidates }) })
+    deps.project = 'different-ui-project'
+    expect(await runDirectionPlanner({ projectId: 'explicit-project', brief: { goal: 'launch goal' } })).toEqual({ candidates })
+    expect(deps.send).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'explicit-project', featureKey: 'nomi:production-directions:explicit-project',
+    }))
+    expect(deps.send.mock.calls[0]![0]).not.toHaveProperty('skillKey')
+    expect(deps.send.mock.calls[0]![0]).not.toHaveProperty('skillName')
+  })
+
+  it('shot verification captures project before frame extraction and keeps its image attached', async () => {
+    let release!: (value: { url: string }) => void
+    deps.frame.mockReturnValueOnce(new Promise((resolve) => { release = resolve }))
+    deps.assets.mockResolvedValueOnce({ items: [{ id: 'asset-frame-A', projectId: 'A', data: { url: 'nomi-local://frame-A' } }], cursor: null })
+    const project = withProjectAction(project => project)!
+    const judge = makeShotVerifyDeps(project)
+    const extracting = judge.extractFrame('nomi-local://video')
+    release({ url: 'nomi-local://frame-A' })
+    await judge.judge('check A', await extracting)
+    expect(deps.frame).toHaveBeenCalledWith({ videoUrl: 'nomi-local://video', which: 'first', projectId: 'A', projectBinding: project.binding })
+    expect(deps.send).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'A', featureKey: 'nomi:shot-verify:A',
+      attachments: [
+        { url: 'nomi-local://frame-A', contentType: 'image/png', fileName: 'shot-frame.png', kind: 'image' },
+      ],
+      attachmentClaims: [{ assetId: 'asset-frame-A', version: 1 }],
+    }))
+    expect(deps.send.mock.calls[0]![0]).not.toHaveProperty('skillKey')
+    expect(deps.send.mock.calls[0]![0]).not.toHaveProperty('skillName')
+    deps.project = 'B'
+    await expect(judge.judge('check A', 'nomi-local://frame-A')).rejects.toThrow('project_binding_stale')
+    expect(deps.send).toHaveBeenCalledOnce()
+  })
+
+  it('refuses a local frame that has no main-owned asset identity', async () => {
+    deps.assets.mockResolvedValueOnce({ items: [], cursor: null })
+    await expect(makeShotVerifyDeps(withProjectAction(project => project)!).judge('check', 'nomi-local://missing-frame'))
+      .rejects.toThrow('shot_verify_frame_asset_unresolved')
+    expect(deps.send).not.toHaveBeenCalled()
+  })
+
+  it.each(['production.plan-script', 'production.revise-script', 'production.revise-storyboard'])('%s uses ephemeral zero-tool text capability', async (operation) => {
+    deps.send.mockResolvedValueOnce({ text: operation.endsWith('storyboard') ? JSON.stringify(plan) : 'actual script' })
+    const result = await handleCapabilityApply(operation, { projectId: 'A', runId: 'run-A', brief: { goal: 'goal' }, sourceContent: 'source', instruction: 'revise' })
+    expect(result).toEqual(operation.endsWith('storyboard') ? { plan } : { text: 'actual script' })
+    expect(deps.send).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'A',
+      featureKey: 'nomi:production-script:A',
+    }))
+    expect(deps.send.mock.calls[0]![0]).not.toHaveProperty('skillKey')
+    expect(deps.send.mock.calls[0]![0]).not.toHaveProperty('skillName')
+  })
+
+  it('production storyboard keeps the launch snapshot/run attribution and returns its own plan after UI project changes', async () => {
+    let release!: () => void
+    deps.landing.mockReturnValueOnce(new Promise((resolve) => { release = () => resolve(null) }))
+    deps.planner.mockResolvedValueOnce({ status: 'finished', text: 'own text', plan })
+    const pending = handleCapabilityApply('production.plan-storyboard', { projectId: 'A', runId: 'run-A', operationId: 'operation-A', brief: { goal: 'goal' } })
+    expect(deps.captureSurface).toHaveBeenCalledOnce()
+    expect(deps.sealSurfaceSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ binding: expect.objectContaining({ projectId: 'A' }) }),
+      expect.objectContaining({
+        nodes: [expect.objectContaining({ id: 'A-node', title: 'A-node' })],
+        selectedNodeIds: [],
+      }),
+    )
+    expect(deps.landing).not.toHaveBeenCalled()
+    deps.project = 'B'
+    useGenerationCanvasStore.getState().restoreSnapshot(snapshot('B-node'))
+    useWorkbenchStore.setState({ storyboardDesignsByDocumentId: { 'doc-a': [{ id: 'b', documentId: 'doc-a', title: 'B plan', plan: { ...plan, title: 'B plan' }, committed: false, status: 'draft', sourceDocumentUpdatedAt: 1, createdAt: 1, updatedAt: 1 }] } })
+    release()
+    expect(await pending).toEqual({ text: 'own text', plan })
+    expect(deps.planner).toHaveBeenCalledWith(expect.objectContaining({ target: 'production', projectId: 'A',
+      featureKey: 'nomi:production-planner:A:run-A:operation-A',
+      snapshot: expect.objectContaining({
+        nodes: [expect.objectContaining({ id: 'A-node' })],
+        selectedNodeIds: [],
+      }),
+      capturedCanvasReadSnapshot: { version: 1, handleId: 'captured-A', nonce: 'captured-nonce-A' },
+    }))
+    expect(deps.planner.mock.calls[0]![0].snapshot).toBe(deps.sealSurfaceSnapshot.mock.calls[0]![1])
+    expect(useWorkbenchStore.getState()).toMatchObject({ workspaceMode: 'creation', storyboardDesignsByDocumentId: { 'doc-a': [{ plan: { title: 'B plan' } }] } })
+    expect(useGenerationCanvasStore.getState().nodes[0].id).toBe('B-node')
+  })
+})

@@ -18,6 +18,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { screenshotSettled } from './_assert.mjs'
+import { stationTimeout } from './_station-budget.mjs'
 
 const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -86,9 +87,10 @@ const { app, win } = await launchNomiApp({
   // DIRECT 就不套代理。真实厂商 CDN 是公网 https、经代理正常，此 switch 只为让本地夹具走查跑通。
   args: ['--no-proxy-server'],
   env: {
-    // 走查用 127.0.0.1 冒充厂商 CDN，SSRF 闸默认拦 loopback；这个 lab-only 逃生口放行本地夹具服务器。
-    // 真实厂商 CDN 是公网、不吃这个开关，生产绝不设它（见 hardenedFetch.isPrivateHost）。
-    LAB_ALLOW_LOCALHOST: '1',
+    // 走查用 127.0.0.1 冒充厂商 CDN，SSRF 闸默认拦 loopback。**只**报出这一个精确 origin，
+    // 不再像旧的 LAB_ALLOW_LOCALHOST=1 那样把整个私网分类器关掉（那会连 169.254 云元数据段
+    // 一起放行，而且随包发布）。main.ts 只在未打包构建里读它，打包版本一次都不读。
+    NOMI_LAB_TRUSTED_PRIVATE_ORIGINS: new URL(cdnUrl).origin,
     HTTP_PROXY: '', HTTPS_PROXY: '', http_proxy: '', https_proxy: '',
     NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost',
   },
@@ -97,7 +99,11 @@ const { app, win } = await launchNomiApp({
 
 try {
 
-  await win.getByText('开项目体检回归').first().click()
+  // Project titles are rename affordances; opening the workspace is the
+  // card-level "继续创作" action used by the real project-library flow.
+  const projectCard = win.locator('[data-project-card="true"]', { hasText: '开项目体检回归' }).first()
+  await projectCard.waitFor({ state: 'visible', timeout: stationTimeout({ operations: 2 }) })
+  await projectCard.getByRole('button', { name: /继续创作/ }).first().click()
   await win.waitForTimeout(1500)
 
   // ① 体检把节点 result.url 从 http:// 换成 nomi-local://（后台异步，给它时间跑）。

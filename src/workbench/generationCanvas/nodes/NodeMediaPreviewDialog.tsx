@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import { IconX } from '@tabler/icons-react'
@@ -20,15 +20,32 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
   const { t } = useTranslation()
   // 此前这里的 <video> 连 onError 都没有：点开大图播不了 = 纯黑 + 零提示，用户无从判断也无从修。
   const heal = useVideoPlaybackHeal({ rawUrl: url })
+  const dialogRef = React.useRef<HTMLDivElement>(null)
   const closeButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const canvasViewport =
     typeof document === 'undefined' ? null : document.querySelector<HTMLElement>('.workbench-generation__canvas')
-  const generationWorkspace = canvasViewport?.closest<HTMLElement>('.workbench-generation') ?? null
 
   React.useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const previousPreviewState = generationWorkspace?.getAttribute('data-media-preview-open') ?? null
-    generationWorkspace?.setAttribute('data-media-preview-open', 'true')
+    // The portal is a sibling of the covered canvas roots. Never inert its parent
+    // (that would disable the dialog too) or the uncovered Agent/sidebar region.
+    const previousInert = new Map<HTMLElement, boolean>()
+    const coverChildren = () => {
+      for (const child of Array.from(canvasViewport?.children ?? [])) {
+        if (!(child instanceof HTMLElement) || child === dialogRef.current) continue
+        if (!previousInert.has(child)) previousInert.set(child, child.inert)
+        child.inert = true
+      }
+    }
+    coverChildren()
+    const observer = new MutationObserver(coverChildren)
+    if (canvasViewport) observer.observe(canvasViewport, { childList: true })
+    // 遮罩只有 40% 黑：`inert` 只挡得住交互，挡不住「看见」——工具条、导航栈、节点浮条
+    // 会继续浮在大图上面（2026-09-11 迁移等价审计 §③ 行 4；规则被 `903d992f6` 误删）。
+    // 收起哪些由 CSS 一处声明（reactFlow/generationCanvasReactFlow.css 的媒体预览段），
+    // 这里只负责挂/摘这面旗子，关闭后原布局与交互自动恢复。
+    const previousPreviewState = canvasViewport?.getAttribute('data-media-preview-open') ?? null
+    canvasViewport?.setAttribute('data-media-preview-open', 'true')
     closeButtonRef.current?.focus()
 
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -37,13 +54,15 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
     document.addEventListener('keydown', handleKeyDown)
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
-      if (generationWorkspace) {
-        if (previousPreviewState === null) generationWorkspace.removeAttribute('data-media-preview-open')
-        else generationWorkspace.setAttribute('data-media-preview-open', previousPreviewState)
+      observer.disconnect()
+      for (const [child, inert] of previousInert) child.inert = inert
+      if (canvasViewport) {
+        if (previousPreviewState === null) canvasViewport.removeAttribute('data-media-preview-open')
+        else canvasViewport.setAttribute('data-media-preview-open', previousPreviewState)
       }
       previousFocus?.focus()
     }
-  }, [generationWorkspace, onClose])
+  }, [canvasViewport, onClose])
 
   const mediaTypeLabel =
     mediaType === 'video' ? t('generationCommon.imagePreview.video') : t('generationCommon.imagePreview.image')
@@ -53,12 +72,13 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
 
   return createPortal(
     <div
+      ref={dialogRef}
       className={cn(
-        'absolute inset-0 z-[9999] flex h-full w-full items-center justify-center overflow-hidden overscroll-contain p-6 pt-16',
+        // z-application-modal（9000）：接管画布工作区的预览层，仍在所有 dialog/confirmation 之下。
+        'absolute inset-0 z-application-modal flex h-full w-full items-center justify-center overflow-hidden overscroll-contain p-6 pt-16',
         'bg-black/40',
       )}
       role="dialog"
-      aria-modal="true"
       aria-label={t('generationCommon.imagePreview.mediaAria', { title: dialogTitle })}
       onPointerDown={(event) => {
         event.stopPropagation()
@@ -68,7 +88,7 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
       <span
         className={cn(
           'pointer-events-none absolute left-4 top-4 z-[2] max-w-[calc(100%-80px)] truncate rounded-full px-3 py-1.5',
-          'bg-nomi-overlay-chip-strong border border-nomi-paper/20 text-caption font-medium text-nomi-paper shadow-nomi-sm backdrop-blur-sm',
+          'bg-nomi-overlay-chip-strong border border-nomi-media-ink/20 text-caption font-medium text-nomi-media-ink shadow-nomi-sm backdrop-blur-sm',
         )}
       >
         {t('generationCommon.imagePreview.mediaHeader', { type: mediaTypeLabel, title: dialogTitle })}
@@ -78,7 +98,7 @@ export default function NodeMediaPreviewDialog({ mediaType, url, title, onClose 
         type="button"
         className={cn(
           'absolute right-4 top-4 z-[3] grid size-9 place-items-center rounded-full cursor-pointer',
-          'border border-nomi-paper/20 bg-nomi-overlay-chip-strong text-nomi-paper shadow-nomi-md hover:bg-nomi-overlay-chip',
+          'border border-nomi-media-ink/20 bg-nomi-overlay-chip-strong text-nomi-media-ink shadow-nomi-md hover:bg-nomi-overlay-chip',
           'focus-visible:outline-2 focus-visible:outline-nomi-paper focus-visible:outline-offset-2',
         )}
         aria-label={t('generationCommon.imagePreview.closeMedia')}

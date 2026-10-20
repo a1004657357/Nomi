@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { findGenerationExecutionJob, readGenerationExecution } from "./productionGenerationHistory";
+import { classifyUpstreamTaskStatus } from "../shared/taskStatus";
 import path from "node:path";
 
 import {
@@ -8,13 +10,20 @@ import {
   type GenerationProvider,
   type GenerationProviderOutput,
 } from "../capabilityCore/generationRuntimeAdapter";
-import { assertGenerationProviderCanSubmit } from "../capabilityCore/generationProviderCapabilities";
 import type { ExecutionContractV1 } from "../capabilityCore/executionContract";
+import {
+  productionGenerationJobId,
+  productionGenerationProviderIdempotencyKey,
+} from "./productionGenerationAuthorization";
+import { nextGenerationAttempt } from "./prepareProductionGenerationAuthorization";
+import { authorizationGateForJob } from "../shared/productionSpendAuthority";
+import { DispatchConsentLapsedError, dispatchConsentOpen } from "../shared/productionDispatchConsent";
 import { createProductionRunRuntimeEnvelope } from "./productionRunRuntimeEnvelope";
 import { createProductionRunIntentLog } from "./productionRunIntentLog";
 import { productionRunPaths } from "./productionRunPaths";
 import { createProductionRunLock } from "./productionRunLock";
 import type { ProductionRunRepository } from "./productionRunRepository";
+import { isTransportLevelFailure, outboundRequestWasNeverWritten } from "../outboundDispatchEvidence";
 import {
   SubmissionNotDispatchedError,
   SubmissionReceiptUnknownError,
@@ -24,7 +33,6 @@ import {
 import { classifyGenerationResume, type GenerationResumeDecision } from "./productionRunResume";
 import { createProductionExecutionBinding, type ProductionExecutionBinding } from "./productionExecutionBinding";
 import type { ProductionArtifact, ProductionJob, ProductionRun } from "./productionRunTypes";
-import type { ShotPrice } from "./shotPricing";
 
 export { SubmissionReceiptUnknownError, SubmissionReconciliationRequiredError };
 
@@ -93,70 +101,22 @@ export type GenerationSubmissionResumeResult = GenerationResumeDecision & {
   providerTaskId?: string;
 };
 
-export type GenerationNewAttemptInput = {
-  projectId: string;
-  operationId: string;
-  reason: "submission_unknown" | "needs_attention";
-  /** P4 S1: which shot to re-attempt. Omitted = the default (single) shot — today's chain. */
-  shotId?: string;
-};
-
-export type GenerationNewAttemptResult = {
-  operationId: string;
-  runId: string;
-  jobId: string;
-  attempt: number;
-  contractHash: string;
-  requiresFreshReceipt: true;
-  nextAction: "request_gate";
-  warning: string;
-  /** P4 S6: 谱系——本次尝试是从哪个 job 派生的（原结果仍可查/可切回）。 */
-  parentJobId?: string;
-};
-
-/**
- * P4 S6 返工：对**任意终态**的一镜（ready/adopted 已完成、needs_attention 失败、detached 已停）发起「同 Run 新 Job」。
- * 与 `createNewAttempt` 的区别是语义而非机制：createNewAttempt 是「恢复」（只认失败/失证态，reason 门），
- * reworkShot 是「返工」（用户主动对已成/已停镜重拍）。二者都用 reducer 的 `generation.new_attempt` 命令
- * （同镜谱系 attempt 单调 + 只清该镜 approval，不连坐），都设 parentJobId 留痕——不是并行版，是两个语义入口。
- */
-export type GenerationReworkInput = {
-  projectId: string;
-  operationId: string;
-  /** 返工哪一镜。多镜返工必带；单镜（默认镜）省略。 */
-  shotId?: string;
-};
-
-export type GenerationReworkResult = {
-  operationId: string;
-  runId: string;
-  jobId: string;
-  attempt: number;
-  contractHash: string;
-  requiresFreshReceipt: true;
-  nextAction: "request_gate";
-  parentJobId: string;
-};
-
 export type ProductionGenerationSubmissionDependencies = {
   repository: ProductionRunRepository;
   projectRoot: string;
   immutableProjectUuid: string;
   projectGeneration: number;
   intentMacKey: string | NodeJS.TypedArray;
-  provider: GenerationProvider;
+  provider?: GenerationProvider;
+  providers?: readonly GenerationProvider[];
   now?: () => string;
-  /**
-   * P4 S2: derive the real per-shot price for a sealed sub-contract from the catalog pricing.
-   * Replaces the ¥0 placeholders on approval.maxSpend / budget authorize / reserve costCeiling.
-   * Omitted (or an unknown result) → the shot has no priced liability and the seam keeps its
-   * backward-compatible 0 ledger amount (an unpriced model, e.g. one with no catalog `pricing`,
-   * must still be submittable — see submissionOutbox line "costCeiling === null" hard-fail).
-   */
-  resolveShotPrice?: (contract: ExecutionContractV1) => ShotPrice;
   runtimeTaskId?: (input: { runId: string; contractHash: string; attempt?: number }) => string;
   afterProviderAcceptance?: (input: { providerTaskId: string; run: ProductionRun }) => void | Promise<void>;
-  beforeDispatch?: (input: { run: ProductionRun; job: ProductionJob }) => void | Promise<void>;
+  /**
+   * 派发准入闸（生产里是镜头认领闸）。由提交 outbox 在这次尝试的第一笔耐久写（预留 / 提交意向）之前调用，
+   * 看到的是还没落盘的 job；抛错 = 这一镜这次不提交，什么都没写（见 `SubmissionOutboxDependencies.beforeDispatch`）。
+   */
+  beforeDispatch: (input: { run: ProductionRun; job: ProductionJob }) => void | Promise<void>;
   /** Asset store owns bytes, identity and leases; the submission seam only commits its returned receipt. */
   materializeOutput?: (input: {
     projectId: string;
@@ -166,7 +126,7 @@ export type ProductionGenerationSubmissionDependencies = {
     contract: ExecutionContractV1;
     providerTaskId: string;
     output: GenerationProviderOutput;
-  }) => Promise<Pick<ProductionArtifact, "artifactId" | "kind" | "contentHash" | "projectRelativePath" | "thumbnailRelativePath">>;
+  }) => Promise<Pick<ProductionArtifact, "artifactId" | "kind" | "contentHash" | "projectRelativePath" | "thumbnailRelativePath" | "width" | "height">>;
 };
 
 function stableJson(value: unknown): string {
@@ -198,9 +158,9 @@ function requiredRun(repository: ProductionRunRepository, projectId: string, run
 
 /**
  * P4 S1: resolve the sub-contract this call addresses.
- * - No shotId → the default (single) shot: top-level plan contract + plan-level receipt (today's chain).
- * - shotId → that shot's sealed sub-contract + the shot's own receipt approval.
- * Either way the plan must be sealed/submitted and the addressed unit must be approved before submit.
+ * - No shotId → the default (single) shot: the top-level plan contract.
+ * - shotId → that shot's sealed sub-contract.
+ * 批没批准不在这里判：派发前 `prepareAuthorizedSubmission` 核「批这个 job 的那道门」（唯一判据），这里只要合同在。
  */
 function requiredContract(run: ProductionRun, shotId?: string): ExecutionContractV1 {
   const plan = run.generationPlan;
@@ -209,40 +169,62 @@ function requiredContract(run: ProductionRun, shotId?: string): ExecutionContrac
   }
   if (shotId) {
     const shot = (plan.shots ?? []).find((candidate) => candidate.shotId === shotId);
-    if (!shot?.contract || !shot.approvedReceiptId) throw new Error("Seal and confirm the generation plan before starting");
+    if (!shot?.contract) throw new Error("Seal and confirm the generation plan before starting");
     return shot.contract;
   }
-  if (!plan.contract || !plan.approvedReceiptId) throw new Error("Seal and confirm the generation plan before starting");
+  if (!plan.contract) throw new Error("Seal and confirm the generation plan before starting");
   return plan.contract;
 }
 
 /**
+ * 「这次提交要发的是第几次尝试」**只有一个 owner**：`nextGenerationAttempt`（按 `metadata.shotId`
+ * 数这一镜已有的 attempt）。授权在 job 落盘**之前**问它，拿到 `max + 1`；提交在 job 落盘**之后**问，
+ * 要的就是那一条，于是 `- 1`。
+ *
+ * 这里原本另有一份 `latestGenerationAttempt`，按 jobId 前缀（含 contractHash）去数。它今天给的答案
+ * 和这条一样，但口径不同：换了参数就换 contractHash，于是它对「同一镜的第几次」这个问题的回答
+ * 会从头开始。一个语义两个推导式、两边都不报错 —— 那正是要收掉的形状（P1/R14.1）。
+ *
  * P4 S1 identity: shotId is part of the jobId so two shots with identical parameters (equal contract
  * hash) never collide. The default shot keeps the legacy prefix (`generation-<run>-<hash16>`) so
  * durable Runs and single-shot callers are byte-compatible; a named shot inserts `-<shotId>` after it.
  */
-function jobIdFor(runId: string, contractHash: string, attempt = 1, shotId?: string): string {
-  const shotSegment = shotId ? `-${shotId}` : "";
-  return `generation-${runId}${shotSegment}-${contractHash.slice(0, 16)}${attempt > 1 ? `-attempt-${attempt}` : ""}`;
-}
-
-function latestGenerationAttempt(run: ProductionRun, contractHash: string, shotId?: string): number {
-  const prefix = jobIdFor(run.runId, contractHash, 1, shotId).replace(/-attempt-\d+$/, "");
-  return run.jobs
-    .filter((job) => job.jobId === prefix || job.jobId.startsWith(`${prefix}-attempt-`))
-    .reduce((latest, job) => Math.max(latest, job.attempt), 0);
+export function addressedGenerationAttempt(run: ProductionRun, shotId?: string): number {
+  return Math.max(1, nextGenerationAttempt(run, shotId) - 1);
 }
 
 function envelopeRefFor(runId: string, jobId: string): string {
   return `.nomi/runs/${runId}/jobs/${jobId}/runtime-envelope.json`;
 }
 
+type ProviderPollStatusClass = "pending" | "succeeded" | "failed" | "unknown";
+
+/**
+ * Provider adapters expose their native status verbatim.  The submission seam
+ * must only advance a job for a status that is explicitly known to be pending,
+ * successful, or failed.  Treating an unrecognised verb as success is unsafe
+ * (it can materialize an incomplete output); treating it as pending is worse
+ * (the observer can spin forever).  The vocabulary itself lives in exactly one
+ * place (shared/taskStatus, #1213) — engine A asks the same table.
+ */
+function classifyProviderStatus(status: string): ProviderPollStatusClass {
+  const cls = classifyUpstreamTaskStatus(status);
+  if (cls === "queued" || cls === "running") return "pending";
+  if (cls === "succeeded") return "succeeded";
+  if (cls === "failed" || cls === "cancelled") return "failed";
+  return "unknown";
+}
+
 function isPendingProviderStatus(status: string): boolean {
-  return ["queued", "pending", "processing", "running", "in_progress"].includes(status.trim().toLowerCase());
+  return classifyProviderStatus(status) === "pending";
+}
+
+function isSuccessfulProviderStatus(status: string): boolean {
+  return classifyProviderStatus(status) === "succeeded";
 }
 
 function isFailedProviderStatus(status: string): boolean {
-  return ["failed", "error", "cancelled", "canceled", "rejected"].includes(status.trim().toLowerCase());
+  return classifyProviderStatus(status) === "failed";
 }
 
 /**
@@ -289,17 +271,9 @@ function ensureBinding(deps: ProductionGenerationSubmissionDependencies, run: Pr
 
 export function createProductionGenerationSubmission(deps: ProductionGenerationSubmissionDependencies) {
   const now = deps.now ?? (() => new Date().toISOString());
-  const adapter = createGenerationRuntimeAdapter({ providers: [deps.provider] });
-
-  /**
-   * P4 S2: the real ledger amount for one shot's sub-contract. A known price flows straight into
-   * approval.maxSpend / authorize / reserve; an unknown or unresolved price keeps the legacy 0
-   * (no priced liability — the shot still submits, matching pre-S2 behavior for unpriced models).
-   */
-  function ledgerAmountFor(contract: ExecutionContractV1): number {
-    const price = deps.resolveShotPrice?.(contract);
-    return price?.known ? price.amount : 0;
-  }
+  const providers = deps.providers ?? (deps.provider ? [deps.provider] : []);
+  if (providers.length === 0) throw new Error("At least one generation provider is required");
+  const adapter = createGenerationRuntimeAdapter({ providers });
 
   function intentLog(runId: string) {
     return createProductionRunIntentLog({
@@ -327,81 +301,104 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
     }).run;
   }
 
-  function prepare(run: ProductionRun, contract: ExecutionContractV1, binding: ProductionExecutionBinding, jobId: string, attempt: number, shotId?: string): { run: ProductionRun; envelope: ReturnType<typeof createProductionRunRuntimeEnvelope> } {
+  function prepareAuthorizedSubmission(
+    run: ProductionRun,
+    contract: ExecutionContractV1,
+    jobId: string,
+    attempt: number,
+    fencingEpoch: number,
+    shotId?: string,
+  ): {
+    run: ProductionRun;
+    envelope: ReturnType<typeof createProductionRunRuntimeEnvelope>;
+    approvalId: string;
+    authorizationDigest: string;
+    /** `null` = 目录算不出价（2026-09-21 开闸）。绝不是 0 元。 */
+    costCeiling: number | null;
+    currency: string;
+    expectedProviderRequestHash: string;
+    preparedProviderRequest: unknown;
+  } {
     let current = run;
-    // P4 S2: this shot's real ledger amount (0 when the price is unknown — keeps unpriced models submittable).
-    const shotAmount = ledgerAmountFor(contract);
+    const plan = current.generationPlan;
     const existingJob = current.jobs.find((job) => job.jobId === jobId);
-    const addedJob = !existingJob;
-    if (addedJob) {
-      // P4 S5: inherit the shot's canvas placeholder node (bound at 确认即落 / 打开项目补齐) so the
-      // scheduler's job carries nodeId for reconcile/attach-shot-result. A shot whose node the user later
-      // deleted has canvasDetached set + no nodeId → the job carries none (§3.4 撤销事实优先, no revive).
-      const boundNodeId = shotId
-        ? (current.generationPlan?.shots ?? []).find((shot) => shot.shotId === shotId)?.nodeId
-        : undefined;
-      const job: ProductionJob = {
+    // 批这个 job 的**那一道门**（每点一次一份授权，信封住在门上）。不是计划上某一份：那一份已删——它让排在前面、
+    // 已经批过的镜在下一次批准时失去授权，也让「只批这一镜」只能靠把别的镜移出这一批来实现（2026-09-30）。
+    const gate = existingJob ? authorizationGateForJob(current, existingJob) : undefined;
+    const authorizationEnvelope = gate?.authorizationEnvelope;
+    const authorizationDigest = gate?.authorizationDigest;
+    const gateId = gate?.gateId;
+    if (!plan || !existingJob || !gate || !authorizationEnvelope || !authorizationDigest || !gateId) {
+      throw new Error("This generation Run has no sealed paid authorization; it is read-only until re-planned");
+    }
+    if (
+      // 派发时核的是「还是不是那个项目、那一个 Run、批它的那一道门」。**不核活的项目文档版本、也不核活的计划版本**：
+      // 批准那一刻它们是前提（收据只对当时的版本有效，见 productionRunApprovalReceipt.assertCurrentProjectRevision），
+      // 批准之后项目照常会变——Nomi 自己把占位和参考卡结果落到画布上、用户在卡上改下一镜，都会让它们前进。以前这里要求
+      // 派发时它们仍等于封信封时的值，于是定妆照检查点放行、急停后继续、重开项目这些「批准之后过一会儿才派」的路一律报
+      // 「Generation authorization no longer matches」，视频镜永远排队（2026-09-29 用户实见）。发出去的请求本身已由
+      // 合同哈希、线上报文哈希、幂等键逐字钉死（下面那组比对），文档和计划怎么变都改不了它。
+      authorizationEnvelope.immutableProjectUuid !== deps.immutableProjectUuid
+      || authorizationEnvelope.projectGeneration !== deps.projectGeneration
+      || authorizationEnvelope.projectId !== current.projectId
+      || authorizationEnvelope.runId !== current.runId
+      || authorizationEnvelope.gateId !== gateId
+    ) {
+      throw new Error("Generation authorization no longer matches the current project or Run");
+    }
+    const authorized = authorizationEnvelope.jobs.find((job) => job.jobId === jobId);
+    const approvalId = `approval:${gateId}`;
+    const approval = deps.repository.readApprovals(current.projectId, current.runId)
+      .find((candidate) => candidate.approvalId === approvalId);
+    if (
+      !authorized
+      || authorized.attempt !== attempt
+      || authorized.contractHash !== contract.contractHash
+      || authorized.providerId !== contract.providerId
+      || authorized.modelId !== contract.modelId
+      || authorized.providerIdempotencyKey !== productionGenerationProviderIdempotencyKey(current.runId, contract.contractHash, attempt, shotId)
+      || existingJob.authorizationDigest !== authorizationDigest
+      || existingJob.providerIdempotencyKey !== authorized.providerIdempotencyKey
+      || gate.status !== "approved"
+      || gate.planHash !== authorizationDigest
+      || !gate.receiptId
+      || !approval
+      || approval.authorizationDigest !== authorizationDigest
+      || approval.planHash !== authorizationDigest
+      || approval.receiptId !== gate.receiptId
+      || !approval.jobIds.includes(jobId)
+    ) {
+      throw new Error("Generation submission is not covered by the approved Run authorization");
+    }
+    // 「现在派出去还算不算用户同意过」只有一个判据（付费卡① 第 13 条，`productionDispatchConsent`）：离他最近一次点头
+    // ——批准这一镜，或之后放行形象、停下后点「继续」——不超过同意窗口。以前这里拿信封封好那一刻起的 10 分钟判，
+    // 于是放行形象、急停后继续、第二天重开这些「批准之后过一会儿才派」的路永远派不出去，镜头一直「排队中」。
+    // 过了窗口 = 没有人替他续：这一镜不派，调度器接住这个错，批次如实停下等他再点一次（不是失败）。
+    if (!dispatchConsentOpen(gate, now())) throw new DispatchConsentLapsedError(gateId, jobId);
+
+    // This is the last zero-side-effect check. If provider serialization drifted since the gate,
+    // nothing below (Run events, ledger, intents, runtime envelope or provider) is touched.
+    const providerPreparation = adapter.prepareAuthorization({
+      contract,
+      providerIdempotencyKey: authorized.providerIdempotencyKey,
+      referenceUrls: authorized.referenceUrls,
+    });
+    if (providerPreparation.providerRequestHash !== authorized.providerWirePayloadHash) {
+      throw new Error("Provider wire payload no longer matches the approved authorization");
+    }
+
+    const binding = ensureBinding(deps, current, contract, jobId, attempt, fencingEpoch, shotId);
+    if (!existingJob.executionBinding) {
+      current = command(current, "job.patch", {
         jobId,
-        stageId: "generate",
-        status: "authorized",
-        attempt,
-        provider: contract.providerId,
-        model: contract.modelId,
-        idempotencyKey: binding.providerIdempotencyKey,
-        executionBinding: binding,
-        requestFingerprint: binding.requestFingerprint,
-        providerIdempotencyKey: binding.providerIdempotencyKey,
-        runtimeEnvelopeRef: binding.runtimeEnvelopeRef,
-        taskKind: contract.mode,
-        ...(boundNodeId ? { nodeId: boundNodeId } : {}),
-        // P4 S1: stamp the shot lineage so per-shot attempt monotonicity survives replay (reducer reads
-        // metadata.shotId). Default shot omits it → the reducer treats it as the single default lineage.
-        ...(shotId ? { metadata: { shotId } } : {}),
-        createdAt: now(),
-        updatedAt: now(),
-      };
-      // #4 commandId: the suffix must carry jobId or a second job in the same Run is silently deduped.
-      current = command(current, "job.add", { job }, `job-add:${jobId}`);
-    }
-    const approvalId = `approval:generation:${current.runId}:${contract.contractHash}:${jobId}`;
-    const existingApproval = deps.repository.readApprovals(current.projectId, current.runId).find((approval) => approval.approvalId === approvalId);
-    if (!existingApproval) {
-      current = deps.repository.execute(current.projectId, current.runId, {
-        commandId: `generation.runtime:${current.runId}:approval-record:${jobId}`,
-        expectedRevision: current.revision,
-        type: "approval.record",
-        payload: {
-          approval: {
-            approvalId,
-            runId: current.runId,
-            scope: "job_set",
-            planHash: contract.contractHash,
-            jobIds: [jobId],
-            allowedProviders: [contract.providerId],
-            allowedModels: [contract.modelId],
-            currency: current.budget.currency,
-            // P4 S2: this shot's derived price is its authorized ceiling (0 = unknown/unpriced, unbounded like today).
-            maxSpend: shotAmount,
-            maxAttemptsPerJob: current.policy.maxAttemptsPerJob,
-            decidedAt: now(),
-            expiresAt: new Date(Date.parse(now()) + 24 * 60 * 60 * 1000).toISOString(),
-          },
+        patch: {
+          executionBinding: binding,
+          requestFingerprint: binding.requestFingerprint,
+          providerIdempotencyKey: binding.providerIdempotencyKey,
+          idempotencyKey: binding.providerIdempotencyKey,
+          runtimeEnvelopeRef: binding.runtimeEnvelopeRef,
         },
-        issuedAt: now(),
-      }).run;
-    }
-    if (addedJob) {
-      if (current.budget.authorized < 0) throw new Error("Invalid generation budget authorization");
-      if (current.budget.authorized === 0 && current.budget.reserved === 0 && current.budget.actual === 0 && current.budget.unsettled === 0) {
-        // #4 commandId: without jobId, a second shot's authorize reuses the first's commandId and is
-        // deduped into a stale-revision result. The billingEntryId already embeds jobId (via approvalId).
-        // P4 S2: authorize the ledger to this shot's derived price. For the single-shot chain that IS the
-        // plan cap; the plan-level cap that sums included shots up front is the scheduler's job (S4 §3.3),
-        // so this guard (first entry only) intentionally leaves multi-shot cap accumulation to S4.
-        current = command(current, "budget.entry", {
-          entry: { billingEntryId: `${approvalId}:authorize`, kind: "authorize", amount: shotAmount, occurredAt: now() },
-        }, `budget-authorize:${jobId}`);
-      }
+      }, `job-bind:${jobId}`);
     }
     const resolved = resolveExecutionContract(contract, binding);
     const sealedEnvelope = envelope(current.runId, jobId);
@@ -414,35 +411,45 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
       requestFingerprint: binding.requestFingerprint,
       request: resolved,
     });
-    return { run: current, envelope: sealedEnvelope };
+    return {
+      run: current,
+      envelope: sealedEnvelope,
+      approvalId,
+      authorizationDigest,
+      costCeiling: authorized.price.maximum,
+      currency: authorized.price.currency,
+      expectedProviderRequestHash: authorized.providerWirePayloadHash,
+      preparedProviderRequest: providerPreparation.providerRequest,
+    };
   }
 
   async function start(input: GenerationSubmissionStartInput): Promise<GenerationSubmissionResult> {
     const shotId = input.shotId;
     let run = requiredRun(deps.repository, input.projectId, input.operationId);
     const contract = requiredContract(run, shotId);
-    const attempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
+    const attempt = input.attempt ?? addressedGenerationAttempt(run, shotId);
     if (!Number.isInteger(attempt) || attempt < 1) throw new Error("Generation attempt is invalid");
-    let jobId = jobIdFor(run.runId, contract.contractHash, attempt, shotId);
+    let jobId = productionGenerationJobId(run.runId, contract.contractHash, attempt, shotId);
     const existingJob = run.jobs.find((job) => job.jobId === jobId);
+    // 没有任何一份授权（门）盖着的旧 job 只能看、不能再发：它的那一轮授权已经不在了。
+    if (existingJob && !authorizationGateForJob(run, existingJob)) {
+      throw new Error("Historical generation execution is observation-only");
+    }
     if (existingJob?.status === "provider_accepted" && existingJob.providerTaskId) {
-      if (run.generationPlan?.state !== "submitted") run = command(run, "generation.submit", {}, "plan-submit");
+      if (run.generationPlan?.state !== "submitted") run = command(run, "generation.submit", {}, `plan-submit:v${run.planVersion}`);
       return { operationId: run.runId, runId: run.runId, jobId, providerTaskId: existingJob.providerTaskId, attempt, nextAction: "observe" };
     }
     if (existingJob && ["submission_unknown", "reconciling", "needs_attention", "cancel_requested"].includes(existingJob.status)) {
       throw new SubmissionReconciliationRequiredError();
     }
-    assertGenerationProviderCanSubmit(deps.provider);
-
     const runLock = lock(run.runId);
     return runLock.withLock(async (lease) => {
       run = requiredRun(deps.repository, input.projectId, input.operationId);
       const lockedContract = requiredContract(run, shotId);
       if (lockedContract.contractHash !== contract.contractHash) throw new Error("Generation contract changed while waiting for the Run lock");
-      const lockedAttempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, lockedContract.contractHash, shotId));
-      jobId = jobIdFor(run.runId, lockedContract.contractHash, lockedAttempt, shotId);
-      const binding = ensureBinding(deps, run, lockedContract, jobId, lockedAttempt, lease.fencingEpoch, shotId);
-      const prepared = prepare(run, lockedContract, binding, jobId, lockedAttempt, shotId);
+      const lockedAttempt = input.attempt ?? addressedGenerationAttempt(run, shotId);
+      jobId = productionGenerationJobId(run.runId, lockedContract.contractHash, lockedAttempt, shotId);
+      const prepared = prepareAuthorizedSubmission(run, lockedContract, jobId, lockedAttempt, lease.fencingEpoch, shotId);
       run = prepared.run;
       const log = intentLog(run.runId);
       let rawReceipt: unknown;
@@ -455,15 +462,33 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
         beforeDispatch: async (dispatchInput) => {
           await deps.beforeDispatch?.({ run: dispatchInput.run, job: dispatchInput.job });
         },
+        // 供应商档案真声明了幂等（并把键带到请求上）才允许在「结果未知」后用同一个键重发一次；
+        // 目前没有任何生产供应商声明（APIMart 明确 false），所以生产里这条恒为 false。
+        canResendAfterUnknown: (error, dispatchInput) =>
+          providers.some((provider) => provider.providerId === dispatchInput.job.provider && provider.capabilities.submitIdempotency === true)
+          && isTransportLevelFailure(error),
         dispatch: async (dispatchInput) => {
           const currentBinding = dispatchInput.job.executionBinding;
           if (!currentBinding) throw new Error("Generation job is missing its sealed execution binding");
           try {
-            const result = await adapter.submit({ contract: lockedContract, binding: currentBinding });
+            const result = await adapter.submit({
+              contract: lockedContract,
+              binding: currentBinding,
+              expectedProviderRequestHash: prepared.expectedProviderRequestHash,
+              preparedProviderRequest: prepared.preparedProviderRequest,
+            });
             rawReceipt = result.raw;
             return { providerTaskId: result.providerTaskId };
           } catch (error) {
-            if (!(error instanceof SubmissionNotDispatchedError)) prepared.envelope.markSubmittedUnknown();
+            // 「一个字节都没写出去」是**可证明**的一档（只认连上之前的失败：DNS / 建连 / TLS 握手前），
+            // 它和「写出去了不知道结果」性质完全不同：前者供应商那边什么都没发生，后者可能已经在扣费。
+            // 连上之后的任何失败（连接被重置、对面关闭、响应超时）都是后者。判据只有一个 owner：
+            // `outboundDispatchEvidence.ts`。
+            if (error instanceof SubmissionNotDispatchedError) throw error;
+            if (outboundRequestWasNeverWritten(error)) {
+              throw new SubmissionNotDispatchedError(error instanceof Error ? error.message : String(error));
+            }
+            prepared.envelope.markSubmittedUnknown();
             throw error;
           }
         },
@@ -477,47 +502,57 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
           }
         },
       });
-      const approvalId = `approval:generation:${run.runId}:${lockedContract.contractHash}:${jobId}`;
       const result = await outbox.submit({
         projectId: run.projectId,
         runId: run.runId,
         jobId,
-        approvalId,
-        planHash: lockedContract.contractHash,
-        // P4 S2: reserve this shot's derived price (the outbox also feeds it to authorizeSubmission as
-        // estimatedCost). 0 = unknown/unpriced → no priced reservation, keeping the pre-S2 submit path.
-        costCeiling: ledgerAmountFor(lockedContract),
-        currency: run.budget.currency,
+        approvalId: prepared.approvalId,
+        planHash: prepared.authorizationDigest,
+        costCeiling: prepared.costCeiling,
+        currency: prepared.currency,
         allowRetryAfterAbort: input.definitelyNotSubmitted === true,
       });
       run = result.run;
-      if (run.generationPlan?.state !== "submitted") run = command(run, "generation.submit", {}, "plan-submit");
+      if (run.generationPlan?.state !== "submitted") run = command(run, "generation.submit", {}, `plan-submit:v${run.planVersion}`);
       return { operationId: run.runId, runId: run.runId, jobId, providerTaskId: result.providerTaskId, attempt: lockedAttempt, nextAction: "observe" };
     });
   }
 
   async function poll(input: GenerationSubmissionStartInput): Promise<GenerationSubmissionPollResult> {
-    const shotId = input.shotId;
     const run = requiredRun(deps.repository, input.projectId, input.operationId);
-    const contract = requiredContract(run, shotId);
-    const attempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
-    const jobId = jobIdFor(run.runId, contract.contractHash, attempt, shotId);
-    const job = run.jobs.find((candidate) => candidate.jobId === jobId);
+    const { job, contract } = readGenerationExecution(deps.repository, run, input);
     if (!job?.providerTaskId) throw new SubmissionReconciliationRequiredError("A provider task id is required before polling");
 
-    const result = await adapter.query({ providerId: job.provider, providerTaskId: job.providerTaskId });
-    const providerStatus = result.status.trim();
+    // A completed immutable execution is read from its receipt; do not poll or rewrite it again.
+    const stored = envelope(run.runId, job.jobId).read();
+    if (stored?.state === "materialized") return {
+      operationId: run.runId, runId: run.runId, jobId: job.jobId, providerTaskId: job.providerTaskId,
+      providerStatus: stored.lastPoll?.status ?? "succeeded", nextAction: "materialize",
+    };
+    // 这笔任务的模型 / 模式从冻结合同里读、随查询递下去：供应商实例是每次新建的，
+    // 它自己内存里记的「这笔任务用的哪个模型」活不过观察窗重踢 / 重开项目 / 重启（见 GenerationProviderTaskContext）。
+    const result = await adapter.query({ providerId: job.provider, providerTaskId: job.providerTaskId, context: { modelId: contract.modelId, mode: contract.mode } });
+    const providerStatus = result.providerStatus.trim();
     if (!providerStatus) throw new Error("Provider returned an empty poll status");
+    const statusClass = classifyProviderStatus(providerStatus);
     const envelopeStore = envelope(run.runId, job.jobId);
     envelopeStore.markPolled({ status: providerStatus, raw: result.raw });
     const observedAt = now();
     const statusChanged = job.providerStatus !== providerStatus;
-    const nextStatus = isPendingProviderStatus(providerStatus) ? "polling" : isFailedProviderStatus(providerStatus) ? "needs_attention" : job.status;
+    const nextStatus = statusClass === "pending"
+      ? "polling"
+      : statusClass === "failed" || statusClass === "unknown"
+        ? "needs_attention"
+        : job.status;
     const patch = {
       providerStatus,
       lastPollAt: observedAt,
       ...(statusChanged ? { lastVendorStateChangeAt: observedAt } : {}),
-      ...(isFailedProviderStatus(providerStatus) ? { errorCode: "provider_task_failed", errorMessage: "供应商任务已返回失败状态" } : {}),
+      ...(statusClass === "failed"
+        ? { errorCode: "provider_task_failed", errorMessage: "供应商任务已返回失败状态" }
+        : statusClass === "unknown"
+          ? { errorCode: "provider_status_unknown", errorMessage: "供应商返回了未识别的任务状态，需要人工核对" }
+          : {}),
     };
     command(run, nextStatus === job.status ? "job.patch" : "job.status", {
       jobId: job.jobId,
@@ -529,17 +564,16 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
       jobId: job.jobId,
       providerTaskId: job.providerTaskId,
       providerStatus,
-      nextAction: isPendingProviderStatus(providerStatus) ? "poll" : isFailedProviderStatus(providerStatus) ? "attention" : "materialize",
+      nextAction: statusClass === "pending" ? "poll" : statusClass === "succeeded" ? "materialize" : "attention",
     };
   }
 
   async function materialize(input: GenerationSubmissionStartInput): Promise<GenerationSubmissionMaterializeResult> {
-    const shotId = input.shotId;
     let run = requiredRun(deps.repository, input.projectId, input.operationId);
-    const contract = requiredContract(run, shotId);
-    const attempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
-    const jobId = jobIdFor(run.runId, contract.contractHash, attempt, shotId);
-    let job = run.jobs.find((candidate) => candidate.jobId === jobId);
+    const execution = readGenerationExecution(deps.repository, run, input);
+    const { contract } = execution;
+    let job = execution.job;
+    const jobId = job.jobId;
     if (!job?.providerTaskId) throw new GenerationMaterializationError("A provider task id is required before materialization");
     const providerTaskId = job.providerTaskId;
     const existing = run.artifacts.find((artifact) => artifact.jobId === jobId && ["image", "video", "audio"].includes(artifact.kind) && artifact.status === "ready");
@@ -554,9 +588,10 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
     const polled = currentEnvelope.lastPoll;
     if (!polled || isPendingProviderStatus(polled.status)) throw new GenerationMaterializationError("The provider task is still processing");
     if (isFailedProviderStatus(polled.status)) throw new GenerationMaterializationError("The provider task did not complete successfully");
+    if (!isSuccessfulProviderStatus(polled.status)) throw new GenerationMaterializationError("The provider returned an unknown status; reconcile before materialization");
     let extracted: { outputs: readonly GenerationProviderOutput[] };
     try {
-      extracted = await adapter.materialize({ providerId: job.provider, providerTaskId: job.providerTaskId, raw: polled.raw });
+      extracted = await adapter.materialize({ providerId: job.provider, providerTaskId: job.providerTaskId, raw: polled.raw, context: { modelId: contract.modelId, mode: contract.mode, parameters: contract.parameters } });
     } catch (error) {
       if (error instanceof GenerationProviderObservationError) throw new GenerationMaterializationUnsupportedError();
       throw error;
@@ -580,6 +615,7 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
       contentHash,
       projectRelativePath,
       ...(receipt.thumbnailRelativePath ? { thumbnailRelativePath: receipt.thumbnailRelativePath } : {}),
+      ...(receipt.width && receipt.height ? { width: receipt.width, height: receipt.height } : {}),
       createdAt: now(),
     };
     run = command(run, "artifact.add", { artifact }, `materialize-artifact:${artifact.artifactId}`);
@@ -588,144 +624,36 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
     return { operationId: run.runId, runId: run.runId, jobId, providerTaskId, artifactId: artifact.artifactId, contentHash, nextAction: "completed" };
   }
 
-  async function createNewAttempt(input: GenerationNewAttemptInput): Promise<GenerationNewAttemptResult> {
-    const shotId = input.shotId;
-    let run = requiredRun(deps.repository, input.projectId, input.operationId);
-    const contract = requiredContract(run, shotId);
-    const previousAttempt = Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
-    const previousJob = run.jobs.find((job) => job.jobId === jobIdFor(run.runId, contract.contractHash, previousAttempt, shotId));
-    if (!previousJob || previousJob.status !== input.reason) throw new SubmissionReconciliationRequiredError("A new attempt is only available after the selected submission issue is recorded");
-    const runLock = lock(run.runId);
-    return runLock.withLock(async (lease) => {
-      run = requiredRun(deps.repository, input.projectId, input.operationId);
-      const lockedContract = requiredContract(run, shotId);
-      const lockedPreviousAttempt = Math.max(1, latestGenerationAttempt(run, lockedContract.contractHash, shotId));
-      const lockedPreviousJob = run.jobs.find((job) => job.jobId === jobIdFor(run.runId, lockedContract.contractHash, lockedPreviousAttempt, shotId));
-      if (!lockedPreviousJob || lockedPreviousJob.status !== input.reason) throw new SubmissionReconciliationRequiredError("The submission state changed; reconcile it before creating a new attempt");
-      const nextAttempt = lockedPreviousAttempt + 1;
-      const jobId = jobIdFor(run.runId, lockedContract.contractHash, nextAttempt, shotId);
-      const binding = ensureBinding(deps, run, lockedContract, jobId, nextAttempt, lease.fencingEpoch, shotId);
-      const job: ProductionJob = {
-        jobId,
-        stageId: "generate",
-        status: "authorized",
-        attempt: nextAttempt,
-        provider: lockedContract.providerId,
-        model: lockedContract.modelId,
-        idempotencyKey: binding.providerIdempotencyKey,
-        executionBinding: binding,
-        requestFingerprint: binding.requestFingerprint,
-        providerIdempotencyKey: binding.providerIdempotencyKey,
-        runtimeEnvelopeRef: binding.runtimeEnvelopeRef,
-        taskKind: lockedContract.mode,
-        // P4 S6: 谱系留痕——新尝试从上一 job 派生，原结果仍可查（productionRunTypes.ts:163）。
-        parentJobId: lockedPreviousJob.jobId,
-        // P4 S1: carry the shot lineage so the reducer scopes attempt monotonicity + approval reset.
-        ...(shotId ? { metadata: { shotId } } : {}),
-        createdAt: now(),
-        updatedAt: now(),
-      };
-      run = command(run, "generation.new_attempt", { job, ...(shotId ? { shotId } : {}) }, `new-attempt-${shotId ? `${shotId}-` : ""}${nextAttempt}`);
-      return {
-        operationId: run.runId,
-        runId: run.runId,
-        jobId,
-        attempt: nextAttempt,
-        contractHash: lockedContract.contractHash,
-        requiresFreshReceipt: true,
-        nextAction: "request_gate",
-        warning: "这是一次新的提交尝试；上一次结果仍可能已计费，请先确认后再提交。",
-        parentJobId: lockedPreviousJob.jobId,
-      };
-    });
-  }
-
-  /**
-   * P4 S6 返工：对任意终态的一镜发起「同 Run 新 Job」。复用 `generation.new_attempt` 命令（reducer 已通用：
-   * 同镜谱系 attempt 单调 + 只清该镜 approval，不连坐兄弟镜），设 parentJobId 留痕，返回 `request_gate`——
-   * 调用方随后起**单镜 gate（该镜子合同单价）**确认，铸 receipt 后 approve 该 attempt、kick scheduler 派发。
-   * 锚 character_ref 与 DNA 提示词天然继承：新 job 复用该镜现有子合同（requiredContract(run, shotId)），
-   * 其 references 就是锚（§3.2「每镜 references 自动带锚」）。
-   */
-  async function reworkShot(input: GenerationReworkInput): Promise<GenerationReworkResult> {
-    const shotId = input.shotId;
-    let run = requiredRun(deps.repository, input.projectId, input.operationId);
-    const contract = requiredContract(run, shotId);
-    const previousAttempt = Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
-    const previousJob = run.jobs.find((job) => job.jobId === jobIdFor(run.runId, contract.contractHash, previousAttempt, shotId));
-    // 返工必须有一个已存在的上一 job 可派生（这一镜从没生成过 → 走正常首次派发，不是返工）。
-    if (!previousJob) throw new Error("No prior submission to rework for this shot");
-    const runLock = lock(run.runId);
-    return runLock.withLock(async (lease) => {
-      run = requiredRun(deps.repository, input.projectId, input.operationId);
-      const lockedContract = requiredContract(run, shotId);
-      const lockedPreviousAttempt = Math.max(1, latestGenerationAttempt(run, lockedContract.contractHash, shotId));
-      const lockedPreviousJob = run.jobs.find((job) => job.jobId === jobIdFor(run.runId, lockedContract.contractHash, lockedPreviousAttempt, shotId));
-      if (!lockedPreviousJob) throw new Error("No prior submission to rework for this shot");
-      const nextAttempt = lockedPreviousAttempt + 1;
-      const jobId = jobIdFor(run.runId, lockedContract.contractHash, nextAttempt, shotId);
-      const binding = ensureBinding(deps, run, lockedContract, jobId, nextAttempt, lease.fencingEpoch, shotId);
-      const job: ProductionJob = {
-        jobId,
-        stageId: "generate",
-        status: "authorized",
-        attempt: nextAttempt,
-        provider: lockedContract.providerId,
-        model: lockedContract.modelId,
-        idempotencyKey: binding.providerIdempotencyKey,
-        executionBinding: binding,
-        requestFingerprint: binding.requestFingerprint,
-        providerIdempotencyKey: binding.providerIdempotencyKey,
-        runtimeEnvelopeRef: binding.runtimeEnvelopeRef,
-        taskKind: lockedContract.mode,
-        parentJobId: lockedPreviousJob.jobId,
-        retryReason: "rework",
-        // 继承上一 job 的 nodeId：返工的新版落回**同一画布节点**（版本切换的前提），不新建节点。
-        ...(lockedPreviousJob.nodeId ? { nodeId: lockedPreviousJob.nodeId } : {}),
-        ...(shotId ? { metadata: { shotId } } : {}),
-        createdAt: now(),
-        updatedAt: now(),
-      };
-      run = command(run, "generation.new_attempt", { job, ...(shotId ? { shotId } : {}) }, `rework-${shotId ? `${shotId}-` : ""}${nextAttempt}`);
-      return {
-        operationId: run.runId,
-        runId: run.runId,
-        jobId,
-        attempt: nextAttempt,
-        contractHash: lockedContract.contractHash,
-        requiresFreshReceipt: true,
-        nextAction: "request_gate",
-        parentJobId: lockedPreviousJob.jobId,
-      };
-    });
-  }
-
   async function resume(input: GenerationSubmissionStartInput): Promise<GenerationSubmissionResumeResult> {
     const shotId = input.shotId;
     let run = requiredRun(deps.repository, input.projectId, input.operationId);
-    const contract = requiredContract(run, shotId);
-    const attempt = input.attempt ?? Math.max(1, latestGenerationAttempt(run, contract.contractHash, shotId));
-    const jobId = jobIdFor(run.runId, contract.contractHash, attempt, shotId);
-    const job = run.jobs.find((candidate) => candidate.jobId === jobId);
-    if (!job) return { operationId: run.runId, action: "attention", reason: "invalid_recovery_state", nextAction: "attention" };
+    // 恢复路径的既有契约：**找不到这次执行的那条 job 是一个可分诊的状态，不是异常。**
+    // 主干上它返回 `attention/invalid_recovery_state`，让上层把这次恢复交回给用户处置；
+    // 一路抛出去会把它变成一次没人接得住的失败。（冻结合同缺失仍然抛，主干也抛。）
+    if (!findGenerationExecutionJob(run, input)) {
+      return { operationId: run.runId, action: "attention", reason: "invalid_recovery_state", nextAction: "attention" };
+    }
+    const { job, currentAuthority } = readGenerationExecution(deps.repository, run, input);
+    const jobId = job.jobId;
     const currentEnvelope = envelope(run.runId, jobId).read();
     if (!currentEnvelope) return { operationId: run.runId, action: "attention", reason: "invalid_recovery_state", nextAction: "attention" };
-    if (input.definitelyNotSubmitted === true && ["submission_unknown", "needs_attention"].includes(job.status)) {
+    if (currentAuthority && input.definitelyNotSubmitted === true && ["submission_unknown", "needs_attention"].includes(job.status)) {
       const committed = intentLog(run.runId).list().some((intent) => intent.key === `${run.runId}:${jobId}:${job.attempt}` && intent.status === "committed");
       if (committed) return { operationId: run.runId, action: "reconcile", reason: "submission_receipt_unknown", nextAction: "reconcile" };
       if (currentEnvelope.state === "submitted_unknown") envelope(run.runId, jobId).markDefinitelyNotSubmitted();
       // Suffix carries jobId so a per-shot explicit retry never dedupes against a sibling shot.
       run = command(run, "job.status", { jobId, status: "submit_intent_persisted", patch: {} }, `explicit-retry:${jobId}`);
-      return { ...(await start({ projectId: run.projectId, operationId: run.runId, definitelyNotSubmitted: true, ...(shotId ? { shotId } : {}) })), action: "dispatch", nextAction: "dispatch" };
+      return { ...(await start({ projectId: run.projectId, operationId: run.runId, definitelyNotSubmitted: true, attempt: job.attempt, ...(shotId ? { shotId } : {}) })), action: "dispatch", nextAction: "dispatch" };
     }
     const decision = classifyGenerationResume({ jobStatus: job.status, providerTaskId: job.providerTaskId, envelopeState: currentEnvelope.state, definitelyNotSubmitted: input.definitelyNotSubmitted });
     if (decision.action === "poll") return { operationId: run.runId, ...decision, nextAction: "poll", providerTaskId: job.providerTaskId };
     if (decision.action === "reconcile") return { operationId: run.runId, ...decision, nextAction: "reconcile" };
+    if (decision.action === "dispatch" && !currentAuthority) return { operationId: run.runId, action: "attention", reason: "invalid_recovery_state", nextAction: "attention" };
     if (decision.action === "dispatch") return { ...(await start(input)), action: "dispatch", nextAction: "dispatch" };
     return { operationId: run.runId, ...decision, nextAction: "attention" };
   }
 
-  return { start, poll, materialize, createNewAttempt, reworkShot, resume };
+  return { start, poll, materialize, resume };
 }
 
 export type ProductionGenerationSubmission = ReturnType<typeof createProductionGenerationSubmission>;

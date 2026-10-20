@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { IconAlertCircle, IconCheck, IconRefresh, IconStack2 } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'

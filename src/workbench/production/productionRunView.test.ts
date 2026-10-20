@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ProductionRun } from '../../../electron/productionRun/productionRunTypes'
-import { buildProductionRunView } from './productionRunView'
+import type { ProductionRun, ProductionRunStatus } from '../../../electron/productionRun/productionRunTypes'
+import type { TaskCenterGroup } from '../taskCenter/taskCenterProjection'
+import { buildProductionRunView, isProductionRunTask, productionRunStatusGroup, type ProductionRunTone } from './productionRunView'
+
+/** 每一组允许的色调：状态签说「进行中」，颜色就不能是「等你确认」的琥珀色（排队组不会出现制作卡）。 */
+const VIEW_TONES_BY_GROUP: Readonly<Record<Exclude<TaskCenterGroup, 'queued'>, readonly ProductionRunTone[]>> = {
+  running: ['working'],
+  attention: ['attention', 'danger', 'neutral'],
+  done: ['success', 'neutral'],
+}
 
 const now = Date.parse('2026-08-08T08:10:00.000Z')
 
@@ -16,7 +24,6 @@ function run(patch: Partial<ProductionRun> = {}): ProductionRun {
     playbook: { name: 'brand.promo', version: '1.0.0' },
     origin: { host: 'codex' },
     policy: {
-      mode: 'balanced',
       trustedHosts: ['codex'],
       allowedProviders: ['tapcanvas'],
       allowedModels: ['seedance'],
@@ -24,7 +31,7 @@ function run(patch: Partial<ProductionRun> = {}): ProductionRun {
       maxAttemptsPerJob: 2,
       minimizeUploads: true,
     },
-    budget: { currency: 'CNY', authorized: 20, reserved: 5, actual: 3, unsettled: 0 },
+    budget: { currency: 'CNY', authorized: 20, reserved: 5, actual: 3, unsettled: 0, unknownInFlight: 0 },
     planVersion: 1,
     snapshotCursor: 2,
     stages: [{ stageId: 'production', title: 'Production', status: 'running', order: 1 }],
@@ -53,7 +60,7 @@ describe('production run view', () => {
   it('shows real progress when known and omits it when unknown', () => {
     expect(buildProductionRunView(run(), now)).toMatchObject({
       tone: 'working',
-      titleKey: 'production.status.running',
+      titleKey: 'generationCommon.production.status.running',
       percent: 42,
       primaryAction: 'open-stage',
     })
@@ -65,12 +72,12 @@ describe('production run view', () => {
     expect(buildProductionRunView(run(), now).controls).toEqual(['pause', 'cancel'])
     expect(buildProductionRunView(run({ status: 'paused' }), now)).toMatchObject({
       tone: 'attention',
-      titleKey: 'production.status.paused',
+      titleKey: 'generationCommon.production.status.paused',
       primaryAction: 'resume-run',
       controls: ['cancel'],
     })
     expect(buildProductionRunView(run({ status: 'pausing' }), now)).toMatchObject({
-      titleKey: 'production.status.pausing',
+      titleKey: 'generationCommon.production.status.pausing',
       primaryAction: null,
       controls: ['cancel'],
     })
@@ -87,8 +94,8 @@ describe('production run view', () => {
 
     expect(view).toMatchObject({
       tone: 'danger',
-      titleKey: 'production.status.stalledDraft',
-      descriptionKey: 'production.description.stalledDraft',
+      titleKey: 'generationCommon.production.status.stalledDraft',
+      descriptionKey: 'generationCommon.production.description.stalledDraft',
       primaryAction: null,
       controls: ['cancel'],
     })
@@ -126,8 +133,8 @@ describe('production run view', () => {
 
     expect(buildProductionRunView(value, now)).toMatchObject({
       tone: 'attention',
-      titleKey: 'production.status.scriptReady',
-      descriptionKey: 'production.description.scriptReady',
+      titleKey: 'generationCommon.production.status.scriptReady',
+      descriptionKey: 'generationCommon.production.description.scriptReady',
       primaryAction: 'review-script',
       targetId: 'script-v1',
     })
@@ -150,7 +157,7 @@ describe('production run view', () => {
     })
     expect(buildProductionRunView(value, now)).toMatchObject({
       tone: 'attention',
-      titleKey: 'production.status.approvalRequired',
+      titleKey: 'generationCommon.production.status.approvalRequired',
       primaryAction: 'open-gate',
       targetId: 'gate-1',
     })
@@ -164,23 +171,23 @@ describe('production run view', () => {
     })
     const direction = buildProductionRunView(run({ status: 'awaiting_direction', gates: [gate('gate-direction-v1', 'stage')] }), now)
     expect(direction).toMatchObject({
-      titleKey: 'production.status.directionGate',
-      descriptionKey: 'production.description.directionGate',
+      titleKey: 'generationCommon.production.status.directionGate',
+      descriptionKey: 'generationCommon.production.description.directionGate',
       gateKind: 'direction',
       decisionHome: 'origin', // fixture origin=codex → 门首选发起端，Nomi 只指路兜底
     })
     const sample = buildProductionRunView(run({ status: 'running', gates: [gate('gate-sample-v1', 'stage')] }), now)
-    expect(sample).toMatchObject({ titleKey: 'production.status.sampleGate', gateKind: 'sample' })
+    expect(sample).toMatchObject({ titleKey: 'generationCommon.production.status.sampleGate', gateKind: 'sample' })
     const contract = buildProductionRunView(run({ status: 'awaiting_contract', gates: [gate('gate-contract-v1', 'budget_envelope')] }), now)
-    expect(contract).toMatchObject({ titleKey: 'production.status.approvalRequired', gateKind: 'contract', decisionHome: 'nomi' })
+    expect(contract).toMatchObject({ titleKey: 'generationCommon.production.status.approvalRequired', gateKind: 'contract', decisionHome: 'nomi' })
     const shot = buildProductionRunView(run({
       status: 'running',
       jobs: [{ ...run().jobs[0], nodeId: 'shot-1' }],
       gates: [{ ...gate('gate-shot-v1-job', 'job_set'), jobIds: ['job-1'] }],
     }), now)
     expect(shot).toMatchObject({
-      titleKey: 'production.status.shotGate',
-      descriptionKey: 'production.description.shotGate',
+      titleKey: 'generationCommon.production.status.shotGate',
+      descriptionKey: 'generationCommon.production.description.shotGate',
       gateKind: 'shot',
       decisionHome: 'nomi',
       gateJob: { index: 1, nodeId: 'shot-1', provider: 'tapcanvas', model: 'seedance' },
@@ -203,11 +210,11 @@ describe('production run view', () => {
       expiresAt: '2026-08-08T09:00:00.000Z',
     }
     expect(buildProductionRunView(run({ status: 'awaiting_rough_cut_review', gates: [exportGate] }), now)).toMatchObject({
-      titleKey: 'production.status.roughCutReady',
+      titleKey: 'generationCommon.production.status.roughCutReady',
       primaryAction: 'review-rough-cut',
     })
     expect(buildProductionRunView(run({ status: 'awaiting_export', gates: [exportGate] }), now)).toMatchObject({
-      titleKey: 'production.status.exportReady',
+      titleKey: 'generationCommon.production.status.exportReady',
       primaryAction: 'open-gate',
       targetId: 'gate-export-v1',
     })
@@ -216,7 +223,7 @@ describe('production run view', () => {
   it('shows a durable contract refusal and states that no spend occurred', () => {
     const value = run({
       status: 'awaiting_contract',
-      budget: { currency: 'CNY', authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+      budget: { currency: 'CNY', authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
       gates: [{
         gateId: 'gate-contract-v1', scope: 'budget_envelope', status: 'rejected', planHash: 'plan-1', jobIds: ['job-1'],
         title: 'Production contract', summary: '5 shots', createdAt: '2026-08-08T08:00:00.000Z', expiresAt: '2026-08-08T09:00:00.000Z', decidedAt: '2026-08-08T08:05:00.000Z',
@@ -224,8 +231,8 @@ describe('production run view', () => {
     })
     expect(buildProductionRunView(value, now)).toMatchObject({
       tone: 'neutral',
-      titleKey: 'production.status.contractDeclined',
-      descriptionKey: 'production.description.contractDeclined',
+      titleKey: 'generationCommon.production.status.contractDeclined',
+      descriptionKey: 'generationCommon.production.description.contractDeclined',
       primaryAction: null,
     })
   })
@@ -234,11 +241,16 @@ describe('production run view', () => {
     const value = run({ jobs: [{ ...run().jobs[0], status: 'submission_unknown', progressPercent: undefined }] })
     expect(buildProductionRunView(value, now)).toMatchObject({
       tone: 'danger',
-      titleKey: 'production.status.submissionUnknown',
-      primaryAction: 'reconcile',
+      titleKey: 'generationCommon.production.status.submissionUnknown',
+      // 没有任务号：Nomi 没法核对，用户去服务商后台看完才有「我核对过了，重新生成」；并给出时间 / 模型 / 服务商供比对。
+      primaryAction: 'release-unknown',
       targetId: 'job-1',
+      unknownJob: { provider: value.jobs[0].provider, model: value.jobs[0].model, at: value.jobs[0].updatedAt },
     })
     expect(JSON.stringify(buildProductionRunView(value, now))).not.toContain('retry')
+    // 有任务号：仍走原来的对账（找到 / 没找到）。
+    const withTask = run({ jobs: [{ ...run().jobs[0], status: 'submission_unknown', providerTaskId: 'task-9', progressPercent: undefined }] })
+    expect(buildProductionRunView(withTask, now).primaryAction).toBe('reconcile')
   })
 
   it('explains stale provider state without inventing failure or ETA', () => {
@@ -246,12 +258,58 @@ describe('production run view', () => {
       jobs: [{ ...run().jobs[0], progressPercent: undefined, lastVendorStateChangeAt: '2026-08-08T08:00:00.000Z' }],
     })
     const view = buildProductionRunView(value, now, { staleAfterMs: 60_000 })
+    // 2026-09-25 用户截图：状态签「等待确认」+ 标题「供应商长时间没有返回新状态」互相打架。
+    // 供应商慢时 Nomi 仍在查询、用户不用做任何事 → 进行中，不是「等你」。
     expect(view).toMatchObject({
-      tone: 'attention',
-      titleKey: 'production.status.providerStale',
+      group: 'running',
+      tone: 'working',
+      titleKey: 'generationCommon.production.status.providerStale',
       primaryAction: 'open-stage',
     })
     expect(view.percent).toBeUndefined()
+  })
+
+  it('每一个分支的分组与色调都是允许的搭配（状态签 = 分组名，颜色不许说另一件事）', () => {
+    const statuses: ProductionRunStatus[] = ['draft', 'awaiting_direction', 'awaiting_script_review', 'awaiting_storyboard_review',
+      'awaiting_contract', 'ready', 'running', 'pausing', 'paused', 'needs_attention', 'awaiting_rough_cut_review',
+      'awaiting_export', 'exporting', 'completed', 'cancelled']
+    const job = run().jobs[0]
+    const variants: ProductionRun[] = [
+      ...statuses.map((status) => run({ status })),
+      run({ jobs: [{ ...job, status: 'submission_unknown' }] }),
+      run({ jobs: [{ ...job, lastVendorStateChangeAt: '2026-08-08T07:00:00.000Z' }] }),
+      run({ jobs: [{ ...job, status: 'needs_attention' }] }),
+      run({ status: 'draft', stages: [], gates: [], jobs: [] }),
+      run({ gates: [{ gateId: 'gate-direction-1', scope: 'stage', status: 'waiting', title: 'Direction', summary: '', jobIds: [], createdAt: '2026-08-08T08:00:00.000Z' }] as never }),
+    ]
+    for (const value of variants) {
+      const view = buildProductionRunView(value, now)
+      expect(view.group, `${value.status} → ${view.titleKey}`).not.toBe('queued')
+      expect(VIEW_TONES_BY_GROUP[view.group as Exclude<TaskCenterGroup, 'queued'>], `${value.status} → ${view.titleKey}`).toContain(view.tone)
+    }
+    for (const status of statuses) expect(productionRunStatusGroup(status)).not.toBe('queued')
+  })
+
+  it('已取消的 Run 不再报「Nomi 正在继续制作」', () => {
+    expect(buildProductionRunView(run({ status: 'cancelled' }), now)).toMatchObject({
+      group: 'done', titleKey: 'generationCommon.production.status.cancelled', primaryAction: null,
+    })
+  })
+
+  it('流程身份不上屏：卡上的流程名是翻译键，不是 playbook.name', () => {
+    expect(buildProductionRunView(run({ playbook: { name: 'generation.single-shot', version: '1.0.0' } }), now).playbookLabelKey)
+      .toBe('generationCommon.production.playbook.shotGeneration')
+    expect(buildProductionRunView(run({ playbook: { name: 'someone.else', version: '1.0.0' } }), now).playbookLabelKey)
+      .toBe('generationCommon.production.playbook.unknown')
+  })
+
+  it('Agent 没出价的草稿、丢掉的计划不是任务；摆出报价卡 / 已封存 / 已提交 / 老 Run 才是', () => {
+    expect(isProductionRunTask({ generationPlan: { state: 'draft', cardHidden: true } })).toBe(false)
+    expect(isProductionRunTask({ generationPlan: { state: 'cancelled' } })).toBe(false)
+    expect(isProductionRunTask({ generationPlan: { state: 'draft' } })).toBe(true)
+    expect(isProductionRunTask({ generationPlan: { state: 'sealed' } })).toBe(true)
+    expect(isProductionRunTask({ generationPlan: { state: 'submitted', cardHidden: true } })).toBe(true)
+    expect(isProductionRunTask({})).toBe(true)
   })
 
   it('selects only the latest safe artifact preview', () => {

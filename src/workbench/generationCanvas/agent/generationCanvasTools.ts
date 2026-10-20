@@ -1,12 +1,8 @@
 import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
-import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import { collectNodeContext } from '../model/nodeContext'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { validateReferenceEdge, type EdgeSkipReason } from './referenceEdgeCapability'
-import {
-  sendGenerationNodeToTimeline,
-  type SendGenerationNodeToTimelineOptions,
-} from './sendGenerationNodeToTimeline'
+import { sendGenerationNodeToTimeline, type SendGenerationNodeToTimelineOptions } from './sendGenerationNodeToTimeline'
 
 export type CreateGenerationNodeToolInput = {
   kind: GenerationNodeKind
@@ -31,11 +27,10 @@ export type GenerationCanvasToolResult<T = unknown> = {
 }
 
 export type GenerationCanvasToolAction =
-  | { tool: 'read_canvas' }
   | { tool: 'read_selected_nodes' }
   | { tool: 'read_node_context'; nodeId: string }
   | { tool: 'create_nodes'; nodes: CreateGenerationNodeToolInput[] }
-  | { tool: 'connect_nodes'; edges: Array<Pick<GenerationCanvasEdge, 'source' | 'target' | 'mode'>> }
+  | { tool: 'connect_nodes'; edges: Array<Pick<GenerationCanvasEdge, 'source' | 'target' | 'mode' | 'order'>> }
   | { tool: 'delete_nodes'; nodeIds: string[] }
   | { tool: 'update_node_prompt'; nodeId: string; prompt: string }
   | { tool: 'set_node_references'; nodeId: string; references: string[] }
@@ -57,10 +52,12 @@ function findNode(nodeId: string): GenerationCanvasNode | null {
   return useGenerationCanvasStore.getState().nodes.find((node) => node.id === id) || null
 }
 
+/** Renderer-owned document snapshot primitive for local planning and write RMW. */
+export function readGenerationCanvasSnapshot() {
+  return useGenerationCanvasStore.getState().readSnapshot()
+}
+
 export const generationCanvasTools = {
-  read_canvas() {
-    return useGenerationCanvasStore.getState().readSnapshot()
-  },
   read_selected_nodes(): GenerationCanvasNode[] {
     const state = useGenerationCanvasStore.getState()
     const selected = new Set(state.selectedNodeIds)
@@ -77,7 +74,7 @@ export const generationCanvasTools = {
       return created
     })
   },
-  connect_nodes(edges: Array<Pick<GenerationCanvasEdge, 'source' | 'target' | 'mode'>>) {
+  connect_nodes(edges: Array<Pick<GenerationCanvasEdge, 'source' | 'target' | 'mode' | 'order'>>) {
     // 两道校验,放不行的边都带 reason 进 skipped——applyCanvasToolCall 原样回报给 LLM,它据此纠正:
     //   1. 端点必须真实存在(reason:'dangling')——吊边一旦入 store 会被持久化且永不渲染(连线静默丢失)。
     //   2. 目标模型必须支持这条参考(reason:'source_not_referenceable'/'unsupported_reference',T8)——
@@ -100,14 +97,16 @@ export const generationCanvasTools = {
       }
       // T1 轨迹语义:mode(first_frame/character_ref/…)随边落 store,
       // 生成期 generationReferenceResolver 按它分流参考槽。
-      useGenerationCanvasStore.getState().connectNodes(edge.source, edge.target, edge.mode)
+      useGenerationCanvasStore.getState().connectNodes(edge.source, edge.target, edge.mode, undefined, edge.order)
       connected += 1
     }
     return { connected, skipped, edges: useGenerationCanvasStore.getState().edges }
   },
   delete_nodes(nodeIds: string[]): string[] {
     const existing = new Set(useGenerationCanvasStore.getState().nodes.map((node) => node.id))
-    const deleted = Array.from(new Set(nodeIds.map((id) => String(id || '').trim()).filter((id) => id && existing.has(id))))
+    const deleted = Array.from(
+      new Set(nodeIds.map((id) => String(id || '').trim()).filter((id) => id && existing.has(id))),
+    )
     deleted.forEach((id) => useGenerationCanvasStore.getState().deleteNode(id))
     return deleted
   },
@@ -130,10 +129,6 @@ export const generationCanvasTools = {
     return sendGenerationNodeToTimeline(nodeId, options)
   },
   async execute(action: GenerationCanvasToolAction): Promise<GenerationCanvasToolResult> {
-    if (action.tool === 'read_canvas') {
-      const snapshot = generationCanvasTools.read_canvas()
-      return toolResult({ ok: true, tool: action.tool, message: `读取画布：${snapshot.nodes.length} 个节点`, data: snapshot })
-    }
     if (action.tool === 'read_selected_nodes') {
       const nodes = generationCanvasTools.read_selected_nodes()
       return toolResult({ ok: true, tool: action.tool, message: `读取选中节点：${nodes.length} 个`, data: nodes })
@@ -154,7 +149,12 @@ export const generationCanvasTools = {
     }
     if (action.tool === 'connect_nodes') {
       const result = generationCanvasTools.connect_nodes(action.edges)
-      return toolResult({ ok: true, tool: action.tool, message: `连接节点：${result.connected} 条`, data: result.edges })
+      return toolResult({
+        ok: true,
+        tool: action.tool,
+        message: `连接节点：${result.connected} 条`,
+        data: result.edges,
+      })
     }
     if (action.tool === 'delete_nodes') {
       const deleted = generationCanvasTools.delete_nodes(action.nodeIds)

@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { useThree } from '@react-three/fiber'
 import type { Scene3DTrajectoryBinding } from '../scene3dTypes'

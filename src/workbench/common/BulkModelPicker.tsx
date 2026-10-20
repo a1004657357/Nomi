@@ -13,13 +13,16 @@
 //
 // 为什么不做成第二个并排下拉：画布框选工具条实测已 713px、上限 760px，每个执行组再加一个 select
 // 会把主钮「生成选中 N 个」挤出视野（样张实测，R8）。
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ModelOption } from '../../config/models'
 import { NomiSelect } from '../../design'
 import { dedupeModelOptions } from '../../config/modelIdentity'
 import { isModelRecentlyAiling } from '../generationCanvas/runner/modelHealthMemory'
-import { buildVendorExplicitModelOptions, resolveProviderByAddress } from './useDedupedModelSelect'
+import { buildVendorExplicitModelOptions, modelBoxHiddenNote, resolveProviderByAddress, openModelCatalog, CONNECT_VENDOR_OPTION_VALUE } from './useDedupedModelSelect'
+import { useVendorPreferenceOrder } from './useVendorPreference'
+import { useModelBoxPreference } from './useModelBoxPreference'
+import { partitionByModelBoxPreference } from '../../config/modelBoxPreference'
 
 import i18n from '../../i18n'
 
@@ -61,10 +64,17 @@ export default function BulkModelPicker({
 }: BulkModelPickerProps): JSX.Element | null {
   const { t } = useTranslation()
   const deduped = React.useMemo(() => dedupeModelOptions([...modelOptions]), [modelOptions])
+  const orderedVendorKeys = useVendorPreferenceOrder()
+  const preference = useModelBoxPreference()
   const vendorRows = React.useMemo(
-    () => buildVendorExplicitModelOptions(deduped, isModelRecentlyAiling),
+    () => buildVendorExplicitModelOptions(deduped, isModelRecentlyAiling, orderedVendorKeys, preference),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language：切语言要重算 trailing 文案
-    [deduped, i18n.language],
+    [deduped, i18n.language, orderedVendorKeys, preference],
+  )
+  const hiddenNote = React.useMemo(
+    () => modelBoxHiddenNote(partitionByModelBoxPreference(deduped, preference).hidden.length),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language：切语言要重算脚注文案
+    [deduped, preference, i18n.language],
   )
 
   const handleChange = React.useCallback(
@@ -74,8 +84,11 @@ export default function BulkModelPicker({
         onPickLeadingOption?.(fixed.value)
         return
       }
+      // 一家都没接入时下拉里只有「还没接入供应商」那一行——点它是去接入，不是选模型。
+      if (picked === CONNECT_VENDOR_OPTION_VALUE) { openModelCatalog(); return }
       const provider = resolveProviderByAddress(deduped, picked)
-      if (provider) onPick(provider.option.value, provider.vendor)
+      if (!provider) return
+      onPick(provider.option.value, provider.vendor)
     },
     [deduped, leadingOptions, onPick, onPickLeadingOption],
   )
@@ -92,6 +105,7 @@ export default function BulkModelPicker({
       onChange={handleChange}
       size={size}
       triggerMaxWidth={triggerMaxWidth}
+      hiddenNote={hiddenNote}
     />
   )
 }

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ModelOption } from '../../../config/models'
 import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { applyImageBatchSettingsToNode, applyVideoBatchSettingsToNode, createImageBatchDraftMeta, createVideoBatchDraftMeta } from './batchImageSettings'
+import { resolveGenerationReferences } from './generationReferenceResolver'
+import { buildCatalogTaskRequest } from './catalogTaskActions'
 
 const codexOption: ModelOption = {
   value: 'codex-img2',
@@ -87,9 +89,14 @@ describe('batchImageSettings', () => {
     expect(meta.archetype).toMatchObject({ id: 'gpt-image-2', modeId: 'i2i' })
   })
 
-  it('builds video draft params and switches first-frame video nodes to image-to-video mode', () => {
-    const source = imageNode('source')
+  it('builds video draft params and promotes incoming images to the canonical reference workflow', () => {
+    const sources = ['first', 'last'].map((id) => ({
+      ...imageNode(id),
+      result: { id: `${id}-result`, type: 'image' as const, url: `https://cdn.example/${id}.png`, createdAt: 1 },
+    }))
     const target = videoNode('target', { archetype: { id: 'agnes-video', modeId: 't2v' } })
+    // Canonical reference-workflow ranking now selects keyframes (min 2), not the single-frame i2v mode.
+    const edges = sources.map((source, order) => ({ ...edge(source.id, target.id), order }))
     const draft = createVideoBatchDraftMeta({
       option: agnesVideoOption,
       value: 'agnes-video-v2.0',
@@ -107,8 +114,8 @@ describe('batchImageSettings', () => {
 
     const meta = applyVideoBatchSettingsToNode({
       node: target,
-      nodes: [source, target],
-      edges: [{ ...edge('source', 'target'), mode: 'first_frame' }],
+      nodes: [...sources, target],
+      edges,
       modelOption: agnesVideoOption,
       currentModelOption: null,
       draftMeta: draft.meta,
@@ -116,6 +123,32 @@ describe('batchImageSettings', () => {
 
     expect(meta.modelKey).toBe('agnes-video-v2.0')
     expect(meta.videoModel).toBe('agnes-video-v2.0')
+    expect(meta.archetype).toMatchObject({ id: 'agnes-video', modeId: 'keyframes' })
+    const configured = { ...target, meta }
+    const references = resolveGenerationReferences(configured, { nodes: [...sources, configured], edges })
+    const { request } = buildCatalogTaskRequest(configured, { references })
+    expect(request.kind).toBe('image_to_video')
+    expect(request.extras?.archetypeInput).toMatchObject({ keyframe_images: sources.map((source) => source.result.url) })
+  })
+
+  it('preserves an explicit single-frame i2v mode and sends its image as a scalar', () => {
+    const source = {
+      ...imageNode('source'),
+      result: { id: 'source-result', type: 'image' as const, url: 'https://cdn.example/first.png', createdAt: 1 },
+    }
+    const target = videoNode('target', { archetype: { id: 'agnes-video', modeId: 'i2v' } })
+    const edges: GenerationCanvasEdge[] = [{ ...edge(source.id, target.id), mode: 'first_frame' }]
+    const draft = createVideoBatchDraftMeta({ option: agnesVideoOption, value: agnesVideoOption.value })
+    const meta = applyVideoBatchSettingsToNode({
+      node: target, nodes: [source, target], edges, modelOption: agnesVideoOption, currentModelOption: agnesVideoOption,
+      draftMeta: draft.meta,
+    })
     expect(meta.archetype).toMatchObject({ id: 'agnes-video', modeId: 'i2v' })
+    const configured = { ...target, meta }
+    const references = resolveGenerationReferences(configured, { nodes: [source, configured], edges })
+    const { request } = buildCatalogTaskRequest(configured, { references })
+    expect(request.kind).toBe('image_to_video')
+    expect(request.extras?.archetypeInput).toMatchObject({ image: source.result.url })
+    expect(request.extras?.archetypeInput).not.toHaveProperty('keyframe_images')
   })
 })

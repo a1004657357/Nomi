@@ -1,13 +1,15 @@
 import type { AgentsChatResponseDto } from '../../../../api/desktopClient'
-import { runWorkbenchAgent, type ToolCallEvent } from '../../../ai/workbenchAgentRunner'
+import type { ToolCallEvent } from '../../../ai/workbenchAgentRunner'
+import { sendWorkbenchAiMessage } from '../../../ai/workbenchAiClient'
 import { getAssistantModelPref } from '../../../ai/assistantModelPref'
-import { getActiveWorkbenchProjectId } from '../../../project/workbenchProjectSession'
+import type { ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
 import {
   formatVibingDirectorContext,
   type VibingDirectorState,
 } from './vibingDirectorState'
 
 export type SendVibingDirectorAgentMessageInput = {
+  project: ProjectExecutionContext
   directorNodeId: string
   state: VibingDirectorState
   message: string
@@ -29,12 +31,7 @@ function structuredProtocolPrefKey(): string | null {
 
 /** Remember only a provider/model compatibility fact, never conversation data. */
 export function preferredVibingDirectorAgentProtocol(): 'tools' | 'structured-text' {
-  try {
-    const key = structuredProtocolPrefKey()
-    return key && localStorage.getItem(key) === 'structured-text' ? 'structured-text' : 'tools'
-  } catch {
-    return 'tools'
-  }
+  return 'structured-text'
 }
 
 export function rememberVibingDirectorStructuredProtocol(): void {
@@ -46,8 +43,9 @@ export function rememberVibingDirectorStructuredProtocol(): void {
   }
 }
 
-export function vibingDirectorSessionKey(directorNodeId: string): string {
-  const projectId = getActiveWorkbenchProjectId() || 'local'
+export function vibingDirectorSessionKey(directorNodeId: string, project: ProjectExecutionContext): string {
+  project.assertCurrent()
+  const projectId = project.binding.projectId
   return `nomi:workbench:${projectId}:director:${directorNodeId}`
 }
 
@@ -92,18 +90,32 @@ function buildDirectorPrompt(input: SendVibingDirectorAgentMessageInput): string
 export async function sendVibingDirectorAgentMessage(
   input: SendVibingDirectorAgentMessageInput,
 ): Promise<VibingDirectorAgentResponse> {
-  const protocol = input.protocol ?? 'tools'
-  const response = await runWorkbenchAgent({
+  const { project } = input
+  project.assertCurrent()
+  const protocol = 'structured-text' as const
+  let disposeCancellation = () => {}
+  try {
+  const response = await sendWorkbenchAiMessage({
     prompt: buildDirectorPrompt(input),
     systemPrompt: buildDirectorSystemPrompt(protocol),
     displayPrompt: input.message,
-    sessionKey: vibingDirectorSessionKey(input.directorNodeId),
+    sessionKey: vibingDirectorSessionKey(input.directorNodeId, project),
     skillKey: 'workbench.vibing-director',
     skillName: 'VIBING Director',
-    ...(protocol === 'structured-text' ? { disableTools: true } : {}),
-    onContent: input.onContent,
-    onToolCall: input.onToolCall,
-    onCancelReady: input.onCancelReady,
+    projectId: project.binding.projectId,
+    disableTools: true,
+  }, {
+    onContent: (delta, text) => { project.assertCurrent(); input.onContent?.(delta, text) },
+    onCancelReady: cancel => {
+      if (project.signal.aborted) { cancel(); return }
+      project.signal.addEventListener('abort', cancel, { once: true })
+      disposeCancellation = () => project.signal.removeEventListener('abort', cancel)
+      input.onCancelReady?.(cancel)
+    },
   })
+  project.assertCurrent()
   return { response }
+  } finally {
+    disposeCancellation()
+  }
 }

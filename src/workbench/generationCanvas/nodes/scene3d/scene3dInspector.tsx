@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // Scene3D 检视面板：左侧场景节点列表 + 右侧属性/姿势编辑。
 // 从 Scene3DFullscreen.tsx 抽出，纯展示组件；计算依赖 scene3dMath.ts，常量依赖 scene3dConstants.ts。
 import React from 'react'

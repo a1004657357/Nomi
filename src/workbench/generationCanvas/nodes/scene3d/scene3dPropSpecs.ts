@@ -270,4 +270,3 @@ export function buildPlacedProps(props: ScenePropPlacement[] | undefined): Scene
     return object
   })
 }
-

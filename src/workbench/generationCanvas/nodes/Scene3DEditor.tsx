@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconBrandBlender, IconCube, IconMaximize, IconMovie, IconPlayerStopFilled } from '@tabler/icons-react'
@@ -7,7 +8,8 @@ import { getDesktopBridge } from '../../../desktop/bridge'
 import { EmptyStateLauncher } from './render/CardCommon'
 import { NomiLoadingMark } from '../../../design'
 import { toast } from '../../../ui/toast'
-import { getActiveWorkbenchProjectId, persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import { isProjectExecutionContextCurrent, withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import { useWorkbenchStore } from '../../workbenchStore'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
@@ -28,7 +30,6 @@ import type { Scene3DCaptureResult, Scene3DState } from './scene3d/scene3dTypes'
 import {
   blenderOutputCategoryId,
   buildBlenderOutputNodeSpecs,
-  shouldApplyBlenderResult,
   type BlenderSceneRenderResult,
 } from './scene3d/scene3dBlenderResult'
 
@@ -274,8 +275,11 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
   }, [addNode, height, node.categoryId, node.id, node.position.x, node.position.y, t, updateNode])
 
   const handleScreenshot = React.useCallback(async (capture: Scene3DCaptureResult) => {
+    const project = withProjectAction(project => project)
+    if (!project) return
     try {
-      const persisted = await persistScene3DScreenshot(capture.dataUrl, node.id, capture.title)
+      const persisted = await persistScene3DScreenshot(capture.dataUrl, node.id, capture.title, project)
+      project.assertCurrent()
       const createdAt = Date.now()
       const screenshotNode = addNode({
         kind: 'image',
@@ -343,19 +347,13 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
   }, [addNode, connectNodes, node.id, node.meta, node.position.x, node.position.y, referenceTarget, t, updateNode, width])
 
   const applyBlenderOutput = React.useCallback(async (
-    projectId: string,
+    project: ProjectExecutionContext,
     result: BlenderSceneRenderResult,
     source: BlenderOutputSource,
   ) => {
+    project.assertCurrent()
     const store = useGenerationCanvasStore.getState()
-    if (!shouldApplyBlenderResult(
-      projectId,
-      getActiveWorkbenchProjectId(),
-      store.nodes.some((candidate) => candidate.id === node.id),
-    )) {
-      toast('Blender 已完成，但项目已切换；产物仅保存在原项目素材中', 'info')
-      return
-    }
+    if (!store.nodes.some((candidate) => candidate.id === node.id)) return
     const priorOutputCount = store.nodes.filter((candidate) => (
       candidate.meta?.sourceNodeId === node.id && candidate.meta?.source === source
     )).length
@@ -408,14 +406,16 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
       },
     })
     await persistActiveWorkbenchProjectNow()
+    project.assertCurrent()
     requestCanvasFit()
     toast(source === 'blender-director' ? 'Blender 导演预演已回传画布' : 'Blender 场景已回传画布', 'success')
   }, [addNode, connectNodes, node.categoryId, node.id, node.meta, node.position, requestCanvasFit, updateNode, width])
 
-  const runBlenderJob = React.useCallback(async (
+  const runBlenderJob = React.useCallback((
     source: BlenderOutputSource,
-    execute: (projectId: string, jobId: string) => Promise<BlenderSceneRenderResult>,
-  ) => {
+    execute: (project: ProjectExecutionContext, jobId: string) => Promise<BlenderSceneRenderResult>,
+  ) => withProjectAction(async project => {
+    project.assertCurrent()
     const desktop = getDesktopBridge()
     if (!desktop?.scene3d) {
       toast('当前运行环境不支持 Blender 后台渲染', 'error')
@@ -424,11 +424,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     const activeJobId = blenderJobIdRef.current
     if (activeJobId) {
       await desktop.scene3d.cancelBlender(activeJobId).catch(() => ({ cancelled: false }))
-      return
-    }
-    const projectId = getActiveWorkbenchProjectId()
-    if (!projectId) {
-      toast('请先打开一个本地项目', 'error')
+      project.assertCurrent()
       return
     }
 
@@ -436,15 +432,19 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     blenderJobIdRef.current = jobId
     setBlenderJobId(jobId)
     try {
-      await applyBlenderOutput(projectId, await execute(projectId, jobId), source)
+      const result = await execute(project, jobId)
+      project.assertCurrent()
+      await applyBlenderOutput(project, result, source)
+      project.assertCurrent()
     } catch (error) {
+      if (!isProjectExecutionContextCurrent(project)) return
       const message = error instanceof Error ? error.message : String(error)
       toast(message.includes('已取消') ? 'Blender 渲染已取消' : message, message.includes('已取消') ? 'info' : 'error')
     } finally {
       if (blenderJobIdRef.current === jobId) blenderJobIdRef.current = null
-      setBlenderJobId(null)
+      if (isProjectExecutionContextCurrent(project)) setBlenderJobId(null)
     }
-  }, [applyBlenderOutput])
+  }, () => { toast('请先打开一个本地项目', 'error') }), [applyBlenderOutput])
 
   const handleBlenderRender = React.useCallback(() => {
     const desktop = getDesktopBridge()
@@ -452,12 +452,17 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
       toast('当前运行环境不支持 Blender 后台渲染', 'error')
       return
     }
-    return runBlenderJob('blender', (projectId, jobId) => desktop.scene3d.renderWithBlender({
+    return runBlenderJob('blender', (project, jobId) => {
+      project.assertCurrent()
+      const payload = {
       jobId,
-      projectId,
+      projectId: project.binding.projectId,
+      projectBinding: project.binding,
       ownerNodeId: node.id,
       scene: persistableScene3DState(sceneState),
-    }))
+      }
+      return desktop.scene3d.renderWithBlender(payload)
+    })
   }, [node.id, runBlenderJob, sceneState])
 
   const handleBlenderDirectorRender = React.useCallback(() => {
@@ -466,14 +471,19 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
       toast('当前运行环境尚未安装 Blender 导演预演', 'error')
       return
     }
-    return runBlenderJob('blender-director', (projectId, jobId) => desktop.scene3d.renderDirectorWithBlender({
+    return runBlenderJob('blender-director', (project, jobId) => {
+      project.assertCurrent()
+      const payload = {
       jobId,
-      projectId,
+      projectId: project.binding.projectId,
+      projectBinding: project.binding,
       ownerNodeId: node.id,
       title: node.title || '3D 导演台',
       stagePreset: directorStagePreset(sceneState),
       scene: persistableScene3DState(sceneState),
-    }))
+      }
+      return desktop.scene3d.renderDirectorWithBlender(payload)
+    })
   }, [node.id, node.title, runBlenderJob, sceneState])
 
   const takeCaptureStatus = readTakeCaptureStatus(node)

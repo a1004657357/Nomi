@@ -1,12 +1,13 @@
+import type { ToastType } from '../../toast'
 // 网页提示词提取 runner（素材面收敛 2026-07-22）：产物只此一家=主提示词库「我的库」。
 // 此前提取在素材盒弹层内跑、结果存 localStorage 私账卡（正牌提示词库找不到、顶栏浮窗恒空）；
-// 收敛后提取由浏览器侧直接驱动：toast 反馈进度，成品 addUserPrompt 入主库（带参考图+模式标签）。
+// 提取由浏览器侧直接驱动：请求宿主原地反馈进度，成品 addUserPrompt 入主库（带参考图+模式标签）。
 import i18n from '../../../i18n'
-import { getDesktopActiveProjectId } from '../../../desktop/activeProject'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { addUserPrompt, getTextBrain } from '../../../workbench/api/promptLibraryApi'
 import { runWorkbenchTaskByVendor } from '../../../workbench/api/taskApi'
-import { toast } from '../../toast'
+import { isProjectExecutionContextCurrent, type ProjectExecutionContext } from '../../../workbench/project/projectCanvasReadSurface'
+import { notify } from '../../notificationPolicy'
 import type {
   BrowserAssetPromptCaptureRequest,
   BrowserAssetPromptReference,
@@ -18,8 +19,9 @@ import {
   referenceResultDataUrl,
   referenceResultUrl,
 } from '../popover/browserAssetPopoverUtils'
+import { logRendererError } from '../../../desktop/rendererLog'
 import {
-  BROWSER_PROMPT_EXTRACTION_MODE_LABELS,
+  BROWSER_PROMPT_EXTRACTION_MODE_LABEL_KEYS,
   extractTextFromTaskResult,
   parseBrowserPromptExtraction,
   type BrowserPromptExtractionMode,
@@ -30,12 +32,11 @@ import {
   normalizeBrowserPromptExtractionTemplateSettings,
 } from './browserPromptExtractionSettings'
 
-async function loadExtractionSettings(): Promise<BrowserPromptExtractionTemplateSettings> {
+async function loadExtractionSettings(projectId: string | null): Promise<BrowserPromptExtractionTemplateSettings> {
   const browserBridge = getDesktopBridge()?.browser
-  const projectId = getDesktopActiveProjectId()
   if (!projectId || !browserBridge?.readPromptExtractionSettings) return createDefaultBrowserPromptExtractionTemplateSettings()
   try {
-    const result = await browserBridge.readPromptExtractionSettings({ projectId })
+    const result = await browserBridge.readPromptExtractionSettings()
     return normalizeBrowserPromptExtractionTemplateSettings(result?.settings)
   } catch {
     return createDefaultBrowserPromptExtractionTemplateSettings()
@@ -48,12 +49,10 @@ async function preparePromptReference(
   initialReferences: readonly BrowserAssetPromptReference[],
 ): Promise<{ references: BrowserAssetPromptReference[]; modelImageUrl: string }> {
   const browserBridge = getDesktopBridge()?.browser
-  const projectId = getDesktopActiveProjectId()
   const sourceUrl = request.sourceUrl?.trim() || initialReferences[0]?.sourceUrl || initialReferences[0]?.url || ''
   if (request.sourceType === 'screenshot' && request.viewId && browserBridge?.capturePromptScreenshot) {
     const captured = await browserBridge.capturePromptScreenshot({
       viewId: request.viewId,
-      ...(projectId ? { projectId } : {}),
       fileName: request.fileName,
       title: request.title,
       sourceRect: request.sourceRect,
@@ -68,7 +67,6 @@ async function preparePromptReference(
   if (request.viewId && /^(https?:\/\/|blob:)/i.test(sourceUrl) && browserBridge?.capturePromptImage) {
     const captured = await browserBridge.capturePromptImage({
       viewId: request.viewId,
-      ...(projectId ? { projectId } : {}),
       url: sourceUrl,
       fileName: request.fileName,
       title: request.title,
@@ -87,10 +85,11 @@ async function runPromptExtraction(
   modelImageUrl: string,
   mode: BrowserPromptExtractionMode,
   settings: BrowserPromptExtractionTemplateSettings,
+  projectId: string | null,
 ): Promise<{ title: string; prompt: string }> {
-  if (!modelImageUrl) throw new Error('没有可分析的参考图')
+  if (!modelImageUrl) throw new Error(i18n.t('browserAssets.promptReferenceMissing'))
   const brain = await getTextBrain()
-  if (!brain) throw new Error('请先在「设置 → 模型」里启用一个支持图片输入的文本模型')
+  if (!brain) throw new Error(i18n.t('browserAssets.promptVisionModelMissing'))
   const result = await runWorkbenchTaskByVendor(brain.vendor, {
     kind: 'image_to_prompt',
     prompt: browserPromptExtractionPromptFromSettings(settings, mode),
@@ -100,11 +99,11 @@ async function runPromptExtraction(
       temperature: mode === 'style' ? 0.2 : 0.35,
       maxTokens: mode === 'style' ? 1800 : 1600,
     },
-  })
+  }, projectId)
   const text = extractTextFromTaskResult(result)
-  if (!text) throw new Error('模型没有返回提示词')
+  if (!text) throw new Error(i18n.t('browserAssets.promptModelEmpty'))
   const parsed = parseBrowserPromptExtraction(text, mode)
-  if (!parsed.prompt) throw new Error('模型没有返回可用提示词')
+  if (!parsed.prompt) throw new Error(i18n.t('browserAssets.promptModelInvalid'))
   return parsed
 }
 
@@ -116,42 +115,41 @@ function fallbackTitle(request: BrowserAssetPromptCaptureRequest, extractedTitle
   return request.sourceType === 'screenshot' ? i18n.t('browserAssets.screenshotPromptTitle') : i18n.t('browserAssets.extraction.imagePrompt')
 }
 
-/** 就地反馈事件：浏览器页是原生 WebContentsView，恒盖主窗 DOM——全局 toast 用户根本看不见
- * （2026-08-07 飞书反馈「点击提取画面复刻提示词 然后就不知道生成哪里去了」根因）。
- * 素材盒（DOM 浮层）监听这个事件做就地反馈条。 */
-export const PROMPT_EXTRACTION_FEEDBACK_EVENT = 'nomi:prompt-extraction-feedback'
-
-function dispatchExtractionFeedback(detail: { ok: boolean; title?: string; error?: string }): void {
-  try {
-    window.dispatchEvent(new CustomEvent(PROMPT_EXTRACTION_FEEDBACK_EVENT, { detail }))
-  } catch {
-    /* 非浏览器环境（测试）静默放行 */
-  }
-}
-
-/** 浏览器截图/图片右键 → 提取提示词 → 直存主提示词库。fire-and-forget，进度/结果全走 toast。 */
-export async function runBrowserPromptExtractionToLibrary(request: BrowserAssetPromptCaptureRequest): Promise<void> {
+/**
+ * 提取结果由请求宿主原地承接；纯 runner 不另开素材盒或全局提示。
+ * `project` 是用户发起提取那一刻签发的项目（没打开项目 = null）：模板设置、参考截图都按它读写；
+ * 中途换了项目就取消，不把一半的结果写回。
+ */
+export async function runBrowserPromptExtractionToLibrary(
+  request: BrowserAssetPromptCaptureRequest,
+  present: (message: string) => void,
+  project: ProjectExecutionContext | null,
+): Promise<void> {
+  const projectId = project?.binding.projectId ?? null
+  const stillCurrent = () => !project || isProjectExecutionContextCurrent(project)
   const mode = promptExtractionModeFromRequest(request)
-  toast(i18n.t('browserAssets.extractingPrompt', { mode: BROWSER_PROMPT_EXTRACTION_MODE_LABELS[mode] }))
+  const report = (message: string, type: ToastType) => notify({ identity: `browser-prompt:${request.requestId}`, reason: 'extraction', level: 'inline', message, type, present })
+  report(i18n.t('browserAssets.extractingPrompt', { mode: i18n.t(BROWSER_PROMPT_EXTRACTION_MODE_LABEL_KEYS[mode]) }), 'info')
   try {
-    const settings = await loadExtractionSettings()
+    const settings = await loadExtractionSettings(projectId)
+    if (!stillCurrent()) return
     const initialReferences = promptReferenceImagesFromRequest(request)
     const prepared = await preparePromptReference(request, initialReferences)
-    const extracted = await runPromptExtraction(prepared.modelImageUrl, mode, settings)
+    if (!stillCurrent()) return
+    const extracted = await runPromptExtraction(prepared.modelImageUrl, mode, settings, projectId)
+    if (!stillCurrent()) return
     const title = fallbackTitle(request, extracted.title)
     await addUserPrompt({
       title,
       prompt: extracted.prompt,
       promptType: 'image',
-      tags: ['网页提取', BROWSER_PROMPT_EXTRACTION_MODE_LABELS[mode]],
+      tags: [i18n.t('browserAssets.webExtraction'), i18n.t(BROWSER_PROMPT_EXTRACTION_MODE_LABEL_KEYS[mode])],
       referenceImages: prepared.references,
     })
-    toast(i18n.t('browserAssets.savedToPromptLibraryNamed', { name: title }), 'success')
-    dispatchExtractionFeedback({ ok: true, title })
+    report(i18n.t('browserAssets.savedToPromptLibraryNamed', { name: title }), 'success')
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
-    console.error('[nomi:browser] 提示词提取失败:', reason)
-    toast(i18n.t('browserAssets.promptExtractionFailedToast', { error: reason }), 'error')
-    dispatchExtractionFeedback({ ok: false, error: reason })
+    logRendererError('browser-prompt-extraction-failed', error)
+    report(i18n.t('browserAssets.promptExtractionFailedToast', { error: reason }), 'error')
   }
 }

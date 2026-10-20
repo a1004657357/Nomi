@@ -1,49 +1,59 @@
 // R13 走查：从目标节点左输入端拖到两图编组，编组成员应成为目标参考，而不是反向连边。
 // 用法：node tests/ux/group-reference-direction.walk.mjs
 import { launchNomiApp } from './_launchApp.mjs'
-import { spawn } from 'node:child_process'
+import { createServer } from 'vite'
 import fs from 'node:fs'
-import http from 'node:http'
 import path from 'node:path'
 import { screenshotSettled } from './_assert.mjs'
+import { findConnectionStartPoint, findEdgeHitPoint } from './_canvasHit.mjs'
 const repoRoot = process.cwd()
-const port = 5287
-const baseUrl = `http://127.0.0.1:${port}`
 const tempRoot = path.join(repoRoot, '.tmp', 'nomi-group-reference-direction')
+const settingsDir = path.join(tempRoot, 'settings')
 const shotsDir = path.join(repoRoot, 'tests/ux/shots/group-reference-direction')
-for (const dir of [tempRoot, shotsDir]) {
+for (const dir of [tempRoot, settingsDir, shotsDir]) {
   fs.rmSync(dir, { recursive: true, force: true })
   fs.mkdirSync(dir, { recursive: true })
 }
+const catalogNow = '2026-08-29T00:00:00.000Z'
+fs.writeFileSync(path.join(settingsDir, 'model-catalog.json'), JSON.stringify({
+  version: 8,
+  vendors: [{
+    key: 'ux-local', name: 'UX Local', enabled: true, authType: 'none', providerKind: 'openai-compatible',
+    createdAt: catalogNow, updatedAt: catalogNow,
+  }],
+  models: [{
+    vendorKey: 'ux-local', modelKey: 'nano-banana', labelZh: 'Nano Banana', kind: 'image', enabled: true,
+    createdAt: catalogNow, updatedAt: catalogNow,
+    meta: {
+      archetypeId: 'nano-banana',
+      adapter: {
+        state: 'verified', activeRevision: 'ux-revision', publicationModes: ['text_to_image', 'image_edit'],
+        modes: [
+          { taskKind: 'text_to_image', state: 'verified' },
+          { taskKind: 'image_edit', state: 'verified' },
+        ],
+      },
+    },
+  }],
+  mappings: [],
+  apiKeysByVendor: {},
+}, null, 2))
 
 const failures = []
 const check = (name, ok, detail = '') => {
   console.log(`  ${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`)
   if (!ok) failures.push(`${name}${detail ? ` — ${detail}` : ''}`)
 }
-const waitForUrl = (url, timeoutMs = 60_000) => new Promise((resolve, reject) => {
-  const deadline = Date.now() + timeoutMs
-  const poll = () => {
-    const request = http.get(url, (response) => { response.destroy(); resolve(true) })
-    request.on('error', () => Date.now() > deadline ? reject(new Error('Vite 未就绪')) : setTimeout(poll, 300))
-    request.setTimeout(1200, () => request.destroy())
-  }
-  poll()
-})
-
-const vite = spawn('node', ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port)], {
-  cwd: repoRoot,
-  env: { ...process.env },
-  stdio: 'ignore',
-})
+const vite = await createServer({ root: repoRoot, server: { host: '127.0.0.1', port: 0 } })
 let app
 try {
-  await waitForUrl(baseUrl)
+  await vite.listen()
+  const baseUrl = `http://127.0.0.1:${vite.httpServer.address().port}`
   let win
   ;({ app, win } = await launchNomiApp({
     name: 'group-reference-direction',
     userDataDir: path.join(tempRoot, 'user-data'),
-    settingsDir: path.join(tempRoot, 'settings'),
+    settingsDir,
     projectsDir: path.join(tempRoot, 'projects'),
     env: {
       NOMI_DESKTOP_DEV: '1',
@@ -80,11 +90,11 @@ try {
   const catalogSeeded = await win.evaluate(async () => {
     const desktop = window.nomiDesktop
     if (!desktop?.modelCatalog) return { error: '模型目录 bridge 不存在' }
-    desktop.modelCatalog.upsertVendor({ key: 'ux-local', name: 'UX Local', enabled: true, authType: 'none' })
-    desktop.modelCatalog.upsertModel({
-      vendorKey: 'ux-local', modelKey: 'nano-banana', labelZh: 'Nano Banana', kind: 'image', enabled: true,
-      meta: { archetypeId: 'nano-banana' },
-    })
+    const model = desktop.modelCatalog.listModels({ vendorKey: 'ux-local' })
+      .find((candidate) => candidate.modelKey === 'nano-banana')
+    if (!model?.publishedModes?.includes('text_to_image') || !model.publishedModes.includes('image_edit')) {
+      return { error: `验证发布模式不完整：${JSON.stringify(model?.publishedModes || [])}` }
+    }
     const { notifyModelOptionsRefresh } = await import('/src/config/modelCatalogCache.ts')
     notifyModelOptionsRefresh('all')
     return { ok: true }
@@ -126,11 +136,11 @@ try {
   await win.waitForTimeout(900)
   await screenshotSettled(win, { path: path.join(shotsDir, '01-before.png') })
 
-  const handle = win.locator('[data-node-id="target"] [data-side="left"]').first()
-  const handleBox = await handle.boundingBox()
+  // 按人按的地方起线：目标卡左侧那颗常驻「+」圈（见 _canvasHit.mjs findConnectionStartPoint 的根因注释）。
+  const startPoint = await findConnectionStartPoint(win, { handleSelector: '.react-flow__node[data-id="target"] .generation-canvas-react-flow__handle--source[data-side="left"]' })
   const groupBox = await win.locator('[data-group-id="reference-group"]').first().boundingBox()
-  check('目标左输入端和编组框均可见', Boolean(handleBox && groupBox))
-  if (!handleBox || !groupBox) throw new Error('连接手势缺少可见端点')
+  check('目标左输入端和编组框均可见', Boolean(startPoint && groupBox), JSON.stringify(startPoint))
+  if (!startPoint || !groupBox) throw new Error('连接手势缺少可见端点')
   const dropPoint = await win.evaluate((box) => {
     for (let y = box.y + 12; y < box.y + box.height - 8; y += 8) {
       for (let x = box.x + 12; x < box.x + box.width - 8; x += 8) {
@@ -143,7 +153,7 @@ try {
   check('编组内存在不压节点的真实落点', Boolean(dropPoint))
   if (!dropPoint) throw new Error('没有可用编组落点')
 
-  await win.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2)
+  await win.mouse.move(startPoint.x, startPoint.y)
   await win.mouse.down()
   await win.mouse.move(dropPoint.x, dropPoint.y, { steps: 12 })
   await win.waitForTimeout(350)
@@ -177,27 +187,14 @@ try {
 
   const targetNode = win.locator('[data-node-id="target"]').first()
   const referenceImages = targetNode.locator('.generation-canvas-v2-node__ref-section img')
-  check('目标顶部真实显示两张参考缩略图', await referenceImages.count() === 2, String(await referenceImages.count()))
+  await referenceImages.nth(1).waitFor({ state: 'visible', timeout: 10_000 })
+  const referenceImageCount = await referenceImages.count()
+  check('目标顶部真实显示两张参考缩略图', referenceImageCount === 2, String(referenceImageCount))
   const activeMode = await targetNode.locator('[aria-label="生成方式"] [data-active="true"]').first().textContent().catch(() => '')
   check('界面模式同步显示“改图”', /改图/.test(activeMode || ''), activeMode || '')
   await screenshotSettled(win, { path: path.join(shotsDir, '03-after-connected.png') })
 
-  const clickableEdgePoint = await win.evaluate(() => {
-    const groupRect = document.querySelector('[data-group-id="reference-group"]')?.getBoundingClientRect()
-    const paths = Array.from(document.querySelectorAll('.generation-canvas-v2__edge-hit'))
-    if (!groupRect) return null
-    for (const path of paths) {
-      const total = path.getTotalLength()
-      for (let step = 1; step <= 99; step += 1) {
-        const point = path.getPointAtLength(total * step / 100)
-        const screen = point.matrixTransform(path.getScreenCTM())
-        const insideGroup = screen.x > groupRect.left && screen.x < groupRect.right && screen.y > groupRect.top && screen.y < groupRect.bottom
-        if (!insideGroup) continue
-        if (document.elementFromPoint(screen.x, screen.y) === path) return { x: screen.x, y: screen.y }
-      }
-    }
-    return null
-  })
+  const clickableEdgePoint = await findEdgeHitPoint(win, { withinSelector: '[data-group-id="reference-group"]' })
   check('编组内部的连线命中区不再被组框盖住', Boolean(clickableEdgePoint))
   if (!clickableEdgePoint) throw new Error('找不到编组内可点的连线')
 
@@ -243,14 +240,16 @@ try {
   })
   check('断开编组连接会撤掉全部展开边', disconnected.edgeCount === 0, JSON.stringify(disconnected))
   check('断开同时清掉编组声明，不会后续复活', disconnected.outputLinks == null, JSON.stringify(disconnected.outputLinks))
-  check('目标顶部参考图随断开实时清空', await referenceImages.count() === 0, String(await referenceImages.count()))
+  await referenceImages.first().waitFor({ state: 'detached', timeout: 10_000 })
+  const disconnectedReferenceImageCount = await referenceImages.count()
+  check('目标顶部参考图随断开实时清空', disconnectedReferenceImageCount === 0, String(disconnectedReferenceImageCount))
   await screenshotSettled(win, { path: path.join(shotsDir, '05-after-disconnected.png') })
 } catch (error) {
   failures.push(String(error))
   console.error(error)
 } finally {
   await app?.close().catch(() => {})
-  vite.kill('SIGTERM')
+  await vite.close()
 }
 
 console.log(failures.length ? `\n❌ ${failures.length} 条不达标:\n - ${failures.join('\n - ')}` : '\n✅ 编组参考方向走查全部达标')

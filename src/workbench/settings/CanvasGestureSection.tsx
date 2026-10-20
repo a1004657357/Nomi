@@ -6,7 +6,7 @@
  *
  * 芯片行的样式与选中态照抄同页 [[ScreenshotHotkeySection]]，不另发明一套控件（P4/设计一致性）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../utils/cn'
 import {
@@ -28,7 +28,6 @@ export function CanvasGestureSection(): JSX.Element {
   return (
     <div className="mt-5 border-t border-nomi-line pt-4">
       <div className="mb-1.5 text-body-sm text-nomi-ink">{t('settings.general.canvasGesture')}</div>
-      <div className="mb-3 text-caption leading-relaxed text-nomi-ink-40">{t('settings.general.canvasGestureHint')}</div>
 
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t('settings.general.canvasGesture')}>
         {OPTIONS.map((option) => (
@@ -41,7 +40,7 @@ export function CanvasGestureSection(): JSX.Element {
             onClick={() => setCanvasGestureScheme(option.id)}
             className={cn(
               'rounded-nomi-sm border px-2.5 py-1.5 text-caption cursor-pointer',
-              'transition-colors duration-[var(--nomi-transition-fast)]',
+              'transition-colors duration-nomi-fast ease-nomi-fast',
               option.id === scheme
                 ? 'border-nomi-accent bg-nomi-accent-soft text-nomi-accent'
                 : 'border-nomi-line bg-nomi-paper text-nomi-ink-60 hover:bg-nomi-ink-05',

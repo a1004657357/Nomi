@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { encodeMention, parsePromptSegments, hasMentions, projectPromptForDisplay, projectPromptForSend, removeMention } from './promptMentions'
+import { encodeMention, mentionUrlsInOrder, parsePromptSegments, hasMentions, projectPromptForDisplay, projectPromptForSend, removeMention } from './promptMentions'
 
 const A = 'nomi-local://asset/p/a.png'
 const B = 'https://pub/b.png'
@@ -23,6 +23,11 @@ describe('encode / parse round-trip', () => {
     expect(parsePromptSegments('阳光下的猫')).toEqual([{ type: 'text', value: '阳光下的猫' }])
     expect(hasMentions('阳光下的猫')).toBe(false)
     expect(hasMentions(`x ${encodeMention(A)}`)).toBe(true)
+  })
+
+  it('@ url 去重但保留首次出现顺序，供绑定边排序', () => {
+    const prompt = `${encodeMention(B)} ${encodeMention(A)} ${encodeMention(B)}`
+    expect(mentionUrlsInOrder(prompt)).toEqual([B, A])
   })
 })
 
@@ -54,6 +59,14 @@ describe('projectPromptForSend (R6 单源)', () => {
   it('非编辑态预览与最终发送使用同一 @imageN 口径，不泄露内部 URL 标记', () => {
     const prompt = `${encodeMention(B)} 看向 ${encodeMention(A)}`
     expect(projectPromptForDisplay(prompt, [A, B])).toBe('@image2 看向 @image1')
+  })
+
+  it('按媒体类型投影视频/音频引用', () => {
+    const prompt = `${encodeMention(A)} ${encodeMention(B)}`
+    expect(projectPromptForSend(prompt, [
+      { url: A, kind: 'image', index: 1 },
+      { url: B, kind: 'video', index: 1 },
+    ])).toBe('@image1 @video1')
   })
 })
 

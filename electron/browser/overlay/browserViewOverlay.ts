@@ -11,12 +11,21 @@ import type {
   BrowserAssetOverlayRecord,
   BrowserAssetOverlayRect,
 } from "../core/browserViewTypes";
+import { registerAppWindow } from "../../appWindowRegistry";
+import type { ProjectBinding } from "../../shared/projectBinding";
 
 const BROWSER_ASSET_OVERLAY_SHAPE_SLOP = 10;
 let browserAssetOverlayRendererUrlResolver: (() => string) | null = null;
 
 export function setBrowserAssetOverlayRendererUrlResolver(resolver?: () => string): void {
   browserAssetOverlayRendererUrlResolver = resolver ?? browserAssetOverlayRendererUrlResolver;
+}
+
+// 浮层窗没有自己的项目会话：它显示的项目只由主进程按父窗口已提交的项目面签发（main 注入，无则 null）。
+let browserAssetOverlayProjectResolver: (owner: BrowserWindow) => ProjectBinding | null = () => null;
+
+export function setBrowserAssetOverlayProjectResolver(resolver: (owner: BrowserWindow) => ProjectBinding | null): void {
+  browserAssetOverlayProjectResolver = resolver;
 }
 
 export function getOwnerWindowForSender(sender: WebContents): BrowserWindow {
@@ -101,7 +110,9 @@ export function sendBrowserAssetOverlayConfig(
   captureRequest: BrowserAssetOverlayCaptureRequest | null = null,
 ): void {
   if (record.window.isDestroyed()) return;
+  const owner = BrowserWindow.fromId(record.ownerWindowId);
   record.window.webContents.send("browser:asset-overlay:config", {
+    projectBinding: owner && !owner.isDestroyed() ? browserAssetOverlayProjectResolver(owner) : null,
     opened: record.window.isVisible(),
     viewId: record.viewId,
     bounds: record.hostBounds,
@@ -396,7 +407,11 @@ function ensureBrowserAssetOverlay(owner: BrowserWindow): BrowserAssetOverlayRec
     browserAssetOverlaysByWindow.delete(owner.id);
   });
   overlayWindow.webContents.on("did-finish-load", () => sendBrowserAssetOverlayConfig(record));
-  void overlayWindow.loadURL(overlayRendererUrl());
+  // 建窗即声明信任角色：这是我们自己建、加载我们自己渲染层、挂了 Nomi preload 的窗口，
+  // 素材盒界面就长在这里，它必须够得到素材列表/导入/删除三条通道（2026-09-08 根因修复）。
+  const entryUrl = overlayRendererUrl();
+  registerAppWindow(overlayWindow, "app-surface", entryUrl);
+  void overlayWindow.loadURL(entryUrl);
   return record;
 }
 

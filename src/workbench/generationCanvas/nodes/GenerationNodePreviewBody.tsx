@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
 import { cn } from '../../../utils/cn'
@@ -10,7 +11,6 @@ import type { PanoramaScreenshot } from './PanoramaViewer'
 import {
   PendingGenerationPlaceholder,
   RemoveBackgroundPendingPlaceholder,
-  Scene3DEditorLoading,
 } from './render/CardCommon'
 
 const Scene3DEditor = lazyWithChunkBoundary('3D 场景编辑器', () => import('./Scene3DEditor'))
@@ -101,7 +101,7 @@ export function GenerationNodePreviewBody({
   if (node.kind === 'vibingDirector' || node.kind === 'scene3d') {
     const Director = node.kind === 'vibingDirector' ? VibingDirectorEditor : Scene3DEditor
     return (
-      <React.Suspense fallback={<Scene3DEditorLoading />}>
+      <React.Suspense fallback={<NodeBodyLoading />}>
         <Director node={node} width={visualSize.width} height={previewHeight} readOnly={readOnly} />
       </React.Suspense>
     )
@@ -125,7 +125,7 @@ export function GenerationNodePreviewBody({
   if (node.result?.url) {
     if (node.result.type === 'model3d') {
       return (
-        <React.Suspense fallback={<Scene3DEditorLoading />}>
+        <React.Suspense fallback={<NodeBodyLoading />}>
           <Model3DCameraNodeBody node={node} readOnly={readOnly} />
         </React.Suspense>
       )
@@ -133,8 +133,7 @@ export function GenerationNodePreviewBody({
     if (node.result.type === 'video') {
       return (
         <NodeVideoPlaybackGuard
-          nodeId={node.id}
-          rawUrl={node.result.url}
+          node={node} previewRequested={selected} engaged={selected}
           data-node-preview-video="true"
           className={cn('w-full h-full min-h-0 object-contain pointer-events-auto', 'bg-nomi-ink-05 select-none')}
           priority={mediaPreviewPriority}
@@ -142,7 +141,6 @@ export function GenerationNodePreviewBody({
           controls
           muted
           playsInline
-          preload="metadata"
           draggable={false}
           onLoadedMetadata={(event) => {
             updateMediaDimensions(
@@ -181,9 +179,7 @@ export function GenerationNodePreviewBody({
       selected={selected}
       needsFirstFrame={needsFirstFrame}
       waitingUpstream={hasFrameSourceEdge}
-      shotIndex={shotIndex}
-      title={node.title}
-      prompt={displayPrompt}
+      kind={node.kind}
     />
   )
 }

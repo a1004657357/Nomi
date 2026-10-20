@@ -12,7 +12,7 @@
  * 组头字号字色沿用面板既有的 section header 规格（text-micro / ink-40 + chevron），
  * 不另立视觉语言（P1）。（原文引用的 AvailableGroup.tsx 已于 2026-08-26 作为死代码删除。）
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconChevronDown } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -29,7 +29,13 @@ const MODES: readonly DesktopProxyMode[] = ['system', 'custom', 'off']
  */
 export function proxyPillTone(status: DesktopProxyStatus): { key: string; ok: boolean } {
   if (status.unsupported) return { key: 'pillUnsupported', ok: false }
-  if (status.mode === 'off' || !status.activeUrl) return { key: 'pillDirect', ok: false }
+  if (status.mode === 'off' || !status.activeUrl) {
+    // fake-ip 本地代理（Clash/Surge TUN）：app 侧看不到任何代理配置，说「直连」是**错的**——
+    // 流量其实全被本机解析器映射进 198.18/15 交给代理。同 unsupported 的取舍：宁可多说一句，
+    // 也不能让用户以为 Nomi 没走他的梯子（2026-09-06 验收现场）。
+    if (status.localProxyDetected) return { key: 'pillLocalProxy', ok: true }
+    return { key: 'pillDirect', ok: false }
+  }
   return { key: status.mode === 'custom' ? 'pillCustom' : 'pillSystem', ok: true }
 }
 
@@ -196,6 +202,12 @@ export function NetworkSection(): JSX.Element | null {
           ) : null}
 
           <p className="text-micro text-nomi-ink-40 leading-relaxed">{hint}</p>
+
+          {status.localProxyDetected ? (
+            <p data-network-local-proxy="true" className="text-micro text-nomi-ink-60 leading-relaxed">
+              {t('onboardingProviders.drawer.network.localProxyDetected', { address: status.localProxySample || '198.18.x.x' })}
+            </p>
+          ) : null}
 
           <div className="flex items-center gap-2.5">
             <button

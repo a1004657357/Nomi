@@ -1,5 +1,14 @@
+import { isLegacyCatalogMeta } from './modelIdentity'
 import { describe, expect, it } from 'vitest'
-import { deriveCanonicalModelId, normalizeModelLabel, dedupeModelOptions, resolveBestProvider, vendorTier } from './modelIdentity'
+import {
+  dedupeModelOptions,
+  deriveCanonicalModelId,
+  modelCatalogLifecycle,
+  normalizeModelLabel,
+  sortModelProviders,
+  sortModelsByCatalogLifecycle,
+  vendorTier,
+} from './modelIdentity'
 import type { ModelOption } from './models'
 
 const opt = (o: Partial<ModelOption>): ModelOption => ({ value: '', label: '', ...o })
@@ -72,12 +81,13 @@ describe('modelIdentity · 去重聚合', () => {
   })
 })
 
-describe('modelIdentity · resolveBestProvider 自动选最优', () => {
+describe('modelIdentity · sortModelProviders 先走哪家', () => {
   const model = dedupeModelOptions([
     opt({ value: 'a', label: 'Seedream 4.5', vendor: 'apimart', modelKey: 'a' }),
     opt({ value: 'b', label: 'Seedream 4.5', vendor: 'volcengine', modelKey: 'b' }),
     opt({ value: 'c', label: 'Seedream 4.5', vendor: 'myrelay', modelKey: 'c' }),
   ])[0]
+  const vendorsOf = (providers: readonly { vendor?: string }[]): (string | undefined)[] => providers.map((p) => p.vendor)
 
   it('vendorTier：官方0 < 内置中转1 < 未知2', () => {
     expect(vendorTier('volcengine')).toBe(0)
@@ -85,21 +95,24 @@ describe('modelIdentity · resolveBestProvider 自动选最优', () => {
     expect(vendorTier('myrelay')).toBe(2)
   })
 
-  it('默认选官方（volcengine）而非中转', () => {
-    expect(resolveBestProvider(model)?.vendor).toBe('volcengine')
+  it('分级表只有一份：渲染层这个名字转的就是 electron/shared 那一个（2026-09-22 总合并）', async () => {
+    // 执行侧（findExecutableModelAnyVendor）用的是同一个函数。这里比的是**同一个函数对象**——
+    // 值相等挡不住「有人在渲染层又抄了一份一模一样的表」，而那正是当初分叉的样子。
+    const shared = await import('../../electron/shared/contracts/vendorPreference')
+    expect(vendorTier).toBe(shared.vendorTier)
   })
 
-  it('锁定供应商优先（可用时）', () => {
-    expect(resolveBestProvider(model, { lockedVendorKey: 'apimart' })?.vendor).toBe('apimart')
+  it('用户没设过偏好 → 按分级排（官方在前），不是按厂商名字母序', () => {
+    // 字母序会是 apimart < myrelay < volcengine——这条测试就是钉住「别退化成字母序」。
+    expect(vendorsOf(sortModelProviders(model.providers))).toEqual(['volcengine', 'apimart', 'myrelay'])
   })
 
-  it('锁定家不可用 → 回落自动选最优', () => {
-    expect(resolveBestProvider(model, { lockedVendorKey: 'nope', usableVendorKeys: new Set(['apimart', 'myrelay']) })?.vendor).toBe('apimart')
+  it('用户设过偏好 → 偏好压过分级', () => {
+    expect(vendorsOf(sortModelProviders(model.providers, ['myrelay', 'apimart']))).toEqual(['myrelay', 'apimart', 'volcengine'])
   })
 
-  it('过滤到可用供应商集；全不可用返回 null', () => {
-    expect(resolveBestProvider(model, { usableVendorKeys: new Set(['myrelay']) })?.vendor).toBe('myrelay')
-    expect(resolveBestProvider(model, { usableVendorKeys: new Set(['x']) })).toBeNull()
+  it('偏好只覆盖一部分家 → 其余仍按分级续排', () => {
+    expect(vendorsOf(sortModelProviders(model.providers, ['myrelay']))).toEqual(['myrelay', 'volcengine', 'apimart'])
   })
 
   it('同级保持 catalog 顺序（稳定）', () => {
@@ -107,6 +120,68 @@ describe('modelIdentity · resolveBestProvider 自动选最优', () => {
       opt({ value: '1', label: 'X', vendor: 'apimart', modelKey: '1' }),
       opt({ value: '2', label: 'X', vendor: 'kie', modelKey: '2' }),
     ])[0]
-    expect(resolveBestProvider(m)?.vendor).toBe('apimart')
+    expect(vendorsOf(sortModelProviders(m.providers))).toEqual(['apimart', 'kie'])
   })
+})
+
+describe('modelIdentity · catalog lifecycle ordering', () => {
+  const lifecycleOption = (value: string, catalogLifecycle?: string): ModelOption => opt({
+    value,
+    label: value,
+    modelKey: value,
+    vendor: 'provider',
+    ...(catalogLifecycle ? { meta: { catalogLifecycle } } : {}),
+  })
+
+  it('显式旗舰/性价比在前、兼容旧款在后，同档保持目录顺序', () => {
+    const models = dedupeModelOptions([
+      lifecycleOption('custom-a'),
+      lifecycleOption('old', 'legacy'),
+      lifecycleOption('flagship-a', 'flagship'),
+      lifecycleOption('custom-b'),
+      lifecycleOption('value', 'value'),
+      lifecycleOption('flagship-b', 'flagship'),
+    ])
+    expect(models.map((model) => model.canonicalId)).toEqual([
+      'flagship-a',
+      'flagship-b',
+      'value',
+      'custom-a',
+      'custom-b',
+      'old',
+    ])
+  })
+
+  it('绝不从未知自建模型名称猜代际', () => {
+    const [model] = dedupeModelOptions([lifecycleOption('obviously-best-v99-ultra')])
+    expect(modelCatalogLifecycle(model)).toBeNull()
+    expect(sortModelsByCatalogLifecycle([model])).toEqual([model])
+  })
+
+  it('同一模型多条线路时采用最强的显式生命周期', () => {
+    const [model] = dedupeModelOptions([
+      { ...lifecycleOption('relay:model'), value: 'relay:model', label: 'Shared', vendor: 'relay', meta: { catalogLifecycle: 'legacy' } },
+      { ...lifecycleOption('official:model'), value: 'official:model', label: 'Shared', vendor: 'official', meta: { catalogLifecycle: 'flagship' } },
+    ])
+    expect(modelCatalogLifecycle(model)).toBe('flagship')
+  })
+})
+
+describe('modelIdentity · vendor preference ordering', () => {
+  it('偏好那家排第一，其余按分级续排，同名稳定', () => {
+    const models = dedupeModelOptions([
+      opt({ value: 'shared-kie', label: 'Shared', vendor: 'kie', modelKey: 'shared', vendorName: 'Kie' }),
+      opt({ value: 'shared-z', label: 'Shared', vendor: 'relay-z', modelKey: 'shared', vendorName: 'Z relay' }),
+      opt({ value: 'shared-a', label: 'Shared', vendor: 'relay-a', modelKey: 'shared', vendorName: 'A relay' }),
+    ])
+    const ordered = sortModelProviders(models[0].providers, ['relay-a', 'kie'])
+    expect(ordered.map((provider) => provider.vendor)).toEqual(['relay-a', 'kie', 'relay-z'])
+  })
+})
+
+it('folds only explicit legacy metadata without guessing from names', () => {
+  expect(isLegacyCatalogMeta({ catalogLifecycle: 'legacy' })).toBe(true)
+  expect(isLegacyCatalogMeta({ catalogLifecycle: 'value' })).toBe(false)
+  expect(isLegacyCatalogMeta({ label: 'Old model v1' })).toBe(false)
+  expect(isLegacyCatalogMeta(null)).toBe(false)
 })

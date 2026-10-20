@@ -27,8 +27,8 @@ function runWith(shots: ProductionGenerationShot[], jobs: ProductionJob[] = []):
   return {
     schemaVersion: 1, runId: 'run-1', projectId: 'proj-1', revision: 1, status: 'running', stageId: 'generate',
     playbook: { name: 'generation.single-shot', version: '1.0.0' }, origin: { host: 'semantic-mcp' },
-    policy: { mode: 'balanced', trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 1, minimizeUploads: true },
-    budget: { currency: 'CNY', authorized: 100, reserved: 0, actual: 0, unsettled: 0 }, planVersion: 1, snapshotCursor: 0,
+    policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend: null, maxAttemptsPerJob: 1, minimizeUploads: true },
+    budget: { currency: 'CNY', authorized: 100, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 }, planVersion: 1, snapshotCursor: 0,
     stages: [], gates: [], jobs, artifacts: [],
     generationPlan: {
       operationId: 'run-1', state: 'submitted',
@@ -71,6 +71,19 @@ describe('plan.bind-shot-nodes', () => {
     expect(s1?.nodeId).toBe('node-new')
     expect(s1?.canvasDetached).toBeUndefined()
   })
+
+  it('单镜计划用 candidateId 绑定顶层 nodeId，并让已有 job 继承', () => {
+    const single = runWith([shot('cat')], [
+      { ...job('cat'), metadata: undefined },
+    ])
+    single.generationPlan = { ...single.generationPlan!, shots: undefined }
+    const effect = applyProductionCommand(single, {
+      commandId: 'bind-single', expectedRevision: 1, type: 'plan.bind-shot-nodes',
+      payload: { bindings: [{ shotId: 'cat', nodeId: 'node-cat' }] }, issuedAt: NOW,
+    }, NOW)
+    expect(effect.run.generationPlan?.nodeId).toBe('node-cat')
+    expect(effect.run.jobs[0]?.nodeId).toBe('node-cat')
+  })
 })
 
 describe('plan.detach-shot-nodes', () => {
@@ -104,5 +117,26 @@ describe('plan.detach-shot-nodes', () => {
     }, NOW)
     expect(effect.run.generationPlan?.shots?.[0].nodeId).toBe('node-1')
     expect(effect.run.generationPlan?.shots?.[0].canvasDetached).toBeUndefined()
+  })
+
+  it('单镜节点删除记录 canvasDetached，恢复不会静默复活', () => {
+    const single = runWith([shot('cat')], [{ ...job('cat'), metadata: undefined, nodeId: 'node-cat' }])
+    single.generationPlan = { ...single.generationPlan!, shots: undefined, nodeId: 'node-cat' }
+    const effect = applyProductionCommand(single, {
+      commandId: 'detach-single', expectedRevision: 1, type: 'plan.detach-shot-nodes',
+      payload: { nodeIds: ['node-cat'] }, issuedAt: NOW,
+    }, NOW)
+    expect(effect.run.generationPlan?.nodeId).toBeUndefined()
+    expect(effect.run.generationPlan?.canvasDetached).toBe(true)
+    expect(effect.run.jobs[0]?.nodeId).toBeUndefined()
+  })
+
+  it('detach marks an unsubmitted job detached with a durable reason', () => {
+    const run = runWith([shot('s1', { nodeId: 'node-1' })], [job('s1', { nodeId: 'node-1', status: 'authorized' })])
+    const effect = applyProductionCommand(run, {
+      commandId: 'detach-pending', expectedRevision: 1, type: 'plan.detach-shot-nodes',
+      payload: { nodeIds: ['node-1'] }, issuedAt: NOW,
+    }, NOW)
+    expect(effect.run.jobs[0]).toMatchObject({ status: 'detached', errorCode: 'canvas_detached' })
   })
 })

@@ -26,6 +26,24 @@ afterEach(() => {
 })
 
 describe('createTaskSubmissionRuntime', () => {
+  it('never creates again after an unacknowledged submission, including after restart', async () => {
+    const create = vi.fn(async () => { throw new Error('[nomi:submission-unknown] acknowledgement missing'); });
+    const query = vi.fn();
+    const load = async () => ({ runTask: create, fetchTaskResult: query }) as unknown as typeof import('../runtime');
+    const payload = { vendor: 'fixture', request: { kind: 'text_to_video', extras: { idempotencyKey: 'missing-ack' } } };
+    const runtime = createTaskSubmissionRuntime(load);
+    const results = await Promise.allSettled([runtime.run(payload), runtime.run(payload)]);
+    expect(results.map(result => result.status)).toEqual(['rejected', 'rejected']);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(getGlobalIdempotencyStore()?.get('missing-ack')).toMatchObject({ status: 'unknown' });
+    expect(getGlobalIdempotencyStore()?.get('missing-ack')?.providerTaskId).toBeUndefined();
+    resetDefaultSubmissionLedgerForTests();
+    resetGlobalIdempotencyStoreForTests();
+    initGlobalIdempotencyStore(tmpDir);
+    await expect(createTaskSubmissionRuntime(load).run(payload)).rejects.toThrow(/系统不会自动重发/);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(query).not.toHaveBeenCalled();
+  });
   it('routes a restarted duplicate through query-only recovery', async () => {
     const create = vi.fn(async () => ({ id: 'provider-1', kind: 'text_to_video', status: 'queued', assets: [], raw: {} }))
     const query = vi.fn(async () => ({

@@ -5,14 +5,16 @@
  * 批量删除（2026-07-15 用户群反馈：462 个自定义模型只能逐个删=鸡肋）：进「选择删除」模式勾多行一次删；
  * 配合搜索可精准删某一类（搜 flux → 全选 → 删除选中）。数据结构零改动——enabled 字段与生成侧过滤都现成。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
+import { isLegacyCatalogMeta } from '../../config/modelIdentity'
 import { useTranslation } from 'react-i18next'
-import { IconSearch, IconTrash, IconCheck, IconCode } from '@tabler/icons-react'
+import { IconSearch, IconTrash, IconCheck, IconCode, IconEye, IconEyeOff } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { NomiSelect } from '../../design'
 import type { ChipModel } from './ModelChipGroups'
 import { groupModelsByKind, isKnownModelChipKind, MODEL_CHIP_KINDS } from './modelChipGrouping'
 import { bulkToggleTargets, enabledCount, filterModelsByQuery, modelRowKey, selectedModelRows } from './modelEnableEditing'
+import { translateModelDisplayText } from '../../i18n/modelDisplayText'
 import { isAdapterModelLocked } from './adapterVerificationViewModel'
 
 type ModelEnableEditorProps = {
@@ -38,10 +40,11 @@ const PILL = 'h-6 px-2.5 rounded-full border text-micro inline-flex items-center
 
 export function ModelEnableEditor({ models, onToggle, onDelete, onCustomCall, onRetype, onOpenModel }: ModelEnableEditorProps): JSX.Element {
   const { t } = useTranslation()
+  const [more, setMore] = React.useState(false)
   const [query, setQuery] = React.useState('')
   const [selectMode, setSelectMode] = React.useState(false)
   const [selected, setSelected] = React.useState<Set<string>>(() => new Set())
-  const visible = React.useMemo(() => filterModelsByQuery(models, query), [models, query])
+  const visible = React.useMemo(() => filterModelsByQuery(models, query).filter((model) => more || query.trim() || model.unlisted || !isLegacyCatalogMeta(model.meta)), [models, query, more])
   const groups = React.useMemo(() => groupModelsByKind(visible), [visible])
   const enabledTotal = enabledCount(models)
   const selectedRows = React.useMemo(() => selectedModelRows(models, selected), [models, selected])
@@ -129,11 +132,12 @@ export function ModelEnableEditor({ models, onToggle, onDelete, onCustomCall, on
         ) : (
           <>
             <div className="flex gap-1.5">
+              {/* 这两个动作改的是可见性，不是「选中」——沿用「全选/全不选」正是三套词混用的来源。 */}
               <button type="button" onClick={() => bulk(true)} className={cn(PILL, 'border-nomi-line text-nomi-ink-60 hover:border-nomi-ink-20')}>
-                {t('onboardingProviders.modelControls.selectAll')}
+                {t('onboardingProviders.modelControls.showAll')}
               </button>
               <button type="button" onClick={() => bulk(false)} className={cn(PILL, 'border-nomi-line text-nomi-ink-60 hover:border-nomi-ink-20')}>
-                {t('onboardingProviders.modelControls.selectNone')}
+                {t('onboardingProviders.modelControls.hideAll')}
               </button>
               {models.length > 0 ? (
                 <button
@@ -145,11 +149,12 @@ export function ModelEnableEditor({ models, onToggle, onDelete, onCustomCall, on
                 </button>
               ) : null}
             </div>
-            <span className="text-micro text-nomi-ink-40">{t('onboardingProviders.modelControls.enabledCount', { enabled: enabledTotal, total: models.length })}</span>
+            <span className="text-micro text-nomi-ink-40">{t('onboardingProviders.modelControls.visibleCount', { enabled: enabledTotal, total: models.length })}</span>
           </>
         )}
       </div>
 
+      {!more && !query.trim() && models.some((model) => !model.unlisted && isLegacyCatalogMeta(model.meta)) ? <button type="button" onClick={() => setMore(true)} className="self-start text-caption text-nomi-ink-60">{t('onboardingProviders.modelControls.more')}</button> : null}
       {/* 分组列表 */}
       {groups.length === 0 ? (
         <div className="text-caption text-nomi-ink-40 text-center py-5">{t('onboardingProviders.modelControls.noMatchQuery', { query })}</div>
@@ -190,7 +195,7 @@ export function ModelEnableEditor({ models, onToggle, onDelete, onCustomCall, on
                         <IconCheck size={12} stroke={2.4} />
                       </span>
                       <span className={cn('flex-1 min-w-0 text-body-sm truncate', m.enabled ? 'text-nomi-ink' : 'text-nomi-ink-60')}>
-                        {m.labelZh}
+                        {translateModelDisplayText(m.labelZh)}
                       </span>
                     </button>
                   )
@@ -203,23 +208,31 @@ export function ModelEnableEditor({ models, onToggle, onDelete, onCustomCall, on
                       m.enabled ? '' : 'opacity-55',
                     )}
                   >
+                    {/*
+                      眼睛，不是打勾方块（2026-09-11）。旧控件是 18×18 的 role="checkbox"，
+                      而**同一个组件在 selectMode 下用一模一样的方块表示「选中它，准备删除」**，
+                      两者只差一个颜色；同屏还并排放着「全选 / 全不选 / 批量删除」。用户看到勾选框
+                      只会读成「这是多选」，不会读成「这一格决定它在不在画布模型框里」——群反馈
+                      「减少模型怎么操作」的根因不是功能缺失，是这个控件在说另一件事。
+                      眼睛是本仓既有的可见性成语（TrackList / SceneObjectsTab / 白板图层都用它）。
+                    */}
                     <button
                       type="button"
-                      role="checkbox"
-                      aria-checked={m.enabled}
+                      aria-pressed={!m.enabled}
                       disabled={adapterLocked}
-                      aria-label={t(m.enabled ? 'onboardingProviders.modelControls.disableModelAria' : 'onboardingProviders.modelControls.enableModelAria', { name: m.labelZh })}
+                      title={t(m.enabled ? 'onboardingProviders.modelControls.hideModelTitle' : 'onboardingProviders.modelControls.showModelTitle')}
+                      aria-label={t(m.enabled ? 'onboardingProviders.modelControls.hideModelAria' : 'onboardingProviders.modelControls.showModelAria', { name: m.labelZh })}
                       onClick={() => onToggle([m], !m.enabled)}
                       className={cn(
-                        'w-[18px] h-[18px] rounded-nomi-sm shrink-0 grid place-items-center border',
+                        'w-[22px] h-[22px] rounded-nomi-sm shrink-0 grid place-items-center',
                         adapterLocked
-                          ? 'bg-nomi-ink-05 border-nomi-line text-nomi-ink-20 cursor-not-allowed'
+                          ? 'text-nomi-ink-20 cursor-not-allowed'
                           : m.enabled
-                          ? 'bg-nomi-accent border-nomi-accent text-nomi-paper'
-                          : 'bg-nomi-paper border-nomi-ink-20 text-transparent',
+                          ? 'text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink'
+                          : 'text-nomi-ink-40 hover:bg-nomi-ink-05 hover:text-nomi-ink-60',
                       )}
                     >
-                      <IconCheck size={12} stroke={2.4} />
+                      {m.enabled ? <IconEye size={15} stroke={1.8} /> : <IconEyeOff size={15} stroke={1.8} />}
                     </button>
                     <button
                       type="button"
@@ -233,8 +246,9 @@ export function ModelEnableEditor({ models, onToggle, onDelete, onCustomCall, on
                         !onOpenModel && adapterLocked ? 'cursor-not-allowed text-nomi-ink-40' : m.enabled ? 'text-nomi-ink' : 'text-nomi-ink-60',
                       )}
                     >
-                      {m.labelZh}
+                      {translateModelDisplayText(m.labelZh)}
                     </button>
+                    {m.unlisted ? <span className="text-micro text-nomi-ink-60">{t('onboardingProviders.modelControls.unlisted')}</span> : null}
                     {m.customCallDraft ? (
                       <span className="shrink-0 rounded-nomi-sm bg-nomi-accent-soft px-1.5 py-0.5 text-micro text-nomi-accent">
                         {t('onboardingProviders.customCall.directDraft.badge')}
@@ -289,7 +303,7 @@ export function ModelEnableEditor({ models, onToggle, onDelete, onCustomCall, on
                       onClick={() => onDelete([m])}
                       className="shrink-0 p-1 text-nomi-ink-30 hover:text-workbench-danger"
                     >
-                      <IconTrash size={13} stroke={1.7} />
+                      {m.unlisted ? t('common.delete') : <IconTrash size={13} stroke={1.7} />}
                     </button>
                   </div>
                 )

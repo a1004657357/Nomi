@@ -2,21 +2,22 @@
  * 只读节点图画布：SVG 连线层 + 绝对定位的节点卡 + 缩放/适应 + 拖动平移。
  * plan: docs/plan/2026-08-12-model-settings-home-and-comfyui-workflow-page.md
  *
- * 不引图库（P1）：仓库零图库依赖，生成画布本身就是 CSS transform + 绝对定位 div + SVG 连线层
- * 自研的（src/workbench/generationCanvas/components/CanvasEdgeLayer.tsx）。手法照搬那份：
+ * 这是 onboarding 独立的只读工作流图，不复用生成画布的交互状态或渲染器；它使用 CSS
+ * transform + 绝对定位 div + SVG 连线层保持静态拓扑和节点卡对齐：
  * 一层 transform: translate() scale() 包住「连线 svg + 节点 div」，两者共用同一套内容坐标，
  * 于是缩放/平移只动一个 transform，连线和节点永远对得齐。
  *
  * 兜底（图放不下时）：几十上百个节点的图，缩到能看全就糊成灰条了。给一个「显示完整节点列表」——
  * 同样能点、同样能指定角色，只是不画位置。**不是降级提示，是等价的第二条路**。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 // 图/列表这对图标取「同一份东西的两个视图」的隐喻（board ↔ list），且都已在
 // src/vendor/tablerIcons.ts 那份精选清单里——不为一个切换钮往控包体的白名单里加新图标。
 import { IconLayoutBoard, IconLayoutList, IconMaximize, IconMinus, IconPlus } from '@tabler/icons-react'
 import { resolveWheelIntent, useCanvasGestureScheme } from '../../../utils/canvasGesturePreference'
 import { cn } from '../../../utils/cn'
+import { translateModelDisplayText } from '../../../i18n/modelDisplayText'
 import { getWheelZoomFactor } from '../../../utils/wheelZoom'
 import {
   buildGraphGeometry,
@@ -333,7 +334,7 @@ function NodeList({
           const row = (
             <>
               <span className="w-14 shrink-0 font-nomi-mono text-micro text-nomi-ink-40">#{node.nodeId}</span>
-              <span className="min-w-0 flex-1 truncate text-caption text-nomi-ink">{node.title}</span>
+              <span className="min-w-0 flex-1 truncate text-caption text-nomi-ink">{translateModelDisplayText(node.title)}</span>
               <span className="hidden min-w-0 shrink-[2] truncate font-nomi-mono text-micro text-nomi-ink-40 sm:block">{node.classType}</span>
               {node.exposedCount > 0 ? (
                 <span className="shrink-0 rounded-full bg-nomi-accent-soft px-1.5 text-micro font-semibold text-nomi-accent">

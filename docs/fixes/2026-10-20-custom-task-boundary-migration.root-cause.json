@@ -1,0 +1,138 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-20-custom-task-boundary-migration",
+  "detected_by": "walkthrough",
+  "recurrence_check_on": "2026-11-20",
+  "invariant_owner_layer": {
+    "layer": "electron/tasks/taskSubmissionRuntime.ts",
+    "tests": ["electron/tasks/taskSubmissionRuntime.test.ts", "electron/runtime.asyncTaskIdGuard.test.ts", "electron/tasks/codexImageTask.test.ts"],
+    "why": "The shared submission ledger distinguishes unacknowledged creates from rejections; captured asset contexts prevent a delayed result from changing project identity."
+  },
+  "problem_type": "Execution-contract drift during stable upstream integration",
+  "symptom": "An accepted asynchronous create without a remote task ID appeared as a retryable failure; custom generated outputs could miss the fixed project publication context.",
+  "direct_cause": "The upstream missing-ID branch returned a failed DTO with a local fallback ID, while custom execution paths were not yet migrated to the new publication context.",
+  "class_root": "A transport response without an acknowledgement is not evidence of rejection, and a delayed local output cannot re-resolve its destination after execution.",
+  "affected_population": [
+    "Asynchronous media providers omitting acknowledgements",
+    "GUI and capability submissions sharing an intent",
+    "Codex image output during project identity replacement"
+  ],
+  "scope_paths": [
+    "electron/runtime.ts",
+    "electron/tasks/taskSubmissionRuntime.ts",
+    "electron/tasks/codexImageTask.ts",
+    "electron/tasks/taskResultQuery.ts"
+  ],
+  "entry_points": [
+    "Renderer task run IPC",
+    "Desktop capability run callback",
+    "Persistent task recovery and free queries",
+    "Codex image result publication"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The invariants are local application contracts. Both official v0.23.2 source and the customized snapshot are available in the integration repository.",
+  "invariants": [
+    "A missing remote acknowledgement never becomes proof of a safe resubmission.",
+    "Repeated intent keys coalesce before node exclusivity and survive restart without creating again.",
+    "Delayed image output is published only through its captured project identity.",
+    "Query reconstruction carries the explicitly requested project to process operations."
+  ],
+  "doors": [
+    {
+      "kind": "write",
+      "path": "electron/main.ts",
+      "symbol": "createTaskSubmissionRuntime"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/taskIpcHandlers.ts",
+      "symbol": "createTaskSubmissionRuntime"
+    }
+  ],
+  "door_reduction": {
+    "before": 2,
+    "after": 2,
+    "why_not": "The desktop assembly injects one shared task runtime; the IPC registrar retains a factory default for isolated hosts and tests. Both construct the same idempotency-before-node-exclusivity implementation."
+  },
+  "generality_proof": "The shared submission runtime owns replay for both desktop callers, and the canonical runtime checks all asynchronous create acknowledgements before admitting a task. Captured asset contexts validate identity immediately before writing.",
+  "shared_boundaries": [
+    {
+      "path": "electron/tasks/taskSubmissionRuntime.ts",
+      "symbol": "createTaskSubmissionRuntime",
+      "responsibility": "One idempotent submission and query-only recovery owner."
+    },
+    {
+      "path": "electron/runtime.ts",
+      "symbol": "runTask",
+      "responsibility": "Never synthesize a failed remote task from an unacknowledged create."
+    },
+    {
+      "path": "electron/tasks/codexImageTask.ts",
+      "symbol": "runCodexImageTask",
+      "responsibility": "Capture the destination before spending and publish through that context."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/main.ts",
+      "entry_point": "taskSubmissionRuntime",
+      "disposition": "enforced",
+      "evidence": "Both capability run and renderer registration receive the same runtime instance."
+    },
+    {
+      "path": "electron/tasks/taskIpcHandlers.ts",
+      "entry_point": "registerTaskIpcHandlers",
+      "disposition": "enforced",
+      "evidence": "The default host and injected desktop instance use createTaskSubmissionRuntime."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any asynchronous provider or restarted host may omit an acknowledgement or replay a paid intent.",
+    "same_class_scan": [
+      "door-map createTaskSubmissionRuntime: two construction doors",
+      "Reviewed runtime runTask, taskResultQuery rebuildCachedTaskFromPayload, and Codex publication",
+      "Independent reviewer 01a15742-6323-7fa3-a4c1-bed6d3583260 reproduced both execution classes without network"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/tasks/taskSubmissionRuntime.ts",
+    "invariant": "The submission ledger records unknown outcomes and never automatically repeats create for a persisted intent.",
+    "failure_mode": "Missing acknowledgement throws the structured submission-unknown code; stale publication contexts reject before write.",
+    "exception_policy": "none",
+    "strategy": "Keep one task-submission owner and the official asset-write context rather than provider-specific retry fallbacks.",
+    "artifacts": [
+      "electron/tasks/taskSubmissionRuntime.ts",
+      "electron/runtime.ts",
+      "electron/tasks/codexImageTask.ts",
+      "electron/tasks/taskResultQuery.ts"
+    ]
+  },
+  "regression_tests": [
+    "electron/runtime.asyncTaskIdGuard.test.ts",
+    "electron/tasks/taskSubmissionRuntime.test.ts",
+    "electron/tasks/codexImageTask.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/tasks/taskSubmissionRuntime.test.ts",
+    "electron/tasks/codexImageTask.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "electron/runtime.ts"
+    ],
+    "rationale": "Remove the branch that cached a fabricated failed task ID after an unacknowledged create; no active-project fallback is restored."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Receipt classification and project identity are application invariants, not dependency behavior.",
+    "exit_criteria": []
+  },
+  "migration": "Existing project contents are not rewritten. Old persisted intent records remain fail-closed; new unacknowledged submissions are recorded as unknown without a fabricated provider ID.",
+  "residual_risks": [
+    "Real paid provider generation is deliberately not exercised in this merge.",
+    "Daily checkout delivery and isolated GUI verification are still pending."
+  ]
+}

@@ -8,11 +8,13 @@ const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   projectDirById: vi.fn(),
   writeAsset: vi.fn(),
+  captureAssetWriteContext: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 vi.mock("../projects/repository", () => ({ projectDirById: mocks.projectDirById }));
 vi.mock("../runtime", () => ({ writeAsset: mocks.writeAsset }));
+vi.mock("../assets/assetWriteContext", () => ({ captureAssetWriteContext: mocks.captureAssetWriteContext }));
 
 import {
   activeDirectorBlenderRenderCount,
@@ -33,8 +35,10 @@ beforeEach(() => {
   mocks.spawn.mockReset();
   mocks.projectDirById.mockReset();
   mocks.writeAsset.mockReset();
+  mocks.captureAssetWriteContext.mockReset();
+  mocks.captureAssetWriteContext.mockImplementation(async () => ({ root: mocks.projectDirById(), assertCurrent: vi.fn() }));
   mocks.projectDirById.mockReturnValue("/project-dir");
-  mocks.writeAsset.mockImplementation((_projectId: string, _bytes: Buffer, fileName: string) => ({
+  mocks.writeAsset.mockImplementation(async (_projectId: string, _bytes: Buffer, fileName: string) => ({
     id: `asset-${fileName}`,
     data: { url: `nomi-local://asset/project/${fileName}` },
   }));

@@ -5,6 +5,7 @@ import path from "node:path";
 import { BLENDER_RENDER_SCRIPT } from "./blenderRenderScript";
 import { writeAsset } from "../runtime";
 import { inspectGlb } from "../assets/glbValidation";
+import { captureAssetWriteContext, type AssetWriteContext } from "../assets/assetWriteContext";
 
 type BlenderAssetRef = { url: string; assetId?: string };
 
@@ -27,11 +28,13 @@ export type BlenderSceneRenderResult = {
 
 type ActiveBlenderJob = {
   child: ChildProcess;
+  closed?: boolean;
   terminationReason?: "cancelled" | "timeout";
   forceKillTimer?: NodeJS.Timeout;
 };
 
 const activeJobs = new Map<string, ActiveBlenderJob>();
+const pendingJobs = new Map<string, { cancelled: boolean }>();
 const OUTPUT_LIMIT = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -91,19 +94,24 @@ function asAssetRef(value: unknown): BlenderAssetRef {
   return { url, ...(typeof record.id === "string" ? { assetId: record.id } : {}) };
 }
 
-function persistOutputs(request: BlenderSceneRenderRequest, outputDir: string, stdout: string): BlenderSceneRenderResult {
+async function persistOutputs(request: BlenderSceneRenderRequest, outputDir: string, stdout: string, context: AssetWriteContext, assertRunning: () => void): Promise<BlenderSceneRenderResult> {
   const meta = { kind: "blender", ownerNodeId: request.ownerNodeId || null, blenderJobId: request.jobId };
-  const preview = asAssetRef(writeAsset(request.projectId, readOutputFile(outputDir, "preview.png"), "blender-preview.png", "image/png", meta));
-  const blend = asAssetRef(writeAsset(request.projectId, readOutputFile(outputDir, "scene.blend"), "blender-scene.blend", "application/x-blender", meta));
+  const preview = asAssetRef(await writeAsset(request.projectId, readOutputFile(outputDir, "preview.png"), "blender-preview.png", "image/png", meta, "image", context));
+  assertRunning();
+  const blend = asAssetRef(await writeAsset(request.projectId, readOutputFile(outputDir, "scene.blend"), "blender-scene.blend", "application/x-blender", meta, null, context));
+  assertRunning();
   const modelBytes = readOutputFile(outputDir, "scene.glb");
   const model3dValidation = inspectGlb(modelBytes);
-  const model = asAssetRef(writeAsset(
+  const model = asAssetRef(await writeAsset(
     request.projectId,
     modelBytes,
     "blender-scene.glb",
     "model/gltf-binary",
     { ...meta, model3dValidation },
+    "model3d",
+    context,
   ));
+  assertRunning();
   const version = stdout.match(/NOMI_BLENDER_VERSION=([^\r\n]+)/)?.[1]?.trim();
   return { jobId: request.jobId, ...(version ? { blenderVersion: version } : {}), preview, blend, model };
 }
@@ -113,7 +121,16 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
   const projectId = String(request.projectId || "").trim();
   if (!jobId) throw new Error("Blender jobId 不能为空");
   if (!projectId) throw new Error("Blender projectId 不能为空");
-  if (activeJobs.has(jobId)) throw new Error(`Blender 任务 ${jobId} 已在运行`);
+  if (activeJobs.has(jobId) || pendingJobs.has(jobId)) throw new Error(`Blender 任务 ${jobId} 已在运行`);
+  const pending = { cancelled: false };
+  pendingJobs.set(jobId, pending);
+  let context: AssetWriteContext;
+  try {
+    context = await captureAssetWriteContext(projectId);
+    if (pending.cancelled) throw new Error("Blender 渲染已取消");
+  } finally {
+    pendingJobs.delete(jobId);
+  }
 
   let tempDir = "";
   try {
@@ -165,7 +182,11 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
         }
         finish(new Error(`Blender 启动失败：${error.message}`));
       });
-      child.once("close", (code, signal) => {
+      child.once("close", async (code, signal) => {
+        if (settled) return;
+        job.closed = true;
+        clearTimeout(timeout);
+        if (job.forceKillTimer) clearTimeout(job.forceKillTimer);
         if (job.terminationReason === "timeout") {
           finish(new Error(`Blender 渲染超时（${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} 秒）`));
           return;
@@ -180,7 +201,9 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
           return;
         }
         try {
-          finish(undefined, persistOutputs(request, outputDir, stdout));
+          finish(undefined, await persistOutputs(request, outputDir, stdout, context, () => {
+            if (job.terminationReason === "cancelled") throw new Error("Blender 渲染已取消");
+          }));
         } catch (error) {
           finish(error instanceof Error ? error : new Error(String(error)));
         }
@@ -192,9 +215,12 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
 }
 
 export function cancelBlenderSceneRender(jobId: string): boolean {
+  const pending = pendingJobs.get(String(jobId || ""));
+  if (pending) { pending.cancelled = true; return true; }
   const job = activeJobs.get(String(jobId || ""));
   if (!job) return false;
   job.terminationReason = "cancelled";
+  if (job.closed) return true;
   job.child.kill("SIGTERM");
   job.forceKillTimer = setTimeout(() => {
     if (activeJobs.has(jobId)) job.child.kill("SIGKILL");
@@ -204,11 +230,11 @@ export function cancelBlenderSceneRender(jobId: string): boolean {
 }
 
 export function cancelAllBlenderSceneRenders(): number {
-  const jobIds = [...activeJobs.keys()];
+  const jobIds = [...pendingJobs.keys(), ...activeJobs.keys()];
   for (const jobId of jobIds) cancelBlenderSceneRender(jobId);
   return jobIds.length;
 }
 
 export function activeBlenderSceneRenderCount(): number {
-  return activeJobs.size;
+  return pendingJobs.size + activeJobs.size;
 }

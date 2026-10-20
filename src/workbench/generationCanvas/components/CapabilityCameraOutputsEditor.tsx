@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { NomiSelect } from '../../../design'
 
 export type CameraOutput = {

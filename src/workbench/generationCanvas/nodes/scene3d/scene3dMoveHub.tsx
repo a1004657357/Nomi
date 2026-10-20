@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // 整运镜三合一（IA 重排一期，docs/plan/2026-07-20-scene3d-ia-redesign.md §4/§6）：
 // 预设 / 轨迹 / 录 take 三条运镜路收进右栏常驻分区——用户的问题是「想动镜头，从哪动」，
 // 一个固定的家给全三条路。替代并删除：右栏顶层「轨迹」tab、顶栏轨迹 toggle、底部轨迹钮

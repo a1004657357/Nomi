@@ -1,3 +1,4 @@
+import { isProjectExecutionContextCurrent, withProjectAction } from '../../project/projectCanvasReadSurface'
 import {
   BUILTIN_CAPABILITY_RECIPES,
   type CapabilityRecipeOutputKind,
@@ -19,7 +20,7 @@ import {
 } from './capabilityRecipeRunner'
 import { compileCapabilityRecipePrompt } from './capabilityRecipePrompt'
 import {
-  browserCapabilityRecipeMediaProcessor,
+  createBrowserCapabilityRecipeMediaProcessor,
   nearestCapabilityImageAspectRatio,
   normalizeMultiviewCollectionDimensions,
   postprocessCapabilityRecipeResults,
@@ -400,24 +401,32 @@ export async function runCapabilityRecipeOnNode(
   plan: RecipeRunPlan,
   options: RunCapabilityRecipeOnNodeOptions,
 ): Promise<CapabilityRecipeRunOutcome> {
+  const project = withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })
+  const assertCurrent = () => {
+    project.assertCurrent()
+    if (options.signal?.aborted) throw new DOMException('生成已取消', 'AbortError')
+  }
   let grantId = String(options.grantId || '').trim()
   if (!grantId && !options.grantFactory) throw new Error('缺少付费生成授权')
-  if (options.signal?.aborted) throw new DOMException('生成已取消', 'AbortError')
+  assertCurrent()
 
   const initialStore = useGenerationCanvasStore.getState()
   const source = initialStore.nodes.find((node) => node.id === sourceNodeId)
   if (!source) throw new Error('source node not found')
-  const mediaProcessor = options.mediaProcessor ?? browserCapabilityRecipeMediaProcessor
+  const mediaProcessor = options.mediaProcessor ?? createBrowserCapabilityRecipeMediaProcessor(project)
   plan = await prepareSourceImagePlan(plan, source.result, mediaProcessor)
+  assertCurrent()
   const target = initialStore.duplicateNodeForRegeneration(sourceNodeId)
   if (!target) throw new Error('无法创建配方结果节点')
   options.onTargetCreated?.(target.id)
+  assertCurrent()
 
   if (!grantId && options.grantFactory) {
     try {
       grantId = String(await options.grantFactory(target.id, plan.taskCount)).trim()
+      assertCurrent()
     } catch (error) {
-      useGenerationCanvasStore.getState().deleteNode(target.id)
+      if (isProjectExecutionContextCurrent(project)) useGenerationCanvasStore.getState().deleteNode(target.id)
       throw error
     }
     if (!grantId) {
@@ -476,19 +485,23 @@ export async function runCapabilityRecipeOnNode(
   const generatedCollection = await runCapabilityRecipePlan(plan, {
     concurrency: options.concurrency,
     executeTask: async (task) => {
+      assertCurrent()
       const state = useGenerationCanvasStore.getState()
       const latestTarget = state.nodes.find((node) => node.id === target.id) ?? target
       const taskNode = taskNodeForPlan(latestTarget, plan, task)
       return runWithGenerationProviderSlot(
         taskNode,
         async () => {
+          assertCurrent()
           const result = await executor(taskNode, {
+            projectTarget: project.binding,
             nodes: state.nodes.map((node) => node.id === target.id ? taskNode : node),
             edges: state.edges,
             grantId,
             idempotencyKey: task.id,
             ...(options.signal ? { signal: options.signal } : {}),
             onProgress: (progress) => {
+              if (!isProjectExecutionContextCurrent(project) || options.signal?.aborted) return
               useGenerationCanvasStore.getState().setNodeProgress(target.id, {
                 runId: plan.id,
                 phase: progress.phase,
@@ -497,17 +510,21 @@ export async function runCapabilityRecipeOnNode(
               })
             },
           })
-          return postprocessCapabilityRecipeResults(
+          assertCurrent()
+          const processed = await postprocessCapabilityRecipeResults(
             plan,
             task,
             flattenResult(result),
             target.id,
             mediaProcessor,
           )
+          assertCurrent()
+          return processed
         },
         {
           ...(options.signal ? { signal: options.signal } : {}),
           onRateLimitWait: ({ waitMs }) => {
+            if (!isProjectExecutionContextCurrent(project) || options.signal?.aborted) return
             useGenerationCanvasStore.getState().setNodeProgress(target.id, {
               runId: plan.id,
               phase: 'rate-limited',
@@ -518,12 +535,14 @@ export async function runCapabilityRecipeOnNode(
       )
     },
   })
+  assertCurrent()
   const normalizedCollection = await normalizeMultiviewCollectionDimensions(
     plan,
     generatedCollection,
     target.id,
     mediaProcessor,
   )
+  assertCurrent()
   const collectionWithSource: GenerationResultCollection = source.result
     ? {
         ...normalizedCollection,
@@ -554,6 +573,7 @@ export async function runCapabilityRecipeOnNode(
     )),
   )
 
+  assertCurrent()
   const successfulItems = collection.items.filter((item) => item.status === 'success' && item.result)
   const failedItems = collection.items.filter((item) => item.status === 'error')
   const store = useGenerationCanvasStore.getState()
@@ -564,7 +584,9 @@ export async function runCapabilityRecipeOnNode(
     store.setNodeStatus(target.id, 'error', failedItems[0]?.error || '配方生成失败')
   }
 
+  assertCurrent()
   await (options.persist ?? persistActiveWorkbenchProjectNow)().catch(() => {})
+  assertCurrent()
   return {
     nodeId: target.id,
     collectionId: collection.id,
@@ -577,7 +599,12 @@ export async function retryCapabilityRecipeOnNode(
   targetNodeId: string,
   options: RetryCapabilityRecipeOnNodeOptions,
 ): Promise<CapabilityRecipeRunOutcome> {
-  if (options.signal?.aborted) throw new DOMException('生成已取消', 'AbortError')
+  const project = withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })
+  const assertCurrent = () => {
+    project.assertCurrent()
+    if (options.signal?.aborted) throw new DOMException('生成已取消', 'AbortError')
+  }
+  assertCurrent()
 
   const initialStore = useGenerationCanvasStore.getState()
   const target = initialStore.nodes.find((node) => node.id === targetNodeId)
@@ -592,6 +619,7 @@ export async function retryCapabilityRecipeOnNode(
   let grantId = String(options.grantId || '').trim()
   if (!grantId && options.grantFactory) {
     grantId = String(await options.grantFactory(target.id, retryTaskCount)).trim()
+    assertCurrent()
   }
   if (!grantId) throw new Error('缺少付费生成授权')
 
@@ -622,7 +650,7 @@ export async function retryCapabilityRecipeOnNode(
   })
 
   const executor = options.executor ?? generationNodeExecutor
-  const mediaProcessor = options.mediaProcessor ?? browserCapabilityRecipeMediaProcessor
+  const mediaProcessor = options.mediaProcessor ?? createBrowserCapabilityRecipeMediaProcessor(project)
   const desktopVideoInspector = getDesktopBridge()?.assets.inspectVideo
   const inspectVideo = options.inspectVideoQuality ?? (desktopVideoInspector
     ? async (result: GenerationNodeResult) => {
@@ -634,19 +662,23 @@ export async function retryCapabilityRecipeOnNode(
   const retriedCollection = await retryFailedRecipeItems(retryPlan, previousCollection, {
     concurrency: options.concurrency,
     executeTask: async (task) => {
+      assertCurrent()
       const state = useGenerationCanvasStore.getState()
       const latestTarget = state.nodes.find((node) => node.id === target.id) ?? target
       const taskNode = taskNodeForPlan(latestTarget, retryPlan, task)
       return runWithGenerationProviderSlot(
         taskNode,
         async () => {
+          assertCurrent()
           const result = await executor(taskNode, {
+            projectTarget: project.binding,
             nodes: state.nodes.map((node) => node.id === target.id ? taskNode : node),
             edges: state.edges,
             grantId,
             idempotencyKey: task.id,
             ...(options.signal ? { signal: options.signal } : {}),
             onProgress: (progress) => {
+              if (!isProjectExecutionContextCurrent(project) || options.signal?.aborted) return
               useGenerationCanvasStore.getState().setNodeProgress(target.id, {
                 runId: retryPlan.id,
                 phase: progress.phase,
@@ -655,17 +687,21 @@ export async function retryCapabilityRecipeOnNode(
               })
             },
           })
-          return postprocessCapabilityRecipeResults(
+          assertCurrent()
+          const processed = await postprocessCapabilityRecipeResults(
             retryPlan,
             task,
             flattenResult(result),
             target.id,
             mediaProcessor,
           )
+          assertCurrent()
+          return processed
         },
         {
           ...(options.signal ? { signal: options.signal } : {}),
           onRateLimitWait: ({ waitMs }) => {
+            if (!isProjectExecutionContextCurrent(project) || options.signal?.aborted) return
             useGenerationCanvasStore.getState().setNodeProgress(target.id, {
               runId: retryPlan.id,
               phase: 'rate-limited',
@@ -676,6 +712,7 @@ export async function retryCapabilityRecipeOnNode(
       )
     },
   })
+  assertCurrent()
   const collectionWithSource: GenerationResultCollection = retriedCollection.source || !source.result
     ? retriedCollection
     : {
@@ -706,6 +743,7 @@ export async function retryCapabilityRecipeOnNode(
     )),
   )
 
+  assertCurrent()
   const successfulItems = collection.items.filter((item) => item.status === 'success' && item.result)
   const failedItems = collection.items.filter((item) => item.status === 'error')
   const store = useGenerationCanvasStore.getState()
@@ -716,7 +754,9 @@ export async function retryCapabilityRecipeOnNode(
     store.setNodeStatus(target.id, 'error', failedItems[0]?.error || '配方重试失败')
   }
 
+  assertCurrent()
   await (options.persist ?? persistActiveWorkbenchProjectNow)().catch(() => {})
+  assertCurrent()
   return {
     nodeId: target.id,
     collectionId: collection.id,

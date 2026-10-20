@@ -13,9 +13,12 @@ import readline from 'node:readline'
 
 import { createMcpProtocol, MCP_REQUEST_SIGNAL, type McpInvokeOptions } from './mcpProtocol'
 import { MAX_MCP_LINE_BYTES, parseMcpStdioLine } from './mcpStdioLine'
+import { MCP_CANCELLED_IN_FLIGHT_EVENT, MCP_OVERSIZED_LINE_EVENT } from './mcpStdioDiagnostics'
+import { recordDetectedMcpClient } from './mcpDetectedClients'
 // 直接吃纯 locale 模块，不经 i18n.ts——后者顶层 `import { app } from 'electron'`，本 launcher 打包后跑在
 // 无 electron 的裸 Node 里，引 i18n 会 MODULE_NOT_FOUND。这条 electron-free 由 mcpLauncherClosure.test.ts 钉死。
 import { normalizeDesktopLocale, type DesktopLocale } from '../desktopLocale'
+import { readPersistedLocale } from '../settings/localePreference'
 import {
   instanceAdvertFileName,
   parseAdvert,
@@ -23,6 +26,12 @@ import {
   type AdvertVerdict,
   type InstanceAdvertisement,
 } from './instanceAdvert'
+import {
+  createMcpConnectionContext,
+  type McpConnectionContext,
+} from './mcpConnectionContext'
+import { rpcErrorFromPayload } from './mcpRpcError'
+import { createMcpLoopbackRpcRequest } from './mcpLoopbackRpcRequest'
 
 const CAPABILITY_DIR_ENV = 'NOMI_CAPABILITY_DIR'
 const PROJECTS_DIR_ENV = 'NOMI_PROJECTS_DIR'
@@ -31,6 +40,7 @@ const CLIENT_ENV = 'NOMI_MCP_CLIENT'
 const CLIENT_PROOF_ENV = 'NOMI_MCP_CLIENT_PROOF'
 const APP_COMMAND_ENV = 'NOMI_MCP_APP_COMMAND'
 const APP_ARGS_ENV = 'NOMI_MCP_APP_ARGS'
+const BACKGROUND_LAUNCH_ENV = 'NOMI_LAUNCH_BACKGROUND'
 const BOOT_TIMEOUT_MS = 60_000
 // 快速失败预算（§P3-F 承诺）：库不匹配/陈旧/旧版这类「已知连不上」必须在此预算内报人话，绝不拖到 60s 盲等。
 // 实现上在**冷启前**同步命中即抛（毫秒级 ≪ 预算），远快于它；此常量既是文档也是并发用例断言的上界。
@@ -150,6 +160,7 @@ function startNomi(): void {
   delete env[APP_ARGS_ENV]
   delete env[CLIENT_ENV]
   delete env[CLIENT_PROOF_ENV]
+  env[BACKGROUND_LAUNCH_ENV] = '1'
   bootFailure = ''
   bootExitDetail = ''
   bootedApp = spawn(command, appArgs(), { env, stdio: 'ignore' })
@@ -163,10 +174,18 @@ function startNomi(): void {
   })
 }
 
-// 结果/进度文案 locale：bare-Node launcher 没有 Electron 的 app.getLocale()，改读**同一份 OS locale**——
-// Intl.DateTimeFormat().resolvedOptions().locale 就是 Electron app.getLocale() 底下那个系统区域信号（同源、非
-// 凭空发明的通道），经 normalizeDesktopLocale 归成 en / zh-CN，取不到/异常时缺省 zh-CN。provider 可注入（单测）。
-export function resolveLauncherLocale(readSystemLocale: () => string = () => Intl.DateTimeFormat().resolvedOptions().locale): DesktopLocale {
+// 结果/进度文案 locale：bare-Node launcher 优先读 GUI 写入的 preferences.language；Nomi 未运行或偏好缺失时
+// 才读系统 locale。provider 可注入（单测），并保留 zh-CN 作为无信号兜底。
+export function resolveLauncherLocale(
+  readSystemLocale: () => string = () => Intl.DateTimeFormat().resolvedOptions().locale,
+  readPreference: () => DesktopLocale | null = () => readPersistedLocale(),
+): DesktopLocale {
+  try {
+    const preferred = readPreference()
+    if (preferred) return preferred
+  } catch {
+    // A corrupt/unavailable preference must not prevent the OS fallback.
+  }
   try {
     return normalizeDesktopLocale(readSystemLocale())
   } catch {
@@ -215,7 +234,7 @@ async function callViaRpc(
   params: Record<string, unknown>,
   options?: McpInvokeOptions,
 ): Promise<unknown> {
-  const client = String(process.env[CLIENT_ENV] || '').trim()
+  const connection = launcherConnection()
   const proof = String(process.env[CLIENT_PROOF_ENV] || '').trim()
   const timeoutMs = rpcTimeoutMs()
   const controller = new AbortController()
@@ -226,15 +245,15 @@ async function callViaRpc(
   let response: Response
   try {
     response = await fetch(`http://127.0.0.1:${instance.port}/rpc`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${instance.token}`,
-        ...(client && proof ? { 'x-nomi-mcp-client': client, 'x-nomi-mcp-client-proof': proof } : {}),
-      },
-      // planConfirmed crosses to the renderer gateway so an in-chat plan approval skips the App dialog (no double-ask).
-      body: JSON.stringify({ method, params, ...(options?.planConfirmed ? { planConfirmed: true } : {}), ...(options?.spendConfirmed ? { spendConfirmed: true } : {}) }),
-      signal: controller.signal,
+      ...createMcpLoopbackRpcRequest({
+        token: instance.token,
+        clientProof: proof,
+        connection,
+        method,
+        params,
+        planConfirmed: options?.planConfirmed,
+        signal: controller.signal,
+      }),
     })
   } catch (error) {
     if (options?.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new Error('MCP request cancelled')
@@ -246,22 +265,99 @@ async function callViaRpc(
     clearTimeout(timer)
     options?.signal?.removeEventListener('abort', relayAbort)
   }
-  const body = await response.json() as { ok?: boolean; error?: string; result?: unknown }
-  if (!body.ok) throw new Error(body.error || `Nomi RPC failed (${response.status})`)
+  const body = await response.json() as { ok?: boolean; error?: unknown; result?: unknown }
+  if (!body.ok) throw rpcErrorFromPayload(body, response.status)
   return body.result
 }
 
-// OS locale 解析一次（进程生命周期内 UI 语言不变，同 mcpStdioServer 的 setDesktopLocale(app.getLocale())）。
-const launcherLocale = resolveLauncherLocale()
+// 首次无 GUI 时从持久化偏好解析；在线请求会通过 loopback RPC 刷新，避免用户切语言后旧缓存继续生效。
+let launcherLocale = resolveLauncherLocale()
+async function refreshLauncherLocale(instance: InstanceAdvertisement): Promise<void> {
+  try {
+    const result = await callViaRpc(instance, 'nomi_get_locale', {})
+    if (result && typeof result === 'object' && typeof (result as { locale?: unknown }).locale === 'string') {
+      launcherLocale = normalizeDesktopLocale((result as { locale: string }).locale)
+    }
+  } catch {
+    // Offline or older GUI: keep persisted/system resolution.
+  }
+}
+let connection: McpConnectionContext | null = null
+// Mint lazily but at most once for this stdio transport. Lazy construction
+// keeps pure helper imports side-effect free; the first real RPC still fails
+// closed when the installed client proof is absent or invalid.
+function launcherConnection(): McpConnectionContext {
+  connection ??= createMcpConnectionContext({
+    client: process.env[CLIENT_ENV],
+    proof: process.env[CLIENT_PROOF_ENV],
+  })
+  return connection
+}
+
+async function invokeLiveRpc(
+  instance: InstanceAdvertisement,
+  method: string,
+  params: Record<string, unknown>,
+  options?: McpInvokeOptions,
+): Promise<unknown> {
+  const requestSignal = (params as Record<PropertyKey, unknown>)[MCP_REQUEST_SIGNAL] as AbortSignal | undefined
+  return callViaRpc(instance, method, params, requestSignal ? { ...options, signal: requestSignal } : options)
+}
 
 const protocol = createMcpProtocol({
   send: (message) => process.stdout.write(`${JSON.stringify(message)}\n`),
   invoke: async (method, params, options) => {
     const requestSignal = (params as Record<PropertyKey, unknown>)[MCP_REQUEST_SIGNAL] as AbortSignal | undefined
-    return callViaRpc(await ensureLiveInstance(requestSignal), method, params, requestSignal ? { ...options, signal: requestSignal } : options)
+    const instance = await ensureLiveInstance(requestSignal)
+    await refreshLauncherLocale(instance)
+    return invokeLiveRpc(instance, method, params, options)
+  },
+  invokeIfOpen: async (method, params, options) => {
+    const instance = readLiveInstance()
+    if (!instance) return undefined
+    return invokeLiveRpc(instance, method, params, options)
   },
   isAppOpen: () => Boolean(readLiveInstance()),
+  getAuthenticatedClient: () => launcherConnection().authenticatedClient,
+  // 打包态：mcpNodeLauncher 以裸 Node 跑，无自己的 Electron 主进程，不能直接弹应用内卡。
+  // 通过 loopback RPC 把挑战令牌转给 GUI 进程的 nomi_confirm_generation_gate 端点，
+  // 由 GUI 负责弹真人确认卡并铸收据——与 mcpStdioServer.ts 的 confirmGenerationInNomi 同语义。
+  confirmGenerationInNomi: async (challenge) => {
+    const challengeToken = challenge.handoff && typeof challenge.handoff.challengeToken === 'string'
+      ? challenge.handoff.challengeToken
+      : ''
+    const instance = readLiveInstance()
+    if (!challengeToken || !instance) return { confirmed: false }
+    const result = await callViaRpc(instance, 'nomi_confirm_generation_gate', { challengeToken })
+    const typed = result as { confirmed?: boolean; receiptId?: string; receiptToken?: string }
+    return {
+      confirmed: typed.confirmed === true,
+      ...(typed.receiptId ? { receiptId: typed.receiptId } : {}),
+      ...(typed.receiptToken ? { receiptToken: typed.receiptToken } : {}),
+    }
+  },
+  // 打包态：client_elicitation 路径——客户端在调用方 accept 后，通过 loopback RPC 让主进程铸收据。
+  // 主进程持有 macKey，是唯一能签 client_elicitation attestation 的一方；
+  // 此函数是 mcpGateConfirmation.ts 中 verifyClientGenerationConfirmation 的装配点。
+  verifyClientGenerationConfirmation: async (challenge) => {
+    const challengeToken = challenge.handoff && typeof challenge.handoff.challengeToken === 'string'
+      ? challenge.handoff.challengeToken
+      : ''
+    const instance = readLiveInstance()
+    const authenticatedClient = launcherConnection().authenticatedClient
+    if (!challengeToken || !instance || !authenticatedClient) return { confirmed: false }
+    const result = await callViaRpc(instance, 'nomi_verify_client_generation_gate', { challengeToken, authenticatedClient })
+    const typed = result as { confirmed?: boolean; receiptId?: string; receiptToken?: string }
+    return {
+      confirmed: typed.confirmed === true,
+      ...(typed.receiptId ? { receiptId: typed.receiptId } : {}),
+      ...(typed.receiptToken ? { receiptToken: typed.receiptToken } : {}),
+    }
+  },
   getLocale: () => launcherLocale,
+  // 打包态（裸 Node）与开发态（Electron stdio）共用同一套检测档案。
+  // mcpDetectedClients 是 bare-Node safe，不引 electron，可安全接入。
+  onClientDetected: (name) => { recordDetectedMcpClient(name) },
 })
 
 const input = readline.createInterface({ input: process.stdin })
@@ -269,7 +365,9 @@ input.on('line', (line) => {
   const parsed = parseMcpStdioLine(line)
   if (parsed.kind === 'blank') return
   if (parsed.kind === 'oversized') {
-    process.stderr.write(`[nomi-mcp] dropped an oversized stdin line (> ${MAX_MCP_LINE_BYTES} bytes)\n`)
+    // 裸 Node launcher 够不着 logger（它要 electron 的 app.getPath），所以这里直写 stderr，
+    // 但事件名与字段与 Electron 那条逐字一致（同一个常量），宿主两边看到的是同一件事。
+    process.stderr.write(`[nomi-mcp] ${MCP_OVERSIZED_LINE_EVENT} limitBytes=${MAX_MCP_LINE_BYTES}\n`)
     return
   }
   if (parsed.kind === 'parse-error') {
@@ -283,7 +381,8 @@ let closing = false
 function close(): void {
   if (closing) return
   closing = true
-  protocol.cancelAllInFlight('stdio disconnected')
+  const cancelled = protocol.cancelAllInFlight('stdio disconnected')
+  if (cancelled > 0) process.stderr.write(`[nomi-mcp] ${MCP_CANCELLED_IN_FLIGHT_EVENT} count=${cancelled}\n`)
   if (process.env.NOMI_MCP_EXIT_BOOTSTRAPPED_APP === '1' && bootedApp?.pid) {
     try { bootedApp.kill('SIGTERM') } catch { /* best effort test cleanup */ }
   }

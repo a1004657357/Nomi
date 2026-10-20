@@ -2,7 +2,7 @@
  * 撤销 toast — 用于跨分类拖拽创建独立副本场景（spec §6.6 / 决策 3）。
  *
  * 触发：跨分类拖拽完成、跨分类 Cmd+V 粘贴。
- * 行为：5 秒内可点击 toast 任意位置 = 撤销（删除刚创建的副本节点）；
+ * 行为：5 秒内可点击「撤销」按钮 = 撤销（删除刚创建的副本节点）；
  *      5 秒后自动消失，副本永久保留。
  *
  */
@@ -26,11 +26,13 @@ export type UndoToastOptions = {
    *
    * 为什么需要它：只在点击时拦，会留下一个点了没反应的哑巴按钮——
    * 用户看到的是「撤销坏了」。失效就让它消失，才是诚实的界面。
+   * 收掉与退订都由 toast 所有者（ToastValidity）负责，这里只交出这两个函数。
    */
   watchUndoable?: (recheck: () => void) => () => void
 }
 
 const DEFAULT_DURATION_MS = 5000
+let undoOperationSequence = 0
 
 export function showUndoToast({
   message,
@@ -40,13 +42,6 @@ export function showUndoToast({
   watchUndoable,
 }: UndoToastOptions): void {
   let consumed = false
-  let unwatch: (() => void) | undefined
-  const stopWatching = () => {
-    if (!unwatch) return
-    const dispose = unwatch
-    unwatch = undefined
-    try { dispose() } catch { /* 退订失败不该影响 toast 行为 */ }
-  }
 
   // 判定本身抛了 = 证不出「撤的是自己那笔」= 按不可撤处理。
   // 宁可少撤一次，也不能误撤别人的成果。
@@ -56,10 +51,15 @@ export function showUndoToast({
   }
 
   const id = useToastStore.getState().push({
+    id: `undo:${++undoOperationSequence}`,
+    reason: 'undo-operation',
     message,
     type: 'success',
     ttl: durationMs,
     actionLabel: i18n.t('common.undo'),
+    // 「前提失效就撤回这条提示」由 toast 所有者统一负责：失效了它收掉提示、连同那个撤不动的按钮，
+    // 提示到点 / 被关时它退订。这里只交出两件事：怎么问「还能撤吗」、谁会告诉我「可能变了」。
+    ...(isUndoable && watchUndoable ? { validWhile: { isValid: stillUndoable, subscribe: watchUndoable } } : {}),
     onAction: () => {
       if (consumed) return
       // 过期判定放在**点击那一刻**：toast 挂在屏上期间世界会变，
@@ -67,28 +67,11 @@ export function showUndoToast({
       // 绝不退化成「无条件弹一层撤销栈」——那正是会误伤别人成果的写法。
       if (!stillUndoable()) {
         consumed = true
-        stopWatching()
         useToastStore.getState().remove(id)
         return
       }
       consumed = true
-      stopWatching()
       try { onUndo() } catch { /* swallow undo failures, toast UI 已消失 */ }
     },
   })
-
-  if (isUndoable && watchUndoable) {
-    unwatch = watchUndoable(() => {
-      if (consumed) return
-      if (stillUndoable()) return
-      // 失效了：收掉这张 toast，连同它那个已经撤不动的按钮。
-      consumed = true
-      stopWatching()
-      useToastStore.getState().remove(id)
-    })
-    // toast 自己到点消失后订阅也该停，别把监听留到天荒地老。
-    if (typeof durationMs === 'number' && durationMs > 0) {
-      setTimeout(stopWatching, durationMs)
-    }
-  }
 }

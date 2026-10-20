@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createProjectSessionTestHarness } from '../../project/projectSessionTestHarness'
+import { withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { createVibingDirectorState } from '../nodes/vibingDirector/vibingDirectorState'
@@ -51,7 +53,12 @@ function sourceNode(): GenerationCanvasNode {
   }
 }
 
-beforeEach(() => {
+let session: ReturnType<typeof createProjectSessionTestHarness>
+let project: ProjectExecutionContext
+beforeEach(async () => {
+  session = createProjectSessionTestHarness()
+  await session.open('project-1')
+  project = withProjectAction(project => project)!
   useGenerationCanvasStore.getState().restoreSnapshot({
     nodes: [sourceNode()],
     edges: [],
@@ -59,10 +66,12 @@ beforeEach(() => {
     selectedNodeIds: [],
   })
 })
+afterEach(() => session.dispose())
 
 describe('handoffModel3dNode', () => {
   it('creates a Scene3D node containing the generated GLB and keeps source provenance', async () => {
     const outcome = await handoffModel3dNode({
+      project,
       sourceNodeId: 'model-source',
       target: 'scene3d',
       persist: async () => {},
@@ -117,10 +126,10 @@ describe('handoffModel3dNode', () => {
     }))
 
     const outcome = await handoffModel3dNode({
+      project,
       sourceNodeId: 'model-source',
       target: 'vibingDirector',
       targetNodeId: director.id,
-      projectId: 'project-1',
       license: 'user-owned',
       importDirectorAsset,
       persist: async () => {},
@@ -134,7 +143,8 @@ describe('handoffModel3dNode', () => {
     }
     expect(outcome.createdTarget).toBe(false)
     expect(importDirectorAsset).toHaveBeenCalledWith({
-      projectId: expect.any(String),
+      projectId: 'project-1',
+      projectBinding: project.binding,
       directorNodeId: director.id,
       sourceUrl: 'nomi-local://asset/project-1/generated/coffee-cup.glb',
       source: 'local',
@@ -154,6 +164,7 @@ describe('handoffModel3dNode', () => {
 
   it('keeps the latest Scene3D transform when the same generated asset is handed to Blender', async () => {
     const sceneOutcome = await handoffModel3dNode({
+      project,
       sourceNodeId: 'model-source',
       target: 'scene3d',
       persist: async () => {},
@@ -179,9 +190,9 @@ describe('handoffModel3dNode', () => {
     })
 
     const outcome = await handoffModel3dNode({
+      project,
       sourceNodeId: 'model-source',
       target: 'vibingDirector',
-      projectId: 'project-1',
       importDirectorAsset: async () => ({
         asset: {
           id: 'director-asset-transform',
@@ -224,6 +235,7 @@ describe('handoffModel3dNode', () => {
     })
 
     await expect(handoffModel3dNode({
+      project,
       sourceNodeId: 'model-source',
       target: 'scene3d',
       inspectModel3d: async () => { throw new Error('GLB magic 无效') },
@@ -235,13 +247,43 @@ describe('handoffModel3dNode', () => {
 
   it('removes a newly-created Director node when the asset import fails', async () => {
     await expect(handoffModel3dNode({
+      project,
       sourceNodeId: 'model-source',
       target: 'vibingDirector',
-      projectId: 'project-1',
       importDirectorAsset: async () => { throw new Error('本地资产不存在') },
       persist: async () => {},
     })).rejects.toThrow('本地资产不存在')
 
     expect(useGenerationCanvasStore.getState().nodes.map((node) => node.id)).toEqual(['model-source'])
+  })
+
+  it('rejects an obsolete context before inspecting or mutating', async () => {
+    await session.open('project-2')
+    await session.open('project-1')
+    const inspectModel3d = vi.fn()
+    const persist = vi.fn()
+    const before = useGenerationCanvasStore.getState().nodes
+    await expect(handoffModel3dNode({ project, sourceNodeId: 'model-source', target: 'scene3d', inspectModel3d, persist })).rejects.toThrow()
+    expect(inspectModel3d).not.toHaveBeenCalled()
+    expect(persist).not.toHaveBeenCalled()
+    expect(useGenerationCanvasStore.getState().nodes).toBe(before)
+  })
+
+  it('does not roll back a same-id node in the new project when import returns late', async () => {
+    let finish!: (result: { asset: { id: string; name: string; fileName: string; format: 'glb'; source: 'local'; license: string; importedAt: number }; relativePath: string }) => void
+    const persist = vi.fn(async () => {})
+    const importing = handoffModel3dNode({
+      project, sourceNodeId: 'model-source', target: 'vibingDirector', persist,
+      importDirectorAsset: () => new Promise(resolve => { finish = resolve }),
+    })
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+    const target = useGenerationCanvasStore.getState().nodes.find(node => node.kind === 'vibingDirector')!
+    await session.open('project-2')
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [{ ...target, title: 'new project same-id node' }], edges: [], groups: [], selectedNodeIds: [] })
+    const before = useGenerationCanvasStore.getState().nodes
+    finish({ asset: { id: 'late', name: 'late', fileName: 'late.glb', format: 'glb', source: 'local', license: 'user-owned', importedAt: 1 }, relativePath: 'late.glb' })
+    await expect(importing).rejects.toThrow()
+    expect(useGenerationCanvasStore.getState().nodes).toBe(before)
+    expect(persist).not.toHaveBeenCalled()
   })
 })

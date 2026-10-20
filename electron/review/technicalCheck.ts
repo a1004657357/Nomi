@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import { resolveFfmpegPath } from "../export/ffmpegRunner";
 import { probeMediaMetadata, type MediaProbeMetadata } from "../export/mediaProbe";
+import { desktopT } from "../i18n";
 
 export type TechnicalCheckItem = {
   id: "black-frames" | "frozen-video" | "silent-audio" | "zero-duration" | "undecodable" | "aspect-ratio" | "duration";
@@ -45,7 +46,7 @@ function runFfmpegStderr(args: string[]): Promise<string> {
       child.kill("SIGTERM");
       const forceKill = setTimeout(() => child.kill("SIGKILL"), 1_000);
       forceKill.unref?.();
-      finish(new Error("媒体质量检查超时"));
+      finish(new Error(desktopT("review.checkTimedOut")));
     }, FFMPEG_CHECK_TIMEOUT_MS);
     timeout.unref?.();
     child.stderr?.on("data", (chunk) => {
@@ -130,8 +131,8 @@ export async function runTechnicalCheck(
         id: "aspect-ratio",
         suspect,
         detail: suspect
-          ? `实际 ${meta.width}×${meta.height}，不符合请求画幅 ${options.expectedAspectRatio}`
-          : `实际 ${meta.width}×${meta.height}，符合请求画幅 ${options.expectedAspectRatio}`,
+          ? desktopT("review.aspectMismatch", { width: meta.width ?? 0, height: meta.height ?? 0, ratio: options.expectedAspectRatio ?? '' })
+          : desktopT("review.aspectMatch", { width: meta.width ?? 0, height: meta.height ?? 0, ratio: options.expectedAspectRatio ?? '' }),
         metrics: {
           width: meta.width ?? 0,
           height: meta.height ?? 0,
@@ -150,9 +151,9 @@ export async function runTechnicalCheck(
         id: "undecodable",
         suspect: !decodable || !largeEnough,
         detail: !decodable
-          ? "图片无法解码或尺寸为 0"
+          ? desktopT("review.imageUndecodable")
           : !largeEnough
-            ? `图片尺寸过小：${meta.width}×${meta.height}，最短边至少需要 ${MINIMUM_GENERATED_IMAGE_DIMENSION}px`
+            ? desktopT("review.imageTooSmall", { width: meta.width ?? 0, height: meta.height ?? 0, minimum: MINIMUM_GENERATED_IMAGE_DIMENSION })
             : `${meta.width}×${meta.height}`,
         metrics: {
           width: meta.width ?? 0,
@@ -168,8 +169,8 @@ export async function runTechnicalCheck(
           id: "duration",
           suspect,
           detail: suspect
-            ? `实际 ${duration.toFixed(2)}s，不符合请求时长 ${options.expectedDurationSeconds}s`
-            : `实际 ${duration.toFixed(2)}s，符合请求时长 ${options.expectedDurationSeconds}s`,
+            ? desktopT("review.durationMismatch", { actual: duration.toFixed(2), expected: options.expectedDurationSeconds })
+            : desktopT("review.durationMatch", { actual: duration.toFixed(2), expected: options.expectedDurationSeconds }),
           metrics: {
             durationSeconds: duration,
             expectedDurationSeconds: options.expectedDurationSeconds,
@@ -180,7 +181,7 @@ export async function runTechnicalCheck(
       checks.push({
         id: "zero-duration",
         suspect: duration <= 0.1,
-        detail: duration > 0.1 ? `时长 ${duration.toFixed(1)}s` : "视频时长为 0",
+        detail: duration > 0.1 ? desktopT("review.duration", { seconds: duration.toFixed(1) }) : desktopT("review.zeroDuration"),
         metrics: { durationSeconds: duration },
       });
       if (duration > 0.1) {
@@ -199,8 +200,8 @@ export async function runTechnicalCheck(
           id: "black-frames",
           suspect: metrics.blackRatio > BLACK_RATIO_THRESHOLD,
           detail: metrics.blackRatio > BLACK_RATIO_THRESHOLD
-            ? `约 ${Math.round(metrics.blackRatio * 100)}% 画面是黑的`
-            : `黑帧占比 ${Math.round(metrics.blackRatio * 100)}%`,
+            ? desktopT("review.blackRatio", { percent: Math.round(metrics.blackRatio * 100) })
+            : desktopT("review.blackFrames", { percent: Math.round(metrics.blackRatio * 100) }),
           metrics: {
             blackSeconds: metrics.blackSeconds,
             blackRatio: metrics.blackRatio,
@@ -210,8 +211,8 @@ export async function runTechnicalCheck(
           id: "frozen-video",
           suspect: metrics.freezeRatio > FREEZE_RATIO_THRESHOLD,
           detail: metrics.freezeRatio > FREEZE_RATIO_THRESHOLD
-            ? `约 ${Math.round(metrics.freezeRatio * 100)}% 画面保持冻结`
-            : `冻结占比 ${Math.round(metrics.freezeRatio * 100)}%`,
+            ? desktopT("review.frozenRatio", { percent: Math.round(metrics.freezeRatio * 100) })
+            : desktopT("review.frozenFrames", { percent: Math.round(metrics.freezeRatio * 100) }),
           metrics: {
             frozenSeconds: metrics.frozenSeconds,
             freezeRatio: metrics.freezeRatio,
@@ -224,7 +225,8 @@ export async function runTechnicalCheck(
           checks.push({
             id: "silent-audio",
             suspect: silenceRatio > SILENCE_RATIO_THRESHOLD,
-            detail: silenceRatio > SILENCE_RATIO_THRESHOLD ? "音轨几乎全程静音" : `静音占比 ${Math.round(silenceRatio * 100)}%`,
+            detail: silenceRatio > SILENCE_RATIO_THRESHOLD
+              ? desktopT("review.silentAudio") : desktopT("review.silenceRatio", { percent: Math.round(silenceRatio * 100) }),
             metrics: { silenceSeconds, silenceRatio },
           });
         }
@@ -236,7 +238,7 @@ export async function runTechnicalCheck(
     checks.push({
       id: "undecodable",
       suspect: true,
-      detail: `媒体探测失败:${error instanceof Error ? error.message.slice(0, 120) : String(error).slice(0, 120)}`,
+      detail: desktopT("review.probeFailed", { detail: error instanceof Error ? error.message.slice(0, 120) : String(error).slice(0, 120) }),
     });
   }
   return { suspect: checks.some((check) => check.suspect), checks };

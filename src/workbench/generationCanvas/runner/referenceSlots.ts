@@ -1,3 +1,4 @@
+import { remainingReferenceCapacity } from '../../../../electron/shared/videoCapabilities/crossFieldConstraints'
 // 能力驱动的参考槽解析 —— **唯一真相源**（方案 docs/plan/2026-06-14-connection-reference-capability-model.md）。
 //
 // 一个函数把「目标当前模式声明的槽」+「指向它的画布边」+「meta 里手动上传的值」解析成
@@ -10,9 +11,9 @@
 //   故 fills 即使 url 为 null 也保留，显示画「已连接·待生成」占位 → 不再「连线没用」。
 // - **来源判别**：每个 fill 标明来自边（带源节点 id + 语义）还是上传。
 import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode } from '../model/generationCanvasTypes'
-import type { ArchetypeReferenceSlot, ArchetypeReferenceSlotKind } from '../../../config/modelArchetypes'
-import { currentArchetypeMode, referenceSlotStorage } from '../nodes/controls/archetypeMeta'
-import { archetypeForNode, referenceAssetKindForNode, SLOT_ACCEPTS, type ReferenceAssetKind } from '../agent/referenceEdgeCapability'
+import type { ArchetypeReferenceSlot, ArchetypeReferenceSlotKind } from '../../../../electron/shared/modelArchetypes'
+import { applyArchetypeModeSwitch, currentArchetypeMode, referenceSlotStorage } from '../nodes/controls/archetypeMeta'
+import { archetypeForNode, referenceAssetKindForNode, resolveTargetModeForEdge, SLOT_ACCEPTS, preferredSlotKinds, type ReferenceAssetKind } from '../agent/referenceEdgeCapability'
 import { sortEdgesByOrder } from '../model/graphOps'
 import { asUrl, findNodeResultUrl } from './referenceUrl'
 
@@ -46,7 +47,7 @@ export type ResolvedReferenceSlot = {
 function assignEdgeToSlot(
   mode: GenerationCanvasEdgeMode | undefined,
   assetKind: ReferenceAssetKind,
-  slots: ArchetypeReferenceSlot[],
+  slots: readonly ArchetypeReferenceSlot[],
 ): { slotIndex: number; preferredPosition?: number } | null {
   const accepts = (slot: ArchetypeReferenceSlot) => SLOT_ACCEPTS[slot.kind].includes(assetKind)
   const findKind = (kind: ArchetypeReferenceSlotKind) => slots.findIndex((s) => s.kind === kind && accepts(s))
@@ -59,12 +60,21 @@ function assignEdgeToSlot(
     const ir = findKind('image_ref'); if (ir >= 0) return { slotIndex: ir, preferredPosition: 1 } // 尾帧 = image_ref[1]
   }
   // 通用 reference / style_ref / character_ref / composition_ref / 未知：按源资产挑第一个能吃的槽
-  const order: ArchetypeReferenceSlotKind[] = assetKind === 'video'
-    ? ['video_ref', 'source_video', 'first_frame']
-    : ['image_ref', 'first_frame', 'last_frame']
-  for (const kind of order) { const i = findKind(kind); if (i >= 0) return { slotIndex: i } }
+  for (const kind of preferredSlotKinds('reference', assetKind)) { const i = findKind(kind); if (i >= 0) return { slotIndex: i } }
   const any = slots.findIndex(accepts)
   return any >= 0 ? { slotIndex: any } : null
+}
+
+/**
+ * 一条**首帧边**（图片源）落进这组声明槽里的哪一个——就是上面 `assignEdgeToSlot` 的判据，不另写一份。
+ * 首帧槽优先，没有就是 image_ref[0]；这与发送侧一致：generationReferenceResolver 把首帧边的图同时放进
+ * `firstFrameUrl`（喂首帧槽）与 `referenceImages`（喂 image_ref 数组槽），而没有模式同时声明这两种槽
+ * （shotRowModel.plannedFirstFrame.test.ts 按全部视频档案逐模式核对）。
+ * 消费方：分镜行「计划首帧」——那一行还没落画布，首帧边还不存在，但生成时它会落在这里。落不下 → null。
+ */
+export function firstFrameEdgeSlot(slots: readonly ArchetypeReferenceSlot[]): ArchetypeReferenceSlot | null {
+  const assignment = assignEdgeToSlot('first_frame', 'image', slots)
+  return assignment ? slots[assignment.slotIndex] ?? null : null
 }
 
 /**
@@ -231,4 +241,20 @@ export function decideArrayReferenceRemoval(
     return { kind: 'remove-upload', url: fill.url as string }
   }
   return { kind: 'noop' }
+}
+
+/** Same slot placement and aggregate budget for uploads and pending connections. */
+export function canFitReferenceEdge(source: GenerationCanvasNode, target: GenerationCanvasNode, nodes: readonly GenerationCanvasNode[], edges: readonly GenerationCanvasEdge[], semantic: GenerationCanvasEdgeMode): boolean {
+  const archetype = archetypeForNode(target)
+  const asset = referenceAssetKindForNode(source)
+  if (!archetype || !asset) return true
+  const promoted = resolveTargetModeForEdge(source, target, semantic)
+  const effectiveTarget = promoted ? { ...target, meta: applyArchetypeModeSwitch(target.meta ?? {}, archetype, promoted) } : target
+  const mode = currentArchetypeMode(archetype, effectiveTarget.meta ?? {})
+  const assignment = assignEdgeToSlot(semantic, asset, mode.slots)
+  if (!assignment) return false
+  const filled = resolveReferenceSlots(effectiveTarget, [...nodes], [...edges])
+  const slot = filled[assignment.slotIndex]
+  if (slot.max !== undefined && slot.fills.length >= slot.max) return false
+  return remainingReferenceCapacity(mode, Object.fromEntries(filled.map((item) => [item.slotKind, item.fills.length]))) > 0
 }

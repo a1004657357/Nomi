@@ -51,6 +51,10 @@ describe('reviewMoodCollectionWithVisionModel', () => {
   it('uses one isolated multimodal call and writes semantic evidence into quality', async () => {
     const clearSession = vi.fn(async () => {})
     const send = vi.fn<SendVisionReview>(async () => ({
+      id: 'mood-review-response',
+      status: 'finished',
+      toolCalls: [],
+      artifacts: [],
       text: JSON.stringify({
         items: [{
           itemId: 'mood-e4-a0',
@@ -64,6 +68,7 @@ describe('reviewMoodCollectionWithVisionModel', () => {
       usage: {
         promptTokens: 120,
         completionTokens: 40,
+        cachedPromptTokens: 0,
         totalTokens: 160,
       },
     }))

@@ -1,7 +1,8 @@
-import React from "react";
+import React, { type JSX } from "react";
+import { WorkspacePanelFrameContext } from "./WorkspacePanelFrame";
+import { createPortal } from 'react-dom';
 import { useTranslation } from "react-i18next";
 import "./workbench.css";
-import "./workbench-ai.css";
 import { IconBrowser } from "@tabler/icons-react";
 import { NomiBrand, NomiLoadingMark } from "../design";
 import NomiAppBar from "../ui/app-shell/NomiAppBar";
@@ -10,17 +11,33 @@ import {
     useWorkbenchStore,
     type WorkspaceMode,
 } from "./workbenchStore";
+import { assistantWidthMaxFor } from "./assistantWidthBounds";
 import { cn } from "../utils/cn";
+import { cancelCanvasDraggingWithin } from "./generationCanvas/components/canvasDraggingFlag";
 import ProjectExplorerSidebar from "./explorer/ProjectExplorerSidebar";
+import DocumentListSidebar from "./creation/DocumentListSidebar";
+import { workspaceModeCarriesCreationResourceTree } from "./creation/creationResourceTreeModes";
+import { useCreationResourceTreeCollapsed } from "./creation/useCreationResourceTreeCollapsed";
 import { lazyWithChunkBoundary } from "../ui/chunkBoundary";
 import { WindowControls } from "../ui/app-shell/WindowControls";
 import { handleWindowTitlebarDoubleClick } from "../ui/app-shell/windowTitlebarDoubleClick";
 import { OnboardingChecklist } from "./onboarding/OnboardingChecklist";
+import ProjectAgentResidentShell from './ai/ProjectAgentResidentShell';
+import { useUpdater } from '../ui/app-shell/useUpdater';
+import { UpdaterDialog } from '../ui/app-shell/UpdaterDialog';
+import { useGenerationCanvasStore } from './generationCanvas/store/generationCanvasStore';
+import { useProductionRunStore } from './production/productionRunStore';
 
 // 工作区懒加载走容错域（审计 A5）：单个工作区 chunk 失败不拖死其余工作区。
 const CreationWorkspace = lazyWithChunkBoundary(
     "创作区",
     () => import("./creation/CreationWorkspace"),
+);
+// 分镜独立工作区（v5 C3）：storyboard 模式不再共用 CreationWorkspace，
+// 单独懒挂载全宽 StoryboardWorkspace（表本身全宽；创作资源树由本 shell 统一挂，见下）。
+const StoryboardWorkspace = lazyWithChunkBoundary(
+    "i18n:workspace.storyboard",
+    () => import("./creation/storyboard/StoryboardWorkspace"),
 );
 const GenerationWorkspace = lazyWithChunkBoundary(
     "生成区",
@@ -29,9 +46,8 @@ const GenerationWorkspace = lazyWithChunkBoundary(
 const PreviewWorkspace = lazyWithChunkBoundary("预览区", () => import("./preview/PreviewWorkspace"));
 
 type WorkbenchShellProps = {
+    projectFeedback?: React.ReactNode;
     generation: React.ReactNode;
-    generationAi?: React.ReactNode;
-    generationAiLayout?: "sidebar" | "overlay";
     projectId?: string | null;
     projectName?: string;
     onBackToLibrary?: () => void;
@@ -42,6 +58,7 @@ type WorkbenchShellProps = {
 
 const STEP_PARAM_BY_MODE: Record<WorkspaceMode, string> = {
     creation: "create",
+    storyboard: "storyboard",
     generation: "generate",
     preview: "preview",
 };
@@ -49,6 +66,7 @@ const STEP_PARAM_BY_MODE: Record<WorkspaceMode, string> = {
 const MODE_BY_STEP_PARAM: Record<string, WorkspaceMode> = {
     create: "creation",
     creation: "creation",
+    storyboard: "storyboard",
     generate: "generation",
     generation: "generation",
     preview: "preview",
@@ -82,8 +100,19 @@ function WorkspaceSlot({
     children,
     label,
 }: WorkspaceSlotProps): JSX.Element {
+    const slot = React.useRef<HTMLDivElement>(null);
+    // 槽位被藏起来 = 这里面还没结束的手势被打断。**隐藏是宿主自己知道的事**，
+    // 所以由它显式喊一声；画布那边因此不用给每次手势装一个扫祖先链的 MutationObserver
+    // （那条路每帧一轮 getComputedStyle，正压在拖图热路径上，见 canvasDraggingFlag 顶部注释）。
+    React.useEffect(() => {
+        if (active) return;
+        cancelCanvasDraggingWithin(slot.current);
+    }, [active]);
+    // 卸载同理：租约记着那张 stage，走掉了就没人再来收尾。
+    React.useEffect(() => () => cancelCanvasDraggingWithin(slot.current), []);
     return (
         <div
+            ref={slot}
             className={cn(
                 "workbench-shell__workspace",
                 "w-full h-full min-w-0 min-h-0",
@@ -124,9 +153,8 @@ function openBrowser(): void {
 }
 
 export default function WorkbenchShell({
+    projectFeedback,
     generation,
-    generationAi,
-    generationAiLayout = "sidebar",
     projectId,
     projectName,
     onBackToLibrary,
@@ -140,6 +168,35 @@ export default function WorkbenchShell({
         (state) => state.setWorkspaceMode,
     );
     const categories = useWorkbenchStore((state) => state.categories);
+    const agentDockCollapsed = useWorkbenchStore((state) => state.projectAgentDockCollapsed);
+    // 常驻 Agent 无条件渲染（2026-09-05 开闸）：发布闸 agentHostPreference 已随开闸删除——
+    // 它曾让「用户日常用的产品」和「测试跑的产品」变成两条路（并行版，P1）。
+    // 未完成的能力用 header 上的 Beta 徽标明说（D4 诚实交付），不再靠藏整套 UI 遮掩。
+    const [agentDockTargets, setAgentDockTargets] = React.useState<Record<'creation' | 'storyboard' | 'generation' | 'preview', HTMLDivElement | null>>({ creation: null, storyboard: null, generation: null, preview: null });
+    const setAgentDockTarget = React.useCallback((surface: 'creation' | 'storyboard' | 'generation' | 'preview') => (node: HTMLDivElement | null) => {
+        setAgentDockTargets((current) => current[surface] === node ? current : { ...current, [surface]: node });
+    }, []);
+    const agentDockRefs = React.useMemo(() => ({
+        creation: setAgentDockTarget('creation'),
+        storyboard: setAgentDockTarget('storyboard'),
+        generation: setAgentDockTarget('generation'),
+        preview: setAgentDockTarget('preview'),
+    }), [setAgentDockTarget]);
+    // Storyboard owns its own full-width workspace and its own dock target.
+    // Falling through to creation here portals the resident Agent into the
+    // hidden creation slot whenever storyboard is active.
+    const agentSurface = workspaceMode === 'generation'
+        ? 'generation'
+        : workspaceMode === 'preview'
+            ? 'preview'
+            : workspaceMode === 'storyboard'
+                ? 'storyboard'
+                : 'creation';
+    const agentDock = agentDockTargets[agentSurface];
+    const updater = useUpdater();
+    const hasRunningCanvasTask = useGenerationCanvasStore((state) => state.nodes.some((node) => node.status === 'running'));
+    const productionRun = useProductionRunStore((state) => state.projectId === projectId ? state.run : null);
+    const hasRunningTask = hasRunningCanvasTask || productionRun?.status === 'running' || productionRun?.status === 'pausing' || productionRun?.status === 'exporting';
     const [mountedWorkspaceModes, setMountedWorkspaceModes] = React.useState<
         WorkspaceMode[]
     >(() => [workspaceMode]);
@@ -162,6 +219,36 @@ export default function WorkbenchShell({
         return () => window.removeEventListener("popstate", onPopState);
     }, [setWorkspaceMode]);
 
+    // Some workspace actions (for example a storyboard summary card) update
+    // the shared mode store directly instead of going through the app-bar
+    // callback. Keep the URL projection in sync for those visible entries too;
+    // otherwise a restart/back-forward can restore `step=create` while the
+    // user is already in the storyboard workspace.
+    React.useEffect(() => {
+        writeWorkspaceModeToUrl(workspaceMode);
+    }, [workspaceMode]);
+
+    /**
+     * 窗口变窄时把**超限的**面板宽度钳回来（09-01 定稿 §11.2 窄窗态）。
+     *
+     * 只收上限、不动没超限的宽度：用户拖出来的 340 在任何窗口下都还是 340，窗口变窄不是他改主意了。
+     * 超限的那份必须钳——不钳的话内容侧（探索栏 60 + 画布底线 700 = 760）会被面板吃掉，
+     * 画布窄到看不了，而用户看到的现象是「窗口一小画布就废了」，根本联想不到是面板宽度。
+     *
+     * 放在这里而不是某个面里：面板四个面共用同一个 `assistantWidth`，钳一次就够；
+     * 挂在某个面上，切到别的面再缩窗口就漏了。
+     */
+    React.useEffect(() => {
+        const clampToViewport = (): void => {
+            const store = useWorkbenchStore.getState();
+            const max = assistantWidthMaxFor(window.innerWidth);
+            if (store.editingPanelLayout.assistantWidth > max) store.setAssistantWidth(max);
+        };
+        clampToViewport();
+        window.addEventListener("resize", clampToViewport);
+        return () => window.removeEventListener("resize", clampToViewport);
+    }, []);
+
     React.useEffect(() => {
         setMountedWorkspaceModes((current) =>
             current.includes(workspaceMode)
@@ -169,6 +256,27 @@ export default function WorkbenchShell({
                 : [...current, workspaceMode],
         );
     }, [workspaceMode]);
+
+    // 「定位到它」这个入口随旧面板一起删了：v4 的八个积木里没有定位控件——
+    // icon 标的是**动的那个对象**，不是一个可以点的跳转。留着一个没人派发的监听，
+    // 正是 `customEventWiring` 那条不变量要抓的死码（有监听没派发 = 这个入口永远打不开）。
+    // 要恢复这条能力，得先在设计里给它一个控件，再同时补派发方与监听方。
+
+    React.useEffect(() => {
+        const onOpenSkillLibrary = () => {
+            if (workspaceMode !== "generation") {
+                setWorkspaceMode("generation");
+                writeWorkspaceModeToUrl("generation");
+            }
+            window.setTimeout(() => window.dispatchEvent(new Event("nomi-open-skill-library")), 0);
+        };
+        window.addEventListener("nomi-focus-skill-library", onOpenSkillLibrary);
+        return () => window.removeEventListener("nomi-focus-skill-library", onOpenSkillLibrary);
+    }, [setWorkspaceMode, workspaceMode]);
+
+    // 「创作内容」那列收没收起：偏好 → 按面默认（创作展开 / 分镜收起）。
+    // 收起 = 整列不挂载（宽度归 0、不留 rail、不留 0 宽残壳），回头的钮在中间面板头部。
+    const creationResourceTreeCollapsed = useCreationResourceTreeCollapsed();
 
     const handleWorkspaceModeChange = React.useCallback(
         (mode: WorkspaceMode) => {
@@ -180,6 +288,7 @@ export default function WorkbenchShell({
     );
 
     return (
+        <WorkspacePanelFrameContext.Provider value={workspaceModeCarriesCreationResourceTree(workspaceMode)}>
         <div
             className={cn(
                 "workbench-shell",
@@ -254,6 +363,8 @@ export default function WorkbenchShell({
                 onOpenSettings={onOpenSettings}
                 onRenameProject={onRenameProject}
             />
+            {projectFeedback}
+            <UpdaterDialog updater={updater} hasRunningTask={hasRunningTask} />
 
             {/* 左侧面板重做: 分类导航 + 文件树统一收进 ProjectExplorerSidebar 的双 Tab。
           创作模式是纯文稿写作，不挂项目资源树（仅生成/预览显示）。 */}
@@ -261,17 +372,29 @@ export default function WorkbenchShell({
                 className={cn(
                     "workbench-shell__body",
                     "relative min-w-0 min-h-0 overflow-hidden flex flex-1",
+                    workspaceModeCarriesCreationResourceTree(workspaceMode) && "p-4 gap-4",
                 )}>
                 {/* 文件树只在生成区显示：创作是纯文稿、预览/剪辑是回看时间轴，都不需要左侧资源树。 */}
                 {workspaceMode === "generation" ? (
                     <ProjectExplorerSidebar projectId={projectId ?? null} categories={categories} />
                 ) : null}
+                {/* 创作资源树（原稿 + 各自的分镜方案）：写剧本和编分镜表是同一批资源的两个视图，
+                    所以树归 shell 所有、跨这两个模式常驻——挂在任一工作区里都会让另一个工作区
+                    没有树（2026-09-06 回归：点开一个方案就再也点不到别的剧本/分镜）。 */}
+                {workspaceModeCarriesCreationResourceTree(workspaceMode) && !creationResourceTreeCollapsed ? <DocumentListSidebar /> : null}
                 <div className='flex-1 min-w-0 min-h-0 relative'>
                     {mountedWorkspaceModes.includes("creation") ? (
                         <WorkspaceSlot
                             active={workspaceMode === "creation"}
                             label={t("workspace.creation")}>
-                            <CreationWorkspace />
+                            <CreationWorkspace aiCollapsed={agentDockCollapsed} agentDockRef={agentDockRefs.creation} />
+                        </WorkspaceSlot>
+                    ) : null}
+                    {mountedWorkspaceModes.includes("storyboard") ? (
+                        <WorkspaceSlot
+                            active={workspaceMode === "storyboard"}
+                            label={t("workspace.storyboard")}>
+                                <StoryboardWorkspace projectId={projectId} aiCollapsed={agentDockCollapsed} agentDockRef={agentDockRefs.storyboard} />
                         </WorkspaceSlot>
                     ) : null}
                     {mountedWorkspaceModes.includes("generation") ? (
@@ -280,8 +403,8 @@ export default function WorkbenchShell({
                             label={t("workspace.generation")}>
                             <GenerationWorkspace
                                 canvas={generation}
-                                aiSidebar={generationAi}
-                                aiLayout={generationAiLayout}
+                                aiCollapsed={agentDockCollapsed}
+                                agentDockRef={agentDockRefs.generation}
                             />
                         </WorkspaceSlot>
                     ) : null}
@@ -289,11 +412,16 @@ export default function WorkbenchShell({
                         <WorkspaceSlot
                             active={workspaceMode === "preview"}
                             label={t("workspace.preview")}>
-                            <PreviewWorkspace />
+                            <PreviewWorkspace
+                                aiCollapsed={agentDockCollapsed}
+                                agentDockRef={agentDockRefs.preview}
+                            />
                         </WorkspaceSlot>
                     ) : null}
                 </div>
+                {agentDock ? createPortal(<ProjectAgentResidentShell surface={agentSurface} />, agentDock) : null}
             </main>
         </div>
+        </WorkspacePanelFrameContext.Provider>
     );
 }

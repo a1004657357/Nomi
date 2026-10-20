@@ -1,8 +1,8 @@
 // 生成画布控件辨识与比例连续性 R13 走查。
 //
 // 真 Electron + 真构建产物，隔离 userData / projects，不触发任何生成请求（零额度）。
-// 验证：8 个节点入口及 tooltip、自动比例本地化、面积守恒、composer/触发器/浮层不漂移、
-//       1–4 张显式选择、任务/辅助/配置/主动作分组，以及深浅色与紧凑宽度截图。
+// 验证：左缘 5 常驻 + 「更多」两段（2026-09-06 第三档）、15 档比例与多供应商始终显式分段、自动比例本地化、面积守恒、
+//       composer/触发器/浮层不漂移、1–4 张显式选择、任务/辅助/配置/主动作分组，以及深浅色与紧凑宽度截图。
 //
 // 用法：pnpm run build && node tests/ux/canvas-control-clarity.walk.mjs
 import { launchNomiApp } from './_launchApp.mjs'
@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { screenshotSettled } from './_assert.mjs'
+import { expectAbsent, expectVisible, proveProbe, screenshotSettled } from './_assert.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const shotsDir = path.join(repoRoot, 'tests/ux/shots/canvas-control-clarity')
@@ -25,6 +25,7 @@ const { app, win: _initialWin } = await launchNomiApp({
   userDataDir,
   settingsDir: userDataDir,
   projectsDir,
+  syntheticCredentialStorage: true,
   args: ['--no-proxy-server'],
   settleMs: 0,
 })
@@ -114,9 +115,13 @@ async function ensureParameterPanel(composer) {
     const rect = element.getBoundingClientRect()
     const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
     const composer = element.closest('.generation-canvas-v2-node__composer')
-    const stage = composer?.closest('.generation-canvas-v2__stage')
-    const composerRect = composer?.getBoundingClientRect()
-    const stageRect = stage?.getBoundingClientRect()
+    const card = composer?.querySelector('.generation-canvas-v2-node__composer-card')
+    const nodeEl = composer?.parentElement
+    const viewportEl = document.querySelector('.react-flow__viewport')
+    const cardRect = card?.getBoundingClientRect()
+    const nodeRect = nodeEl?.getBoundingClientRect()
+    // 画布缩放读 React Flow 视口自己的 transform（DOMMatrix.a），与 node-composer-placement.walk.mjs 同一口径。
+    const zoom = viewportEl ? new DOMMatrixReadOnly(getComputedStyle(viewportEl).transform).a : 1
     const handle = document.querySelector('.workbench-generation__timeline-handle')
     const handleRect = handle?.getBoundingClientRect()
     const overlapWidth = handleRect ? Math.min(rect.right, handleRect.right) - Math.max(rect.left, handleRect.left) : 0
@@ -124,10 +129,15 @@ async function ensureParameterPanel(composer) {
     return {
       clear: hit === element || Boolean(hit && element.contains(hit)),
       overlapsTimeline: overlapWidth > 0 && overlapHeight > 0,
-      flipped: composer?.getAttribute('data-flipped'),
-      composerWithinStage: Boolean(
-        composerRect && stageRect && composerRect.top >= stageRect.top && composerRect.bottom <= stageRect.bottom,
-      ),
+      // 2026-09-25 起浮框钉在节点正下方（composerCanvasPlacement.ts）：顶边 = 节点底边 + 14×缩放、
+      // 中线 = 节点中线、屏幕宽恒 560；不再翻到上方、不再 clamp 进视口，所以这里不再量「在舞台内」。
+      pinned: Boolean(cardRect && nodeRect
+        && Math.abs(cardRect.top - (nodeRect.bottom + 14 * zoom)) <= 2
+        && Math.abs((cardRect.left + cardRect.right) / 2 - (nodeRect.left + nodeRect.right) / 2) <= 2
+        && Math.abs(cardRect.width - 560) <= 1),
+      card: cardRect ? box(cardRect) : null,
+      node: nodeRect ? box(nodeRect) : null,
+      zoom,
       workspaceFound: Boolean(composer?.closest('.workbench-generation__canvas')),
       trigger: box(rect),
       handle: handleRect ? box(handleRect) : null,
@@ -136,11 +146,17 @@ async function ensureParameterPanel(composer) {
   })
   assert(hitTest.clear, '生成参数按钮不被底部时间轴遮挡', JSON.stringify(hitTest))
   assert(!hitTest.overlapsTimeline, '生成参数按钮与底部时间轴没有视觉重叠', JSON.stringify(hitTest))
-  assert(hitTest.flipped === 'false' && hitTest.composerWithinStage, '新建节点的编辑框在下方完整可见', JSON.stringify(hitTest))
+  assert(hitTest.pinned, '新建节点的编辑框钉在节点正下方（顶边 = 节点底边 + 14×缩放、中线对齐、宽 560）', JSON.stringify(hitTest))
   await trigger.click()
   const panel = getWin().getByRole('group', { name: '生成参数面板', exact: true }).first()
   await panel.waitFor({ timeout: 5000 })
   return { trigger, panel }
+}
+
+async function selectRatio(panel, ratio) {
+  const segmented = panel.getByRole('radiogroup', { name: '比例', exact: true }).first()
+  await expectVisible(segmented, '比例必须保持显式分段，不随模型选项数量变成下拉')
+  await segmented.getByRole('radio', { name: ratio, exact: true }).click()
 }
 
 const pageErrors = []
@@ -162,11 +178,12 @@ try {
   await resize(1600, 1000)
   await dismissFirstRun()
 
-  // 隔离 catalog 里只写一个占位 key，让内置图像模型与真实参数控件出现；全程不点生成。
-  const keyStatus = await getWin().evaluate(() =>
+  // 两家都只写占位 key：让同一个 Nano Banana 2 出现 15 档比例 + 多供应商选择；全程不点生成。
+  const keyStatuses = await getWin().evaluate(() => Promise.all([
     window.nomiDesktop?.modelCatalog?.upsertVendorApiKey('kie', { apiKey: 'nomi-e2e-placeholder', enabled: true }),
-  )
-  assert(Boolean(keyStatus?.hasApiKey), '隔离模型目录已启用图像模型（不发生成请求）')
+    window.nomiDesktop?.modelCatalog?.upsertVendorApiKey('apimart', { apiKey: 'nomi-e2e-placeholder', enabled: true }),
+  ]))
+  assert(keyStatuses.every((status) => Boolean(status?.hasApiKey)), '隔离模型目录已启用两家图像供应商（不发生成请求）')
   await getWin().reload()
   await getWin().waitForLoadState('domcontentloaded')
   await getWin().waitForTimeout(1500)
@@ -179,29 +196,75 @@ try {
   await dismissFirstRun()
   await resize(1600, 1000)
   await ensureGenerationWorkspace()
+  await expectVisible(getWin().locator('.react-flow').first(), '生产生成画布必须挂载 React Flow renderer')
 
-  // ① 左侧栏：8 个入口直接可见，没有省略号，悬浮名称完整。
+  // ① 左侧栏（2026-09-06 第三档）：**5 个常驻 + 一个「更多」**，常驻每颗悬浮名称完整；
+  //    收起去的 5 个必须在「更多」里、且每段有名字。原来那条「9 个平铺」的断言随设计一起退役
+  //    （P1：不留两套期望）——它当时钉的是「没有省略号」，现在钉的是「收纳之后仍然找得到」。
   const toolbar = getWin().locator('.generation-canvas-v2-toolbar').first()
-  const expectedTools = [
-    ['text', '文本节点'],
+  const residentTools = [
     ['image', '图片节点'],
     ['video', '视频节点'],
     ['audio', '声音节点'],
-    ['model3d', '3D 模型节点'],
-    ['whiteboard', '画板节点'],
-    ['panorama', '全景图节点'],
-    ['scene3d', '3D 场景节点'],
+    ['clip', '剪辑节点'],
   ]
-  const toolButtons = toolbar.locator('[data-node-kind]')
-  assert((await toolButtons.count()) === expectedTools.length, '左侧 8 个节点入口全部直接可见')
-  assert((await toolbar.locator('[aria-label*="更多"], [aria-label*="省略"]').count()) === 0, '左侧栏没有省略号创建入口')
-  for (const [kind, tooltipText] of expectedTools) {
-    const button = toolbar.locator(`[data-node-kind="${kind}"]`)
-    assert(await button.isVisible(), `${tooltipText}入口可见`)
+  const moreTools = [
+    ['text', '文字'],
+    ['director', '导演台'],
+    ['model3d', '3D 模型'],
+    ['panorama', '全景图'],
+    ['whiteboard', '画板'],
+  ]
+  const residentButtons = toolbar.locator('[data-add-intent]')
+  assert(
+    (await residentButtons.count()) === residentTools.length + 1,
+    '左侧常驻恰好 5 个（四种生成 + 导入）',
+    `实测 ${await residentButtons.count()} 个`,
+  )
+  for (const [kind, tooltipText] of residentTools) {
+    const button = toolbar.locator(`[data-add-intent="${kind}"]`)
+    assert(await button.isVisible(), `${tooltipText}常驻入口可见`)
     await button.focus()
     const tooltip = getWin().locator('[role="tooltip"]', { hasText: tooltipText }).last()
     await tooltip.waitFor({ timeout: 2400 })
     assert((await tooltip.textContent())?.trim() === tooltipText, `${tooltipText}悬浮/聚焦名称正确`)
+  }
+  const importButton = toolbar.locator('[data-add-intent="import-file"]')
+  assert(await importButton.isVisible(), '导入入口常驻可见')
+  assert(
+    (await importButton.getAttribute('aria-label')) === '导入文件',
+    '导入钮说得清按下去会发生什么',
+  )
+
+  // 「更多」：先展开、证明收进去的 5 个都在（这是基线），再收起来证明它们真的不占常驻位。
+  // 顺序不能反——没有基线的「没看到」和「探针根本没生效」在观测上一模一样。
+  const moreButton = toolbar.locator('[data-canvas-add-more="true"]')
+  await expectVisible(moreButton, '左侧栏底部必须有一颗「更多」')
+  await moreButton.click()
+  const moreMenu = getWin().locator('.generation-canvas-v2-toolbar__more-menu').first()
+  await expectVisible(moreMenu, '「更多」点开必须弹出菜单')
+  const moreProofs = []
+  for (const [kind, label] of moreTools) {
+    const item = moreMenu.locator(`[data-node-kind="${kind}"]`)
+    assert(await item.isVisible(), `「更多」里找得到${label}`)
+    assert((await item.textContent())?.includes(label), `「更多」里${label}写的是它自己的名字`)
+    moreProofs.push([kind, label, await proveProbe(toolbar.locator(`[data-node-kind="${kind}"]`), `展开时${label}在工具条里`)])
+  }
+  // §1.5.3「分段要有名字」：两段各自带名字，不是一条看不见的分隔线。
+  for (const sectionLabel of ['更多', '空间 · 草图']) {
+    assert(
+      (await moreMenu.locator(`[role="group"][aria-label="${sectionLabel}"]`).count()) === 1,
+      `「更多」菜单里有名为「${sectionLabel}」的一段`,
+    )
+  }
+  await getWin().keyboard.press('Escape')
+  for (const [kind, label, proof] of moreProofs) {
+    await expectAbsent(toolbar.locator(`[data-node-kind="${kind}"]`), {
+      provenBy: proof,
+      message: `${label}收进了「更多」，收起后不再占常驻位`,
+    })
+    passed += 1
+    console.log(`  ✓ ${label}收起后不占常驻位（kind=${kind}）`)
   }
 
   // ② 新建图像节点并打开真实参数面板。
@@ -210,17 +273,27 @@ try {
   const composer = getWin().locator('.generation-canvas-v2-node__composer-card').first()
   await node.waitFor({ timeout: 5000 })
   await composer.waitFor({ timeout: 5000 })
+  const modelSelect = composer.getByRole('button', { name: '模型', exact: true }).first()
+  await modelSelect.click()
+  const nanoBanana2 = getWin().getByRole('option').filter({ hasText: /^Nano Banana 2(?:\s*\d+ 家)?$/ }).first()
+  await expectVisible(nanoBanana2, '模型目录必须提供跨供应商 Nano Banana 2')
+  await nanoBanana2.click()
+  await getWin().waitForTimeout(400)
   const { trigger, panel } = await ensureParameterPanel(composer)
   const ratioGroup = panel.getByRole('radiogroup', { name: '比例', exact: true }).first()
-  await ratioGroup.waitFor({ timeout: 5000 })
-
+  await expectVisible(ratioGroup, '15 档比例仍显示为图形分段组')
+  assert((await ratioGroup.getByRole('radio').count()) === 15, 'Nano Banana 2 的 15 档比例全部显式可见')
   const automatic = ratioGroup.getByRole('radio', { name: '自动', exact: true }).first()
   assert(await automatic.isVisible(), 'Auto 在中文界面显示为“自动”')
-  assert((await automatic.locator('svg').count()) === 1, '自动比例项上方有自适应画幅图标')
+  assert((await automatic.locator('svg').count()) === 1, '分段式自动比例项上方有自适应画幅图标')
+  assert((await ratioGroup.locator('[aria-hidden] span').count()) > 0, '比例分段保留可扫描的宽高形状')
+  const providerGroup = panel.getByRole('radiogroup', { name: '供应商', exact: true }).first()
+  await expectVisible(providerGroup, '多供应商选择保持显式分段组')
+  assert((await providerGroup.getByRole('radio').count()) >= 2, '同模型至少两家供应商并排可见')
 
   const geometries = []
   for (const ratio of ['1:1', '21:9', '9:16']) {
-    await ratioGroup.getByRole('radio', { name: ratio, exact: true }).click()
+    await selectRatio(panel, ratio)
     await getWin().waitForTimeout(220)
     const [nodeBox, composerBox, triggerBox, panelBox, nodeLayout] = await Promise.all([
       node.boundingBox(),
@@ -256,25 +329,30 @@ try {
   )
   assert(Math.min(...areas) >= areas[0] * 0.965, '连续切换不会把节点越切越小')
 
-  const gaps = geometries.map((item) => {
-    const flipped = getWin().locator('.generation-canvas-v2-node__composer').first()
-    return flipped.getAttribute('data-flipped').then((value) =>
-      value === 'true' ? item.node.y - (item.composer.y + item.composer.height) : item.composer.y - (item.node.y + item.node.height),
-    )
+  // 浮框恒在节点正下方（2026-09-25 起不再翻到上方），间距只有一种量法：卡顶边 − 节点底边，应恒为 14×缩放。
+  const canvasZoom = await getWin().evaluate(() => {
+    const viewportEl = document.querySelector('.react-flow__viewport')
+    return viewportEl ? new DOMMatrixReadOnly(getComputedStyle(viewportEl).transform).a : 1
   })
-  const resolvedGaps = await Promise.all(gaps)
-  assert(resolvedGaps.every((gap) => closeEnough(gap, resolvedGaps[0], 1)), '节点与编辑框连接间距保持一致')
+  const resolvedGaps = geometries.map((item) => item.composer.y - (item.node.y + item.node.height))
+  assert(
+    resolvedGaps.every((gap) => closeEnough(gap, 14 * canvasZoom, 2)),
+    '节点与编辑框连接间距保持一致（恒为 14×缩放，浮框在节点下方）',
+    `gaps=${resolvedGaps.map((gap) => gap.toFixed(1)).join('/')} zoom=${canvasZoom.toFixed(2)}`,
+  )
   await snap('02-dark-canvas-ratio-panel.png')
 
-  // ③ 生成数量是明确的 1–4 选择，不再循环跳数；3 张是真选项。
+  // ③ 生成数量是明确的 1–4 选择，不再循环跳数；3 个是真选项。
+  //    文案 2026-09-10 由「张」改为「个」：同一个计数件现在也管视频/音频/3D（反馈 #11），
+  //    「张」只对图片成立。
   await getWin().keyboard.press('Escape')
-  const countSelect = composer.getByRole('button', { name: '每次生成张数', exact: true }).first()
+  const countSelect = composer.getByRole('button', { name: '每次生成几个', exact: true }).first()
   await countSelect.click()
   const countOptions = getWin().getByRole('option')
   const labels = (await countOptions.allTextContents()).map((text) => text.trim())
-  assert(['1 张', '2 张', '3 张', '4 张'].every((label) => labels.includes(label)), '数量菜单明确包含 1、2、3、4 张')
-  await getWin().getByRole('option', { name: '3 张', exact: true }).click()
-  assert((await countSelect.textContent())?.includes('3 张'), '可直接选择 3 张并在触发器显示')
+  assert(['1 个', '2 个', '3 个', '4 个'].every((label) => labels.includes(label)), '数量菜单明确包含 1、2、3、4 个')
+  await getWin().getByRole('option', { name: '3 个', exact: true }).click()
+  assert((await countSelect.textContent())?.includes('3 个'), '可直接选择 3 个并在触发器显示')
 
   // ④ 顶栏语义分组与任务按钮：任务独立，设置和模型接入相邻，主组只负责去出片。
   const actionGroups = await getWin().evaluate(() => ({

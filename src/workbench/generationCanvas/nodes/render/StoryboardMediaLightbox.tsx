@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { IconX } from '@tabler/icons-react'
 import { NomiImage } from '../../../../design/media'

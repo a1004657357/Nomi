@@ -12,22 +12,24 @@
 import { readNomiLocalAsset } from "./assets/localAssetFile";
 import { parseDataUrl } from "./assets/assetBytes";
 import { hardenedFetch } from "./hardenedFetch";
-import { type AuthType, authHeaders as buildAuthHeaders } from "./ai/requestPipeline";
+import { appFetch } from "./appFetch";
+import { isRedirectRefusal } from "./networkErrorDetails";
+import { appendQueryParams } from "./ai/requestPipeline";
 import { firstString, isJsonRecord, trim, type JsonRecord } from "./jsonUtils";
 import { taskTemplateParams } from "./catalog/taskParams";
 import { buildDoubaoReqParams, decodeDoubaoNdjsonAudio, splitDoubaoCredential } from "./catalog/doubaoTtsCodec";
-import { buildProfileHttpRequest, type TaskRequest, type TaskResult } from "./runtime";
+import type { TaskRequest, TaskResult } from "./runtime";
 import { importLocalFile } from "./assets/localFileImport";
+import { desktopT } from "./i18n";
+import { executeMultipartOperation } from "./catalog/multipartOperation";
+import { buildProfileHttpRequest, templateContext } from "./catalog/profileHttpRequest";
+import { firstMappedString } from "./tasks/responseParsing";
 import type { HttpOperation, Mapping, Model, ProfileKind, Vendor } from "./catalog/types";
+import { executeSynchronousAudioOperation } from "./audio/synchronousAudioResponse";
 
 const TTS_PATH = "/v1/audio/speech";
 const TRANSCRIBE_PATH = "/v1/audio/transcriptions";
 const MAX_AUDIO_BYTES = 30 * 1024 * 1024; // Whisper 侧上限 25MB，留余量
-
-// response_format → MIME（落盘扩展名 + <audio> 播放）。wav 默认（未压缩、Chromium 必播）。
-const AUDIO_CONTENT_TYPE: Record<string, string> = {
-  wav: "audio/wav", mp3: "audio/mpeg", opus: "audio/ogg", aac: "audio/aac", flac: "audio/flac", pcm: "audio/L16",
-};
 
 type AudioTaskInput = {
   vendor: Vendor;
@@ -58,33 +60,24 @@ async function runTextToSpeech(input: AudioTaskInput): Promise<TaskResult> {
   // 声明驱动分流（P4）：NDJSON+base64 形状（豆包语音 unidirectional）走专属手搓分支，
   // 其余（缺省/binary，OpenAI 兼容裸音频字节）走下方通用路径。
   if (op.audioResponse === "ndjson-base64") return runDoubaoUnidirectionalTts(input, op);
-  const built = buildProfileHttpRequest({ vendor, model, apiKey, request, operation: op });
-  let response: Response;
-  try {
-    response = await fetch(built.url, {
-      method: built.method.toUpperCase(),
-      headers: built.headers,
-      body: typeof built.body === "string" ? built.body : JSON.stringify(built.body),
-    });
-  } catch (error: unknown) {
-    throw new Error(`配音生成失败（${vendor.key} 网络错误）：${(error instanceof Error ? error.message : String(error)).slice(0, 256)}`);
-  }
-  if (!response.ok) {
-    throw new Error(`配音生成失败（${vendor.key} HTTP ${response.status}）：${(await safeText(response)).slice(0, 300) || "(无详情)"}`);
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  if (!arrayBuffer || arrayBuffer.byteLength === 0) throw new Error("配音生成失败：供应商返回空音频");
-  const fmt = firstString((isJsonRecord(built.body) ? built.body.response_format : undefined)) || "wav";
-  const contentType = AUDIO_CONTENT_TYPE[fmt] || "audio/wav";
+  const decoded = await executeSynchronousAudioOperation({ vendor, model, apiKey, request, operation: op });
+  const arrayBuffer = decoded.bytes.buffer.slice(
+    decoded.bytes.byteOffset,
+    decoded.bytes.byteOffset + decoded.bytes.byteLength,
+  ) as ArrayBuffer;
   const saved = (await importLocalFile({
-    projectId, bytes: arrayBuffer, contentType, fileName: `tts-${taskId}.${fmt}`, kind: "generated",
+    projectId,
+    bytes: arrayBuffer,
+    contentType: decoded.contentType,
+    fileName: `tts-${taskId}.${decoded.extension}`,
+    kind: "generated",
   })) as { id?: string; name?: string; data?: { url?: string } };
   const url = String(saved.data?.url || "");
-  if (!url) throw new Error("配音生成失败：音频落盘异常");
+  if (!url) throw new Error(desktopT("dubbing.diskWriteFailed"));
   return {
     id: taskId, kind, status: "succeeded",
     assets: [{ type: "audio", url, thumbnailUrl: null, assetId: saved.id || null, assetName: saved.name || null }],
-    raw: { audio_url: url, response_format: fmt },
+    raw: { audio_url: url, response_format: decoded.extension, byte_length: decoded.bytes.byteLength },
   };
 }
 
@@ -93,11 +86,11 @@ async function runTextToSpeech(input: AudioTaskInput): Promise<TaskResult> {
 //   → fetch → NDJSON+base64 解码（decodeDoubaoNdjsonAudio）→ 落盘 mp3 资产。
 async function runDoubaoUnidirectionalTts(input: AudioTaskInput, op: HttpOperation): Promise<TaskResult> {
   const { vendor, model, apiKey, request, kind, taskId, projectId } = input;
-  const params = taskTemplateParams(request, { vendorKey: vendor.key, modelKey: model.modelKey });
+  const params = taskTemplateParams(request, { vendorKey: vendor.key, modelKey: model.modelKey, wireModelKey: model.modelAlias || model.modelKey });
   const text = trim(request.prompt) || firstString(params.text);
-  if (!text) throw new Error("配音生成失败：没有台词文本");
+  if (!text) throw new Error(desktopT("dubbing.noText"));
   const voice = firstString(params.voice);
-  if (!voice) throw new Error("配音生成失败：未选择音色");
+  if (!voice) throw new Error(desktopT("dubbing.noVoice"));
   const emotion = firstString(params.emotion);
   const [appId, accessKey] = splitDoubaoCredential(apiKey);
   const resourceId = firstString(op.headers?.["X-Api-Resource-Id"]) || "seed-tts-2.0";
@@ -109,9 +102,13 @@ async function runDoubaoUnidirectionalTts(input: AudioTaskInput, op: HttpOperati
   const reqParams = buildDoubaoReqParams({ text, voice, emotion });
   const body = JSON.stringify({ user: { uid: "nomi" }, req_params: reqParams });
 
-  let response: Response;
+  let fetched: Awaited<ReturnType<typeof hardenedFetch>>;
   try {
-    response = await fetch(url, {
+    // 走 hardenedFetch 读体（限 MAX_AUDIO_BYTES、带超时）：NDJSON 也是无限流，
+    // 异常/恶意端点可用超大响应撑爆主进程内存（入站参考音频同文件早就限 30MB，
+    // 出站响应此前是裸 response.text() 无上限）。SSRF/私网策略与全局出站口径一致。
+    // throwOnNon2xx=false：非 2xx 也要读 body 拼进错误文案（原语义），不读盘。
+    fetched = await hardenedFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -120,21 +117,25 @@ async function runDoubaoUnidirectionalTts(input: AudioTaskInput, op: HttpOperati
         "X-Api-Resource-Id": resourceId,
       },
       body,
+      timeoutMs: 120_000,
+      maxBytes: MAX_AUDIO_BYTES,
+      throwOnNon2xx: false,
     });
   } catch (error: unknown) {
-    throw new Error(`配音生成失败（${vendor.key} 网络错误）：${(error instanceof Error ? error.message : String(error)).slice(0, 256)}`);
+    throw new Error(desktopT("dubbing.networkError", { vendor: vendor.key, detail: (error instanceof Error ? error.message : String(error)).slice(0, 256) }));
   }
-  if (!response.ok) {
-    throw new Error(`配音生成失败（${vendor.key} HTTP ${response.status}）：${(await safeText(response)).slice(0, 300) || "(无详情)"}`);
+  if (fetched.status >= 400) {
+    const detail = fetched.bytes.byteLength > 0 ? fetched.bytes.toString("utf8").slice(0, 300) : "";
+    throw new Error(desktopT("dubbing.httpError", { vendor: vendor.key, status: fetched.status, detail: detail || desktopT("common.noDetail") }));
   }
-  const audio = decodeDoubaoNdjsonAudio(await response.text());
-  if (audio.byteLength === 0) throw new Error("配音生成失败：供应商返回空音频");
+  const audio = decodeDoubaoNdjsonAudio(fetched.bytes.toString("utf8"));
+  if (audio.byteLength === 0) throw new Error(desktopT("dubbing.emptyAudio"));
   const ab = audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer;
   const saved = (await importLocalFile({
     projectId, bytes: ab, contentType: "audio/mpeg", fileName: `tts-${taskId}.mp3`, kind: "generated",
   })) as { id?: string; name?: string; data?: { url?: string } };
   const url2 = String(saved.data?.url || "");
-  if (!url2) throw new Error("配音生成失败：音频落盘异常");
+  if (!url2) throw new Error(desktopT("dubbing.diskWriteFailed"));
   return {
     id: taskId, kind, status: "succeeded",
     assets: [{ type: "audio", url: url2, thumbnailUrl: null, assetId: saved.id || null, assetName: saved.name || null }],
@@ -145,37 +146,69 @@ async function runDoubaoUnidirectionalTts(input: AudioTaskInput, op: HttpOperati
 // Whisper：读参考音频字节 → multipart(file+model+language+response_format) → 同步 JSON → 文本结果。
 async function runTranscribe(input: AudioTaskInput): Promise<TaskResult> {
   const { vendor, model, apiKey, request, kind, taskId } = input;
-  const params = taskTemplateParams(request, { vendorKey: vendor.key, modelKey: model.modelKey });
+  const params = taskTemplateParams(request, { vendorKey: vendor.key, modelKey: model.modelKey, wireModelKey: model.modelAlias || model.modelKey });
   const audioUrl = resolveAudioSource(request, params);
-  if (!audioUrl) throw new Error("转写失败：未提供音频（请先连接或上传一个音频）");
+  if (!audioUrl) throw new Error(desktopT("transcribe.noAudio"));
+
+  // 声明驱动分流（P4，与上面 TTS 按 `audioResponse` 分流、runtime 按 `process` 分流同一手法）：
+  // create op 声明了 `localEngine` = 这条 mapping 由本机 sidecar 执行，不发 HTTP。
+  // 出来的 raw 与云端 verbose_json 同形状，所以下面那段结果处理（以及拆解侧读 raw.segments）
+  // 对两条路一视同仁——**不新造第二个「转写结果」概念**（P1）。
+  const localEngine = input.mapping?.create?.localEngine;
+  if (localEngine) {
+    const { runLocalSpeechTranscription } = await import("./localSpeech/localSpeechTaskBridge");
+    const raw = await runLocalSpeechTranscription({
+      audioUrl,
+      requestedTier: params[localEngine.tierParam],
+      progressKey: trim(request.extras?.nodeId),
+    });
+    return { id: taskId, kind, status: "succeeded", assets: [], raw: raw as unknown as JsonRecord };
+  }
+
   const audio = await readAudioBytes(audioUrl);
-  const baseUrl = trim(vendor.baseUrlHint).replace(/\/$/, "");
-  const opPath = input.mapping?.create?.path || TRANSCRIBE_PATH;
-  const url = /^https?:/i.test(opPath) ? opPath : `${baseUrl}${opPath}`;
   const language = firstString(params.language);
-
-  const form = new FormData();
-  const ab = audio.bytes.buffer.slice(audio.bytes.byteOffset, audio.bytes.byteOffset + audio.bytes.byteLength) as ArrayBuffer;
-  form.append("file", new Blob([ab], { type: audio.contentType }), audio.fileName);
-  // 真实模型名来自档案当前模式的 modelEnum（注入 params.model），catalog 基模型(nomi-audio)只是入口。
-  form.append("model", firstString(params.model) || model.modelAlias || model.modelKey);
-  if (language) form.append("language", language);
-  form.append("response_format", "verbose_json");
-
-  // multipart 不能带 Content-Type（fetch 自动加 boundary）；其余鉴权头按 vendor 声明（通用 bearer）。
-  const { "Content-Type": _drop, ...auth } = buildAuthHeaders(vendor.authType as AuthType, apiKey, vendor.authHeader ?? undefined);
-  let response: Response;
-  try {
-    response = await fetch(url, { method: "POST", headers: auth, body: form });
-  } catch (error: unknown) {
-    throw new Error(`转写失败（${vendor.key} 网络错误）：${(error instanceof Error ? error.message : String(error)).slice(0, 256)}`);
-  }
-  if (!response.ok) {
-    throw new Error(`转写失败（${vendor.key} HTTP ${response.status}）：${(await safeText(response)).slice(0, 300) || "(无详情)"}`);
-  }
-  const json = await safeJson(response);
-  const text = firstString(isJsonRecord(json) ? json.text : undefined);
-  if (!text) throw new Error("转写失败：供应商未返回文本");
+  const op: HttpOperation = input.mapping?.create ?? {
+    method: "POST",
+    path: TRANSCRIBE_PATH,
+    headers: { Authorization: "Bearer {{user_api_key}}" },
+  };
+  const multipart = op.multipart ?? {
+    fields: {
+      model: firstString(params.model) || model.modelAlias || model.modelKey,
+      language,
+      response_format: "verbose_json",
+    },
+    fileField: "file",
+    fileSource: audioUrl,
+    fileKind: "audio" as const,
+    multiple: false,
+    filename: "audio",
+  };
+  const built = buildProfileHttpRequest({ vendor, model, apiKey, request, operation: op });
+  const context = templateContext(request, model, apiKey, {}, op.paramMap);
+  const executed = await executeMultipartOperation({
+    multipart,
+    context,
+    resolveFile: async () => audio,
+    send: async (form) => {
+      const headers = Object.fromEntries(Object.entries(built.headers).filter(([key]) => key.toLowerCase() !== "content-type"));
+      let response: Response;
+      try {
+        response = await appFetch(appendQueryParams(built.url, built.query), { method: built.method, headers, body: form });
+      } catch (error: unknown) {
+        if (isRedirectRefusal(error)) throw Object.assign(new Error(desktopT("network.credentialRedirect")), { cause: error });
+        throw new Error(desktopT("transcribe.networkError", { vendor: vendor.key, detail: (error instanceof Error ? error.message : String(error)).slice(0, 256) }));
+      }
+      if (!response.ok) {
+        throw new Error(desktopT("transcribe.httpError", { vendor: vendor.key, status: response.status, detail: (await safeText(response)).slice(0, 300) || desktopT("common.noDetail") }));
+      }
+      return safeJson(response);
+    },
+  });
+  const json = executed.response;
+  const text = firstMappedString(json, (op.response_mapping || null) as JsonRecord | null, "text")
+    || firstString(isJsonRecord(json) ? json.text : undefined);
+  if (!text) throw new Error(desktopT("transcribe.noText"));
   return { id: taskId, kind, status: "succeeded", assets: [], raw: json };
 }
 
@@ -199,7 +232,7 @@ async function readAudioBytes(url: string): Promise<AudioBytes> {
     const parsed = parseDataUrl(url);
     return { bytes: parsed.bytes, contentType: parsed.contentType || "audio/mpeg", fileName: `audio.${(parsed.contentType.split("/")[1] || "mp3")}` };
   }
-  if (!/^https?:\/\//i.test(url)) throw new Error("转写失败：音频地址无法访问");
+  if (!/^https?:\/\//i.test(url)) throw new Error(desktopT("transcribe.unreachable"));
   const fetched = await hardenedFetch(url, {
     timeoutMs: 60_000, maxBytes: MAX_AUDIO_BYTES,
     allowContentTypes: ["audio/", "video/", "application/octet-stream"],

@@ -1,6 +1,52 @@
 ---
-name: creative.video-deconstruction
-description: 视频时序拆解、视觉事实审计与生成提示词反推
+name: creative-video-deconstruction
+description: 从视频的有序关键帧拆解镜头、构图、动作链、运镜、光影和节奏，并反推出可编辑的视频生成提示词。
+metadata:
+  nomi:
+    selectable-in-workbench: true
+    version: 1.0.0
+    label: 视频拆解与提示词反推
+    author: "@nomi"
+    canvas:
+      recipeIds: []
+    inputs:
+      - name: sourceVideo
+        description: 一个已生成或已导入的视频节点。Nomi 会按时间顺序抽取关键帧交给支持图片输入的文本模型。
+        required: true
+    tools:
+      - look_at_canvas
+      - write_script
+      - draft_shots
+    required-providers:
+      - text
+    stages:
+      - id: inspect
+        goal: 读取已连接的视频节点和按时间排列的关键帧，确认时长、画幅、主体及镜头边界。
+        tools:
+          - look_at_canvas
+        pause: false
+        model-prefs:
+          - kind: text
+      - id: deconstruct
+        goal: 按时间拆解构图、人物表演、道具交互、动作因果、运镜轴向、光影变化和剪辑节奏，并区分可见事实与推断。
+        tools:
+          - look_at_canvas
+        depends-on:
+          - inspect
+        pause: false
+        model-prefs:
+          - kind: text
+      - id: reverse
+        goal: 生成一条可编辑的视频提示词，明确时间段、动作链、运镜、风格锁定和负面约束。
+        tools:
+          - look_at_canvas
+          - write_script
+          - draft_shots
+        depends-on:
+          - deconstruct
+        pause: true
+        model-prefs:
+          - kind: text
 ---
 
 # 视频拆解与提示词反推
@@ -9,10 +55,10 @@ description: 视频时序拆解、视觉事实审计与生成提示词反推
 
 ## 流程规划
 
-1. 先调用 `read_canvas_state`，确认技能节点连接的视频来源和相关节点。
+1. 先调用 `look_at_canvas`，确认技能节点连接的视频来源和相关节点。
 2. 按附件顺序读取时间点，不得打乱关键帧。
 3. 先输出拆解结果，再输出反推提示词；默认不修改画布。
-4. 用户明确要求保存或替换时，才用 `create_canvas_nodes` 创建文本节点，或用 `set_node_prompt` 更新指定视频节点。
+4. 用户明确要求保存或替换时，用 `write_script` 保存分析文本，或用 `draft_shots` 创建、修订视频草稿。修订使用当前回执的 `operationId` 与 `shotId`，不把旧节点 id 当成草稿 id。
 
 ## 素材分析
 
@@ -48,3 +94,12 @@ description: 视频时序拆解、视觉事实审计与生成提示词反推
 - 若检测到切镜，列出每个镜头的建议入点、出点和视觉衔接依据。
 - 区分镜内运动和剪辑造成的画面变化。
 - 关键动作峰值应对应剪辑点、转场或结束状态；无法确认音频时不虚构节拍。
+
+## 输入
+
+- **sourceVideo**（必填）：一个已生成或已导入的视频节点。Nomi 会按时间顺序抽取关键帧交给支持图片输入的文本模型。
+
+## 示例
+
+- **拆解广告样片**
+  > 拆解这段视频的动作、运镜和光影，并反推出一条可以复现其节奏的视频提示词。

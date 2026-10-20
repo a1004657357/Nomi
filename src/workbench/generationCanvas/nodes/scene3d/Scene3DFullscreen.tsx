@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
@@ -23,9 +24,9 @@ import { CanvasPanelRestoreButton, Scene3DViewportToolPill } from './scene3dTool
 import { SCENE_FIT_FOCUS_ID } from './scene3dFitView'
 import { Scene3DFullscreenToolbar } from './Scene3DFullscreenToolbar'
 import {
-  levelEditorCameraRotation,
   applyEditorCameraPose,
 } from './scene3dMath'
+import { useScene3DEditorSession } from './useScene3DEditorSession'
 import { useScene3DCameraFraming } from './useScene3DCameraFraming'
 import { useScene3DBoundDrag } from './useScene3DBoundDrag'
 import { SceneObjectList } from './scene3dInspector'
@@ -103,7 +104,6 @@ export default function Scene3DFullscreen({
   const [transformMode, setTransformMode] = React.useState<Scene3DTransformMode>('translate')
   const [viewLocked, setViewLocked] = React.useState(false)
   const controlMode: Scene3DControlMode = viewLocked ? 'edit' : 'fly'
-  const controlModeRef = React.useRef<Scene3DControlMode>(controlMode)
   const [flySpeed, setFlySpeed] = React.useState(5)
   const [leftPanelOpen, setLeftPanelOpen] = React.useState(true)
   const [leftPanelTab, setLeftPanelTab] = React.useState<'scene' | 'sidecar'>(sidecarDefaultOpen ? 'sidecar' : 'scene')
@@ -116,18 +116,12 @@ export default function Scene3DFullscreen({
   // 录完的 take 转交任务状态机（takeRecorder 与 taskFlow 初始化互相依赖 → ref 转发破环，同 #4 范本）。
   const rememberLastTakeRef = React.useRef<(recordedState: Scene3DState) => void>(() => {})
   const captureApiRef = React.useRef<CaptureApi | null>(null)
-  const initialEditorCameraRef = React.useRef<Scene3DState['editorCamera']>({
-    ...initialState.editorCamera,
-    rotation: levelEditorCameraRotation(initialState.editorCamera.position, initialState.editorCamera.target),
-  })
-  const latestEditorCameraRef = React.useRef<Scene3DState['editorCamera']>(initialEditorCameraRef.current)
-  const stateRef = React.useRef(state)
-  const selectionRef = React.useRef<Scene3DSelection>(selection)
+  const { stateRef, selectionRef, initialEditorCameraRef, latestEditorCameraRef, handleEditorCameraDraft, flushLatestState } =
+    useScene3DEditorSession({ initialState, state, selection, controlMode, onStateChange })
   const suspendedKeyboardSelectionRef = React.useRef<Exclude<Scene3DSelection, null> | null>(null)
   const clipboardRef = React.useRef<Scene3DClipboardItem | null>(null)
   const suppressCanvasMissedSelectionRef = React.useRef(false)
   const suppressCanvasMissedReleaseRef = React.useRef<number | null>(null)
-  const onStateChangeRef = React.useRef(onStateChange)
   const canvasCamera = React.useMemo(
     () => ({ fov: 55, near: 0.1, far: 500, position: initialEditorCameraRef.current.position }),
     [],
@@ -164,47 +158,10 @@ export default function Scene3DFullscreen({
     else enterTrajectoryMode()
   }, [enterTrajectoryMode, exitTrajectoryMode, trajectoryMode])
 
-  React.useEffect(() => {
-    stateRef.current = state
-  }, [state])
-
-  React.useEffect(() => {
-    selectionRef.current = selection
-  }, [selection])
-
-  React.useEffect(() => {
-    controlModeRef.current = controlMode
-    latestEditorCameraRef.current = {
-      ...latestEditorCameraRef.current,
-      mode: controlMode,
-    }
-  }, [controlMode])
-
-  React.useEffect(() => {
-    onStateChangeRef.current = onStateChange
-  }, [onStateChange])
-
-  React.useEffect(() => {
-    onStateChangeRef.current(state)
-  }, [state])
-
   React.useEffect(() => () => {
     if (suppressCanvasMissedReleaseRef.current !== null) {
       window.clearTimeout(suppressCanvasMissedReleaseRef.current)
       suppressCanvasMissedReleaseRef.current = null
-    }
-  }, [])
-
-  React.useEffect(() => {
-    if (typeof document === 'undefined') return undefined
-    const { body } = document
-    const previousOverflow = body.style.overflow
-    const previousOverscroll = body.style.overscrollBehavior
-    body.style.overflow = 'hidden'
-    body.style.overscrollBehavior = 'none'
-    return () => {
-      body.style.overflow = previousOverflow
-      body.style.overscrollBehavior = previousOverscroll
     }
   }, [])
 
@@ -335,10 +292,6 @@ export default function Scene3DFullscreen({
     setState,
   })
 
-  const handleEditorCameraDraft = React.useCallback((editorCamera: Scene3DState['editorCamera']) => {
-    latestEditorCameraRef.current = editorCamera
-  }, [])
-
   const { enterCameraViewEdit, exitCameraViewEdit, toggleCameraViewEdit, levelSelectedCamera, previewMode, setPreviewMode, handleTogglePreview, updateEditorCamera } =
     useScene3DCameraViewEdit({
       readOnly,
@@ -459,19 +412,6 @@ export default function Scene3DFullscreen({
     setState,
     setSelection,
   })
-
-  const flushLatestState = React.useCallback(() => {
-    const latestState = {
-      ...stateRef.current,
-      editorCamera: {
-        ...latestEditorCameraRef.current,
-        mode: controlModeRef.current,
-      },
-    }
-    stateRef.current = latestState
-    onStateChangeRef.current(latestState)
-    return latestState
-  }, [])
 
   const handleClose = React.useCallback(() => {
     characterDrive.exitPossess()

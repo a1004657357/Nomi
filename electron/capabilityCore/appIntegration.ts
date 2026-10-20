@@ -1,9 +1,10 @@
+import { readAgentApprovalPolicy } from '../settings/agentApprovalPolicySettings'
+import { spendReferenceKey } from "../shared/contracts/pendingSpendConfirm";
 // 能力核 · app 集成（见 docs/plan/2026-06-20-capability-core-headless-exposure.md §S4）。
 //
 // 把 RPC server + token + 实例广告接到运行中的 Nomi app：启动时拉起 RPC（127.0.0.1）、ensureToken、
 // 写实例广告让外部 CLI/MCP 探测得到「app 开着」；退出时清广告 + 关 server。
-// 还维护「当前哪个项目正在窗口里打开」（renderer 经 IPC 上报）供 A/B 守卫用——避免外部直写正在
-// 编辑的工程被内存 store 覆盖（rpcServer 注释详述）。
+// 「当前项目」只投影 main-owned Surface committed identity；renderer 不再上报可执行项目标量。
 //
 // **库指纹 + 心跳**（2026-08-18 §P3-F）：广告写 v2——带 projectsRoot（本实例真正服务的库，取自
 // getProjectLocationState，与 runtimePaths 同源，不另派生）+ heartbeatAt（每 HEARTBEAT_INTERVAL_MS 刷新的
@@ -12,196 +13,106 @@
 //
 // 这里只做接线，不碰 main.ts 的其它职责（保持 main.ts 精简、单一关注点）。
 import { app } from 'electron'
-import crypto from 'node:crypto'
-import path from 'node:path'
+import { getMainWindow } from '../appWindowRegistry'
 import { startRpcServer, type RpcServerHandle } from './rpcServer'
-import { capabilityCoreDir, ensureCapabilitySigningKey, ensureToken } from './security'
+import { ensureCapabilitySigningKey, ensureToken } from './security'
 import { clearInstanceAdvertisement, writeInstanceAdvertisement } from './lockfile'
 import type { FetchTaskResultFn, RunDirectorFn, RunTaskFn } from './core'
 import { HEARTBEAT_INTERVAL_MS, type InstanceAdvertisement } from './instanceAdvert'
 import { getProjectLocationState, getWorkspaceRepositoryDeps } from '../runtimePaths'
-import { getProductionRunService } from '../productionRun/productionRunRuntime'
-import { createProjectLeaseAuthority, type ProjectLeaseAuthority } from './projectLease'
-import { createProjectLeaseStore } from './projectLeaseStore'
-import { createApprovalReceiptAuthority, type ApprovalReceiptAuthority } from './approvalReceipt'
-import { createProductionRunLock } from '../productionRun/productionRunLock'
+import { getProductionRunService, subscribeProductionRunChanges } from '../productionRun/productionRunRuntime'
+import { unknownSubmissionShotLabels } from '../shared/productionShotPhase'
+import type { ApprovalReceiptAuthority } from './approvalReceipt'
 import { readWorkspaceProject, resolveWorkspaceProjectDir } from '../workspace/workspaceRepository'
-import { createCurrentProjectResolver, deriveProjectIdentityDigests } from './currentProjectResolver'
-import type { ProjectSelectionHandleV1 } from './projectLease'
-import { createRuntimeMcpGenerationPolicy, type McpGenerationPolicy } from './mcpGenerationPolicy'
 import type { DispatchContext } from './dispatcher'
-import { requestRenderer, rendererTargetIdentity } from './rendererBridge'
+import { requestRenderer, requestRendererDecision, rendererTargetIdentity } from './rendererBridge'
+import { resolveIndexedReferencePreview } from './pendingSpendReferences'
+import { resolveProjectAssetReferenceIdentity } from '../assets/projectAssetStore'
 import { createGenerationPlanningHandler } from './mcpGenerationTools'
+import { installGuiResolveNarrowIpc } from './generationResolveIpc'
+import { planStoryboardFromScript } from './mcpStoryboardPlanner'
 import { createProductionGenerationOperationStore } from '../productionRun/productionGenerationOperationStore'
+import { withdrawStalePresentations } from '../productionRun/stalePresentationSweep'
 import { createProductionGenerationSubmission } from '../productionRun/productionGenerationSubmission'
-import { createMultiShotBatchScheduler, type MultiShotBatchScheduler } from '../productionRun/multiShotBatchScheduler'
+import {
+  prepareProductionGenerationAuthorizationWithReferences,
+} from '../productionRun/prepareProductionGenerationAuthorization'
+import { createMultiShotBatchScheduler } from '../productionRun/multiShotBatchScheduler'
 import { registerBatchSchedulerKicker } from '../productionRun/batchSchedulerKick'
-import type { ProductionActionResult } from '../productionRun/productionRunTypes'
-import { landCanvasForRun } from '../productionRun/multiShotCanvasLanding'
-import { createArtifactProjection, getArtifactPreviewSecret } from '../productionRun/artifactProjection'
+import type { ProductionShotActionResult } from '../productionRun/productionRunTypes'
+import { createCanvasLandingHost } from '../productionRun/canvasLandingHost'
 import { createCatalogModelPricingResolver, createCatalogShotPriceResolver } from '../productionRun/catalogPricingResolver'
 import type { ModuleRegistry } from './moduleRegistry'
-import { createCatalogModuleRegistry } from './moduleCatalogBootstrap'
-import { createGenerationProviderBootstrap } from './generationProviderBootstrap'
 import { createGenerationOutputMaterializer } from './generationOutputMaterializer'
+import { createRunObservationDrivers } from './appIntegrationRunObservation'
+import { isProductionJobInFlight } from '../shared/productionShotPhase'
+import { readGenerationDefaultModelResolver } from './generationDefaultModelResolver'
 import { readCatalog } from '../catalog/catalogStore'
-import { buildVideoModelCandidates, recommendVideoGeneration, videoArchetypeIdFromMeta } from '../shared/videoCapabilities'
+import { recommendVideoGeneration } from '../shared/videoCapabilities'
+import { deriveUsableVideoModelCandidates } from './usableVideoModelCandidates'
+import { resolvePlanPatch } from './generationPlanPatch'
+import { installCatalogRowLookup } from './modelSpecRead'
+import { canvasReadSurfaceRuntime } from './canvasReadSurfaceRuntime'
+import type { CanvasReadExecutionRuntime } from './canvasReadExecutionRuntime'
+import {
+  createRunOwnedGenerationGateAuthority,
+} from './runOwnedGenerationGateAuthority'
+import { installResidentGenerationAdapter } from './residentGenerationAdapterFactory'
+import {
+  hasGenerationOperationProviderReadiness,
+  type GenerationOperationProviderShape,
+} from './generationOperationProviderReadiness'
+import { createLiveGenerationRuntime } from './liveGenerationRuntime'
+import { createGenerationProviderBootstrap } from './generationProviderBootstrap'
+import { createDefaultAuthorities } from './appIntegrationAuthorities'
+import { createProductionActionHooks } from './appIntegrationProductionActions'
+import { installPendingSpendActions, pendingSpendDependencies } from './appIntegrationSpendConfirm'
+// 付费确认卡的四个动作住在它自己的模块里（这里只装配）。main.ts 的 IPC 经能力核门面转调，所以门面要露出这四个名字。
+export { listPendingSpendConfirmations, revisePendingSpendConfirmation, discardPendingSpendConfirmation, confirmPendingSpendConfirmation, removePendingSpendShot, confirmRemainingSpendShots } from './appIntegrationSpendConfirm'
+import { repairStaleMcpConfigs } from './mcpConfig'
+import { logDevDetail, logError, logInfo, logWarn } from '../logging/logger'
+import { markResidentSurfaceInstallFailed, markResidentSurfaceReady, markResidentSurfaceStarting, markResidentSurfaceStopped, readResidentSurfaceLifecycle } from './residentSurfaceLifecycle'
+import { createProductionShotDispatchGuard } from '../productionRun/productionShotDispatchGuard'
 
 let handle: RpcServerHandle | null = null
-let openProjectId = ''
 // P4 S5：打开/切换项目时的补齐钩子（startCapabilityCore 装配后设进来）——按 run.jobs[].nodeId × artifacts
 // 幂等补落缺失节点/组、回填已完成 result，并恢复未完批次调度（resumeUnfinishedRuns）。模块级 hoist 是因为
-// setOpenProjectId 是模块级导出（main.ts 的 active-project IPC 直接调它），而补齐逻辑住在 start 闭包内。
 let reconcileOpenProjectHook: ((projectId: string) => void) | null = null
+let unsubscribeCommittedSurface: (() => void) | null = null
+let unsubscribeRunChanges: (() => void) | null = null
 // P4 S6：返工/续拍编排钩子（start 闭包装配后设进来）——住在 start 闭包里因为它们要用 scheduler builder +
 // 单镜 gate 确认（confirmGenerationInNomi + 收据机构）+ 提交门面，这些都在闭包内。main.ts 的 IPC 转调这两个导出。
-let reworkProductionShotHook: ((input: { projectId: string; runId: string; shotId?: string }) => Promise<ProductionActionResult>) | null = null
-let resumeProductionBatchHook: ((input: { projectId: string; runId: string; reason: 'budget' | 'manual' }) => Promise<ProductionActionResult>) | null = null
+let reworkProductionShotHook: ((input: { projectId: string; runId: string; shotId?: string }) => Promise<ProductionShotActionResult>) | null = null
+let resumeProductionBatchHook: ((input: { projectId: string; runId: string }) => Promise<ProductionShotActionResult>) | null = null
+let disposeResidentGenerationAdapter: (() => void) | null = null
+let disposeSingleShotObservationLifecycle: (() => void) | null = null
 // 心跳定时器 + 当前广告所在库（退出时按同一命名空间文件名清理）。
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let advertisedLibrary: { projectsRoot: string; isDefault: boolean } | null = null
 
-function createDefaultAuthorities(hooks: {
-  /**
-   * P4 S4 试拍首镜 (§6 T3): called when a multi-shot confirmation card resolves trialFirst. Narrows the
-   * plan to shot 1 and re-seals it durably, so the client's re-requested gate lists a single shot. The
-   * challenge's runId is the operationId. Failures are swallowed (the client still gets trialFirst and
-   * can re-request the gate; a failed narrow only means the re-gate still lists the full plan).
-   */
-  onTrialFirst?: (input: { projectId: string; operationId: string }) => void | Promise<void>
-} = {}): Pick<
-  DispatchContext,
-  'projectLeaseAuthority' | 'resolveProjectSelection' | 'resolveCurrentProject' | 'approvalReceiptAuthority' | 'projectRevisionResolver'
-  | 'confirmGenerationInNomi'
-> {
-  const authorityDir = capabilityCoreDir()
-  const sharedLock = createProductionRunLock({
-    filePath: path.join(authorityDir, 'semantic-authorities.lock'),
-    epochPath: path.join(authorityDir, 'semantic-authorities.epoch'),
-    ownerId: `capability-core-${process.pid}`,
-  })
-  const leaseKey = ensureCapabilitySigningKey('project-lease')
-  const leaseAuthority = createProjectLeaseAuthority({
-    macKey: leaseKey,
-    keyId: 'project-lease-v1',
-    store: createProjectLeaseStore({
-      filePath: path.join(authorityDir, 'project-leases.json'),
-      macKey: ensureCapabilitySigningKey('project-lease-store'),
-      keyId: 'project-lease-store-v1',
-      lock: sharedLock,
-    }),
-  })
-  const receiptAuthority = createApprovalReceiptAuthority({
-    filePath: path.join(authorityDir, 'approval-receipts.json'),
-    macKey: ensureCapabilitySigningKey('approval-receipt'),
-    storeMacKey: ensureCapabilitySigningKey('approval-receipt-store'),
-    keyId: 'approval-receipt-v1',
-    lock: sharedLock,
-  })
-  const resolver = createCurrentProjectResolver({
-    getOpenProjectId: () => openProjectId,
-    readProject: (projectId) => readWorkspaceProject(projectId, getWorkspaceRepositoryDeps()),
-  })
-  const resolveProjectSelection = (selection: ProjectSelectionHandleV1) => {
-    const projectId = openProjectId.trim()
-    const record = projectId ? readWorkspaceProject(projectId, getWorkspaceRepositoryDeps()) : null
-    if (!record || record.id !== projectId || record.immutableProjectUuid !== selection.immutableProjectUuid
-      || record.projectGeneration !== selection.projectGeneration) {
-      throw new Error('Project selection handle does not match the open project')
-    }
-    const digests = deriveProjectIdentityDigests(record)
-    if (digests.canonicalRootDigest !== selection.canonicalRootDigest || digests.manifestDigest !== selection.manifestDigest) {
-      throw new Error('Project selection handle is stale for the open project')
-    }
-    return {
-      projectId,
-      leasePrincipal: 'nomi-gui',
-      sessionId: `nomi-gui:${selection.sessionNonce}`,
-      connectionNonce: selection.sessionNonce,
-      serverNonce: crypto.randomUUID(),
-    }
-  }
-  const confirmGenerationInNomi = async ({ challengeToken }: { challengeToken: string }) => {
-    const challenge = receiptAuthority.verifyChallenge(challengeToken)
-    const target = rendererTargetIdentity()
-    if (!target || !challenge.display?.model) return { confirmed: false, challengeId: challenge.challengeId }
-    const result = await requestRenderer('generation.gate.confirm', {
-      challengeId: challenge.challengeId,
-      projectName: challenge.display.projectName,
-      shotSummary: challenge.display.shotSummary,
-      model: challenge.display.model,
-      referenceCount: challenge.display.referenceCount,
-      maximumCost: challenge.reservationPreview.maximum,
-      currency: challenge.reservationPreview.currency,
-      expiresAt: challenge.expiresAt,
-      // P4 S3a — forward the (MAC-signed) multi-shot projection when the challenge carries one; a
-      // single-shot challenge omits it and the renderer keeps rendering today's flat card unchanged.
-      ...(challenge.display.shots ? { shots: challenge.display.shots } : {}),
-    }, 60_000) as { confirmed?: unknown; trialFirst?: unknown } | null
-    // P4 S3a/S4 — 「先试拍第 1 镜」信号：渲染层回 { confirmed:false, trialFirst:true }。S4 在此把计划缩到
-    // 首镜 + 重封存（onTrialFirst），随后客户端重发 gate → 新卡只列 1 镜；narrow 失败只降级为「重发仍列全批」。
-    if (result?.confirmed !== true) {
-      if (result?.trialFirst === true && hooks.onTrialFirst && challenge.runId && challenge.projectId) {
-        try {
-          await hooks.onTrialFirst({ projectId: challenge.projectId, operationId: challenge.runId })
-        } catch (error) {
-          console.error('[nomi:capability-core] trial-first narrow failed:', error instanceof Error ? error.message : String(error))
-        }
-      }
-      return {
-        confirmed: false,
-        challengeId: challenge.challengeId,
-        ...(result?.trialFirst === true ? { trialFirst: true } : {}),
-      }
-    }
-    const attestation = receiptAuthority.createMainProcessGestureAttestation(challengeToken, {
-      ...target,
-      decision: 'accept',
-    })
-    const receipt = receiptAuthority.mintReceipt(challengeToken, attestation)
-    return {
-      confirmed: true,
-      challengeId: challenge.challengeId,
-      receiptId: receipt.receipt.receiptId,
-      receiptToken: receipt.token,
-    }
-  }
-  return {
-    projectLeaseAuthority: leaseAuthority,
-    resolveProjectSelection,
-    resolveCurrentProject: resolver,
-    approvalReceiptAuthority: receiptAuthority,
-    confirmGenerationInNomi,
-    projectRevisionResolver: (projectId) => readWorkspaceProject(projectId, getWorkspaceRepositoryDeps())?.revision,
-  }
-}
-
-/** renderer 上报当前打开的项目（打开/切换=id，关闭=''）。A/B 守卫据此拒绝直写打开中的工程。 */
-export function setOpenProjectId(projectId: string): void {
-  const next = String(projectId || '').trim()
-  const changed = next && next !== openProjectId
-  openProjectId = next
-  // P4 S5：打开/切到某项目 → 触发画布落地补齐 + 未完批次恢复（best-effort，异步不阻塞上报）。
-  if (changed && reconcileOpenProjectHook) reconcileOpenProjectHook(next)
-}
-
 /** 当前进程 RPC 端口（未启动=null）。「接入助手卡」据此显示能力核就绪态。 */
+// 档案解析要目录行里的 meta（fal/* 这类带斜杠的键靠 meta.archetypeId 钉档案）。装配期接一次。
+installCatalogRowLookup()
+
 export function getCapabilityPort(): number | null {
   return handle?.port ?? null
 }
 
 /**
- * P4 S6：渲染层（经 main.ts IPC）请求返工一镜 → 同 Run 新 Job + 单镜 gate 确认 + 派发。能力核未就绪 → unavailable。
- * projectId 守卫（须 = 当前打开项目）在 hook 内做。绝不在结果里带任何密钥（只回结构化 code + 可选人话 message）。
+ * P4 S6：渲染层（经 main.ts IPC）请求返工一镜 → 同 Run 新 Job + 单镜 gate 确认 + 派发。能力核还没起来 → core_starting。
+ * projectId 守卫（须 = 当前打开项目）在 hook 内做。绝不在结果里带任何密钥（只回结构化码）。
  */
-export async function reworkProductionShot(input: { projectId: string; runId: string; shotId?: string }): Promise<ProductionActionResult> {
-  if (!reworkProductionShotHook) return { ok: false, code: 'unavailable' }
+export async function reworkProductionShot(input: { projectId: string; runId: string; shotId?: string }): Promise<ProductionShotActionResult> {
+  if (!reworkProductionShotHook) return { ok: false, code: 'failed', failure: 'core_starting' }
   return reworkProductionShotHook(input)
 }
 
-/** P4 S6：渲染层请求续拍已停批次（manual=急停继续 / budget=提额续拍）。能力核未就绪 → unavailable。 */
-export async function resumeProductionBatch(input: { projectId: string; runId: string; reason: 'budget' | 'manual' }): Promise<ProductionActionResult> {
-  if (!resumeProductionBatchHook) return { ok: false, code: 'unavailable' }
+/**
+ * P4 S6：渲染层请求续拍已停批次。续额度还是直接接着拍，由 Run 停下那一刻记下的原因决定（不是渲染层传进来的）。
+ * 能力核还没起来 → core_starting。
+ */
+export async function resumeProductionBatch(input: { projectId: string; runId: string }): Promise<ProductionShotActionResult> {
+  if (!resumeProductionBatchHook) return { ok: false, code: 'failed', failure: 'core_starting' }
   return resumeProductionBatchHook(input)
 }
 
@@ -226,150 +137,156 @@ function buildAdvert(port: number, token: string, projectsRoot: string): Instanc
 export async function startCapabilityCore(
   runTask: RunTaskFn,
   fetchTaskResult: FetchTaskResultFn,
-  authoritiesOrDirector: RunDirectorFn | {
+  authorities: {
     runDirector?: RunDirectorFn
-    projectLeaseAuthority?: ProjectLeaseAuthority
-    resolveCurrentProject?: DispatchContext['resolveCurrentProject']
     approvalReceiptAuthority?: ApprovalReceiptAuthority
     requestGenerationGate?: DispatchContext['requestGenerationGate']
     authorizeGeneration?: DispatchContext['authorizeGeneration']
     confirmGenerationInNomi?: import('./rpcServer').RpcServerOptions['confirmGenerationInNomi']
-    generationPolicy?: McpGenerationPolicy
     generationContext?: (params: Record<string, unknown>) => unknown | Promise<unknown>
     generationPlanning?: DispatchContext['generationPlanning']
     generationModuleRegistry?: Pick<ModuleRegistry, 'resolve'>
     projectRevisionResolver?: (projectId: string) => number | undefined
+    proposalReceiptFor?: import('./rpcServer').RpcServerOptions['proposalReceiptFor']
+    openCredentialsInNomi?: import('./rpcServer').RpcServerOptions['openCredentialsInNomi']
+    canvasReadExecutionRuntime?: CanvasReadExecutionRuntime
+    onRpcActivity?: () => void
   } = {},
 ): Promise<void> {
-  const authorities = typeof authoritiesOrDirector === 'function' ? { runDirector: authoritiesOrDirector } : authoritiesOrDirector
+  // 常驻生成面的相从这里起算：重启能力核时先回到 starting，上一轮的 install-failed 不许残留。
+  markResidentSurfaceStarting();
   try {
+    // A second core start must invalidate observers owned by the previous
+    // instance before any new provider/runtime wiring can begin. Otherwise a
+    // setup failure could leave the old poll loop alive against a replaced
+    // renderer.
+    disposeSingleShotObservationLifecycle?.();
+    disposeSingleShotObservationLifecycle = null;
+    // A resident adapter owns listeners/IPC bindings. Dispose the previous
+    // instance before reinstalling it on a capability-core restart so no stale
+    // adapter can keep writing into the new runtime.
+    disposeResidentGenerationAdapter?.();
+    disposeResidentGenerationAdapter = null;
+    // 已接入的编程助手若还指着 Nomi 旧入口，宿主侧只显示一句 CONNECTION_CLOSED——里面一个字都没提 Nomi，
+    // 用户没有理由想到「去开 Nomi 的模型接入面板」。这个修复原本只作为渲染那块面板的副作用发生，等于没有。
+    // 能力核起来 = 这些配置指向的服务端就绪，正是把它们修回来的时刻（只动 Nomi 自己写过的条目，见 mcpConfig）。
+    try {
+      repairStaleMcpConfigs()
+    } catch { /* 宿主配置不可读不是 Nomi 的故障，不能反向拖垮能力核 */ }
     const token = ensureToken()
     const generationService = getProductionRunService()
-    const operationStore = createProductionGenerationOperationStore(generationService)
-    // P4 S4: wire the trial-first narrow into the confirmation seam. When a multi-shot card resolves
-    // trialFirst, narrow the durable plan to shot 1 (a fresh plan hash) so the re-requested gate lists 1
-    // shot. Guarded by the same operationId the challenge carries as runId.
+    // 建草稿 / 改草稿即刻落画布。真正的落地函数（landCanvasBestEffort）在下面才装配得起来
+    // （它要 requestRenderer / projectRoot / 预览密钥），故这里留一个后填的钩子槽：
+    // 装配完成前的调用是 no-op（能力核还没就绪时本来也没有渲染层可落）。
+    let landDraftOnCanvas: ((projectId: string, runId: string) => void) | null = null
+    const operationStore = createProductionGenerationOperationStore(generationService, {
+      onPlanChanged: (projectId, operationId) => landDraftOnCanvas?.(projectId, operationId),
+    })
+    // P4 S4: trialFirst narrows the durable plan to shot 1 and re-seals it.
     const defaults = createDefaultAuthorities({
       onTrialFirst: async ({ projectId, operationId }) => {
         if (!operationStore.trialNarrow) return
-        const trialPlanHash = `trial:${operationId}:${crypto.randomUUID()}`
-        await operationStore.trialNarrow(projectId, operationId, trialPlanHash, new Date().toISOString())
+        await operationStore.trialNarrow(projectId, operationId, new Date().toISOString())
       },
     })
-    const providerBootstrap = createGenerationProviderBootstrap()
-    const outputMaterializer = createGenerationOutputMaterializer()
-    const generationRegistry = authorities.generationModuleRegistry ?? createCatalogModuleRegistry(undefined, { readinessByProvider: providerBootstrap.readinessByProvider })
-    const videoModelCandidates = buildVideoModelCandidates(readCatalog().models
-      .filter((model) => model.enabled && model.kind === 'video')
-      .map((model) => ({
-        provider: model.vendorKey,
-        modelKey: model.modelKey,
-        label: model.labelZh,
-        archetypeId: videoArchetypeIdFromMeta(model.meta),
-        parameterControls: model.onboarding?.fields?.map((field) => ({
-          key: field.key,
-          label: field.displayName,
-          type: field.type,
-          options: (field.options ?? []).map((option) => ({ value: option.value, label: option.label })),
-          ...(field.default === undefined ? {} : { defaultValue: field.default }),
-        })),
-      })))
+    const projectRevisionResolver = authorities.projectRevisionResolver ?? defaults.projectRevisionResolver!
+    const fixtureBaseUrlOverride = process.env.NOMI_E2E_PRODUCTION_FIXTURE === '1'
+      ? process.env.NOMI_E2E_FIXTURE_BASE_URL
+      : undefined
+    const fixtureReferenceUrl = fixtureBaseUrlOverride && process.env.NOMI_E2E_FIXTURE_REFERENCE_URL
+      ? process.env.NOMI_E2E_FIXTURE_REFERENCE_URL
+      : undefined
+    const liveGenerationRuntime = createLiveGenerationRuntime({
+      bootstrap: (state, options) => createGenerationProviderBootstrap(state, {
+        ...options,
+        ...(fixtureBaseUrlOverride ? { fixtureBaseUrlOverride } : {}),
+      }),
+    })
+    const readProviderBootstrap = liveGenerationRuntime.readBootstrap
+    // The loopback vendor is a test-only trusted local service. Keep the
+    // private-origin exception at this fixture wiring boundary; ordinary
+    // provider output downloads retain hardenedFetch's SSRF guard. The fetch
+    // policy itself (timeout / size / provider route) is the shared owner's.
+    const outputMaterializer = createGenerationOutputMaterializer(fixtureBaseUrlOverride ? { trustedPrivateOrigin: fixtureBaseUrlOverride } : {})
+    const generationRegistry = authorities.generationModuleRegistry ?? liveGenerationRuntime.registry
     // P4 S2: real per-shot pricing from the live catalog (resolve lazily so pricing edits apply).
     const resolveModelPricing = (providerId: string, modelId: string) => createCatalogModelPricingResolver(readCatalog().models)(providerId, modelId)
     const resolveShotPrice = (contract: Parameters<ReturnType<typeof createCatalogShotPriceResolver>>[0]) => createCatalogShotPriceResolver(readCatalog().models)(contract)
-    // P4 S5：本实例是否正打开该项目（确认即落只在项目正开时尝试）。openProjectId 是 renderer 上报的单一真相。
-    const isProjectOpen = (id: string) => Boolean(openProjectId) && id === openProjectId
-    // P4 S5：把一个 Run 的镜尽力落成画布占位/组/回填 result，并把 shotId→nodeId 写回 Run（best-effort，永不抛）。
-    // 确认即落与打开项目补齐（reconcileOpenProject）共用它——一个家（P1）。
-    const landCanvasBestEffort = async (projectId: string, runId: string): Promise<boolean> => {
-      let run
-      try {
-        run = generationService.repository.read(projectId, runId)
-      } catch {
-        return false
-      }
-      if (!run) return false
-      const projectRoot = resolveWorkspaceProjectDir(projectId, getWorkspaceRepositoryDeps())
-      return landCanvasForRun(run, {
-        requestRenderer,
-        projectRoot,
-        previewSecret: getArtifactPreviewSecret(),
-        planName: run.brief?.goal,
-        bindShotNodes: async (boundProjectId, boundRunId, expectedRevision, bindings) => {
-          await generationService.command(boundProjectId, boundRunId, {
-            commandId: `canvas-landing:${boundRunId}:bind:${bindings.map((binding) => `${binding.shotId}=${binding.nodeId}`).join(',')}`.slice(0, 200),
-            expectedRevision,
-            type: 'plan.bind-shot-nodes',
-            payload: { bindings },
-            issuedAt: new Date().toISOString(),
-          })
-        },
-      })
-    }
-    // P4 S5：一镜落地 → 把它的 result 推给渲染层回填占位节点（逐个冒）。best-effort：项目没开/渲染层不可用/
-    // 该镜没绑 nodeId → 静默跳过。渲染层 attach 会断言 result.url 为 nomi-local://（我们这里就用 preview.nomiUrl）。
-    const pushShotResultToRenderer = async (projectId: string, runId: string, shotId: string): Promise<void> => {
-      if (!isProjectOpen(projectId)) return
-      let run
-      try {
-        run = generationService.repository.read(projectId, runId)
-      } catch {
-        return
-      }
-      if (!run) return
-      const shot = (run.generationPlan?.shots ?? []).find((candidate) => candidate.shotId === shotId)
-      const nodeId = shot?.nodeId
-      if (!nodeId) return // 该镜没绑画布节点（确认时项目没开等）→ 打开项目时由 materialize-shots 一并回填
-      const job = run.jobs.find((candidate) => typeof candidate.metadata?.shotId === 'string' && candidate.metadata.shotId === shotId && (candidate.status === 'ready' || candidate.status === 'adopted'))
-      if (!job) return
-      const artifact = run.artifacts.find((candidate) => candidate.jobId === job.jobId && (candidate.kind === 'image' || candidate.kind === 'video') && (candidate.status === 'ready' || candidate.status === 'adopted'))
-      if (!artifact || !(artifact.projectRelativePath || artifact.thumbnailRelativePath)) return
-      const projectRoot = resolveWorkspaceProjectDir(projectId, getWorkspaceRepositoryDeps())
-      if (!projectRoot) return
-      try {
-        const projected = createArtifactProjection({ projectRoot, run, artifact, secret: getArtifactPreviewSecret() })
-        const url = projected.preview?.nomiUrl
-        if (!url) return
-        await requestRenderer('production.attach-shot-result', {
-          projectId,
-          runId,
-          nodeId,
-          shotId,
-          result: { id: `production-${job.jobId}`, type: artifact.kind === 'image' ? 'image' : 'video', url, createdAt: Date.now() },
-        }, 15_000)
-      } catch (error) {
-        console.warn('[nomi:production] push shot result failed:', error instanceof Error ? error.message : String(error))
-      }
-    }
+    // P4 S5：只认 main-issued Surface 的完整 committed identity；renderer scalar 不是 authority。
+    const isProjectOpen = (id: string) => canvasReadSurfaceRuntime.getCommittedProjectSelection()?.projectId === id
+    // P4 S5：三个落地时机（建/改草稿即投影 · 付费确认即落 · 打开项目补齐）共用的一条 best-effort 链。
+    // 实现住 productionRun/canvasLandingHost.ts（本文件守 800 行门岗 · R9），这里只做接线。
+    const canvasLanding = createCanvasLandingHost({
+      readRun: (projectId, runId) => generationService.repository.read(projectId, runId),
+      command: (projectId, runId, command) => generationService.command(projectId, runId, command as never),
+      requestRenderer,
+      resolveProjectRoot: (projectId) => resolveWorkspaceProjectDir(projectId, getWorkspaceRepositoryDeps()),
+      isProjectOpen,
+    })
+    const landCanvasBestEffort = canvasLanding.landCanvasBestEffort
+    landDraftOnCanvas = canvasLanding.landDraftOnCanvas
+    const assertProductionShotCanDispatch = createProductionShotDispatchGuard({
+      readRun: (projectId, runId) => generationService.repository.read(projectId, runId) ?? undefined,
+    })
+    // 画布节点跟着 Run 走：每一次耐久变化（派发 / 受理 / 出片落盘 / 失败 / 停）都经过仓库 execute 的事件旁路，
+    // 跟随者据此把「生成中 / 结果 / 失败」写进节点自己的运行记录——与普通生成同一份状态、同一套画法。
+    // 它取代了以前只在「出片」那一下投递结果的专用通道（一件事一个 owner：Run → 画布只有落地这一条路）。
+    unsubscribeRunChanges?.()
+    unsubscribeRunChanges = subscribeProductionRunChanges((run) => canvasLanding.followRunChange(run))
     // P4 S4/S5：构造一个 Run 的提交门面（submission）。lease 身份（immutableProjectUuid/projectGeneration）
-    // 从工作区记录读——**耐久 binding 已冻住这些值**，恢复时无需新 lease。provider 按 run 的合同 provider 解析。
-    // 返回 null = provider 未配置 / 工程根不可达（调用方跳过，不驱动）。start 与 reconcile 共用它（P1）。
-    const buildSubmissionForRun = (run: { projectId: string; generationPlan?: { candidate: { providerId: string } }; jobs: Array<{ provider: string }> }) => {
-      const providerId = run.generationPlan?.candidate.providerId ?? run.jobs[0]?.provider
-      const provider = providerId ? providerBootstrap.providers.find((candidate) => candidate.providerId === providerId) : undefined
+    // 从工作区记录读——**耐久 binding 已冻住这些值**，恢复时无需新 lease。provider 集合按所有镜头合同和已有 job 推导。
+    // 返回 null = provider 未配置 / 工程根不可达（调用方跳过，不驱动）。start 与恢复调度共用同一门槛（P1）。
+    const buildSubmission = (input: {
+      projectRoot: string
+      immutableProjectUuid: string
+      projectGeneration: number
+      providers: Parameters<typeof createProductionGenerationSubmission>[0]['providers']
+    }) => createProductionGenerationSubmission({
+      repository: generationService.repository,
+      projectRoot: input.projectRoot,
+      immutableProjectUuid: input.immutableProjectUuid,
+      projectGeneration: input.projectGeneration,
+      intentMacKey: ensureCapabilitySigningKey('generation-intent'),
+      providers: input.providers,
+      beforeDispatch: assertProductionShotCanDispatch,
+      materializeOutput: ({ projectId, providerTaskId, output, job }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider }),
+    })
+    type SubmittableRun = {
+      projectId: string
+      generationPlan?: GenerationOperationProviderShape & { candidate?: { providerId?: unknown } }
+      jobs: Array<{ provider: string }>
+    }
+    // 这个 Run 现在驱动得起来吗、起不来缺什么——调度器构造与返工 / 续拍的「如实说」读同一份判断。
+    const submissionReadinessForRun = (run: SubmittableRun) => {
+      // Recovery uses the same provider set as a live multi-shot start.  A
+      // durable job can outlive the provider that happened to be first in the
+      // top-level candidate, so include every shot contract and every already
+      // materialized job provider before deciding whether to resume.
+      const plan = run.generationPlan
+      const operationShape: GenerationOperationProviderShape = {
+        contract: plan?.contract ?? (plan?.candidate ? { providerId: plan.candidate.providerId } : undefined),
+        shots: plan?.shots,
+      }
+      const jobProviderIds = run.jobs.map((job) => job.provider)
+      const providerBootstrap = readProviderBootstrap()
+      if (!hasGenerationOperationProviderReadiness(operationShape, providerBootstrap.providers, jobProviderIds)) return { ready: false as const, missing: 'provider_missing' as const }
       const projectRoot = resolveWorkspaceProjectDir(run.projectId, getWorkspaceRepositoryDeps())
       const record = readWorkspaceProject(run.projectId, getWorkspaceRepositoryDeps())
-      if (!provider || !projectRoot || !record?.immutableProjectUuid || !record.projectGeneration) return null
-      return createProductionGenerationSubmission({
-        repository: generationService.repository,
-        projectRoot,
-        immutableProjectUuid: record.immutableProjectUuid,
-        projectGeneration: record.projectGeneration,
-        intentMacKey: ensureCapabilitySigningKey('generation-intent'),
-        provider,
-        resolveShotPrice,
-        materializeOutput: ({ projectId, providerTaskId, output }) => outputMaterializer.materialize({ projectId, providerTaskId, output }),
-      })
+      if (!projectRoot || !record?.immutableProjectUuid || !record.projectGeneration) return { ready: false as const, missing: 'project_missing' as const }
+      return { ready: true as const, input: { projectRoot, immutableProjectUuid: record.immutableProjectUuid, projectGeneration: record.projectGeneration, providers: providerBootstrap.providers } }
+    }
+    const buildSubmissionForRun = (run: SubmittableRun) => {
+      const readiness = submissionReadinessForRun(run)
+      return readiness.ready ? buildSubmission(readiness.input) : null
     }
     // P4 S5：re-kick 一个未完多镜批次的调度器（打开项目恢复用）。best-effort、不阻塞、异常只记 warn。
     // scheduler 无自有状态：从 jobs[]+ledger 纯派生「下一批」，已提交不重提、已完成不重扣（batchScheduleDerivation）。
-    // P4 S6：构造一个 Run 的批次调度器（返工/续拍/恢复共用同一 builder，P1 一个家）。options 透传给 scheduler
-    // （提额续拍传 raisePlanAuthorizationTo）。返回 null = provider 未配置 / 工程根不可达（调用方跳过）。
+    // P4 S6：构造一个 Run 的批次调度器（返工/续拍/恢复共用同一 builder，P1 一个家）。
+    // Scheduler 只消费 gate 已授权的 jobs/ledger，绝不创建或提高付费授权。
     const buildSchedulerForRun = (
       projectId: string,
       runId: string,
-      run: { projectId: string; generationPlan?: { candidate: { providerId: string } }; jobs: Array<{ provider: string }> },
-      options?: { raisePlanAuthorizationTo?: number },
+      run: { projectId: string; generationPlan?: GenerationOperationProviderShape & { candidate?: { providerId?: unknown } }; jobs: Array<{ provider: string }> },
     ) => {
       const submission = buildSubmissionForRun(run)
       if (!submission) return null
@@ -378,81 +295,95 @@ export async function startCapabilityCore(
         submission,
         projectId,
         runId,
-        perShotPrice: (shot) => (shot.contract ? resolveShotPrice(shot.contract) : { known: false }),
-        onShotMaterialized: (shotId) => pushShotResultToRenderer(projectId, runId, shotId),
-        ...(options ? { options } : {}),
+        onBatchComplete: () => generationService.advanceSemanticProduction(projectId, runId),
       })
     }
-    // 慢供应商续力（2026-08-25，S6.5 APIMart 真付费验收抓到的死锁）：一次 drive 只等到 pollHorizon；
-    // 没到静止点（quiescent:false = 还有可轮询的在飞 job / bounded-out）就定时再踢，直到批次真正落定。
-    // 重启安全：定时器丢了没关系，开项目 reconcile 的 kick 经派生 observe 一样推进在飞 job。每 run 至多
-    // 一个待踢定时器；kick 路径带在飞 dedupe（长跑 drive 存续期间 reconcile/timer 不叠踢——dedupe 只是
-    // 省资源，正确性本就由 Run lock + intent log + commandId 幂等保住，漏网的并发 drive 也无害）。
-    // rework/resume 语义路径不 dedupe：提额要立即落 ledger。
-    const REKICK_DELAY_MS = 15_000
-    const activeBatchDrives = new Set<string>()
-    const batchRekickTimers = new Map<string, ReturnType<typeof setTimeout>>()
-    const scheduleBatchRekick = (projectId: string, runId: string): void => {
-      const key = `${projectId}:${runId}`
-      if (batchRekickTimers.has(key)) return
-      const timer = setTimeout(() => {
-        batchRekickTimers.delete(key)
-        kickSchedulerForRun(projectId, runId)
-      }, REKICK_DELAY_MS)
-      timer.unref?.()
-      batchRekickTimers.set(key, timer)
-    }
-    const driveScheduler = (projectId: string, runId: string, scheduler: MultiShotBatchScheduler, label: string): void => {
-      const key = `${projectId}:${runId}`
-      activeBatchDrives.add(key)
-      void scheduler.runToQuiescence()
-        .then((outcome) => {
-          if (!outcome.quiescent) scheduleBatchRekick(projectId, runId)
-        })
-        .catch((error) => {
-          console.warn(`[nomi:production] ${label} failed:`, error instanceof Error ? error.message : String(error))
-        })
-        .finally(() => activeBatchDrives.delete(key))
-    }
-    const kickSchedulerForRun = (projectId: string, runId: string): void => {
-      if (activeBatchDrives.has(`${projectId}:${runId}`)) return // 已有长跑 drive；它的下一轮派生会接住新状态
-      let run
-      try {
-        run = generationService.repository.read(projectId, runId)
-      } catch {
-        return
-      }
-      if (!run || !run.generationPlan?.shots || run.generationPlan.shots.length === 0) return
-      if (run.generationPlan.state !== 'submitted') return // 还没确认过的草稿不驱动
-      if (['completed', 'cancelled', 'paused', 'pausing'].includes(run.status)) return // 已停/急停不自动续
-      const scheduler = buildSchedulerForRun(projectId, runId, run)
-      if (!scheduler) return
-      driveScheduler(projectId, runId, scheduler, 'batch resume tick')
-    }
-    // P4 §3.2：注册进 service 的 post-decide 重踢插槽——任何入口（MCP dispatcher / 渲染层 IPC / 未来的
-    // 检查点卡）批完锚定妆照检查点，批次自动续跑，入口自己不用记得踢（batchSchedulerKick.ts 有为什么）。
+    // 观察与调度驱动（多镜推到静止点 + 单镜回合外轮询）整块住在 appIntegrationRunObservation：
+    // 它们共享同一批 per-instance 状态（在飞的 drive / 重踢定时器 / 单镜 epoch），核重启时一起作废。
+    const runObservation = createRunObservationDrivers({
+      repository: generationService.repository,
+      buildSchedulerForRun,
+    })
+    disposeSingleShotObservationLifecycle = runObservation.stop
+    const { settleSingleShotRunning, settleSingleShotCompleted, settleSingleShotAttention, driveScheduler, kickSchedulerForRun, observeSingleShotRun } = runObservation
+    // P4 §3.2：所有 gate 入口共用 post-decide 重踢。
     registerBatchSchedulerKicker(kickSchedulerForRun)
     const generationPlanning = authorities.generationPlanning
       ?? createGenerationPlanningHandler({
         registry: generationRegistry,
         operations: operationStore,
-        videoModelCandidates,
+        requestRendererDecision,
+        requestRenderer,
+        resolveStoryboardReferenceUrl: resolveIndexedReferencePreview,
+        // 2026-09-22：**这一行以前不在**，而 `mcpStdioServer` 那个宿主一直有它。
+        // 后果：App 内的 Agent 面板（真实用户唯一走的那条路）上，`draft_shots` 的 `references`
+        // **必定**被拒——`resolve?.(assetId)` 恒 undefined ⇒「参考素材 … 不在这个项目的素材库里」。
+        // run2 的 A1 里，`look_at_media` 刚给出 `asset-c7ce…`，下一句 `draft_shots` 就说不认识它：
+        // 两个工具对「素材身份」的答案不一样，而不一样的原因是**其中一个宿主没把解析器递下去**
+        // （与 report-B 项 4 同一形状：判据写对了，没人把状态交给它，而且没有任何东西会红）。
+        resolveAssetReferenceIdentity: (projectId, assetId) => resolveProjectAssetReferenceIdentity(projectId, assetId),
+        get videoModelCandidates() { return deriveUsableVideoModelCandidates() },
+        // ScriptText uses the Workbench defaults lazily (single preference source).
+        defaultModelForTaskKind: (taskKind) => readGenerationDefaultModelResolver()(taskKind),
+        planStoryboard: planStoryboardFromScript,
         recommendVideoGeneration,
         resolveModelPricing,
-        providerReadiness: ({ providerId }) => providerBootstrap.readinessByProvider[providerId] ?? { providerReady: false, missingForSubmit: ['configured_provider'] },
+        providerReadiness: ({ providerId }) => {
+          const providerBootstrap = readProviderBootstrap()
+          return providerBootstrap.readinessByProvider[providerId] ?? { providerReady: false, missingForSubmit: ['configured_provider'] }
+        },
+        prepareAuthorization: async ({ lease, operation, contract, multiShot }) => {
+          // 封信封前先等 Nomi 自己在飞的画布落地落完（草稿投影是 fire-and-forget，它会让
+          // project.revision 前进）。不等的话信封盖的是旧 revision，用户点确认时收据已被自家的写作废，
+          // 报「此确认已失效」——付费闸对**用户**改项目才该 fail-closed，对我们自己的投影不该。
+          await canvasLanding.settleCanvasLanding(lease.projectId)
+          const providerBootstrap = readProviderBootstrap()
+          const projectRecord = readWorkspaceProject(lease.projectId, getWorkspaceRepositoryDeps())
+          if (!projectRecord || !Number.isInteger(projectRecord.revision)) throw new Error('Generation authorization requires the current project revision')
+          const authorizationRun = generationService.repository.read(lease.projectId, operation.operationId)
+          // attempt 谱系、负债合计和硬上限全部从这份快照里算。读不到就停在这里——
+          // 以前的 `run?` 会让它按「这一镜没有任何 attempt」继续，算出来的 attempt 在校验侧对不上。
+          if (!authorizationRun) throw new Error('Generation authorization requires the current Run snapshot')
+          return prepareProductionGenerationAuthorizationWithReferences({
+            lease,
+            assertCurrent: () => {
+              const currentProject = readWorkspaceProject(lease.projectId, getWorkspaceRepositoryDeps())
+              const currentRun = generationService.repository.read(lease.projectId, operation.operationId)
+              if (!currentProject || currentProject.revision !== projectRecord.revision
+                || currentProject.immutableProjectUuid !== lease.immutableProjectUuid
+                || currentProject.projectGeneration !== lease.projectGeneration
+                || currentRun?.revision !== authorizationRun?.revision) throw new Error('generation_reference_scope_changed')
+            },
+            projectRevision: projectRecord.revision,
+            operation,
+            contract,
+            ...(multiShot ? { multiShot } : {}),
+            providers: providerBootstrap.providers,
+            resolveShotPrice,
+            run: authorizationRun,
+            now: new Date().toISOString(),
+          }, fixtureReferenceUrl ? async ({ references }) => Object.fromEntries(references.map(reference => [spendReferenceKey(reference), fixtureReferenceUrl])) : undefined)
+        },
         start: async (operation, lease) => {
-          const provider = providerBootstrap.providers.find((candidate) => candidate.providerId === operation.contract?.providerId)
+          // Settings can save APIMart while this process is already running.
+          // Read the executable provider set at this operation boundary rather
+          // than using the startup snapshot.
+          const providerBootstrap = readProviderBootstrap()
           const projectRoot = resolveWorkspaceProjectDir(lease.projectId, getWorkspaceRepositoryDeps())
-          if (!provider || !projectRoot || !operation.contract) return { operationId: operation.operationId, state: operation.state, nextAction: 'provider_not_configured' }
-          const submission = createProductionGenerationSubmission({
-            repository: generationService.repository,
+          const projectRecord = readWorkspaceProject(lease.projectId, getWorkspaceRepositoryDeps())
+          // A multi-shot plan may put an image anchor in the top-level
+          // contract while its video shots use another provider.  Readiness
+          // must be derived from every included shot (the scheduler's real
+          // submission set), not just operation.contract.providerId.
+          if (!hasGenerationOperationProviderReadiness(operation, providerBootstrap.providers)
+            || !projectRoot || !operation.contract || !projectRecord || !Number.isInteger(projectRecord.revision)) {
+            return { operationId: operation.operationId, state: operation.state, nextAction: 'provider_not_configured' }
+          }
+          const submission = buildSubmission({
             projectRoot,
             immutableProjectUuid: lease.immutableProjectUuid,
             projectGeneration: lease.projectGeneration,
-            intentMacKey: ensureCapabilitySigningKey('generation-intent'),
-            provider,
-            resolveShotPrice,
-            materializeOutput: ({ projectId, providerTaskId, output }) => outputMaterializer.materialize({ projectId, providerTaskId, output }),
+            providers: providerBootstrap.providers,
           })
           // P4 S4: a multi-shot operation is driven by the durable batch scheduler (anchor → checkpoint →
           // shot batch, with budget halt + stop). A single-shot operation keeps the flat one-call start.
@@ -472,7 +403,7 @@ export async function startCapabilityCore(
             const beforeKick = generationService.repository.read(lease.projectId, operation.operationId)
             if (beforeKick?.generationPlan?.state === 'sealed') {
               await generationService.command(lease.projectId, operation.operationId, {
-                commandId: `generation.submit:${operation.operationId}:${beforeKick.generationPlan.planHash ?? beforeKick.generationPlan.contract?.contractHash ?? 'plan'}`,
+                commandId: `generation.submit:${operation.operationId}:v${beforeKick.planVersion}`,
                 expectedRevision: beforeKick.revision,
                 type: 'generation.submit',
                 payload: {},
@@ -484,32 +415,40 @@ export async function startCapabilityCore(
               submission,
               projectId: lease.projectId,
               runId: operation.operationId,
-              perShotPrice: (shot) => (shot.contract ? resolveShotPrice(shot.contract) : { known: false }),
-              onShotMaterialized: (shotId) => pushShotResultToRenderer(lease.projectId, operation.operationId, shotId),
+              onBatchComplete: () => generationService.advanceSemanticProduction(lease.projectId, operation.operationId),
             })
-            // Kick the batch off the request path (durable + restart-safe): the scheduler runs to its next
-            // resting point (anchors done + checkpoint waiting, or halt, or completion) without blocking.
-            // 慢供应商没到静止点 → driveScheduler 定时再踢直到批次落定。
+            // Durable, restart-safe kick; slow providers are re-kicked until quiescent.
             driveScheduler(lease.projectId, operation.operationId, scheduler, 'batch scheduler tick')
             return { operationId: operation.operationId, state: operation.state, nextAction: 'observe' }
           }
-          return submission.start({ projectId: lease.projectId, operationId: operation.operationId })
+          const started = await submission.start({ projectId: lease.projectId, operationId: operation.operationId })
+          settleSingleShotRunning(lease.projectId, operation.operationId)
+          // Single-shot semantic plans keep their candidate at the plan root,
+          // but they still belong to the same canvas materialization owner as
+          // multi-shot runs. Land the real placeholder after the durable
+          // provider acceptance so the node carries the run/job provenance.
+          // The semantic operation was initiated by the active resident
+          // surface; requestRenderer itself enforces the committed target
+          // identity. Do not gate this call on a transient surface snapshot
+          // (surface switches can lag the main-process selection by a tick).
+          await landCanvasBestEffort(lease.projectId, operation.operationId)
+          if (started.nextAction === 'observe') observeSingleShotRun(submission, lease.projectId, operation.operationId)
+          return started
         },
+        unknownShotsOf: (operation, lease) => unknownSubmissionShotLabels(generationService.repository.read(lease.projectId, operation.operationId)),
         reconcile: async (operation, outcome, lease) => {
+          const providerBootstrap = readProviderBootstrap()
           if (outcome === 'not_found') return { operationId: operation.operationId, outcome, nextAction: 'manual_review' }
           const provider = providerBootstrap.providers.find((candidate) => candidate.providerId === operation.contract?.providerId)
           const projectRoot = resolveWorkspaceProjectDir(lease.projectId, getWorkspaceRepositoryDeps())
-          if (!provider || !projectRoot || !operation.contract) return { operationId: operation.operationId, outcome, nextAction: 'manual_review' }
+          const projectRecord = readWorkspaceProject(lease.projectId, getWorkspaceRepositoryDeps())
+          if (!provider || !projectRoot || !operation.contract || !projectRecord || !Number.isInteger(projectRecord.revision)) return { operationId: operation.operationId, outcome, nextAction: 'manual_review' }
           if (!provider.query || !provider.capabilities.query) return { operationId: operation.operationId, outcome, nextAction: 'manual_review', recoveryNotice: '该供应商没有可用的任务查询；请到供应商核对。' }
-          const submission = createProductionGenerationSubmission({
-            repository: generationService.repository,
+          const submission = buildSubmission({
             projectRoot,
             immutableProjectUuid: lease.immutableProjectUuid,
             projectGeneration: lease.projectGeneration,
-            intentMacKey: ensureCapabilitySigningKey('generation-intent'),
-            provider,
-            resolveShotPrice,
-            materializeOutput: ({ projectId, providerTaskId, output }) => outputMaterializer.materialize({ projectId, providerTaskId, output }),
+            providers: providerBootstrap.providers,
           })
           try {
             const polled = await submission.poll({ projectId: lease.projectId, operationId: operation.operationId })
@@ -523,11 +462,63 @@ export async function startCapabilityCore(
           }
         },
       })
-    // P4 S5：打开/切换项目时的补齐钩子（§3.4）。对该项目所有活跃 run：① landCanvasBestEffort 幂等补落缺失
-    // 节点/组 + 回填已完成 result（materializationOperationId + 组章去重，跑两次不重复）；② resumeUnfinishedRuns
-    // 恢复未完批次调度（S4 遗留的接上启动触发）。best-effort：异步、逐 run try/catch，不阻塞项目打开。
+    // Generation strategy resolver GUI 窄 IPC：seam 一就绪就装配注册（幂等，重启重注册）。装配点住
+    // generationResolveIpc 模块（避免 main.ts 巨壳增长 / 本文件破 800 上限）；候选集与 agent/MCP 同源。
+    installGuiResolveNarrowIpc(generationPlanning, () => canvasReadSurfaceRuntime.getCommittedProjectSelection()?.projectId ?? null)
+    const runOwnedGenerationAuthority = createRunOwnedGenerationGateAuthority({
+      owner: generationService,
+      operations: operationStore,
+      planning: generationPlanning,
+      receipts: defaults.approvalReceiptAuthority!,
+    })
+    try {
+      const requestGenerationGate = authorities.requestGenerationGate ?? runOwnedGenerationAuthority.requestGenerationGate
+      const authorizeGeneration = authorities.authorizeGeneration ?? runOwnedGenerationAuthority.authorizeGeneration
+      // P1 单轨化（2026-09-11）：这条 lane 不再注入 `confirmGenerationInNomi`（居中弹窗的入口），
+      // 于是「agent 代发的付费确认弹居中卡」结构上不可能；真被走到会 fail-closed。面板那条走 appIntegrationSpendConfirm。
+      const residentGeneration = installResidentGenerationAdapter({ planning: generationPlanning, requestGenerationGate, authorizeGeneration, approvalReceiptAuthority: defaults.approvalReceiptAuthority!, projectSessionAuthority: defaults.projectSessionAuthority, owner: generationService })
+      disposeResidentGenerationAdapter = residentGeneration.dispose
+      // 付费确认卡的编排：租约与 resident 适配器共用同一个 `leaseFor`（不另起一份续期逻辑）。
+      installPendingSpendActions(pendingSpendDependencies({
+        isProjectOpen, repository: generationService.repository, operations: operationStore, planning: generationPlanning,
+        requestGenerationGate, authorizeGeneration, receipts: defaults.approvalReceiptAuthority!,
+        rendererTarget: rendererTargetIdentity, committedSelection: canvasReadSurfaceRuntime.getCommittedProjectSelection,
+        leaseFor: residentGeneration.leaseFor, resolvePricing: resolveModelPricing,
+        // 卡上改一下与 Agent 改草稿走同一条并入规则（同一个目录、同一份视频候选）。
+        normalizePatch: (base, patch) => resolvePlanPatch({ baseCandidate: base, userPatch: patch, registry: generationRegistry, videoModelCandidates: deriveUsableVideoModelCandidates() }).normalizedPatch,
+      }))
+      // 两条面（lane 的生成适配器、面板的付费卡）装齐了才算 ready：它们由同一份相回答。
+      markResidentSurfaceReady(residentGeneration.factory)
+    } catch (error) {
+      logError('capability', 'resident-generation-adapter-install-failed', error)
+      // 装配失败**不许只留一行日志**（2026-09-12）。这一段一旦抛，付费确认卡在整个会话里
+      // 都不会再出现，而模型还在一句句告诉用户「请在确认卡上点头」——那正是「声称有卡、
+      // 却什么都没渲染」这一族的会话级版本。把原因记进 owner，读通道据此抛得明明白白，
+      // 用户那头看到一张会说话的卡，CI 里那条 console error 让门岗当场红。
+      installPendingSpendActions(null)
+      markResidentSurfaceInstallFailed(error)
+    }
+    // P4 S5：打开/切换项目时的补齐钩子（§3.4）。对该项目所有未取消的 run：① reconcileExistingCanvas 只让已有节点
+    // 对上 Run（补结果、纠正记录，绝不新建节点）；② single-shot 只 poll→materialize
+    // 恢复，不重新 start；③ resumeUnfinishedRuns 恢复 legacy/多镜调度。
+    // best-effort：异步、逐 run try/catch，不阻塞项目打开。
     reconcileOpenProjectHook = (projectId: string) => {
       void (async () => {
+        // 裁决 C：上一个进程摆出去、还没人答的那几次出价先撤回（回 draft / 未 present，计划留着）。
+        // 排在补落画布之前：占位节点照旧补，但那张「没人在等」的卡不该再闪出来一次。
+        try {
+          const runs = (typeof generationService.repository.list === 'function' ? generationService.repository.list(projectId) : [])
+            .flatMap((summary) => { try { const run = generationService.repository.read(projectId, summary.runId); return run ? [run] : [] } catch { return [] } })
+          const withdrawn = await withdrawStalePresentations({
+            listRuns: () => runs,
+            // 关的原因要一路带到账上（「被停」），回执据此说「没决定是因为上一次被停了」——少传一个参数就会变成「用户关了卡」。
+            withdraw: (owner, operationId, now, reason) => operationStore.withdraw(owner, operationId, now, reason),
+            onError: (operationId, error) => logWarn('production-run', 'withdraw-stale-presentation-failed', { operationId }, error),
+          }, projectId)
+          if (withdrawn.length > 0) logInfo('production-run', 'withdrew-stale-presentations', { projectId, operationIds: withdrawn.join(',') })
+        } catch (error) {
+          logWarn('production-run', 'stale-presentation-sweep-failed', undefined, error)
+        }
         try {
           const summaries = typeof generationService.repository.list === 'function' ? generationService.repository.list(projectId) : []
           for (const summary of summaries) {
@@ -537,193 +528,115 @@ export async function startCapabilityCore(
             } catch {
               continue
             }
-            // 只补语义多镜 run（有 generationPlan.shots）且未终结的；单镜/legacy 不在此列。
-            if (!run || ['completed', 'cancelled'].includes(run.status)) continue
+            if (!run || run.status === 'cancelled') continue
+            // 打开项目的画布对账**绝不新建节点**：只让已经在、认得出是同一镜的节点对上 Run（补结果、纠正 detached 记录），
+            // 认不出来的什么都不做（落地宿主记日志）。建节点只归确认即落 / 草稿投影。
+            // CI 抓到（#966 canvas-shortcuts C19）：这里以前是整份落地，带老 Run 的项目一打开就凭空多出一份节点。
+            await canvasLanding.reconcileExistingCanvas(projectId, run.runId)
+            // 结束的 Run 不再调度。
+            if (run.status === 'completed') continue
+            const isSemanticSingleShot = run.playbook.name === 'generation.single-shot'
+              && run.generationPlan?.operationId === run.runId
+              && !run.generationPlan.shots?.length
+            if (isSemanticSingleShot) {
+              // The canvas side was reconciled above (existing nodes only). If a
+              // provider task is still in flight, resume by query only: this
+              // path must never call start or create a second paid job.
+              const refreshed = generationService.repository.read(projectId, run.runId) ?? run
+              const readyJob = refreshed.jobs.find((job) => ['ready', 'adopted'].includes(job.status))
+              const readyArtifact = readyJob
+                ? refreshed.artifacts.find((artifact) => artifact.jobId === readyJob.jobId
+                  && ['ready', 'adopted'].includes(artifact.status)
+                  && Boolean(artifact.contentHash)
+                  && Boolean(artifact.projectRelativePath || artifact.thumbnailRelativePath))
+                : undefined
+              if (readyJob && readyArtifact) {
+                settleSingleShotCompleted(projectId, run.runId, { jobId: readyJob.jobId, artifactId: readyArtifact.artifactId })
+                continue
+              }
+              const attentionJob = refreshed.jobs.find((job) => job.status === 'needs_attention')
+              if (attentionJob || refreshed.status === 'needs_attention') {
+                settleSingleShotAttention(projectId, run.runId, attentionJob?.jobId)
+                continue
+              }
+              // 与观察者「歇一歇再问」用同一个判据（isProductionJobInFlight），重开项目与观察窗到期不会各判各的。
+              const observable = refreshed.jobs.some(isProductionJobInFlight)
+              if (observable) {
+                const submission = buildSubmissionForRun(refreshed)
+                if (submission) observeSingleShotRun(submission, projectId, run.runId)
+              }
+              continue
+            }
+            // 只补语义多镜 run（有 generationPlan.shots）且未终结的；legacy 不在此列。
             if (!run.generationPlan?.shots || run.generationPlan.shots.length === 0) continue
-            // ① 幂等补落节点/组 + 回填已完成 result（materializationOperationId + 组章去重）。
-            await landCanvasBestEffort(projectId, run.runId)
             // ② 恢复未完批次调度（从 jobs[]+ledger 纯派生「下一批」，已提交不重提、已完成不重扣）。
             kickSchedulerForRun(projectId, run.runId)
           }
         } catch (error) {
-          console.warn('[nomi:production] open-project canvas reconcile failed:', error instanceof Error ? error.message : String(error))
+          logWarn('production-run', 'open-project-canvas-reconcile-failed', undefined, error)
         }
-        // 顺带把 S4 遗留的 resumeUnfinishedRuns 接上启动触发（legacy driver / 单镜链的崩溃恢复；语义多镜批次
-        // 由上面 kickSchedulerForRun 驱动，resumeUnfinishedRuns 内部会跳过 semantic-single-shot 不重复动它们）。
+        // 顺带把 S4 遗留的 resumeUnfinishedRuns 接上启动触发（legacy driver / 多镜批次的崩溃恢复；
+        // semantic single-shot 已在上面走只读 observer，service 内部仍跳过它们，避免任何隐式 start）。
         try {
           await generationService.resumeUnfinishedRuns(projectId)
         } catch (error) {
-          console.warn('[nomi:production] resume unfinished runs failed:', error instanceof Error ? error.message : String(error))
+          logWarn('production-run', 'resume-unfinished-runs-failed', undefined, error)
         }
       })()
     }
-    // P4 S6 返工编排（§3.5 / §3.B）：对一镜发起「同 Run 新 Job」→ 起**单镜 gate**（该镜子合同单价，复用唯一
-    // spendConfirm 漏斗的扁平单镜卡 = 无 shots 键）→ 铸 receipt → durable `generation.approve` 带新 attempt（只批该
-    // 镜，不动兄弟镜的批准）→ kick scheduler 派发这个 authorized 新 Job。锚 character_ref/DNA 提示词天然继承（新 Job
-    // 复用该镜现有子合同）。用户取消/超时 → 新 Job 留 authorized 不扣费。**授权面只认 Nomi 自有确认（防注入）**。
-    const reworkProductionShot = async (input: { projectId: string; runId: string; shotId?: string }): Promise<ProductionActionResult> => {
-      const { projectId, runId, shotId } = input
-      // 守卫：返工只对当前打开的项目（用户在本机对本项目操作，§3.C）。
-      if (!isProjectOpen(projectId)) return { ok: false, code: 'run_not_open' }
-      let run
-      try {
-        run = generationService.repository.read(projectId, runId)
-      } catch {
-        return { ok: false, code: 'failed', message: 'run read failed' }
-      }
-      if (!run || !run.generationPlan?.shots || run.generationPlan.shots.length === 0) return { ok: false, code: 'not_multishot' }
-      const submission = buildSubmissionForRun(run)
-      if (!submission) return { ok: false, code: 'unavailable' }
-      const receiptAuthority = defaults.approvalReceiptAuthority
-      const confirm = defaults.confirmGenerationInNomi
-      const record = readWorkspaceProject(projectId, getWorkspaceRepositoryDeps())
-      const projectRevision = record?.revision
-      if (!receiptAuthority || !confirm || !record?.immutableProjectUuid || !record.projectGeneration || !Number.isInteger(projectRevision)) {
-        return { ok: false, code: 'unavailable' }
-      }
-      // 1. 造新 attempt Job（authorized、parentJobId 谱系、继承子合同=锚继承）。无可返工的上一 job → no_prior_attempt。
-      let rework
-      try {
-        rework = await submission.reworkShot({ projectId, operationId: runId, ...(shotId ? { shotId } : {}) })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (/No prior submission to rework/.test(message)) return { ok: false, code: 'no_prior_attempt' }
-        return { ok: false, code: 'failed', message }
-      }
-      // 2. 起单镜 gate：用该镜子合同单价作 receipt 上界，display 用单镜形态（无 shots → 渲染层走扁平单镜卡）。
-      const fresh = generationService.repository.read(projectId, runId)
-      const shot = shotId ? (fresh?.generationPlan?.shots ?? []).find((candidate) => candidate.shotId === shotId) : undefined
-      const shotContract = shot?.contract ?? fresh?.generationPlan?.contract
-      const price = shotContract ? resolveShotPrice(shotContract) : { known: false as const }
-      const maximumCost = price.known ? price.amount : 0
-      const modelLabel = shotContract?.modelId ?? run.generationPlan.candidate.modelId ?? ''
-      const shotSummary = typeof shot?.candidate.prompt === 'string' && shot.candidate.prompt.trim()
-        ? shot.candidate.prompt.trim().slice(0, 80)
-        : undefined
-      const challenge = receiptAuthority.requestChallenge({
-        challengeKey: `production.rework:${projectId}:${runId}:${shotId ?? 'default'}:${rework.attempt}`,
-        immutableProjectUuid: record.immutableProjectUuid,
-        projectGeneration: record.projectGeneration,
-        projectId,
-        runId,
-        gateId: `generation-rework:${runId}:${shotId ?? 'default'}:${rework.attempt}`,
-        contractHash: rework.contractHash,
-        targetHash: rework.contractHash,
-        projectRevision: projectRevision as number,
-        costScope: 'production.rework',
-        pricingSnapshotHash: rework.contractHash,
-        reservationPreview: { currency: run.budget.currency, maximum: maximumCost },
-        display: { model: modelLabel, ...(shotSummary ? { shotSummary } : {}), ...(shotContract?.references?.length ? { referenceCount: shotContract.references.length } : {}) },
-      })
-      // 3. 弹卡确认（Nomi 自有表面点头才算，防 prompt injection）。取消/超时 → 新 Job 留 authorized 不派发不扣费。
-      // confirmGenerationInNomi 声明返回 unknown（DispatchContext 契约）；这里塑形到它的真实成功/取消形状。
-      let confirmation: { confirmed?: unknown; receiptId?: unknown } | null
-      try {
-        confirmation = (await confirm({ challengeToken: challenge.token })) as { confirmed?: unknown; receiptId?: unknown } | null
-      } catch (error) {
-        return { ok: false, code: 'failed', message: error instanceof Error ? error.message : String(error) }
-      }
-      const receiptId = confirmation?.confirmed === true && typeof confirmation.receiptId === 'string' ? confirmation.receiptId : ''
-      if (!receiptId) {
-        return { ok: false, code: 'rework_declined' }
-      }
-      // 4. durable approve（带新 attempt = 只批该镜的这次尝试；reducer 保留计划级 receipt、只重置该镜 approval）。
-      try {
-        const approving = generationService.repository.read(projectId, runId)
-        if (!approving?.generationPlan) return { ok: false, code: 'failed', message: 'plan gone before approve' }
-        const approvalHash = approving.generationPlan.shots ? approving.generationPlan.planHash : approving.generationPlan.contract?.contractHash
-        await generationService.command(projectId, runId, {
-          commandId: `production-rework-approve:${runId}:${shotId ?? 'default'}:${rework.attempt}`,
-          expectedRevision: approving.revision,
-          type: 'generation.approve',
-          payload: { receiptId, contractHash: approvalHash, attempt: rework.attempt },
-          issuedAt: new Date().toISOString(),
-        })
-        // reworkShot 把 plan 退回 sealed（reducer new_attempt）→ 重新标 submitted，scheduler 才驱动。
-        const submitting = generationService.repository.read(projectId, runId)
-        if (submitting?.generationPlan?.state !== 'submitted') {
-          await generationService.command(projectId, runId, {
-            commandId: `production-rework-submit:${runId}:${shotId ?? 'default'}:${rework.attempt}`,
-            expectedRevision: submitting!.revision,
-            type: 'generation.submit',
-            payload: {},
-            issuedAt: new Date().toISOString(),
-          })
-        }
-      } catch (error) {
-        return { ok: false, code: 'failed', message: error instanceof Error ? error.message : String(error) }
-      }
-      // 5. kick scheduler：派发这个 authorized 新 Job（已完成兄弟镜不重扣）；提额上界给该镜单价（累计已授权则不降）。
-      const kicking = generationService.repository.read(projectId, runId)
-      if (kicking) {
-        const scheduler = buildSchedulerForRun(projectId, runId, kicking, maximumCost > 0 ? { raisePlanAuthorizationTo: kicking.budget.authorized + maximumCost } : undefined)
-        if (scheduler) {
-          driveScheduler(projectId, runId, scheduler, 'rework dispatch tick')
-        }
-      }
-      return { ok: true, code: 'reworked' }
-    }
-    // P4 S6 续拍编排（§3.3 / §3.B）：把已停批次（急停 paused / 预算 halt needs_attention）转回 running 后重踢
-    // scheduler。manual（急停继续）= 转 running + kick；budget（提额续拍）= 转 running + kick 带 raisePlanAuthorizationTo
-    // （抬到「已授权 + 剩余勾选镜预估上界」）。scheduler 无自有状态：已提交不重提、已完成不重扣（batchScheduleDerivation）。
-    const resumeProductionBatch = async (input: { projectId: string; runId: string; reason: 'budget' | 'manual' }): Promise<ProductionActionResult> => {
-      const { projectId, runId, reason } = input
-      if (!isProjectOpen(projectId)) return { ok: false, code: 'run_not_open' }
-      let run
-      try {
-        run = generationService.repository.read(projectId, runId)
-      } catch {
-        return { ok: false, code: 'failed', message: 'run read failed' }
-      }
-      if (!run || !run.generationPlan?.shots || run.generationPlan.shots.length === 0) return { ok: false, code: 'not_multishot' }
-      if (run.generationPlan.state !== 'submitted') return { ok: false, code: 'failed', message: 'plan not submitted' }
-      // 只从「可续拍的停态」转回 running（paused=急停、needs_attention=预算 halt）。其它态（running/completed/cancelled）
-      // 不是待续拍——running 已在跑、completed/cancelled 是终态。pausing 是瞬态（等它落到 paused 再续）。
-      if (run.status === 'paused' || run.status === 'needs_attention') {
-        try {
-          await generationService.command(projectId, runId, {
-            commandId: `production-resume:${runId}:${run.revision}`,
-            expectedRevision: run.revision,
-            type: 'run.status',
-            payload: { status: 'running' },
-            issuedAt: new Date().toISOString(),
-          })
-        } catch (error) {
-          return { ok: false, code: 'failed', message: error instanceof Error ? error.message : String(error) }
-        }
-      } else if (run.status !== 'running') {
-        return { ok: false, code: 'failed', message: `run status ${run.status} is not resumable` }
-      }
-      const running = generationService.repository.read(projectId, runId)
-      if (!running) return { ok: false, code: 'failed', message: 'run gone after resume' }
-      // 提额续拍：抬到「已授权 + 剩余勾选镜预估上界」（scheduler 的 ledger 只接受 authorize ≥ 当前 liability，不降额）。
-      let raiseTo: number | undefined
-      if (reason === 'budget') {
-        let remaining = 0
-        for (const shot of running.generationPlan?.shots ?? []) {
-          if (shot.role === 'anchor' || shot.included === false || !shot.contract) continue
-          const price = resolveShotPrice(shot.contract)
-          if (price.known) remaining += price.amount
-        }
-        raiseTo = running.budget.authorized + remaining
-      }
-      const scheduler = buildSchedulerForRun(projectId, runId, running, raiseTo !== undefined ? { raisePlanAuthorizationTo: raiseTo } : undefined)
-      if (!scheduler) return { ok: false, code: 'unavailable' }
-      driveScheduler(projectId, runId, scheduler, 'batch resume tick')
-      return { ok: true, code: 'resumed' }
-    }
+    // Late core startup must replay a Surface committed before the RPC server
+    // was enabled, then follow subsequent suspend/commit/release projections.
+    unsubscribeCommittedSurface?.()
+    unsubscribeCommittedSurface = canvasReadSurfaceRuntime.subscribeCommittedProject((selection) => {
+      if (selection && reconcileOpenProjectHook) reconcileOpenProjectHook(selection.projectId)
+    })
+    const { reworkProductionShot, resumeProductionBatch } = createProductionActionHooks({
+      generationService,
+      isProjectOpen,
+      readProviderBootstrap,
+      readProject: (projectId) => readWorkspaceProject(projectId, getWorkspaceRepositoryDeps()),
+      resolveShotPrice,
+      driverReadiness: (run) => {
+        const readiness = submissionReadinessForRun(run)
+        return readiness.ready ? 'ready' : readiness.missing
+      },
+      kickScheduler: kickSchedulerForRun,
+      receiptAuthority: defaults.approvalReceiptAuthority,
+      confirmGenerationInNomi: defaults.confirmGenerationInNomi,
+    })
     reworkProductionShotHook = reworkProductionShot
     resumeProductionBatchHook = resumeProductionBatch
     handle = await startRpcServer({
+      runDirector: authorities.runDirector,
       runTask,
       fetchTaskResult,
-      runDirector: authorities.runDirector,
-      isProjectOpen: (id) => Boolean(openProjectId) && id === openProjectId,
+      isProjectOpen,
       productionRuns: getProductionRunService(),
       ...defaults,
+      requestGenerationGate: authorities.requestGenerationGate ?? runOwnedGenerationAuthority.requestGenerationGate,
+      authorizeGeneration: authorities.authorizeGeneration ?? runOwnedGenerationAuthority.authorizeGeneration,
       ...authorities,
-      generationPolicy: authorities.generationPolicy ?? createRuntimeMcpGenerationPolicy(),
+      projectRevisionResolver,
+      // 同 mcpStdioServer：档位来自设置里持久化的那一份，宿主只负责递，不自己编。
+      approvalPolicy: readAgentApprovalPolicy,
+      proposalReceiptFor: authorities.proposalReceiptFor,
+      openCredentialsInNomi: authorities.openCredentialsInNomi ?? (async ({ sessionId }: { sessionId: string; vendorName: string }) => {
+        const win = getMainWindow()
+        if (!win || win.isDestroyed()) throw new Error('Nomi window unavailable')
+        // macOS 上只 win.focus() 不够：它让某扇窗成为 key window，但不会把 Nomi 变成最前面的
+        // **应用**——用户还是看不见它。app.focus({steal:true}) 管的是后面那件事，两件都要做。
+        // 2026-09-06 实测这条路径能把窗口叫到前台（tests/ux/mcp-key-window.walk.mjs）；
+        // 那条走查在锁屏/无前台登录会话时会用阳性对照判出「窗口服务器不给任何 App 焦点」并明说没跑成，
+        // 不会把环境没功率报成 Nomi 的 bug。
+        if (process.platform === 'darwin') app.focus({ steal: true })
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+        await requestRenderer('integration.open-credentials', { sessionId }, 30_000)
+        return { opened: true }
+      }),
       generationPlanning,
+      onRpcActivity: authorities.onRpcActivity,
     })
     const location = getProjectLocationState()
     advertisedLibrary = { projectsRoot: location.path, isDefault: location.source === 'default' }
@@ -739,9 +652,13 @@ export async function startCapabilityCore(
       }
     }, HEARTBEAT_INTERVAL_MS)
     heartbeatTimer.unref?.()
-    console.log(`[nomi:capability-core] RPC 监听 127.0.0.1:${handle.port}（库 ${location.path}）`)
+    logInfo('capability', 'rpc-listening', { port: handle.port })
+    // 库路径是本机路径，只在开发终端里给人看，不落盘。
+    logDevDetail('capability', `RPC 监听 127.0.0.1:${handle.port}（库 ${location.path}）`)
   } catch (error) {
-    console.error('[nomi:capability-core] 启动失败（不影响 app）:', error)
+    logError('capability', 'rpc-start-failed', error)
+    // 没走到常驻面装配就抛了（比如 token / 供应商引导抛）：相不许停在 starting 装睡。
+    if (readResidentSurfaceLifecycle().phase === 'starting') markResidentSurfaceInstallFailed(error)
   }
 }
 
@@ -760,6 +677,13 @@ export function stopCapabilityCore(): void {
     handle = null
   }
   reconcileOpenProjectHook = null
+  unsubscribeCommittedSurface?.()
+  unsubscribeCommittedSurface = null
+  unsubscribeRunChanges?.()
+  unsubscribeRunChanges = null
   reworkProductionShotHook = null
   resumeProductionBatchHook = null
+  disposeSingleShotObservationLifecycle?.(); disposeSingleShotObservationLifecycle = null
+  disposeResidentGenerationAdapter?.(); disposeResidentGenerationAdapter = null; installPendingSpendActions(null); markResidentSurfaceStopped()
+  installGuiResolveNarrowIpc(null)
 }

@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { NomiBrand } from '../../../../design'
 import { WindowControls } from '../../../../ui/app-shell/WindowControls'

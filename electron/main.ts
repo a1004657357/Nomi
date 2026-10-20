@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from "electron";
+import { startCatalogReconciliation } from "./ai/onboarding/vendorHealth";
 import type { Rectangle, WebContents } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,35 +15,34 @@ import {
   ensureBuiltinModelSeeds,
   exportModelCatalogPackage,
   getModelCatalogHealth,
-  importModelCatalogPackage,
   listModelCatalogMappings,
   listModelCatalogModels,
   listModelCatalogVendors,
-  upsertModelCatalogMapping,
-  upsertModelCatalogModel,
-  upsertModelCatalogVendor,
-  upsertModelCatalogVendorApiKey,
 } from "./catalog/catalogStore";
-import { initGlobalIdempotencyStore } from "./tasks/idempotencyStore";
-import { createTaskSubmissionRuntime } from "./tasks/taskSubmissionRuntime";
-import { retypeModelCatalogModel } from "./catalog/modelRetype";
-import { getSettingsRoot } from "./runtimePaths";
+import { importRendererCatalogPackage, upsertRendererCatalogMapping, upsertRendererCatalogModel, upsertRendererCatalogVendor } from "./catalog/rendererCatalogMutation";
 import { registerAssetTransportIpc } from "./assetTransportIpc";
+import { retypeModelCatalogModel } from "./catalog/modelRetype";
 import { registerTaskIpcHandlers } from "./tasks/taskIpcHandlers";
+import { createTaskSubmissionRuntime } from './tasks/taskSubmissionRuntime';
+import { initGlobalIdempotencyStore } from './tasks/idempotencyStore';
+import { getSettingsRoot } from './runtimePaths';
+import { registerDesktopIntegrationIpc } from './desktopIntegrationIpc';
+import { configureCustomMcpRuntime, runCustomDirector, setCustomBlenderCleanup, stopCustomGenerationProcesses } from './customGenerationLifecycle';
 import { registerNotificationIpc } from "./notificationIpc";
-import { logCrash } from "./crashLog";
+import { openWorkspaceFolder, selectWorkspaceFolder } from "./workspace/workspaceIpc";
+import { listWorkspaceFiles, resolveWorkspaceFilePath } from "./workspace/workspaceFileIndex";
+import { registerWorkspaceFileDeleteIpc } from "./workspace/workspaceFileDelete";
+import { registerWorkspaceSyncIpc } from "./workspace/workspaceSyncIpc";
 import { installMainProcessLifecycle } from "./mainProcessLifecycle";
 import { registerExportJobIpc } from "./export/exportJobIpc";
-import { registerAgentChatV2Ipc } from "./ai/agentChatV2Ipc";
 import { registerTextStreamIpc } from "./ai/textStreamIpc";
-import { registerConversationsIpc } from "./conversations/conversationsIpc";
 import { setEventLogSecretsProvider } from "./events/eventLogRepository";
 import { registerEventsIpc } from "./events/eventsIpc";
 import { registerMemoryIpc } from "./memory/memoryIpc";
 import { registerPromptLibraryIpc } from "./promptLibrary/promptLibraryIpc";
 import { registerBrowserViewIpc } from "./browser/core/browserViews";
 import { registerBrowserPromptExtractionSettingsIpc } from "./browser/settings/browserPromptExtractionSettings";
-import { registerProxyIpc } from "./proxyIpc";
+import { applyProxyAtBoot, registerProxyIpc } from "./proxyIpc";
 import { catalogSecretsProvider } from "./events/secretsProvider";
 import { registerOnboardingIpc } from "./ai/onboarding/onboardingIpc";
 import { registerProviderAdapterIpc } from "./providerAdapter/ipc";
@@ -50,25 +50,57 @@ import { registerExistingConnectionIpc } from "./providerAdapter/existingConnect
 import { registerUpdaterIpc } from "./update/autoUpdater";
 import { setRendererTarget } from "./capabilityCore/rendererBridge";
 import { readMcpInfo, installMcp, uninstallMcp } from "./capabilityCore/mcpConfig";
+import { registerNomiProtocolClient } from "./protocolRegistration";
 import { verifyMcp } from "./capabilityCore/mcpVerify";
+import { registerCustomMcpProfileIpc, watchMcpProfiles } from "./capabilityCore/mcpProfiles";
 import { registerLocalProtocol } from "./protocol/localProtocol";
-import { registerDesktopIntegrationIpc } from "./desktopIntegrationIpc";
 import { installMainWindowInteractions } from "./mainWindowInteractions";
-import { getMainWindow, setMainWindow } from "./mainWindowRegistry";
+import { getMainWindow, setMainWindow } from "./appWindowRegistry";
 import { createMainWindowGuard } from "./mainWindowPresence";
-import { assertTrustedSender } from "./ipcSenderGuard";
+import { assertTrustedSender, assertTrustedUiSender } from "./ipcSenderGuard";
+import { registerDirectorMobileIpc } from "./director/mobileBridgeIpc";
 import { registerScreenshotIpc } from "./screenshot/screenshotIpc";
-import { registerI18nIpc, setDesktopLocale } from "./i18n";
+import { registerVideoIpc } from "./video/videoIpc";
+import { registerTikhubConnectorIpc } from "./connectors/tikhubConnectorIpc";
+import { desktopT, registerI18nIpc, setDesktopLocale } from "./i18n";
 import { registerSettingsIpc } from "./settings/registerSettingsIpc";
+import { registerIntegrationHandoffIpc } from "./integrationCertification/handoffQueue";
+import { registerIntegrationSessionIpc } from "./integrationCertification/integrationSessionIpc";
+import { installIntegrationSessionRuntime } from "./integrationCertification/integrationSessionRuntimeInstall";
 import { registerProductionRunIpc } from "./productionRun/productionRunIpc";
 import { registerProductionActionIpc } from "./productionRun/productionActionIpc";
 import { installProductionRunDesktopLifecycle } from "./productionRun/productionRunDesktopLifecycle";
-installMainProcessLifecycle(app);
+import { canvasReadSurfaceRuntime } from "./capabilityCore/canvasReadSurfaceRuntime";
+import { registerDesktopCanvasReadRuntime, type CanvasReadExecutionRuntime } from "./capabilityCore/canvasReadMainRuntime";
+import { registerAgentLaneIpc, type LaneIpcRegistration } from "./agentLane/laneIpc";
+import { createDesktopLaneDependencies } from "./agentLane/laneDesktopRuntime";
+import { bootResidentSurfaceLifecycle, residentGenerationFactory } from "./capabilityCore/residentSurfaceLifecycle";
+import { createDesktopProposalReceiptResolver } from "./capabilityCore/projectAgentReceiptResolver";
+import { installContentSecurityPolicy } from "./contentSecurityPolicy";
+import { registerSkillIpc } from "./skills/skillIpc";
+import { logError, logInfo, logWarn } from "./logging/logger";
+import { seedFromStableInstallAtBoot } from "./settings/sideBySideInstallSeed";
+import { registerDevDiagnostics } from "./logging/devDiagnostics";
+import { registerRendererLogIpc } from "./logging/rendererLog";
+import { createProjectInteractionCapture } from "./assets/projectInteractionCapture";
+import { issueChildWindowProject } from "./assets/windowProjectCapture";
+import { installWindowNavigation } from "./windowNavigation";
+import { installQuitTeardown } from "./quitTeardown";
+import { backgroundWindowOptions, disposeBackgroundLifecycle, hasInFlightProductionWork, installBackgroundLifecycle, installBackgroundWindowBehavior, isBackgroundLaunch, touchBackgroundActivity } from "./backgroundLaunch";
+// profile 重定向必须排在 installMainProcessLifecycle **之前**：崩溃处理与日志一装上就会写盘，
+// 晚一步重定向，这次会话的头几行（含会话表头）会落在被隔离掉的那个目录里。
 const configuredUserDataDir = String(process.env.NOMI_ELECTRON_USER_DATA_DIR || "").trim();
 if (configuredUserDataDir) {
   // dev-electron.mjs 按 renderer 端口隔离 profile，避免复用旧 Vite chunk/code cache。
   app.setPath("userData", configuredUserDataDir);
+  // 日志跟着 profile 走。macOS 的 `logs` 默认是 ~/Library/Logs/<app>，**不随 userData 变**——
+  // 于是同一台机器上的每个实例（正装的、dev 的、E2E 的、多 worktree 的）都往同一个文件里写，
+  // 日志互相交叉、诊断包也会把别人的会话打包进来（2026-09-06 走查实测：隔离实例的诊断包里
+  // 出现了另一个 worktree 的崩溃栈）。profile 被显式隔离时，它的日志也必须被隔离。
+  // 正常安装的用户没有这个 env，路径与从前逐字一致（仍是 ~/Library/Logs/Nomi）。
+  app.setPath("logs", path.join(configuredUserDataDir, "logs"));
 }
+installMainProcessLifecycle(app);
 // 单实例锁（能力核前提，docs/plan/2026-06-20）：保证同一 user-data 只有一个 app 实例 = 工程文件的
 // 唯一写者，外部 CLI/MCP 才能安全地「app 开着走 RPC、关着走 headless」。隔离实例（eval/promo 用独立
 // --user-data-dir）拿到的是各自的锁，不受影响。拿不到锁 = 已有实例在跑 → 让出（聚焦老窗后退出）。
@@ -77,17 +109,19 @@ if (configuredUserDataDir) {
 // 它会被判第二实例而自杀；也不开窗、不起 IPC，只跑进程内 stdio JSON-RPC（下方 GUI whenReady 由
 // hasSingleInstanceLock=false 自动跳过）。
 const isMcpStdio = process.env.NOMI_MCP_STDIO === "1";
+// Dev/test MCP may load dist-electron/main.js directly, so Electron cannot read
+// package.json and otherwise identifies as "Electron". Match the GUI identity
+// before app ready or safeStorage ciphertext written by Nomi cannot be opened.
+if (isMcpStdio && process.env.NOMI_APP_NAME) app.setName(process.env.NOMI_APP_NAME);
 const allowE2eMultiInstance = process.env.NOMI_E2E_ALLOW_MULTI_INSTANCE === "1";
 const hasSingleInstanceLock = isMcpStdio ? false : allowE2eMultiInstance ? true : app.requestSingleInstanceLock();
-if (isMcpStdio) {
-  // GUI 在线时 MCP 只做 localhost RPC 转发，不需要 Chromium 合成器。必须在 ready 前关闭，
-  // 否则每个 Codex/Claude MCP 会话都会常驻一组 GPU helper。
-  app.disableHardwareAcceleration();
-  app.commandLine.appendSwitch("disable-gpu");
-  app.commandLine.appendSwitch("disable-software-rasterizer");
-  app.commandLine.appendSwitch("in-process-gpu");
-}
-const { ensureArtifactPreviewSecret, flushPendingProductionDeepLink } = installProductionRunDesktopLifecycle({ isMcpStdio, allowE2eMultiInstance, hasSingleInstanceLock, ensureMainWindow: () => ensureMainWindow() });
+configureCustomMcpRuntime(isMcpStdio);
+const { ensureArtifactPreviewSecret, flushPendingProductionDeepLink } = installProductionRunDesktopLifecycle({
+  isMcpStdio,
+  allowE2eMultiInstance,
+  hasSingleInstanceLock,
+  ensureMainWindow: () => ensureMainWindow(),
+});
 if (isMcpStdio) {
   void app
     .whenReady()
@@ -101,7 +135,6 @@ if (isMcpStdio) {
       app.exit(1);
     });
 }
-
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "nomi-local",
@@ -114,28 +147,24 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
-
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL || process.env.NOMI_DESKTOP_DEV);
 const devRemoteDebuggingPort = process.env.NOMI_DESKTOP_REMOTE_DEBUGGING_PORT;
 const DEV_RENDERER_LOAD_ATTEMPTS = 20;
 const DEV_RENDERER_LOAD_RETRY_MS = 500;
-let cancelBlenderRendersOnQuit: (() => number) | null = null;
 let isRecreatingMainWindow = false;
 const lowMemoryMode = process.env.NOMI_LOW_MEMORY_MODE === "1";
-const capabilityCoreDisabled =
-  process.env.NOMI_DISABLE_CAPABILITY_CORE === "1" || (lowMemoryMode && process.env.NOMI_KEEP_CAPABILITY_CORE !== "1");
+// 「本会话起不起能力核」的判断与记录是同一件事（residentSurfaceLifecycle 是唯一 owner）：
+// 不起 = 常驻生成面按配置 disabled，lane 与付费卡读到的是这个相，而不是一个说不出原因的 undefined。
+const capabilityCoreDisabled = bootResidentSurfaceLifecycle({ env: process.env, lowMemoryMode }).phase === "disabled";
 let runtimeModulePromise: Promise<typeof import("./runtime")> | null = null;
 let capabilityCoreModule: typeof import("./capabilityCore/appIntegration") | null = null;
 let capabilityCoreModulePromise: Promise<typeof import("./capabilityCore/appIntegration")> | null = null;
-let activeCapabilityProjectId = "";
 let capabilityPortCache: number | null = null;
-
+let desktopCanvasReadExecutionRuntime: CanvasReadExecutionRuntime | null = null;
 function loadRuntimeModule(): Promise<typeof import("./runtime")> {
   runtimeModulePromise ??= import("./runtime");
   return runtimeModulePromise;
 }
-const taskSubmissionRuntime = createTaskSubmissionRuntime(loadRuntimeModule);
-
 async function loadCapabilityCoreModule(): Promise<typeof import("./capabilityCore/appIntegration")> {
   if (capabilityCoreModule) return capabilityCoreModule;
   capabilityCoreModulePromise ??= import("./capabilityCore/appIntegration").then((module) => {
@@ -145,32 +174,30 @@ async function loadCapabilityCoreModule(): Promise<typeof import("./capabilityCo
   return capabilityCoreModulePromise;
 }
 
-function setActiveCapabilityProject(projectId: string): void {
-  activeCapabilityProjectId = String(projectId || "").trim();
-  if (capabilityCoreModule) capabilityCoreModule.setOpenProjectId(activeCapabilityProjectId);
-  void import("./tasks/activeProjectFallback").then((m) => m.rememberActiveProjectForTasks(activeCapabilityProjectId));
-}
-
 function getActiveCapabilityPort(): number | null {
   return capabilityPortCache;
 }
 
+let desktopLaneIpc: LaneIpcRegistration | undefined;
+const taskSubmissionRuntime = createTaskSubmissionRuntime(loadRuntimeModule);
 async function startDesktopCapabilityCore(): Promise<void> {
+  if (!desktopCanvasReadExecutionRuntime) throw new Error("Canvas read execution runtime is unavailable");
   const core = await loadCapabilityCoreModule();
-  core.setOpenProjectId(activeCapabilityProjectId);
   await core.startCapabilityCore(
     taskSubmissionRuntime.run,
     taskSubmissionRuntime.result,
-    async (payload) => {
-      const director = await import("./blender/directorCli");
-      cancelBlenderRendersOnQuit = director.cancelAllDirectorBlenderRenders;
-      return director.runDirectorBlenderRender(payload);
+    {
+      canvasReadExecutionRuntime: desktopCanvasReadExecutionRuntime,
+      proposalReceiptFor: createDesktopProposalReceiptResolver(),
+      onRpcActivity: touchBackgroundActivity,
+      runDirector: runCustomDirector,
     },
   );
   capabilityPortCache = core.getCapabilityPort();
 }
 
 function stopDesktopCapabilityCore(): void {
+  stopCustomGenerationProcesses();
   capabilityCoreModule?.stopCapabilityCore();
   capabilityPortCache = null;
 }
@@ -200,34 +227,6 @@ if (lowMemoryMode || process.env.NOMI_DISABLE_V8_JIT === "1") {
   app.commandLine.appendSwitch("js-flags", process.env.NOMI_V8_FLAGS);
 }
 
-function registerDevDiagnostics(mainWindow: BrowserWindow, rendererUrl: string): void {
-  if (!isDev) return;
-
-  console.log(`[nomi:desktop] loading renderer: ${rendererUrl}`);
-  if (configuredUserDataDir) {
-    console.log(`[nomi:desktop] userData dir: ${configuredUserDataDir}`);
-  }
-
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    console.error(`[nomi:desktop] renderer load failed (${errorCode}): ${errorDescription} ${validatedURL}`);
-  });
-  mainWindow.webContents.on("did-finish-load", () => {
-    console.log("[nomi:desktop] renderer did finish load");
-  });
-  mainWindow.webContents.on("dom-ready", () => {
-    console.log("[nomi:desktop] renderer dom ready");
-  });
-  // render-process-gone 不在这里挂：已由 installProcessGoneHandlers 装在 app 上（落盘 + console），
-  // 覆盖所有窗口而不只是主窗，且生产环境也留证。
-  mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
-    console.error(`[nomi:desktop] preload failed: ${preloadPath}`, error);
-  });
-  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    const method = level >= 2 ? console.error : console.log;
-    method(`[nomi:renderer:${level}] ${message} (${sourceId}:${line})`);
-  });
-}
-
 function getRendererUrl(): string {
   const explicit = process.env.VITE_DEV_SERVER_URL || process.env.NOMI_RENDERER_URL;
   if (explicit) return explicit;
@@ -254,18 +253,6 @@ function getRendererUrlWithRoute(currentUrl?: string): string {
   }
 }
 
-function isRendererEntryUrl(url: string, rendererUrl: string): boolean {
-  try {
-    const actual = new URL(url);
-    const expected = new URL(rendererUrl);
-    if (actual.protocol !== expected.protocol) return false;
-    if (actual.protocol === "file:") return actual.pathname === expected.pathname;
-    return actual.origin === expected.origin && actual.pathname === expected.pathname;
-  } catch {
-    return url === rendererUrl;
-  }
-}
-
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -282,7 +269,7 @@ async function loadRendererWithRetry(mainWindow: BrowserWindow, rendererUrl: str
       lastError = error;
       if (!isDev || mainWindow.isDestroyed() || attempt === attempts) break;
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[nomi:desktop] renderer load attempt ${attempt}/${attempts} failed: ${message}`);
+      logWarn("window", "renderer-load-retry", { attempt, attempts, reason: message });
       await wait(DEV_RENDERER_LOAD_RETRY_MS);
     }
   }
@@ -311,7 +298,9 @@ async function createWindow(
       nodeIntegration: false,
       sandbox: false,
     },
+    ...backgroundWindowOptions(),
   });
+  installBackgroundWindowBehavior(mainWindow);
   setMainWindow(mainWindow); // 主窗口单一真相（registry）；closed 条件清理防窗口重建竞态误清新窗
   installMainWindowInteractions(mainWindow);
   mainWindow.on("closed", () => {
@@ -322,26 +311,12 @@ async function createWindow(
   mainWindow.on("maximize", () => mainWindow.webContents.send("nomi:window:maximized", true));
   mainWindow.on("unmaximize", () => mainWindow.webContents.send("nomi:window:maximized", false));
 
-  // External http(s) links (e.g. the "get your API key" link → provider console)
-  // open in the user's real browser, never as a new in-app Electron window.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url);
-    }
-    return { action: "deny" };
-  });
-
   const rendererUrl = options.rendererUrl || getRendererUrl();
+  installWindowNavigation(mainWindow, rendererUrl);
 
   // 纵深防御：setWindowOpenHandler 只拦新窗口，拦不住顶层框架自身被诱导导航
   // （window.location = 'http://evil'）。一旦发生，整个 app 会变成加载远端页面的浏览器。
   // 这里把任何「离开本地渲染入口」的顶层导航一律拦下；外链改走系统浏览器。
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (isRendererEntryUrl(url, rendererUrl)) return;
-    event.preventDefault();
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-  });
-
   // 能力核 A 模式实时桥：登记当前窗口 webContents，让主进程把外部 MCP 的画布改动/付费确认
   // 转发进运行中的渲染层（所见即所得）。窗口销毁即清除，避免向死窗口发送。
   setRendererTarget(mainWindow.webContents);
@@ -350,24 +325,23 @@ async function createWindow(
     if (!main || main === mainWindow || main.webContents === mainWindow.webContents) setRendererTarget(null);
   });
 
-  registerDevDiagnostics(mainWindow, rendererUrl);
+  registerDevDiagnostics(mainWindow, rendererUrl, { isDev, userDataDir: configuredUserDataDir });
   if (isDev) {
     try {
       await mainWindow.webContents.session.clearCache();
     } catch (error) {
-      console.warn("[nomi:desktop] failed to clear dev session cache:", error);
+      logWarn("window", "dev-cache-clear-failed", undefined, error);
     }
   }
   await loadRendererWithRetry(mainWindow, rendererUrl);
 
   if (options.maximize) mainWindow.maximize();
 
-  if (isDev && process.env.NOMI_E2E !== "1") {
+  if (isDev && process.env.NOMI_E2E !== '1') {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
   return mainWindow;
 }
-
 // 零窗口自愈的唯一入口（issue #62）；activate / second-instance / 窗口重建失败都走它。
 const ensureMainWindow = createMainWindowGuard({ createWindow, onWindowReady: () => flushPendingProductionDeepLink() });
 
@@ -386,9 +360,13 @@ function recreateMainWindowFromSender(sender: WebContents, options: { preserveRo
     session.defaultSession.clearCodeCaches({}).catch(() => undefined),
   ])
     .then(() => createWindow({ bounds, maximize, rendererUrl }))
-    .then((nextWindow) => nextWindow.focus())
+    .then((nextWindow) => {
+      // A renderer reload can also happen in the hidden MCP-launched process;
+      // never let that maintenance path surface the background window.
+      if (!isBackgroundLaunch) nextWindow.focus();
+    })
     .catch((error) => {
-      console.error(`[nomi:desktop] failed to recreate window for ${options.reason}:`, error);
+      logError("window", "recreate-window-failed", error, { reason: options.reason });
     })
     .finally(() => {
       isRecreatingMainWindow = false;
@@ -402,7 +380,7 @@ function registerSyncIpc<TArgs extends unknown[], TResult>(
 ): void {
   ipcMain.on(channel, (event, ...args: TArgs) => {
     try {
-      event.returnValue = { ok: true, value: handler(...args) };
+      assertTrustedSender(event); event.returnValue = { ok: true, value: handler(...args) };
     } catch (error) {
       event.returnValue = {
         ok: false,
@@ -412,14 +390,25 @@ function registerSyncIpc<TArgs extends unknown[], TResult>(
   });
 }
 function registerIpc(): void {
+  const selectedWorkspaceRoots = new Set<string>();
+  // Static app-main Surface authority: registered before createWindow and
+  // independent from the delayed/optional external capability core.
+  const canvasReadExecutionRuntime = registerDesktopCanvasReadRuntime();
+  desktopCanvasReadExecutionRuntime = canvasReadExecutionRuntime;
+  const childWindowProject = (sender: WebContents) => issueChildWindowProject(sender, BrowserWindow.fromWebContents);
+  const projectInteraction = createProjectInteractionCapture(canvasReadExecutionRuntime.surfaceCapture, childWindowProject);
+  registerDesktopIntegrationIpc({ setCancelBlenderRendersOnQuit: setCustomBlenderCleanup });
+  desktopLaneIpc = registerAgentLaneIpc(createDesktopLaneDependencies(
+    canvasReadExecutionRuntime, residentGenerationFactory,
+  ));
   registerI18nIpc();
-  registerDesktopIntegrationIpc({
-    setCancelBlenderRendersOnQuit: (cancel) => {
-      cancelBlenderRendersOnQuit = cancel;
-    },
-  });
-  // 渲染层崩溃（RootErrorBoundary）也落到同一崩溃日志（P0-8）。
-  ipcMain.on("nomi:log:renderer-crash", (_event, message: unknown) => logCrash("renderer", String(message)));
+  // 会话式模型接入的可信渲染层交接（凭据保存/确认/handoff 队列）。0b6441c6 移植时这两行被误删，而
+  // preload 与 OnboardingWizard/IntegrationSelfCheckPanel 仍调这些通道（No handler registered）；
+  // model-integration-trusted-audio.e2e 抓到后按根因恢复注册。
+  registerIntegrationHandoffIpc();
+  registerIntegrationSessionIpc(installIntegrationSessionRuntime());
+  // 渲染层失败与崩溃的唯一日志通道（崩溃另进崩溃日志，P0-8）；注册与 sender 守卫住在 logging/rendererLog（main.ts 巨壳只减不增）。
+  registerRendererLogIpc({ onMessage: ipcMain.on.bind(ipcMain), assertTrusted: assertTrustedUiSender });
   // 窗口控制（Windows 自绘标题栏）：只注册一次，作用于发起请求的那个窗口（fromWebContents），
   // 而非闭包捕获某个窗口实例——后者会在第二次 createWindow（重开库/activate）时重复注册 handle 抛错、崩窗。
   ipcMain.handle("nomi:window:minimize", (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
@@ -448,167 +437,131 @@ function registerIpc(): void {
     assertTrustedSender(event);
     recreateMainWindowFromSender(event.sender, { preserveRoute: true, reason: "hard reload window" });
   });
+  // 读目录的 IPC 是**纯读**：种子对账（写盘）只在启动期跑一次。挂在读上时，盘上版本比应用新就会
+  // 让每次读都抛 → 设置页全空零报错（判据住 electron/catalogReadChannelsPureRead.test.ts）。
   registerSyncIpc("nomi:model-catalog:vendors:list", listModelCatalogVendors);
-  registerSyncIpc("nomi:model-catalog:models:list", (params?: unknown) => {
-    // Renderer 热更新不会重启 Electron main；读取时补一次内置种子，避免 onboarding
-    // 长时间停留在旧的持久化目录（例如 APIMart 缺 Grok Imagine 1.5）。
-    ensureBuiltinModelSeeds();
-    return listModelCatalogModels(params);
-  });
+  registerSyncIpc("nomi:model-catalog:models:list", listModelCatalogModels);
   registerSyncIpc("nomi:model-catalog:mappings:list", listModelCatalogMappings);
   registerSyncIpc("nomi:model-catalog:health", getModelCatalogHealth);
-  registerSyncIpc("nomi:model-catalog:vendor:upsert", upsertModelCatalogVendor);
+  registerSyncIpc("nomi:model-catalog:vendor:upsert", upsertRendererCatalogVendor);
   registerSyncIpc("nomi:model-catalog:vendor:delete", deleteModelCatalogVendor);
-  registerSyncIpc("nomi:model-catalog:vendor-api-key:upsert", upsertModelCatalogVendorApiKey);
   registerSyncIpc("nomi:model-catalog:vendor-api-key:clear", clearModelCatalogVendorApiKey);
-  registerSyncIpc("nomi:model-catalog:model:upsert", upsertModelCatalogModel);
+  registerSyncIpc("nomi:model-catalog:model:upsert", upsertRendererCatalogModel);
   // 改类型是**领域操作**不是字段 upsert：改 kind 的同时要按新 kind 重建调用通道，否则只是把
   // 「类型错」换成「没有通道」（见 catalog/modelRetype.ts 文件头）。故走自己的 IPC，不复用 upsert。
   registerSyncIpc("nomi:model-catalog:model:retype", retypeModelCatalogModel);
   registerSyncIpc("nomi:model-catalog:model:delete", deleteModelCatalogModel);
   registerSyncIpc("nomi:model-catalog:models:delete", deleteModelCatalogModels);
-  registerSyncIpc("nomi:model-catalog:mapping:upsert", upsertModelCatalogMapping);
+  registerSyncIpc("nomi:model-catalog:mapping:upsert", upsertRendererCatalogMapping);
   registerSyncIpc("nomi:model-catalog:mapping:delete", deleteModelCatalogMapping);
   registerSyncIpc("nomi:model-catalog:export", exportModelCatalogPackage);
-  registerSyncIpc("nomi:model-catalog:import", importModelCatalogPackage);
+  registerSyncIpc("nomi:model-catalog:import", importRendererCatalogPackage);
   // 域 IPC 各住各的模块（给 main.ts 800 行门腾空间；新通道加到对应模块，别回填这里）。comfy 那棵树重 → 惰性 require；素材通道薄 → 顶部静态 import。
   (require("./comfyuiIpc") as typeof import("./comfyuiIpc")).registerComfyuiIpc(registerSyncIpc);
   registerAssetTransportIpc(registerSyncIpc);
-  // 自定义调用域（契约/AI 指令/试跑）住 electron/catalog/customCallIpc.ts（同上，腾 800 行门）。
   const { registerCustomCallIpc } = require("./catalog/customCallIpc") as typeof import("./catalog/customCallIpc");
   registerCustomCallIpc(registerSyncIpc);
-  // 系统通知（任务跑完且窗口失焦时）住 electron/notificationIpc.ts，同样为 800 行门腾空间。
-  // 静态 import 而非惰性 require：该文件只依赖 electron 本身，载入零成本，且不吃 no-require-imports 警告配额。
+  // 系统通知（notificationIpc.ts）：静态 import，该文件只依赖 electron 本身，载入零成本，不吃 no-require-imports 配额。
   registerNotificationIpc();
-  // Skill / Playbook 域（业务函数在 electron/skills/*，这里只接同步 IPC 管道）。
-  registerSyncIpc("nomi:skill:list", () => {
-    const { listSkillsForRenderer } = require("./skills/skillIpc") as typeof import("./skills/skillIpc");
-    return listSkillsForRenderer();
-  });
-  registerSyncIpc("nomi:skill:export", (dirName: unknown) => {
-    const { exportSkillPackageByName } = require("./skills/skillPackage") as typeof import("./skills/skillPackage");
-    return exportSkillPackageByName(String(dirName || ""), Date.now());
-  });
-  registerSyncIpc("nomi:skill:import", (payload: unknown) => {
-    const { importSkillPackageToUserDir } = require("./skills/skillPackage") as typeof import("./skills/skillPackage");
-    return importSkillPackageToUserDir(payload);
-  });
-  registerSyncIpc("nomi:skill:delete", (dirName: unknown) => {
-    const { deleteUserSkill } = require("./skills/skillPackage") as typeof import("./skills/skillPackage");
-    return deleteUserSkill(String(dirName || ""));
-  });
+  // Skill / Playbook 域在自己的 IPC 模块；ZIP import 异步流式解析，不能阻塞 renderer。
+  registerSkillIpc(registerSyncIpc);
 
   ipcMain.handle("nomi:model-catalog:docs:fetch", async (event, payload) => {
     assertTrustedSender(event);
     const { fetchModelCatalogDocs } = await import("./catalog/catalogCommit");
     return fetchModelCatalogDocs(payload);
   });
+  ipcMain.handle("nomi:workspace:select-folder", async (event) => {
+    assertTrustedSender(event);
+    const selection = await selectWorkspaceFolder({ showOpenDialog: (options) => dialog.showOpenDialog(options) });
+    if (!selection.canceled) selectedWorkspaceRoots.add(selection.rootPath);
+    return selection;
+  });
+  ipcMain.handle("nomi:workspace:open-folder", (event, payload) => {
+    assertTrustedSender(event);
+    return openWorkspaceFolder(payload, {
+      createProject,
+      selectedRootPaths: selectedWorkspaceRoots,
+      confirmInitialize: async (rootPath) => {
+        const result = await dialog.showMessageBox({
+          type: "question",
+          buttons: [desktopT("common.cancel"), desktopT("common.initialize")],
+          defaultId: 1,
+          cancelId: 0,
+          message: desktopT("workspace.initializeTitle"),
+          detail: desktopT("workspace.initializeDetail", { path: rootPath }),
+        });
+        return result.response === 1;
+      },
+    });
+  });
+  ipcMain.handle("nomi:workspace:list-files", (event, payload) => {
+    assertTrustedSender(event);
+    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
+    if (!projectId) throw new Error("projectId is required");
+    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null;
+    const rootPath = typeof project?.lastKnownRootPath === "string" ? project.lastKnownRootPath : "";
+    if (!rootPath) throw new Error("Project folder is unavailable");
+    return listWorkspaceFiles({
+      rootPath,
+      maxFiles:
+        typeof (payload as { limit?: unknown } | null)?.limit === "number"
+          ? (payload as { limit: number }).limit
+          : undefined,
+    });
+  });
+  ipcMain.handle("nomi:workspace:reveal-file", (event, payload) => {
+    assertTrustedSender(event);
+    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
+    const relativePath = String((payload as { relativePath?: unknown } | null)?.relativePath || "").trim();
+    if (!projectId) throw new Error("projectId is required");
+    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null;
+    const rootPath = typeof project?.lastKnownRootPath === "string" ? path.resolve(project.lastKnownRootPath) : "";
+    if (!rootPath) throw new Error("Project folder is unavailable");
+    const absolutePath = resolveWorkspaceFilePath(rootPath, relativePath);
+    shell.showItemInFolder(absolutePath);
+    return { ok: true };
+  });
+  registerWorkspaceFileDeleteIpc({ readProject, childWindowProject });
+  registerWorkspaceSyncIpc({ readProject });
+  ipcMain.handle("nomi:workspace:reveal-project-folder", (event, payload) => {
+    assertTrustedSender(event);
+    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
+    if (!projectId) throw new Error("projectId is required");
+    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null;
+    const rootPath = typeof project?.lastKnownRootPath === "string" ? path.resolve(project.lastKnownRootPath) : "";
+    if (!rootPath) throw new Error("Project folder is unavailable");
+    void shell.openPath(rootPath);
+    return { ok: true };
+  });
   ipcMain.handle("nomi:model-catalog:mapping:test", async (event, id, payload) => {
     assertTrustedSender(event);
     const { testModelCatalogMapping } = await import("./catalog/catalogCommit");
     return testModelCatalogMapping(id, payload);
   });
-  ipcMain.handle("nomi:assets:import-remote-url", async (event, payload) => {
-    assertTrustedSender(event);
-    const { importRemoteAsset } = await loadRuntimeModule();
-    return importRemoteAsset(payload);
-  });
-  ipcMain.handle("nomi:assets:import-local-path", async (event, payload) => {
-    assertTrustedSender(event);
-    const { importLocalPath } = await import("./assets/localFileImport");
-    return importLocalPath(payload);
-  });
   ipcMain.handle("nomi:assets:list", async (event, payload) => {
-    assertTrustedSender(event);
+    assertTrustedUiSender(event); // UI 面：素材盒界面长在浮层窗里，理由见 ipcSenderGuard#assertTrustedUiSender
     const { listProjectAssets } = await loadRuntimeModule();
     return listProjectAssets(payload);
   });
-  ipcMain.handle("nomi:assets:inspect-model3d", async (event, payload) => {
-    assertTrustedSender(event);
-    const { inspectProjectModel3dAsset } = await import("./assets/projectAssetStore");
-    return inspectProjectModel3dAsset(payload);
-  });
-  ipcMain.handle("nomi:assets:inspect-video", async (event, payload) => {
-    assertTrustedSender(event);
-    const { inspectProjectVideoAsset } = await import("./assets/projectAssetStore");
-    return inspectProjectVideoAsset(payload);
-  });
-  registerAssetsIpc();
-  ipcMain.handle("nomi:assets:archive-output-collection", async (event, payload) => {
-    assertTrustedSender(event);
-    const { archiveOutputCollection } = await import("./assets/archiveOutputCollection");
-    return archiveOutputCollection(payload);
-  });
-  ipcMain.handle("nomi:files:extract-text", async (event, payload) => {
-    assertTrustedSender(event);
-    const raw = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-    const source = raw.bytes;
-    const bytes =
-      source instanceof ArrayBuffer
-        ? Buffer.from(source)
-        : ArrayBuffer.isView(source)
-          ? Buffer.from(source.buffer, source.byteOffset, source.byteLength)
-          : null;
-    if (!bytes || bytes.byteLength === 0) throw new Error("文件内容为空");
-    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("剧本文件不能超过 20 MB");
-    const { extractTextFromBytes } = await import("./files/extractText");
-    const text = await extractTextFromBytes(
-      bytes,
-      typeof raw.contentType === "string" ? raw.contentType : "",
-      typeof raw.fileName === "string" ? raw.fileName : "script.txt",
-    );
-    if (!text?.trim()) throw new Error("当前文件格式不支持，或没有可读取的文字");
-    return { text };
-  });
+  registerAssetsIpc(projectInteraction);
   registerSettingsIpc();
-  ipcMain.handle("nomi:video:extract-frame", async (event, payload) => {
-    assertTrustedSender(event);
-    const { extractVideoFrameToAsset } = await import("./video/extractVideoFrame");
-    return extractVideoFrameToAsset(payload);
-  });
-  ipcMain.handle("nomi:video:extract-frames", async (event, payload) => {
-    assertTrustedSender(event);
-    const { extractVideoFramesToAssets } = await import("./video/extractVideoFrame");
-    return extractVideoFramesToAssets(payload);
-  });
-  ipcMain.handle("nomi:video:extract-filmstrip", async (event, payload) => {
-    assertTrustedSender(event);
-    const { extractVideoFilmstripToAsset } = await import("./video/extractVideoFrame");
-    return extractVideoFilmstripToAsset(payload);
-  });
+  registerVideoIpc(projectInteraction);
   registerScreenshotIpc();
-  ipcMain.handle("nomi:video:detect-shot-cuts", async (event, payload) => {
-    assertTrustedSender(event);
-    const { detectShotCuts } = await import("./video/detectShotCuts");
-    return detectShotCuts(payload);
+  registerTikhubConnectorIpc();
+  registerDirectorMobileIpc();
+  registerExportJobIpc({
+    getActiveProjectSelection: () => canvasReadSurfaceRuntime.getCommittedProjectSelection(),
   });
-  ipcMain.handle("nomi:image:decompose-layers", async (event, payload) => {
-    assertTrustedSender(event);
-    const { decomposeLayers } = await import("./image/decomposeLayers");
-    return decomposeLayers(payload);
-  });
-  ipcMain.handle("nomi:scene3d:frames-to-video", async (event, payload) => {
-    assertTrustedSender(event);
-    const { framesToVideoAsset } = await import("./video/framesToVideo");
-    return framesToVideoAsset(payload);
-  });
-  registerExportJobIpc();
   registerTaskIpcHandlers(loadRuntimeModule, taskSubmissionRuntime);
-  // 能力核 A/B 守卫：renderer 在打开/切换/关闭项目时上报当前打开的 projectId，
-  // 让外部调用拒绝直写「正在窗口里编辑」的工程（防内存 store 回盘覆盖，见 capabilityCore/rpcServer）。
-  ipcMain.on("nomi:capability:active-project", (event, projectId: unknown) => {
-    assertTrustedSender(event);
-    setActiveCapabilityProject(String(projectId || ""));
-  });
   // 「接入 AI 编程助手」卡：读接入状态/配置片段 + 一键写入/撤销 ~/.claude.json 的 mcpServers.nomi。
   registerSyncIpc("nomi:capability:mcp-info", () => readMcpInfo(getActiveCapabilityPort()));
   registerSyncIpc("nomi:capability:mcp-install", installMcp);
   registerSyncIpc("nomi:capability:mcp-uninstall", uninstallMcp);
+  registerCustomMcpProfileIpc();
   // 实连验证（异步：真起一次配置里那条命令握手）。「配置里有这行字」≠「还连得上」，见 mcpVerify 头注释。
   ipcMain.handle("nomi:capability:mcp-verify", (event, client: unknown) => (assertTrustedSender(event), verifyMcp(typeof client === "string" ? client : undefined)));
-  registerAgentChatV2Ipc();
   registerTextStreamIpc();
-  registerConversationsIpc();
   registerEventsIpc();
   registerMemoryIpc();
   registerPromptLibraryIpc();
@@ -616,84 +569,20 @@ function registerIpc(): void {
   registerProxyIpc();
   registerBrowserViewIpc(getRendererUrl);
   registerOnboardingIpc();
+  (require("./localRuntime/localTextEndpointHandlers") as typeof import("./localRuntime/localTextEndpointHandlers")).registerLocalTextEndpointIpc();
   registerProviderAdapterIpc();
   registerExistingConnectionIpc();
   registerProductionRunIpc();
-  registerProductionActionIpc({ getActiveProjectId: () => activeCapabilityProjectId, loadCore: loadCapabilityCoreModule }); // P4 S6 返工/续拍
+  registerProductionActionIpc({
+    getActiveProjectId: () => canvasReadSurfaceRuntime.getCommittedProjectSelection()?.projectId ?? "",
+    loadCore: loadCapabilityCoreModule,
+  });
   registerUpdaterIpc();
-  // M0 独立捕捞窗已退役（方案A 2026-07-12）：捕捞面收敛到应用内浏览器（registerBrowserViewIpc）。
-  // S4-1 评测安全铁律:事件落盘前,已配置的 vendor key 精确匹配脱敏(形态兜底之外的地基)。
   setEventLogSecretsProvider(catalogSecretsProvider);
 }
-// 纵深防御：渲染层此前在「无 CSP」环境运行，contextIsolation 是唯一防线。
-// 注入严格 CSP，让任何被注入的脚本/远端内容无法自由 eval、连外站、加外部资源。
-// dev/prod 分治：dev 下 vite HMR 需要 unsafe-eval + inline + ws 回连，故放宽；
-// prod（打包后从 file:// 加载）收紧——脚本只许 'self'，外联仅图片/媒体/连接到 https。
-function buildContentSecurityPolicy(): string {
-  const common = [
-    "default-src 'self' nomi-local:",
-    "img-src 'self' nomi-local: https: data: blob:",
-    "media-src 'self' nomi-local: https: data: blob:",
-    "font-src 'self' data:",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "frame-src 'none'",
-    "worker-src 'self' blob:",
-  ];
-  if (isDev) {
-    // vite dev server：HMR 走 ws、sourcemap/模块求值需要 eval、注入 inline 脚本与样式。
-    // blob:：3D 编辑器（Three.js GLTF/meshopt 解码）的 worker 经 blob 脚本 importScripts。
-    return [
-      ...common,
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: http://127.0.0.1:5273",
-      "style-src 'self' 'unsafe-inline'",
-      "connect-src 'self' nomi-local: https: ws://127.0.0.1:5273 http://127.0.0.1:5273 blob:",
-    ].join("; ");
-  }
-  return [
-    ...common,
-    // prod：vite 产物为外链脚本，无需 inline/eval。但 3D 编辑器要 'wasm-unsafe-eval'（Three.js
-    // GLTF/meshopt 解码器实例化 WASM）+ blob:（解码 worker 经 blob 脚本 importScripts）。
-    // 'wasm-unsafe-eval' 只放行 WASM 编译，不开放危险的 JS eval（比 'unsafe-eval' 收得紧）。
-    "script-src 'self' 'wasm-unsafe-eval' blob:",
-    "style-src 'self' 'unsafe-inline'",
-    "connect-src 'self' nomi-local: https: blob:",
-  ].join("; ");
-}
-
-// COOP/COEP 开 cross-origin isolation（ONNX 的 SharedArrayBuffer 需要），但有两类桌面场景必须跳过：
-// 1) Playwright/E2E：CDP target 握手会卡死（_electron.launch / connectOverCDP 都连不上）。
-// 2) Windows frame:false 自绘标题栏：Electron 31/Chromium 在 COOP/COEP 下会把
-//    -webkit-app-region: drag 命中测试全部返回 HTCLIENT，导致真实窗口无法拖动。
-// 注：只关 isolation，CSP 仍照常注入（安全基线不降）。相关 WASM/ONNX 能力在这些场景退到非 SAB 路径。
 const SKIP_CROSS_ORIGIN_ISOLATION = process.env.NOMI_E2E === "1";
 const SKIP_CROSS_ORIGIN_ISOLATION_FOR_WINDOWS_FRAMELESS = process.platform === "win32";
 
-function installContentSecurityPolicy(targetSession: Electron.Session): void {
-  const csp = buildContentSecurityPolicy();
-  const crossOriginIsolationDisabled =
-    lowMemoryMode ||
-    SKIP_CROSS_ORIGIN_ISOLATION ||
-    SKIP_CROSS_ORIGIN_ISOLATION_FOR_WINDOWS_FRAMELESS ||
-    process.env.NOMI_DISABLE_CROSS_ORIGIN_ISOLATION === "1";
-  targetSession.webRequest.onHeadersReceived((details, callback) => {
-    const responseHeaders: Record<string, string[]> = {
-      ...details.responseHeaders,
-      "Content-Security-Policy": [csp],
-    };
-    if (!crossOriginIsolationDisabled) {
-      // ONNX Runtime Web 需要 SharedArrayBuffer 才能多线程推理；SharedArrayBuffer 要求 renderer 跨源隔离。
-      responseHeaders["Cross-Origin-Opener-Policy"] = ["same-origin"];
-      responseHeaders["Cross-Origin-Embedder-Policy"] = ["require-corp"];
-    }
-    callback({
-      responseHeaders,
-    });
-  });
-}
-
-// 非主实例（没拿到单实例锁）不启动 UI / RPC——已让出给老实例（second-instance 已聚焦它）。
-// 单实例锁本身在文件顶部定义（main 与本批独立都加了同一锁，合并去重，根治全局 index 并发覆盖）。
 if (hasSingleInstanceLock)
   app
     .whenReady()
@@ -701,53 +590,60 @@ if (hasSingleInstanceLock)
       setDesktopLocale(app.getLocale());
       initGlobalIdempotencyStore(getSettingsRoot());
       ensureArtifactPreviewSecret();
-      try {
-        app.setAsDefaultProtocolClient("nomi");
-      } catch {
-        // Registration is best-effort in dev and on platforms that disallow it.
-      }
+      watchMcpProfiles();
+      registerNomiProtocolClient(app);
       registerLocalProtocol();
-      installContentSecurityPolicy(session.defaultSession);
-      // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。
+      installContentSecurityPolicy(session.defaultSession, {
+        isDev,
+        lowMemoryMode,
+        skipCrossOriginIsolation: SKIP_CROSS_ORIGIN_ISOLATION,
+        skipCrossOriginIsolationForWindowsFrameless: SKIP_CROSS_ORIGIN_ISOLATION_FOR_WINDOWS_FRAMELESS,
+        disableCrossOriginIsolation: process.env.NOMI_DISABLE_CROSS_ORIGIN_ISOLATION === "1",
+      });
+      // appFetch waits for proxy configuration before sending early requests.
+      void applyProxyAtBoot()
+        .then(() => import("./vendor/vendorBaseFallbackBoot"))
+        .then((m) => m.configureVendorBaseFallbackAtBoot())
+        .catch((error) => logError("main", "network-boot-failed", error));
+      // Preview/RC 首次启动从稳定版拷一份配置过来（共用 userData 不行，理由在该模块头注释）。
+      // 必须排在种子对账与任何一次配置读之前：它判断的正是「自己这份是不是全新的」。
+      seedFromStableInstallAtBoot();      // 写入内置模型种子（Seedance 等主流模型档案）；幂等、存在即跳过，不覆盖用户已有记录。
       // sync 且渲染层一进库就读 catalog → 须在 createWindow 前完成。
       try {
         ensureBuiltinModelSeeds();
       } catch (error) {
-        console.error("[nomi:desktop] ensureBuiltinModelSeeds failed:", error);
+        logError("catalog", "builtin-model-seeds-failed", error);
       }
-      // 存量中转模型升级到厂商原生报文（异步不挡窗口、幂等、失败静默；细节见该模块头注释）。
-      void import("./catalog/relayNativeWireUpgrade").then((m) => m.scheduleRelayNativeWireUpgrade()).catch(() => {});
-      registerIpc();
-      // E(冷启动 P0)：代理探测与能力核都不是窗口首帧的依赖，挡在窗口前是纯浪费。
-      //  · applySystemProxy：窗口创建后延迟后台探测；低内存模式更晚加载，避免列表页常驻代理栈。
-      //  · startCapabilityCore(外部 MCP 的本地 RPC 广告)：fail-open，本就不影响 app；低内存模式默认跳过。
+      registerIpc(); void import('./telemetry/telemetryLifecycle').then(({ recordAppStarted }) => recordAppStarted());
+      await createWindow();
+      installBackgroundLifecycle({ hasInFlightWork: hasInFlightProductionWork, quit: () => app.quit() });
+      // 外部 capability RPC 不是首窗依赖，且它一旦 listen 就可能收到会解析凭据的 models/generation 请求。
+      // 必须在窗口完成后才暴露；失败显式消化，不能反向拖垮已经可用的首窗。低内存模式仍默认跳过。
       if (!capabilityCoreDisabled) {
         void startDesktopCapabilityCore().catch((error) => {
-          console.error("[nomi:desktop] startCapabilityCore failed:", error);
+          logError("capability", "start-failed", error);
         });
       }
-      await ensureMainWindow();
+      flushPendingProductionDeepLink();
       setTimeout(
         () => {
+          // 存量中转模型升级会在真实探测前按需解密凭据；首窗完成后再让出一个后台时段调度，
+          // 避免 OS Keychain 阻塞初始窗口或调试握手。动态导入/维护失败均显式消化，不反向拖垮首窗。
+          void import("./catalog/relayNativeWireUpgrade")
+            .then((m) => m.scheduleRelayNativeWireUpgrade())
+            .catch(() => logWarn("catalog", "post-window-maintenance-unavailable"));
           // 全局截图热键：默认关，只有用户在设置里开过才会真注册（见 screenshot/screenshotHotkey.ts）。
           void import("./screenshot/screenshotHotkey")
             .then(({ applyScreenshotHotkey }) => applyScreenshotHotkey())
-            .catch((error) => console.error("[nomi:desktop] screenshot hotkey boot failed:", error));
-          void import("./proxyIpc")
-            .then(({ applyProxyAtBoot }) => applyProxyAtBoot())
-            .catch((error) => console.error("[nomi:desktop] proxy boot failed:", error))
-            // 代理定型后装 vendor 候选域自愈（apimart 被墙自动切官方备用域；回切探测走最终 dispatcher）。
-            .then(() => import("./vendor/vendorBaseFallbackBoot"))
-            .then((m) => m.configureVendorBaseFallbackAtBoot())
-            .catch((error) => console.error("[nomi:desktop] vendor base fallback boot failed:", error));
+            .catch((error) => logError("screenshot", "hotkey-boot-failed", error));
         },
         lowMemoryMode ? 15000 : 3000,
       );
-
+      app.once("will-quit", startCatalogReconciliation());
       app.on("activate", () => void ensureMainWindow()); // macOS 关窗后进程不退，点 Dock 靠这条把窗口建回来
     })
     .catch((error) => {
-      console.error("[nomi:desktop] failed to start:", error);
+      logError("main", "start-failed", error);
       app.quit();
     });
 app.on("window-all-closed", () => {
@@ -756,28 +652,12 @@ app.on("window-all-closed", () => {
 });
 // 退出时中止所有在跑导出，否则 ffmpeg 子进程会变孤儿（继续占 CPU/写文件，直到自己跑完）。
 // abort → ffmpegRunner 监听 abort 后 kill 子进程。同步、不抛，绝不拖住退出。
-app.on("before-quit", () => {
-  // 能力核退出清理：清实例广告 + 关 RPC，让外部探测立刻知道「app 已关」。同步、不抛。
-  stopDesktopCapabilityCore();
-  try {
-    const { terminateAllCodexImagegenProcesses } =
-      require("./ai/codexImagegenRunner") as typeof import("./ai/codexImagegenRunner");
-    const terminated = terminateAllCodexImagegenProcesses();
-    if (terminated > 0) console.log(`[nomi:desktop] terminated ${terminated} Codex Img2 process group(s) on quit`);
-  } catch (error) {
-    console.error("[nomi:desktop] failed to terminate Codex Img2 processes on quit:", error);
-  }
-  try {
-    const { abortAllActiveExports } = require("./export/exportJobs") as typeof import("./export/exportJobs");
-    const aborted = abortAllActiveExports();
-    if (aborted > 0) console.log(`[nomi:desktop] aborted ${aborted} in-flight export(s) on quit`);
-  } catch (error) {
-    console.error("[nomi:desktop] failed to abort exports on quit:", error);
-  }
-  try {
-    const cancelled = cancelBlenderRendersOnQuit?.() || 0;
-    if (cancelled > 0) console.log(`[nomi:desktop] cancelled ${cancelled} Blender render(s) on quit`);
-  } catch (error) {
-    console.error("[nomi:desktop] failed to cancel Blender renders on quit:", error);
-  }
+installQuitTeardown(app, {
+  disposeBackgroundLifecycle,
+  stopDesktopCapabilityCore,
+  disposeDesktopLaneIpc: () => desktopLaneIpc?.dispose() ?? Promise.resolve(),
+  abortAllActiveExports: () => (require("./export/exportJobs") as typeof import("./export/exportJobs")).abortAllActiveExports(),
+  onError: (stage, error) => stage === "exports-aborted"
+    ? logInfo("export", "aborted-on-quit", { count: error && typeof error === "object" && "count" in error && typeof error.count === "number" ? error.count : 0 })
+    : logError("agent", `${stage}-on-quit-failed`, error),
 });

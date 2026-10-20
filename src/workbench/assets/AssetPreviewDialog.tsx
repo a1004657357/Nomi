@@ -1,21 +1,72 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
-import { IconX } from '@tabler/icons-react'
+import { IconDownload, IconLoader2, IconX } from '@tabler/icons-react'
 import { NomiImage } from '../../design/media'
 import { cn } from '../../utils/cn'
 import { useVideoPlaybackHeal } from '../../media/useVideoPlaybackHeal'
 import { VideoPlaybackStatusOverlay } from '../../media/VideoPlaybackStatusOverlay'
 import type { AssetRef } from './assetTypes'
+import { getDesktopBridge } from '../../desktop/bridge'
+import { notify } from '../../ui/notificationPolicy'
+import { currentFullscreenOverlayTopOffset } from '../../ui/app-shell/windowChrome'
+
+const Model3DViewer = React.lazy(() => import('../generationCanvas/nodes/model3d/Model3DViewer'))
 
 // 素材库双击放大预览（#52 群反馈「加个双击放大预览」）。独立的 body-portal 全屏 lightbox：
 // 不复用 NodeMediaPreviewDialog——它 portal 到画布区、且创作页画布 hidden 时预览会挂到隐藏画布上
 // 看不到（强耦合 `.workbench-generation__canvas`）。素材库在侧边栏、跨创作/生成/预览页，必须 body
 // 全屏。只复用其视频自愈核心 useVideoPlaybackHeal（点开大图播不了时探测+转码，不再纯黑无提示）。
-export function AssetPreviewDialog({ asset, onClose }: { asset: AssetRef; onClose: () => void }): JSX.Element {
+// 从 Windows 自绘窗口栏之下起画（不是 inset-0 铺满）：那条 32px 是系统拖拽带，右上角关闭钮压上去
+// 会被当成拖窗口吃掉——正是 #58 那个「点中心没反应」的同一族（见 ui/app-shell/windowChrome）。
+export type AssetPreviewSequenceItem = {
+  asset?: AssetRef
+  durationSec?: number
+  /** Optional audio that starts with the visual result and stops with the shot. */
+  audio?: AssetRef
+  /** Empty storyboard rows remain visible as gray progress segments. */
+  playable?: boolean
+  label?: string
+}
+
+export function AssetPreviewDialog({ asset, onClose, sequence, initialIndex = 0 }: {
+  asset: AssetRef
+  onClose: () => void
+  /** Optional ordered playback mode; it keeps this dialog's single body-portal owner. */
+  sequence?: readonly AssetPreviewSequenceItem[]
+  initialIndex?: number
+}): JSX.Element {
   const { t } = useTranslation()
-  const heal = useVideoPlaybackHeal({ rawUrl: asset.renderUrl })
-  const title = asset.name || ''
+  const [sequenceIndex, setSequenceIndex] = React.useState(() => Math.max(0, Math.min(initialIndex, (sequence?.length ?? 1) - 1)))
+  const currentItem = sequence?.[sequenceIndex]
+  const current = currentItem?.asset ?? asset
+  const currentPlayable = currentItem?.playable ?? true
+  const currentAudio = currentItem?.audio
+  const currentDuration = sequence?.[sequenceIndex]?.durationSec ?? 0
+  const heal = useVideoPlaybackHeal({ rawUrl: current.renderUrl })
+  const title = current.name || ''
+  const sourceName = current.sourceProjectName?.trim() || ''
+  const mediaTypeLabel = current.kind === 'video' ? t('assetLibrary.video') : t('assetLibrary.image')
+  const [downloading, setDownloading] = React.useState(false)
+  const [downloadFeedback, setDownloadFeedback] = React.useState<{ owner: string; message: string; path?: string; error: boolean } | null>(null)
+  const downloadModel = React.useCallback(() => {
+    const bridge = getDesktopBridge()
+    if (!bridge?.assets?.download || downloading) return
+    const suggestedName = /\.glb$/i.test(title) ? title : `${title || 'model'}.glb`
+    setDownloadFeedback(null)
+    setDownloading(true)
+    const report = (message: string, error: boolean, path?: string): void => { notify({
+      identity: `asset-preview:${current.id}`, reason: 'download', message, type: error ? 'error' : 'success', level: 'inline',
+      present: (text) => setDownloadFeedback({ owner: current.id, message: text, error, path }),
+    }) }
+    void bridge.assets.download({ url: current.renderUrl, suggestedName })
+      .then((result) => {
+        if (result.ok) report(t('assetLibrary.downloadedModel3d'), false, result.path)
+        else if (!result.canceled) report(t('assetLibrary.downloadModel3dFailed'), true)
+      })
+      .catch(() => report(t('assetLibrary.downloadModel3dFailed'), true))
+      .finally(() => setDownloading(false))
+  }, [current.id, current.renderUrl, downloading, t, title])
 
   React.useEffect(() => {
     // capture 阶段拦 Esc：素材库/画布也监听 window keydown，先于它们关预览（不误删节点等）。
@@ -29,12 +80,53 @@ export function AssetPreviewDialog({ asset, onClose }: { asset: AssetRef; onClos
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
 
+  React.useEffect(() => {
+    if (!sequence || sequence.length === 0) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        setSequenceIndex((index) => Math.max(0, index - 1))
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        setSequenceIndex((index) => Math.min(sequence.length - 1, index + 1))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sequence])
+
+  React.useEffect(() => {
+    if (!sequence || sequence.length === 0 || !currentPlayable || current.kind !== 'image' || currentDuration <= 0) return
+    const timer = window.setTimeout(() => {
+      if (sequenceIndex + 1 < sequence.length) setSequenceIndex((index) => index + 1)
+      else onClose()
+    }, currentDuration * 1000)
+    return () => window.clearTimeout(timer)
+  }, [current.kind, currentDuration, currentPlayable, onClose, sequence, sequenceIndex])
+
+  const advance = React.useCallback((): void => {
+    if (!sequence || sequenceIndex + 1 >= sequence.length) {
+      onClose()
+      return
+    }
+    setSequenceIndex((index) => index + 1)
+  }, [onClose, sequence, sequenceIndex])
+
+  React.useEffect(() => {
+    if (!sequence || sequence.length === 0 || currentPlayable || !sequence.some((item) => item.playable)) return
+    const timer = window.setTimeout(() => advance(), 180)
+    return () => window.clearTimeout(timer)
+  }, [advance, currentPlayable, sequence])
+
   return createPortal(
     <div
-      className={cn('fixed inset-0 z-[10000] flex items-center justify-center overflow-hidden p-8', 'bg-black/60')}
+      className={cn('fixed inset-x-0 bottom-0 z-application-modal flex items-center justify-center overflow-hidden p-8', 'bg-black/60')}
+      style={{ top: currentFullscreenOverlayTopOffset() }}
       role="dialog"
       aria-modal="true"
+      data-asset-preview-dialog="true"
       aria-label={t('assetLibrary.previewAria', { name: title })}
+      {...(sequence ? { 'data-storyboard-player': 'true' } : {})}
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
@@ -42,8 +134,11 @@ export function AssetPreviewDialog({ asset, onClose }: { asset: AssetRef; onClos
       <button
         type="button"
         className={cn(
-          'absolute right-4 top-4 z-[3] grid size-9 place-items-center rounded-full border-0 cursor-pointer',
-          'bg-nomi-overlay-chip text-nomi-paper hover:bg-nomi-overlay-chip-strong',
+          'absolute right-4 top-4 z-[3] grid size-9 place-items-center rounded-full cursor-pointer',
+          // 边框 + 强 scrim：预览背景是 bg-black/60，无边框的深色徽标钮会和暗背景融为一体（用户反馈
+          // 「找不到关闭钮」）。给一圈 paper/25 描边把边缘钉出来、并用 chip-strong 提对比，光暗都读得清。
+          'border border-nomi-media-ink/25 bg-nomi-overlay-chip-strong text-nomi-media-ink shadow-nomi-md backdrop-blur-sm',
+          'hover:bg-nomi-paper hover:text-nomi-ink hover:border-transparent',
           'focus-visible:outline-2 focus-visible:outline-nomi-paper focus-visible:outline-offset-2',
         )}
         aria-label={t('assetLibrary.previewClose')}
@@ -52,7 +147,71 @@ export function AssetPreviewDialog({ asset, onClose }: { asset: AssetRef; onClos
         <IconX size={18} stroke={1.8} />
       </button>
 
-      {asset.kind === 'video' ? (
+      {sequence && sequence.length > 0 ? (
+        <div className="absolute left-1/2 top-4 z-[3] flex -translate-x-1/2 items-center gap-2 rounded-full border border-nomi-media-ink/20 bg-nomi-overlay-chip-strong px-3 py-1.5 text-caption text-nomi-media-ink shadow-nomi-sm backdrop-blur-sm">
+          <button type="button" className="px-1 text-nomi-paper/80 hover:text-nomi-paper disabled:opacity-40" disabled={sequenceIndex <= 0} onClick={() => setSequenceIndex((index) => Math.max(0, index - 1))} aria-label={t('storyboardEditor.playback.previous')}>
+            ←
+          </button>
+          <span aria-live="polite">{t('storyboardEditor.playback.position', { index: sequenceIndex + 1, total: sequence.length })}</span>
+          <button type="button" className="px-1 text-nomi-paper/80 hover:text-nomi-paper disabled:opacity-40" disabled={sequenceIndex >= sequence.length - 1} onClick={() => setSequenceIndex((index) => Math.min(sequence.length - 1, index + 1))} aria-label={t('storyboardEditor.playback.next')}>
+            →
+          </button>
+        </div>
+      ) : null}
+
+      {current.kind !== 'audio' ? (
+        <span
+          className={cn(
+            'pointer-events-none absolute left-4 top-4 z-[2] flex max-w-[calc(100%-80px)] items-baseline gap-2 truncate rounded-full px-3 py-1.5',
+            'border border-nomi-media-ink/20 bg-nomi-overlay-chip-strong text-caption font-medium text-nomi-media-ink shadow-nomi-sm backdrop-blur-sm',
+          )}
+          data-asset-preview-title="true"
+        >
+          <span className="min-w-0 truncate">{title || mediaTypeLabel}</span>
+          {sourceName ? <span className="shrink-0 truncate text-micro font-normal text-nomi-paper/70">{t('assetLibrary.previewSource', { name: sourceName })}</span> : null}
+        </span>
+      ) : null}
+
+      {currentPlayable && current.kind === 'model3d' ? (
+        <button
+          type="button"
+          className={cn(
+            'absolute right-16 top-4 z-[3] grid size-9 place-items-center rounded-full cursor-pointer',
+            'border border-nomi-media-ink/25 bg-nomi-overlay-chip-strong text-nomi-media-ink shadow-nomi-md backdrop-blur-sm',
+            'hover:bg-nomi-paper hover:text-nomi-ink hover:border-transparent disabled:cursor-wait disabled:opacity-60',
+            'focus-visible:outline-2 focus-visible:outline-nomi-paper focus-visible:outline-offset-2',
+          )}
+          aria-label={t('assetLibrary.downloadModel3d')}
+          title={t('assetLibrary.downloadModel3d')}
+          disabled={downloading}
+          onClick={downloadModel}
+        >
+          {downloading ? <IconLoader2 size={18} stroke={1.8} className="animate-spin" /> : <IconDownload size={18} stroke={1.8} />}
+        </button>
+      ) : null}
+
+      {downloadFeedback?.owner === current.id ? (
+        <div role={downloadFeedback.error ? 'alert' : 'status'} className="absolute right-16 top-16 z-[3] max-w-sm break-words rounded-nomi-sm bg-nomi-paper px-3 py-2 text-caption text-nomi-ink">
+          <p>{downloadFeedback.message}</p>
+          {downloadFeedback.path ? <p className="mt-1 text-micro text-nomi-ink-60">{downloadFeedback.path}</p> : null}
+        </div>
+      ) : null}
+      {current.kind === 'model3d' ? (
+        <div
+          className="h-[72vh] max-h-[720px] w-[84vw] max-w-[960px] overflow-hidden rounded-nomi bg-nomi-paper shadow-nomi-lg"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <React.Suspense
+            fallback={
+              <div className="grid h-full w-full place-items-center text-nomi-ink-40">
+                <IconLoader2 size={24} stroke={1.6} className="animate-spin" aria-label={t('assetLibrary.loadingModel3d')} />
+              </div>
+            }
+          >
+            <Model3DViewer url={current.renderUrl} />
+          </React.Suspense>
+        </div>
+      ) : currentPlayable && current.kind === 'video' ? (
         <div className="relative flex max-h-full max-w-full" onPointerDown={(event) => event.stopPropagation()}>
           <video
             src={heal.playbackUrl}
@@ -65,26 +224,40 @@ export function AssetPreviewDialog({ asset, onClose }: { asset: AssetRef; onClos
             preload="metadata"
             onError={heal.onError}
             onLoadedMetadata={heal.onLoadedMetadata}
+            onEnded={advance}
           />
           <VideoPlaybackStatusOverlay healingText={heal.healingText} failureText={heal.failureText} className="rounded-nomi" />
         </div>
-      ) : asset.kind === 'audio' ? (
+      ) : currentPlayable && current.kind === 'audio' ? (
         <div
           className="rounded-nomi bg-nomi-paper px-6 py-5 shadow-nomi-lg"
           onPointerDown={(event) => event.stopPropagation()}
         >
           <div className="mb-3 max-w-[60vw] truncate text-body-sm font-medium text-nomi-ink">{title}</div>
-          <audio src={asset.renderUrl} controls autoPlay aria-label={title} style={{ width: 'min(60vw, 520px)' }} />
+          {sourceName ? <div className="mb-3 max-w-[60vw] truncate text-micro text-nomi-ink-60">{t('assetLibrary.previewSource', { name: sourceName })}</div> : null}
+          <audio src={current.renderUrl} controls autoPlay aria-label={title} style={{ width: 'min(60vw, 520px)' }} />
         </div>
-      ) : (
+      ) : currentPlayable ? (
         <NomiImage
-          src={asset.renderUrl}
+          src={current.renderUrl}
           eager
           alt={title}
           className="max-h-full max-w-full rounded-nomi object-contain shadow-nomi-lg select-none"
           onPointerDown={(event) => event.stopPropagation()}
         />
+      ) : (
+        <div className="flex h-40 w-[min(70vw,560px)] items-center justify-center rounded-nomi border border-dashed border-nomi-media-ink/30 bg-nomi-overlay-chip-strong px-6 text-body-sm text-nomi-media-ink/70" data-storyboard-playback-empty-row="true">
+          {!sequence?.some((item) => item.playable) ? t('storyboardEditor.playback.allNotGenerated') : currentItem?.label || t('storyboardEditor.playback.notGenerated')}
+        </div>
       )}
+      {currentAudio && currentPlayable ? <audio key={`${currentAudio.id}:${sequenceIndex}`} src={currentAudio.renderUrl} autoPlay aria-label={t('storyboardEditor.playback.audio')} /> : null}
+      {sequence && sequence.length > 0 ? (
+        <div className="absolute bottom-5 left-1/2 flex w-[min(86vw,760px)] -translate-x-1/2 gap-1" data-storyboard-playback-progress="true" aria-label={t('storyboardEditor.playback.progressAria')}>
+          {sequence.map((item, index) => (
+            <span key={`${item.asset?.id || item.label || 'empty'}-${index}`} className={cn('h-1 flex-1 rounded-full', !item.playable ? 'bg-nomi-paper/25' : index === sequenceIndex ? 'bg-nomi-paper' : index < sequenceIndex ? 'bg-nomi-paper/65' : 'bg-nomi-paper/40')} />
+          ))}
+        </div>
+      ) : null}
     </div>,
     document.body,
   )

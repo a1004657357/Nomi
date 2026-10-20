@@ -7,14 +7,13 @@ import { createProductionRunRepository } from './productionRunRepository'
 import { createProductionRunService } from './productionRunService'
 import { approveLatestScript, approveLatestStoryboard, waitForProduction as waitFor } from './productionRunTestHelpers'
 import { normalizeTrustLevel, trustLevelOf, DEFAULT_TRUST_LEVEL } from './productionRunTypes'
-import { shouldSampleGate } from './productionRunDriverOps'
 import { buildToolOutcome } from '../capabilityCore/mcpToolResults'
 
 // B3 信任档位（plan 2026-08-11-mcp-conversation-native-phase-b）：
 // key_confirm（默认）= 五门全开；budget_only（「别问了直接出」）= 自动批准创意/样片门、只留预算门（永不跳）；
 // confirm_all = 每镜提交前在 Nomi 停门。降档留痕（事件 commandId 自证）。
 
-function makeService(root: string, trackCalls: { count: number }) {
+function makeService(root: string, trackCalls: { count: number }, userTrustLevel?: 'key_confirm' | 'budget_only' | 'confirm_all') {
   fs.mkdirSync(path.join(root, 'assets/generated'), { recursive: true })
   fs.writeFileSync(path.join(root, 'assets/generated/shot.mp4'), 'video', 'utf8')
   const requestRenderer = async (op: string) => {
@@ -43,7 +42,8 @@ function makeService(root: string, trackCalls: { count: number }) {
     repository,
     projectRootResolver: () => root,
     requestRenderer,
-    policyResolver: () => ({ trustedHosts: ['codex'], allowedProviders: ['local'], allowedModels: ['demo-video'], maxSpend: 10, maxAttemptsPerJob: 1 }),
+    // 用户自己的档位设置（不是调用方在 payload 里自报的那一个）。
+    policyResolver: () => ({ trustedHosts: ['codex'], allowedProviders: ['local'], allowedModels: ['demo-video'], maxSpend: 10, maxAttemptsPerJob: 1, ...(userTrustLevel ? { trustLevel: userTrustLevel } : {}) }),
   })
 }
 
@@ -63,7 +63,7 @@ async function driveToContract(service: ReturnType<typeof createProductionRunSer
     issuedAt: new Date().toISOString(),
   })
   await service.command('project-1', runId, {
-    commandId: 'contract', expectedRevision: attached.run.revision, type: 'gate.decide',
+    commandId: 'contract', expectedRevision: attached.run.revision, type: 'gate.decide', humanGesture: true,
     payload: { gateId: 'gate-contract-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
   })
 }
@@ -81,24 +81,18 @@ describe('normalizeTrustLevel / trustLevelOf (B3 收口)', () => {
     expect(trustLevelOf({ trustLevel: 'budget_only' })).toBe('budget_only')
   })
 
-  it('shouldSampleGate 仅 budget_only 跳样片门', () => {
-    expect(shouldSampleGate({ policy: { trustLevel: 'budget_only' } } as never)).toBe(false)
-    expect(shouldSampleGate({ policy: { trustLevel: 'key_confirm' } } as never)).toBe(true)
-    expect(shouldSampleGate({ policy: { trustLevel: 'confirm_all' } } as never)).toBe(true)
-    expect(shouldSampleGate({ policy: {} } as never)).toBe(true) // 缺省 = 要门
-  })
 })
 
 describe('trust level gate-skip matrix (B3 · 预算门永不跳)', () => {
   it('budget_only：草稿建好即自动批准方向门（留痕）+ 跳样片门，但预算门仍在等', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-trust-budgetonly-'))
     const calls = { count: 0 }
-    const service = makeService(root, calls)
+    // 2026-09-21：档位来自**用户的设置**，不再是调用方在 createDraft payload 里自报的那一个。
+    const service = makeService(root, calls, 'budget_only')
     const runId = 'run-trust-1'
     service.createDraft({
       runId, projectId: 'project-1', playbook: { name: 'brand.promo', version: '1.0.0' },
       origin: { host: 'codex' }, brief: { goal: 'budget only', durationSeconds: 30 },
-      policy: { trustLevel: 'budget_only' },
     })
 
     // 方向门被自动批准（不拟候选、不打扰），driver 直接推进到分镜。
@@ -137,7 +131,7 @@ describe('trust level gate-skip matrix (B3 · 预算门永不跳)', () => {
     expect(beforeApprove.gates.find((g) => g.gateId === 'gate-direction-v1')!.status).toBe('waiting') // 没被自动批
     // 手动批准方向门。
     await service.command('project-1', runId, {
-      commandId: 'approve-direction', expectedRevision: beforeApprove.revision, type: 'gate.decide',
+      commandId: 'approve-direction', expectedRevision: beforeApprove.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-direction-v1', status: 'approved', choiceKey: 'a' }, issuedAt: new Date().toISOString(),
     })
     await driveToContract(service, runId)
@@ -162,9 +156,10 @@ describe('set_trust 对话改档 (B3 · 降档留痕 + 立即生效)', () => {
     const atDirection = service.readFull('project-1', runId)!
     expect(atDirection.gates.find((g) => g.gateId === 'gate-direction-v1')!.status).toBe('waiting')
 
-    // 用户：「别问了直接出」→ set_trust budget_only。
+    // 用户：「别问了直接出」→ set_trust budget_only。2026-09-21 起**任何**往 budget_only 的降档
+    // 都要一次真人答过的确认（Nomi 窗口里的手势章，或一张收据）——「全自动档要不要开」是用户的决定。
     await service.command('project-1', runId, {
-      commandId: 'set-trust-1', expectedRevision: atDirection.revision, type: 'run.control',
+      commandId: 'set-trust-1', expectedRevision: atDirection.revision, type: 'run.control', humanGesture: true,
       payload: { action: 'set_trust', trustLevel: 'budget_only' }, issuedAt: new Date().toISOString(),
     })
 
@@ -181,23 +176,125 @@ describe('set_trust 对话改档 (B3 · 降档留痕 + 立即生效)', () => {
     expect(service.readFull('project-1', runId)!.gates.some((g) => g.gateId === 'gate-sample-v1')).toBe(false)
   })
 
+  // 2026-09-10 根因回归闸：set_trust 只能由**客户端工具调用**发起（渲染层 IPC 把 run.control 收窄成
+  // pause/resume/cancel，递不进 trustLevel）。原实现在降到 budget_only 时会顺手自动批准正在等待的
+  // 逐镜门——那是付费门，批准即放行 provider 调用。等于一次工具调用替真人授权了一次扣费。
+  //
+  // 21:00 拍板后加严：confirm_all → budget_only 本身就是「以后这些镜头不再问你」= 一次付费放行，
+  // 因此**没有人证时连降档都不许发生**；带了人证降档生效，但正在等待的那道逐镜付费门仍原样等着
+  // （自动批准永远碰不到付费门——两条不变量各管各的，不许互相顶替）。
+  it('budget_only 无收据无手势 → 拒；带手势降档生效但逐镜付费门仍原样等着', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-trust-shot-'))
+    const calls = { count: 0 }
+    const service = makeService(root, calls)
+    const runId = 'run-trust-shot'
+    service.createDraft({
+      runId, projectId: 'project-1', playbook: { name: 'brand.promo', version: '1.0.0' },
+      origin: { host: 'codex' }, brief: { goal: 'shot gate', durationSeconds: 30 },
+      // confirm_all 是**收紧**（问得更多），调用方照样可以声明。
+      policy: { trustLevel: 'confirm_all' },
+    })
+    await waitFor(() => Boolean(service.readFull('project-1', runId)?.gates.some((g) => g.gateId === 'gate-direction-v1' && g.status === 'waiting')))
+    const atDirection = service.readFull('project-1', runId)!
+    await service.command('project-1', runId, {
+      commandId: 'direction-shot', expectedRevision: atDirection.revision, type: 'gate.decide', humanGesture: true,
+      payload: { gateId: 'gate-direction-v1', status: 'approved', choiceKey: 'a' }, issuedAt: new Date().toISOString(),
+    })
+    await driveToContract(service, runId)
+    await waitFor(() => service.readFull('project-1', runId)!.gates.some((g) => g.gateId.startsWith('gate-shot-') && g.status === 'waiting'))
+    const atShot = service.readFull('project-1', runId)!
+    const shotGate = atShot.gates.find((g) => g.gateId.startsWith('gate-shot-') && g.status === 'waiting')!
+    const submissionsBefore = calls.count
+
+    // ① 无收据、无手势 → 拒（fail-closed）。档位一动不动。
+    await expect(service.command('project-1', runId, {
+      commandId: 'set-trust-shot-bare', expectedRevision: atShot.revision, type: 'run.control',
+      payload: { action: 'set_trust', trustLevel: 'budget_only' }, issuedAt: new Date().toISOString(),
+    })).rejects.toThrowError(expect.objectContaining({ code: 'human_approval_required' }))
+    expect(trustLevelOf(service.readFull('project-1', runId)!.policy)).toBe('confirm_all')
+
+    // ② Nomi 窗口里的真人手势章 → 降档生效。
+    await service.command('project-1', runId, {
+      commandId: 'set-trust-shot', expectedRevision: atShot.revision, type: 'run.control', humanGesture: true,
+      payload: { action: 'set_trust', trustLevel: 'budget_only' }, issuedAt: new Date().toISOString(),
+    })
+
+    await waitFor(() => trustLevelOf(service.readFull('project-1', runId)!.policy) === 'budget_only')
+    const after = service.readFull('project-1', runId)!
+    expect(after.gates.find((g) => g.gateId === shotGate.gateId)!.status).toBe('waiting')
+    expect(calls.count).toBe(submissionsBefore)
+    const events = await service.readEvents('project-1', runId, 0, 0)
+    expect(events.events.some((event) => event.type === 'gate.decided'
+      && (event.commandId || '').startsWith('auto-trust-budget-only:gate-shot-'))).toBe(false)
+  })
+
   it('set_trust 转述带新档位与后果（budget_only：创意/样片门自动过、预算门仍在）', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-trust-narrate-'))
-    const service = makeService(root, { count: 0 })
+    const service = makeService(root, { count: 0 }, 'budget_only')
     const runId = 'run-trust-4'
     service.createDraft({
       runId, projectId: 'project-1', playbook: { name: 'brand.promo', version: '1.0.0' },
       origin: { host: 'codex' }, brief: { goal: 'narration', durationSeconds: 30 },
-      policy: { trustLevel: 'budget_only' },
     })
     const projection = service.readProjection('project-1', runId)
-    const outcome = buildToolOutcome('nomi_control_run', { projectId: 'project-1', runId, action: 'set_trust', trustLevel: 'budget_only' }, projection, 'zh-CN')
+    const outcome = buildToolOutcome('nomi_run_control', { projectId: 'project-1', runId, action: 'set_trust', trustLevel: 'budget_only' }, projection, 'zh-CN')
     expect(outcome.text).toContain('信任档位已改为')
     expect(outcome.text).toContain('预算门仍会请示')
     expect(outcome.outcome).toMatchObject({ action: 'set_trust', trustLevel: 'budget_only' })
     // 英文侧同样双语可用。
-    const outcomeEn = buildToolOutcome('nomi_control_run', { projectId: 'project-1', runId, action: 'set_trust', trustLevel: 'budget_only' }, projection, 'en')
+    const outcomeEn = buildToolOutcome('nomi_run_control', { projectId: 'project-1', runId, action: 'set_trust', trustLevel: 'budget_only' }, projection, 'en')
     expect(outcomeEn.text).toContain('Trust level set to')
     expect(outcomeEn.text).toContain('budget gate still asks')
+  })
+})
+
+// 2026-09-21 真机复现的两扇门：调用方自报的信任档不得自证。
+// ① `production.start` 带 trustLevel: 'budget_only' → 200，方向门在 run 创建的同一刻被批掉，没人看见过。
+// ② 同一个进程也能直接 `production.control set_trust budget_only`——从 key_confirm 降档当时一份证据都不要。
+// 规则（用户 09-21）：只有「花钱 / 撤不回 / 全自动档」由用户的设置或授权决定要不要问，
+// 外部入口不能靠一个参数把门批掉。
+describe('调用方自报的信任档不得自证（09-21 真机复现的审批旁路）', () => {
+  it('① 建 Run 时声明比用户默认更松的档位 → 拒，并指向真的会问人的那条路', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-trust-selfdeclared-'))
+    const service = makeService(root, { count: 0 }) // 用户没开全自动 → 默认 key_confirm
+    expect(() => service.createDraft({
+      runId: 'run-trust-bypass', projectId: 'project-1', playbook: { name: 'brand.promo', version: '1.0.0' },
+      origin: { host: 'codex' }, brief: { goal: 'bypass', durationSeconds: 30 },
+      policy: { trustLevel: 'budget_only' },
+    })).toThrowError(expect.objectContaining({ code: 'human_approval_required' }))
+    // Run 根本没建起来：没有半个「门已批准」的草稿留在盘上。
+    expect(() => service.readFull('project-1', 'run-trust-bypass')).toThrowError(/Production run not found/)
+  })
+
+  it('① 收紧（confirm_all）照收——多问永远不需要授权', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-trust-tighten-'))
+    const service = makeService(root, { count: 0 })
+    const projection = service.createDraft({
+      runId: 'run-trust-tighten', projectId: 'project-1', playbook: { name: 'brand.promo', version: '1.0.0' },
+      origin: { host: 'codex' }, brief: { goal: 'tighten', durationSeconds: 30 },
+      policy: { trustLevel: 'confirm_all' },
+    })
+    expect(projection.runId).toBe('run-trust-tighten')
+    expect(trustLevelOf(service.readFull('project-1', 'run-trust-tighten')!.policy)).toBe('confirm_all')
+  })
+
+  it('② 从 key_confirm 直接 set_trust budget_only 且无手势无收据 → 拒（这一格以前一份证据都不要）', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-trust-bare-downgrade-'))
+    const service = makeService(root, { count: 0 })
+    const runId = 'run-trust-bare'
+    service.createDraft({
+      runId, projectId: 'project-1', playbook: { name: 'brand.promo', version: '1.0.0' },
+      origin: { host: 'codex' }, brief: { goal: 'bare downgrade', durationSeconds: 30 },
+    })
+    await waitFor(() => Boolean(service.readFull('project-1', runId)?.gates.some((g) => g.gateId === 'gate-direction-v1' && g.status === 'waiting')))
+    const current = service.readFull('project-1', runId)!
+    await expect(service.command('project-1', runId, {
+      commandId: 'bare-downgrade', expectedRevision: current.revision, type: 'run.control',
+      payload: { action: 'set_trust', trustLevel: 'budget_only' }, issuedAt: new Date().toISOString(),
+    })).rejects.toThrowError(expect.objectContaining({ code: 'human_approval_required' }))
+    // 档位没动，方向门也没被顺手批掉。
+    const after = service.readFull('project-1', runId)!
+    expect(trustLevelOf(after.policy)).toBe('key_confirm')
+    expect(after.gates.find((g) => g.gateId === 'gate-direction-v1')!.status).toBe('waiting')
   })
 })

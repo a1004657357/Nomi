@@ -12,7 +12,7 @@ import {
   useScene3DTrajectoryRuntimeStore,
 } from './trajectoryRuntimeStore'
 
-const refOf = (object: THREE.Object3D | null): RefObject<THREE.Object3D> => ({ current: object })
+const refOf = (object: THREE.Object3D | null): RefObject<THREE.Object3D | null> => ({ current: object })
 
 const targetsOf = (objectId: string) =>
   useScene3DTrajectoryRuntimeStore.getState().objectRefMap.get(objectId)

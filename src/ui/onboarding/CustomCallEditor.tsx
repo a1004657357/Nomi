@@ -1,5 +1,6 @@
 /** 自定义调用编辑器：材料辅助生成，脚本与供应商配置才是持久化内容。 */
-import React from 'react'
+import React, { type JSX } from 'react'
+import { MODEL_ACCESS_ENTRY } from '../../../electron/shared/contracts/modelAccessCapabilities'
 import { useTranslation } from 'react-i18next'
 import { IconAlertTriangle, IconCheck, IconCopy, IconPlayerPlay, IconPlayerStop, IconPlus, IconSparkles, IconTrash } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -13,7 +14,7 @@ import {
   confirmDialog,
 } from '../../design'
 import { getDesktopBridge } from '../../desktop/bridge'
-import { resolveArchetypeForModel } from '../../config/modelArchetypes'
+import { resolveArchetypeForModel } from '../../../electron/shared/modelArchetypes'
 import { getTextBrain } from '../../workbench/api/promptLibraryApi'
 import { runWorkbenchTextTaskStream } from '../../workbench/api/taskApi'
 import { stripCodeFences } from './customCallIntent'
@@ -195,6 +196,7 @@ export function CustomCallEditor({
         await runWorkbenchTextTaskStream(
           brain.vendor,
           { kind: 'prompt_refine', prompt: instruction, extras: { modelKey: brain.modelKey } },
+          null, // 接入配置里的脚本起草不属于任何项目
           {
             signal: ctrl.signal,
             onDelta: (delta) => {
@@ -423,7 +425,7 @@ export function CustomCallEditor({
           variant="filled"
           onClick={saveTestedScript}
           leftSection={<IconCheck size={14} stroke={2} aria-hidden="true" />}
-          className="h-9"
+          size="md"
         >
           {requiresCapabilitySetup
             ? t('onboardingProviders.customCall.saveAndContinueCapability')
@@ -454,7 +456,7 @@ export function CustomCallEditor({
   ) : null
 
   const content = target ? (
-        <div data-settings-unsaved={dirty ? 'true' : undefined} className={cn('flex w-full flex-col gap-3', presentation === 'page' && 'min-h-0 flex-1')}>
+        <div data-model-access-entry={MODEL_ACCESS_ENTRY.customCallScript} data-settings-unsaved={dirty ? 'true' : undefined} className={cn('flex w-full flex-col gap-3', presentation === 'page' && 'min-h-0 flex-1')}>
           <div className="text-caption text-nomi-ink-60 -mt-1">
             {t(target.draft ? 'onboardingProviders.customCall.draftSubtitle' : 'onboardingProviders.customCall.subtitle')}
           </div>

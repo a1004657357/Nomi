@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // 助手模型选择器：让用户指定创作/画布 agent 用哪个 text 模型（根治「盲选第一个=撞到不响应的就全卡」）。
 // 写偏好到 localStorage（assistantModelPref），runWorkbenchAgent 自动带进 payload，两个面板都生效。
 import React from 'react'
@@ -40,7 +41,7 @@ export default function AssistantModelPicker({ className }: { className?: string
         listWorkbenchModelCatalogModels({ kind: 'text', enabled: true }),
       ])
       if (requestId !== loadRequestRef.current) return
-      const usableRows = filterUsableAssistantTextModels(rows, vendors)
+      const usableRows = filterUsableAssistantTextModels(rows)
       setVendorNames(Object.fromEntries(vendors.map((v) => [v.key, v.name])))
       setModels(usableRows)
 

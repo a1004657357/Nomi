@@ -33,7 +33,9 @@ let runtime
 let serverPid
 let electronProcess
 try {
-  runtime = await launchNomiApp({ name: 'pavo-bundled', env: { NOMI_E2E_SMOKE: '1', NOMI_PAVO_WEB_REAL_SUBMIT: '0' } })
+  runtime = await launchNomiApp({ name: 'pavo-bundled',
+    mainRequire: [path.resolve('scripts/walkthrough-network-guard.cjs')],
+    env: { NOMI_E2E_SMOKE: '1', NOMI_PAVO_WEB_REAL_SUBMIT: '0', NOMI_WALK_NET_LOG: path.join(reportDir, 'network-guard.jsonl') } })
   const { app, win } = runtime
   electronProcess = app.process()
   const catalog = await win.evaluate(() => {
@@ -48,6 +50,12 @@ try {
     const runner = require(path.join(app.getAppPath(), 'dist-electron/pavoWeb/runner.js'))
     // Intercept the entire runner HTTPS partition so no external request can leave the fixture.
     await runner.pavoWebRunnerSession().protocol.handle('https', () => new Response(fixture, { headers: { 'content-type': 'text/html; charset=utf-8' } }))
+    // Only the fully intercepted fixture host bypasses the Chromium loopback guard.
+    runner.pavoWebRunnerSession().webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+      const url = new URL(details.url)
+      callback({ cancel: !(url.protocol === 'https:' && url.hostname === 'app.pavo-ai.cn')
+        && !['127.0.0.1', 'localhost', '::1'].includes(url.hostname) })
+    })
     return runner.pavoWebStartRunner(serverUrl)
   }, { fixture, serverUrl })
   serverPid = runner.serverPid
@@ -143,8 +151,13 @@ try {
     const asset = first.assets[0]
     if (!asset) throw new Error(`Local query did not return output: ${JSON.stringify(first)}`)
     const stored = runtime.listProjectAssets({ projectId: project.id }).items
-    const node = { ...template, id: 'pavo-fixture-video', title: 'Pavo 本地回传测试', kind: 'video', status: 'success', references: [], history: [], runs: [], result: { id: asset.assetId, type: 'video', url: asset.url, createdAt: 1 }, meta: { ...template.meta, videoWidth: 320, videoHeight: 180, videoAspectRatio: 16 / 9 }, position: { x: 80, y: 80 } }
-    runtime.saveProject(project.id, { ...project, draft: false, payload: { generationCanvas: { nodes: [node], edges: [], groups: [], selectedNodeIds: [] } } })
+    const node = { ...template, id: 'pavo-fixture-video', title: 'Pavo 本地回传测试', prompt: 'Local output fixture',
+      kind: 'video', status: 'success', references: [], history: [], runs: [],
+      result: { id: asset.assetId, type: 'video', url: asset.url, createdAt: 1 },
+      meta: { modelKey: model.modelKey, vendor: 'pavo-web', modelVendor: 'pavo-web', modelLabel: model.labelZh,
+        archetype: { id: model.meta?.archetypeId, modeId: 't2v' }, duration: 5, aspect_ratio: '16:9',
+        videoWidth: 320, videoHeight: 180, videoAspectRatio: 16 / 9 }, position: { x: 80, y: 80 } }
+    await runtime.saveProject(project.id, { ...project, draft: false, payload: { generationCanvas: { nodes: [node], edges: [], groups: [], selectedNodeIds: [] } } })
     const persisted = runtime.readProject(project.id)
     return { projectId: project.id, status: first.status, sameAsset: first.assets[0]?.assetId === second.assets[0]?.assetId, assets: stored.length, assetPath: stored[0]?.data?.absolutePath, nodeResultUrl: persisted.payload.generationCanvas.nodes[0].result.url }
   }, { serverUrl, clip: fs.readFileSync(clipPath).toString('base64'), template })
@@ -159,9 +172,16 @@ try {
   await win.getByRole('button', { name: '生成', exact: false }).first().click()
   const returnedNode = win.locator('[data-node-id="pavo-fixture-video"]')
   await returnedNode.waitFor()
-  await returnedNode.hover()
+  await returnedNode.click()
+  await win.screenshot({ path: path.join(reportDir, 'pavo-canvas-before-play.png') })
   await returnedNode.locator('video').waitFor({ state: 'attached' })
   await win.waitForFunction(() => document.querySelector('[data-node-id="pavo-fixture-video"] video')?.readyState >= 2)
+  report.videoPreview = await returnedNode.locator('video').evaluate(video => ({
+    width: video.videoWidth, height: video.videoHeight, readyState: video.readyState, error: video.error?.code ?? null,
+  }))
+  assert.equal(report.videoPreview.width, 320)
+  assert.equal(report.videoPreview.height, 180)
+  assert.equal(report.videoPreview.error, null)
   await win.screenshot({ path: path.join(reportDir, 'pavo-canvas-result.png') })
   await app.evaluate(({ app }) => {
     const require = process.mainModule.require.bind(process.mainModule)
@@ -178,6 +198,7 @@ try {
 } catch (error) {
   report.status = 'failed'
   report.error = error.message
+  if (runtime) await runtime.win.screenshot({ path: path.join(reportDir, 'failure.png') }).catch(() => undefined)
   if (runtime) report.windows = await runtime.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(window => ({ url: window.webContents.getURL(), loading: window.webContents.isLoading() }))).catch(() => [])
   if (runtime) report.panelDiagnostics = await runtime.app.evaluate(async ({ BrowserWindow }) => {
     const panel = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().includes('panel.html'))

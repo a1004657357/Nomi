@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import type { BillingModelKind } from '../../../api/desktopClient'
+import type { CanvasPluginHost } from '../plugins/canvasPluginTypes'
 
 export type GenerationNodeRenderProps<TNode = unknown> = {
   node: TNode
@@ -8,28 +9,34 @@ export type GenerationNodeRenderProps<TNode = unknown> = {
   focusFlash?: boolean
   /** 新落点（add/paste/Agent）一次性弹入动画；开项目已有节点不传（不齐闪）。 */
   appear?: boolean
+  /** Present only for host-registered plugin nodes; core nodes ignore it. */
+  host?: CanvasPluginHost
 }
 
 export type GenerationNodeComponent = ComponentType<GenerationNodeRenderProps<unknown>>
-export type GenerationNodeExecutionKind = 'image' | 'video' | 'text' | 'audio' | 'model3d'
+// 生成种类词表的 owner 在中立层（主进程的 Agent 工具面也要判它）；这里只是再导出，对账测试保证插件表与它一致。
+import type { GenerationNodeExecutionKind } from '../../../../electron/shared/canvas/nodeExecutionKinds'
+
+export type { GenerationNodeExecutionKind }
 export type GenerationNodeIconKey =
-    | "text"
-    | "character"
-    | "scene"
-    | "image"
-    | "keyframe"
-    | "video"
-    | "shot"
-    | "output"
-    | "panorama"
-    | "scene3d"
-    | "vibingDirector"
-    | "model3d"
-    | "compare"
-    | "skill"
-    | "whiteboard"
-    | "audio"
-    | "clip";
+  | 'text'
+  | 'character'
+  | 'scene'
+  | 'image'
+  | 'keyframe'
+  | 'video'
+  | 'shot'
+  | 'output'
+  | 'panorama'
+  | 'compare'
+  | 'skill'
+  | 'scene3d'
+  | 'vibingDirector'
+  | 'director'
+  | 'model3d'
+  | 'whiteboard'
+  | 'audio'
+  | 'clip'
 
 export type GenerationNodePluginDefinition<TKind extends string = string> = {
   kind: TKind
@@ -59,147 +66,257 @@ const loadBaseGenerationNode = () =>
   }>
 
 export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
-    {
-        kind: "text",
-        label: "Text",
-        menuLabel: "文本",
-        component: loadBaseGenerationNode,
-        icon: "text",
-        defaultTitle: "文本",
-        defaultSize: { width: 280, height: 200 },
-        catalogKind: "text",
-        executionKind: "text",
-        quickAdd: true,
-        agentCreatable: true,
-        promptPlaceholder: "输入文本内容...",
-    },
-    {
-        kind: "character",
-        label: "Character",
-        menuLabel: "角色",
-        component: loadBaseGenerationNode,
-        icon: "character",
-        defaultTitle: "角色",
-        defaultSize: { width: 300, height: 190 },
-        catalogKind: "image",
-        executionKind: "image",
-        quickAdd: true,
-        agentCreatable: true,
-        providesImageReference: true,
-        promptPlaceholder: "描述角色外观、服装、气质和可识别特征...",
-    },
-    {
-        kind: "scene",
-        label: "Scene",
-        menuLabel: "场景",
-        component: loadBaseGenerationNode,
-        icon: "scene",
-        defaultTitle: "场景",
-        defaultSize: { width: 300, height: 190 },
-        catalogKind: "image",
-        executionKind: "image",
-        quickAdd: true,
-        agentCreatable: true,
-        providesImageReference: true,
-        promptPlaceholder: "描述场景环境、光线、构图和空间氛围...",
-    },
-    {
-        kind: "image",
-        label: "Image",
-        menuLabel: "图片",
-        component: loadBaseGenerationNode,
-        icon: "image",
-        defaultTitle: "图片",
-        defaultSize: { width: 340, height: 280 },
-        catalogKind: "image",
-        executionKind: "image",
-        quickAdd: true,
-        agentCreatable: true,
-        providesImageReference: true,
-        promptPlaceholder: "描述这一帧的画面...",
-    },
-    {
-        kind: "keyframe",
-        label: "Keyframe",
-        menuLabel: "关键帧",
-        component: loadBaseGenerationNode,
-        icon: "keyframe",
-        defaultTitle: "关键帧",
-        defaultSize: { width: 320, height: 220 },
-        catalogKind: "image",
-        executionKind: "image",
-        quickAdd: true,
-        providesImageReference: true,
-        promptPlaceholder: "描述关键帧画面、动作瞬间和镜头状态...",
-    },
-    {
-        kind: "video",
-        label: "Video",
-        menuLabel: "视频",
-        component: loadBaseGenerationNode,
-        icon: "video",
-        defaultTitle: "视频",
-        defaultSize: { width: 420, height: 340 },
-        catalogKind: "video",
-        executionKind: "video",
-        quickAdd: true,
-        agentCreatable: true,
-        promptPlaceholder: "描述这一段视频的镜头、动作和节奏...",
-    },
-    {
-        // 声音：配音生成（TTS，文→音）/ 转写（Whisper，音→文）/ 上传音频。渲染走 audio-strip（按 kind 强制，
-        // 见 BaseGenerationNode renderKind 分发），生成类挂 composer（模式切换在 NodeGenerationComposer）。
-        kind: "audio",
-        label: "Audio",
-        menuLabel: "声音",
-        component: loadBaseGenerationNode,
-        icon: "audio",
-        defaultTitle: "声音",
-        defaultSize: { width: 420, height: 80 },
-        catalogKind: "audio",
-        executionKind: "audio",
-        quickAdd: true,
-        agentCreatable: true,
-        promptPlaceholder: "输入台词或旁白…",
-    },
-    {
-        kind: "clip",
-        label: "Clip",
-        menuLabel: "剪辑",
-        component: () => import('./ClipNode'),
-        icon: "clip",
-        defaultTitle: "剪辑",
-        defaultSize: { width: 760, height: 132 },
-        catalogKind: "video",
-        quickAdd: true,
-        agentCreatable: false,
-        promptPlaceholder: "添加媒体并进行剪辑...",
-    },
-    {
-        kind: "shot",
-        label: "Shot",
-        menuLabel: "镜头",
-        component: loadBaseGenerationNode,
-        icon: "shot",
-        defaultTitle: "镜头",
-        defaultSize: { width: 340, height: 230 },
-        catalogKind: "text",
-        quickAdd: true,
-        promptPlaceholder: "记录镜头设计、调度、对白或拍摄说明...",
-    },
-    {
-        kind: "output",
-        label: "Output",
-        menuLabel: "输出",
-        component: loadBaseGenerationNode,
-        icon: "output",
-        defaultTitle: "输出收集",
-        defaultSize: { width: 560, height: 420 },
-        catalogKind: "text",
-        quickAdd: true,
-        agentCreatable: true,
-        promptPlaceholder: "整理最终输出说明或交付备注...",
-    },
+  {
+    kind: 'shot_table',
+    label: 'Shot Table',
+    menuLabel: 'Shot Table',
+    component: () => import('./shotTable/ShotTableNode') as Promise<{ default: GenerationNodeComponent }>,
+    icon: 'shot',
+    defaultTitle: 'Shot Table',
+    defaultSize: { width: 960, height: 420 },
+    catalogKind: 'text',
+    quickAdd: false,
+    agentCreatable: false,
+  },
+  {
+    kind: 'text',
+    label: 'Text',
+    menuLabel: 'Text',
+    component: loadBaseGenerationNode,
+    icon: 'text',
+    defaultTitle: 'Text',
+    defaultSize: { width: 280, height: 200 },
+    catalogKind: 'text',
+    executionKind: 'text',
+    quickAdd: true,
+    agentCreatable: true,
+    promptPlaceholder: 'Enter text...',
+  },
+  {
+    kind: 'character',
+    label: 'Character',
+    menuLabel: 'Character',
+    component: loadBaseGenerationNode,
+    icon: 'character',
+    defaultTitle: 'Character',
+    defaultSize: { width: 300, height: 190 },
+    catalogKind: 'image',
+    executionKind: 'image',
+    quickAdd: true,
+    agentCreatable: true,
+    providesImageReference: true,
+    promptPlaceholder: 'Describe the character...',
+  },
+  {
+    kind: 'scene',
+    label: 'Scene',
+    menuLabel: 'Scene',
+    component: loadBaseGenerationNode,
+    icon: 'scene',
+    defaultTitle: 'Scene',
+    defaultSize: { width: 300, height: 190 },
+    catalogKind: 'image',
+    executionKind: 'image',
+    quickAdd: true,
+    agentCreatable: true,
+    providesImageReference: true,
+    promptPlaceholder: 'Describe the scene...',
+  },
+  {
+    kind: 'image',
+    label: 'Image',
+    menuLabel: 'Image',
+    component: loadBaseGenerationNode,
+    icon: 'image',
+    defaultTitle: 'Image',
+    defaultSize: { width: 340, height: 280 },
+    catalogKind: 'image',
+    executionKind: 'image',
+    quickAdd: true,
+    agentCreatable: true,
+    providesImageReference: true,
+    promptPlaceholder: 'Describe this frame...',
+  },
+  {
+    kind: 'keyframe',
+    label: 'Keyframe',
+    menuLabel: 'Keyframe',
+    component: loadBaseGenerationNode,
+    icon: 'keyframe',
+    defaultTitle: 'Keyframe',
+    defaultSize: { width: 320, height: 220 },
+    catalogKind: 'image',
+    executionKind: 'image',
+    quickAdd: true,
+    providesImageReference: true,
+    promptPlaceholder: 'Describe the keyframe...',
+  },
+  {
+    kind: 'video',
+    label: 'Video',
+    menuLabel: 'Video',
+    component: loadBaseGenerationNode,
+    icon: 'video',
+    defaultTitle: 'Video',
+    defaultSize: { width: 420, height: 340 },
+    catalogKind: 'video',
+    executionKind: 'video',
+    quickAdd: true,
+    agentCreatable: true,
+    promptPlaceholder: 'Describe the video...',
+  },
+  {
+    // 声音：配音生成（TTS，文→音）/ 转写（Whisper，音→文）/ 上传音频。渲染走 audio-strip（按 kind 强制，
+    // 见 BaseGenerationNode renderKind 分发），生成类挂 composer（模式切换在 NodeGenerationComposer）。
+    kind: 'audio',
+    label: 'Audio',
+    menuLabel: 'Audio',
+    component: loadBaseGenerationNode,
+    icon: 'audio',
+    defaultTitle: 'Audio',
+    defaultSize: { width: 420, height: 80 },
+    catalogKind: 'audio',
+    executionKind: 'audio',
+    quickAdd: true,
+    agentCreatable: true,
+    promptPlaceholder: 'Enter dialogue or narration...',
+  },
+  {
+    kind: 'clip',
+    label: 'Clip',
+    menuLabel: 'Clip',
+    component: () => import('./ClipNode'),
+    icon: 'clip',
+    defaultTitle: '剪辑',
+    defaultSize: { width: 760, height: 132 },
+    catalogKind: 'video',
+    quickAdd: true,
+    agentCreatable: false,
+    promptPlaceholder: 'Add media to edit...',
+  },
+  {
+    kind: 'shot',
+    label: 'Shot',
+    menuLabel: 'Shot',
+    component: loadBaseGenerationNode,
+    icon: 'shot',
+    defaultTitle: 'Shot',
+    defaultSize: { width: 340, height: 230 },
+    catalogKind: 'text',
+    quickAdd: true,
+    promptPlaceholder: 'Describe the shot...',
+  },
+  {
+    kind: 'output',
+    label: 'Output',
+    menuLabel: 'Output',
+    component: loadBaseGenerationNode,
+    icon: 'output',
+    defaultTitle: 'Output',
+    defaultSize: { width: 280, height: 170 },
+    catalogKind: 'text',
+    quickAdd: true,
+    promptPlaceholder: 'Add output notes...',
+  },
+  {
+    kind: 'panorama',
+    label: 'Panorama',
+    menuLabel: 'Panorama',
+    component: loadBaseGenerationNode,
+    icon: 'panorama',
+    defaultTitle: 'Panorama',
+    defaultSize: { width: 480, height: 270 },
+    catalogKind: 'image',
+    quickAdd: true,
+    providesImageReference: true,
+    promptPlaceholder: 'Add a panorama reference...',
+  },
+  {
+    // 导演台（docs/plan/2026-09-02-director-console-v2.md）：Nomi 唯一的 3D 节点；老 scene3d 节点在快照加载时迁成它（director/migration）。
+    // AI 来导（站位 / 运镜参考）走 director/agent 的建节点入口，不经 agentCreatable 泛用建节点。
+    kind: 'director',
+    label: 'Director',
+    menuLabel: 'Director',
+    component: () => import('./director/DirectorNode'),
+    icon: 'director',
+    defaultTitle: 'Director',
+    defaultSize: { width: 480, height: 320 },
+    catalogKind: 'text',
+    quickAdd: true,
+    agentCreatable: false,
+    providesImageReference: true,
+    promptPlaceholder: 'Block, move the camera and render in the 3D director...',
+  },
+  {
+    kind: 'whiteboard',
+    label: 'Whiteboard',
+    menuLabel: 'Whiteboard',
+    // 画板复用共享外壳 BaseGenerationNode(renderKind=whiteboard-card)，和其他节点同一套外壳；
+    // body 在 whiteboard/WhiteboardCardBody（懒加载）。删了旧 WhiteboardCardNode 平行外壳。
+    component: loadBaseGenerationNode,
+    icon: 'whiteboard',
+    defaultTitle: 'Whiteboard',
+    defaultSize: { width: 320, height: 240 },
+    catalogKind: 'image',
+    quickAdd: true,
+    providesImageReference: true,
+    promptPlaceholder: 'Draw a reference...',
+  },
+  {
+    // 3D 模型：文生 / 图生 3D 生成节点（RunningHub 混元/HiTem/Meshy，输出 .glb）。是**生成节点**
+    // （拿 composer），区别于 scene3d 编辑器节点。body 走 model3d-card（懒加载 Model3DViewer，
+    // 复用 scene3d 的 R3F useGLTF 栈）。composer 挂载放行（不在 BaseGenerationNode 的 scene3d 排除名单）。
+    kind: 'model3d',
+    label: '3D Model',
+    menuLabel: '3D Model',
+    component: loadBaseGenerationNode,
+    icon: 'model3d',
+    defaultTitle: '3D Model',
+    defaultSize: { width: 320, height: 300 },
+    catalogKind: 'model3d',
+    executionKind: 'model3d',
+    quickAdd: true,
+    agentCreatable: true,
+    promptPlaceholder: 'Describe the 3D model...',
+  },
+  {
+    // 素材：导入图 / 文件树拖入 / 本地切图裁剪旋转衍生物。它就是一张图，不是生成节点：
+    // 无 executionKind（不会生成）、无 composer（壳按 isAssetKind 关闭）、不可手动新建（quickAdd:false）、
+    // 不进 agent 工具（agentCreatable 缺省 false）。仍可作参考被连线（providesImageReference）。
+    kind: 'asset',
+    label: 'Asset',
+    menuLabel: 'Asset',
+    component: loadBaseGenerationNode,
+    icon: 'image',
+    defaultTitle: 'Asset',
+    defaultSize: { width: 340, height: 280 },
+    catalogKind: 'image',
+    quickAdd: false,
+    providesImageReference: true,
+  },
+  {
+    // AI 手艺产物：Agent 不调模型、用代码/标记语言直接做出的表达物（SVG / 动态 HTML / Markdown /
+    // 表格 / 3D 摆位…）的画布家。区别于生成节点（media 照旧走 image/video/audio/model3d）。
+    // - 无 executionKind → 不生成、无 composer（壳按 asset 同款逻辑关闭生成 UI）。
+    // - agentCreatable:true → 只能 Agent 经 create_nodes 创建（用户不手动加空节点，quickAdd:false）。
+    // - 产物元数据不塞 result（GenerationResultType 是 zod 5 值闭集），挂在 node.meta.artifact：
+    //   { fileType: 'svg'|'html'|'markdown'|'table'|'glb'|'text', url: nomi-local://… }，
+    //   url 带真实扩展名（下载/主进程按扩展名补全，无需动 useResultDownload 闭集）。
+    // - 渲染：BaseGenerationNode 的 kind 专属分支（scene3d/panorama 同级）→ ArtifactBody 按 fileType 分发子视图。
+    // - 不作参考槽源（providesImageReference 缺省 false）：要当参考图 → 浮条"固化为参考图"
+    //   栅格化 PNG 走 assetImportAdapter 另存为 asset 节点（参考语义归 asset，不双源）。
+    //   数据模型收敛见 docs/plan/2026-09-06-agent-artifact-node.md §4.1。
+    kind: 'agent-artifact',
+    label: 'Agent Artifact',
+    menuLabel: 'Artifact',
+    component: loadBaseGenerationNode,
+    icon: 'image',
+    defaultTitle: 'Agent Artifact',
+    defaultSize: { width: 360, height: 260 },
+    catalogKind: 'text',
+    quickAdd: false,
+    agentCreatable: true,
+  },
     {
         kind: "compare",
         label: "Image Compare",
@@ -226,20 +343,6 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
         quickAdd: false,
         agentCreatable: false,
         promptPlaceholder: "从技能库放入一个技能...",
-    },
-    {
-        kind: "panorama",
-        label: "Panorama",
-        menuLabel: "全景图",
-        component: loadBaseGenerationNode,
-        icon: "panorama",
-        defaultTitle: "全景图",
-        defaultSize: { width: 480, height: 270 },
-        catalogKind: "image",
-        executionKind: "image",
-        quickAdd: true,
-        providesImageReference: true,
-        promptPlaceholder: "上传或截取全景参考图...",
     },
     {
         kind: "scene3d",
@@ -271,38 +374,6 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
         promptPlaceholder: "通过 Director Agent 在 Blender 中搭建场景、摆位、机位和镜头节拍...",
     },
     {
-        kind: "whiteboard",
-        label: "Whiteboard",
-        menuLabel: "画板",
-        // 画板复用共享外壳 BaseGenerationNode(renderKind=whiteboard-card)，和其他节点同一套外壳；
-        // body 在 whiteboard/WhiteboardCardBody（懒加载）。删了旧 WhiteboardCardNode 平行外壳。
-        component: loadBaseGenerationNode,
-        icon: "whiteboard",
-        defaultTitle: "画板",
-        defaultSize: { width: 320, height: 240 },
-        catalogKind: "image",
-        quickAdd: true,
-        providesImageReference: true,
-        promptPlaceholder: "在画板里绘制参考，再描述要生成的画面...",
-    },
-    {
-        // 3D 模型：文生 / 图生 3D 生成节点（RunningHub 混元/HiTem/Meshy，输出 .glb）。是**生成节点**
-        // （拿 composer），区别于 scene3d 编辑器节点。body 走 model3d-card（懒加载 Model3DViewer，
-        // 复用 scene3d 的 R3F useGLTF 栈）。composer 挂载放行（不在 BaseGenerationNode 的 scene3d 排除名单）。
-        kind: "model3d",
-        label: "3D Model",
-        menuLabel: "3D 模型",
-        component: loadBaseGenerationNode,
-        icon: "model3d",
-        defaultTitle: "3D 模型",
-        defaultSize: { width: 320, height: 300 },
-        catalogKind: "model3d",
-        executionKind: "model3d",
-        quickAdd: true,
-        agentCreatable: true,
-        promptPlaceholder: "描述要生成的 3D 模型（外形、材质、风格）…",
-    },
-    {
         // 可复用创作资源：保存风格/效果/身份/色板及其来源资产、许可、提示词。
         // 它不直接发起生成，但可作为参考连接到能力配方派生节点。
         kind: "resource",
@@ -317,22 +388,7 @@ export const GENERATION_NODE_PLUGINS = defineGenerationNodePlugins([
         agentCreatable: false,
         providesImageReference: true,
     },
-    {
-        // 素材：导入图 / 文件树拖入 / 本地切图裁剪旋转衍生物。它就是一张图，不是生成节点：
-        // 无 executionKind（不会生成）、无 composer（壳按 isAssetKind 关闭）、不可手动新建（quickAdd:false）、
-        // 不进 agent 工具（agentCreatable 缺省 false）。仍可作参考被连线（providesImageReference）。
-        kind: "asset",
-        label: "Asset",
-        menuLabel: "素材",
-        component: loadBaseGenerationNode,
-        icon: "image",
-        defaultTitle: "素材",
-        defaultSize: { width: 340, height: 280 },
-        catalogKind: "image",
-        quickAdd: false,
-        providesImageReference: true,
-    },
-]);
+])
 
 export type GenerationNodePlugin = (typeof GENERATION_NODE_PLUGINS)[number]
 export type GenerationNodeKind = GenerationNodePlugin['kind']

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ProductionRunRevisionConflictError,
@@ -81,6 +81,23 @@ describe("ProductionRunRepository", () => {
     expect(repository().list("project-1")).toHaveLength(1);
   });
 
+  it("projects only the plan's presence facts into the list, never its candidates or contract", () => {
+    const candidate = { ...generationCandidate(), references: [] };
+    repository().createGenerationDraft({
+      operationId: "op-hidden", projectId: "project-1", origin: { host: "nomi" }, candidate, cardHidden: true,
+    });
+    repository().createGenerationDraft({
+      operationId: "op-shown", projectId: "project-1", origin: { host: "nomi" }, candidate,
+    });
+    createRun();
+
+    const byId = new Map(repository().list("project-1").map((summary) => [summary.runId, summary]));
+    expect(byId.get("op-hidden")?.generationPlan).toEqual({ state: "draft", cardHidden: true });
+    expect(byId.get("op-shown")?.generationPlan).toEqual({ state: "draft" });
+    expect(byId.get("run-1")).not.toHaveProperty("generationPlan");
+    expect(byId.get("op-shown")).not.toHaveProperty("jobs");
+  });
+
   it("serializes mutations with revision CAS and monotonic cursors", () => {
     createRun();
     const first = repository().execute("project-1", "run-1", {
@@ -98,7 +115,7 @@ describe("ProductionRunRepository", () => {
         commandId: "cmd-stale",
         expectedRevision: 0,
         type: "run.status",
-        payload: { status: "cancelled" },
+        payload: { status: "cancelled", reason: "user_cancelled" },
         issuedAt: "2026-08-08T08:00:00.000Z",
       }),
     ).toThrow(ProductionRunRevisionConflictError);
@@ -148,7 +165,7 @@ describe("ProductionRunRepository", () => {
       commandId: "cmd-2",
       expectedRevision: 1,
       type: "run.status",
-      payload: { status: "cancelled" },
+      payload: { status: "cancelled", reason: "user_cancelled" },
       issuedAt: "2026-08-08T08:00:00.000Z",
     });
 
@@ -270,7 +287,6 @@ describe("ProductionRunRepository", () => {
       origin: { host: "codex" },
       brief: { goal: "durable authority fixture" },
       policy: {
-        mode: "balanced",
         trustedHosts: ["codex"],
         allowedProviders: ["tapcanvas"],
         allowedModels: ["seedance-1.0"],
@@ -382,6 +398,41 @@ describe("ProductionRunRepository", () => {
       reserved: 7,
       actual: 0,
       unsettled: 0,
+      unknownInFlight: 0,
     });
   });
 });
+
+describe('K3 trusted absence boundary', () => {
+  it.each(['missing', 'empty', 'wrong-shape'] as const)('rejects a corrupt snapshot with %s event history without rewriting evidence', (history) => {
+    const paths = productionRunPaths(root, 'run-damaged');
+    fs.mkdirSync(paths.dir, { recursive: true });
+    const damaged = '{synthetic-secret-corrupt-snapshot';
+    fs.writeFileSync(paths.snapshot, damaged);
+    if (history !== 'missing') fs.writeFileSync(paths.events, history === 'empty' ? '' : '{}\n');
+    expect(() => repository().read('project-1', 'run-damaged')).toThrow();
+    expect(fs.readFileSync(paths.snapshot, 'utf8')).toBe(damaged);
+  });
+
+  it('reserves null for absent durable records', () => {
+    expect(repository().read('project-1', 'never-created')).toBeNull();
+  });
+
+  it('does not classify an existing empty event log as an absent Run', () => {
+    const paths = productionRunPaths(root, 'run-damaged');
+    fs.mkdirSync(paths.dir, { recursive: true });
+    fs.writeFileSync(paths.events, '');
+    expect(() => repository().read('project-1', 'run-damaged')).toThrow();
+  });
+});
+
+  it('K3 refuses a storage permission failure instead of minting absence', () => {
+    const realRead = fs.readFileSync;
+    const spy = vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
+      if (String(args[0]).includes('run-unreadable')) throw Object.assign(new Error('synthetic-secret-permission'), { code: 'EACCES' });
+      return realRead(...args);
+    });
+    try {
+      expect(() => repository().read('project-1', 'run-unreadable')).toThrow('Production run storage read failed');
+    } finally { spy.mockRestore(); }
+  });

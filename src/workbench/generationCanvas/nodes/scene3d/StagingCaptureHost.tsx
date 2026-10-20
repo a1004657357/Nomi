@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // 站位参考的全局出图 Host：常驻挂载（不随画布节点剔除），扫描带 meta.stagingAutoCapture 的
 // scene3d 节点 → 离屏渲染出图 → 落 image 节点 + 连 scene3d→image(reference) + image→镜头(composition_ref)
 // → 写回缩略图 + 清标志。把 auto-capture 从「依赖节点在视口」的 Scene3DEditor 里抽出来（根因修复：
@@ -10,6 +11,8 @@ import { persistScene3DScreenshot } from './scene3dScreenshot'
 import { Scene3DAutoCapture } from './Scene3DAutoCapture'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import type { Scene3DCaptureResult } from './scene3dTypes'
+import { withProjectAction, type ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
+import { toast } from '../../../../ui/toast'
 
 type StagingAutoCapture = { targetNodeId?: string }
 
@@ -31,13 +34,15 @@ export function StagingCaptureHost(): JSX.Element | null {
     state.nodes.find((node) => node.kind === 'scene3d' && readStaging(node) !== null) ?? null,
   )
   const processingRef = React.useRef<string | null>(null)
+  const projectRef = React.useRef<ProjectExecutionContext | null>(null)
 
   const handleResult = React.useCallback(
-    async (nodeId: string, capture: Scene3DCaptureResult | null) => {
+    async (nodeId: string, capture: Scene3DCaptureResult | null, project: ProjectExecutionContext | null) => {
       const store = useGenerationCanvasStore.getState()
       const node = store.nodes.find((candidate) => candidate.id === nodeId)
       const staging = node ? readStaging(node) : null
       const clearFlag = () => {
+        if (project?.signal.aborted) return
         const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId)
         if (!current) return
         const meta = { ...(current.meta || {}) }
@@ -46,7 +51,9 @@ export function StagingCaptureHost(): JSX.Element | null {
       }
       try {
         if (!node || !capture) return
-        const persisted = await persistScene3DScreenshot(capture.dataUrl, nodeId, capture.title)
+        project?.assertCurrent()
+        const persisted = await persistScene3DScreenshot(capture.dataUrl, nodeId, capture.title, project)
+        project?.assertCurrent()
         const createdAt = Date.now()
         const imageNode = store.addNode({
           kind: 'image',
@@ -103,8 +110,14 @@ export function StagingCaptureHost(): JSX.Element | null {
 
   if (!pendingNode) return null
   if (processingRef.current && processingRef.current !== pendingNode.id) return null
+  if (!processingRef.current) projectRef.current = withProjectAction(project => project) ?? null
   processingRef.current = pendingNode.id
+  const project = projectRef.current
   const state = normalizeScene3DState(pendingNode.meta?.scene3dState)
   const nodeId = pendingNode.id
-  return <Scene3DAutoCapture state={state} onResult={(result) => { void handleResult(nodeId, result) }} />
+  return <Scene3DAutoCapture state={state} onResult={(result) => {
+    void handleResult(nodeId, result, project).catch(() => {
+      if (!project?.signal.aborted) toast(t('scene3d.fullscreen.screenshotFailed'), 'error')
+    })
+  }} />
 }

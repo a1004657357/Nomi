@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { canvasToolNames } from '../ai/canvasTools'
-import { parseSkillManifest } from './skillManifestSchema'
+import { LANE_MODEL_TOOL_CATALOG, LANE_DEFERRED_TOOL_CATALOG, LANE_NATIVE_TOOL_CATALOG } from '../agentLane/laneToolCatalog'
+import { parseSkillFrontmatter } from './skillFrontmatter'
+import { readSkillManifest } from './skillManifestSchema'
 
 const SKILL_DIRS = [
   'creative-multiview',
@@ -23,24 +24,33 @@ const REQUIRED_SECTIONS = [
 ] as const
 
 describe('creative capability Skill Playbooks', () => {
-  it('ships six valid provider-independent manifests using only registered canvas tools', () => {
-    const names = new Set<string>()
-    for (const directory of SKILL_DIRS) {
-      const skillDir = path.resolve(process.cwd(), 'skills', directory)
-      const raw = JSON.parse(fs.readFileSync(path.join(skillDir, 'skill.json'), 'utf8')) as unknown
-      const parsed = parseSkillManifest(raw)
-      expect(parsed.ok, directory).toBe(true)
-      if (!parsed.ok) continue
-      expect(names.has(parsed.manifest.name), parsed.manifest.name).toBe(false)
-      names.add(parsed.manifest.name)
-      expect(parsed.manifest.stages?.length).toBeGreaterThan(0)
-      expect(parsed.manifest.tools.every((toolName) => canvasToolNames.includes(toolName as typeof canvasToolNames[number]))).toBe(true)
-      expect(parsed.manifest.canvas).toBeDefined()
-      expect(parsed.manifest.canvas?.defaultRecipeId ?? null).toSatisfy(
-        (value: string | null) => value === null || parsed.manifest.canvas?.recipeIds.includes(value) === true,
-      )
+  it.each(SKILL_DIRS)('%s keeps its provider-independent metadata in frontmatter', (directory) => {
+    const skillDir = path.resolve(process.cwd(), 'skills', directory)
+    const front = parseSkillFrontmatter(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8'))
+    expect(front.values.name).toBe(directory)
+    expect(fs.existsSync(path.join(skillDir, 'skill.json'))).toBe(false)
+    const { manifest, error } = readSkillManifest(front)
+    expect(error, directory).toBeUndefined()
+    expect(manifest).not.toBeNull()
+    if (!manifest) return
+    expect(manifest.selectableInWorkbench).toBe(true)
+    expect(manifest.stages?.length).toBeGreaterThan(0)
+    expect(manifest.canvas).toBeDefined()
+    expect(manifest.canvas?.defaultRecipeId ?? null).toSatisfy(
+      (value: string | null) => value === null || manifest.canvas?.recipeIds.includes(value) === true,
+    )
+  })
+
+  it.each([...SKILL_DIRS, 'creative-video-deconstruction', 'workbench-cinematic-director', 'workbench-vibing-director'])(
+    '%s declares only tools wired into the unified Agentlane', (directory) => {
+    const front = parseSkillFrontmatter(fs.readFileSync(path.resolve('skills', directory, 'SKILL.md'), 'utf8'))
+    const declared = (front.values.metadata as { nomi: { tools: string[]; stages?: { tools: string[] }[] } }).nomi
+    const registered = new Set([...LANE_MODEL_TOOL_CATALOG, ...LANE_DEFERRED_TOOL_CATALOG, ...LANE_NATIVE_TOOL_CATALOG].map(tool => tool.name))
+    for (const name of declared.tools) expect(registered.has(name), `${directory}: ${name}`).toBe(true)
+    const top = new Set(declared.tools)
+    for (const stage of declared.stages ?? []) {
+      for (const name of stage.tools) expect(top.has(name), `${directory}: stage tool ${name}`).toBe(true)
     }
-    expect(names.size).toBe(6)
   })
 
   it('uses the standard six-section playbook body for every skill', () => {

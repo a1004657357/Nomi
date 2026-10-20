@@ -1,102 +1,61 @@
 import crypto from 'node:crypto'
+import { tagNomiError } from '../shared/nomiErrorCodes'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import {
-  createProductionRunRepository,
-  type ProductionRunRepository,
-} from './productionRunRepository'
+import { createProductionRunRepository, type ProductionRunRepository } from './productionRunRepository'
 import { resolveWorkspaceProjectDir } from '../workspace/workspaceRepository'
 import { getWorkspaceRepositoryDeps } from '../runtimePaths'
 import {
-  createArtifactProjection,
   getArtifactPreviewSecret,
   resolveOwnedArtifactFile,
   verifyArtifactPreviewHandle,
-  type ArtifactProjection,
 } from './artifactProjection'
 import { buildProductionDeepLink } from './productionDeepLink'
 import { applyRunControl } from './productionRunControl'
-import { createDriverOps, isShotGate } from './productionRunDriverOps'
+import { isStillAtProvider, settleRunLifecycle } from './productionRunLifecycle'
+import { createDriverOps, isSemanticMultiShotRun } from './productionRunDriverOps'
+import { isShotGate, isSpendGate } from './productionRunGateIdentity'
 import { withEventTap } from './productionRunEventTap'
-import { safeExternalText, safeProductionContract, safeShotId } from './productionRunProjectionSanitizer'
 import { assertStoryboardSourceFresh, createArtifactOperations } from './productionRunArtifactOperations'
 import { assertStoryboardSourceApproved } from './productionRunReducer'
 import { MEANINGFUL_EVENT_TYPES } from './productionRunMeaningfulEvents'
 import { readAutomationPolicySettings } from '../settings/automationPolicySettings'
+import { readAgentApprovalPolicy } from '../settings/agentApprovalPolicySettings'
+import { readConnectedModelScope } from './connectedModelScope'
 import { assertProductionPolicyReady } from './productionPolicyReadiness'
 import { normalizeTrustLevel, trustLevelOf } from './productionRunTypes'
-import { approvalReceiptForGate } from './productionRunApprovalReceipt'
+import { assertCallerDeclaredTrustLevel, trustLevelFromApprovalPolicy } from './productionRunTrustAuthority'
+import { createGateApprovalOwner } from './productionRunApprovalReceipt'
 import { isAnchorCheckpointGate } from './anchorCheckpoint'
 import { kickBatchSchedulerForRun } from './batchSchedulerKick'
+import { renewDispatchConsent } from './productionDispatchConsentEdits'
+import { recoverStoryboardContentHashes } from './productionRunStoryboardHashRecovery'
 import type { ApprovalReceiptAuthority } from '../capabilityCore/approvalReceipt'
 import {
-  metadataProjection,
   storyboardMetadata,
 } from './productionRunArtifactHelpers'
 import type {
   AutomationPolicy,
   CreateProductionRunInput,
   ProductionGenerationPlan,
+  ProductionGenerationShot,
   ProductionRun,
   RunEvent,
   RunCommand,
 } from './productionRunTypes'
+import { eventProjection, runProjection } from './productionRunProjections'
+import type { ProductionEventProjection, ProductionRunProjection } from './productionRunProjections'
+// 投影类型的公共 API 位置不变：外部调用方仍从本模块 import。
+export type {
+  ProductionRunProjection,
+  ProductionEventProjection,
+  ProductionArtifactProjection,
+  MaterializeStoryboardResult,
+} from './productionRunProjections'
+import { logError } from '../logging/logger'
+import { ProductionRunNotFoundError } from './productionRunErrors'
 
-type SafeProductionGate = Omit<ProductionRun['gates'][number], 'planHash' | 'contract'> & {
-  contract?: ReturnType<typeof safeProductionContract>
-}
-type SafeProductionJob = Pick<ProductionRun['jobs'][number], 'jobId' | 'stageId' | 'status' | 'attempt' | 'provider' | 'model' | 'nodeId' | 'parentJobId' | 'retryCount' | 'retryReason' | 'progressPercent' | 'lastPollAt' | 'lastVendorStateChangeAt' | 'createdAt' | 'updatedAt' | 'errorCode'>
-  // metadata 只投影 shotId 这一格，故显式写死形状——不 Pick 整个 metadata：那是 Record<string, unknown> 袋子
-  // （还装着 ffDesc/dialogue/retryDirective 等未脱敏长文本），类型上承诺全量、实际只发一格 = 类型说谎。
-  & { metadata?: { shotId: string } }
-export type ProductionRunProjection = {
-  schemaVersion: number
-  runId: string
-  projectId: string
-  revision: number
-  status: ProductionRun['status']
-  stageId: string
-  playbook: ProductionRun['playbook']
-  origin: ProductionRun['origin']
-  budget: ProductionRun['budget']
-  planVersion: number
-  snapshotCursor: number
-  stages: ProductionRun['stages']
-  gates: SafeProductionGate[]
-  jobs: SafeProductionJob[]
-  artifacts: Array<Omit<ArtifactProjection, 'projectId' | 'runId' | 'openInNomi'>>
-  /** B3：信任档位（run 级）。老 run 无字段 → 默认 key_confirm。用于合同/状态转述。 */
-  trustLevel: import('./productionRunTypes').TrustLevel
-  createdAt: string
-  updatedAt: string
-  openInNomi: string
-}
-
-export type ProductionEventProjection = Pick<RunEvent, 'schemaVersion' | 'eventId' | 'cursor' | 'runId' | 'runRevision' | 'commandId' | 'type' | 'message' | 'emittedAt' | 'stageId' | 'jobId' | 'artifactId' | 'causationId' | 'correlationId' | 'attemptId' | 'providerOccurredAt'>
-
-export type ProductionArtifactProjection = ArtifactProjection
-
-/**
- * Renderer result for the external-agent storyboard materialization seam.
- * The renderer owns the actual Zustand canvas mutation; the service only accepts
- * the small, validated binding receipt needed to attach the production contract.
- */
-export type MaterializeStoryboardResult = ProductionRunProjection & {
-  materialized: true
-  artifactId: string
-  artifactVersion: number
-  createdNodeIds: string[]
-  connectedCount?: number
-  /** Stable canvas node bindings copied into production jobs. */
-  bindings: Array<{
-    nodeId: string
-    provider: string
-    model: string
-    stageId: string
-    metadata?: Record<string, unknown>
-  }>
-}
 
 type ServiceDeps = {
   repository?: ProductionRunRepository
@@ -104,6 +63,7 @@ type ServiceDeps = {
   projectRootResolver?: (projectId: string) => string | null
   previewSecret?: string
   requestRenderer?: (op: string, payload: unknown, timeoutMs: number) => Promise<unknown>
+  executeProductionExport?: (input: { projectId: string; runId: string; outputName: string }) => Promise<{ relativePath: string; size: number; jobId?: string }>
   policyResolver?: () => Partial<AutomationPolicy>
   reconcileProviderTask?: (job: ProductionRun['jobs'][number]) => Promise<{
     status?: string
@@ -112,7 +72,11 @@ type ServiceDeps = {
   }>
   /** A5：每批持久化事件的旁路监听（系统通知等）。异常被吞，绝不影响制作主流程。 */
   onEvents?: (events: RunEvent[], run: ProductionRun) => void
-  /** Optional main-process receipt owner. When supplied, gate.decide must verify and consume a receipt. */
+  /**
+   * 主进程收据权威。**不传不等于放行**：构造时会退成 fail-closed 的人证持有者，付费门届时只认
+   * productionRunIpc 盖的真人手势章（见 createGateApprovalOwner）。生产装配必须传，装配点是
+   * productionRunRuntime.getProductionRunService()。
+   */
   approvalReceiptAuthority?: ApprovalReceiptAuthority
   /** Current project document revision, resolved by the project owner rather than the command body. */
   projectRevisionResolver?: (projectId: string) => number | undefined
@@ -124,108 +88,6 @@ function identifier(value: string, label: string): string {
   return normalized
 }
 
-function safeRunProjection(run: ProductionRun): Omit<ProductionRunProjection, 'artifacts' | 'openInNomi'> {
-  return {
-    schemaVersion: run.schemaVersion,
-    runId: run.runId,
-    projectId: run.projectId,
-    revision: run.revision,
-    status: run.status,
-    stageId: run.stageId,
-    playbook: { name: run.playbook.name, version: run.playbook.version },
-    origin: { host: run.origin.host, ...(run.origin.actorId ? { actorId: run.origin.actorId } : {}) },
-    budget: { ...run.budget },
-    planVersion: run.planVersion,
-    snapshotCursor: run.snapshotCursor,
-    // B3：run 级信任档位（老 run 无字段 → 默认 key_confirm）。合同/状态转述据此显示打扰程度。
-    trustLevel: trustLevelOf(run.policy),
-    stages: run.stages.map((stage) => ({
-      stageId: stage.stageId, title: safeExternalText(stage.title), status: stage.status, order: stage.order,
-      ...(stage.startedAt ? { startedAt: stage.startedAt } : {}),
-      ...(stage.completedAt ? { completedAt: stage.completedAt } : {}),
-      // W1.5：审片摘要透出（仅 qa 阶段有，文本经 sanitizer）。
-      ...(stage.qaSummary ? { qaSummary: safeExternalText(stage.qaSummary) } : {}),
-    })),
-    gates: run.gates.map((gate) => ({
-      gateId: gate.gateId, scope: gate.scope, status: gate.status, title: safeExternalText(gate.title), summary: safeExternalText(gate.summary),
-      jobIds: [...gate.jobIds],
-      createdAt: gate.createdAt, expiresAt: gate.expiresAt, ...(gate.decidedAt ? { decidedAt: gate.decidedAt } : {}),
-      ...(gate.contract ? { contract: safeProductionContract(gate.contract) } : {}),
-      // B1：方向候选透出（文本经 sanitizer）；决议后回填的 choiceKey 供转述/审计。
-      ...(gate.directionCandidates ? { directionCandidates: gate.directionCandidates.map((candidate) => ({ key: candidate.key, title: safeExternalText(candidate.title), oneLiner: safeExternalText(candidate.oneLiner) })) } : {}),
-      ...(gate.decidedChoiceKey ? { decidedChoiceKey: gate.decidedChoiceKey } : {}),
-    })),
-    jobs: run.jobs.map((job) => {
-      // 多镜批次里 job↔镜头的对应关系（agent 建批时自己传的 shotId）。没有它，读回来的 jobs 只能按 status
-      // 计数、认不出哪个 job 是哪一镜——返工/对账全瞎。老 run / 单镜链无此字段 → 不发（等价「默认镜」）。
-      const shotId = safeShotId(job.metadata?.shotId)
-      return {
-        jobId: job.jobId, stageId: job.stageId, status: job.status, attempt: job.attempt,
-        provider: job.provider, model: job.model, ...(job.nodeId ? { nodeId: job.nodeId } : {}),
-        ...(shotId ? { metadata: { shotId } } : {}),
-        ...(job.parentJobId ? { parentJobId: job.parentJobId } : {}),
-        ...(job.retryCount !== undefined ? { retryCount: job.retryCount } : {}),
-        ...(job.retryReason ? { retryReason: safeExternalText(job.retryReason) } : {}),
-        ...(job.progressPercent !== undefined ? { progressPercent: job.progressPercent } : {}),
-        ...(job.providerStatus ? { providerStatus: safeExternalText(job.providerStatus) } : {}),
-        ...(job.lastPollAt ? { lastPollAt: job.lastPollAt } : {}),
-        ...(job.lastVendorStateChangeAt ? { lastVendorStateChangeAt: job.lastVendorStateChangeAt } : {}),
-        ...(job.errorCode ? { errorCode: job.errorCode } : {}),
-        createdAt: job.createdAt, updatedAt: job.updatedAt,
-      }
-    }),
-    createdAt: run.createdAt,
-    updatedAt: run.updatedAt,
-  }
-}
-
-function runProjection(
-  run: ProductionRun,
-  projectRootResolver: (projectId: string) => string | null,
-  previewSecret: string,
-): ProductionRunProjection {
-  const { artifacts } = run
-  const safeRun = safeRunProjection(run)
-  return {
-    ...safeRun,
-    artifacts: artifacts.map((artifact) => {
-      const root = projectRootResolver(run.projectId)
-      if (root && (artifact.projectRelativePath || artifact.thumbnailRelativePath)) {
-        try {
-          const projected = createArtifactProjection({ projectRoot: root, run, artifact, secret: previewSecret })
-          const { runId: _runId, projectId: _projectId, openInNomi: _openInNomi, ...safeArtifact } = projected
-          return safeArtifact
-        } catch {
-          // Missing or changed files must not hide the Run itself; expose metadata without a preview.
-        }
-      }
-      const { runId: _runId, projectId: _projectId, openInNomi: _openInNomi, ...safeArtifact } = metadataProjection(run, artifact)
-      return safeArtifact
-    }),
-    openInNomi: buildProductionDeepLink(run.projectId, run.runId),
-  }
-}
-
-function eventProjection(event: RunEvent): ProductionEventProjection {
-  return {
-    schemaVersion: event.schemaVersion,
-    eventId: event.eventId,
-    cursor: event.cursor,
-    runId: event.runId,
-    runRevision: event.runRevision,
-    commandId: event.commandId,
-    type: event.type,
-    message: safeExternalText(event.message),
-    emittedAt: event.emittedAt,
-    ...(event.stageId ? { stageId: event.stageId } : {}),
-    ...(event.jobId ? { jobId: event.jobId } : {}),
-    ...(event.artifactId ? { artifactId: event.artifactId } : {}),
-    ...(event.causationId ? { causationId: event.causationId } : {}),
-    ...(event.correlationId ? { correlationId: event.correlationId } : {}),
-    ...(event.attemptId ? { attemptId: event.attemptId } : {}),
-    ...(event.providerOccurredAt ? { providerOccurredAt: event.providerOccurredAt } : {}),
-  }
-}
 
 export function createProductionRunService(deps: ServiceDeps = {}) {
   // A5：事件旁路装饰（通知等），见 productionRunEventTap.ts。
@@ -237,18 +99,35 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     const bridge = await import('../capabilityCore/rendererBridge')
     return bridge.requestRenderer(op, payload, timeoutMs)
   })
+
+  const executeProductionExport = deps.executeProductionExport ?? (async (input) => {
+    const prepared = await requestRenderer('production.export', input, 5 * 60_000) as { manifest?: unknown }
+    const exports = await import('../export/exportJobs')
+    return exports.executeProductionRunExport({
+      ...input,
+      manifest: prepared?.manifest,
+      captureWebm: async () => {
+        const captured = await requestRenderer('production.capture-export', input, 30 * 60_000) as { webmBytes?: unknown }
+        return captured?.webmBytes
+      },
+    })
+  })
   const policyResolver = deps.policyResolver ?? (() => {
     const settings = readAutomationPolicySettings()
     return {
-      mode: settings.mode,
       trustedHosts: [...settings.trustedHosts],
-      allowedProviders: [...settings.allowedProviders],
-      allowedModels: [...settings.allowedModels],
-      maxSpend: settings.maxSpend,
+      ...readConnectedModelScope(),
       maxAttemptsPerJob: settings.maxAttemptsPerJob,
       minimizeUploads: settings.minimizeUploads,
+      // 信任档不是这一层自己的设置，而是**用户权限档的投影**（唯一那座桥）。少了这一行，
+      // `normalizeTrustLevel(undefined)` 恒给 `key_confirm`：用户在 Agent 面板选了「全自动」，
+      // Run 这一侧永远不知道，外部入口只能靠调用方自报——而自报那条路已经被堵死了。
+      trustLevel: trustLevelFromApprovalPolicy(readAgentApprovalPolicy()),
     }
   })
+  // 装配不变量：service 内部**没有**「没有人证持有者」这个状态。缺权威时持有的是 fail-closed 的那份，
+  // 于是命令路径上不再有 `if (!authority)` 这种「验不了就跳过」的分支（R28：能在构造期消掉的空状态别留到运行时）。
+  const gateApproval = createGateApprovalOwner(deps.approvalReceiptAuthority, deps.projectRevisionResolver)
   const inFlight = new Set<string>()
   const recoveryInFlight = new Set<string>()
   const reconciliationInFlight = new Set<string>()
@@ -270,16 +149,20 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     const safeProjectId = identifier(projectId, 'project')
     const safeRunId = identifier(runId, 'run')
     const run = repository.read(safeProjectId, safeRunId)
-    if (!run) throw new Error(`Production run not found: ${safeRunId}`)
+    if (!run) throw new ProductionRunNotFoundError()
     if (run.projectId !== safeProjectId) throw new Error('Production run project mismatch')
     return run
   }
 
   function createDraft(input: CreateProductionRunInput): ProductionRunProjection {
+    const userPolicy = policyResolver()
+    // 调用方自报的信任档不得自证：放松（少问）只能由用户的设置或一次真人答过的确认产生，
+    // 而建 Run 这条路上连一个能问人的面都没有。收紧照收。
+    assertCallerDeclaredTrustLevel(input.policy?.trustLevel, userPolicy)
     const run = repository.create({
       ...input,
       runId: input.runId ? identifier(input.runId, 'run') : undefined,
-      policy: { ...policyResolver(), ...(input.policy || {}) },
+      policy: { ...userPolicy, ...(input.policy || {}) },
     })
     // create 只可能产出「等方向 + 至少一道门 + 零任务零预算」的草稿：未登记的 playbook / 缺 brief
     // 在 repository 层就抛错（productionPlaybooks.ts），draft 已不可达，这里不再给它留口子。
@@ -288,6 +171,9 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     }
     // B3：budget_only（「别问了直接出」）→ 自动批准创意方向门（留痕），不拟候选、不打扰。
     // 其余档位 → 异步拟方向候选（GUI 有 LLM 才成；关着则保持兜底 gate）。均不阻塞返回。
+    // 2026-09-21：这一行以前也认调用方在请求体里自报的档位——门在 run 创建的同一刻被批掉，
+    // 没有任何人看见过它。上面的 assertCallerDeclaredTrustLevel 保证走到这里的 budget_only
+    // 只可能来自用户的设置（放松档位的请求已经被拒了）。
     if (trustLevelOf(run.policy) === 'budget_only') void autoApproveGate(run.projectId, run.runId, 'gate-direction-v1')
     else void proposeDirections(run)
     return runProjection(run, projectRootResolver, previewSecret)
@@ -300,8 +186,20 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     candidate: ProductionGenerationPlan['candidate']
     currency?: string
     policy?: Partial<AutomationPolicy>
+    shots?: ReadonlyArray<Pick<ProductionGenerationShot, 'shotId' | 'role' | 'included' | 'candidate'>>
+    cardHidden?: boolean
   }): ProductionRun {
-    return repository.createGenerationDraft(input)
+    // Semantic generation drafts must use the same live automation policy as
+    // every other ProductionRun entry point. Previously this thin service
+    // method delegated straight to the repository, whose low-level fallback
+    // is intentionally conservative (¥20 / one attempt), silently discarding
+    // the user's configured budget and retry ceiling. Keep caller-supplied
+    // provider/model allowlists as the narrow operation override, while
+    // deriving all unspecified controls from this service's policy resolver.
+    return repository.createGenerationDraft({
+      ...input,
+      policy: { ...policyResolver(), ...(input.policy || {}) },
+    })
   }
 
   function writeProjectJson(projectId: string, relativePath: string, value: unknown): void {
@@ -359,12 +257,13 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
 
   // B0：driver 编排（拟分镜 / 生成 / 导出 / 对账）抽到 productionRunDriverOps.ts，行为零变化。
   // service 保留其依赖的路径工具 + in-flight 去重集，经参数注入，仍可单测（R9 ≤800）。
-  const { proposeDirections, proposeScript, proposeStoryboard, driveGeneration, driveExport, driveReconciliation } = createDriverOps({
+  const { proposeDirections, proposeScript, proposeStoryboard, driveGeneration, advanceSemanticProduction, driveExport, driveReconciliation } = createDriverOps({
     repository,
     sleep,
     requireRun,
     executeInternal,
     requestRenderer,
+    executeProductionExport,
     writeProjectJson,
     localAssetPath,
     projectRelativePath,
@@ -374,6 +273,16 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     reconciliationInFlight,
     directionsInFlight,
   })
+
+  /**
+   * 叫醒干这个 Run 的活的那一方——「谁来驱动」只在这里判：多镜批次的派发归批次调度器（批次收齐后它自己交给
+   * driveGeneration 收尾），其余归 driveGeneration。Run 从停着被放回 running（任务卡 / 画布 / MCP 的「继续」都经
+   * run.control）后经这里，入口自己不用知道该踢谁；以前「继续」只踢 driveGeneration，多镜批次状态回到 running 却一镜都不派。
+   */
+  function wakeRunDriver(run: ProductionRun): void {
+    if (isSemanticMultiShotRun(run)) kickBatchSchedulerForRun(run.projectId, run.runId)
+    else void driveGeneration(run)
+  }
 
   async function command(projectId: string, runId: string, runCommand: RunCommand) {
     const safeProjectId = identifier(projectId, 'project')
@@ -394,6 +303,32 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       const outcome = runCommand.payload.outcome
       const job = current.jobs.find((candidate) => candidate.jobId === jobId)
       if (!job || job.status !== 'submission_unknown') throw new Error('Production job is not awaiting reconciliation')
+      if (outcome === 'user_checked_abandon') {
+        // 「我去服务商后台核对过了，没有这一笔」：把那次结果未知的尝试记成「用户核对后放弃」，释放这一镜的占用
+        // （job → needs_attention，画布重新可以生成），预留按用户核对过的事实 provider-safe 释放。
+        // 只认来自 Nomi 自己窗口的真人手势（productionRunIpc 盖章）；不开拍——重新生成仍要在正常的付费确认卡上点。
+        if (runCommand.humanGesture !== true) throw new Error('A user gesture is required to release an unconfirmed submission')
+        const released = repository.execute(safeProjectId, safeRunId, {
+          ...runCommand,
+          type: 'job.status',
+          payload: {
+            jobId,
+            status: 'needs_attention',
+            patch: { errorCode: 'user_checked_abandoned', errorMessage: `User checked the provider and abandoned this unconfirmed attempt at ${runCommand.issuedAt}` },
+          },
+        })
+        const reservationId: string = `${safeRunId}:${jobId}:${job.attempt}`
+        if (repository.readBudgetLedger(safeProjectId, safeRunId).reservations[reservationId]?.status === 'unsettled') {
+          return repository.execute(safeProjectId, safeRunId, {
+            commandId: `${runCommand.commandId}:release`,
+            expectedRevision: released.run.revision,
+            type: 'budget.entry',
+            payload: { entry: { billingEntryId: `${reservationId}:release-user-checked`, kind: 'release', reservationId, providerSafe: true, occurredAt: runCommand.issuedAt } },
+            issuedAt: runCommand.issuedAt,
+          })
+        }
+        return released
+      }
       if (outcome === 'not_found') {
         return repository.execute(safeProjectId, safeRunId, {
           ...runCommand,
@@ -416,16 +351,24 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       // 若正卡在创意/样片门等待且新档位是 budget_only → 顺手自动批准该门，让「直接出」立刻生效。
       const current = requireRun(safeProjectId, safeRunId)
       const trustLevel = normalizeTrustLevel(runCommand.payload.trustLevel)
+      // 降到 budget_only = 一次付费放行（此后逐镜确认门不再生成）→ 必须有一次真人答过的确认：
+      // Nomi 窗口里的手势章，或一张绑死「预算上限 + runId」的 elicitation 收据。缺两者 → 拒。
+      const trustReceipt = gateApproval.verifyTrustGrant(safeProjectId, safeRunId, current, runCommand)
       const result = repository.execute(safeProjectId, safeRunId, {
         ...runCommand,
         type: 'policy.set',
         payload: { policy: { ...current.policy, trustLevel } },
       })
+      // 事件先落库再消费收据：崩溃最多留下一张对着已生效档位的可重放收据，不会把档位改回去。
+      gateApproval.consume(trustReceipt || undefined)
       if (trustLevel === 'budget_only') {
-        const waitingCreativeGate = result.run.gates.find((gate) => gate.status === 'waiting' && (
-          gate.scope === 'stage' && (gate.gateId.startsWith('gate-direction-') || gate.gateId.startsWith('gate-sample-'))
-          || isShotGate(gate)
-        ))
+        // 2026-09-10 根因：这里原本也把 isShotGate(gate) 算进「顺手批掉」的范围。逐镜门是**付费门**
+        // （批准即放行 production.generate-node），而 set_trust 只能由客户端工具调用发起（渲染层 IPC
+        // 把 run.control 的 payload 收窄成 pause/resume/cancel，根本递不进 trustLevel）——等于一次
+        // 客户端工具调用就能替用户批掉一次真实扣费。降档只降「问得多细」，不代表替真人授权花钱。
+        const waitingCreativeGate = result.run.gates.find((gate) => gate.status === 'waiting'
+          && gate.scope === 'stage'
+          && (gate.gateId.startsWith('gate-direction-') || gate.gateId.startsWith('gate-sample-')))
         if (waitingCreativeGate) void autoApproveGate(safeProjectId, safeRunId, waitingCreativeGate.gateId)
       }
       return result
@@ -433,7 +376,8 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     if (runCommand.type === 'run.control') {
       // A4 run 控制：逻辑在 productionRunControl.ts（MCP 与渲染端同一收口）。
       const controlled = applyRunControl(repository, safeProjectId, safeRunId, requireRun(safeProjectId, safeRunId), runCommand)
-      if (runCommand.payload.action === 'resume' && controlled.run.status === 'running') void driveGeneration(controlled.run) // 恢复必须重踢 driver：只回状态不回工作=假 resume
+      // 恢复必须重踢干活的那一方：只回状态不回工作 = 假 resume。
+      if (runCommand.payload.action === 'resume' && controlled.run.status === 'running') wakeRunDriver(controlled.run)
       return controlled
     }
     if (runCommand.type === 'script.review' || runCommand.type === 'artifact.review') {
@@ -515,24 +459,14 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       })
       return result
     }
-    if (runCommand.type === 'gate.decide') {
-      // B4 幂等：两个审批同时来（异 commandId、同决议）——门已按同方向决过 → 幂等 no-op，
-      // 返回当前态、不再执行（不重复授权预算 / 不重踢 driver / 不炸「already decided」）。
-      // 翻决议（approved↔rejected）不在此放行 → 落到 reducer 拒改写。竞态的输家由此静默收敛。
-      const current = requireRun(safeProjectId, safeRunId)
-      const gateId = typeof runCommand.payload.gateId === 'string' ? runCommand.payload.gateId.trim() : ''
-      const decidedGate = current.gates.find((item) => item.gateId === gateId)
-      if (decidedGate && decidedGate.status !== 'waiting' && decidedGate.status === runCommand.payload.status) {
-        return { run: current, events: [] }
-      }
-    }
-    const gateReceipt = approvalReceiptForGate(
-      deps.approvalReceiptAuthority,
-      safeProjectId,
-      safeRunId,
-      runCommand,
-      deps.projectRevisionResolver,
-    )
+    const gateDecisionRun = runCommand.type === 'gate.decide' ? requireRun(safeProjectId, safeRunId) : undefined
+    const duplicateGateDecision = gateDecisionRun
+      ? gateApproval.duplicateGateDecisionFor(safeProjectId, safeRunId, gateDecisionRun, runCommand)
+      : undefined
+    const gateReceipt = duplicateGateDecision
+      ? duplicateGateDecision.gateReceipt
+      : gateDecisionRun && gateApproval.verifyGateDecision(safeProjectId, safeRunId, gateDecisionRun, runCommand)
+    if (duplicateGateDecision) return { run: duplicateGateDecision.current, events: [] }
     if (runCommand.type === 'gate.decide' && runCommand.payload.status === 'approved') {
       const current = requireRun(safeProjectId, safeRunId)
       const gateId = typeof runCommand.payload.gateId === 'string' ? runCommand.payload.gateId.trim() : ''
@@ -548,11 +482,9 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       }
     }
     const result = repository.execute(safeProjectId, safeRunId, runCommand)
-    if (gateReceipt && deps.approvalReceiptAuthority) {
-      // The Run event is durable before receipt consumption. A crash can only leave
-      // a replayable receipt against an already-decided gate; it cannot reopen it.
-      deps.approvalReceiptAuthority.consumeReceipt(gateReceipt.token)
-    }
+    // The Run event is durable before receipt consumption. A crash can only leave
+    // a replayable receipt against an already-decided gate; it cannot reopen it.
+    gateApproval.consume(gateReceipt || undefined)
     if (runCommand.type === 'gate.decide' && runCommand.payload.status === 'approved' && runCommand.payload.gateId === 'gate-direction-v1') {
       void proposeScript(result.run)
     }
@@ -574,7 +506,7 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
             issuedAt: new Date().toISOString(),
           })
         } catch (error) {
-          console.error('[nomi:production] freeze gate reject pause failed:', error instanceof Error ? error.message : String(error))
+          logError('production-run', 'freeze-gate-reject-pause-failed', error)
         }
       }
     }
@@ -593,7 +525,7 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
           })
         } catch (error) {
           // 暂停失败不掩盖否决本身（门已落 rejected）；run 状态仍可查、可手动暂停。
-          console.error('[nomi:production] sample gate reject pause failed:', error instanceof Error ? error.message : String(error))
+          logError('production-run', 'sample-gate-reject-pause-failed', error)
         }
       }
     }
@@ -613,7 +545,7 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
             issuedAt: new Date().toISOString(),
           })
         } catch (error) {
-          console.error('[nomi:production] shot gate reject pause failed:', error instanceof Error ? error.message : String(error))
+          logError('production-run', 'shot-gate-reject-pause-failed', error)
         }
       }
     }
@@ -625,7 +557,13 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     // 免费空 tick（derivation 对 rejected 只在有新 attempt 时才重派锚，见 batchScheduleDerivation）。scheduler
     // 构造依赖 appIntegration 接线，故经晚绑定插槽（batchSchedulerKick.ts 有为什么）。
     if (runCommand.type === 'gate.decide' && decidedGate && isAnchorCheckpointGate(decidedGate)) {
+      // 付费卡① 第 13 条：用户在 Nomi 窗口里放行形象 = 他对等着这一下才开拍的那几镜点了头，续上它们的同意。
+      // MCP / Agent 的决议没有真人手势章，不续——派到时同意过了窗口就如实停下，等他自己点。
+      const renewed = runCommand.payload.status === 'approved' && runCommand.humanGesture === true
+        ? renewDispatchConsent(repository, safeProjectId, safeRunId, result.run, 'anchor_release', runCommand.issuedAt)
+        : undefined
       kickBatchSchedulerForRun(safeProjectId, safeRunId)
+      if (renewed) return { run: renewed.run, events: [...result.events, ...renewed.events] }
     }
     return result
   }
@@ -639,6 +577,9 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       const current = requireRun(projectId, runId)
       const gate = current.gates.find((item) => item.gateId === gateId)
       if (!gate || gate.status !== 'waiting') return
+      // 付费门永远不自动批：自动批准没有人证，而付费门的不变量就是「必须有真人授权」。防线放在这个
+      // 共享出口，任何未来的自动批准调用者都被同一条规则拦住（不靠每个调用点自己记得筛）。
+      if (isSpendGate(gate)) throw new Error(`Spend gate cannot be auto-approved by trust level: ${gate.gateId}`)
       await command(projectId, runId, {
         commandId: `auto-trust-budget-only:${gateId}:${current.revision}`,
         expectedRevision: current.revision,
@@ -648,7 +589,7 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       })
     } catch (error) {
       // 自动批准失败不掩盖 run：门仍 waiting、可手动批。
-      console.error('[nomi:production] auto-approve gate failed:', error instanceof Error ? error.message : String(error))
+      logError('production-run', 'auto-approve-gate-failed', error)
     }
   }
 
@@ -661,6 +602,15 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
       for (const summary of summaries) {
         let current = repository.read(safeProjectId, summary.runId)
         if (!current || ['completed', 'cancelled'].includes(current.status)) continue
+        // 老数据：上一版把多镜批次急停后留在 pausing、手上其实已经没有在跑的活——之后再没有命令经过写入口，
+        // 它就永远「暂停中」。欠不欠这一步只由生命周期 owner 判，这里只负责在重开项目时让它经过一次写入口。
+        if (settleRunLifecycle(current, new Date().toISOString())) {
+          try {
+            current = executeInternal(safeProjectId, current.runId, current, 'run.lifecycle.settle', {}, `recovery-${current.runId}-lifecycle-${current.revision}`).run
+          } catch (error) {
+            logError('production-run', 'recovery-lifecycle-settle-failed', error)
+          }
+        }
         // Semantic single-shot runs own recovery through ProductionGenerationSubmission
         // (resume/poll/reconcile). The legacy playbook driver must not rewrite their
         // durable provider state to submission_unknown or kick a second submit.
@@ -668,8 +618,31 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
           && current.generationPlan?.operationId === current.runId
         let changedUnknown = false
         for (const job of current.jobs) {
-          if (!['submitting', 'provider_accepted', 'polling', 'retry_wait', 'downloading', 'validating_technical', 'validating_content'].includes(job.status)) continue
-          if (isSemanticSingleShot) continue
+          if (!isStillAtProvider(job)) continue
+          if (isSemanticSingleShot) {
+            // 提交在路上时进程没了（硬杀 / 断电）：请求发没发出去、供应商收没收下，Nomi 都不知道——结果未知，
+            // 和连接被重置是同一档。此前这里直接跳过，job 永远停在 submitting、画布一直写「生成中」。
+            // 已经拿到任务号的（polling 等）仍由 ProductionGenerationSubmission 的恢复路径接手。
+            if (job.status === 'submitting' && !job.providerTaskId) {
+              try {
+                current = executeInternal(safeProjectId, current.runId, current, 'job.status', {
+                  jobId: job.jobId,
+                  status: 'submission_unknown',
+                  patch: { errorCode: 'submission_unknown_restart', errorMessage: tagNomiError('submission-unknown', 'Nomi was closed while the request was being sent') },
+                }, `recovery-${current.runId}-${job.jobId}-submit-unknown`).run
+                const reservationId: string = `${current.runId}:${job.jobId}:${job.attempt}`
+                if (repository.readBudgetLedger(safeProjectId, current.runId).reservations[reservationId]?.status === 'reserved') {
+                  current = executeInternal(safeProjectId, current.runId, current, 'budget.entry', {
+                    entry: { billingEntryId: `${reservationId}:mark-unsettled`, kind: 'mark_unsettled', reservationId, occurredAt: new Date().toISOString() },
+                  }, `recovery-${current.runId}-${job.jobId}-unsettled`).run
+                }
+                changedUnknown = true
+              } catch {
+                // A concurrent command may have already settled this job.
+              }
+            }
+            continue
+          }
           try {
             current = executeInternal(safeProjectId, current.runId, current, 'job.status', {
               jobId: job.jobId,
@@ -683,10 +656,10 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
         }
         current = requireRun(safeProjectId, current.runId)
         if (changedUnknown && current.status !== 'needs_attention') {
-          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention' }, `recovery-${current.runId}-attention-${current.revision}`).run } catch { /* preserve the durable job state */ }
+          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention', reason: 'restart_recovery' }, `recovery-${current.runId}-attention-${current.revision}`).run } catch { /* preserve the durable job state */ }
         }
         if (current.status === 'exporting') {
-          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention' }, `recovery-${current.runId}-export-attention-${current.revision}`).run } catch { /* preserve exporting state for inspection */ }
+          try { current = executeInternal(safeProjectId, current.runId, current, 'run.status', { status: 'needs_attention', reason: 'restart_recovery' }, `recovery-${current.runId}-export-attention-${current.revision}`).run } catch { /* preserve exporting state for inspection */ }
         }
         // B1/B3：草稿建好时 GUI 关着 → 重开时补动作。budget_only 自动批准方向门，其余补拟候选（gate 还 waiting 且无候选才跑）。
         if (current.status === 'awaiting_direction') {
@@ -704,7 +677,7 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
         }
       }
     } catch (error) {
-      console.error('[nomi:production] recovery scan failed:', error instanceof Error ? error.message : String(error))
+      logError('production-run', 'recovery-scan-failed', error)
     } finally {
       recoveryInFlight.delete(safeProjectId)
     }
@@ -715,7 +688,8 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
   }
 
   function readFull(projectId: string, runId: string): ProductionRun {
-    return requireRun(projectId, runId)
+    const run = requireRun(projectId, runId)
+    return recoverStoryboardContentHashes(run, projectRootResolver(run.projectId))
   }
 
   const artifactOperations = createArtifactOperations({
@@ -770,21 +744,13 @@ export function createProductionRunService(deps: ServiceDeps = {}) {
     return { filePath: resolveOwnedArtifactFile(root, claims.relativePath), expiresAt: claims.expiresAt }
   }
 
-  function listProjections(projectId: string): ProductionRunProjection[] {
-    return repository.list(identifier(projectId, 'project')).map((summary) => runProjection(requireRun(projectId, summary.runId), projectRootResolver, previewSecret))
-  }
-
-  function listFull(projectId: string): ProductionRun[] {
-    return repository.list(identifier(projectId, 'project')).map((summary) => requireRun(projectId, summary.runId))
-  }
 
   return {
-    // The semantic generation submission adapter is a thin orchestration layer;
-    // ProductionRun's repository remains its only durable owner.
+    // Semantic generation is a thin orchestration layer; ProductionRun remains the only durable owner.
     repository,
     createDraft, createGenerationDraft, readProjection, readFull, readEvents, readArtifactProjection, readArtifactContent, readScriptDraft,
     requestArtifactRevision, reviewArtifact, materializeStoryboard, resolveArtifactPreview, command, proposeScript, proposeStoryboard,
-    resumeUnfinishedRuns, listProjections, listFull,
+    advanceSemanticProduction, resumeUnfinishedRuns,
   }
 }
 export type ProductionRunService = ReturnType<typeof createProductionRunService>

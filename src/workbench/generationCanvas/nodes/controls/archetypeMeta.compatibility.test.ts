@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { MODEL_ARCHETYPES, getArchetypeById, type ModelArchetype } from '../../../../config/modelArchetypes'
-import { AGNES_VIDEO_25_FLASH_ARCHETYPE } from '../../../../config/modelArchetypes/agnesVideo25Flash'
+import { MODEL_ARCHETYPES, getArchetypeById, type ModelArchetype } from '../../../../../electron/shared/modelArchetypes'
+import { AGNES_VIDEO_25_FLASH_ARCHETYPE } from '../../../../../electron/shared/videoCapabilities/agnesVideo25'
 import { AGNES_VIDEO_25_FLASH_ARCHETYPE as SHARED_FLASH } from '../../../../../electron/shared/videoCapabilities/agnesVideo25'
 import { applyArchetypeModeSwitch, applyArchetypeVariantSwitch, archetypeVariantChoices, buildArchetypeInputParams, currentArchetypeMode, currentArchetypeVariant, ensureArchetypeNodeMeta } from './archetypeMeta'
 

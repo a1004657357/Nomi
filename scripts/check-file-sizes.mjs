@@ -2,7 +2,7 @@
 // 文件体积门岗 —— 落实 CLAUDE.md 规则 12（约束代码量、防巨型文件）。
 //
 // 机制（棘轮，只减不增）：
-//   1. 任何非测试的 .ts/.tsx，行数不得超过 MAX_LINES（硬上限）。
+//   1. 任何非测试的 .ts/.tsx/.mts/.cts，行数不得超过 MAX_LINES（硬上限）。
 //   2. 现存已超限的"巨壳"列入 ALLOWLIST 并记录基线行数；它们：
 //        - 超过基线 → 红牌（你把已知巨壳改得更大了：拆分或精简，别再喂）。
 //        - 低于基线 → 黄牌提示（你瘦身了，请把基线下调以锁定战果）。
@@ -13,10 +13,10 @@
 //
 // 用法：node ./scripts/check-file-sizes.mjs
 
-import { execFileSync } from 'node:child_process'
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { gitPaths } from "./lib/gitPaths.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const MAX_LINES = 800
@@ -25,31 +25,31 @@ const SCAN_DIRS = ['src', 'electron']
 // 现存巨壳的基线行数（棘轮上限）。清空此表 = 巨壳债还清。
 // 改小某个数 = 你成功瘦身后锁定的新上限。新增条目应经人工评审。
 const ALLOWLIST = {
-  // 2026-08-01 定制分支合并官方 45 提交时完成逐项人工复核：下列 10 个巨壳均已存在于合并前定制版，
-  // 其中 bridge / generationCommon / onboardingProviders 吸收官方桥接与设置能力后增长，其余 7 个本轮零增长。
-  // 先以合并后精确行数建立棘轮，避免把历史架构债伪装成此次 Seedance 2.5 回归；后续只能拆小，不能再增长。
-  // 2026-08-15 合并 v0.19.0 后逐项复核：官方生产运行/模型接入与定制 Director/任务调度取并集。
-  // 这些值是合并后的精确棘轮；后续只能降低。generated 档案由生成器维护，不宜手工拆分。
-  // 2026-09-12 接入 Pixstag（MiniMax-H3）：generated 档案随生成器 +22 行、onboardingProviders
-  // 精确吸收 Pixstag 接入卡 zh/en 18 行，重新锁定。
-  // v0.21 integration split the affected modules; lock in the reduced sizes.
-  'electron/ai/agentChatV2.ts': 745,
-  'electron/catalog/archetypeWireDefaults.generated.ts': 76,
-  'src/desktop/bridge.ts': 888,
-  // 官方 PR #82 增加剪辑节点连续预览与分段导出文案，精确吸收 18 行后重新锁定。
-  'src/i18n/locales/generationCommon.ts': 2216,
-  'src/i18n/locales/onboardingProviders.ts': 1379,
-  'src/i18n/locales/scene3d.ts': 835,
-  'src/workbench/generationCanvas/agent/applyCanvasToolCall.ts': 728,
-  'src/workbench/generationCanvas/components/CanvasAssistantPanel.tsx': 755,
-  'src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx': 801,
-  'src/workbench/generationCanvas/components/GenerationCanvas.tsx': 798,
-  'src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx': 600,
-  'src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx': 848,
-  'src/workbench/generationCanvas/runner/generationRunController.ts': 827,
-  'src/workbench/workbenchStore.ts': 813,
-  "electron/runtime.ts": 489, // Web bridge dispatch moved into its provider-neutral task module.
-  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 671, // Preview rendering is delegated to GenerationNodePreviewBody.
+  "electron/runtime.ts": 485, // …→ 531（2026-08-27 pi 运行切换移除旧 Agent 再导出）→ 530（2026-08-28 onboarding facade cleanup）→ 526（2026-08-30 runtime lifecycle cleanup）→ 519（2026-09-01 actual-cost 接线时把两处终态 trace 收成单行，净瘦身）→ 490（2026-09-17 TaskRequest/CachedTask 抽到 electron/taskTypes.ts）→ 486（2026-09-21 合并 ① 按门岗提示拧紧）→ 485（0.23.0 基线恢复；10a8ed2cd 的 483 不适用于 release 基线）
+  // Conversational model integration boundary: the session service keeps the
+  // state machine, receipt contract, canonical certification and recovery
+  // transitions together. It is reviewed as one security boundary and must
+  // be split only along a stable ownership seam, not by moving methods into
+  // a second writer. (2026-08-29)
+  "electron/integrationCertification/integrationSession.ts": 1394, // 1695→1652（2026-09-10 把 workflow 绑定净化与「谁来编译说明卡」的裁决各抽成独立模块）→ 1338（2026-09-15 棘轮锁定：门岗自己报「已瘦身」要求下调，来自 main 的既有瘦身，不是本 PR 改的）→ 1394（2026-09-21 会话容量合同：读盘那一段整体搬进 integrationSessionRecord，服务层只剩一行委托）
+  // Existing SettingsDialog shell now owns the durable integration handoff
+  // projection alongside the legacy model settings pages. Keep this reviewed
+  // baseline until the planned settings-surface extraction. (2026-08-29)
+  "src/ui/onboarding/OnboardingDrawer.tsx": 795, // 795（2026-09-21 合并 ① 按门岗提示拧紧，只减不增）
+  "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 557, // …→ 558（2026-10-02 结果托盘不再要 selected 入参）…→ 560（2026-09-25 浮框放置层删除后的注释收短）…→ 713（2026-08-29 React Flow 单内核：移除旧布局与缩放分支）→ 710（2026-09-07 agent-artifact：正文/浮条插槽移出壳 + composer 排除表收进 resolveRenderKind）→ 677（2026-09-12 S3：四个整表选择器收进 canvasNodeGenerationIndex）→ 654（2026-09-21 合并 ① 按门岗提示拧紧）
+  // Project Agent Host 迁移巨壳（M1 transplant：electron 切片随 r2 入库、renderer 切片随
+  // 本次 cutover 入库；上游 pr223 原型已人工评审同一批 owner，数字按本分支实际行数锁棘轮，
+  // 只减不增，下一个分解批次按稳定 ownership seam 拆分后逐个出表）。834→836：并 origin/main 的
+  // TikHub connector（#296）加 registerTikhubConnectorIpc 的 import+调用两行；836→839：#298-v2
+  // 自定义 MCP 客户端 profile 接入（registerCustomMcpProfileIpc + watchMcpProfiles + import）3行；
+  // 839→846：registerIntegrationHandoffIpc + registerIntegrationSessionIpc 的 import+调用（integration
+  // certification handoff queue，0b6441c6 transplant 时误删后按根因恢复）7行；仍远低于本分支起点 847。
+  // 846→828：console.* 收口到 logging/logger 时，把 registerDevDiagnostics（dev-only 窗口诊断挂钩，
+  // 整族最后都落在 logDevDetail 上）搬进 electron/logging/devDiagnostics.ts（−26 行），
+  // 同 commit 加回「profile 被隔离时日志跟着走」那段带注释的 setPath（+8 行）。
+  "electron/main.ts": 684,
+  // Phase 6 常驻壳成为唯一 Agent UI 后的应用外壳（pr223 评审基线曾为 908；并 origin/main 拆解面板宿主后
+  // 折叠一行多名 import，曾 907；m1 侧栏收起修复顺手折叠 hydrate/navigate 多行调用参数，实际 903，锁棘轮只减不增）。
   // PR#21 白板节点引入（2026-06-25）：WhiteboardDrawingTool（1032）与 WhiteboardLeaferCanvas（3406）两巨壳
   // 已按 Rule 9 全部拆完、双双出白名单。LeaferCanvas → whiteboardCanvasTypes/Export/NodeOps/Geometry 四纯模块
   // + whiteboardSceneRender（渲染树）+ useWhiteboardDrawing/BoxSelection/SelectionActions/SceneSync 四交互 hook，
@@ -63,20 +63,18 @@ const ALLOWLIST = {
 }
 
 export function listSourceFiles({ root = ROOT, scanDirs = SCAN_DIRS } = {}) {
-  // 同时扫描受跟踪和新建源码；--exclude-standard 继续排除 node_modules、dist 和 .gitignore 内容。
-  const out = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--', ...scanDirs], {
-    cwd: root,
-    encoding: 'utf8',
-  })
-  return out
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .filter((f) => /\.tsx?$/.test(f))
-    .filter((f) => !/\.test\.tsx?$/.test(f))
-    .filter((f) => !/\.d\.ts$/.test(f))
+  // Include new source modules too; NUL-delimited paths preserve Unicode and whitespace.
+  return [...new Set(gitPaths(["ls-files", "--cached", "--others", "--exclude-standard", "--", ...scanDirs], { cwd: root }))]
+    .filter((f) => /\.(?:tsx?|[mc]ts)$/.test(f))
+    .filter((f) => !/\.test\.(?:tsx?|[mc]ts)$/.test(f))
+    .filter((f) => !/\.d\.(?:ts|[mc]ts)$/.test(f))
+    // i18n 翻译资源是「数据表」不是代码复杂度 —— R9/R12 治的是代码模块化，
+    // locale 词典随翻译量线性增长天然会破 800，不适用本门（2026-07-22 全量 i18n 落地）。
+    .filter((f) => !/^src\/i18n\/(locales\/.*|resources)\.ts$/.test(f))
+    // git ls-files 会连「工作树里已删除、尚未 commit」的文件一起列出——门岗量的是
+    // 工作树现状，消失的文件没有体积可查，跳过（commit 后 CI checkout 恒存在，不削弱棘轮）。
     .filter((f) => fs.existsSync(path.join(root, f)))
-    .sort()
+    .sort();
 }
 
 function countLines(absPath) {
@@ -123,6 +121,6 @@ function runCli() {
   )
 }
 
-if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   runCli()
 }

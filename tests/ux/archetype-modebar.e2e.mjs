@@ -55,6 +55,7 @@ const { app, win } = await launchNomiApp({
   userDataDir,
   settingsDir: userDataDir,
   projectsDir,
+  syntheticCredentialStorage: true,
   args: ['--no-proxy-server'],
   settleMs: 0,
 })
@@ -87,7 +88,7 @@ async function switchMode(vendorTerm) {
 /**
  * 从 NomiSelect 里挑一个选项。
  * `:visible` 是硬要求——Mantine 的下拉挂在 body 的 portal 里，画布上那些**没展开**的下拉
- * （变体、每次生成张数…）其选项同样在 DOM 中，裸选会选到别人家的。
+ * （变体、每次生成几个…）其选项同样在 DOM 中，裸选会选到别人家的。
  */
 async function pickFromSelect(triggerLabel, match, humanLabel) {
   await clickOrFail(composer.locator(`[aria-label="${triggerLabel}"]`), `${humanLabel}下拉`)

@@ -1,0 +1,210 @@
+{
+  "checks": [
+    {
+      "name": "图片版本卡角可见",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "视频版本卡角可见",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "图片卡角最多两层",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "视频两版只有一层后卡",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "托盘列出三版",
+      "ok": true,
+      "detail": "image-v3,image-v2,image-v1"
+    },
+    {
+      "name": "切换当前版不重排历史",
+      "ok": true,
+      "detail": "image-v3,image-v2,image-v1"
+    },
+    {
+      "name": "第一版成为当前",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "历史图片预览载入原图",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "历史图片提供下载入口",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "历史图片下载文件非空",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "删除历史结果后其他版本保留",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "复制变体新增一个节点、画布没自己动、用户看得到它",
+      "ok": true,
+      "detail": "in-view"
+    },
+    {
+      "name": "复制变体可一次撤销",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "撤销复制不挪画布",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "版本托盘避开画布视口边缘",
+      "ok": true,
+      "detail": "left"
+    },
+    {
+      "name": "悬停历史视频真实播放元素可见",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "历史视频默认静音",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "历史视频进度条可见",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "拖动进度条连续跳转",
+      "ok": true,
+      "detail": "45.07199016194419"
+    },
+    {
+      "name": "键盘左键精确回退一秒",
+      "ok": true,
+      "detail": "45.07199016194419 -> 44.07199"
+    },
+    {
+      "name": "离开历史视频后播放暂停并回到起点",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "历史视频预览挂载视频元素",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "历史视频预览提供原生控制条",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "收起后只剩一个组卡",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "三位成员已从画布投影隐藏",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "编组显示节点语义",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "未选中的折叠编组不出「+」圈",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "选中的折叠编组左右「+」圈可见、带加号、没被画布上的卡盖住",
+      "ok": true,
+      "detail": "[{\"side\":\"left\",\"hasPlusIcon\":true,\"onTop\":true,\"coveredBy\":null},{\"side\":\"right\",\"hasPlusIcon\":true,\"onTop\":true,\"coveredBy\":null}]"
+    },
+    {
+      "name": "三条成员输入聚合为一条编组线",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "聚合编组输入线上存在真的点得到的点",
+      "ok": true,
+      "detail": "{\"x\":348.41795173919127,\"y\":361.8270041254955}"
+    },
+    {
+      "name": "返回项目库仍能看到两个项目",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "重新打开后节点与聚合连接仍在",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "重新打开后历史结果仍保留",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "点击卡角恢复组内节点",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "展开后恢复三条真实成员输入线",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "重开后聚合编组输入线仍有真实可点击点",
+      "ok": true,
+      "detail": "{\"x\":386.3606262207031,\"y\":469.1921081542969}"
+    },
+    {
+      "name": "聚合线一次断开整组关系",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "收起状态写入项目",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "断开的编组声明不再持久化",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "展开后素材库面板可见",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "切换项目后左侧栏自动收起",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "projectRoot": "C:\\Users\\23732\\AppData\\Local\\Temp\\nomi-card-stack-walk-YSSUdb\\projects\\canvas-card-stack-walk"
+}

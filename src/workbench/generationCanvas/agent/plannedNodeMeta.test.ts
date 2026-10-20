@@ -1,15 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { buildPlannedNodeMeta, resolvePlannedNodeArgs } from "./plannedNodeMeta";
+import { buildModelEntryIndex, buildPlannedNodeMeta, resolvePlannedNodeArgs } from "./plannedNodeMeta";
 import { buildAgentModelEntries, type AgentModelEntry } from "./availableModels";
 import type { ModelOption } from "../../../config/models";
-import { getArchetypeById } from "../../../config/modelArchetypes";
+import { getArchetypeById } from "../../../../electron/shared/modelArchetypes";
 import { buildArchetypeInputParams } from "../nodes/controls/archetypeMeta";
 
 function entryByKey(): Map<string, AgentModelEntry> {
   const entries = buildAgentModelEntries([
     { value: "seedance-2", label: "即梦 Seedance", vendor: "kie", meta: { archetypeId: "seedance-2" } } as ModelOption,
   ]);
-  return new Map(entries.map((e) => [e.modelKey, e]));
+  return new Map(entries.map((e) => [e.modelId, e]));
+}
+
+function textEntryByKey(): Map<string, AgentModelEntry> {
+  const entries = buildAgentModelEntries([
+    { value: "agent-runtime-text", label: "Fixture 文本", vendor: "loopback", kind: "text" } as ModelOption & { kind: "text" },
+  ]);
+  return new Map(entries.map((e) => [e.modelId, e]));
 }
 
 function jimengEntryByKey(): Map<string, AgentModelEntry> {
@@ -29,7 +36,7 @@ function jimengEntryByKey(): Map<string, AgentModelEntry> {
       meta: { archetypeId: "jimeng-web-seedance-2" },
     } as ModelOption,
   ]);
-  return new Map(entries.map((entry) => [entry.modelKey, entry]));
+  return new Map(entries.map((entry) => [entry.modelId, entry]));
 }
 
 describe("buildPlannedNodeMeta", () => {
@@ -50,6 +57,28 @@ describe("buildPlannedNodeMeta", () => {
     expect(meta!.archetype).toMatchObject({ id: "seedance-2" });
     // 默认参数已铺（seedance aspect_ratio 默认 16:9）
     expect(meta!.aspect_ratio).toBe("16:9");
+  });
+
+  it("保留批准卡选择的供应商和变体到 canonical node meta", () => {
+    const meta = buildPlannedNodeMeta(
+      { modelKey: "seedance-2", vendor: "kie", variantId: "fast", modeId: "t2v" },
+      entryByKey(),
+    );
+    expect(meta).toMatchObject({
+      modelKey: "seedance-2",
+      modelVendor: "kie",
+      vendor: "kie",
+      archetype: { id: "seedance-2", modeId: "t2v", variantId: "fast" },
+    });
+  });
+
+  it("冲突的 vendor/modelVendor 不会静默改路由", () => {
+    expect(
+      buildPlannedNodeMeta(
+        { modelKey: "seedance-2", vendor: "kie", modelVendor: "other-vendor", variantId: "fast" },
+        entryByKey(),
+      ),
+    ).toBeUndefined();
   });
 
   it("agent 的合法参数覆盖默认", () => {
@@ -76,66 +105,10 @@ describe("buildPlannedNodeMeta", () => {
     expect(meta!.aspect_ratio).toBe("16:9");
   });
 
-  it("Agent 选择图片 5.0 Lite 后写入 variantId，并映射到实际即梦模型", () => {
-    const meta = buildPlannedNodeMeta(
-      {
-        modelKey: "jimeng-web-image",
-        variantId: "v5_0_lite",
-        modeId: "t2i",
-        params: { ratio: "9:16", resolution_type: "4K" },
-      },
-      jimengEntryByKey(),
-    )!;
-
-    expect(meta.modelKey).toBe("jimeng-web-image");
-    expect(meta.archetype).toEqual({
-      id: "jimeng-web-image",
-      modeId: "t2i",
-      variantId: "v5_0_lite",
-    });
-    expect(meta.ratio).toBe("9:16");
-    expect(meta.resolution_type).toBe("4K");
-
-    const archetype = getArchetypeById("jimeng-web-image")!;
-    expect(buildArchetypeInputParams(meta, archetype).model).toBe("jimeng-image-5.0-lite");
-  });
-
-  it("图片 3.0 不支持参考图改图时回落到 t2i，并使用旧型号参数约束", () => {
-    const meta = buildPlannedNodeMeta(
-      {
-        modelKey: "jimeng-web-image",
-        variantId: "v3_0",
-        modeId: "edit",
-        params: { ratio: "智能", resolution_type: "4K" },
-      },
-      jimengEntryByKey(),
-    )!;
-
-    expect(meta.archetype).toEqual({
-      id: "jimeng-web-image",
-      modeId: "t2i",
-      variantId: "v3_0",
-    });
-    expect(meta.ratio).toBe("1:1");
-    expect(meta.resolution_type).toBe("2K");
-  });
-
-  it("即梦视频 VIP 保留 4K 和生成数量参数", () => {
-    const meta = buildPlannedNodeMeta(
-      {
-        modelKey: "jimeng-web-seedance-2.0",
-        variantId: "vip",
-        modeId: "i2v",
-        params: { ratio: "9:16", video_resolution: "4K", duration: 8, generation_count: 3 },
-      },
-      jimengEntryByKey(),
-    )!;
-
-    expect(meta.archetype).toMatchObject({ variantId: "vip", modeId: "i2v" });
-    expect(meta.video_resolution).toBe("4K");
-    expect(meta.generation_count).toBe(3);
-    const archetype = getArchetypeById("jimeng-web-seedance-2")!;
-    expect(buildArchetypeInputParams(meta, archetype).model).toBe("jimeng-seedance-2.0-vip");
+  it("文本模型保留显式身份但不伪造媒体 archetype", () => {
+    const meta = buildPlannedNodeMeta({ modelKey: "agent-runtime-text", modeId: "chat" }, textEntryByKey());
+    expect(meta).toMatchObject({ modelKey: "agent-runtime-text", modelVendor: "loopback", modelLabel: "Fixture 文本" });
+    expect(meta?.archetype).toBeUndefined();
   });
 });
 
@@ -153,7 +126,7 @@ describe("resolvePlannedNodeArgs — 批准≡执行(消灭对账出入)", () =>
     const node = { clientId: "k1", kind: "video", modelKey: "seedance-2", params: { aspect_ratio: "999:1" } };
     const resolved = resolvePlannedNodeArgs(node, entryByKey());
     const meta = buildPlannedNodeMeta(node, entryByKey())!;
-    const { modelKey: _mk, modelLabel: _ml, archetype: _arch, modelVendor: _mv, ...metaParams } = meta;
+    const { modelKey: _mk, modelLabel: _ml, archetype: _arch, modelVendor: _mv, vendor: _vendor, ...metaParams } = meta;
     expect(resolved.params).toEqual(metaParams);
     expect(resolved.modelKey).toBe(meta.modelKey);
   });
@@ -188,5 +161,76 @@ describe("resolvePlannedNodeArgs — 批准≡执行(消灭对账出入)", () =>
 
     expect(resolved.variantId).toBe("v5_0_lite");
     expect(resolved.params).toMatchObject({ resolution_type: "4K" });
+  });
+});
+
+// ── 根因回归：模型身份的唯一键是 (vendor, modelKey) ──────────────────────────
+// 2026-09-03 首次真实付费闭环走查的阻断：UI 选 APIMart 的模型，出站请求实际发去
+// code-newcli-com（HTTP 400，全链阻断）。成因是落地写 node.meta 时只按裸 modelKey
+// 反查模型清单——两家供应商提供同名模型时，拿到的是「索引里碰巧那一家」。
+// node.meta.modelVendor 就是运行器出站时用的供应商，所以这里断言的就是「出站发去哪家」。
+describe("模型身份唯一键含 vendor（选 A 家就发去 A 家）", () => {
+  const TWO_VENDORS: ModelOption[] = [
+    { value: "nano-banana", label: "Nano Banana", vendor: "code-newcli-com", meta: { archetypeId: "nano-banana" } } as ModelOption,
+    { value: "nano-banana", label: "Nano Banana", vendor: "apimart", meta: { archetypeId: "nano-banana" } } as ModelOption,
+  ];
+
+  it("同名不同家 = 两个条目，各自可按 vendor::key 取回", () => {
+    const index = buildModelEntryIndex(buildAgentModelEntries(TWO_VENDORS));
+    expect(index.get("code-newcli-com::nano-banana")?.vendor).toBe("code-newcli-com");
+    expect(index.get("apimart::nano-banana")?.vendor).toBe("apimart");
+  });
+
+  // 裸 key（没记供应商的旧数据）落哪家由 pickImplicitVendorMatch 决定——与模型框回显同一把尺：
+  // 用户顺序 > 官方 > 内置中转 > 自接 > 目录序。以前是「首次出现」，而目录新接入的在前，
+  // 用户一自定义同名模型裸键就换成了它（2026-09-21）。既不是「最后写入」也不是「第一条」。
+  it("裸 key 按同一把尺落家：内置中转 apimart 先于自接中转，不看目录里谁先出现", () => {
+    const index = buildModelEntryIndex(buildAgentModelEntries(TWO_VENDORS));
+    expect(index.get("nano-banana")?.vendor).toBe("apimart");
+  });
+
+  it("裸 key 跟随用户排的供应商顺序", () => {
+    const index = buildModelEntryIndex(buildAgentModelEntries(TWO_VENDORS), ["code-newcli-com"]);
+    expect(index.get("nano-banana")?.vendor).toBe("code-newcli-com");
+  });
+
+  it("选 apimart → 写进 node.meta 的供应商就是 apimart（不是目录里的另一家）", () => {
+    const index = buildModelEntryIndex(buildAgentModelEntries(TWO_VENDORS));
+    const meta = buildPlannedNodeMeta({ modelKey: "nano-banana", modelVendor: "apimart" }, index);
+    expect(meta).toBeTruthy();
+    expect(meta!.modelVendor).toBe("apimart");
+    expect(meta!.vendor).toBe("apimart");
+  });
+
+  it("选 code-newcli-com → 写进 node.meta 的供应商就是 code-newcli-com", () => {
+    const index = buildModelEntryIndex(buildAgentModelEntries(TWO_VENDORS));
+    const meta = buildPlannedNodeMeta({ modelKey: "nano-banana", modelVendor: "code-newcli-com" }, index);
+    expect(meta!.modelVendor).toBe("code-newcli-com");
+  });
+
+  // 裸 key 索引下这条会红：apimart 的请求反查到 code-newcli-com 的条目，
+  // buildPlannedNodeMeta 的「不许跨家混搭」判定随即拒收 → 用户选的模型被整个剥掉，
+  // 静默回落自动选（走查实测的第二种表现）。vendor 限定键让它稳稳落在 apimart 上。
+  it("resolvePlannedNodeArgs 按 vendor 限定键落地，用户所选不被静默剥掉", () => {
+    const index = buildModelEntryIndex(buildAgentModelEntries(TWO_VENDORS));
+    const resolved = resolvePlannedNodeArgs(
+      { clientId: "k1", kind: "image", title: "镜头", modelKey: "nano-banana", modelVendor: "apimart" },
+      index,
+    );
+    expect(resolved.modelKey).toBe("nano-banana");
+    expect(resolved.modelVendor).toBe("apimart");
+  });
+});
+
+
+describe("B4 provider preference at node persistence", () => {
+  it("lands a bare gpt-image-2 key on APIMart when APIMart is preferred", () => {
+    const entries = buildAgentModelEntries([
+      { value: "gpt-image-2", modelKey: "gpt-image-2", label: "GPT Image 2", vendor: "relay", kind: "image" },
+      { value: "gpt-image-2", modelKey: "gpt-image-2", label: "GPT Image 2", vendor: "apimart", kind: "image" },
+    ] as ModelOption[]);
+    const index = buildModelEntryIndex(entries, ["apimart", "relay"]);
+    expect(buildPlannedNodeMeta({ modelKey: "gpt-image-2" }, index)?.modelVendor).toBe("apimart");
+    expect(buildPlannedNodeMeta({ modelKey: "gpt-image-2", vendor: "relay" }, index)?.modelVendor).toBe("relay");
   });
 });

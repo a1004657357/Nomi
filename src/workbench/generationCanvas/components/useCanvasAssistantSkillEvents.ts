@@ -2,7 +2,7 @@ import React from 'react'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { toast } from '../../../ui/toast'
 import type { ComposerAttachment } from '../../ai/composer/composerAttachmentTypes'
-import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
+import { isProjectExecutionContextCurrent, withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import {
   buildFixationPlanningMessage,
@@ -73,7 +73,11 @@ export function useCanvasAssistantSkillEvents(input: {
         })
         return
       }
-      void prepareVideoDeconstruction({ detail, nodes, submitAgentMessage })
+      withProjectAction(project => {
+        void prepareVideoDeconstruction({ project, detail, nodes, submitAgentMessage }).catch(error => {
+          if (isProjectExecutionContextCurrent(project)) toast(`视频拆解准备失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+        })
+      }, () => { toast('视频拆解需要已打开的桌面端项目', 'error') })
     }
     window.addEventListener(RUN_CANVAS_SKILL_AGENT_EVENT, handler)
     return () => window.removeEventListener(RUN_CANVAS_SKILL_AGENT_EVENT, handler)
@@ -81,11 +85,13 @@ export function useCanvasAssistantSkillEvents(input: {
 }
 
 async function prepareVideoDeconstruction(input: {
+  project: ProjectExecutionContext
   detail: RunCanvasSkillAgentEventDetail
   nodes: GenerationCanvasNode[]
   submitAgentMessage: SubmitAgentMessage
 }): Promise<void> {
-  const { detail, nodes, submitAgentMessage } = input
+  const { detail, nodes, submitAgentMessage, project } = input
+  project.assertCurrent()
   const source = detail.sourceNodeIds
     .map((id) => nodes.find((node) => node.id === id))
     .find((node) => node?.result?.type === 'video' && node.result.url)
@@ -93,7 +99,7 @@ async function prepareVideoDeconstruction(input: {
     toast('视频拆解需要先连接一个已有结果的视频节点', 'warning')
     return
   }
-  const projectId = getActiveWorkbenchProjectId()
+  const projectId = project.binding.projectId
   const desktop = getDesktopBridge()
   if (!projectId || !desktop?.video?.extractFrames) {
     toast('视频拆解需要已保存的桌面端项目', 'error')
@@ -102,6 +108,7 @@ async function prepareVideoDeconstruction(input: {
   let duration = resolveVideoDurationSeconds(source)
   if (!duration && desktop.assets.inspectVideo) {
     const inspection = await desktop.assets.inspectVideo({ url: source.result.url })
+    project.assertCurrent()
     duration = inspection.metadata?.durationSeconds ?? null
   }
   if (!duration) {
@@ -110,11 +117,14 @@ async function prepareVideoDeconstruction(input: {
   }
   toast('正在为 Agent 抽取 8 张时序关键帧', 'info')
   try {
-    const extracted = await desktop.video.extractFrames({
+    const payload = {
       videoUrl: source.result.url,
       projectId,
+      projectBinding: project.binding,
       times: buildEvenlySpacedFrameTimes(duration, 8),
-    })
+    }
+    const extracted = await desktop.video.extractFrames(payload)
+    project.assertCurrent()
     const frames = extracted.frames.filter((frame) => frame.url)
     if (!frames.length) throw new Error('没有取得有效关键帧')
     submitAgentMessage(videoDeconstructionAgentMessage(detail, frames), {
@@ -123,6 +133,7 @@ async function prepareVideoDeconstruction(input: {
       attachments: buildVideoDeconstructionAttachments(frames),
     })
   } catch (error) {
+    if (!isProjectExecutionContextCurrent(project)) return
     toast(`视频拆解准备失败：${error instanceof Error ? error.message : String(error)}`, 'error')
   }
 }

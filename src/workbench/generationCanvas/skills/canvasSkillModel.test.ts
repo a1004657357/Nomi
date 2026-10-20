@@ -36,6 +36,8 @@ const skill: SkillListItemDto = {
     defaultRecipeId: 'image.multiview.grid9',
   },
   origin: 'builtin',
+  packageVersion: 'nomi-skill-v1',
+  contentHash: 'a'.repeat(64),
 }
 
 describe('canvasSkillModel', () => {

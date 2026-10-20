@@ -1,35 +1,12 @@
 import { rollbackNodeHistory } from '../model/graphOps'
-import type { GenerationNodeResult, GenerationNodeRunRecord } from '../model/generationCanvasTypes'
+import type { GenerationNodeRunRecord } from '../model/generationCanvasTypes'
+import { nodeRunOutcomePatch } from './nodeRunOutcome'
 import { createRunId } from './canvasIds'
 import { bumpPersistRevision } from './canvasGuards'
-import { createProgress, getResultTaskKind, getRunDurationSeconds, mergeRunRecord } from './runRecordHelpers'
+import { getRunDurationSeconds, mergeRunRecord } from './runRecordHelpers'
 import { emitCanvasGesture } from '../events/canvasEventEmitter'
 import type { CanvasRunActions, CanvasSliceCreator } from './canvasStoreTypes'
-
-const MAX_NODE_RESULT_HISTORY = 24
-const MAX_NODE_RUN_HISTORY = 50
-
-function mergeResultHistory(
-  nextResult: GenerationNodeResult,
-  alternatives: GenerationNodeResult[],
-  previousResult: GenerationNodeResult | undefined,
-  previousHistory: GenerationNodeResult[] | undefined,
-): GenerationNodeResult[] {
-  const history: GenerationNodeResult[] = []
-  const seen = new Set<string>()
-  const add = (result: GenerationNodeResult | undefined) => {
-    if (!result) return
-    const key = result.id || result.url || result.thumbnailUrl || result.text || ''
-    if (!key || seen.has(key)) return
-    seen.add(key)
-    history.push(result)
-  }
-  add(nextResult)
-  alternatives.forEach(add)
-  add(previousResult)
-  ;(previousHistory || []).forEach(add)
-  return history.slice(0, MAX_NODE_RESULT_HISTORY)
-}
+import { describeOpaqueFailure } from '../../observability/opaqueFailure'
 
 // S5-a3 run 域记账 = 终态收敛:setNodeProgress(每 1.5s 轮询 tick)不入日志(§4.3 瞬态),
 // 终态 action 发后态整节点(canvas.node.run-updated)——内部时间戳逻辑再复杂,后态都构造性精确;
@@ -40,191 +17,106 @@ export const createCanvasRunActions: CanvasSliceCreator<CanvasRunActions> = (set
     if (node) emitCanvasGesture([{ type: 'canvas.node.run-updated', payload: { node } }], { source: 'runtime' })
   }
   return {
-    setNodeStatus: (nodeId, status, error) => {
-      set((state) => {
-        const node = state.nodes.find((candidate) => candidate.id === nodeId)
-        if (!node) return
-        const nextError = status === 'error' ? error || node.error || 'Generation failed' : undefined
-        const latestRun = node.runs?.[0]
-        const runs =
-          latestRun &&
-          latestRun.status !== 'success' &&
-          latestRun.status !== 'error' &&
-          latestRun.status !== 'cancelled'
-            ? [
-                mergeRunRecord(latestRun, { status: status === 'idle' ? 'cancelled' : status, error: nextError }),
-                ...(node.runs || []).slice(1),
-              ]
-            : node.runs
-
-        node.status = status
-        node.error = nextError
-        node.progress = status === 'queued' || status === 'running' ? node.progress : undefined
-        node.runs = runs?.slice(0, MAX_NODE_RUN_HISTORY)
-        bumpPersistRevision(state)
-      })
-      emitRunUpdated(nodeId)
-    },
-    // Only dismiss the error overlay; preserve the failed run and previous result.
-    dismissNodeError: (nodeId) => {
-      set((state) => {
-        const node = state.nodes.find((candidate) => candidate.id === nodeId)
-        if (!node || node.status !== 'error') return
-        node.status = node.result ? 'success' : 'idle'
-        node.error = undefined
-        bumpPersistRevision(state)
-      })
-      emitRunUpdated(nodeId)
-    },
-    setNodeProgress: (nodeId, progress) => {
-      set((state) => {
-        const node = state.nodes.find((candidate) => candidate.id === nodeId)
-        if (!node) return
-        if (!progress) {
-          node.progress = undefined
-          bumpPersistRevision(state)
-          return
-        }
-        const nextProgress = createProgress(progress, node.runs?.[0]?.id)
-        const waitingForProviderSlot = nextProgress.phase === 'queued' || nextProgress.phase === 'rate-limited'
-        const runs = node.runs?.length
-          ? [
-              mergeRunRecord(
-                node.runs[0],
-                {
-                  status: waitingForProviderSlot
-                    ? 'queued'
-                    : node.runs[0].status === 'queued'
-                      ? 'running'
-                      : node.runs[0].status,
-                  progress: nextProgress,
-                  taskId: nextProgress.taskId ?? node.runs[0].taskId,
-                  taskKind: nextProgress.taskKind ?? node.runs[0].taskKind,
-                },
-                nextProgress.updatedAt,
-              ),
-              ...node.runs.slice(1),
-            ]
-          : node.runs
-        node.status = waitingForProviderSlot
-          ? 'queued'
-          : node.status === 'queued'
-            ? 'running'
-            : node.status || 'running'
-        node.error = undefined
-        node.progress = nextProgress
-        node.runs = runs
-        bumpPersistRevision(state)
-      })
-    },
-    appendNodeRun: (nodeId, run) => {
-      const now = Date.now()
-      const nextRun: GenerationNodeRunRecord = {
-        ...run,
-        id: run.id ?? createRunId(nodeId),
-        startedAt: run.startedAt ?? now,
-        updatedAt: run.updatedAt ?? now,
-      }
-      const normalizedRun = {
-        ...nextRun,
-        durationSeconds: getRunDurationSeconds(nextRun),
-      }
-      set((state) => {
-        const node = state.nodes.find((candidate) => candidate.id === nodeId)
-        if (!node) return
-        node.status = normalizedRun.status === 'cancelled' ? 'idle' : normalizedRun.status
-        node.error =
-          normalizedRun.status === 'error' ? normalizedRun.error || node.error || 'Generation failed' : undefined
-        node.progress = normalizedRun.progress
-        node.runs = [normalizedRun, ...(node.runs || []).filter((entry) => entry.id !== normalizedRun.id)].slice(
-          0,
-          MAX_NODE_RUN_HISTORY,
-        )
-        bumpPersistRevision(state)
-      })
-      emitRunUpdated(nodeId)
-      return normalizedRun
-    },
-    trackNodeRun: (nodeId, runId, patch) => {
-      set((state) => {
-        const node = state.nodes.find((candidate) => candidate.id === nodeId)
-        if (!node) return
-        const runIndex = (node.runs || []).findIndex((entry) => entry.id === runId)
-        if (runIndex < 0) return
-        const nextRuns = [...(node.runs || [])]
-        const nextRun = mergeRunRecord(nextRuns[runIndex], patch)
-        nextRuns[runIndex] = nextRun
-        const isLatestRun = runIndex === 0
-        node.status = isLatestRun ? (nextRun.status === 'cancelled' ? 'idle' : nextRun.status) : node.status
-        node.error = isLatestRun && nextRun.status === 'error' ? nextRun.error || 'Generation failed' : undefined
-        node.progress = isLatestRun ? nextRun.progress : node.progress
-        node.runs = nextRuns.slice(0, MAX_NODE_RUN_HISTORY)
-        bumpPersistRevision(state)
-      })
-      emitRunUpdated(nodeId)
-    },
-    addNodeResult: (nodeId, result) => {
-      const { alternatives = [], ...primaryResult } = result
-      set((state) => {
-        const node = state.nodes.find((candidate) => candidate.id === nodeId)
-        if (!node) return
-        const previousResult = node.result
-        const latestRun = node.runs?.[0]
-        const completedAt = primaryResult.createdAt || Date.now()
-        const runs = latestRun
-          ? [
-              mergeRunRecord(
-                latestRun,
-                {
-                  status: 'success',
-                  taskId: primaryResult.taskId ?? latestRun.taskId,
-                  taskKind: getResultTaskKind(primaryResult) ?? latestRun.taskKind,
-                  assetId: primaryResult.assetId ?? latestRun.assetId,
-                  assetRefId: primaryResult.assetRefId ?? latestRun.assetRefId,
-                  resultId: primaryResult.id,
-                  raw: primaryResult.raw ?? latestRun.raw,
-                  completedAt,
-                  durationSeconds: primaryResult.durationSeconds ?? latestRun.durationSeconds,
-                  progress: undefined,
-                  error: undefined,
-                },
-                completedAt,
-              ),
-              ...(node.runs || []).slice(1),
-            ].slice(0, MAX_NODE_RUN_HISTORY)
-          : node.runs
-        node.result = primaryResult
-        node.history = mergeResultHistory(primaryResult, alternatives, previousResult, node.history)
-        node.status = 'success'
-        node.error = undefined
-        node.progress = undefined
-        node.runs = runs
-        bumpPersistRevision(state)
-      })
-      emitRunUpdated(nodeId)
-    },
-    addNodeResultCollection: (nodeId, collection) => {
-      set((state) => {
-        const node = state.nodes.find((candidate) => candidate.id === nodeId)
-        if (!node) return
-        const current = node.resultCollections ?? []
-        const existingIndex = current.findIndex((entry) => entry.id === collection.id)
-        node.resultCollections = existingIndex < 0
-          ? [...current, collection]
-          : current.map((entry, index) => index === existingIndex ? collection : entry)
-        bumpPersistRevision(state)
-      })
-      emitRunUpdated(nodeId)
-    },
-    rollbackHistory: (nodeId, resultId) => {
-      const before = get().nodes
-      set((state) => {
-        const nextNodes = rollbackNodeHistory(state.nodes, nodeId, resultId)
-        if (nextNodes === state.nodes) return
-        state.nodes = nextNodes
-        bumpPersistRevision(state)
-      })
-      if (get().nodes !== before) emitRunUpdated(nodeId)
-    },
+  setNodeStatus: (nodeId, status, error) => {
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node) return
+      Object.assign(node, nodeRunOutcomePatch(node, { kind: 'status', status, error }))
+      bumpPersistRevision(state)
+    })
+    emitRunUpdated(nodeId)
+  },
+  // 收起失败卡（2026-08-24 用户反馈：「下面是生了视频的，有这个报错窗口在，就一直看不了原本的视频」）。
+  // 失败卡是 absolute inset-0 铺满正文的**遮罩**，节点的 result 一直好端端在下面——错误态只是把它挡住了。
+  // 所以「关掉」不是删数据，而是把节点放回它本来的样子：有产物 → success（片子露出来），没有 → idle。
+  // 错误原文不丢：它在 runs[0] 里（任务日志/生成记录仍查得到），此处只动 node.status/node.error 这层展示态。
+  dismissNodeError: (nodeId) => {
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node || node.status !== 'error') return
+      node.status = node.result ? 'success' : 'idle'
+      node.error = undefined
+      bumpPersistRevision(state)
+    })
+    emitRunUpdated(nodeId)
+  },
+  setNodeProgress: (nodeId, progress) => {
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node) return
+      Object.assign(node, nodeRunOutcomePatch(node, { kind: 'progress', progress }))
+      bumpPersistRevision(state)
+    })
+  },
+  appendNodeRun: (nodeId, run) => {
+    const now = Date.now()
+    const nextRun: GenerationNodeRunRecord = {
+      ...run,
+      id: run.id ?? createRunId(nodeId),
+      startedAt: run.startedAt ?? now,
+      updatedAt: run.updatedAt ?? now,
+    }
+    const normalizedRun = {
+      ...nextRun,
+      durationSeconds: getRunDurationSeconds(nextRun),
+    }
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node) return
+      Object.assign(node, nodeRunOutcomePatch(node, { kind: 'run-started', run: normalizedRun }))
+      bumpPersistRevision(state)
+    })
+    emitRunUpdated(nodeId)
+    return normalizedRun
+  },
+  trackNodeRun: (nodeId, runId, patch) => {
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node) return
+      const runIndex = (node.runs || []).findIndex((entry) => entry.id === runId)
+      if (runIndex < 0) return
+      const nextRuns = [...(node.runs || [])]
+      const nextRun = mergeRunRecord(nextRuns[runIndex], patch)
+      nextRuns[runIndex] = nextRun
+      const isLatestRun = runIndex === 0
+      node.status = isLatestRun ? (nextRun.status === 'cancelled' ? 'idle' : nextRun.status) : node.status
+      node.error = isLatestRun && nextRun.status === 'error' ? nextRun.error || describeOpaqueFailure(null) : undefined
+      node.progress = isLatestRun ? nextRun.progress : node.progress
+      node.runs = nextRuns
+      bumpPersistRevision(state)
+    })
+    emitRunUpdated(nodeId)
+  },
+  addNodeResult: (nodeId, result, mediaDimensions) => {
+    set((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === nodeId)
+      if (!node) return
+      Object.assign(node, nodeRunOutcomePatch(node, { kind: 'result', result, mediaDimensions }))
+      bumpPersistRevision(state)
+    })
+    emitRunUpdated(nodeId)
+  },
+  addNodeResultCollection: (nodeId, collection) => {
+    set(state => {
+      const node = state.nodes.find(candidate => candidate.id === nodeId)
+      if (!node) return
+      const current = node.resultCollections ?? []
+      node.resultCollections = current.some(entry => entry.id === collection.id)
+        ? current.map(entry => entry.id === collection.id ? collection : entry)
+        : [...current, collection]
+      bumpPersistRevision(state)
+    })
+    emitRunUpdated(nodeId)
+  },
+  rollbackHistory: (nodeId, resultId) => {
+    const before = get().nodes
+    set((state) => {
+      const nextNodes = rollbackNodeHistory(state.nodes, nodeId, resultId)
+      if (nextNodes === state.nodes) return
+      state.nodes = nextNodes
+      bumpPersistRevision(state)
+    })
+    if (get().nodes !== before) emitRunUpdated(nodeId)
+  },
   }
 }

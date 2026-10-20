@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { cn } from '../utils/cn'
 
 /**
@@ -27,17 +27,34 @@ export type NomiSegmentedProps = {
   className?: string
   /** 每个分段项的附加类（如比例组统一双行高，保证图形/文字跨项对齐）。 */
   itemClassName?: string
+  /** compact = 28px item height for dense canvas controls; default = 32px. */
+  density?: 'compact' | 'default'
+  /**
+   * fill（默认）= 撑满父容器宽、超宽换行——参数面板用；
+   * content = 按内容收缩成一行、各项仍等宽——放在 flex 工具条 / 绝对定位的浮层里用。
+   * column = **一项一行**、文字左对齐——标签本身就长（文件名、长枚举）时用：
+   *   挤在等宽格子里只会各自 truncate 成一排读不出的省略号，那时「摊开」等于没摊开
+   *   （2026-09-11 参数面板去下拉：≤8 项一律摊平，短标签一排、长标签一列）。
+   * 为什么要分：auto-fit 列数靠「父容器的确定宽度」算，父级是 flex 项或 shrink-to-fit 容器时宽度不定，
+   * 浏览器按 min-content 只排出一列 → 四个工具竖着叠成一根柱子（2026-09-02 导演台顶栏栽过）。
+   */
+  fit?: 'fill' | 'content' | 'column'
 }
 
-export function NomiSegmented({ value, options, onChange, ariaLabel, className, itemClassName }: NomiSegmentedProps): JSX.Element {
+const FILL_STYLE: React.CSSProperties = { gridTemplateColumns: 'repeat(auto-fit, minmax(56px, 1fr))' }
+const CONTENT_STYLE: React.CSSProperties = { gridAutoFlow: 'column', gridAutoColumns: '1fr', width: 'max-content' }
+const COLUMN_STYLE: React.CSSProperties = { gridTemplateColumns: 'minmax(0, 1fr)' }
+
+export function NomiSegmented({ value, options, onChange, ariaLabel, className, itemClassName, density = 'default', fit = 'fill' }: NomiSegmentedProps): JSX.Element {
   return (
     // grid 等宽列（2026-07-17 用户反馈：flex-1 下换行的孤项被拉伸，「多出来的选项要和其他一样大」）：
-    // auto-fit+minmax——所有项严格等宽；选项少于一行时空轨道塌陷、项拉伸**填满父容器**（1K/2K 两项
+    // fill: auto-fit+minmax——所有项严格等宽；选项少于一行时空轨道塌陷、项拉伸**填满父容器**（1K/2K 两项
     // 各占一半，不缩在左边）；选项多于一行时与 auto-fill 无差（换行项与上行同宽）。
+    // content: 单行 auto-flow column + auto-columns 1fr——宽度由最宽一项决定、各列等宽，不依赖父容器宽度。
     // 尺寸走 inline style 不用任意值类：dev 的 tailwind 生成缓存可能缺新类 → 布局静默塌（栽过两次）。
     <div
       className={cn('grid rounded-nomi bg-nomi-ink-05 p-1 gap-1', className)}
-      style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(56px, 1fr))' }}
+      style={fit === 'content' ? CONTENT_STYLE : fit === 'column' ? COLUMN_STYLE : FILL_STYLE}
       role="radiogroup"
       aria-label={ariaLabel}
     >
@@ -52,11 +69,15 @@ export function NomiSegmented({ value, options, onChange, ariaLabel, className, 
             title={option.title}
             disabled={option.disabled}
             onClick={() => { if (!on) onChange(option.value) }}
-            style={{ minHeight: 32 }}
+            // 换行点走 inline style 不用任意值类（与上面尺寸同理：dev 的 tailwind 缓存可能缺新类）。
+            // 长模型文件名没有空格可断，不给 anywhere 就会横着溢出格子。
+            style={{ minHeight: density === 'compact' ? 28 : 32, ...(fit === 'column' ? { overflowWrap: 'anywhere' } : {}) }}
             className={cn(
               'px-2 py-1 rounded-nomi-sm border-0 text-caption cursor-pointer min-w-0',
               'inline-flex flex-col items-center justify-center gap-1 font-[inherit]',
-              'transition-colors duration-[var(--nomi-transition-fast)]',
+              // 一列时每项是一整行：文字左对齐、读不完就换行（居中的长文件名是另一种乱）。
+              fit === 'column' && 'flex-row items-center justify-start gap-2 text-left',
+              'transition-colors duration-nomi-fast ease-nomi-fast',
               on
                 ? 'bg-nomi-paper text-nomi-ink font-semibold shadow-nomi-sm'
                 : 'bg-transparent text-nomi-ink-60 hover:text-nomi-ink-80',

@@ -1,7 +1,10 @@
 // 渲染层取提示词库的唯一入口(镜像 skillApi 的 requireDesktopRuntime 范式)。
 // 主进程已聚合+缓存;这里取全量,搜索/分类过滤是平凡纯函数,放渲染层(不重复后端逻辑)。
+import type { SkillCuration } from '../../../electron/shared/skillCuration'
 import { getDesktopBridge, type DesktopBridge } from '../../desktop/bridge'
 import i18n from '../../i18n'
+import { matchesLibraryQuery } from '../library/libraryDiscovery'
+import { promptSourceKey } from '../promptLibrary/promptDisplay'
 
 export type PromptMediaType = 'image' | 'video'
 
@@ -10,6 +13,7 @@ export type PromptOrigin = 'public' | 'user'
 export type PromptReferenceImage = { url: string; title?: string; sourceUrl?: string }
 
 export type LibraryPrompt = {
+  curation?: SkillCuration
   id: string
   title: string
   prompt: string
@@ -44,6 +48,7 @@ function toPrompt(raw: unknown): LibraryPrompt | null {
   const promptType: PromptMediaType = r.promptType === 'video' ? 'video' : 'image'
   return {
     id,
+    curation: r.curation as SkillCuration | undefined,
     title: String(r.title ?? i18n.t('runtime.promptLibrary.untitled')),
     prompt,
     mediaUrl: String(r.mediaUrl ?? ''),
@@ -66,7 +71,7 @@ function toPrompt(raw: unknown): LibraryPrompt | null {
 export async function fetchPromptLibrary(): Promise<LibraryPrompt[]> {
   const desktop = requireDesktopRuntime('prompt library')
   const res = await desktop.promptLibrary!.list()
-  if (!res?.ok || !Array.isArray(res.prompts)) return []
+  if (!res?.ok || !Array.isArray(res.prompts)) throw new Error(res?.error || i18n.t('runtime.promptLibrary.loadFailed'))
   return res.prompts.map(toPrompt).filter((p): p is LibraryPrompt => p !== null)
 }
 
@@ -79,7 +84,9 @@ function mapUserPrompts(res: { ok?: boolean; prompts?: unknown[] } | undefined):
 
 export async function fetchUserPrompts(): Promise<LibraryPrompt[]> {
   const desktop = requireDesktopRuntime('my prompt library')
-  return mapUserPrompts(await desktop.promptLibrary!.userList())
+  const res = await desktop.promptLibrary!.userList()
+  if (!res?.ok || !Array.isArray(res.prompts)) throw new Error(res?.error || i18n.t('runtime.promptLibrary.loadFailed'))
+  return mapUserPrompts(res)
 }
 
 export async function addUserPrompt(input: {
@@ -107,32 +114,57 @@ export async function deleteUserPrompt(id: string): Promise<LibraryPrompt[]> {
   return mapUserPrompts(await desktop.promptLibrary!.userDelete(id))
 }
 
-/** 节点提示词优化用的文本大脑键(与创作助手同脑);未配文本模型返回 null。 */
+/** 节点提示词优化用的已配置文本大脑键(与创作助手同脑);未配文本模型返回 null。 */
 export async function getTextBrain(): Promise<{ vendor: string; modelKey: string } | null> {
   const desktop = requireDesktopRuntime('prompt optimize')
   const res = await desktop.promptLibrary!.textBrain()
   return res?.ok && res.brain ? res.brain : null
 }
 
-/**
- * 文本大脑三态（ok / locked / missing）——上手清单第一步、恢复卡、库页状态条据此把
- * 「已保存的 Key 读不出（locked）」和「压根没配（missing）」说清楚，而不是一律「去接入」。
- * 与 getTextBrain 同一 IPC，判据同一份（chooseTextModel + apiKeyDecryptStatus）。
- */
-export async function getTextBrainStatus(): Promise<'ok' | 'locked' | 'missing'> {
-  const desktop = requireDesktopRuntime('text brain status')
-  const res = await desktop.promptLibrary!.textBrain()
-  return res?.status ?? (res?.ok ? 'ok' : 'missing')
-}
-
 export type PromptCategory = 'all' | 'image' | 'video'
 
-/** 平凡过滤:分类(全部/图片/视频)+ 关键词(标题/正文/来源)。 */
-export function filterPrompts(items: LibraryPrompt[], category: PromptCategory, keyword: string): LibraryPrompt[] {
-  const kw = keyword.trim().toLowerCase()
-  return items.filter((item) => {
-    if (category !== 'all' && item.promptType !== category) return false
-    if (!kw) return true
-    return `${item.title} ${item.prompt} ${item.source}`.toLowerCase().includes(kw)
-  })
+/** 「全部来源」哨兵：来源筛选的默认值（不按来源过滤）。用常量避免和真实来源名撞。 */
+export const PROMPT_SOURCE_ALL = '__all__'
+
+/**
+ * 站外精选条目按「来源」分组——这是数据里现成的字段，不硬造词表。返回按出现顺序去重的
+ * **稳定来源键**列表（精选条目 = curation 组名 en 值，不随界面语言变；显示标签由 UI 用
+ * promptSourceDisplayLabel 另取，键/显示分离——2026-09-10 走查反馈：原先直接用写死中文的
+ * source 当值，切语言时 chips 与过滤一齐失配）；空来源忽略。
+ */
+export function promptSourceOptions(items: LibraryPrompt[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of items) {
+    const source = promptSourceKey(item)
+    if (!source || seen.has(source)) continue
+    seen.add(source)
+    out.push(source)
+  }
+  return out
+}
+
+/** 平凡过滤:分类(全部/图片/视频)+ 来源(全部/某来源的稳定键)+ 关键词(标题/正文/来源/已有标签)。 */
+export function filterPrompts(
+  items: LibraryPrompt[],
+  category: PromptCategory,
+  keyword: string,
+  source: string = PROMPT_SOURCE_ALL,
+): LibraryPrompt[] {
+  const byCategory = items.filter((item) => category === 'all' || item.promptType === category)
+  const bySource = source === PROMPT_SOURCE_ALL ? byCategory : byCategory.filter((item) => promptSourceKey(item) === source)
+  return bySource.filter((item) => matchesLibraryQuery(
+    {
+      title: item.title,
+      description: item.prompt,
+      // 搜索关键词中英都给:精选条目的双语标题/组名都参与匹配,中文搜「转台」英文搜 "turntable" 都能中。
+      keywords: [
+        item.source,
+        ...item.tags,
+        ...([item.curation?.title['zh-CN'], item.curation?.title.en,
+          item.curation?.group['zh-CN'], item.curation?.group.en].filter(Boolean) as string[]),
+      ],
+    },
+    keyword,
+  ))
 }

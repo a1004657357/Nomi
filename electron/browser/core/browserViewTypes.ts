@@ -35,7 +35,6 @@ export type BrowserViewResizePayload = BrowserViewIdPayload & {
 };
 
 export type BrowserViewImportMediaPayload = BrowserViewIdPayload & {
-  projectId?: unknown;
   url?: unknown;
   fileName?: unknown;
   title?: unknown;
@@ -43,14 +42,12 @@ export type BrowserViewImportMediaPayload = BrowserViewIdPayload & {
 };
 
 export type BrowserViewPromptImagePayload = BrowserViewIdPayload & {
-  projectId?: unknown;
   url?: unknown;
   fileName?: unknown;
   title?: unknown;
 };
 
 export type BrowserViewPromptScreenshotPayload = BrowserViewIdPayload & {
-  projectId?: unknown;
   fileName?: unknown;
   title?: unknown;
   sourceRect?: BrowserResourceCaptureRectPayload;

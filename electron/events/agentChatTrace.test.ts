@@ -8,6 +8,7 @@ vi.mock("electron", () => ({
 }));
 
 import { beginTurnTrace, traceChatEvent, traceGateDenied, traceToolDecision } from "./agentChatTrace";
+import { createProjectAgentContextBinding } from "../shared/contracts/projectAgentContextBinding";
 import {
   readEvents,
   resetEventLogStateForTests,
@@ -17,8 +18,15 @@ import {
 
 let tmpRoot = "";
 const SESSION = "sess-1";
-// 用渲染层真实格式(带 :area 后缀,cdc433c 起)——曾用无后缀的 `nomi:workbench:p1` 掩盖了 trace 全丢的回归。
-const SESSION_KEY = "nomi:workbench:p1:generation";
+// 用 Host 真实格式：线程身份由不可变项目 UUID 派生（`projectAgentContextBinding`）。
+// 曾用可解析的 `nomi:workbench:p1` 掩盖了 trace 全丢的回归；projectId 现在直接从 binding 读。
+const history = {
+  kind: 'persistent',
+  binding: createProjectAgentContextBinding(
+    { projectId: 'p1', immutableProjectUuid: '4d80f2e0-4a45-4a8f-8fe1-78ac659177c8', projectGeneration: 3 },
+    'explicit-thread',
+  ),
+};
 
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-trace-"));
@@ -34,7 +42,7 @@ afterEach(() => {
 
 describe("agentChatTrace — S6-0 对账的米", () => {
   it("approved 携 effectiveArgs/overridesDelta,causeId 回指 proposed", () => {
-    beginTurnTrace(SESSION, { sessionKey: SESSION_KEY, skillKey: "canvas", prompt: "拆镜头" });
+    beginTurnTrace(SESSION, { history, skillKey: "canvas", prompt: "拆镜头" });
     traceChatEvent(SESSION, {
       type: "tool-call",
       toolCallId: "tc-1",
@@ -65,7 +73,7 @@ describe("agentChatTrace — S6-0 对账的米", () => {
   });
 
   it("无 override 时不写空 overridesDelta(空对象不进日志)", () => {
-    beginTurnTrace(SESSION, { sessionKey: SESSION_KEY, skillKey: "canvas", prompt: "建节点" });
+    beginTurnTrace(SESSION, { history, skillKey: "canvas", prompt: "建节点" });
     traceChatEvent(SESSION, { type: "tool-call", toolCallId: "tc-2", toolName: "create_canvas_nodes", args: { nodes: [] } });
     traceToolDecision(SESSION, "tc-2", { ok: true, effectiveArgs: { nodes: [] } });
 
@@ -75,7 +83,7 @@ describe("agentChatTrace — S6-0 对账的米", () => {
   });
 
   it("rejected 只记 message,不混入对账字段", () => {
-    beginTurnTrace(SESSION, { sessionKey: SESSION_KEY, skillKey: "canvas", prompt: "删节点" });
+    beginTurnTrace(SESSION, { history, skillKey: "canvas", prompt: "删节点" });
     traceChatEvent(SESSION, { type: "tool-call", toolCallId: "tc-3", toolName: "delete_canvas_nodes", args: { nodeIds: ["n9"] } });
     traceToolDecision(SESSION, "tc-3", { ok: false, message: "用户拒绝" });
 
@@ -85,7 +93,7 @@ describe("agentChatTrace — S6-0 对账的米", () => {
   });
 
   it("S6-1 gate.denied:reason 人话落盘,causeId 回指 proposed(intent 可反走还原)", () => {
-    beginTurnTrace(SESSION, { sessionKey: SESSION_KEY, skillKey: "canvas", prompt: "动作" });
+    beginTurnTrace(SESSION, { history, skillKey: "canvas", prompt: "动作" });
     traceChatEvent(SESSION, { type: "tool-call", toolCallId: "tc-4", toolName: "rm_rf", args: {} });
     traceGateDenied(SESSION, "tc-4", "不支持的操作「rm_rf」");
 
@@ -100,7 +108,7 @@ describe("agentChatTrace — S6-0 对账的米", () => {
   });
 
   it("records harness configuration, per-step progress and the final step count", () => {
-    beginTurnTrace(SESSION, { sessionKey: SESSION_KEY, skillKey: "brand.promo", playbookStageId: "build", prompt: "继续" });
+    beginTurnTrace(SESSION, { history, skillKey: "brand.promo", playbookStageId: "build", prompt: "继续" });
     traceChatEvent(SESSION, {
       type: "harness-config",
       vendorKey: "ark-plan",
@@ -126,7 +134,7 @@ describe("agentChatTrace — S6-0 对账的米", () => {
 
   it("reads the real renderer skill shape from chatContext", () => {
     beginTurnTrace(SESSION, {
-      sessionKey: SESSION_KEY,
+      history,
       chatContext: { skill: { key: "brand.promo", name: "品牌宣传片" } },
       playbookStageId: "storyboard",
       displayPrompt: "做宣传片",
@@ -136,5 +144,14 @@ describe("agentChatTrace — S6-0 对账的米", () => {
       skillKey: "brand.promo",
       playbookStageId: "storyboard",
     });
+  });
+
+  it.each(['finished', 'cancelled', 'error'])('records the actual %s status and explicit thread identity', (status) => {
+    beginTurnTrace(SESSION, { history, prompt: 'go' });
+    traceChatEvent(SESSION, { type: 'result', result: { status, text: 'actual', usage: { totalTokens: 9 } } });
+    traceChatEvent(SESSION, { type: 'done', reason: status });
+    const events = readEvents('p1');
+    expect(events.find((event) => event.type === 'agent.turn.started')?.payload).toMatchObject({ threadId: 'explicit-thread' });
+    expect(events.find((event) => event.type === 'agent.turn.finished')?.payload).toMatchObject({ status, usage: { totalTokens: 9 } });
   });
 });

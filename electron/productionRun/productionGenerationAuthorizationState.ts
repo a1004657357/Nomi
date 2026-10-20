@@ -1,0 +1,416 @@
+import { budgetExceeds, sumBudgetAmounts } from "./budgetLedger";
+import type { ExecutionContractV1, PlanCandidate } from "../capabilityCore/executionContract";
+import {
+  createProductionGenerationAuthorizationEnvelope,
+  productionGenerationAuthorizationDigest,
+  productionGenerationJobId,
+  productionGenerationProviderIdempotencyKey,
+  stableAuthorizationJson,
+  type ProductionGenerationAuthorizationEnvelopeV1,
+} from "./productionGenerationAuthorization";
+import type {
+  ProductionGate,
+  ProductionGenerationPlan,
+  ProductionGenerationShot,
+  ProductionJob,
+  ProductionRun,
+} from "./productionRunTypes";
+import {
+  REWORKABLE_JOB_STATUSES,
+  nextGenerationAttempt,
+} from "./prepareProductionGenerationAuthorization";
+
+type AuthorizationPreparation = Readonly<{
+  envelope: ProductionGenerationAuthorizationEnvelopeV1;
+  authorizationDigest: string;
+}>;
+
+type AuthorizationUnit = Readonly<{
+  shotId: string;
+  jobShotId?: string;
+  candidate: PlanCandidate;
+  contract: ExecutionContractV1;
+  nodeId?: string;
+}>;
+
+export type SealedGenerationAuthorizationState = Readonly<{
+  envelope: ProductionGenerationAuthorizationEnvelopeV1;
+  authorizationDigest: string;
+  jobs: readonly ProductionJob[];
+  gate: ProductionGate;
+}>;
+
+export type GenerationAuthorizationGateDecision = Readonly<{
+  receiptId?: string;
+  generationPlan?: ProductionGenerationPlan;
+}>;
+
+export type ReauthorizedGenerationState = Readonly<{
+  generationPlan: ProductionGenerationPlan;
+  job: ProductionJob;
+  gate: ProductionGate;
+}>;
+
+function preparationFrom(value: unknown): AuthorizationPreparation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Generation authorization preparation is required");
+  }
+  const raw = value as Partial<AuthorizationPreparation>;
+  if (!raw.envelope || typeof raw.authorizationDigest !== "string" || !raw.authorizationDigest.trim()) {
+    throw new Error("Generation authorization preparation is invalid");
+  }
+  const envelope = createProductionGenerationAuthorizationEnvelope(raw.envelope);
+  const authorizationDigest = productionGenerationAuthorizationDigest(envelope);
+  if (authorizationDigest !== raw.authorizationDigest.trim()) {
+    throw new Error("Generation authorization digest does not match its envelope");
+  }
+  return { envelope, authorizationDigest };
+}
+
+function authorizationUnits(
+  plan: ProductionGenerationPlan,
+  topLevelContract: ExecutionContractV1,
+  sealedShots: readonly ProductionGenerationShot[] | undefined,
+  scope: ReadonlySet<string> | undefined,
+): AuthorizationUnit[] {
+  if (!sealedShots) {
+    return [{
+      shotId: plan.candidate.candidateId,
+      candidate: plan.candidate,
+      contract: topLevelContract,
+    }];
+  }
+  return sealedShots
+    .filter((shot) => shot.included !== false && (!scope || scope.has(shot.shotId)))
+    .map((shot) => {
+      if (!shot.contract) throw new Error(`Generation shot is missing its sealed contract: ${shot.shotId}`);
+      return {
+        shotId: shot.shotId,
+        jobShotId: shot.shotId,
+        candidate: shot.candidate,
+        contract: shot.contract,
+        ...(shot.nodeId ? { nodeId: shot.nodeId } : {}),
+      };
+    });
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return stableAuthorizationJson(left) === stableAuthorizationJson(right);
+}
+
+export function deriveSealedGenerationAuthorizationState(input: Readonly<{
+  run: ProductionRun;
+  plan: ProductionGenerationPlan;
+  topLevelContract: ExecutionContractV1;
+  sealedShots?: readonly ProductionGenerationShot[];
+  /** 这一次封印盖的镜（逐镜点击）；缺省 = 勾进这一批的全部。 */
+  scope?: ReadonlySet<string>;
+  preparation: unknown;
+  now: string;
+}>): SealedGenerationAuthorizationState {
+  const { envelope, authorizationDigest } = preparationFrom(input.preparation);
+  if (
+    envelope.projectId !== input.run.projectId
+    || envelope.runId !== input.run.runId
+    || envelope.planVersion !== input.run.planVersion
+  ) {
+    throw new Error("Generation authorization does not belong to the current Run plan");
+  }
+  if (envelope.budget.currency !== input.run.budget.currency) {
+    throw new Error("Generation authorization currency does not match the Run budget");
+  }
+  if (input.run.policy.maxSpend !== null && budgetExceeds(envelope.budget.ledgerCeiling, input.run.policy.maxSpend)) {
+    throw new Error("Generation authorization exceeds the Run hard spend ceiling");
+  }
+  const liability = sumBudgetAmounts([input.run.budget.reserved, input.run.budget.actual, input.run.budget.unsettled]);
+  if (budgetExceeds(input.run.budget.authorized, envelope.budget.ledgerCeiling) || budgetExceeds(liability + envelope.budget.maximum, envelope.budget.ledgerCeiling)) {
+    throw new Error("Generation authorization must retain cumulative Run liability");
+  }
+  if (Date.parse(envelope.expiresAt) <= Date.parse(input.now)) {
+    throw new Error("Generation authorization has expired");
+  }
+  if (input.run.gates.some((gate) => gate.gateId === envelope.gateId)) {
+    throw new Error(`Duplicate gate: ${envelope.gateId}`);
+  }
+
+  const units = authorizationUnits(input.plan, input.topLevelContract, input.sealedShots, input.scope);
+  if (units.length !== envelope.jobs.length) {
+    throw new Error("Generation authorization job set does not match the sealed plan");
+  }
+
+  const jobs = units.map((unit, index): ProductionJob => {
+    const authorized = envelope.jobs[index];
+    if (
+      authorized.shotId !== unit.shotId
+      || authorized.attempt !== nextGenerationAttempt(input.run, unit.jobShotId)
+      || authorized.attempt > input.run.policy.maxAttemptsPerJob
+      || authorized.contractHash !== unit.contract.contractHash
+      || authorized.providerId !== unit.contract.providerId
+      || authorized.modelId !== unit.contract.modelId
+      || authorized.mode !== unit.contract.mode
+      || !sameJson(authorized.parameters, unit.contract.parameters)
+      || !sameJson(authorized.references, unit.contract.references)
+    ) {
+      throw new Error(`Generation authorization job does not match sealed shot: ${unit.shotId}`);
+    }
+    if (
+      authorized.target.kind !== "generation-operation"
+      || authorized.target.operationId !== input.plan.operationId
+      || authorized.target.candidateRevision !== unit.candidate.revision
+    ) {
+      throw new Error(`Generation authorization target does not match sealed shot: ${unit.shotId}`);
+    }
+    const expectedJobId = productionGenerationJobId(
+      input.run.runId,
+      unit.contract.contractHash,
+      authorized.attempt,
+      unit.jobShotId,
+    );
+    const expectedIdempotencyKey = productionGenerationProviderIdempotencyKey(
+      input.run.runId,
+      unit.contract.contractHash,
+      authorized.attempt,
+      unit.jobShotId,
+    );
+    if (authorized.jobId !== expectedJobId || authorized.providerIdempotencyKey !== expectedIdempotencyKey) {
+      throw new Error(`Generation authorization identity does not match sealed shot: ${unit.shotId}`);
+    }
+    if (input.run.jobs.some((job) => job.jobId === authorized.jobId)) {
+      throw new Error(`Duplicate job: ${authorized.jobId}`);
+    }
+    return {
+      jobId: authorized.jobId,
+      stageId: "generate",
+      status: "authorization_required",
+      attempt: authorized.attempt,
+      provider: authorized.providerId,
+      model: authorized.modelId,
+      idempotencyKey: authorized.providerIdempotencyKey,
+      providerIdempotencyKey: authorized.providerIdempotencyKey,
+      authorizationDigest,
+      taskKind: authorized.mode,
+      ...(unit.nodeId ? { nodeId: unit.nodeId } : {}),
+      ...(unit.jobShotId ? { metadata: { shotId: unit.jobShotId } } : {}),
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+  });
+
+  return {
+    envelope,
+    authorizationDigest,
+    jobs,
+    gate: {
+      gateId: envelope.gateId,
+      scope: "budget_envelope",
+      status: "waiting",
+      planHash: authorizationDigest,
+      authorizationDigest,
+      authorizationEnvelope: envelope,
+      costScope: envelope.costScope,
+      requestedSpend: envelope.budget.maximum,
+      ...(envelope.budget.unknownJobCount > 0 ? { requestedUnknownJobs: envelope.budget.unknownJobCount } : {}),
+      jobIds: jobs.map((job) => job.jobId),
+      title: "Confirm generation spend",
+      summary: "Approve the frozen provider requests and their maximum total cost.",
+      createdAt: input.now,
+      expiresAt: envelope.expiresAt,
+    },
+  };
+}
+
+/** Validate and materialize a fresh authorization_required job + gate for one explicit rework. */
+export function deriveGenerationReauthorizationState(input: Readonly<{
+  run: ProductionRun;
+  shotId?: string;
+  preparation: unknown;
+  now: string;
+}>): ReauthorizedGenerationState {
+  const plan = input.run.generationPlan;
+  if (!plan || (plan.state !== "sealed" && plan.state !== "submitted")) {
+    throw new Error("A previously authorized generation plan is required before rework");
+  }
+  const { envelope, authorizationDigest } = preparationFrom(input.preparation);
+  if (
+    envelope.projectId !== input.run.projectId
+    || envelope.runId !== input.run.runId
+    || envelope.planVersion !== input.run.planVersion
+    || envelope.jobs.length !== 1
+  ) {
+    throw new Error("Generation reauthorization does not belong to the current Run plan");
+  }
+  if (Date.parse(envelope.expiresAt) <= Date.parse(input.now)) {
+    throw new Error("Generation reauthorization has expired");
+  }
+  if (input.run.gates.some((gate) => gate.gateId === envelope.gateId)) {
+    throw new Error(`Duplicate gate: ${envelope.gateId}`);
+  }
+
+  const shot = input.shotId
+    ? (plan.shots ?? []).find((candidate) => candidate.shotId === input.shotId)
+    : undefined;
+  if (input.shotId && !shot?.contract) throw new Error(`Generation shot is not sealed: ${input.shotId}`);
+  if (!input.shotId && plan.shots?.length) throw new Error("A multi-shot reauthorization requires a shot id");
+  const candidate = shot?.candidate ?? plan.candidate;
+  const contract = shot?.contract ?? plan.contract;
+  if (!contract) throw new Error("Generation contract is not sealed");
+
+  const authorized = envelope.jobs[0];
+  const jobShotId = input.shotId;
+  const expectedShotId = input.shotId ?? candidate.candidateId;
+  const expectedJobId = productionGenerationJobId(input.run.runId, contract.contractHash, authorized.attempt, jobShotId);
+  const expectedIdempotencyKey = productionGenerationProviderIdempotencyKey(
+    input.run.runId,
+    contract.contractHash,
+    authorized.attempt,
+    jobShotId,
+  );
+  if (
+    authorized.shotId !== expectedShotId
+    || authorized.attempt < 2
+    || authorized.attempt > input.run.policy.maxAttemptsPerJob
+    || authorized.jobId !== expectedJobId
+    || authorized.providerIdempotencyKey !== expectedIdempotencyKey
+    || authorized.contractHash !== contract.contractHash
+    || authorized.providerId !== contract.providerId
+    || authorized.modelId !== contract.modelId
+    || authorized.mode !== contract.mode
+    || !sameJson(authorized.parameters, contract.parameters)
+    || !sameJson(authorized.references, contract.references)
+    || authorized.target.kind !== "generation-operation"
+    || authorized.target.operationId !== plan.operationId
+    || authorized.target.candidateRevision !== candidate.revision
+  ) {
+    throw new Error("Generation reauthorization does not match the addressed shot");
+  }
+  if (input.run.jobs.some((job) => job.jobId === expectedJobId)) throw new Error(`Duplicate job: ${expectedJobId}`);
+  const parentJobId = productionGenerationJobId(
+    input.run.runId,
+    contract.contractHash,
+    authorized.attempt - 1,
+    jobShotId,
+  );
+  const parent = input.run.jobs.find((job) => job.jobId === parentJobId);
+  if (!parent || !REWORKABLE_JOB_STATUSES.has(parent.status)) {
+    throw new Error("The previous generation attempt is not safely reworkable");
+  }
+  // 以前这里要求「之前批过的都已发出」：计划上只有一份授权，重做那一份会替掉它，排在前面的镜就失去授权。
+  // 现在每份授权住在自己那道门上（productionSpendAuthority），重做只是又一份，不替任何一份。
+  const liability = sumBudgetAmounts([input.run.budget.reserved, input.run.budget.actual, input.run.budget.unsettled]);
+  if (
+    envelope.budget.currency !== input.run.budget.currency
+    || budgetExceeds(input.run.budget.authorized, envelope.budget.ledgerCeiling)
+    || (input.run.policy.maxSpend !== null && budgetExceeds(envelope.budget.ledgerCeiling, input.run.policy.maxSpend))
+    || budgetExceeds(liability + envelope.budget.maximum, envelope.budget.ledgerCeiling)
+  ) {
+    throw new Error("Generation reauthorization does not safely extend the Run budget");
+  }
+
+  const nodeId = shot?.nodeId ?? parent.nodeId;
+  // Keep retry lineage on the explicit reauthorization path identical to the
+  // automatic QA retry path.  Without this field the durable job still had
+  // attempt=2, but projections/evidence could not tell it was the first retry
+  // (and a subsequent recovery pass could schedule it again).
+  const previousRetryCount = Math.max(0, Math.floor(Number(parent.retryCount ?? parent.metadata?.retryCount) || 0));
+  const retryCount = previousRetryCount + 1;
+  const job: ProductionJob = {
+    jobId: expectedJobId,
+    stageId: "generate",
+    status: "authorization_required",
+    attempt: authorized.attempt,
+    provider: authorized.providerId,
+    model: authorized.modelId,
+    idempotencyKey: authorized.providerIdempotencyKey,
+    providerIdempotencyKey: authorized.providerIdempotencyKey,
+    authorizationDigest,
+    taskKind: authorized.mode,
+    parentJobId,
+    retryCount,
+    retryReason: "rework",
+    ...(nodeId ? { nodeId } : {}),
+    metadata: {
+      ...(parent.metadata ?? {}),
+      ...(input.shotId ? { shotId: input.shotId } : {}),
+      retryCount,
+      retryReason: "rework",
+      parentJobId,
+    },
+    createdAt: input.now,
+    updatedAt: input.now,
+  };
+  const gate: ProductionGate = {
+    gateId: envelope.gateId,
+    scope: "budget_envelope",
+    status: "waiting",
+    planHash: authorizationDigest,
+    authorizationDigest,
+    authorizationEnvelope: envelope,
+    costScope: envelope.costScope,
+    requestedSpend: envelope.budget.maximum,
+    ...(envelope.budget.unknownJobCount > 0 ? { requestedUnknownJobs: envelope.budget.unknownJobCount } : {}),
+    jobIds: [job.jobId],
+    title: "Confirm generation spend",
+    summary: "Approve the frozen provider request for this rework.",
+    createdAt: input.now,
+    expiresAt: envelope.expiresAt,
+  };
+  // 计划的状态不动：重做是这一镜的又一份授权，不是把整份计划退回「等人决定」。
+  const generationPlan: ProductionGenerationPlan = {
+    ...plan,
+    ...(input.shotId
+      ? {
+          shots: plan.shots!.map((candidateShot) => candidateShot.shotId === input.shotId
+            ? {
+                ...candidateShot,
+                attemptCount: authorized.attempt,
+                approvedReceiptId: undefined,
+                approvedAt: undefined,
+                approvedAttempt: undefined,
+                updatedAt: input.now,
+              }
+            : candidateShot),
+        }
+      : {}),
+    updatedAt: input.now,
+  };
+  return { generationPlan, job, gate };
+}
+
+export function applyGenerationAuthorizationGateDecision(input: Readonly<{
+  run: ProductionRun;
+  gate: ProductionGate;
+  status: ProductionGate["status"];
+  receiptId?: string;
+  now: string;
+}>): GenerationAuthorizationGateDecision {
+  if (!input.gate.authorizationDigest) return { generationPlan: input.run.generationPlan };
+  const plan = input.run.generationPlan;
+  // 决的是**这道门自己那一份**：门上的信封、门的摘要、门的 job 表三者对得上才算数。
+  const envelope = input.gate.authorizationEnvelope;
+  if (
+    !plan
+    || !envelope
+    || envelope.gateId !== input.gate.gateId
+    || input.gate.planHash !== input.gate.authorizationDigest
+    || input.gate.jobIds.join("\n") !== envelope.jobs.map((job) => job.jobId).join("\n")
+  ) {
+    throw new Error("Generation authorization gate does not match its sealed envelope");
+  }
+  if (input.status !== "approved") return { generationPlan: plan };
+  const receiptId = input.receiptId?.trim();
+  if (!receiptId) throw new Error("Production receiptId is required");
+  return {
+    receiptId,
+    generationPlan: {
+      ...plan,
+      ...(plan.shots
+        ? {
+            shots: plan.shots.map((shot) => envelope.jobs.some((job) => job.shotId === shot.shotId)
+              ? { ...shot, approvedReceiptId: receiptId, approvedAt: input.now, updatedAt: input.now }
+              : shot),
+          }
+        : {}),
+      updatedAt: input.now,
+    },
+  };
+}

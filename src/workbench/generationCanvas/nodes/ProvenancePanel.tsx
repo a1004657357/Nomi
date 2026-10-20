@@ -1,7 +1,16 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { cn } from '../../../utils/cn'
+import { useOverlayEscape } from '../../../design'
+import { NODE_SCROLL_REGION_CLASS_NAME } from './nodeScrollRegionClassName'
+
+/** Trim trailing zeros from a credits amount (8.50 → "8.5", 8.00 → "8"). Local to the
+ *  provenance viewer so it does not depend on the estimate module. */
+function formatCredits(amount: number): string {
+  if (!Number.isFinite(amount) || amount < 0) return ''
+  return amount.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+}
 
 /**
  * Phase E Task E11 — Provenance viewer.
@@ -31,10 +40,14 @@ function copyToClipboard(text: string): void {
 
 export default function ProvenancePanel({ node, open, onClose }: Props): JSX.Element | null {
   const { t, i18n } = useTranslation()
+  // Esc = 关闭（只读溯源面板，关掉不丢任何东西）。hook 必须在 early return 之前。
+  const dialogRef = React.useRef<HTMLDivElement | null>(null)
+  useOverlayEscape(dialogRef, open, onClose)
   if (!open) return null
   const provenance = node.result?.provenance
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-[210] grid place-items-center bg-black/30 p-4"
       role="dialog"
       aria-modal="true"
@@ -43,6 +56,7 @@ export default function ProvenancePanel({ node, open, onClose }: Props): JSX.Ele
     >
       <div
         className={cn(
+          NODE_SCROLL_REGION_CLASS_NAME,
           'w-full max-w-[560px] max-h-[80vh] overflow-y-auto',
           'bg-nomi-paper border border-nomi-line rounded-nomi-lg shadow-nomi-md p-5',
         )}
@@ -78,6 +92,13 @@ export default function ProvenancePanel({ node, open, onClose }: Props): JSX.Ele
           <div className="space-y-3 text-caption">
             <ProvenanceRow label={t('generationCommon.provenance.provider')} value={provenance.provider || '—'} />
             <ProvenanceRow label={t('generationCommon.provenance.model')} value={provenance.modelKey || '—'} />
+            {provenance.cost?.unit === 'actual' ? (
+              <ProvenanceRow
+                label={t('generationCommon.provenance.actualCost')}
+                value={`${formatCredits(provenance.cost.amount)} ${provenance.cost.currency}`}
+                mono
+              />
+            ) : null}
             <ProvenanceRow
               label={t('generationCommon.provenance.time')}
               value={new Date(provenance.timestamp).toLocaleString(i18n.resolvedLanguage || i18n.language)}
@@ -117,7 +138,7 @@ export default function ProvenancePanel({ node, open, onClose }: Props): JSX.Ele
                 <div className="text-micro text-nomi-ink-40 uppercase tracking-wide mb-1">
                   {t('generationCommon.provenance.params')}
                 </div>
-                <pre className="bg-nomi-bg border border-nomi-line-soft rounded-nomi-sm p-2 text-micro font-mono overflow-x-auto text-nomi-ink-80">
+                <pre className={cn(NODE_SCROLL_REGION_CLASS_NAME, 'bg-nomi-bg border border-nomi-line-soft rounded-nomi-sm p-2 text-micro font-mono overflow-x-auto text-nomi-ink-80')}>
                   {JSON.stringify(provenance.params, null, 2)}
                 </pre>
               </div>

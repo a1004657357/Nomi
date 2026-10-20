@@ -1,3 +1,4 @@
+import { withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import type { RecipeOutputDescriptor, RecipeRunPlan } from '../../../config/capabilityRecipes'
 import { dataUrlToFile, persistNodeImageFile } from '../adapters/persistNodeImage'
 import type { GenerationNodeResult, GenerationResultCollection } from '../model/generationCanvasTypes'
@@ -293,10 +294,10 @@ export function analyzeCapabilityImagePixels(
   }
 }
 
-async function persistProcessedImage(dataUrl: string, ownerNodeId: string, fileName: string): Promise<string> {
+async function persistProcessedImageForProject(project: ProjectExecutionContext, dataUrl: string, ownerNodeId: string, fileName: string): Promise<string> {
   const file = dataUrlToFile(dataUrl, fileName)
   if (!file) return dataUrl
-  return await persistNodeImageFile(file, ownerNodeId) || dataUrl
+  return await persistNodeImageFile(file, ownerNodeId, project) || dataUrl
 }
 
 function withProcessedOutput(
@@ -374,7 +375,9 @@ export function nearestCapabilityImageAspectRatio(width: number, height: number)
   })
 }
 
-export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcessor = {
+export function createBrowserCapabilityRecipeMediaProcessor(project: ProjectExecutionContext): CapabilityRecipeMediaProcessor {
+  const persistProcessedImage = (dataUrl: string, ownerNodeId: string, fileName: string) => persistProcessedImageForProject(project, dataUrl, ownerNodeId, fileName)
+  return {
   async splitGrid3x3(result, outputs, ownerNodeId) {
     const image = await loadImage(sourceImageUrl(result))
     const sourceWidth = image.naturalWidth || image.width
@@ -505,6 +508,15 @@ export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcess
       image.naturalHeight || image.height,
     )
   },
+}
+}
+
+export const browserCapabilityRecipeMediaProcessor: CapabilityRecipeMediaProcessor = {
+  splitGrid3x3: (...args) => createBrowserCapabilityRecipeMediaProcessor(withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })).splitGrid3x3(...args),
+  normalizePanorama2to1: (...args) => createBrowserCapabilityRecipeMediaProcessor(withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })).normalizePanorama2to1(...args),
+  normalizeStyleAspect: (...args) => createBrowserCapabilityRecipeMediaProcessor(withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })).normalizeStyleAspect!(...args),
+  normalizeImageDimensions: (...args) => createBrowserCapabilityRecipeMediaProcessor(withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })).normalizeImageDimensions!(...args),
+  inspectImage: (...args) => createBrowserCapabilityRecipeMediaProcessor(withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })).inspectImage!(...args),
 }
 
 const MAX_MULTIVIEW_DIMENSION_DRIFT = 0.02

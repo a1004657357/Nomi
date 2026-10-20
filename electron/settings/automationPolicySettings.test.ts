@@ -33,35 +33,56 @@ describe("automation policy settings", () => {
     expect(readAutomationPolicySettings()).toEqual(DEFAULT_AUTOMATION_POLICY_SETTINGS);
   });
 
-  it("normalizes modes, strips unknown hosts, and preserves mandatory gates", () => {
+  it("strips malformed hosts and clamps attempts", () => {
+    // 泛化后：任意格式合法的 key（小写字母/数字/横杠）都通过，不限定白名单四值。
+    // "Evil Host!"（含非法字符）被过滤；格式合法的 key（含自定义 profile key）通过。
     expect(normalizeAutomationPolicySettings({
-      mode: "anything",
-      trustedHosts: ["codex", "evil", "codex", "cursor"],
-      confirmFirstSpend: false,
-      confirmIrreversible: false,
+      trustedHosts: ["codex", "Evil Host!", "codex", "cursor"],
       maxAttemptsPerJob: 99,
     })).toMatchObject({
-      mode: "balanced",
       trustedHosts: ["nomi", "codex", "cursor"],
-      confirmFirstSpend: true,
-      confirmIrreversible: true,
       maxAttemptsPerJob: 10,
     });
   });
 
-  it("normalizes notification, automation, privacy, and spend values", () => {
+  it("drops the removed settings-page fields from old persisted files (2026-09-14 cleanup)", () => {
+    // 删掉的键：mode / allowedProviders / allowedModels / confirmFirstSpend / autoContinueWithinBudget /
+    // confirmIrreversible / notifyOn*。旧文件带着它们进来，归一化后一个都不留，也不改别的字段。
+    const normalized = normalizeAutomationPolicySettings({
+      allowedProviders: ["kie"],
+      allowedModels: ["gpt-image-2-text-to-image"],
+      confirmFirstSpend: true,
+      autoContinueWithinBudget: false,
+      confirmIrreversible: true,
+      notifyOnGate: false,
+      notifyOnFailure: false,
+      notifyOnCompletion: false,
+      systemNotifications: false,
+    });
+    for (const key of [
+      "mode", "allowedProviders", "allowedModels", "confirmFirstSpend", "autoContinueWithinBudget",
+      "confirmIrreversible", "notifyOnGate", "notifyOnFailure", "notifyOnCompletion",
+    ]) expect(normalized, key).not.toHaveProperty(key);
+    expect(normalized.systemNotifications).toBe(false);
+    expect(Object.keys(normalized).sort()).toEqual(Object.keys(DEFAULT_AUTOMATION_POLICY_SETTINGS).sort());
+  });
+
+  it("accepts arbitrary valid-format custom client keys in trustedHosts", () => {
+    // 方案 A：自定义客户端 key（合法格式）可以出现在 trustedHosts 里，不被白名单过滤。
+    const result = normalizeAutomationPolicySettings({
+      trustedHosts: ["claude", "workbuddy", "my-tool-42"],
+    });
+    expect(result.trustedHosts).toEqual(["nomi", "claude", "workbuddy", "my-tool-42"]);
+  });
+
+  it("normalizes notification, privacy, and spend values", () => {
     expect(normalizeAutomationPolicySettings({
       systemNotifications: false,
-      notificationSound: false,
-      autoContinueWithinBudget: false,
       minimizeUploads: false,
       maxSpend: -2,
     })).toMatchObject({
       systemNotifications: false,
-      notificationSound: false,
-      autoContinueWithinBudget: false,
       minimizeUploads: false,
-      maxSpend: null,
     });
   });
 
@@ -71,15 +92,15 @@ describe("automation policy settings", () => {
     expect(normalizeAutomationPolicySettings({ anonymousAssetHosting: "anything" }).anonymousAssetHosting).toBe("ask");
   });
 
+  it("drops the obsolete global budget", () => {
+    expect(normalizeAutomationPolicySettings({ maxSpend: 25 })).not.toHaveProperty("maxSpend");
+  });
+
   it("persists normalized settings atomically", () => {
     const written = writeAutomationPolicySettings({
-      mode: "policy-auto",
       trustedHosts: ["claude"],
-      maxSpend: 25,
       maxAttemptsPerJob: 4,
       systemNotifications: true,
-      notificationSound: false,
-      autoContinueWithinBudget: true,
       minimizeUploads: true,
     });
 

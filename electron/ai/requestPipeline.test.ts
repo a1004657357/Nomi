@@ -43,27 +43,30 @@ describe("extractTaskId", () => {
 
 describe("authHeaders", () => {
   it("bearer", () => {
-    expect(authHeaders("bearer", "KEY")).toEqual({ Authorization: "Bearer KEY" });
+    expect(authHeaders({ authType: "bearer" }, "KEY")).toEqual({ Authorization: "Bearer KEY" });
   });
   it("x-api-key with custom header name", () => {
-    expect(authHeaders("x-api-key", "KEY", "X-Custom")).toEqual({ "X-Custom": "KEY" });
+    expect(authHeaders({ authType: "x-api-key", headerName: "X-Custom" }, "KEY")).toEqual({ "X-Custom": "KEY" });
   });
   it("x-api-key default header name", () => {
-    expect(authHeaders("x-api-key", "KEY")).toEqual({ "X-API-Key": "KEY" });
+    expect(authHeaders({ authType: "x-api-key" }, "KEY")).toEqual({ "X-API-Key": "KEY" });
   });
   it("none/query carry no header", () => {
-    expect(authHeaders("none", "KEY")).toEqual({});
-    expect(authHeaders("query", "KEY")).toEqual({});
+    expect(authHeaders({ authType: "none" }, "KEY")).toEqual({});
+    expect(authHeaders({ authType: "query" }, "KEY")).toEqual({});
   });
   it("no key → no header (avoids `Authorization: Bearer ` empty)", () => {
-    expect(authHeaders("bearer", "")).toEqual({});
+    expect(authHeaders({ authType: "bearer" }, "")).toEqual({});
+  });
+  it("declared scheme replaces Bearer (Higgsfield 的 `Key id:secret`)", () => {
+    expect(authHeaders({ authType: "bearer", scheme: "Key" }, "id:secret")).toEqual({ Authorization: "Key id:secret" });
   });
 });
 
 describe("authQueryParams", () => {
   it("only emits for query auth", () => {
-    expect(authQueryParams("query", "KEY", "api_key")).toEqual({ api_key: "KEY" });
-    expect(authQueryParams("bearer", "KEY")).toEqual({});
+    expect(authQueryParams({ authType: "query", queryParam: "api_key" }, "KEY")).toEqual({ api_key: "KEY" });
+    expect(authQueryParams({ authType: "bearer" }, "KEY")).toEqual({});
   });
 });
 
@@ -153,6 +156,10 @@ describe("looksLikeLogicalError", () => {
   it("detects { code: 4xx } HTTP-200 envelopes", () => {
     expect(looksLikeLogicalError({ code: 422, msg: "bad" })).toBe(422);
     expect(looksLikeLogicalError({ code: "404" })).toBe(404);
+  });
+  it("字符串 code 不限 3 位：4 位业务码（如 \"1004\"）也是逻辑错，不许漏判成成功", () => {
+    // 修复前 /^\d{3}$/ 漏掉 4 位 → 200 空壳体当成功流进结果构造（errorCode 分支早有 /^\d+$/，同文件两分支口径不一）。
+    expect(looksLikeLogicalError({ code: "1004", msg: "quota denied" })).toBe(1004);
   });
   it("ignores success codes", () => {
     expect(looksLikeLogicalError({ code: 200 })).toBeNull();
@@ -248,6 +255,69 @@ describe("buildHttpRequest — vendor extraHeaders (relay/proxy gateway auth)", 
       extraHeaders: { "X-Title": "from-extra" },
     });
     expect(built.headers["X-Title"]).toBe("from-mapping");
+  });
+
+  it("redacts custom auth headers and encoded query secrets from the returned preview only", () => {
+    const secret = "opaque+Credential/Value=987654%";
+    const secretContext = buildTemplateContext({ request: {}, params: {}, model: {}, modelKey: "m", apiKey: secret });
+    const built = buildHttpRequest({
+      baseUrl: "https://relay",
+      authType: "query",
+      authHeaderName: "X-Workspace-Auth",
+      apiKey: secret,
+      context: secretContext,
+      operation: {
+        method: "GET",
+        path: "/p",
+        headers: { "X-Workspace-Auth": "{{user_api_key}}", "X-Ordinary": "ordinary-header-secret" },
+        query: { credential: "{{user_api_key}}", ordinary: "ordinary-query-marker" },
+      },
+      extraHeaders: { "X-Relay-Token": secret },
+    });
+
+    const preview = JSON.stringify(built.preview);
+    expect(built.headers["X-Workspace-Auth"]).toBe(secret);
+    expect(built.query.credential).toBe(secret);
+    expect(preview).toContain("ordinary-query-marker");
+    expect(preview).not.toContain("ordinary-header-secret");
+    expect(preview).not.toContain(secret);
+    expect(preview).not.toContain(encodeURIComponent(secret));
+    expect(preview).not.toContain(new URLSearchParams({ credential: secret }).toString().slice("credential=".length));
+  });
+
+  it("treats every non-public gateway header value as sensitive regardless of its name", () => {
+    const workspaceSecret = "SENTINEL-CUSTOM-HEADER-SECRET";
+    const randomNameSecret = "RANDOM-NAMED-HEADER-SECRET";
+    const built = buildHttpRequest({
+      baseUrl: "https://relay",
+      authType: "none",
+      apiKey: "",
+      context,
+      operation: {
+        method: "POST",
+        path: "/p",
+        body: { a: 1 },
+      },
+      extraHeaders: {
+        "X-Workspace": workspaceSecret,
+        "X-Random-Gateway-Field": randomNameSecret,
+        Accept: "SENTINEL-USER-CONFIGURED-ACCEPT",
+        "User-Agent": "SENTINEL-USER-CONFIGURED-AGENT",
+      },
+    });
+
+    expect(built.headers["X-Workspace"]).toBe(workspaceSecret);
+    expect(built.headers["X-Random-Gateway-Field"]).toBe(randomNameSecret);
+    expect(built.preview.headers["X-Workspace"]).toBe("[redacted]");
+    expect(built.preview.headers["X-Random-Gateway-Field"]).toBe("[redacted]");
+    expect(built.preview.headers["Content-Type"]).toBe("application/json");
+    expect(built.preview.headers.Accept).toBe("[redacted]");
+    expect(built.preview.headers["User-Agent"]).toBe("[redacted]");
+    const preview = JSON.stringify(built.preview);
+    for (const secret of [workspaceSecret, randomNameSecret, "SENTINEL-USER-CONFIGURED-ACCEPT", "SENTINEL-USER-CONFIGURED-AGENT"]) {
+      expect(preview).not.toContain(secret);
+      expect(preview).not.toContain(encodeURIComponent(secret));
+    }
   });
 
   it("no extraHeaders → headers unchanged (zero-cost when none set)", () => {

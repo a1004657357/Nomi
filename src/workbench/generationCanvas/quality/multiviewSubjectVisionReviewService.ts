@@ -2,7 +2,6 @@ import type {
   AgentAttachmentPayload,
   AgentsChatResponseDto,
 } from '../../../api/desktopClient'
-import { clearWorkbenchAgentSession } from '../../../api/desktopClient'
 import {
   sendWorkbenchAiMessage,
   type WorkbenchAiRequest,
@@ -142,7 +141,7 @@ function createWorkbenchVisionReviewRunner(input: {
   response: () => AgentsChatResponseDto | undefined
 } {
   const deps: VisionReviewDeps = {
-    clearSession: input.deps?.clearSession ?? clearWorkbenchAgentSession,
+    clearSession: input.deps?.clearSession ?? (async () => {}),
     send: input.deps?.send ?? sendWorkbenchAiMessage,
     now: input.deps?.now ?? Date.now,
   }

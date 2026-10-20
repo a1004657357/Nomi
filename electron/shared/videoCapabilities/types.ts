@@ -19,8 +19,10 @@ export type ModelParameterControl = {
   label: string;
   type: ModelParameterControlType;
   /** Media-reference controls retain the declared asset kind; older controls default to image. */
-  mediaKind?: "image" | "video";
+  mediaKind?: "image" | "video" | "audio";
   options: ModelParameterControlOption[];
+  /** Intersect options when another parameter has the declared value. */
+  optionConstraints?: { when: { key: string; value: string | number | boolean }; values: (string | number | boolean)[] }[];
   defaultValue?: string | number | boolean;
   min?: number;
   max?: number;
@@ -73,20 +75,43 @@ export type ArchetypeTransportTaskKind =
   | "text_to_3d"
   | "image_to_3d";
 
+export type ModelCapabilityTier = "native" | "compatible" | "experimental";
+
+export type ModelCapabilitySupport = {
+  capabilityId: string;
+  tier: ModelCapabilityTier;
+  maxOutputs?: number;
+};
+
 export type ArchetypeMode = {
   id: string;
   intent: ArchetypeIntent;
   vendorTerm: string;
   hint: string;
   slots: ArchetypeReferenceSlot[];
+  /** Combined file count across this mode's reference slots. */
+  maxTotalReferences?: number;
   expressionChannels?: ArchetypeExpressionChannel[];
   params: ModelParameterControl[];
   vendorParams?: Record<string, ModelParameterControl[]>;
   promptRequired: boolean;
   modelEnum?: string;
   transportTaskKind?: ArchetypeTransportTaskKind;
+  /**
+   * Vendor-specialized transport bucket (second vendor specialization axis, sibling of
+   * `vendorParams`). One model identity can be routed to different mapping buckets per vendor:
+   * kie funnels every minimax-h3 / happyhorse scenario through one createTask endpoint, while
+   * Runway posts the same models' image modes to `/v1/image_to_video`.
+   *
+   * Precedence: `vendorTransportTaskKind[vendor]` > mode `transportTaskKind` > archetype
+   * `transportTaskKind`. Read it **only** through `modeTransportFor()` (./modeTransport) —
+   * a hand-written `mode.transportTaskKind ?? archetype.transportTaskKind` re-creates the
+   * second source of truth this field exists to remove.
+   */
+  vendorTransportTaskKind?: Record<string, ArchetypeTransportTaskKind>;
   combineSlotsInto?: { key: string; flat?: boolean };
   fixedParams?: Record<string, string>;
+  capabilities?: ModelCapabilitySupport[];
 };
 
 export type ModelArchetypeVariant = {

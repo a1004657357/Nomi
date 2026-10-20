@@ -8,20 +8,26 @@
  * 为什么要这页（2026-08-11 反馈的体验根源）：以前配一条工作流，是在 320px 窄栏里对着
  * 「#110 CLIPTextEncode」猜哪个是提示词。现在图摆在眼前，点那张卡说「你是提示词」。
  *
+ * 整页从 Windows 自绘窗口栏之下起画（不是 inset-0 铺满）：那条 32px 是系统拖拽带，盖住它这页
+ * 顶部的返回/保存一条会被当成拖窗口吃掉、窗口控件也埋在下面（与 issue #58 同根，见 windowChrome）。
+ *
  * 与「导入自定义工作流」的分工（§1.5.2 一功能一个家，2026-08-12 用户拍板）：
  *   贴 JSON 导入 = 接入动作，留在 ComfyUI 卡里；
  *   改绑定/改字段/改名/删除 = 配置动作，全在这页。窄栏那套编辑态已同 commit 删除，不留并行版（P1）。
  */
-import React from 'react'
+import { CatalogNoticeBanner } from '../ModelCatalogNotices'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Portal } from '@mantine/core'
 import { IconAlertTriangle, IconArrowLeft, IconTrash, IconX } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
-import { alertDialog, confirmDialog, NOMI_OVERLAY_Z_INDEX } from '../../../design'
+import { confirmDialog, NOMI_OVERLAY_Z_INDEX } from '../../../design'
+import { currentFullscreenOverlayTopOffset } from '../../app-shell/windowChrome'
 import { getDesktopBridge } from '../../../desktop/bridge'
-import { toast } from '../../toast'
+import { cancelComfyCandidateTestRevision, type TaskKind } from '../../../workbench/api/taskApi'
+import { notify } from '../../notificationPolicy'
 import { buildWorkflowGraphView, type GraphInput } from '../comfyuiWorkflowGraphView'
-import { buildCanvasPreview, previewValuesToExtras } from '../comfyuiCanvasPreview'
+import { buildCanvasPreview } from '../comfyuiCanvasPreview'
 import {
   assignRole,
   clearRole,
@@ -40,7 +46,6 @@ import { WorkflowSidebar, type BackendRow } from './WorkflowSidebar'
 import { WorkflowGraphCanvas } from './WorkflowGraphCanvas'
 import { WorkflowCanvasPreview } from './WorkflowCanvasPreview'
 import { useWorkflowCatalog } from './useWorkflowCatalog'
-import { runTestGeneration } from './runTestGeneration'
 
 type ComfyuiWorkflowSettingsPageProps = {
   /** 从哪台 ComfyUI 进来的。 */
@@ -70,10 +75,46 @@ export function ComfyuiWorkflowSettingsPage({
   const [uiWorkflowText, setUiWorkflowText] = React.useState('')
   const [name, setName] = React.useState('')
   const [dirty, setDirty] = React.useState(false)
-  const [error, setError] = React.useState('')
+  const [errors, setErrors] = React.useState<Record<string, string>>({})
+  const feedbackOwner = `${vendorKey}/${selectedModelKey ?? ''}`
+  const error = errors[feedbackOwner] ?? ''
+  const setError = React.useCallback((message: string) => {
+    notify({ identity: `workflow:${feedbackOwner}`, reason: 'operation', message, type: 'error', level: 'inline',
+      present: (text) => setErrors((current) => ({ ...current, [feedbackOwner]: text })) })
+  }, [feedbackOwner])
+  const [backendErrors, setBackendErrors] = React.useState<Record<string, string>>({})
+  const reportBackend = React.useCallback((key: string, message: string) => {
+    notify({ identity: `workflow-backend:${key}`, reason: 'operation', message, type: 'error', level: 'inline',
+      present: (text) => setBackendErrors((current) => ({ ...current, [key]: text })) })
+  }, [])
   const [busy, setBusy] = React.useState(false)
   const [running, setRunning] = React.useState(false)
   const [previewValues, setPreviewValues] = React.useState<Record<string, string>>({})
+  const [verificationPending, setVerificationPending] = React.useState(false)
+  const candidateRef = React.useRef<{ revisionId: string; modelKey: string; taskKind: TaskKind } | null>(null)
+  const replaceCandidate = React.useCallback((candidate: { revisionId: string; modelKey: string; taskKind: TaskKind } | null) => {
+    const previous = candidateRef.current
+    candidateRef.current = candidate
+    if (previous && previous.revisionId !== candidate?.revisionId) {
+      void cancelComfyCandidateTestRevision(previous).catch(() => undefined)
+    }
+  }, [])
+  React.useEffect(() => () => {
+    const candidate = candidateRef.current
+    candidateRef.current = null
+    if (candidate) void cancelComfyCandidateTestRevision(candidate).catch(() => undefined)
+  }, [])
+  const closePage = React.useCallback(() => { onClose() }, [onClose])
+  const selectVendor = React.useCallback((next: string) => {
+    replaceCandidate(null)
+    setVerificationPending(false)
+    setVendorKey(next)
+  }, [replaceCandidate])
+  const selectWorkflow = React.useCallback((next: string) => {
+    replaceCandidate(null)
+    setVerificationPending(false)
+    setSelectedModelKey(next)
+  }, [replaceCandidate])
 
   const bumpAll = React.useCallback(() => {
     setRefreshToken((v) => v + 1)
@@ -86,11 +127,11 @@ export function ComfyuiWorkflowSettingsPage({
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       event.stopPropagation()
-      onClose()
+      closePage()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  }, [closePage])
 
   // 换后端 → 选中它的第一条工作流（别把上一台的选中项留在这儿，那条在这台上不存在）。
   const workflowKeys = catalog.workflows.map((w) => w.modelKey).join(',')
@@ -189,33 +230,37 @@ export function ComfyuiWorkflowSettingsPage({
     patchBinding((current) => toggleField(current, candidate))
   }, [patchBinding])
 
-  const save = React.useCallback((): boolean => {
+  const save = React.useCallback(async (): Promise<boolean> => {
     if (!selectedModelKey || !binding) return false
-    const update = getDesktopBridge()?.modelCatalog?.updateComfyWorkflow
-    if (!update) { setError(t('comfyuiWorkflowPage.errors.unsupported')); return false }
+    if (verificationPending && !dirty) return true
+    const prepare = getDesktopBridge()?.onboarding?.integrationSessionPrepareComfy
+    if (!prepare) { setError(t('comfyuiWorkflowPage.errors.unsupported')); return false }
     const label = name.trim() || labelOf(selectedModelKey)
+    setError('')
     setBusy(true)
     try {
-      const result = update({
-        modelKey: selectedModelKey,
-        text: graphText,
-        binding,
-        labelZh: label,
-        // enumOptions 随保存烤回参数控件——combo 参数在画布才是真实文件下拉（与导入同口径）。
-        ...(reconcile?.enumOptions?.length ? { enumOptions: reconcile.enumOptions } : {}),
+      await prepare({
         vendorKey,
-        ...(uiWorkflowText ? { uiWorkflowText } : {}),
+        name: label,
+        modelKey: selectedModelKey,
+        workflow: graphText,
+        binding,
+        ...(reconcile?.enumOptions?.length ? { enumOptions: reconcile.enumOptions } : {}),
+        ...(uiWorkflowText ? { uiWorkflow: uiWorkflowText } : {}),
       })
-      if (!result.ok) { setError(t('comfyuiWorkflowPage.errors.saveFailed', { error: result.error })); return false }
       setDirty(false)
+      setVerificationPending(true)
       setError('')
-      toast(t('comfyuiWorkflowPage.header.saved', { name: label }), 'success')
-      bumpAll()
       return true
+    } catch (value) {
+      setError(t('comfyuiWorkflowPage.errors.saveFailed', {
+        error: value instanceof Error ? value.message : String(value),
+      }))
+      return false
     } finally {
       setBusy(false)
     }
-  }, [selectedModelKey, binding, name, graphText, reconcile?.enumOptions, vendorKey, uiWorkflowText, labelOf, bumpAll, t])
+  }, [selectedModelKey, binding, verificationPending, dirty, name, labelOf, vendorKey, graphText, reconcile?.enumOptions, uiWorkflowText, setError, t])
 
   const remove = React.useCallback(async () => {
     if (!selectedModelKey) return
@@ -227,18 +272,15 @@ export function ComfyuiWorkflowSettingsPage({
       danger: true,
     })
     if (!ok) return
+    setError('')
     try {
       getDesktopBridge()?.modelCatalog?.deleteModels([{ vendorKey, modelKey: selectedModelKey }])
       setSelectedModelKey(null)
-      toast(t('comfyuiWorkflowPage.header.deleted', { name: label }), 'success')
       bumpAll()
     } catch (e) {
-      void alertDialog({
-        title: t('comfyuiWorkflowPage.errors.deleteFailed', { error: '' }),
-        message: e instanceof Error ? e.message : String(e),
-      })
+      setError(t('comfyuiWorkflowPage.errors.deleteFailed', { error: e instanceof Error ? e.message : String(e) }))
     }
-  }, [selectedModelKey, vendorKey, labelOf, bumpAll, t])
+  }, [selectedModelKey, vendorKey, labelOf, bumpAll, setError, t])
 
   const removeBackend = React.useCallback(async (backend: BackendRow) => {
     const ok = await confirmDialog({
@@ -250,6 +292,7 @@ export function ComfyuiWorkflowSettingsPage({
     if (!ok) return
     const bridge = getDesktopBridge()?.modelCatalog
     if (!bridge) return
+    reportBackend(backend.vendorKey, '')
     try {
       // 整台移除连它名下的工作流一起删——那些工作流指向的是这台的地址，留着是死的（同 ComfyuiLocalCard）。
       const owned = (bridge.listModels() as Array<Record<string, unknown>>)
@@ -258,22 +301,21 @@ export function ComfyuiWorkflowSettingsPage({
       if (owned.length > 0) bridge.deleteModels(owned)
       bridge.deleteVendor?.(backend.vendorKey)
       if (backend.vendorKey === vendorKey) setVendorKey(initialVendorKey)
-      toast(t('comfyuiWorkflowPage.backends.removed', { name: backend.name }), 'success')
       bumpAll()
     } catch (e) {
-      void alertDialog({ title: t('comfyuiWorkflowPage.backends.remove'), message: e instanceof Error ? e.message : String(e) })
+      reportBackend(backend.vendorKey, e instanceof Error ? e.message : String(e))
     }
-  }, [vendorKey, initialVendorKey, bumpAll, t])
+  }, [vendorKey, initialVendorKey, bumpAll, reportBackend, t])
 
   const saveAddress = React.useCallback((key: string, address: string) => {
+    reportBackend(key, '')
     try {
       getDesktopBridge()?.modelCatalog?.upsertVendor({ key, baseUrlHint: address })
-      toast(t('comfyuiWorkflowPage.backends.saved'), 'success')
       bumpAll()
     } catch (e) {
-      void alertDialog({ title: t('comfyuiWorkflowPage.backends.edit'), message: e instanceof Error ? e.message : String(e) })
+      reportBackend(key, e instanceof Error ? e.message : String(e))
     }
-  }, [bumpAll, t])
+  }, [bumpAll, reportBackend])
 
   // 试跑挡门（§1.6 C1：挡住就 disabled + title 说清为什么，不做沟通死路）。
   //
@@ -285,37 +327,34 @@ export function ComfyuiWorkflowSettingsPage({
     ? t('comfyuiWorkflowPage.preview.runNeedsOutput')
     : catalog.reachable === false
       ? t('comfyuiWorkflowPage.preview.runNeedsBackend')
+      : reconcile && reconcile.serverReachable && reconcile.missingEnumValues.length > 0
+        ? t('comfyuiWorkflowPage.preview.runNeedsMissing', {
+            count: reconcile.missingEnumValues.length,
+            names: reconcile.missingEnumValues.map((item) => item.value).join(', '),
+          })
+      : reconcile && reconcile.serverReachable && reconcile.unknownNodeTypes.length > 0
+        ? t('comfyuiWorkflowPage.preview.runNeedsNodes', { count: reconcile.unknownNodeTypes.length })
       : needsFrame
         ? t('comfyuiWorkflowPage.preview.runNeedsFrame')
         : null
 
   const runTest = React.useCallback(async () => {
     if (!selectedModelKey || !binding) return
-    // 先保存再跑：跑的是**落库的那条**工作流，不能拿屏幕上的草稿假装跑通了（P3 全绿≠完成同理）。
-    if (dirty && !save()) { setError(t('comfyuiWorkflowPage.preview.runNeedsSave')); return }
     setRunning(true)
     try {
-      const result = await runTestGeneration({
-        vendorKey,
-        modelKey: selectedModelKey,
-        binding,
-        prompt: previewValues.prompt ?? '',
-        extras: previewValuesToExtras(preview.fields, previewValues),
-      })
-      if (result.ok) toast(t('comfyuiWorkflowPage.preview.runStarted'), 'success')
-      else toast(t('comfyuiWorkflowPage.preview.runFailed', { error: result.error }), 'error')
+      await save()
     } finally {
       setRunning(false)
     }
-  }, [selectedModelKey, binding, dirty, save, vendorKey, previewValues, preview.fields, t])
+  }, [selectedModelKey, binding, save])
 
   const nodeCount = view.nodes.length
 
   return (
     <Portal>
       <div
-        className="fixed inset-0 flex flex-col bg-nomi-bg"
-        style={{ zIndex: NOMI_OVERLAY_Z_INDEX.dialog }}
+        className="fixed inset-x-0 bottom-0 flex flex-col bg-nomi-bg"
+        style={{ top: currentFullscreenOverlayTopOffset(), zIndex: NOMI_OVERLAY_Z_INDEX.dialog }}
         role="dialog"
         aria-modal="true"
         aria-label={t('comfyuiWorkflowPage.aria')}
@@ -324,7 +363,7 @@ export function ComfyuiWorkflowSettingsPage({
         <header className="flex flex-none items-center gap-2 border-b border-nomi-line px-3 py-2">
           <button
             type="button"
-            onClick={onClose}
+            onClick={closePage}
             className="inline-flex h-7 items-center gap-1.5 rounded-nomi-sm px-2 text-caption text-nomi-ink-60 hover:bg-nomi-ink-05 hover:text-nomi-ink"
           >
             <IconArrowLeft size={14} stroke={1.8} aria-hidden="true" />{t('comfyuiWorkflowPage.back')}
@@ -334,7 +373,7 @@ export function ComfyuiWorkflowSettingsPage({
           <span className="flex-1" />
           <button
             type="button"
-            onClick={onClose}
+            onClick={closePage}
             aria-label={t('comfyuiWorkflowPage.close')}
             className="grid size-7 place-items-center rounded-nomi-sm text-nomi-ink-40 hover:bg-nomi-ink-05 hover:text-nomi-ink"
           >
@@ -342,19 +381,35 @@ export function ComfyuiWorkflowSettingsPage({
           </button>
         </header>
 
+        {/* 目录这一次读不了：列表仍是上一份，所以必须明说「这是上一次读到的」——
+            不说的话，用户看到的是一份看起来正常、其实可能过期的清单。 */}
+        {catalog.loadError ? (
+          <div className="px-3 pt-3">
+            <CatalogNoticeBanner
+              marker="workflow-load-error"
+              title={t('onboardingProviders.drawer.loadErrorTitle')}
+              body={t('onboardingProviders.drawer.loadErrorBody', { detail: catalog.loadError })}
+              action={{ label: t('common.reload'), onClick: catalog.refresh }}
+            />
+          </div>
+        ) : null}
+
         <div className="flex min-h-0 flex-1 gap-3 p-3">
           <aside className="flex w-[268px] flex-none flex-col gap-3 overflow-y-auto">
             <WorkflowSidebar
               backends={catalog.backends}
               selectedVendorKey={vendorKey}
-              onSelectBackend={setVendorKey}
+              onSelectBackend={selectVendor}
               onSaveAddress={saveAddress}
               onRemoveBackend={(row) => void removeBackend(row)}
               onBackendsChanged={bumpAll}
               workflows={catalog.workflows}
               selectedModelKey={selectedModelKey}
-              onSelectWorkflow={setSelectedModelKey}
+              onSelectWorkflow={selectWorkflow}
             />
+            {catalog.backends.filter((backend) => backendErrors[backend.vendorKey]).map((backend) => (
+              <p key={backend.vendorKey} role="alert" className="text-caption text-workbench-danger">{backend.name}: {backendErrors[backend.vendorKey]}</p>
+            ))}
             {selectedModelKey && binding ? (
               <WorkflowCanvasPreview
                 fields={preview.fields}
@@ -410,7 +465,7 @@ export function ComfyuiWorkflowSettingsPage({
               >
                 <button
                   type="button"
-                  onClick={save}
+                  onClick={() => { void save() }}
                   disabled={!selectedModelKey || !binding || busy || !binding.outputNodeId}
                   data-workflow-save
                   className="inline-flex h-7 items-center rounded-nomi-sm bg-nomi-ink px-3 text-micro font-semibold text-nomi-paper hover:bg-nomi-accent disabled:opacity-45"
@@ -420,8 +475,9 @@ export function ComfyuiWorkflowSettingsPage({
               </span>
             </div>
 
+            {verificationPending ? <p role="status" className="px-2.5 py-2 text-caption text-nomi-ink-60">{t('onboardingProviders.comfyWorkflow.awaitingVerification', { name })}</p> : null}
             {error ? (
-              <div className="flex flex-none items-start gap-2 border-b border-nomi-line bg-nomi-ink-05 px-2.5 py-2">
+              <div role="alert" className="flex flex-none items-start gap-2 border-b border-nomi-line bg-nomi-ink-05 px-2.5 py-2">
                 <IconAlertTriangle size={14} className="mt-0.5 shrink-0 text-nomi-danger" aria-hidden="true" />
                 <span className="text-caption leading-relaxed text-nomi-ink">{error}</span>
               </div>

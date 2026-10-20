@@ -1,4 +1,4 @@
-// 文本任务流式 IPC（镜像 agentChatV2Ipc 的 per-session 通道）。
+// 文本任务流式 IPC（per-session 通道，与 Agent 对话 IPC 同形状）。
 //
 // runTask 是请求/响应式（一次性返回 TaskResult），没法推 delta。这里另开一条单向
 // 事件通道：handle 立即返回 streamId，逐 token 经 webContents.send 推到渲染层。
@@ -38,12 +38,15 @@ export function registerTextStreamIpc(): void {
     };
     textStreamSessions.set(streamId, session);
 
-    event.sender.once("destroyed", () => {
+    // once("destroyed") 挂在 sender 上、只在 webContents 销毁时触发；流正常结束后必须
+    // 显式解绑，否则监听器与闭包引用的 session/abortController 随会话数累积（MaxListeners 泄漏）。
+    const onSenderDestroyed = () => {
       const live = textStreamSessions.get(streamId);
       if (!live) return;
       live.abortController.abort();
       textStreamSessions.delete(streamId);
-    });
+    };
+    event.sender.once("destroyed", onSenderDestroyed);
 
     // 异步跑，让 handle 立刻返回 streamId（渲染层先订阅事件再收 delta）。
     queueMicrotask(() => {
@@ -67,6 +70,7 @@ export function registerTextStreamIpc(): void {
         })
         .finally(() => {
           textStreamSessions.delete(streamId);
+          if (!event.sender.isDestroyed()) event.sender.removeListener("destroyed", onSenderDestroyed);
         });
     });
 

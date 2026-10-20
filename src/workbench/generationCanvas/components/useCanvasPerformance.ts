@@ -37,7 +37,7 @@ export function useCanvasPerformance(
   const profile = resolveCanvasPerformanceProfile({ preference, nodeCount: nodes.length, edgeCount, zoom,
     mediaNodeCount: nodes.filter((node) => node.result?.type === 'image' || node.result?.type === 'video').length,
     videoNodeCount: nodes.filter((node) => node.result?.type === 'video').length })
-  const settleTimer = React.useRef<ReturnType<typeof setTimeout>>()
+  const settleTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   React.useLayoutEffect(() => {
     const stage = stageRef.current
     if (!stage) return

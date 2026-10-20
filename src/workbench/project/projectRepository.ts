@@ -1,3 +1,4 @@
+import { sameProjectAgentBinding, type ProjectBinding } from '../../../electron/shared/projectBinding'
 import {
   workbenchProjectRecordSchema,
   type WorkbenchProjectPayload,
@@ -8,6 +9,7 @@ import { assertWorkbenchProjectMediaUrlsPersistable } from './projectMediaMigrat
 import { getDesktopBridge } from '../../desktop/bridge'
 import { buildTemplateCategories, getProjectTemplate } from '../library/projectTemplates'
 import { createDefaultWorkbenchDocument } from '../workbenchTypes'
+import { createEmptyStoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
 import {
   PROJECT_BACKUP_INDEX_PREFIX,
   PROJECT_BACKUP_PREFIX,
@@ -41,14 +43,32 @@ function createProjectId(): string {
   return `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-function formatDefaultProjectName(): string {
+/**
+ * 新建项目的默认名。
+ *
+ * 为什么要**查一次现有项目**（2026-09-17，W-10）：名字只精确到分钟，同一分钟内建第二个
+ * 就和第一个逐字相同。而项目卡上另外两格——缩略图（新项目都是同一张灰色占位）和状态行
+ * （都是「刚刚 · 已就绪」）——**本来就该一样**，它们没有身份可言。于是名字是卡片上
+ * 唯一能承载身份的那一格，它撞了就等于用户没有任何办法分辨哪个是哪个。
+ *
+ * 不改成「精确到秒」：秒对用户没有信息（他不会用秒去认项目），只是让每一张卡都变长。
+ * 撞了才加序号，没撞就还是原来那个干净的名字——代价只落在真的撞了的那一次上。
+ */
+export function formatDefaultProjectName(existing: readonly WorkbenchProjectSummary[]): string {
   const time = new Date().toLocaleString(getAppLocale(), {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
   })
-  return i18n.t('runtime.project.untitledWithTime', { time })
+  const base = i18n.t('runtime.project.untitledWithTime', { time })
+  const taken = new Set(existing.map((summary) => summary.name))
+  if (!taken.has(base)) return base
+  for (let ordinal = 2; ordinal <= taken.size + 2; ordinal += 1) {
+    const candidate = i18n.t('runtime.project.untitledWithTimeOrdinal', { time, ordinal })
+    if (!taken.has(candidate)) return candidate
+  }
+  return base
 }
 
 function readIndex(): WorkbenchProjectSummary[] {
@@ -125,7 +145,7 @@ export function createLocalProject(
   const isDraft = !options.seedKey?.trim() && !options.rootPath?.trim()
   const summary: WorkbenchProjectSummary = {
     id: createProjectId(),
-    name: typeof name === 'string' && name.trim() ? name.trim() : formatDefaultProjectName(),
+    name: typeof name === 'string' && name.trim() ? name.trim() : formatDefaultProjectName(readIndex()),
     createdAt: now,
     updatedAt: now,
     revision: 0,
@@ -142,7 +162,30 @@ export function createLocalProject(
       }
     : docDefaults
   const record = createProjectRecord(summary, {
-    workbenchDocument: seededDocument,
+    // Keep the starter attached to the seeded document so the editor can open
+    // with its two empty structural rows.
+    workbenchDocuments: [seededDocument],
+    activeDocumentId: seededDocument.id,
+    // A new blank project starts with two empty editable rows. This is
+    // structural workspace state, not seeded user content: prompts and anchors
+    // remain empty until the user or Agent supplies them.
+    ...(isDraft
+      ? {
+          storyboardDesignsByDocumentId: {
+            [seededDocument.id]: [{
+              id: `starter-${seededDocument.id}`,
+              documentId: seededDocument.id,
+              title: createEmptyStoryboardPlan().title,
+              plan: createEmptyStoryboardPlan(),
+              committed: false,
+              status: 'draft',
+              sourceDocumentUpdatedAt: seededDocument.updatedAt,
+              createdAt: now,
+              updatedAt: now,
+            }],
+          },
+        }
+      : {}),
     categories: buildTemplateCategories(template),
   })
   const desktop = getDesktopBridge()
@@ -182,24 +225,24 @@ export async function readLocalProjectAsync(projectId: string): Promise<Workbenc
   return readLocalProject(id)
 }
 
-export function saveLocalProject(
+export async function saveLocalProject(
   projectId: string,
   state: WorkbenchProjectPayload,
   name?: string,
-): WorkbenchProjectRecordV1 {
+  expectedBinding?: ProjectBinding,
+): Promise<WorkbenchProjectRecordV1> {
   const id = String(projectId || '').trim()
   if (!id) throw new Error('projectId is required')
   const desktop = getDesktopBridge()
   const now = Date.now()
-  const existingRecord = desktop ? desktop.projects.read(id) : readJson(projectRecordKey(id))
+  // 自动保存每 700ms 走一次：只要旧记录的摘要字段（名称 / 创建时间 / 版本号 / 封面风格）。2026-09-25 画布跟手实测：
+  // 原来同步 IPC 读回整份项目、再用完整 schema 校验一遍只为取 revision，每次在界面线程上卡 41–154ms。
+  // 改为异步读（界面不等主进程读盘），版本号由 normalizeSummary 直接取。
+  const existingRecord = desktop ? null : readJson(projectRecordKey(id))
   const existing = desktop
-    ? normalizeSummary(existingRecord)
+    ? normalizeSummary(await (desktop.projects.readAsync ? desktop.projects.readAsync(id) : desktop.projects.read(id)))
     : readMergedProjectSummaries().find((item) => item.id === id)
-  const existingRevision = (() => {
-    const parsed = workbenchProjectRecordSchema.safeParse(existingRecord)
-    if (parsed.success && typeof parsed.data.revision === 'number') return parsed.data.revision
-    return existing?.revision ?? 0
-  })()
+  const existingRevision = existing?.revision ?? 0
   // 封面 = 本次保存内容的现场派生（媒体类型分流）。刻意不沿用 existing 旧封面：
   // 「派生为空就 keep 旧值」会让陈旧 URL（换环境失效 / 视频 url 混 <img>）永远钉在列表里。
   const cover = deriveProjectCoverFromNodes(state.generationCanvas.nodes)
@@ -222,7 +265,14 @@ export function saveLocalProject(
   }
   assertWorkbenchProjectMediaUrlsPersistable(record)
   if (desktop) {
-    return desktop.projects.save(id, record) as WorkbenchProjectRecordV1
+    return await desktop.projects.save(id, { ...record, ...(expectedBinding ? { expectedBinding } : {}) }) as WorkbenchProjectRecordV1
+  }
+  if (expectedBinding) {
+    const current = workbenchProjectRecordSchema.safeParse(existingRecord)
+    if (!current.success || !sameProjectAgentBinding(expectedBinding, { projectId: current.data.id,
+      immutableProjectUuid: current.data.immutableProjectUuid ?? '', projectGeneration: current.data.projectGeneration ?? 0 })) throw new Error('project_binding_stale')
+    record.immutableProjectUuid = expectedBinding.immutableProjectUuid
+    record.projectGeneration = expectedBinding.projectGeneration
   }
   if (existingRecord) rememberProjectBackup(id, existingRecord)
   const nextIndex = [summary, ...readMergedProjectSummaries().filter((item) => item.id !== id)]
@@ -239,7 +289,7 @@ export function saveLocalProject(
  * 违反 never-wipe-user-data 铁律）。列表页改的是**任意项目**（可能没打开），更不能拿当前内存
  * 状态覆盖它。空名/未变 → no-op 返回原 record。
  */
-export function renameLocalProject(projectId: string, name: string): WorkbenchProjectRecordV1 | null {
+export async function renameLocalProject(projectId: string, name: string): Promise<WorkbenchProjectRecordV1 | null> {
   const id = String(projectId || '').trim()
   if (!id) return null
   const record = readLocalProject(id)
@@ -257,7 +307,7 @@ export function renameLocalProject(projectId: string, name: string): WorkbenchPr
   }
   assertWorkbenchProjectMediaUrlsPersistable(next)
   const desktop = getDesktopBridge()
-  if (desktop) return desktop.projects.save(id, next) as WorkbenchProjectRecordV1
+  if (desktop) return await desktop.projects.save(id, next) as WorkbenchProjectRecordV1
   const existingRecord = readJson(projectRecordKey(id))
   if (existingRecord) rememberProjectBackup(id, existingRecord)
   writeJson(projectRecordKey(id), next)

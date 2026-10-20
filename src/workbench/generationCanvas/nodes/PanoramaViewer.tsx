@@ -1,4 +1,15 @@
-import React from 'react'
+/**
+ * [INPUT]: 依赖 @photo-sphere-viewer/core 的 Viewer / EquirectangularAdapter、react-dom 的 createPortal、
+ *          ../../../ui/app-shell/windowChrome 的 currentFullscreenOverlayTopOffset、../../../design 的 NomiImage / WorkbenchIconButton、
+ *          ../../project/projectCanvasReadSurface（截图开始时捕获项目执行上下文）
+ * [OUTPUT]: 对外提供 PanoramaViewer 与 PanoramaScreenshot 类型
+ * [POS]: generationCanvas/nodes 的全景查看器：卡片内嵌 + 全屏两态共用一个 psv Viewer 实例；
+ *        全屏那层从 Windows 自绘窗口栏之下起画（不是 inset-0 铺满）——那条 32px 是系统拖拽带，
+ *        顶部那排取景/截图/退出按钮压上去会被当成拖窗口吃掉（与 issue #58 同根，见 windowChrome）。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+import { notify } from '../../../ui/notificationPolicy'
+import React, { type JSX } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { EquirectangularAdapter, Viewer, type PanoData, type ViewerConfig } from '@photo-sphere-viewer/core'
@@ -7,8 +18,10 @@ import { IconCamera, IconMaximize, IconX } from '@tabler/icons-react'
 import { NomiImage } from '../../../design/media'
 import { cn } from '../../../utils/cn'
 import { WorkbenchIconButton } from '../../../design/actions'
-import { toast } from '../../../ui/toast'
+import { currentFullscreenOverlayTopOffset } from '../../../ui/app-shell/windowChrome'
 import i18n from '../../../i18n'
+import { withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
+import { isProjectImportCancellation } from '../adapters/assetImportAdapter'
 
 export type PanoramaScreenshot = {
   /** PNG Blob，不是 base64：全景图动辄 8K，base64 进 store 会被逐次 JSON 深拷贝 + 全量存盘。 */
@@ -24,7 +37,7 @@ type PanoramaViewerProps = {
   width: number
   height: number
   onEnterFullscreen?: (trigger: (() => void) | null) => void
-  onScreenshot?: (screenshot: PanoramaScreenshot) => void
+  onScreenshot?: (screenshot: PanoramaScreenshot, project: ProjectExecutionContext) => void
 }
 
 type PhotoSphereViewerConfig = Pick<
@@ -301,7 +314,7 @@ function PanoramaCaptureOverlay({
   captureRatio,
   frameSize,
 }: {
-  captureFrameRef: React.RefObject<HTMLDivElement>
+  captureFrameRef: React.RefObject<HTMLDivElement | null>
   captureRatio: PanoramaCaptureRatio
   frameSize: { width: number; height: number } | null
 }): JSX.Element {
@@ -338,14 +351,15 @@ function PanoramaDialogControls({
   onClose,
   onScreenshot,
 }: {
-  captureFrameRef: React.RefObject<HTMLDivElement>
+  captureFrameRef: React.RefObject<HTMLDivElement | null>
   captureRatioId: PanoramaCaptureRatioId
   onCaptureRatioChange: (ratioId: PanoramaCaptureRatioId) => void
   onClose: () => void
-  onScreenshot?: (screenshot: PanoramaScreenshot) => void
+  onScreenshot?: (screenshot: PanoramaScreenshot, project: ProjectExecutionContext) => void
 }): JSX.Element {
   const { t } = useTranslation()
   const viewer = React.useContext(PhotoSphereViewerContext)
+  const feedbackHostId = React.useId()
   const [capturing, setCapturing] = React.useState(false)
   const [feedback, setFeedback] = React.useState<PanoramaCaptureFeedback | null>(null)
   const mountedRef = React.useRef(true)
@@ -353,11 +367,12 @@ function PanoramaDialogControls({
 
   const showFeedback = React.useCallback((nextFeedback: PanoramaCaptureFeedback) => {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
-    setFeedback(nextFeedback)
+    notify({ identity: `panorama-capture:${feedbackHostId}`, reason: 'capture', message: nextFeedback.message, level: 'inline', present: (message) => setFeedback({ ...nextFeedback, message }) })
+    if (nextFeedback.tone !== 'success') return
     feedbackTimerRef.current = setTimeout(() => {
       if (mountedRef.current) setFeedback(null)
     }, 2200)
-  }, [])
+  }, [feedbackHostId])
 
   React.useEffect(() => {
     mountedRef.current = true
@@ -367,33 +382,33 @@ function PanoramaDialogControls({
     }
   }, [])
 
-  const handleScreenshot = React.useCallback(() => {
+  const handleScreenshot = React.useCallback(async () => {
     if (capturing) return
     if (!viewer || !captureFrameRef.current) {
       showFeedback({ tone: 'info', message: t('generationCommon.panorama.notReady') })
-      toast(t('generationCommon.panorama.notReady'), 'info')
       return
     }
 
-    setCapturing(true)
-    showFeedback({ tone: 'info', message: t('generationCommon.panorama.capturing') })
-    void captureFramedPanoramaView(viewer, captureFrameRef.current)
-      .then((screenshot) => {
+    const captureFrame = captureFrameRef.current
+    await withProjectAction(async (project) => {
+      setCapturing(true)
+      showFeedback({ tone: 'info', message: t('generationCommon.panorama.capturing') })
+      try {
+        const screenshot = await captureFramedPanoramaView(viewer, captureFrame)
+        project.assertCurrent()
         if (!screenshot) {
           showFeedback({ tone: 'error', message: t('generationCommon.panorama.captureFailed') })
-          toast(t('generationCommon.panorama.captureFailed'), 'error')
           return
         }
-        onScreenshot?.(screenshot)
+        onScreenshot?.(screenshot, project)
         showFeedback({ tone: 'success', message: t('generationCommon.panorama.created') })
-      })
-      .catch(() => {
+      } catch (error) {
+        if (project.signal.aborted || isProjectImportCancellation(error)) return
         showFeedback({ tone: 'error', message: t('generationCommon.panorama.captureFailed') })
-        toast(t('generationCommon.panorama.captureFailed'), 'error')
-      })
-      .finally(() => {
-        if (mountedRef.current) setCapturing(false)
-      })
+      } finally {
+        if (mountedRef.current && !project.signal.aborted) setCapturing(false)
+      }
+    })
   }, [captureFrameRef, capturing, onScreenshot, showFeedback, t, viewer])
 
   return (
@@ -571,9 +586,12 @@ export default function PanoramaViewer({
         ? createPortal(
             <div
               className={cn(
-                'fixed inset-0 z-[9999] flex h-[100dvh] w-screen items-center justify-center overflow-hidden p-8 overscroll-contain',
+                // z-application-modal（9000）：整屏接管的媒体查看器，和设置对话框同一档。
+                // 此前硬写 z-[9999] 压过花钱确认卡（dialog 9100），钱要花出去了那张卡却看不见。
+                'fixed inset-x-0 bottom-0 z-application-modal flex items-center justify-center overflow-hidden p-8 overscroll-contain',
                 'bg-workbench-backdrop backdrop-blur-[10px]',
               )}
+              style={{ top: currentFullscreenOverlayTopOffset() }}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 if (event.target === event.currentTarget) setFullscreen(false)
@@ -606,7 +624,7 @@ export default function PanoramaViewer({
                     captureRatioId={captureRatioId}
                     onCaptureRatioChange={setCaptureRatioId}
                     onClose={() => setFullscreen(false)}
-                    onScreenshot={(screenshot) => onScreenshot?.(screenshot)}
+                    onScreenshot={(screenshot, project) => onScreenshot?.(screenshot, project)}
                   />
                 </PhotoSpherePanoramaViewer>
               </section>

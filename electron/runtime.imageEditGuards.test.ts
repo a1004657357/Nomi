@@ -1,3 +1,16 @@
+// Fixture user accepts the quote card; the real taskSpend guard still runs.
+vi.mock("./capabilityCore/rendererBridge", () => ({
+  // 付费确认等的是**人**，走没有墙钟期限的那条（2026-09-11 拍板：审批卡永不因空闲超时）。
+  requestRendererDecision: vi.fn(async (operation: string) => {
+    if (operation !== "spend.confirm") throw new Error(`Unexpected renderer operation: ${operation}`);
+    return { confirmed: true };
+  }),
+  // 带超时的那条是给「渲染层自己干活」用的。付费路径再走到它就是回归，所以这里直接炸。
+  requestRenderer: vi.fn(async (operation: string) => {
+    throw new Error(`Spend confirmation must not use the timeout-bound bridge: ${operation}`);
+  }),
+}));
+
 /**
  * runTask 的 L3 诚实护栏（docs/plan/2026-07-06-i2i-reference-reliability.md）：
  *
@@ -22,7 +35,7 @@ vi.mock("electron", () => ({
     getAppPath: () => process.cwd(),
   },
   safeStorage: {
-    isEncryptionAvailable: () => false,
+    isEncryptionAvailable: () => true,
     encryptString: (s: string) => Buffer.from(s),
     decryptString: (b: Buffer) => b.toString(),
   },
@@ -63,7 +76,10 @@ async function seedRelayImageVendor(withEditMapping: boolean): Promise<void> {
     baseUrlHint: "https://relay.example.com",
   });
   store.upsertModelCatalogVendorApiKey("relay", { apiKey: "sk-relay" });
-  store.upsertModelCatalogModel({ vendorKey: "relay", modelKey: "some-image-model", kind: "image", enabled: true });
+  store.upsertModelCatalogModel({
+    vendorKey: "relay", modelKey: "some-image-model", kind: "image", enabled: true,
+    meta: { adapter: { state: "verified", activeRevision: "image-certified", modes: [{ taskKind: "text_to_image", state: "verified" }] } },
+  });
   if (withEditMapping) {
     const { NEWAPI_IMAGE_EDIT_OP } = await import("./catalog/newapiTransport");
     store.upsertModelCatalogMapping({ vendorKey: "relay", taskKind: "image_edit", name: "改图", create: NEWAPI_IMAGE_EDIT_OP });
@@ -105,7 +121,10 @@ describe("runTask L3 护栏 — 图生图/图生视频绝不静默退化", () =>
     const store = await import("./catalog/catalogStore");
     store.upsertModelCatalogVendor({ key: "relay", name: "中转站", enabled: true, authType: "bearer", baseUrlHint: "https://relay.example.com" });
     store.upsertModelCatalogVendorApiKey("relay", { apiKey: "sk-relay" });
-    store.upsertModelCatalogModel({ vendorKey: "relay", modelKey: "some-video-model", kind: "video", enabled: true });
+    store.upsertModelCatalogModel({
+      vendorKey: "relay", modelKey: "some-video-model", kind: "video", enabled: true,
+      meta: { adapter: { state: "verified", activeRevision: "video-certified", modes: [{ taskKind: "text_to_video", state: "verified" }] } },
+    });
     const fetchFn = stubFetch(() => new Response("{}", { status: 200 }));
     const { runTask } = await import("./runtime");
     const { mintSpendGrant } = await import("./spendGrant");

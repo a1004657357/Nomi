@@ -7,14 +7,15 @@
  *
  * 关键：模板不是我们维护的，是读他 ComfyUI 的（他装了什么就看到什么、随 ComfyUI 更新、我们零维护）。
  * 官方模板是界面格式 → 取详情时经 comfyuiGraphConvert 借 ComfyUI 自己的前端转 API（T1）。
- * 缺件闸/启用链全部复用既有（reconcile + importComfyWorkflow），不复制逻辑（P1）。
+ * 缺件闸复用既有 reconcile；提交统一进入 integration session handoff，
+ * 不直接写入 Catalog 或绕过 canonical certification。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconBooks, IconCheck, IconX, IconExternalLink, IconRefresh, IconAlertTriangle, IconSearch } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
-import { toast } from '../toast'
+import { notify } from '../notificationPolicy'
 import { resolvePrecheckGateAction } from './precheckGate'
 
 type TemplateEntry = {
@@ -26,7 +27,7 @@ type Detail = {
   uiWorkflowText: string
   unknownNodeTypes: string[]
   missingEnumValues: Array<{ classType: string; inputKey: string; value: string }>
-  enumOptions: Array<{ classType: string; inputKey: string; options: string[] }>
+  enumOptions: Array<{ classType: string; inputKey: string; options: Array<string | number | boolean> }>
   serverReachable: boolean
 }
 
@@ -35,13 +36,16 @@ type Props = {
   /** 已启用的模型名（判重复）。 */
   modelLabels: string[]
   onImported: () => void
+  onVerificationRequested?: () => void
 }
 
 /** 一次展示多少条（几百条全渲染会卡；用户靠分类+搜索收窄，不需要无限滚动）。 */
 const PAGE_SIZE = 12
 
-export function ComfyuiTemplateLibrary({ vendorKey, modelLabels, onImported }: Props): JSX.Element | null {
+export function ComfyuiTemplateLibrary({ vendorKey, modelLabels, onImported, onVerificationRequested }: Props): JSX.Element | null {
   const { t } = useTranslation()
+  const currentVendor = React.useRef(vendorKey)
+  currentVendor.current = vendorKey
   const catalog = getDesktopBridge()?.modelCatalog
   const [list, setList] = React.useState<TemplateEntry[] | null | 'loading'>('loading')
   const [group, setGroup] = React.useState<string>('')
@@ -49,6 +53,8 @@ export function ComfyuiTemplateLibrary({ vendorKey, modelLabels, onImported }: P
   const [openName, setOpenName] = React.useState<string | null>(null)
   const [detail, setDetail] = React.useState<Detail | 'loading' | { error: string } | null>(null)
   const [busy, setBusy] = React.useState(false)
+  const [feedback, setFeedback] = React.useState<Record<string, string>>({})
+  const report = (name: string, message: string) => notify({ identity: `comfy-template:${vendorKey}:${name}`, reason: 'prepare', level: 'inline', message, present: (value) => setFeedback((old) => ({ ...old, [`${vendorKey}:${name}`]: value })) })
   const [limit, setLimit] = React.useState(PAGE_SIZE)
 
   const load = React.useCallback(() => {
@@ -94,18 +100,22 @@ export function ComfyuiTemplateLibrary({ vendorKey, modelLabels, onImported }: P
   if (!catalog) return null
   if (list === null) return null // 这台 ComfyUI 没有模板包/没连上 → 整块不出现（不占位、不报错）
 
-  const enable = (entry: TemplateEntry, d: Detail) => {
-    if (!catalog.importComfyWorkflow) return
+  const enable = async (entry: TemplateEntry, d: Detail) => {
+    const prepare = getDesktopBridge()?.onboarding?.integrationSessionPrepareComfy
+    if (!prepare) return
+    report(entry.name, '')
     setBusy(true)
     try {
       // 官方模板的绑定交给既有分析器推导（它已能认 86% 的提示词/90% 的输出）。
       const analyzed = catalog.analyzeComfyWorkflow?.(d.apiText)
-      if (!analyzed || !analyzed.ok) { toast(t('onboardingProviders.comfyTemplates.analyzeFailed'), 'error'); return }
+      if (!analyzed || !analyzed.ok) { report(entry.name, t('onboardingProviders.comfyTemplates.analyzeFailed')); return }
       const binding = (analyzed.analysis as { suggested?: unknown }).suggested
-      const r = catalog.importComfyWorkflow({ text: d.apiText, binding, labelZh: entry.title, enumOptions: d.enumOptions, vendorKey, uiWorkflowText: d.uiWorkflowText })
-      if (!r.ok) { toast(r.error, 'error'); return }
-      toast(t('onboardingProviders.comfyTemplates.enabled', { name: entry.title }), 'success')
+      await prepare({ vendorKey, name: entry.title, workflow: d.apiText, binding, enumOptions: d.enumOptions, uiWorkflow: d.uiWorkflowText })
+      if (currentVendor.current !== vendorKey) return
       onImported()
+      onVerificationRequested?.()
+    } catch (error) {
+      report(entry.name, error instanceof Error ? error.message : String(error))
     } finally { setBusy(false) }
   }
 
@@ -169,6 +179,7 @@ export function ComfyuiTemplateLibrary({ vendorKey, modelLabels, onImported }: P
                       </span>
                     ) : null}
                   </button>
+                  {feedback[`${vendorKey}:${entry.name}`] ? <p role="alert" className="m-0 px-4 py-1 text-caption text-nomi-danger">{feedback[`${vendorKey}:${entry.name}`]}</p> : null}
                   {open ? <TemplateDetailBlock entry={entry} detail={detail} busy={busy} onEnable={enable} /> : null}
                 </React.Fragment>
               )

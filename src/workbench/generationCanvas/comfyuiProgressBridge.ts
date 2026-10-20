@@ -3,7 +3,7 @@
 // setNodeProgress（文案必经 narrate 注册表，S2 纪律）+ 预览帧写会话级瞬态 store（绝不持久化）。
 import { getDesktopBridge } from '../../desktop/bridge'
 import { useGenerationCanvasStore } from './store/generationCanvasStore'
-import { useComfyuiPreviewStore } from './store/comfyuiPreviewStore'
+import { useNodeLivePreviewStore } from './store/nodeLivePreviewStore'
 import { narrateProgress } from '../observability/narrate'
 
 type ComfyuiProgressEventLike = {
@@ -28,11 +28,7 @@ export function initComfyuiProgressBridge(): void {
     const event = raw as ComfyuiProgressEventLike
     const nodeId = (event?.nodeId || '').trim()
     if (!nodeId) return
-    const previews = useComfyuiPreviewStore.getState()
-    if (event.kind === 'preview' && event.previewDataUrl) {
-      previews.setPreview(nodeId, event.previewDataUrl)
-      return
-    }
+    const previews = useNodeLivePreviewStore.getState()
     if (event.kind === 'done') {
       previews.clearPreview(nodeId)
       return
@@ -41,12 +37,16 @@ export function initComfyuiProgressBridge(): void {
     const node = store.nodes.find((n) => n.id === nodeId)
     // 迟到帧（已取消/已终态）直接丢，别把 idle 节点又抬回 running。
     if (!node || (node.status !== 'running' && node.status !== 'queued')) return
+    if (event.kind === 'preview' && event.previewDataUrl) {
+      previews.setPreview(nodeId, event.previewDataUrl)
+      return
+    }
     // setNodeProgress 是整体替换：必须带回 taskId(=prompt_id)，遮罩取消按钮靠它做定向取消。
     const taskId = (event.promptId || node.progress?.taskId || '').trim()
     if (event.kind === 'queue') {
       store.setNodeProgress(nodeId, {
         phase: 'comfyui-queued',
-        percent: 0,
+        narrationContext: { queueAhead: event.queueAhead },
         ...(taskId ? { taskId } : {}),
         message: narrateProgress('comfyui-queued', { queueAhead: event.queueAhead }),
       })
@@ -55,6 +55,7 @@ export function initComfyuiProgressBridge(): void {
     if (event.kind === 'progress') {
       store.setNodeProgress(nodeId, {
         phase: 'comfyui-node',
+        narrationContext: { currentClass: event.currentClass, startedNodes: event.startedNodes, totalNodes: event.totalNodes },
         ...(typeof event.percent === 'number' ? { percent: event.percent } : {}),
         ...(taskId ? { taskId } : {}),
         message: narrateProgress('comfyui-node', {

@@ -21,6 +21,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     env:
       RELEASE_VERSION: ${{ inputs.version }}
     outputs:
@@ -41,6 +42,8 @@ jobs:
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - run: pnpm install --frozen-lockfile
+      - name: Install Chromium for release validation browser tests
+        run: pnpm exec playwright install --with-deps chromium
       - name: Validate version
         run: node scripts/release-contract.mjs validate-version --root . --version "$RELEASE_VERSION"
       - name: Repository gates
@@ -49,16 +52,62 @@ jobs:
         run: xvfb-run -a pnpm run test:e2e
       - name: Real user journey suite
         run: xvfb-run -a pnpm run test:journeys
-      - name: Release-critical feature journeys
-        run: |
-          xvfb-run -a node tests/ux/clip-node-editing.walk.mjs
-          xvfb-run -a node tests/ux/production-mcp-journey.e2e.mjs
-          xvfb-run -a pnpm run test:mcp
-          xvfb-run -a node tests/ux/canvas-performance-benchmark.e2e.mjs rc --scale S --runs 1 --warmup 0 --scenario media-reveal,media-error,video-hover,reload-heavy
+      # 一次收齐所有 release-critical 失败，再统一修复。不要恢复成一个 set -e 长链：
+      # Clip 红了也必须继续拿到 MCP 和性能证据；这些 Electron 旅程仍然串行，避免
+      # userData/端口/临时素材互相污染。末尾 summary 才是 validate 的结论。
+      - name: Clip editing journey
+        id: clip
+        continue-on-error: true
+        timeout-minutes: 20
+        run: xvfb-run -a node tests/ux/clip-node-editing.walk.mjs
+      - name: Production MCP journey
+        id: production-mcp
+        continue-on-error: true
+        timeout-minutes: 20
+        run: xvfb-run -a node tests/ux/production-mcp-journey.e2e.mjs
+      - name: MCP journey suite
+        id: mcp-journey
+        continue-on-error: true
+        timeout-minutes: 20
+        run: xvfb-run -a pnpm run test:mcp-journey
+      - name: MCP elicitation journey
+        id: mcp-elicitation
+        continue-on-error: true
+        timeout-minutes: 20
+        run: xvfb-run -a pnpm run test:mcp-elicitation
+      - name: Canvas performance RC journey
+        id: canvas-performance
+        continue-on-error: true
+        timeout-minutes: 20
+        run: xvfb-run -a node tests/ux/canvas-performance-benchmark.e2e.mjs rc --scale S --runs 1 --warmup 0 --scenario media-reveal,media-error,video-hover,reload-heavy
+      - name: Release-critical journey summary
+        if: always()
+        env:
+          CHAIN_LABEL: Release-critical feature journeys
+          CHAIN: >-
+            clip:${{ steps.clip.outcome }}
+            production-mcp:${{ steps.production-mcp.outcome }}
+            mcp-journey:${{ steps.mcp-journey.outcome }}
+            mcp-elicitation:${{ steps.mcp-elicitation.outcome }}
+            canvas-performance:${{ steps.canvas-performance.outcome }}
+        run: node scripts/summarize-e2e-chain.mjs
+      - name: Upload release-critical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-critical-evidence
+          path: |
+            outputs/**
+            tests/ux/shots/**
+            evals/**
+            /tmp/nomi-*.png
+          if-no-files-found: ignore
+          retention-days: 14
 
   macos:
     needs: validate
     runs-on: macos-14
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,15 +120,39 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --force
-      - run: pnpm run build
+      # 反馈回路的出厂配置（W-01）。烤进 dist-electron/intake-config.json，随 app.asar 出厂。
+      # 令牌是**发布令牌**不是密钥：它随包发出去、解包就能拿到；接收端只能写不能读/列/删。
+      - name: Build with the shipped feedback intake configured
+        env:
+          NOMI_INTAKE_ENDPOINT: ${{ secrets.NOMI_INTAKE_ENDPOINT }}
+          NOMI_INTAKE_TOKEN: ${{ secrets.NOMI_INTAKE_TOKEN }}
+        run: pnpm run build
       - name: Package both macOS architectures without publishing
         run: pnpm exec electron-builder --mac --publish never
-      - name: Verify packaged media targets
+      - name: Verify the shipped feedback intake configuration
         run: |
-          node scripts/packaging/audit-packaged-media.cjs release/mac-arm64/Nomi.app darwin arm64
-          node scripts/packaging/audit-packaged-media.cjs release/mac/Nomi.app darwin x64
+          node scripts/check-packaged-intake.mjs release/mac-arm64/Nomi.app
+          node scripts/check-packaged-intake.mjs release/mac/Nomi.app
       - name: Verify packaged MCP on Apple Silicon
         run: node tests/ux/packaged-mcp-smoke.e2e.mjs release/mac-arm64/Nomi.app
+      # 包体审计（docs/plan/2026-09-28-release-audit.md §3 A）：大小超预算、多出一个 npm 包或语言包、
+      # 禁带文件（source map / 测试夹具 / .env / 别的平台二进制）、运行时闭包断了（装机版 Cannot find module）、
+      # ffmpeg/ffprobe 平台目标不对——任一条让本作业红（原 Verify packaged media targets 已并进来）。
+      # 放在 MCP 冒烟之后，超预算时冒烟证据照样留下；两个架构都审完再定结论，报告总会上传。
+      - name: Audit both macOS packages against their budgets
+        run: |
+          status=0
+          node scripts/audit-package.mjs release/mac-arm64/Nomi.app --installer release/Nomi-mac-arm64.dmg --installer release/Nomi-mac-arm64.zip --report release/package-audit-darwin-arm64.json || status=1
+          node scripts/audit-package.mjs release/mac/Nomi.app --installer release/Nomi-mac-x64.dmg --installer release/Nomi-mac-x64.zip --report release/package-audit-darwin-x64.json || status=1
+          exit "$status"
+      - name: Upload the macOS package audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-audit-macos
+          path: release/package-audit-*.json
+          if-no-files-found: warn
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: rc-macos
@@ -94,6 +167,7 @@ jobs:
   windows:
     needs: validate
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,13 +180,30 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
+      # 反馈回路的出厂配置（W-01）。烤进 dist-electron/intake-config.json，随 app.asar 出厂。
+      # 令牌是**发布令牌**不是密钥：它随包发出去、解包就能拿到；接收端只能写不能读/列/删。
+      - name: Build with the shipped feedback intake configured
+        env:
+          NOMI_INTAKE_ENDPOINT: ${{ secrets.NOMI_INTAKE_ENDPOINT }}
+          NOMI_INTAKE_TOKEN: ${{ secrets.NOMI_INTAKE_TOKEN }}
+        run: pnpm run build
       - name: Package Windows without publishing
         run: pnpm exec electron-builder --win nsis --x64 --publish never
-      - name: Verify packaged media target
-        run: node scripts/packaging/audit-packaged-media.cjs release/win-unpacked win32 x64
+      - name: Verify the shipped feedback intake configuration
+        run: node scripts/check-packaged-intake.mjs release/win-unpacked
       - name: Verify packaged MCP on Windows
         run: node tests/ux/packaged-mcp-smoke.e2e.mjs release/win-unpacked/Nomi.exe
+      # 包体审计：判据同 macOS 作业那一步（原 Verify packaged media target 已并进来）。
+      - name: Audit the Windows package against its budget
+        run: node scripts/audit-package.mjs release/win-unpacked --installer release/Nomi-win-x64.exe --report release/package-audit-win32-x64.json
+      - name: Upload the Windows package audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-audit-windows
+          path: release/package-audit-*.json
+          if-no-files-found: warn
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: rc-windows
@@ -126,6 +217,7 @@ jobs:
   finalize:
     needs: [validate, macos, windows]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RELEASE_VERSION: ${{ inputs.version }}
       REPOSITORY: ${{ github.repository }}

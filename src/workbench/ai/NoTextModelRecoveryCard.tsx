@@ -1,20 +1,19 @@
 // 「创作助手缺文本大脑」恢复卡（Issue #9 Part B）：替掉死胡同英文串
 // 「No local text model is configured」——后者只是一句报错、用户不知道怎么办。
 //
-// 触发：agent 报错且 catalog 里没有任何 enabled 的 text 模型（CreationAiPanel 用
+// 触发：agent 报错且 catalog 里没有任何 enabled 的 text 模型（resident Agent shell 用
 // useHasTextModel 判定，传 show=true 才渲染）。判的是**真实目录状态**而非匹配错误字符串（P2）。
 //
 // 一键启用是**派生**的，不 hardcode 任何模型描述符（单一真相源在种子 apimartTexts.ts，P1）：
 // 找一个「供应商已配 key 但被禁用」的文本模型 → 一键启用它（读它自己的 labelZh）。
 // 找不到（只接了纯生成供应商）→ 只给「去模型设置」。Part A 已保证接 APIMart 即自动有大脑，
 // 故本卡是兜底安全网，常态下因 hasTextModel=true 根本不出现。
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconBulb, IconCheck, IconKey, IconSettings } from '@tabler/icons-react'
+import { IconBulb, IconCheck, IconSettings } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { WorkbenchButton } from '../../design'
-import { NomiIdentityRow } from './AssistantMessageView'
-import { getTextBrainStatus } from '../api/promptLibraryApi'
+import { NomiIdentityRow } from './NomiIdentityRow'
 import {
   listWorkbenchModelCatalogModels,
   listWorkbenchModelCatalogVendors,
@@ -43,21 +42,12 @@ export function NoTextModelRecoveryCard({ onResolved }: { onResolved?: () => voi
   const { t } = useTranslation()
   const [state, setState] = React.useState<CardState>('prompt')
   const [recoverable, setRecoverable] = React.useState<Recoverable | null>(null)
-  // locked = 文本模型接过、只是本机解不开它的 Key（换机/钥匙串变化）——文案要说「去重粘 Key」而非「你只接了图/视频模型」。
-  const [locked, setLocked] = React.useState(false)
 
   React.useEffect(() => {
     let alive = true
     void findRecoverableBrain().then((r) => {
       if (alive) setRecoverable(r)
     })
-    void getTextBrainStatus()
-      .then((status) => {
-        if (alive) setLocked(status === 'locked')
-      })
-      .catch(() => {
-        /* 探测失败：退回通用文案（不误标 locked）。 */
-      })
     return () => {
       alive = false
     }
@@ -98,31 +88,20 @@ export function NoTextModelRecoveryCard({ onResolved }: { onResolved?: () => voi
       ) : (
         <div className={cn('flex flex-col gap-3 p-3 rounded-nomi border border-nomi-line')}>
           <div className={cn('flex items-start gap-2')}>
-            {locked ? (
-              <IconKey size={18} className={cn('mt-0.5 shrink-0 text-nomi-ink-60')} />
-            ) : (
-              <IconBulb size={18} className={cn('mt-0.5 shrink-0 text-nomi-ink-60')} />
-            )}
+            <IconBulb size={18} className={cn('mt-0.5 shrink-0 text-nomi-ink-60')} />
             <div className={cn('flex flex-col gap-1')}>
               <span className={cn('text-body-sm font-medium text-nomi-ink leading-snug')}>
-                {locked ? t('creationAi.noTextModel.lockedTitle') : t('creationAi.noTextModel.title')}
+                {t('creationAi.noTextModel.title')}
               </span>
               <span className={cn('text-caption text-nomi-ink-60 leading-snug')}>
-                {locked ? (
-                  t('creationAi.noTextModel.lockedDescription')
-                ) : (
-                  <>
-                    {t('creationAi.noTextModel.descriptionBefore')}
-                    <span className={cn('text-nomi-ink')}>{t('creationAi.noTextModel.textModel')}</span>
-                    {t('creationAi.noTextModel.descriptionAfter')}
-                  </>
-                )}
+                {t('creationAi.noTextModel.descriptionBefore')}
+                <span className={cn('text-nomi-ink')}>{t('creationAi.noTextModel.textModel')}</span>
+                {t('creationAi.noTextModel.descriptionAfter')}
               </span>
             </div>
           </div>
           <div className={cn('flex flex-col gap-2')}>
-            {/* locked 态不给「一键启用」——模型本就 enabled，缺的是能解开的 Key，只指向模型设置去重粘。 */}
-            {!locked && recoverable ? (
+            {recoverable ? (
               <WorkbenchButton
                 variant="primary"
                 className="w-full"

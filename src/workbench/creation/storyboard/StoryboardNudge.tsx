@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../../utils/cn'
 import { useWorkbenchStore } from '../../workbenchStore'
@@ -7,7 +7,7 @@ import StoryboardActionCard, { type StoryboardShotMode } from './StoryboardActio
 
 // 情景卡自动浮现（用户拍板 2026-07-15）：写好故事、还没拆过镜头、非生成中时，在助手顶部浮一张「拆成镜头」卡。
 // 补上「拆镜头没有可点入口、全靠说对暗号」这个触发难的根因；点了才跑、可关，不加常驻按钮、贴合「对话驱动」。
-// 自成组件（从 CreationAiPanel 抽出，防巨壳 R9）：故事正文/是否已拆/收起态都在这判，父层只给 onRun + busy。
+// 自成组件（从旧 Agent shell 抽出，防巨壳 R9）：故事正文/是否已拆/收起态都在这判，父层只给 onRun + busy。
 const STORYBOARD_NUDGE_MIN_CHARS = 60 // 故事正文达到这么多字才认为「有故事可拆」，避免刚起个头就弹卡。
 
 export default function StoryboardNudge({
@@ -26,8 +26,16 @@ export default function StoryboardNudge({
   onRun: (shotMode: StoryboardShotMode) => void
 }): JSX.Element | null {
   const { t } = useTranslation()
-  const workbenchDocument = useWorkbenchStore((state) => state.workbenchDocument)
-  const storyboardPlan = useWorkbenchStore((state) => state.storyboardPlan)
+  const workbenchDocuments = useWorkbenchStore((state) => state.workbenchDocuments)
+  const activeDocumentId = useWorkbenchStore((state) => state.activeDocumentId)
+  const workbenchDocument = React.useMemo(
+    () => workbenchDocuments.find((d) => d.id === activeDocumentId) ?? workbenchDocuments[0],
+    [workbenchDocuments, activeDocumentId],
+  )
+  const storyboardPlan = useWorkbenchStore((state) => {
+    const designs = activeDocumentId ? state.storyboardDesignsByDocumentId[activeDocumentId] ?? [] : []
+    return designs[0]?.plan ?? null
+  })
   const [dismissed, setDismissed] = React.useState(false)
   const documentText = React.useMemo(() => extractWorkbenchDocumentText(workbenchDocument), [workbenchDocument])
 

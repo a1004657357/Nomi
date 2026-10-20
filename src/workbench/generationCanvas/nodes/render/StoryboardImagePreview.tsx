@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { localAssetThumbnailUrl } from '../../../../design/localAssetThumbnail'
 import { cn } from '../../../../utils/cn'

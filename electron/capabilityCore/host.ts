@@ -14,10 +14,17 @@ import { createDiskGateway } from './gateway'
 import { ensureBuiltinModelSeeds } from '../catalog/catalogStore'
 import { runTask, fetchTaskResult } from '../runtime'
 import { verifyToken } from './security'
+import { installIntegrationSessionRuntime } from '../integrationCertification/integrationSessionRuntimeInstall'
 import { applySystemProxy } from '../systemProxy'
 import { flushPendingTechnicalReviews } from '../review/reviewTrace'
+import { readProxyPrefs } from '../proxySettings'
 import { getProductionRunService } from '../productionRun/productionRunRuntime'
 import { rpcErrorWirePayload } from './mcpRpcError'
+import { assertLocalBearerProjectSessionRoute } from './localProjectSessionTransportPolicy'
+import { createHeadlessCanvasReadExecutionRuntime, resolveProductionCanvasReadProjectIdentity } from './canvasReadExecutionRuntime'
+import { createInternalCanvasReadTransportAdapter } from './canvasReadTransportAdapters'
+import { createInternalCanvasReadVerifiedInvocationFactory } from './verifiedCapabilityInvocation'
+import { canvasReadRpcError } from './canvasReadPublicError'
 
 const productionRuns = getProductionRunService()
 
@@ -58,6 +65,9 @@ function emit(payload: unknown): void {
 }
 
 async function run(): Promise<number> {
+  // 一次性 host 也要自己装接入会话服务：dispatch 的 integration.* 全经过它，
+  // 而 GUI 的 registerIpc 在这个进程里根本不跑（根因合同 2026-09-11-comfyui-certification-wiring）。
+  installIntegrationSessionRuntime()
   const command = readCommandFromArgv()
   // 即便本机直连，host 仍要求 token——外部进程想驱动它必须证明拿到了用户机器上的 token（S6）。
   if (!verifyToken(command.token)) {
@@ -66,6 +76,30 @@ async function run(): Promise<number> {
   }
   const method = String(command.method || '')
   const params = command.params && typeof command.params === 'object' ? command.params : {}
+  try {
+    const canvasReadExecutionRuntime = createHeadlessCanvasReadExecutionRuntime()
+    const adapter = createInternalCanvasReadTransportAdapter({
+      factory: createInternalCanvasReadVerifiedInvocationFactory({
+        verifyBearer: (bearer) => verifyToken(bearer),
+        resolveProjectIdentity: resolveProductionCanvasReadProjectIdentity,
+      }),
+      executor: canvasReadExecutionRuntime.executor,
+    })
+    const routed = await adapter.tryExecute(method, {
+        bearer: String(command.token || ''),
+        requestBody: params,
+      })
+    if (routed.handled) {
+      emit({ ok: true, result: routed.result })
+      return 0
+    }
+  } catch (error) {
+    emit({ ok: false, error: rpcErrorWirePayload(canvasReadRpcError(error)) })
+    return 1
+  }
+  // The one-shot host has only a local bearer. It cannot invent an MCP
+  // principal/session or accept a bare projectId for project-session routes.
+  assertLocalBearerProjectSessionRoute(method)
   // headless 永远是工程文件的唯一写者（app 关着时 CLI 才 spawn 它），无运行中渲染层 → 恒磁盘网关。
   try {
     const result = await dispatch(method, params, {
@@ -88,12 +122,11 @@ async function run(): Promise<number> {
 app.whenReady().then(async () => {
   let code = 1
   try {
-    // 和主 app 一致设代理(main.ts:436):headless host 默认 session 不设代理 → 代理后的机器 vendor fetch 失败。
-    // 失败兜底直连(不崩),与主 app 同一不变量。
+    // 与 GUI 共用持久化偏好；公共请求等已确认路由，本机/私网不依赖公共代理就绪。
     try {
-      await applySystemProxy(session.defaultSession)
+      await applySystemProxy(session.defaultSession, readProxyPrefs())
     } catch {
-      /* 代理设失败 → 直连兜底 */
+      /* 初始化失败不退出 host；appFetch 阻止未经确认的公共请求，不隐式直连。 */
     }
     // 内置种子对账（与主 app 启动 main.ts 同一步）：headless 此前从不调它 → 代码改了 curated mapping 后只有
     // 开过 GUI 才同步，纯 MCP/CLI 用户跑旧目录。幂等：无变化不写盘、atomic 写。userData 由顶部 setPath 钉死同源。

@@ -1,23 +1,28 @@
+import { groupLibraryItems, libraryGroup } from '../library/libraryGroups'
 /**
  * 提示词库面板。借鉴 infinite-canvas 的提示词库,但瘦身:库只管「靠封面挑起点 → 送上画布」,
  * AI 优化下沉到节点 composer(不在库内重复)。居中大画廊 + 遮罩;点卡片 FLIP 放大浮到中央预览。
  * 双来源:Nomi 精选(外部公开仓库,主进程聚合+1h 缓存+打包快照兜底,只读)/ 我的库(用户级·跨项目,手写可改可删)。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { IconX, IconBulb, IconRefresh, IconPlus } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
-import { NomiLoadingMark, NomiWordmark, DesignEmptyState, DesignSearchInput, TooltipProvider } from '../../design'
+import { NomiLoadingMark, NomiWordmark, DesignEmptyState, TooltipProvider } from '../../design'
 import { showUndoToast } from '../../utils/showUndoToast'
 import { useGenerationCanvasStore } from '../generationCanvas/store/generationCanvasStore'
-import { filterPrompts, type LibraryPrompt, type PromptCategory } from '../api/promptLibraryApi'
+import { filterPrompts, promptSourceOptions, PROMPT_SOURCE_ALL, type LibraryPrompt, type PromptCategory } from '../api/promptLibraryApi'
+import { promptSourceKey, promptSourceDisplayLabel } from './promptDisplay'
 import { usePromptLibrary } from './usePromptLibrary'
 import { useUserPrompts } from './useUserPrompts'
 import { PromptCard } from './PromptCard'
 import { UserPromptCard } from './UserPromptCard'
 import { UserPromptComposer } from './UserPromptComposer'
 import { PromptPreviewOverlay } from './PromptPreviewOverlay'
+import { promptDisplayTitle } from './promptDisplay'
+import { markLibraryUsed, sortByLibraryUsage, useLibraryUsageVersion } from '../library/libraryDiscovery'
+import { LibraryDiscoveryToolbar } from '../library/LibraryDiscoveryToolbar'
 
 const GRID_GAP = 12 // gap-3
 const MIN_CARD_WIDTH = 200 // 卡片最小宽,据此推列数(窄窗自动减列,不再写死 4 列挤压)
@@ -54,20 +59,58 @@ export function PromptLibraryContent({
   onClose,
   className,
 }: PromptLibraryContentProps): JSX.Element {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [source, setSource] = React.useState<Source>('nomi')
   const [category, setCategory] = React.useState<PromptCategory>('all')
+  // 精选条目按「来源」分类导航（GPT Image 2 / Sora 2…）——治「一大片无分类难找」。默认「全部来源」。
+  const [sourceFilter, setSourceFilter] = React.useState<string>(PROMPT_SOURCE_ALL)
   const [query, setQuery] = React.useState('')
+  const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(new Set())
   const [selected, setSelected] = React.useState<Selected | null>(null)
   const [scrollEl, setScrollEl] = React.useState<HTMLDivElement | null>(null)
   const [composing, setComposing] = React.useState(false)
   const [editing, setEditing] = React.useState<LibraryPrompt | null>(null)
+  const usageVersion = useLibraryUsageVersion()
 
   const { items, loading, error, reload } = usePromptLibrary(active)
   const user = useUserPrompts(active)
   const isMine = source === 'mine'
-  const activeItems = isMine ? user.items : items
-  const visible = React.useMemo(() => filterPrompts(activeItems, category, query), [activeItems, category, query])
+  const activeItems = React.useMemo(
+    () => {
+      // See ProjectLibraryPage: usageVersion invalidates recency after a use.
+      void usageVersion
+      return sortByLibraryUsage(
+        isMine ? user.items : items,
+        'prompt',
+        (prompt) => prompt.id,
+        (prompt) => prompt.updatedAt ? Date.parse(prompt.updatedAt) : undefined,
+      )
+    },
+    [isMine, items, user.items, usageVersion],
+  )
+  // 来源分类只对精选列表有意义（我的库来源统一为「我的」）；按当前类型筛选后的集合派生来源项，
+  // 这样切「视频」时来源行只列出真有视频的来源，不出空类。值 = 稳定键（不随语言变），
+  // 标签按界面语言另取（promptSourceDisplayLabel）——2026-09-10 走查反馈：原先值/标签共用
+  // 投影时写死中文的 source，切语言时 chips 还是中文。
+  const sourceOptions = React.useMemo(
+    () => (isMine
+      ? []
+      : promptSourceOptions(activeItems.filter((p) => category === 'all' || p.promptType === category))
+          .map((value) => {
+            const first = activeItems.find((p) => promptSourceKey(p) === value)
+            return { value, label: first ? promptSourceDisplayLabel(first) : value }
+          })),
+    [isMine, activeItems, category],
+  )
+  // 当前来源筛选若因切类型/切来源不再存在，回落到「全部来源」，避免筛出空列表还高亮着不存在的项。
+  React.useEffect(() => {
+    if (sourceFilter !== PROMPT_SOURCE_ALL && !sourceOptions.some((option) => option.value === sourceFilter)) setSourceFilter(PROMPT_SOURCE_ALL)
+  }, [sourceOptions, sourceFilter])
+  const effectiveSource = isMine ? PROMPT_SOURCE_ALL : sourceFilter
+  const visible = React.useMemo(
+    () => filterPrompts(activeItems, category, query, effectiveSource),
+    [activeItems, category, query, effectiveSource],
+  )
 
   // 响应式列数 + 由实际卡宽推出的行高（替代写死的 grid-cols-4 / 188），窄窗也不挤压、滚动不跳。
   const [contentWidth, setContentWidth] = React.useState(0)
@@ -89,18 +132,26 @@ export function PromptLibraryContent({
   const cardWidth = (width - (cols - 1) * GRID_GAP) / cols
   const rowHeight = cardWidth * CARD_ASPECT + GRID_GAP
 
-  const rowCount = Math.ceil(visible.length / cols)
+  const rows = React.useMemo(() => groupLibraryItems(visible, item => libraryGroup(item, i18n.language)).flatMap(group => {
+    const header = group.label ? [{ id: group.id, group, items: [] as LibraryPrompt[] }] : []
+    if (group.collapsed && !expanded.has(group.id)) return header
+    const cards = Array.from({ length: Math.ceil(group.items.length / cols) }, (_, index) => ({
+      id: `${group.id}:${index}`, group: undefined, items: group.items.slice(index * cols, (index + 1) * cols),
+    }))
+    return [...header, ...cards]
+  }), [visible, i18n.language, expanded, cols])
   const rowVirtualizer = useVirtualizer({
-    count: rowCount,
+    count: rows.length,
+    getItemKey: index => rows[index].id,
     getScrollElement: () => scrollEl,
-    estimateSize: () => rowHeight,
+    estimateSize: index => rows[index].group ? 40 : rowHeight,
     overscan: 3,
   })
 
   // 列数/行高变化（窗口缩放）后重新测量，避免虚拟化用旧行高错位。
   React.useEffect(() => {
     rowVirtualizer.measure()
-  }, [rowVirtualizer, rowHeight, cols])
+  }, [rowVirtualizer, rowHeight, cols, rows])
 
   React.useEffect(() => {
     if (!active || !onClose) return
@@ -111,9 +162,10 @@ export function PromptLibraryContent({
     return () => window.removeEventListener('keydown', handler)
   }, [active, onClose, selected])
 
-  // 切来源时收起编辑/新建态(避免在 Nomi 精选上下文里残留我的库表单)。
+  // 切来源时收起编辑/新建态(避免在 Nomi 精选上下文里残留我的库表单)，并重置来源分类筛选。
   const switchSource = React.useCallback((next: Source) => {
     setSource(next)
+    setSourceFilter(PROMPT_SOURCE_ALL)
     if (next !== 'mine') { setComposing(false); setEditing(null) }
   }, [])
 
@@ -133,6 +185,7 @@ export function PromptLibraryContent({
       message: t('libraries.prompt.sentToCanvas', { kind: prompt.promptType === 'video' ? t('libraries.prompt.category.video') : t('libraries.prompt.storyboard') }),
       onUndo: () => useGenerationCanvasStore.getState().deleteNode(node.id),
     })
+    markLibraryUsed('prompt', prompt.id)
   }, [t])
 
   const handleNew = React.useCallback(() => { setEditing(null); setComposing(true) }, [])
@@ -140,7 +193,7 @@ export function PromptLibraryContent({
   const handleDelete = React.useCallback((prompt: LibraryPrompt) => {
     void user.remove(prompt.id)
     showUndoToast({
-      message: t('libraries.prompt.removedFromMine', { title: prompt.title }),
+      message: t('libraries.prompt.removedFromMine', { title: promptDisplayTitle(prompt) }),
       onUndo: () => void user.add({ title: prompt.title, prompt: prompt.prompt, promptType: prompt.promptType }),
     })
   }, [user, t])
@@ -164,7 +217,7 @@ export function PromptLibraryContent({
             aria-selected={activeOption}
             className={cn(
               'rounded-full text-caption cursor-pointer border-0 bg-transparent whitespace-nowrap',
-              'transition-[background,color] duration-[var(--nomi-transition-fast)]',
+              'transition-[background,color] duration-nomi-fast ease-nomi-fast',
               compact ? 'min-w-0 flex-1 px-2 py-1' : 'px-3 py-1',
               activeOption
                 ? 'bg-nomi-paper text-nomi-ink font-semibold shadow-nomi-sm'
@@ -195,7 +248,7 @@ export function PromptLibraryContent({
             aria-selected={activeOption}
             className={cn(
               'rounded-full text-caption cursor-pointer border-0 bg-transparent whitespace-nowrap',
-              'transition-[background,color] duration-[var(--nomi-transition-fast)]',
+              'transition-[background,color] duration-nomi-fast ease-nomi-fast',
               compact ? 'min-w-0 flex-1 px-2 py-1' : 'px-3 py-1',
               activeOption
                 ? 'bg-nomi-paper text-nomi-ink font-semibold shadow-nomi-sm'
@@ -209,6 +262,38 @@ export function PromptLibraryContent({
       })}
     </div>
   )
+
+  // 来源分类导航（仅精选、且来源多于一个时才显）：横向可滚动的 chip 行，「全部来源」+ 各真实来源名。
+  const sourceChips = !isMine && sourceOptions.length > 1 ? (
+    <div
+      className={cn('flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden', compact ? 'px-3 pb-2 -mt-0.5' : 'px-5 pb-2 -mt-1')}
+      role="tablist"
+      aria-label={t('libraries.prompt.sourceFilterAria')}
+    >
+      {[{ value: PROMPT_SOURCE_ALL, label: t('libraries.prompt.allSources') }, ...sourceOptions].map((option) => {
+        const { value, label } = option
+        const activeChip = sourceFilter === value
+        return (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={activeChip}
+            className={cn(
+              'shrink-0 rounded-full text-caption cursor-pointer border px-2.5 py-0.5 whitespace-nowrap',
+              'transition-[background,color,border-color] duration-nomi-fast ease-nomi-fast',
+              activeChip
+                ? 'bg-nomi-ink text-nomi-paper border-nomi-ink font-medium'
+                : 'bg-transparent text-nomi-ink-60 border-nomi-line hover:text-nomi-ink hover:border-nomi-ink-20',
+            )}
+            onClick={() => setSourceFilter(value)}
+          >
+            {label}
+          </button>
+        )
+      })}
+    </div>
+  ) : null
 
   return (
     <TooltipProvider delayDuration={180} skipDelayDuration={80}>
@@ -236,17 +321,18 @@ export function PromptLibraryContent({
           ) : null}
 
           {/* 工具行 */}
-          <div className={cn('flex gap-2', compact ? 'flex-col px-3 py-3' : 'items-center px-5 py-2.5')}>
-            {sourceTabs}
-            {categoryTabs}
-            <DesignSearchInput
-              className={compact ? 'w-full' : 'flex-1'}
-              placeholder={t('libraries.prompt.searchPlaceholder')}
-              ariaLabel={t('libraries.prompt.searchAria')}
-              value={query}
-              onChange={setQuery}
-            />
-          </div>
+          <LibraryDiscoveryToolbar
+            className={compact ? 'px-3 py-3' : 'px-5 py-2.5'}
+            compact={compact}
+            query={query}
+            onQueryChange={setQuery}
+            placeholder={t('libraries.prompt.searchPlaceholder')}
+            ariaLabel={t('libraries.prompt.searchAria')}
+            leading={<>{sourceTabs}{categoryTabs}</>}
+          />
+
+          {/* 来源分类导航（精选）：治「一大片无分类难找」，按数据里的来源分类。 */}
+          {sourceChips}
 
           {/* 网格 / 状态 */}
           <div ref={setScrollEl} className={cn('flex-1 overflow-y-auto', compact ? 'px-3 pb-3' : 'px-5 pb-5')}>
@@ -304,8 +390,8 @@ export function PromptLibraryContent({
             ) : (
               <div style={{ height: rowVirtualizer.getTotalSize(), width: '100%', position: 'relative' }}>
                 {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                  const start = virtualRow.index * cols
-                  const rowItems = visible.slice(start, start + cols)
+                  const row = rows[virtualRow.index]
+                  const group = row.group
                   return (
                     <div
                       key={virtualRow.key}
@@ -313,9 +399,14 @@ export function PromptLibraryContent({
                       className={cn('grid gap-3 pb-3')}
                       style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)`, gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
                     >
-                      {rowItems.map((prompt) => (
-                        <PromptCard key={prompt.id} prompt={prompt} onSelect={handleSelect} />
-                      ))}
+                      {group ? <button type="button" disabled={!group.collapsed}
+                        aria-expanded={group.collapsed ? expanded.has(group.id) : undefined}
+                        data-library-group={group.id}
+                        onClick={() => setExpanded(previous => { const next = new Set(previous); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next })}
+                        className="col-span-full flex h-7 items-center gap-2 rounded-nomi-sm px-2 text-left text-caption font-medium text-nomi-ink enabled:hover:bg-nomi-ink-05">
+                        {group.collapsed ? <span aria-hidden="true">{expanded.has(group.id) ? '▾' : '▸'}</span> : null}
+                        {t('libraries.gallery.groupCount', { name: group.label, count: group.items.length })}
+                      </button> : row.items.map(prompt => <PromptCard key={prompt.id} prompt={prompt} onSelect={handleSelect} />)}
                     </div>
                   )
                 })}

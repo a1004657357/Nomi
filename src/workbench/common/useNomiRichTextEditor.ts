@@ -1,8 +1,58 @@
 import React from 'react'
-import { useEditor, type Editor, type JSONContent } from '@tiptap/react'
+import { useEditor, type Editor, type JSONContent, type UseEditorOptions } from '@tiptap/react'
+import { markInputRule, markPasteRule, type AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
+import { Highlight } from '@tiptap/extension-highlight'
+import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { TableKit } from '@tiptap/extension-table'
 import { markdownToTiptapContent } from '../creation/markdownToTiptap'
+import { sanitizePastedHtml } from './sanitizePastedHtml'
+import { PersistentSelectionExtension } from './persistentSelection'
+import { createControlledEditorSync } from './controlledEditorSync'
+
+// ==高亮== 输入/粘贴规则：Tiptap 默认规则要求 `==` 前是行首或空白，中文「这是==重点==」
+// 无空格场景会失效；这里放宽为任意位置触发，对齐 ColaMD 的 `/==([^=]+)==/`。
+const HighlightWithZh = Highlight.extend({
+  addInputRules() {
+    return [markInputRule({ find: /==([^=]+)==$/, type: this.type })]
+  },
+  addPasteRules() {
+    return [markPasteRule({ find: /==([^=]+)==/g, type: this.type })]
+  },
+})
+
+// 创作编辑器的富文本特性扩展（模块级稳定引用，避免 editor 反复重建）。
+// 画布文字节点（TextDocumentNode）复用同一内核但不挂这些——它保持基础能力，行为零回归。
+export const RICH_TEXT_FEATURE_EXTENSIONS: AnyExtension[] = [
+  HighlightWithZh,
+  TaskList,
+  TaskItem,
+  TableKit,
+]
+
+const EMPTY_EXTENSIONS: AnyExtension[] = []
+
+/**
+ * The React adapter must keep one mounted TipTap instance as the owner of the
+ * ProseMirror view. React 19 can render a parent again while a native DOM
+ * selection is settling; allowing transaction-driven React renders or an
+ * implicit client/server mode to choose the lifecycle makes the DOM and the
+ * editor state diverge. Both rich-text surfaces consume this one contract.
+ */
+const NOMI_TIPTAP_EDITOR_OPTIONS = {
+  immediatelyRender: true,
+  shouldRerenderOnTransaction: false,
+} as const
+
+/**
+ * The only door to TipTap's `useEditor` (eslint `no-restricted-imports` bans it
+ * elsewhere): every Nomi editor gets the lifecycle policy above, and a caller
+ * cannot override it. Callers still own keeping their option collections stable.
+ */
+export function useNomiTiptapEditor(options: UseEditorOptions, deps?: React.DependencyList): Editor {
+  return useEditor({ ...options, ...NOMI_TIPTAP_EDITOR_OPTIONS }, deps)
+}
 
 /**
  * Shared Tiptap rich-text kernel — single source of truth for BOTH the creation
@@ -18,6 +68,8 @@ export type RichTextApplyMode = 'insert' | 'replace' | 'append'
 export type NomiRichTextTools = {
   readFullText: () => string
   readSelectionText: () => string
+  /** Apply markdown at an explicit ProseMirror range captured by the caller. */
+  applyAtRange: (content: string, range: { from: number; to: number }) => void
   insertAtCursor: (content: string) => void
   replaceSelection: (content: string) => void
   appendToEnd: (content: string) => void
@@ -38,12 +90,27 @@ export function useNomiRichTextEditor(options: {
   content: JSONContent
   placeholder?: string
   editable?: boolean
+  /** 富文本特性扩展（高亮/待办/表格）。创作编辑器传 RICH_TEXT_FEATURE_EXTENSIONS，画布文字节点省略保持基础能力。 */
+  featureExtensions?: AnyExtension[]
+  /** 粘贴 HTML 清洗（Excel/Word 脏 HTML → 干净语义结构）。创作编辑器开，画布文字节点默认关。 */
+  sanitizePaste?: boolean
+  /** Keep a selected creation range visibly marked while a sibling surface owns focus. */
+  persistentSelection?: boolean
   /** Fires on every edit with the new JSON. Caller persists however it wants. */
   onChange?: (json: JSONContent) => void
   /** Fires on selection change with the selected plain text (empty when none). */
   onSelectionChange?: (text: string) => void
 }): { editor: Editor | null; tools: NomiRichTextTools } {
-  const { content, placeholder, editable = true, onChange, onSelectionChange } = options
+  const {
+    content,
+    placeholder,
+    editable = true,
+    featureExtensions = EMPTY_EXTENSIONS,
+    sanitizePaste = false,
+    persistentSelection = false,
+    onChange,
+    onSelectionChange,
+  } = options
 
   // Keep callbacks in refs so changing them never re-creates the editor instance.
   const onChangeRef = React.useRef(onChange)
@@ -55,19 +122,37 @@ export function useNomiRichTextEditor(options: {
     onSelectionChangeRef.current = onSelectionChange
   }, [onSelectionChange])
 
-  // Guards against the controlled-content effect re-applying the editor's own edits.
-  const lastEditorJsonRef = React.useRef('')
+  // 编辑器是自己文档的唯一 owner：受控 content 只有「真正来自外部」时才写进来，
+  // 自己发出去又经 store → props 回流的旧 JSON（React Flow 投影会晚一拍）一律不覆盖文档。
+  // 裁决与 PromptEditor 共用一份（controlledEditorSync.ts）。
+  const syncRef = React.useRef<ReturnType<typeof createControlledEditorSync> | null>(null)
+  if (!syncRef.current) syncRef.current = createControlledEditorSync(JSON.stringify(content))
+  const sync = syncRef.current
 
-  const editor = useEditor(
+  const extensions = React.useMemo(() => [
+    StarterKit,
+    Placeholder.configure({ placeholder: placeholder ?? '' }),
+    ...featureExtensions,
+    ...(persistentSelection ? [PersistentSelectionExtension] : []),
+  ], [featureExtensions, persistentSelection, placeholder])
+
+  const editorProps = React.useMemo(
+    () => ({
+      attributes: { class: 'workbench-editor__content' },
+      transformPastedHTML: sanitizePaste ? (html: string) => sanitizePastedHtml(html) : undefined,
+    }),
+    [sanitizePaste],
+  )
+
+  const editor = useNomiTiptapEditor(
     {
       editable,
-      extensions: [StarterKit, Placeholder.configure({ placeholder: placeholder ?? '' })],
+      extensions,
       content,
-      editorProps: { attributes: { class: 'workbench-editor__content' } },
+      editorProps,
       onUpdate: ({ editor: current }) => {
         const json = current.getJSON()
-        lastEditorJsonRef.current = JSON.stringify(json)
-        onChangeRef.current?.(json)
+        if (sync.emit(JSON.stringify(json))) onChangeRef.current?.(json)
       },
       onSelectionUpdate: ({ editor: current }) => {
         onSelectionChangeRef.current?.(readSelectedText(current))
@@ -76,14 +161,20 @@ export function useNomiRichTextEditor(options: {
     [placeholder],
   )
 
+  // placeholder 变化会重建编辑器实例，新实例的文档就是它创建时拿到的那份 content：账从它重开。
+  React.useEffect(() => {
+    if (isEditorReady(editor)) sync.reset(JSON.stringify(editor.getJSON()))
+  }, [editor, sync])
+
   // Sync controlled content in (e.g. AI wrote into the doc, or node switched).
   React.useEffect(() => {
     if (!isEditorReady(editor)) return
-    const nextJson = JSON.stringify(content)
-    if (!nextJson || nextJson === lastEditorJsonRef.current) return
+    if (!sync.receive(JSON.stringify(content))) return
     const previousSelection = editor.state.selection
-    lastEditorJsonRef.current = nextJson
-    editor.commands.setContent(content)
+    // Controlled resource switches are hydration, not user edits. Emitting an
+    // update here would bump the destination document timestamp and mark its
+    // storyboard designs stale merely because the user opened the document.
+    editor.commands.setContent(content, { emitUpdate: false })
     if (editor.isFocused) {
       const maxPosition = editor.state.doc.content.size
       editor.commands.setTextSelection({
@@ -91,7 +182,7 @@ export function useNomiRichTextEditor(options: {
         to: Math.min(previousSelection.to, maxPosition),
       })
     }
-  }, [editor, content])
+  }, [editor, content, sync])
 
   React.useEffect(() => {
     if (isEditorReady(editor)) editor.setEditable(editable)
@@ -113,9 +204,18 @@ export function useNomiRichTextEditor(options: {
       }
       chain.insertContent(tiptapContent).run()
     }
+    const applyAtRange = (text: string, range: { from: number; to: number }) => {
+      if (!isEditorReady(editor)) return
+      const tiptapContent = markdownToTiptapContent(text)
+      if (!tiptapContent.length) return
+      const chain = editor.chain().focus().setTextSelection(range)
+      if (range.from !== range.to) chain.deleteSelection()
+      chain.insertContent(tiptapContent).run()
+    }
     return {
       readFullText: () => (isEditorReady(editor) ? editor.getText({ blockSeparator: '\n' }).trim() : ''),
       readSelectionText: () => (isEditorReady(editor) ? readSelectedText(editor) : ''),
+      applyAtRange,
       insertAtCursor: (content) => apply(content, 'insert'),
       replaceSelection: (content) => apply(content, 'replace'),
       appendToEnd: (content) => apply(content, 'append'),

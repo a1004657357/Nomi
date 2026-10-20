@@ -1,6 +1,6 @@
-# 用户指南：用 Claude Code / Codex / Cursor 在本地驱动 Nomi（CLI + MCP）
+# 用户指南：用 Claude Code / Codex / Cursor / Pi / WorkBuddy 在本地驱动 Nomi（CLI + MCP）
 
-> 让你电脑上的 AI 编程助手（Claude Code、Codex、Cursor…）直接操作你的 Nomi：建项目、往画布加镜头、改提示词、用你配好的模型**真生成图 / 视频 / 文本**，结果落进 Nomi 项目，打开就能看。
+> 让你电脑上的 AI 编程助手（Claude Code、Codex、Cursor、Pi、WorkBuddy…）直接操作你的 Nomi：建项目、往画布加镜头、改提示词、用你配好的模型**真生成图 / 视频 / 文本**，结果落进 Nomi 项目，打开就能看。
 >
 > 这份是「照着走得通」的完整使用指南。实现原理见 `docs/plan/2026-06-20-capability-core-headless-exposure.md`。
 
@@ -18,7 +18,7 @@ Nomi 主进程内置了一个**能力核**，把「建工程 / 改画布 / 真�
 | 情况 | 行为 | 你的体验 |
 |---|---|---|
 | Nomi **开着** | 走它内部的本地服务（A 模式） | 即时返回 |
-| Nomi **关着** | 自动拉起一个无窗口后台 Nomi 把活干完落盘（B 模式） | 命令一样，干完就在那 |
+| Nomi **关着** | Helper 启动唯一正常 GUI 实例，等待 RPC 就绪 | 需要人工决定时仍由 Nomi 展示确认 |
 
 适合：想在终端/编辑器里用一句话指挥 Nomi 干活的人；想把「拆镜头 → 生成」写成脚本跑的人。
 
@@ -77,14 +77,13 @@ node scripts/nomi.mjs project create "咖啡广告"
 # → { "id": "workspace-xxxx", "name": "咖啡广告" }
 ```
 
-**③ 批量加 3 个镜头节点**（一次加一个；记下每个返回的 `nodeId`）
+**③ 批量加 3 个镜头节点** —— **不走这条 CLI**
 
-```bash
-node scripts/nomi.mjs canvas add workspace-xxxx image "晨光中的咖啡杯特写，蒸汽升腾，暖色调"
-node scripts/nomi.mjs canvas add workspace-xxxx image "咖啡师拉花的手部特写，浅景深"
-node scripts/nomi.mjs canvas add workspace-xxxx image "咖啡馆窗边，一个人捧着杯子微笑，逆光"
-# 每条 → { "ids": ["node-aaaa"] } / { "ids": ["node-bbbb"] } / { "ids": ["node-cccc"] }
-```
+画布的**写**只在 MCP 语义面上：`nomi_canvas_edit`（建节点 / 连边 / 改提示词）与
+`nomi_canvas_maintenance`（删节点，带确认与 `undoToken`）。两者都要 `leaseHandle`，
+而租约只发给验证过的项目会话传输。`scripts/nomi.mjs` 拿的是裸 bearer——它只证明
+「这台机器上的某个进程读到了 token」，证不出「哪个客户端、哪次会话、哪个项目」，
+所以它读得到画布，写不了画布（2026-09-21 删掉了 `canvas add/connect/prompt/delete` 四个子命令）。
 
 **④ 看一眼画布，确认都加上了**
 
@@ -118,9 +117,9 @@ node scripts/nomi.mjs generate workspace-xxxx modelscope "Tongyi-MAI/Z-Image-Tur
 
 **① 一键接入（推荐）**
 
-打开 Nomi 的「模型接入」→「接入 AI 编程助手」，选择 Claude Code、Codex 或 Cursor，点击接入。Nomi 会只合并自己的 `nomi` 条目、保留其它 MCP server，并在改写前留下 `.nomi-backup`。接入卡会真正启动配置中的命令做握手，不会只凭“配置里有一行”显示成功。
+打开 Nomi 的「模型接入」→「接入 AI 编程助手」，选择 Claude Code、Codex、Cursor、Pi 或 WorkBuddy，点击接入。Nomi 会只合并自己的 `nomi` 条目、保留其它 MCP server，并在改写前留下 `.nomi-backup`。接入卡会真正启动配置中的命令做握手，不会只凭“配置里有一行”显示成功。
 
-不要照文档手写一份只有 `NOMI_MCP_STDIO=1` 的配置。当前版本还会为 Claude Code、Codex、Cursor 分别生成本机签名的 `NOMI_MCP_CLIENT` 与 `NOMI_MCP_CLIENT_PROOF`；证明绑定当前电脑和具体客户端，不能写死在公开文档，也不能跨客户端复用。缺少证明的配置可以列工具，但正式 Production Run 会被安全地视为 `external`，无法越过 Nomi 的可信宿主门。
+不要照文档手写一份只有 `NOMI_MCP_STDIO=1` 的配置。当前版本还会为 Claude Code、Codex、Cursor、Pi、WorkBuddy 分别生成本机签名的 `NOMI_MCP_CLIENT` 与 `NOMI_MCP_CLIENT_PROOF`；证明绑定当前电脑和具体客户端，不能写死在公开文档，也不能跨客户端复用。缺少证明的配置可以列工具，但正式 Production Run 会被安全地视为 `external`，无法越过 Nomi 的可信宿主门。
 
 需要手工接入时，先在卡片里选择目标客户端，再点「复制配置」，把 **Nomi 当机生成的完整片段** 合并到对应客户端。不要使用旧版 `scripts/nomi-mcp.mjs`，也不要从另一个客户端复制 proof。Codex 的生成片段已经包含 Electron 冷启动、长视频任务和写操作审批所需的超时与审批配置。
 
@@ -130,16 +129,26 @@ node scripts/nomi.mjs generate workspace-xxxx modelscope "Tongyi-MAI/Z-Image-Tur
 
 **② 完成两侧权限并重启对应客户端**：
 
-- Claude Code / Codex：卡片真实握手成功后，确认 `nomi` 的官方 33 个工具以及本定制版本额外保留的 `nomi_render_director` 出现。
+- Claude Code / Codex：卡片真实握手成功后，确认 `nomi` 的工具出现（数量以 `tools/list` 为准）。
 - Cursor：先在 Nomi「设置 → 自动化与权限」允许 Cursor 发起草稿；首次在 Cursor 调用 Nomi 时，Cursor 自己仍可能要求你批准本地 MCP。Nomi 不会代替你静默批准 Cursor。
+- Pi：pi coding agent **自己不带 MCP**（官方 usage.md 明写）。Nomi 把 `nomi` 条目写进 pi 生态通用的标准共享配置 `~/.config/mcp/mcp.json`；pi 侧还需装一次社区适配器 `pi install npm:pi-mcp-adapter`（接入卡上给了可复制命令，Nomi **不代跑**），装完重开 pi，用 `/mcp` 即可看到 `nomi` 的工具。Nomi 不会写 `~/.pi/agent/mcp.json`——那是适配器自己的覆盖层。同样要先在「设置 → 自动化与权限」允许 Pi 发起草稿。
 
-33 个工具包括 `nomi_list_models`、`nomi_create_project`、`nomi_intake_brief`、`nomi_import_asset`、`nomi_generate`、`nomi_start_playbook`、`nomi_materialize_storyboard`、`nomi_control_run` 和 `nomi_decide_gate`。另外 11 个 `generation.single-shot` 语义工具是同一套可编辑流程的零额度入口：`nomi_session_open`、`nomi_get_generation_context`、`nomi_operation_create`、`nomi_submit_generation_plan`、`nomi_preview_execution`、`nomi_request_generation_gate`、`nomi_decide_generation_gate`、`nomi_start_generation`、`nomi_operation_read`、`nomi_cancel_generation`、`nomi_reconcile_generation`。它们先展示/编辑计划，再由 rollout policy 决定何时可提交；未通过阶段检查时会明确返回下一步，不会回退到旧生成器。
+### WorkBuddy
+
+在 Nomi 的 MCP 连接页选择 **WorkBuddy**，点击「一键接入」。重启 WorkBuddy，在侧栏 → 插件 → 右上 MCP Servers → 配置 MCP 查看 `nomi`。也可以直接粘贴接入卡复制的 JSON。WorkBuddy 原生支持 MCP stdio，无需 Pi 的适配器。
+
+[WorkBuddy 官方 MCP 指南](https://www.workbuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide) 规定用户级 `~/.workbuddy/mcp.json`、项目级 `<项目>/.workbuddy/mcp.json`，形状为 `mcpServers.<name>.{command,args,env}`。**我们的偏差 / 理由：无偏差。** Nomi 只合并用户级文件的 `mcpServers.nomi`，保留 ChatCut 等已有条目；因为无法知道 WorkBuddy 当前项目，不写项目级文件。内部文件 `~/.workbuddy/.mcp.json` 不在写入范围。
+
+检测到 `~/.workbuddy/` 目录只表示宿主已安装，不代表已配置 Nomi。写入配置不自动授予制作权限；仍按「设置 → 自动化与权限」中的可信发起方设置执行。
+
+
+工具目录和总数**以本机 `tools/list` 为准**，下方表格按统一 MCP 契约说明用途。画布写入必须持项目租约，schema 从共享契约派生；不能把应用内 Agentlane 动词当成 MCP 工具名。单次生成使用 `nomi_operation_plan` → `nomi_operation_preview` → `nomi_operation_gate` → `nomi_operation_execute`，后续由 `nomi_operation_control` 控制；未通过计划、预算或确认检查就不会提交。模型接入、持久制作、文档、时间轴与导出仍各自保留确认边界，自定义 Blender 预演也不复用付费生成入口。
 
 **③ 直接说人话**，它自己挑工具完成：
 
 > 「在 Nomi 里新建一个项目叫『咖啡广告』，先列一下我有哪些图模型；然后拆 3 个咖啡主题的镜头加到画布，每个写好提示词；最后用其中的图模型把第一个镜头生成出来。」
 
-Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_add_nodes` → `nomi_generate`，把结果回给你。
+Claude Code 会依次调 `nomi_project_create` → `nomi_read`（target=models）→ `nomi_canvas_edit`（operation=create_canvas_nodes）→ 单次生成流程（`nomi_operation_plan` → … → `nomi_operation_execute`），把结果回给你。
 
 ### 典型体验 1：快速初稿
 
@@ -181,37 +190,38 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 | `projects` | 列所有项目 |
 | `project create "名字"` | 新建项目 → 返回 id |
 | `canvas read <projectId>` | 读节点与连线 |
-| `canvas add <projectId> <kind> "提示词"` | 加节点（kind=text/image/video/shot/character/scene/audio） |
-| `canvas connect <projectId> <源id> <目标id> [mode]` | 连线（mode 缺省 reference） |
-| `canvas prompt <projectId> <节点id> "新提示词"` | 改提示词 |
-| `canvas delete <projectId> <节点id> [更多...]` | 删节点（连带删边） |
 | `generate <projectId> <vendor> <modelKey> <intent> "提示词"` | 真生成（intent=image/video/text/audio） |
 
 ### MCP 工具
 
+对外 MCP 以对象与 action/phase 组织工具，应用内 Agentlane 使用模型动词；两者不是可互换的工具名。读侧使用 `nomi_read`，画布写侧使用带租约的语义入口；付费确认和执行仍然分开。完整目录与数量以本机 `tools/list` 为准。
+
 | 工具 | 对应 |
 |---|---|
-| `nomi_list_projects` / `nomi_create_project` | 列 / 建项目 |
-| `nomi_list_models` | 列可用模型 |
-| `nomi_read_canvas` | 读画布 |
-| `nomi_add_nodes` / `nomi_connect_nodes` | 加节点 / 连线 |
-| `nomi_set_node_prompt` / `nomi_delete_nodes` | 改提示词 / 删节点 |
-| `nomi_intake_brief` | 开拍前一次性方向收敛（一屏 ≤3 题：基调/画幅/风格，每题带「按你判断」）——整局只调一次 |
-| `nomi_import_asset` | 把本机文件（手绘帧/截图/参考图）导入项目当素材，返回可直接引用的 `nomi-local://` 地址 |
-| `nomi_generate` | 真生成（含参考图 references、指定 nodeId、可选 seed 复现） |
-| `nomi_render_director` | 对已有 3D 导演台节点做本地 Blender 预演，将预览图片、GLB 场景节点及 `.blend` 工程引用回写同一画布；不接受脚本、任意命令或二进制路径 |
-| `nomi_start_playbook` | 创建不花钱、可恢复的制作草稿；当前完整流程为 `brand.promo` |
-| `nomi_get_run` / `nomi_subscribe_run` | 读取制作状态 / 按游标等待持久事件 |
-| `nomi_get_artifact` | 取得指定 Run 产物的安全投影、精确 Nomi 深链和限时预览 |
-| `nomi_materialize_storyboard` | 将已批准且来源新鲜的分镜一次性落到 Nomi 画布并登记制作合同（不批准预算、不调用付费模型） |
-| `nomi_control_run` | 暂停、继续、取消 Run，或切换信任档位；预算门仍不会被跳过 |
-| `nomi_decide_gate` | 决定方向/样片等可逆创意门；服务端会再次向真人确认，不能决定预算、逐镜头付费、导出或发布 |
-| `nomi_session_open` / `nomi_get_generation_context` | 打开项目安全会话 / 读取通用模块、模型、模式与素材能力（不花额度） |
-| `nomi_operation_create` / `nomi_submit_generation_plan` | 创建并编辑单镜生成草稿；模型、供应商、模式、参数、参考素材均可替换（不花额度） |
-| `nomi_preview_execution` | 预览封存合同、字段警告与合同 hash（不花额度） |
-| `nomi_request_generation_gate` / `nomi_decide_generation_gate` | 请求并提交一次真人确认凭据；裸 boolean 不算确认 |
-| `nomi_start_generation` | 在 rollout 与确认均满足后进入统一 Runtime Adapter；未满足时 fail-closed |
-| `nomi_operation_read` / `nomi_cancel_generation` / `nomi_reconcile_generation` | 读取、取消或核对语义 Run；未知结果不盲目重提 |
+| `nomi_session_open` | 打开当前项目的安全会话，拿一个短期项目句柄（写副作用） |
+| `nomi_read` | 读任意只读投影（`target`=canvas/projects/models/generation_context/operation/run/run_events/artifact/artifact_content/integration）；整体只读、免确认 |
+| `nomi_canvas_edit` | 画布语义写，唯一的画布写工具（`operation` 枚举即全部合法动作；须持项目租约，一批一个 undo；渲染层拥有的动作在无 GUI 时回 `capability_unsupported` 并说明下一步） |
+| `nomi_canvas_maintenance` | 删除节点或撤销删除（破坏性操作需确认，undoToken 可撤销） |
+| `nomi_document_read` | 读项目创作文档（只读） |
+| `nomi_document_edit` | 编辑项目创作文档（`operation`=insert/replace/append） |
+| `nomi_asset_import` | 把本机文件（手绘帧/截图/参考图）导入项目当素材，返回可直接引用的 `nomi-local://` 地址 |
+| `nomi_operation_plan` | 起/改一份可编辑的生成草稿（单镜 prompt / 多镜 shots / 剧本 scriptText 三选一）；不提交、不花额度 |
+| `nomi_operation_preview` | 预览草稿将用的模型/模式/参数/参考与不支持字段 + 定价（只读，不封存、不调用模型） |
+| `nomi_operation_gate` | 单次生成付费门（`phase`=request 发确认挑战 / decide 提交客户端确认凭据；裸 boolean 不算确认） |
+| `nomi_operation_execute` | 在计划已封存且确认有效后开始单次生成；提交只走统一 Runtime Adapter，未满足时 fail-closed |
+| `nomi_operation_control` | 控制单次生成（`action`=cancel 取消草稿 / reconcile 核对提交状态；未知结果不盲目重提） |
+| `nomi_run_start` | 创建不花钱、可恢复的持久制作草稿；只记 brief + playbook（当前完整流程为 `brand.promo`） |
+| `nomi_run_control` | 控制持久制作 Run（`action`=pause/resume/cancel/set_trust）；预算门仍不会被跳过 |
+| `nomi_artifact_review` | 审阅/修订版本化剧本或分镜（`action`=approve/request_changes/reject/revise，revise 配 `kind`=script/storyboard） |
+| `nomi_run_gate` | Run 的确认门（`action`=decide 表态可逆创意门 / materialize 把已批分镜落画布并登记 jobs+预算）；服务端会再次向真人确认，不能决定预算、逐镜头付费、导出或发布 |
+| `nomi_model_setup` | 接模型（`action`=connect_provider / submit_declaration / show_models / cancel）。`connect_provider` 打开 Nomi 的贴 key 页并开一次接入；`submit_declaration` 交一张声明卡，Nomi 一跳做完三件（形状校验 + 同源 + 免费自检）并登记，模型进模型框标「未试跑」。密钥永不经 Agent；`baseUrl / authType / authHeader / authQueryParam / authScheme / proxyUrl` 一律不是任何工具的入参（`check:credential-origin` 盯着）。 |
+| `nomi_remove_provider` | 永久删除一条连接（含已存密钥）或它的几个模型。撤不回，所以要带 `nomi_read target=models` 返回的 `fingerprint`；隐藏模型请用 `nomi_model_setup action=show_models visible=false`。 |
+| `nomi_project_create` | 新建一个空白 Nomi 项目，返回项目 id |
+| `nomi_timeline_read` | 读取时间轴快照或指定范围（只读） |
+| `nomi_timeline_edit` | 预览、申请或撤销时间轴编辑；apply/undo 必须回到 Nomi 宿主确认 |
+| `nomi_export_job` | 查询导出状态或验证渲染结果；启动/取消导出仍是宿主专属 |
+| `nomi_media_query` | 查询项目媒体、素材范围或波形信息（只读） |
+| `nomi_render_director` | 自定义本地 Blender 预演入口；只接受已有导演节点与受限场景预设，不接受脚本或任意命令 |
 
 `nomi_render_director` 需要 `projectId` 和指向已有 `scene3d` 节点的 `sourceNodeId`。可选 `stagePreset` 仅支持 `empty`、`studio`、`coffee_shop`、`city_street`、`interior_room`；场景状态由 Nomi 读取，外部调用方不能提交脚本。该工具依赖 Nomi 主进程的本地 Blender 能力，不是付费图像或视频生成入口。
 
@@ -228,6 +238,7 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 | `vendor and request are required` | 命令参数不全 | 对照 §5 补齐 vendor / modelKey / intent / 提示词 |
 | `旧配置缺少客户端身份凭据` | 升级前配置只有 stdio 开关，没有本机客户端签名 | 在 Nomi 接入卡对该客户端点「重新接入」 |
 | `untrusted-host` | 当前客户端没有有效签名，或尚未在 Nomi 设置中获准发起草稿 | 重新接入对应客户端，再到「自动化与权限」开启该客户端 |
+| `CONNECTION_CLOSED`（客户端里 nomi 直接连不上，日志无一字提到 Nomi） | 宿主配置还指着旧入口 `scripts/nomi-mcp.mjs`。旧入口在换成「Nomi 二进制 + `NOMI_MCP_STDIO=1`」时被删净，老配置于是启动即退出 | 在 Nomi →「模型接入」→「接入 AI 编程助手」对该客户端重新接一次，再重启客户端。（旧路径现在会在 stderr 打一行中英迁移提示并以退出码 2 结束，不再静默死掉） |
 | `找不到 Nomi 的钥匙串` | 当前启动的是另一份应用身份、隔离测试配置或搬动后的 app，系统钥匙串不会把原凭据交给它 | 关闭该实例并从 `/Applications/Nomi.app` 打开平时使用的 Nomi；除非你明确要新建独立配置，否则不要重新录入或删除原钥匙 |
 
 ---
@@ -235,7 +246,7 @@ Claude Code 会依次调 `nomi_create_project` → `nomi_list_models` → `nomi_
 ## 7. 安全
 
 - 本地服务**只监听 `127.0.0.1`**（外网 / 局域网够不着）+ **token 校验**。
-- Nomi 生成的 MCP 客户端证明按 Claude Code / Codex / Cursor 隔离；自报客户端名、伪造证明和跨客户端复用都只获得 `external` 权限。
+- Nomi 生成的 MCP 客户端证明按 Claude Code / Codex / Cursor / Pi / WorkBuddy 隔离；自报客户端名、伪造证明和跨客户端复用都只获得 `external` 权限。
 - **付费生成不能只凭 token 启动**——方向/样片可由 Nomi 服务端向支持 elicitation 的客户端再次询问真人；预算、逐镜头提交、粗剪采用和导出仍在 Nomi。支出上限、模型和任务集合绑定本次授权，外部 MCP 客户端不能伪造批准。
 - 外部调用只能做 Nomi 的领域操作（建工程 / 改画布 / 生成），**不是**任意文件读写。
 - 项目、素材、提示词、密钥和编排状态保存在本机。使用外部模型 API 时，完成任务所需的输入仍会发送给你配置的供应商；“本地优先”不等于“所有推理都离线”。

@@ -1,32 +1,31 @@
+import { revalidatePendingCredential } from './catalog/validateCandidateCredential';
 import crypto from "node:crypto";
-import fs from "node:fs";
-import { contentTypeFromPath, extensionFromMime } from "./assets/assetPaths";
-import { localizedTaskAssetFileName } from "./assets/localizedAsset";
-import { writeAsset } from "./assets/projectAssetStore";
-import { endpoint } from "./vendorEndpoint";
-import { requestJson } from "./vendor/vendorHttp";
-import { assertLocalAssetTransportReady } from "./catalog/assetLocalization";
+import { assertLocalAssetTransportReady, localizeAssetsForVendor } from "./catalog/assetLocalization";
 import { assetIngestionResolver, assetLocalizationOptions } from "./catalog/assetTransportRuntime";
-import { readNomiLocalAsset } from "./assets/localAssetFile";
-import { validateProfileRequestBeforeSpend } from "./catalog/profileHttpRequest";
+import { readNomiLocalAsset, postJsonForAssetUpload, postMultipartForAssetUpload, putBinaryForAssetUpload } from "./assets/localAssetFile";
+import { writeAsset, writeDeterministicAsset } from "./assets/projectAssetStore";
+import { endpoint } from "./vendorEndpoint";
+import { requestJson, requestMultipart, vendorResponseLimitForKind } from "./vendor/vendorHttp";
+import { runMultipartProfileOperation } from "./catalog/multipartOperation";
+import { templateContext, buildProfileHttpRequest, validateProfileRequestBeforeSpend } from "./catalog/profileHttpRequest";
 import { chatImageFallbackOperation } from "./catalog/imageRouteFallback";
 import { buildNormalizedRecipe, buildTaskProvenance } from "./vendor/provenance";
+import { extractProviderCostActual, type ProviderCostActual } from "./vendor/cost";
 import { traceVendorCompleted, traceVendorRequested } from "./events/vendorCallTrace";
-import { scheduleTechnicalReview } from "./review/reviewTrace";
-import {
-  type AuthType,
-  authHeaders as buildAuthHeaders,
-  extractTaskId as extractTaskIdShared,
-} from "./ai/requestPipeline";
-import { prepareAntigravityCreateOperation } from "./catalog/processOperation";
+import { localizeTaskAsset } from "./assets/localizeTaskAsset";
+export { localizeTaskAsset };
+import { localizedTaskAssetFileName } from "./assets/localizedAsset";
+import { claimCanvasProductionShot } from "./productionRun/canvasShotClaim";
+import { authHeaders as buildAuthHeaders, extractTaskId as extractTaskIdShared } from "./ai/requestPipeline"; import { vendorAuthSpec } from "./catalog/vendorAuthSpec";
+import { assertCanonicalAntigravityOperation, executeProcessOperation, prepareAntigravityCreateOperation } from "./catalog/processOperation"; import type { AntigravityProcessStage } from "./catalog/antigravityCatalog";
 import { executeTextTask } from "./textTaskRunner";
 import { runAudioTask } from "./audioTaskRunner";
-import { runCodexImageGeneration } from "./ai/codexImagegenRunner";
-import { dispatchWebBridgeTask } from "./webBridge/taskDispatch";
-import { firstString, trim, type JsonRecord } from "./jsonUtils";
-import { extractAssetUrl } from "./tasks/assetUrlExtract";
-import type { GlbValidationReport } from "./assets/glbValidation";
-import { TtlLruCache } from "./tasks/taskCache";
+import { firstString, isJsonRecord, trim, type JsonRecord } from "./jsonUtils";
+import { firstMappedString, providerMetaFromResponse, taskFailureMessageFromResponse } from "./tasks/responseParsing"; import { expectedMediaKind, readTaskResponse, requestEchoUrls } from "./tasks/taskResultReading";
+import { applyResponseTransform } from "./tasks/responseTransforms";
+import { applyRequestTransform } from "./tasks/requestTransforms";
+import { taskCache } from "./tasks/taskCache";
+export { taskCache, hasInFlightTasks } from "./tasks/taskCache";
 import { markTaskAdmitted } from "./tasks/taskAdmission";
 import { readCachedTaskResult, recipeFingerprint, rememberTaskResult } from "./vendor/fingerprintCache";
 import {
@@ -39,37 +38,35 @@ import {
 } from "./projects/repository";
 // 公共 API：main.ts 仍从 "./runtime" 消费这些 —— re-export 保持其 import 不变。
 export { createProject, deleteProject, listProjects, readProject, resolveProjectRelativePath, saveProject };
-export { importRemoteAsset, listProjectAssets, moveAssetFile, writeAsset } from "./assets/projectAssetStore";
+export { copyAssetFile, copyProjectAsset, importRemoteAsset, listProjectAssets, moveAssetFile, writeAsset } from "./assets/projectAssetStore";
 // localizedTaskAssetFileName 已抽到 ./assets/localizedAsset（规则 9/12 减负 giant shell）；re-export 保持既有 import（含 runtime.assets.test）不变。
 export { localizedTaskAssetFileName };
-
-// 任务执行复用 catalog 状态（extractVendorExtraHeaders 纯函数）；
+/**
+ * 生产执行时**正在发哪一条 op**：create / query / result。
+ *
+ * 这与「接入自检失败在哪一段」是两件事，只是恰好都叫 stage。此前它是从
+ * `AdapterModeResult["stage"]` 里 Extract 出 "result" 拼出来的——那条耦合让「改认证流程」
+ * 顺手就能改坏「生产发哪条 op」。2026-09-11 删付费验证时它立刻炸了，所以在这里各自定义（P1）。
+ */
+export type ProfileOperationStage = AntigravityProcessStage | "result";
+// 任务执行复用 catalog 状态（readCatalog + extractVendorExtraHeaders 纯函数）；
 // catalogStore 反向复用本文件任务引擎 → 运行期循环引用（CommonJS 安全）。
 import { extractVendorExtraHeaders, readCatalog } from "./catalog/catalogStore";
-
-import type { BillingModelKind, Mapping, Model, ProfileKind, Vendor } from "./catalog/types";
-import { billingKindForTaskKind } from "./catalog/types";
-import { applyHeadlessParamDefaults, imageEditGuardError } from "./catalog/taskParams";
-import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
-import { activeTaskProjectFallback } from "./tasks/activeProjectFallback";
+import { unlocalizedTaskAsset } from "./tasks/unlocalizedTaskAsset";
+import type { BillingModelKind, HttpOperation, Mapping, Model, ProfileKind, Vendor } from "./catalog/types";
+import { billingKindForTaskKind, selectTaskMapping } from "./catalog/types";
+import { applyHeadlessParamDefaults, imageEditGuardError, projectOutboundPrompt } from "./catalog/taskParams";
 import { modelModeBodies } from "./catalog/modelCatalogListing";
 import { runCustomCallTask } from "./catalog/customCallDispatch";
 import { resolveCustomCallExecution } from "./catalog/customCallMode";
-import { assertAndConsumeSpendGrant } from "./spendGrant";
-import { waitForVendorSubmissionWindow } from "./vendorSubmissionRateLimiter";
-import {
-  buildProfileTaskResult,
-  executeProfileOperation,
-  findTaskMapping,
-  localizeTaskAsset,
-} from "./tasks/profileTaskExecution";
-export {
-  buildProfileHttpRequest,
-  buildProfileTaskResult,
-  executeProfileOperation,
-  findTaskMapping,
-  localizeTaskAsset,
-} from "./tasks/profileTaskExecution";
+import { certifyTaskOutputAndSettleComfyCandidate, materializeCertifiedComfyAssets, resolveComfyCandidateExecution } from "./catalog/comfyuiCandidateLifecycle";
+import { consumeTaskSpend } from "./tasks/taskSpend";
+import { desktopT } from "./i18n";
+import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
+import { runCodexImageTask } from "./tasks/codexImageTask";
+import { dispatchWebBridgeTask } from "./webBridge/taskDispatch";
+import { isTerminalTaskStatus } from './shared/taskStatus';
+import { tagNomiError } from './shared/nomiErrorCodes';
 export type {
   AiSdkProviderKind,
   BillingModelKind,
@@ -85,6 +82,7 @@ export type {
 export {
   startExportJob,
   getExportJobStatus,
+  listExportJobs,
   cancelExportJob,
   writeExportTempInput,
   finishExportTempInput,
@@ -114,39 +112,16 @@ export {
 } from "./catalog/catalogStore";
 export {
   commitOnboardedModelToCatalog,
-  deriveVendorKeyFromBaseUrl,
-  commitManualOpenAiCompatibleModels,
   fetchModelCatalogDocs,
   testModelCatalogMapping,
 } from "./catalog/catalogCommit";
-export { runAgentChatV2, clearAgentChatV2History } from "./ai/agentChatV2";
-export type {
-  AgentToolName,
-  AgentChatV2Event,
-  AgentToolConfirmation,
-  AgentChatV2Hooks,
-  RunAgentChatV2Payload,
-} from "./ai/agentChatV2";
-export type TaskRequest = {
-  kind: ProfileKind;
-  prompt: string;
-  negativePrompt?: string;
-  seed?: number;
-  width?: number;
-  height?: number;
-  steps?: number;
-  cfgScale?: number;
-  extras?: Record<string, unknown> & { executionBinding?: import("./productionRun/productionExecutionBinding").ProductionExecutionBinding };
-};
+// 请求与工作缓存两份形状住在 ./taskTypes（R9：runtime.ts 是编排层）；re-export 保住既有 import 面。
+export type { CachedTask, TaskRequest } from "./taskTypes";
+import type { CachedTask, TaskRequest } from "./taskTypes";
 export type TaskResult = {
   id: string;
   kind: ProfileKind;
-  /**
-   * 任务状态。Gate 1 Slice 5 扩展（§10.2）：原先 queued/running/succeeded/failed 四态；
-   * 新增 cancelled（独立于 failed）与 unknown（非终态，持续查询、绝不重发 create）。
-   * 与 `electron/tasks/responseParsing.ts` 的 `TaskStatus` 同义——该处是权威定义。
-   */
-  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
+  status: import('./shared/taskStatus').TaskStatus;
   assets: Array<{
     type: "image" | "video" | "audio" | "model3d";
     url: string;
@@ -154,12 +129,19 @@ export type TaskResult = {
     assetId?: string | null;
     assetRefId?: string | null;
     assetName?: string | null;
-    model3dValidation?: GlbValidationReport;
     /** 原始 CDN URL（https://...）。供后续生成直接用，无需上传。可能过期，过期后退回本地字节。 */
     providerUrl?: string | null;
     durationSeconds?: number;
+    /** 落盘边界 ffprobe 出来的源像素尺寸；画布拿到它就不必解码原图才知道有多大。 */
+    width?: number;
+    height?: number;
   }>;
   raw: unknown;
+  /**
+   * 文本任务的收尾原因（AI SDK 的 `finishReason`：`stop` / `length` / `content-filter`…）。
+   * **截断这一类问题在下游只能靠它自证**——没有它，「模型答不出来」和「我们自己把它截断了」长得一模一样。
+   */
+  finishReason?: string;
   /** failed 时的上游真实原因（tasks/responseParsing.taskFailureMessageFromResponse 取；渲染层只读这一处）。 */
   error?: string;
   /**
@@ -174,12 +156,11 @@ export type TaskResult = {
     seed?: number;
     params?: Record<string, unknown>;
     vendorRequestId?: string;
+    cost?: { amount: number; currency: "credits"; unit: "actual" | "estimate" };
     timestamp: number;
   };
 };
-
 // TTL(1h) + LRU(200) 上限，防异步任务条目无界驻留（P0-7）。不再缓存明文 apiKey。
-export const taskCache = new TtlLruCache<CachedTask>({ maxEntries: 200, ttlMs: 60 * 60 * 1000 });
 
 /** 受理一个异步任务：写工作缓存 + 记账本（单一入口，所有 admit 点同源，防漏记）。 */
 export function admitTask(id: string, entry: CachedTask): void {
@@ -187,35 +168,96 @@ export function admitTask(id: string, entry: CachedTask): void {
   markTaskAdmitted(id);
 }
 
-export type CachedTask = {
-  vendor: string;
-  request: TaskRequest;
-  raw: unknown;
-  mapping?: Mapping | null;
-  model?: Model;
-  providerMeta?: JsonRecord;
-  projectId?: string;
-  nodeId?: string;
-  wantedKind?: BillingModelKind;
-  /** Consecutive unrecognized provider status observations for bounded polling. */
-  unrecognizedStatusStreak?: { verb: string; polls: number; firstSeenAt: number };
-  /** S8 指纹:异步任务终态成功时写回指纹缓存用。 */
-  fingerprint?: string;
-};
-
 // 可执行模型解析下沉到 catalog/executableModel（R12 净减）；re-export 保住 textTaskRunner/taskResultQuery 既有 import 面。
 export { findExecutableModel, findExecutableModelForTask } from "./catalog/executableModel";
 import { findExecutableModel } from "./catalog/executableModel";
 
-// Thin Vendor→primitive adapters over the shared requestPipeline auth logic
-// (the shared module is electron-free and doesn't know the Vendor shape).
-function authHeaders(vendor: Vendor, apiKey: string): Record<string, string> {
-  return buildAuthHeaders(vendor.authType as AuthType, apiKey, vendor.authHeader ?? undefined);
-}
-
 // billingKindForTaskKind 下沉到 catalog/types（R12 净减）；re-export 保住既有消费方 import 面。
 export { billingKindForTaskKind } from "./catalog/types";
-export { extractAssetUrl } from "./tasks/assetUrlExtract";
+
+export function findTaskMapping(vendorKey: string, taskKind: ProfileKind, modelKey?: string, modeId?: string): Mapping | null {
+  // 按 (vendor, taskKind, modelKey) 选——同 vendor 下两模型共用一个 taskKind 但请求形状不同时（如 HappyHorse 与 Kling 都 text_to_video），靠 modelKey 精确路由，不再「第一个赢、另一个套错模板」。
+  return selectTaskMapping(readCatalog().mappings, vendorKey, taskKind, modelKey, modeId);
+}
+
+/** Audio with a query operation is an asynchronous generation task, not a synchronous TTS/STT response. */
+export function usesSynchronousAudioRunner(wantedKind: BillingModelKind, mapping?: Mapping | null): boolean {
+  return wantedKind === "audio" && !mapping?.query;
+}
+
+export { buildProfileHttpRequest };
+export { executeProfileOperation } from "./tasks/profileTaskExecution";
+import { executeProfileOperation } from "./tasks/profileTaskExecution";
+import { attachProfileOperationTimingsToRaw, type ProfileOperationTimings } from './tasks/profileTaskExecution';
+/** Normalize an upstream response into the shared TaskResult contract. */
+export async function buildProfileTaskResult(input: {
+  response: unknown;
+  mapping: Mapping;
+  operation: HttpOperation;
+  request: TaskRequest;
+  taskIdFallback: string;
+  wantedKind: BillingModelKind;
+  projectId?: string;
+  nodeId?: string;
+  /** S4-1:provenance 统一在本出口写(修主路径漏写根因),需要 vendor/model。 */
+  vendor?: Vendor;
+  model?: Model;
+  operationTimings?: ProfileOperationTimings;
+}): Promise<{ result: TaskResult; providerMeta: JsonRecord; unrecognizedStatus: string; actualCost?: ProviderCostActual }> {
+  const response = applyResponseTransform(input.operation.response_transform, input.response, {
+    baseUrl: String(input.vendor?.baseUrlHint || ""),
+  });
+  const { response_mapping: rawResponseMapping, provider_meta_mapping: rawMetaMapping } = input.operation;
+  const responseMapping = isJsonRecord(rawResponseMapping) ? rawResponseMapping : null;
+  const providerMetaMapping = isJsonRecord(rawMetaMapping) ? rawMetaMapping : null;
+  const providerMeta = providerMetaFromResponse(response, providerMetaMapping);
+  // 「上游到底给没给任务编号」只能有一个答案。providerMeta 只看 provider_meta_mapping 与
+  // extractTaskId 认得的那几个键（id / taskId / task_id / jobId…），**看不见 response_mapping**；
+  // 而像本机 ComfyUI 这样把编号叫 `prompt_id` 的供应商，编号只走 response_mapping 这一条路。
+  // 于是 result.id 明明已经拿到了 prompt_id，runTask 里那道「没返回任务编号就按失败处理」的闸
+  // 却问的是 providerMeta，答案是「没有」——整条 ComfyUI 认证必失败（2026-09-11 真机实锤）。
+  // 所以在这里就把「来自上游的编号」统一回填：本地兜底 id（taskIdFallback）刻意不回填，
+  // 那道闸要拦的正是「拿伪造编号去轮询」。
+  const providerTaskId = firstString(
+    firstMappedString(response, responseMapping, "task_id"),
+    providerMeta.task_id,
+    providerMeta.query_id,
+    extractTaskIdShared(response),
+  );
+  if (providerTaskId) {
+    providerMeta.task_id = providerMeta.task_id || providerTaskId;
+    providerMeta.query_id = providerMeta.query_id || providerTaskId;
+  }
+  const taskId = firstString(providerTaskId, input.taskIdFallback);
+  const type: "image" | "video" | "audio" | "model3d" =
+    input.wantedKind === "video" ? "video" : input.wantedKind === "audio" ? "audio" : input.wantedKind === "model3d" ? "model3d" : "image";
+  // 「成没成、结果在哪」只有一种读法（tasks/taskResultReading，两台引擎共用）：先合同、再通用规则。
+  const { status, unrecognizedStatus, assetUrls } = readTaskResponse({ response, responseMapping, statusMapping: input.mapping.statusMapping, wantedKind: expectedMediaKind(input.wantedKind), echoUrls: requestEchoUrls(input.request.extras), trace: { vendor: input.vendor?.key, model: input.model?.modelKey } });
+  const certification = await certifyTaskOutputAndSettleComfyCandidate({ request: input.request, modelKey: input.model?.modelKey, status, urls: assetUrls, kind: type, vendorBaseUrl: String(input.vendor?.baseUrlHint || "") });
+  const assetPersistenceStartedAt = Date.now();
+  const assets = await materializeCertifiedComfyAssets({ certification, status, urls: assetUrls,
+    materialize: (url, index) => input.projectId
+      ? localizeTaskAsset(input.projectId, url, type, input.nodeId, input.vendor, certification.evidence[index])
+      : Promise.resolve(unlocalizedTaskAsset(type, url)) });
+  const actualCost = extractProviderCostActual(input.vendor?.key || "", input.response);
+  const assetPersistenceMs = Date.now() - assetPersistenceStartedAt;
+  return {
+    providerMeta,
+    unrecognizedStatus,
+    ...(actualCost ? { actualCost } : {}),
+    result: {
+      id: taskId,
+      kind: input.request.kind,
+      status,
+      assets,
+      raw: input.operationTimings ? attachProfileOperationTimingsToRaw(input.response, { ...input.operationTimings, assetPersistenceMs, totalMs: input.operationTimings.totalMs + assetPersistenceMs }) : input.response,
+      ...(status === "failed" ? { error: taskFailureMessageFromResponse(response, responseMapping) } : {}),
+      ...(status === "succeeded" && input.vendor && input.model
+        ? { provenance: buildTaskProvenance({ vendor: input.vendor, model: input.model, request: input.request, vendorRequestId: taskId, actualCost }) }
+        : {}),
+    },
+  };
+}
 
 export async function runTask(payload: unknown): Promise<TaskResult> {
   const raw = payload as { vendor?: string; request?: TaskRequest };
@@ -225,106 +267,40 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   const kind = request.kind;
   const wantedKind = billingKindForTaskKind(kind);
   const modelKey = firstString(request.extras?.modelKey, request.extras?.modelAlias);
-  const { vendor, model, apiKey, customConfig } = findExecutableModel(vendorKey, modelKey, wantedKind);
-  const projectId = trim(request.extras?.projectId) || activeTaskProjectFallback();
-  const nodeId = trim(request.extras?.nodeId);
-  const grantId = trim(request.extras?.grantId);
+  const archetypeMeta = request.extras?.archetype;
+  const modeId = archetypeMeta && typeof archetypeMeta === "object" ? firstString((archetypeMeta as JsonRecord).modeId) : firstString(request.extras?.modeId);
+  await revalidatePendingCredential(vendorKey);
+  const stagedCandidate = resolveComfyCandidateExecution(request);
+  const { vendor, model, apiKey, customConfig } = stagedCandidate || findExecutableModel(vendorKey, modelKey, wantedKind);
+  const projectId = trim(request.extras?.projectId), nodeId = trim(request.extras?.nodeId), grantId = trim(request.extras?.grantId);
+  claimCanvasProductionShot(projectId, request.extras);
   const taskId = `task-${crypto.randomUUID()}`;
   if (vendor.key === CODEX_VENDOR_SEED.key) {
-    if (wantedKind !== "image") throw new Error("Codex Img2 只支持图片生成");
-    if (!projectId) throw new Error("Codex Img2 需要先打开并保存到本地项目后再生成");
-    const recipe = buildNormalizedRecipe({ vendor, model, request });
-    const fingerprint = recipeFingerprint(recipe);
-    const cachedHit = readCachedTaskResult({ projectId, fingerprint, nodeId, extras: request.extras });
-    if (cachedHit) return cachedHit as TaskResult;
-    assertAndConsumeSpendGrant(grantId, nodeId);
-    const runtimeStartedAt = Date.now();
-    const generated = await runCodexImageGeneration({ request });
-    try {
-      const assetWriteStartedAt = Date.now();
-      const contentType = contentTypeFromPath(generated.outputPath);
-      const ext = extensionFromMime(contentType, "png");
-      const saved = writeAsset(
-        projectId,
-        fs.readFileSync(generated.outputPath),
-        `codex-img2-${Date.now()}.${ext}`,
-        contentType,
-        {
-          kind: "generated",
-          generator: "codex-img2",
-          originalPath: generated.outputPath,
-          ownerNodeId: nodeId || null,
-          codexThreadId: generated.threadId || null,
-        },
-      ) as { id?: string; name?: string; data?: { url?: string; absolutePath?: string } };
-      const assetUrl = trim(saved.data?.url);
-      if (!assetUrl) throw new Error("Codex Img2 生成成功但资产落盘失败");
-      scheduleTechnicalReview({
-        projectId,
-        nodeId,
-        absolutePath: trim(saved.data?.absolutePath),
-        assetUrl,
-        type: "image",
-        expectedAspectRatio: firstString(request.extras?.aspect_ratio, request.extras?.aspectRatio),
-      });
-      const timings = {
-        ...generated.timings,
-        assetWriteMs: Date.now() - assetWriteStartedAt,
-        runtimeTotalMs: Date.now() - runtimeStartedAt,
-      };
-      const runId = generated.threadId || taskId;
-      const asset: TaskResult["assets"][number] = {
-        type: "image",
-        url: assetUrl,
-        thumbnailUrl: assetUrl,
-        assetId: saved.id || null,
-        assetName: saved.name || null,
-      };
-      const finalResult: TaskResult = {
-        id: runId,
-        kind,
-        status: "succeeded",
-        assets: [asset],
-        raw: { codex: { threadId: generated.threadId || null, lastMessage: generated.lastMessage, timings } },
-        provenance: buildTaskProvenance({ vendor, model, request, vendorRequestId: runId }),
-      };
-      traceVendorRequested(projectId, { runId, nodeId, recipe });
-      traceVendorCompleted(projectId, { runId, nodeId, status: "succeeded", assetCount: 1 });
-      rememberTaskResult(projectId, fingerprint, finalResult);
-      console.info("[nomi:codex-img2]", JSON.stringify({ runId, nodeId, timings }));
-      return finalResult;
-    } finally {
-      try {
-        fs.rmSync(generated.tempDir, { recursive: true, force: true });
-      } catch {
-        /* non-fatal cleanup */
-      }
-    }
+    return runCodexImageTask({ vendor, model, request, wantedKind, projectId, nodeId, grantId, taskId });
   }
-  const webBridgeResult = await dispatchWebBridgeTask({
+  const bridgeResult = await dispatchWebBridgeTask({
     vendor, model, request, wantedKind, projectId, nodeId, grantId, admitTask,
     errors: {
-      unsupported: (label) => new Error(`${label} 当前不支持该生成类型`),
-      projectRequired: (label) => new Error(`${label} 需要先打开并保存到本地项目后再生成`),
+      unsupported: label => new Error(`${label} 当前不支持该生成类型`),
+      projectRequired: label => new Error(`${label} 需要先打开并保存到本地项目后再生成`),
       idempotencyRequired: () => new Error("Pavo Web 真实任务缺少本轮确认标识，已拒绝提交以避免重复扣费"),
       runnerUnavailable: (label, reason) => new Error(`${label} 扩展运行器启动失败：${reason || "扩展客户端没有建立任务连接"}`),
     },
   });
-  if (webBridgeResult) return webBridgeResult;
-  const mapping = findTaskMapping(vendorKey, kind, modelKey);
-  // headless/MCP extras 预备：缺参兜底 + W1d 参考键形态投影（末参 createBody，逻辑/文档住 taskParams.applyHeadlessParamDefaults）；自定义调用脚本存在即接管图/视频/3D（对 L3 护栏算「有 mapping」，参考缺失拒发仍生效，派发抽到 catalog/customCallDispatch，R12）。
-  request.extras = applyHeadlessParamDefaults(request.extras, (model?.meta as { archetypeId?: string } | undefined)?.archetypeId, kind, vendorKey, mapping?.create?.defaultParams, mapping?.create?.body, model.modelKey);
+  if (bridgeResult) return bridgeResult;
+  const effectiveVendorKey = vendor.key;
+  const mapping = stagedCandidate?.mapping || findTaskMapping(effectiveVendorKey, kind, modelKey, modeId);
+  request.extras = applyHeadlessParamDefaults(request.extras, (model?.meta as { archetypeId?: string } | undefined)?.archetypeId, kind, effectiveVendorKey, mapping?.create?.defaultParams, mapping?.create?.body, model.modelKey);
+  // A5：@ 内联参考在发出去之前投影成 @image1/@video1。判据与注释住 taskParams（引擎 A 只有这一个出口）。
+  request.prompt = projectOutboundPrompt(request.prompt, request.extras);
   const customCall = resolveCustomCallExecution(model as Model, request, mapping);
   const customCallScript = customCall?.script || "";
-  // L3 诚实护栏（判定在 taskParams.imageEditGuardError）：图生图/图生视频缺参考或缺 mapping → 付费守卫前拒发人话，绝不静默退化纯文生。末参 modelModeBodies（该模型所有模式 body）= 交付4：拒发时点名"哪个模式带得动你连的参考"（同套 mapping derive）。
-  const guardError = imageEditGuardError(kind, request, Boolean(mapping) || Boolean(customCallScript), model.labelZh || model.modelKey, customCallScript ? undefined : mapping?.create?.body, modelModeBodies(readCatalog().mappings, vendorKey, modelKey, (model as Model).modelAlias), { vendorKey, modelKey: model.modelKey });
+  const guardError = imageEditGuardError(kind, request, Boolean(mapping) || Boolean(customCallScript), model.labelZh || model.modelKey, customCallScript ? undefined : mapping?.create?.body, modelModeBodies(readCatalog().mappings, effectiveVendorKey, modelKey, (model as Model).modelAlias), { vendorKey: effectiveVendorKey, modelKey: model.modelKey });
   if (guardError) throw new Error(guardError);
-  if (customCallScript) // 先于 mapping/fallback；注入避免循环依赖。文本也走这里（去掉 wantedKind!=="text" 排除：那等于「接不上的文本模型毫无出路」，而用户最初踩的正是文本模型）；文本脚本 return { text }
-    return runCustomCallTask({ vendor, model, apiKey, customConfig, script: customCallScript, taskKind: customCall!.taskKind, modeId: customCall!.modeId, request, kind, wantedKind, projectId, nodeId, grantId, taskId, localizeTaskAsset, writeAsset });
-  // 第四路 audio：没有脚本接管时才走 TTS/Whisper 同步收口（二进制/multipart）。
-  if (wantedKind === "audio") {
-    assertAndConsumeSpendGrant(grantId, nodeId);
-    await waitForVendorSubmissionWindow(vendor.key, wantedKind);
+  if (customCallScript)
+    return runCustomCallTask({ vendor, model, apiKey, customConfig, script: customCallScript, taskKind: customCall!.taskKind, modeId: customCall!.modeId, request, kind, wantedKind, projectId, nodeId, grantId, taskId, localizeTaskAsset, writeAsset: (id, bytes, name, type, meta) => writeAsset(id, bytes, name, type, meta, null) }); // 自定义调用按 wantedKind 记 kind，不是生成产物关口
+  if (usesSynchronousAudioRunner(wantedKind, mapping)) {
+    await consumeTaskSpend({ grantId, nodeId, projectId, vendorKey: vendor.key, modelKey: model.modelKey, parameters: request.extras });
     return runAudioTask({ vendor, model, apiKey, request, kind, taskId, projectId, nodeId, mapping });
   }
   if (mapping) {
@@ -338,7 +314,6 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
         assetLocalizationOptions(request.extras),
       );
     }
-    // S8 指纹缓存:同配方(参数没动)秒回上次成功结果,零 vendor 调用;强制重跑经 extras.forceRerun 绕读。
     const recipe = buildNormalizedRecipe({
       vendor,
       model,
@@ -348,24 +323,22 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     const fingerprint = recipeFingerprint(recipe);
     const cachedHit = readCachedTaskResult({ projectId, fingerprint, nodeId, extras: request.extras });
     if (cachedHit) return cachedHit as TaskResult;
-    const antigravityPreflight = await prepareAntigravityCreateOperation({ vendorKey, modelKey: model.modelKey, taskKind: kind, operation: mapping.create, request });
-    assertAndConsumeSpendGrant(grantId, nodeId); // 付费守卫：缓存未命中=真发 vendor，发前校验消费令牌
-    // 中转生图路由回退（y7api 403 定案）：OpenAI images 端点被「分组未开通」类确定性拒绝（403 命中
-    // 窄短语 / 404/405，未创建任务未扣费）→ 换 chat/completions 多模态 op 重发一次；结果归一按
-    // 实际执行的 op 走（chat 同步返回，extractChatImageUrl 兜底解析）。详见 catalog/imageRouteFallback。
+    const antigravityPreflight = await prepareAntigravityCreateOperation({ vendorKey: effectiveVendorKey, modelKey: model.modelKey, taskKind: kind, operation: mapping.create, request });
+    await consumeTaskSpend({ grantId, nodeId, projectId, vendorKey: vendor.key, modelKey: model.modelKey, parameters: request.extras }); // 付费守卫：缓存未命中=真发 vendor，发前校验消费令牌
     let createOperation = mapping.create; let executed;
     try {
-      executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: createOperation, stage: "create", antigravityPreflight, enforceSubmissionRateLimit: true });
+      executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: createOperation, stage: "create", antigravityPreflight });
     } catch (error) {
       const fallbackOp = chatImageFallbackOperation(error, createOperation, kind);
       if (!fallbackOp) throw error;
       createOperation = fallbackOp;
-      executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: createOperation, stage: "create", antigravityPreflight, enforceSubmissionRateLimit: true });
+      executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: createOperation, stage: "create", antigravityPreflight });
     }
     const normalized = await buildProfileTaskResult({
       response: executed.response,
       mapping,
       operation: createOperation,
+      operationTimings: executed.timings,
       request,
       taskIdFallback: taskId,
       wantedKind,
@@ -373,21 +346,19 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       nodeId,
       vendor,
       model,
-      operationTimings: executed.timings,
     });
+    if (!isTerminalTaskStatus(normalized.result.status) && mapping.query && !normalized.providerMeta.task_id && !normalized.providerMeta.query_id) {
+      traceVendorRequested(projectId, { runId: taskId, nodeId, recipe });
+      throw new Error(tagNomiError('submission-unknown', desktopT('tasks.submissionUnacknowledged')));
+    }
     traceVendorRequested(projectId, { runId: normalized.result.id, nodeId, recipe });
     if (["succeeded", "failed"].includes(normalized.result.status)) {
-      traceVendorCompleted(projectId, {
-        runId: normalized.result.id,
-        nodeId,
-        status: normalized.result.status as "succeeded" | "failed",
-        assetCount: normalized.result.assets.length,
-      });
+      traceVendorCompleted(projectId, { runId: normalized.result.id, nodeId, status: normalized.result.status as "succeeded" | "failed", assetCount: normalized.result.assets.length, ...(normalized.actualCost ? { cost: normalized.actualCost } : {}) });
       rememberTaskResult(projectId, fingerprint, normalized.result);
     }
     if (!["succeeded", "failed"].includes(normalized.result.status)) {
       admitTask(normalized.result.id, {
-        vendor: vendorKey,
+        vendor: effectiveVendorKey,
         request,
         raw: executed.response,
         mapping,
@@ -402,14 +373,12 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     return normalized.result;
   }
 
-  // 路径 B 文本任务走 AI SDK（引擎在 textTaskRunner）；逐字流式由 runTextTaskStream 消费。
   if (wantedKind === "text") {
-    await waitForVendorSubmissionWindow(vendor.key, wantedKind);
+    await consumeTaskSpend({ grantId, nodeId, projectId, vendorKey: vendor.key, modelKey: model.modelKey, parameters: request.extras });
     return executeTextTask({ vendor, model, apiKey, kind, request, taskId });
   }
 
   const suffix = wantedKind === "video" ? "/v1/videos/generations" : "/v1/images/generations";
-  // S8 指纹缓存(fallback 路径同语义)。
   const fallbackRecipe = buildNormalizedRecipe({ vendor, model, request });
   const fallbackFingerprint = recipeFingerprint(fallbackRecipe);
   const fallbackHit = readCachedTaskResult({
@@ -419,15 +388,11 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     extras: request.extras,
   });
   if (fallbackHit) return fallbackHit as TaskResult;
-  assertAndConsumeSpendGrant(grantId, nodeId); // 付费守卫：fallback 缓存未命中=真发 vendor，发前校验
-  await waitForVendorSubmissionWindow(vendor.key, wantedKind);
-  // 与 profile 路径同源走 requestJson（单一真相）：错误在抛出那刻即为结构化
-  // VendorRequestError（401→auth/402→balance 查表），不再裸 Error 让下游正则反猜（修 #1）；
-  // extraHeaders（网关头）也一并带上，与 profile 路径一致（修 #2 的 fallback 分支）。
+  await consumeTaskSpend({ grantId, nodeId, projectId, vendorKey: vendor.key, modelKey: model.modelKey, parameters: request.extras });
   const fallbackExtraHeaders = extractVendorExtraHeaders(vendor);
   const fallbackHeaders: Record<string, string> = {
     "Content-Type": "application/json",
-    ...authHeaders(vendor, apiKey),
+    ...buildAuthHeaders(vendorAuthSpec(vendor), apiKey),
     ...(fallbackExtraHeaders || {}),
   };
   const providerResponse = await requestJson(
@@ -437,7 +402,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     endpoint(vendor, suffix),
     fallbackHeaders,
     {},
-    {
+    { // 键形状由 taskParams.NO_MAPPING_FALLBACK_BODY 声明并被测试钉死（两处必须同构）。
       model: model.modelAlias || model.modelKey,
       prompt: request.prompt,
       size: request.width && request.height ? `${request.width}x${request.height}` : undefined,
@@ -447,7 +412,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       extras: request.extras,
     },
   );
-  const assetUrl = extractAssetUrl(providerResponse);
+  const assetUrl = readTaskResponse({ response: providerResponse, responseMapping: null, statusMapping: undefined, wantedKind: expectedMediaKind(wantedKind) }).assetUrls[0] ?? ""; // 无 mapping 兜底提交也走唯一读法
   const upstreamTaskId = extractTaskIdShared(providerResponse) || taskId;
   traceVendorRequested(projectId, { runId: upstreamTaskId, nodeId, recipe: fallbackRecipe });
   if (!assetUrl) {
@@ -463,14 +428,13 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     });
     return { id: upstreamTaskId, kind, status: "queued", assets: [], raw: providerResponse };
   }
-  const type: "image" | "video" | "model3d" =
-    wantedKind === "video" ? "video" : wantedKind === "model3d" ? "model3d" : "image";
+  const type: "image" | "video" | "audio" | "model3d" =
+    wantedKind === "video" ? "video" : wantedKind === "audio" ? "audio" : wantedKind === "model3d" ? "model3d" : "image";
   const asset: TaskResult["assets"][number] = projectId
-    ? await localizeTaskAsset(projectId, assetUrl, type, nodeId, vendor)
-    : { type, url: assetUrl, thumbnailUrl: type === "image" ? assetUrl : null };
-  // E11 provenance + S4-1 终态事件:与 profile 路径共用 vendor/provenance 模块(单一真相)。
-  const provenance = buildTaskProvenance({ vendor, model, request, vendorRequestId: upstreamTaskId });
-  traceVendorCompleted(projectId, { runId: upstreamTaskId, nodeId, status: "succeeded", assetCount: 1 });
+    ? await localizeTaskAsset(projectId, assetUrl, type, nodeId, vendor) : unlocalizedTaskAsset(type, assetUrl);
+  const actualCost = extractProviderCostActual(vendor.key, providerResponse);
+  const provenance = buildTaskProvenance({ vendor, model, request, vendorRequestId: upstreamTaskId, actualCost });
+  traceVendorCompleted(projectId, { runId: upstreamTaskId, nodeId, status: "succeeded", assetCount: 1, ...(actualCost ? { cost: actualCost } : {}) });
   const finalResult: TaskResult = {
     id: upstreamTaskId,
     kind,
@@ -483,7 +447,4 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   return finalResult;
 }
 
-// 异步任务「续查」已拆到 ./tasks/taskResultQuery（巨壳门岗·只减不增 R12）。
-// 该模块从本文件取 executeProfileOperation/buildProfileTaskResult/findExecutableModel/findTaskMapping/
-// extractAssetUrl/localizeTaskAsset/admitTask/taskCache（调用时循环依赖，安全）。对外导出面不变。
 export { fetchTaskResult } from "./tasks/taskResultQuery";

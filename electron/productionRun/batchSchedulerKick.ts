@@ -1,7 +1,7 @@
 /**
  * P4 — 多镜批 scheduler 的晚绑定重踢插槽（§3.2 检查点审批入口修复）。
  *
- * 为什么要一个插槽：anchor_checkpoint 决议后必须有人重踢批次 scheduler（生产不设 anchorAutoReleaseMs，
+ * 为什么要一个插槽：anchor_checkpoint 决议后必须有人重踢批次 scheduler（检查点永不自己放行，
  * 门决了批次不会自己醒）。重踢的正确层级是 productionRunService 的 post-decide 钩子——freeze/sample/shot
  * 门的 driveGeneration 重踢都住在那里，任何入口（MCP dispatcher / 渲染层 IPC / 未来的检查点卡）的
  * gate.decide 都经 service.command，钩子统一触发，「入口忘了踢」整族消失。但 scheduler 的构造依赖
@@ -9,6 +9,8 @@
  * startCapabilityCore 创建 → 构造期注入不可行，只能晚绑定。appIntegration 在 kickSchedulerForRun
  * 定义处注册进来（与它自有的模块级 hook slot 同 idiom）。
  */
+
+import { logWarn } from "../logging/logger";
 
 type BatchSchedulerKicker = (projectId: string, runId: string) => void;
 
@@ -28,6 +30,6 @@ export function kickBatchSchedulerForRun(projectId: string, runId: string): void
   try {
     registered(projectId, runId);
   } catch (error) {
-    console.warn("[nomi:production] batch scheduler kick failed:", error instanceof Error ? error.message : String(error));
+    logWarn("production-run", "batch-scheduler-kick-failed", undefined, error);
   }
 }

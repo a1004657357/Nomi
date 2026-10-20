@@ -1,6 +1,5 @@
 import { readLocalProjectAsync, saveLocalProject, type LocalProjectSummary } from '../library/localProjectStore'
-import { readWindowUrlParam } from '../windowUrlParam'
-import { upgradeWorkbenchProjectMediaUrls, normalizeLegacyImageAssetKinds } from './projectMediaMigration'
+import { backfillCanvasMediaDimensions, upgradeWorkbenchProjectMediaUrls, normalizeLegacyImageAssetKinds } from './projectMediaMigration'
 import {
   clearActiveWorkbenchProjectSaveTarget,
   replayCanvasEventTailAndSealGenesis,
@@ -11,9 +10,18 @@ import type { WorkbenchProjectPayload, WorkbenchProjectRecordV1 } from './projec
 import { migrateProjectRecord, type CategoryMigrationDiagnostic } from './projectCategoryMigration'
 import { migrateProjectV51ToV60 } from './projectV51ToV60Migration'
 import { backfillShotIndexes } from '../generationCanvas/model/shotNumbering'
-import { runProjectAssetHealthCheck } from '../generationCanvas/runner/projectAssetHealthCheck'
+import { useShotVerifyStore } from '../generationCanvas/agent/shotVerifyStore'
+import type { ProjectHydrationGuard } from './projectCanvasReadSurface'
+import { invalidateAgentTurnStates } from '../ai/agentTurnLifecycle'
 
-let lastCategoryMigrationDiagnostic: CategoryMigrationDiagnostic | null = null
+const categoryMigrationDiagnostics = new WeakMap<object, CategoryMigrationDiagnostic>()
+
+function abandonHydratingProjectOwnership(): void {
+  invalidateAgentTurnStates()
+  // Hydration replaces the whole project snapshot. Invalidate review work here,
+  // not when the persistence subscription merely rebinds after an ordinary save.
+  useShotVerifyStore.getState().activateProject(null)
+}
 
 // 迁移幂等的语义相等（P2 根因 / 守纪律「幂等判定用语义相等不用引用相等」）：
 // hydrate 时串行跑多道迁移，其中任一道（如 v51→v60 把跨分类 derivedFrom 计入 anyChange，
@@ -75,10 +83,10 @@ export function migratedRecordNeedsPersist(
   return !workbenchPayloadSemanticEquals(original.payload, upgraded.payload)
 }
 
-/** Returns + clears the most recent Phase E4 migration diagnostic (for toast UI). */
-export function consumeCategoryMigrationDiagnostic(): CategoryMigrationDiagnostic | null {
-  const value = lastCategoryMigrationDiagnostic
-  lastCategoryMigrationDiagnostic = null
+/** Returns + clears only the diagnostic owned by this exact hydration epoch. */
+export function consumeCategoryMigrationDiagnostic(guard: ProjectHydrationGuard): CategoryMigrationDiagnostic | null {
+  const value = categoryMigrationDiagnostics.get(guard) ?? null
+  categoryMigrationDiagnostics.delete(guard)
   return value
 }
 
@@ -86,8 +94,7 @@ const LAST_ACTIVE_PROJECT_KEY = 'nomi-workbench-last-active-project-v1'
 
 type Dependencies = {
   setActiveProject: (project: LocalProjectSummary | null) => void
-  setView: (view: 'library' | 'studio') => void
-  onSaveError: (error: unknown) => void
+  isActiveProject: (projectId: string) => boolean
 }
 
 
@@ -99,8 +106,7 @@ function writeLastActiveProjectId(projectId: string): void {
 }
 
 export type WorkbenchProjectPersistenceService = {
-  hydrateProject: (projectId: string) => Promise<WorkbenchProjectRecordV1 | null>
-  hydrateInitialProject: (projects: readonly LocalProjectSummary[]) => Promise<WorkbenchProjectRecordV1 | null>
+  hydrateProject: (projectId: string, guard: ProjectHydrationGuard) => Promise<WorkbenchProjectRecordV1 | null>
   persistProject: (project: LocalProjectSummary, payload: WorkbenchProjectPayload) => Promise<WorkbenchProjectRecordV1>
   bindProjectPersistence: (input: {
     project: LocalProjectSummary
@@ -108,14 +114,16 @@ export type WorkbenchProjectPersistenceService = {
     canPersist: () => boolean
     onSaved: (record: WorkbenchProjectRecordV1) => void
     onSaveError: (error: unknown) => void
-  }) => () => void
+  }) => () => Promise<void>
 }
 
 export function createWorkbenchProjectPersistenceService(deps: Dependencies): WorkbenchProjectPersistenceService {
   const persistProject = async (project: LocalProjectSummary, payload: WorkbenchProjectPayload): Promise<WorkbenchProjectRecordV1> => {
-    const localSaved = saveLocalProject(project.id, payload, project.name)
-    writeLastActiveProjectId(localSaved.id)
-    deps.setActiveProject(localSaved)
+    const localSaved = await saveLocalProject(project.id, payload, project.name)
+    if (deps.isActiveProject(localSaved.id)) {
+      writeLastActiveProjectId(localSaved.id)
+      deps.setActiveProject(localSaved)
+    }
     return localSaved
   }
 
@@ -125,15 +133,15 @@ export function createWorkbenchProjectPersistenceService(deps: Dependencies): Wo
     canPersist: () => boolean
     onSaved: (record: WorkbenchProjectRecordV1) => void
     onSaveError: (error: unknown) => void
-  }): (() => void) => {
+  }): (() => Promise<void>) => {
     return subscribeWorkbenchProjectPersistence({
       projectId: input.project.id,
       projectName: input.project.name,
       isHydrating: input.isHydrating,
       canPersist: input.canPersist,
       saveProject: async (_projectId, payload, _projectName) => {
-        const localSaved = saveLocalProject(input.project.id, payload, input.project.name)
-        writeLastActiveProjectId(localSaved.id)
+        const localSaved = await saveLocalProject(input.project.id, payload, input.project.name)
+        if (input.canPersist()) writeLastActiveProjectId(localSaved.id)
         return localSaved
       },
       onSaved: input.onSaved,
@@ -141,60 +149,65 @@ export function createWorkbenchProjectPersistenceService(deps: Dependencies): Wo
     })
   }
 
-  const hydrateProject = async (projectId: string): Promise<WorkbenchProjectRecordV1 | null> => {
-    const project = await readLocalProjectAsync(projectId)
-    if (!project) return null
+  const hydrateProject = async (
+    projectId: string,
+    guard: ProjectHydrationGuard,
+  ): Promise<WorkbenchProjectRecordV1 | null> => {
+    abandonHydratingProjectOwnership()
     clearActiveWorkbenchProjectSaveTarget()
+    guard.assertCurrent()
+    const project = await readLocalProjectAsync(projectId)
+    guard.assertCurrent()
+    if (!project) return null
     const mediaUpgraded = await upgradeWorkbenchProjectMediaUrls(project)
+    guard.assertCurrent()
     const { record: catUpgraded, diagnostic } = migrateProjectRecord(mediaUpgraded)
     const { record: v60Upgraded } = migrateProjectV51ToV60(catUpgraded)
     // A1.5：历史导入/切图/裁剪/截图的 image 节点改判为 asset（素材卡）。
     const assetUpgraded = normalizeLegacyImageAssetKinds(v60Upgraded)
+    const mediaDimensionsUpgraded = await backfillCanvasMediaDimensions(assetUpgraded)
     // 镜头编号存储身份化（审计 A2）：存量项目缺 shotIndex 的镜头节点按
     // (y, x, id) 确定性回填一次；此后编号不再随布局/添加节点漂移。
-    const shotBackfill = backfillShotIndexes(assetUpgraded.payload.generationCanvas.nodes)
+    const shotBackfill = backfillShotIndexes(mediaDimensionsUpgraded.payload.generationCanvas.nodes, mediaDimensionsUpgraded.payload.generationCanvas.edges)
     const upgraded = shotBackfill.changed
       ? {
-          ...assetUpgraded,
+          ...mediaDimensionsUpgraded,
           payload: {
-            ...assetUpgraded.payload,
+            ...mediaDimensionsUpgraded.payload,
             generationCanvas: {
-              ...assetUpgraded.payload.generationCanvas,
+              ...mediaDimensionsUpgraded.payload.generationCanvas,
               nodes: shotBackfill.nodes,
             },
           },
         }
-      : assetUpgraded
+      : mediaDimensionsUpgraded
     // 语义相等判定（不再用引用相等）：多道迁移即便换了顶层引用，只要落盘内容没变就
     // 不写盘、不 ++revision、不弹「已升级」toast。修 revision 单调漂移根因。
     const changed = migratedRecordNeedsPersist(project, upgraded)
     if (changed && !diagnostic.alreadyMigrated && (diagnostic.migratedNodes > 0 || diagnostic.removedNodes > 0 || diagnostic.categoriesSeeded)) {
-      lastCategoryMigrationDiagnostic = diagnostic
+      categoryMigrationDiagnostics.set(guard, diagnostic)
     }
     if (changed) {
-      saveLocalProject(upgraded.id, upgraded.payload, upgraded.name)
+      await saveLocalProject(upgraded.id, upgraded.payload, upgraded.name)
     }
+    // A turn begun while the read was pending still targets the outgoing project.
+    abandonHydratingProjectOwnership()
+    guard.assertCurrent()
     restoreWorkbenchProjectPayload(upgraded.payload)
     // S5-b-1:重放快照没盖到的事件尾巴(崩溃恢复),完成后以含尾后态发 genesis。
-    await replayCanvasEventTailAndSealGenesis(upgraded.id, upgraded.payload)
-    // 开项目体检:后台抢救此前漏落进节点的厂商临时 URL(会过期)→ 本地资产。fire-and-forget,
-    // 不阻塞打开;绝大多数项目节点本就 nomi-local,体检立即空跑返回。
-    void runProjectAssetHealthCheck(upgraded.id).catch(() => {})
+    await replayCanvasEventTailAndSealGenesis(upgraded.id, upgraded.payload, guard)
+    guard.assertCurrent()
+    // Event-tail replay crosses IPC and the restored canvas is already visible. A turn may
+    // start in that window with the outgoing project's identity; close the hydration epoch
+    // once more before publishing the new active project.
+    abandonHydratingProjectOwnership()
     writeLastActiveProjectId(upgraded.id)
-    deps.setActiveProject(upgraded)
-    deps.setView('studio')
+    guard.assertCurrent()
     return upgraded
-  }
-
-  const hydrateInitialProject = async (_projects: readonly LocalProjectSummary[]): Promise<WorkbenchProjectRecordV1 | null> => {
-    const explicitProjectId = readWindowUrlParam('projectId')
-    if (!explicitProjectId) return null
-    return hydrateProject(explicitProjectId)
   }
 
   return {
     hydrateProject,
-    hydrateInitialProject,
     persistProject,
     bindProjectPersistence,
   }

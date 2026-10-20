@@ -1,5 +1,10 @@
-import { type TaskKind, type TaskResultDto } from '../../api/taskApi'
+import { LocalTaskCancelledError } from './localTaskControl'
 import i18n from '../../../i18n'
+import { tagNomiError } from '../../../../electron/shared/nomiErrorCodes'
+import {
+  type TaskKind,
+  type TaskResultDto,
+} from '../../api/taskApi'
 import type {
   GenerationCanvasNode,
   GenerationNodeResult,
@@ -7,6 +12,8 @@ import type {
   GenerationResultType,
 } from '../model/generationCanvasTypes'
 import { asFiniteNumber, asTrimmedString, selectedModelKey } from './catalogTaskResolve'
+import { formatTaskFailureMessage } from './taskFailureMessage'
+import { readMediaDimensions, type MediaDimensions } from '../nodes/nodeSizing'
 
 // transcribe(Whisper) 也是「无 asset、文本在 raw」——同走文本支（raw.text 由 extractTextFromChatRaw 末尾捕获）。
 const TEXT_TASK_KINDS = new Set<TaskKind>(['chat', 'prompt_refine', 'image_to_prompt', 'transcribe'])
@@ -87,20 +94,20 @@ function readFailureMessageFromRaw(raw: unknown): string {
 }
 
 function describeTaskFailure(result: TaskResultDto): string {
-  const directMessage = typeof result.error === 'string' ? result.error.trim() : ''
-  const rawMessage = readFailureMessageFromRaw(result.raw)
-  const suffix = [result.id ? `taskId=${result.id}` : '', result.kind ? `kind=${result.kind}` : '']
-    .filter(Boolean)
-    .join(', ')
-  const prefix = directMessage || rawMessage || '模型任务执行失败'
-  return suffix ? `${prefix} (${suffix})` : prefix
+  // 格式的产出与解析成对住在 taskFailureMessage：分类器靠解析分清「供应商说的」与「我们自己的兜底句」。
+  return formatTaskFailureMessage(asTrimmedString(result.error) || readFailureMessageFromRaw(result.raw), { taskId: result.id, kind: result.kind })
 }
 
 function readDurationSeconds(asset: { durationSeconds?: unknown } | null | undefined): number | undefined {
   return asFiniteNumber(asset?.durationSeconds)
 }
 
-export function normalizeCatalogTaskResult(result: TaskResultDto, node: GenerationCanvasNode): GenerationNodeResult {
+export function normalizeCatalogTaskResult(
+  result: TaskResultDto,
+  node: GenerationCanvasNode,
+  onMediaDimensions?: (dimensions: MediaDimensions) => void,
+): GenerationNodeResult {
+  if (result.status === 'cancelled') throw new LocalTaskCancelledError()
   if (result.status === 'failed') {
     throw new Error(describeTaskFailure(result))
   }
@@ -126,20 +133,20 @@ export function normalizeCatalogTaskResult(result: TaskResultDto, node: Generati
   const firstVideoAsset = result.assets.find((item) => item.type === 'video' && asTrimmedString(item.url))
   const firstImageAsset = result.assets.find((item) => item.type === 'image' && asTrimmedString(item.url))
   const firstAudioAsset = result.assets.find((item) => item.type === 'audio' && asTrimmedString(item.url))
-  const firstModel3dAsset = result.assets.find((item) => item.type === 'model3d' && asTrimmedString(item.url))
-  const asset = inferredType === 'model3d'
-    ? firstModel3dAsset
-    : firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
-  if (!asset)
-    throw new Error(
-      inferredType === 'video'
-        ? i18n.t('generationCommon.error.noVideoUrl')
-        : inferredType === 'audio'
-          ? i18n.t('generationCommon.error.noAudio')
-          : inferredType === 'model3d'
-            ? i18n.t('generationCommon.error.noModel3dUrl')
-            : i18n.t('generationCommon.error.noImageUrl'),
-    )
+  const firstModel3dAsset = result.assets.find(item => item.type === 'model3d' && asTrimmedString(item.url))
+  const asset = inferredType === 'model3d' ? firstModel3dAsset : firstVideoAsset || firstImageAsset || firstAudioAsset || result.assets.find((item) => asTrimmedString(item.url))
+  // 上游说成了却没有产物：不是生成失败，是「读结果」这一步没成（#1213 原则 1）——带阶段码，落「可找回」。
+  if (!asset) {
+    const messageKey = inferredType === 'model3d' ? 'generationCommon.error.noModel3dUrl'
+      : inferredType === 'video' ? 'generationCommon.error.noVideoUrl'
+        : inferredType === 'audio' ? 'generationCommon.error.noAudio' : 'generationCommon.error.noImageUrl'
+    throw new Error(tagNomiError('retrieval-parse', i18n.t(messageKey)))
+  }
+  const type = (asset.type === 'video' || asset.type === 'image' || asset.type === 'audio') ? asset.type : inferredType
+  if (type === 'image' || type === 'video') {
+    const dimensions = readMediaDimensions(asset.width, asset.height)
+    if (dimensions) onMediaDimensions?.(dimensions)
+  }
   // E11: propagate provenance from electron TaskResult into the node result.
   const provenance = extractProvenanceFromTaskResult(result)
   const createdAt = Date.now()
@@ -206,6 +213,13 @@ function extractProvenanceFromTaskResult(result: TaskResultDto): GenerationProve
     ...(typeof rec.seed === 'number' ? { seed: rec.seed } : {}),
     ...(rec.params && typeof rec.params === 'object' ? { params: rec.params as Record<string, unknown> } : {}),
     ...(typeof rec.vendorRequestId === 'string' ? { vendorRequestId: rec.vendorRequestId } : {}),
+    ...(rec.cost && typeof rec.cost === 'object'
+      && typeof (rec.cost as Record<string, unknown>).amount === 'number'
+      && Number.isFinite((rec.cost as Record<string, unknown>).amount)
+      && typeof (rec.cost as Record<string, unknown>).currency === 'string'
+      && ((rec.cost as Record<string, unknown>).unit === 'actual' || (rec.cost as Record<string, unknown>).unit === 'estimate')
+      ? { cost: rec.cost as GenerationProvenance['cost'] }
+      : {}),
     ...(typeof rec.agentRunId === 'string' ? { agentRunId: rec.agentRunId } : {}),
   }
 }

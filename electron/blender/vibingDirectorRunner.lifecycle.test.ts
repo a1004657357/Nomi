@@ -8,11 +8,13 @@ const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   projectDirById: vi.fn(),
   writeAsset: vi.fn(),
+  captureAssetWriteContext: vi.fn(),
 }))
 
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
 vi.mock('../projects/repository', () => ({ projectDirById: mocks.projectDirById }))
 vi.mock('../runtime', () => ({ writeAsset: mocks.writeAsset }))
+vi.mock('../assets/assetWriteContext', () => ({ captureAssetWriteContext: mocks.captureAssetWriteContext }))
 
 import {
   activeVibingDirectorBlenderPlanCount,
@@ -107,7 +109,9 @@ beforeEach(() => {
   mocks.spawn.mockReset()
   mocks.projectDirById.mockReset()
   mocks.writeAsset.mockReset()
-  mocks.writeAsset.mockImplementation((_projectId: string, _bytes: Buffer, fileName: string, _type: string, meta: unknown) => ({
+  mocks.captureAssetWriteContext.mockReset()
+  mocks.captureAssetWriteContext.mockImplementation(async () => ({ root: mocks.projectDirById(), assertCurrent: vi.fn() }))
+  mocks.writeAsset.mockImplementation(async (_projectId: string, _bytes: Buffer, fileName: string, _type: string, meta: unknown) => ({
     id: `asset-${fileName}`,
     data: { url: `nomi-local://asset/project/${fileName}`, meta },
   }))

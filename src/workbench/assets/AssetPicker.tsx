@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconSearch, IconUpload } from '@tabler/icons-react'
 import { NomiLoadingMark } from '../../design'
@@ -26,7 +26,7 @@ type AssetPickerProps = {
   className?: string
 }
 
-const ACCEPT_ATTR: Record<AssetKind, string> = { image: 'image/*', video: 'video/*', audio: 'audio/*' }
+const ACCEPT_ATTR: Record<AssetKind, string> = { image: 'image/*', video: 'video/*', audio: 'audio/*', model3d: '.glb' }
 
 function PickerItem({ asset, onPick, dimmed, disabled }: { asset: AssetRef; onPick: (asset: AssetRef) => void; dimmed?: boolean; disabled?: boolean }): JSX.Element {
   const { t } = useTranslation()

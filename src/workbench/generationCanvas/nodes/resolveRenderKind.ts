@@ -39,6 +39,11 @@ export function resolveNodeRenderKind(
   // 分镜表是 text 节点上的专属工作区。旧项目迁移会给 shots 分类补上 shot-frame，
   // 因此该语义标记必须先于显式 renderKind，否则表格会退化成空白文本/媒体节点。
   if (node.kind === "text" && node.meta?.storyboardGroup === true) return "storyboard-table";
+  // 素材与 Agent 手艺产物都走「壳内 kind 专属渲染」，永远纯预览/专属 body（renderKind=undefined）——
+  // 否则落进 cast/scene/prop 分类会被误判成角色/场景/道具卡（asset 的历史边界 1，agent-artifact 同款）。
+  if (node.kind === "agent-artifact") return undefined;
+  const kindOwned = RENDER_KIND_BY_NODE_KIND[node.kind as string];
+  if (kindOwned) return kindOwned;
   const explicit = node.renderKind as string | undefined;
   // 注：`shot-frame`（shots 分类默认 renderKind，历史迁移回填）不在 CARD_RENDER_KINDS，故按 explicit
   // 返回后走「媒体预览」路径——镜头节点就该显生成出的图/视频，不套卡片。分镜序号由 BaseGenerationNode
@@ -56,4 +61,20 @@ export function resolveNodeRenderKind(
 /** renderKind 是否走卡片式 body。 */
 export function isCardRenderKind(renderKind: string | undefined): boolean {
   return CARD_RENDER_KINDS.includes(renderKind as (typeof CARD_RENDER_KINDS)[number]);
+}
+
+/**
+ * 这些 kind **不挂 prompt composer**：它们的正文就是功能本体（画板、3D 编辑器、全景查看器），
+ * 或者它们承载的是已有的文件而不是待生成的东西（素材、Agent 手艺产物）——对着它们弹一个
+ * 「描述你要生成的画面」输入框，是在问一个它答不了的问题。
+ *
+ * 收在这里而不是壳里：这份「谁没有 composer」原本是 BaseGenerationNode 里逐个 kind 排下来的
+ * 五行否定判断，每加一种承载型 kind 就长一行，而它和上面 renderKind 的 asset/agent-artifact
+ * 特例说的是同一件事。一份定义，两处消费。
+ */
+const KINDS_WITHOUT_GENERATION_COMPOSER = new Set(["panorama", "director", "whiteboard", "asset", "agent-artifact", "scene3d", "vibingDirector", "skill", "compare", "resource", "output"]);
+
+/** 该 kind 是否应该在选中时浮出生成 composer。 */
+export function nodeHasGenerationComposer(kind: string): boolean {
+  return !KINDS_WITHOUT_GENERATION_COMPOSER.has(kind);
 }

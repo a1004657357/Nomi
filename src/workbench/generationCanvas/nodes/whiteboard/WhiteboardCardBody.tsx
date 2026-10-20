@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconBrush } from '@tabler/icons-react'
 import { cn } from '../../../../utils/cn'
@@ -44,7 +44,9 @@ function WhiteboardCardBodyImpl({
       <div className={cn('flex-1 min-h-0 flex flex-col items-center justify-center pb-3')}>
         <EmptyStateLauncher
           icon={<IconBrush size={24} stroke={1.55} />}
-          hint={t('generationCommon.whiteboard.openHint')}
+          label={t('generationCommon.nodeEmpty.whiteboard.action')}
+          hint={t('generationCommon.nodeEmpty.whiteboard.description')}
+          testId="whiteboard-empty-action"
           activateAriaLabel={t('generationCommon.whiteboard.openAria')}
           onActivate={handleOpen}
         />

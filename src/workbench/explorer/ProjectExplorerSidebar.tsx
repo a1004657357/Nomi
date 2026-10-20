@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import {
@@ -8,6 +8,7 @@ import {
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
   IconPlus,
+  IconRoute,
   IconTags,
 } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
@@ -15,6 +16,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../
 import { type ProjectCategory } from '../project/projectCategories'
 import { useWorkbenchStore } from '../workbenchStore'
 import { lazyWithChunkBoundary } from '../../ui/chunkBoundary'
+import { observeProjectSidebarTransition } from './projectSidebarProjectTransition'
 
 const CategoryTree = lazyWithChunkBoundary('i18n:sidebar.categoryPanel', () => import('../sidebar/CategoryTree'))
 const PromptLibraryContent = lazyWithChunkBoundary('i18n:sidebar.promptLibrary', () =>
@@ -32,13 +34,18 @@ const AssetLibraryContent = lazyWithChunkBoundary('i18n:sidebar.assetLibrary', (
     default: module.AssetLibraryContent,
   })),
 )
+const WorkflowLibraryContent = lazyWithChunkBoundary('i18n:sidebar.workflowLibrary', () =>
+  import('../library/WorkflowLibraryContent').then((module) => ({
+    default: module.WorkflowLibraryContent,
+  })),
+)
 
 type Props = {
   categories?: ProjectCategory[]
   projectId?: string | null
 }
 
-type ProjectSidebarTab = 'categories' | 'prompt-library' | 'skill-library' | 'asset-library'
+type ProjectSidebarTab = 'categories' | 'prompt-library' | 'skill-library' | 'asset-library' | 'workflow-library'
 
 const PROJECT_SIDEBAR_COLLAPSED_WIDTH = 60
 const PROJECT_SIDEBAR_EXPANDED_WIDTH = 300
@@ -47,7 +54,7 @@ const PROJECT_SIDEBAR_RAIL_WIDTH = 60
 
 const RAIL_BUTTON_CLASS = cn(
   'grid size-8 place-items-center rounded-nomi-sm border-0 bg-transparent',
-  'cursor-pointer text-nomi-ink-40 transition-[background,color] duration-[var(--nomi-transition-fast)]',
+  'cursor-pointer text-nomi-ink-40 transition-[background,color] duration-nomi-fast ease-nomi-fast',
   'hover:bg-nomi-ink-05 hover:text-nomi-ink',
   'disabled:cursor-not-allowed disabled:opacity-50',
 )
@@ -55,7 +62,7 @@ const RAIL_BUTTON_CLASS = cn(
 // 方案A（2026-07-12 拍板）：rail 图标下带微字，治「一列孤图标认不出」；tooltip 保留全名。
 const RAIL_ITEM_BUTTON_CLASS = cn(
   'flex w-11 flex-col items-center gap-0.5 rounded-nomi-sm border-0 bg-transparent py-1.5',
-  'cursor-pointer text-nomi-ink-40 transition-[background,color] duration-[var(--nomi-transition-fast)]',
+  'cursor-pointer text-nomi-ink-40 transition-[background,color] duration-nomi-fast ease-nomi-fast',
   'hover:bg-nomi-ink-05 hover:text-nomi-ink',
   'disabled:cursor-not-allowed disabled:opacity-50',
 )
@@ -64,7 +71,7 @@ const RAIL_BUTTON_ACTIVE_CLASS = 'bg-nomi-ink text-nomi-paper shadow-nomi-sm'
 
 const PANEL_ICON_BUTTON_CLASS = cn(
   'grid size-8 place-items-center rounded-nomi-sm border-0 bg-transparent',
-  'cursor-pointer text-nomi-ink-40 transition-[background,border-color,color] duration-[var(--nomi-transition-fast)]',
+  'cursor-pointer text-nomi-ink-40 transition-[background,border-color,color] duration-nomi-fast ease-nomi-fast',
   'hover:bg-nomi-ink-05 hover:text-nomi-ink',
 )
 
@@ -72,11 +79,12 @@ function sidebarPanelTitle(tab: ProjectSidebarTab, t: TFunction): string {
   if (tab === 'categories') return t('sidebar.groups')
   if (tab === 'prompt-library') return t('sidebar.promptLibrary')
   if (tab === 'skill-library') return t('sidebar.skillLibrary')
+  if (tab === 'workflow-library') return t('sidebar.workflowLibrary')
   return t('sidebar.assetLibrary')
 }
 
 function isLibraryTab(tab: ProjectSidebarTab): boolean {
-  return tab === 'prompt-library' || tab === 'skill-library' || tab === 'asset-library'
+  return tab === 'prompt-library' || tab === 'skill-library' || tab === 'asset-library' || tab === 'workflow-library'
 }
 
 export default function ProjectExplorerSidebar({ categories, projectId = null }: Props): JSX.Element {
@@ -86,6 +94,13 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
   const collapsed = useWorkbenchStore((s) => s.sidebarCollapsed)
   const toggle = useWorkbenchStore((s) => s.toggleSidebarCollapsed)
   const setSidebarCollapsed = useWorkbenchStore((s) => s.setSidebarCollapsed)
+  const lastProjectIdRef = React.useRef(String(projectId || '').trim())
+
+  React.useEffect(() => {
+    const transition = observeProjectSidebarTransition(lastProjectIdRef.current, projectId)
+    lastProjectIdRef.current = transition.lastProjectId
+    if (transition.collapse) setSidebarCollapsed(true)
+  }, [projectId, setSidebarCollapsed])
 
   // 加号 = 新建一个顶层分类（建子组改走分类行右键「新建子组」）。
   const handleAddCategory = React.useCallback(() => {
@@ -111,6 +126,15 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
     }
     window.addEventListener('nomi-open-files-panel', open)
     return () => window.removeEventListener('nomi-open-files-panel', open)
+  }, [setSidebarCollapsed])
+
+  React.useEffect(() => {
+    const open = () => {
+      setTab('skill-library')
+      setSidebarCollapsed(false)
+    }
+    window.addEventListener('nomi-open-skill-library', open)
+    return () => window.removeEventListener('nomi-open-skill-library', open)
   }, [setSidebarCollapsed])
 
   const railItems = React.useMemo(
@@ -144,6 +168,12 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
         label: t('sidebar.skillLibrary'),
         railLabel: t('sidebar.skills'),
         icon: IconBooks,
+      },
+      {
+        id: 'workflow-library' as const,
+        label: t('sidebar.workflowLibrary'),
+        railLabel: t('sidebar.workflows'),
+        icon: IconRoute,
       },
     ],
     [t],
@@ -316,6 +346,10 @@ export default function ProjectExplorerSidebar({ categories, projectId = null }:
                 ) : tab === 'skill-library' ? (
                   <React.Suspense fallback={null}>
                     <SkillLibraryContent active compact showHeader={false} />
+                  </React.Suspense>
+                ) : tab === 'workflow-library' ? (
+                  <React.Suspense fallback={null}>
+                    <WorkflowLibraryContent projectId={projectId} compact showHeader={false} />
                   </React.Suspense>
                 ) : (
                   <React.Suspense fallback={null}>

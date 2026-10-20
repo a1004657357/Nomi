@@ -5,10 +5,13 @@
  * 默认折成一行（logo + 名/副标题 + 状态胶囊 + chevron），点 header 就地展开 body。
  * 样张：docs/design/mockups/onboarding-panel-A.html；规范：docs/plan/2026-06-07-onboarding-panel-redesign.md §5.1
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
+import type { MODEL_ACCESS_ENTRY } from '../../../electron/shared/contracts/modelAccessCapabilities'
+
+type ModelAccessEntryId = (typeof MODEL_ACCESS_ENTRY)[keyof typeof MODEL_ACCESS_ENTRY]
 
 type FoldableModelCardProps = {
   /** logo 内容：字形（如 'A'）、Tabler 图标或 <img> brand logo。 */
@@ -31,6 +34,8 @@ type FoldableModelCardProps = {
   onOpenDetails?: () => void
   /** 连接详情页使用：复用同一张卡的真实控制区，但固定展开且不再显示折叠按钮。 */
   detailMode?: boolean
+  /** Stable, non-visual user-entry contract used by real Electron journeys. */
+  dataAccessEntry?: ModelAccessEntryId | `${ModelAccessEntryId} ${string}`
   children: React.ReactNode
 }
 
@@ -46,6 +51,7 @@ export function FoldableModelCard({
   defaultExpanded = false,
   onOpenDetails,
   detailMode = false,
+  dataAccessEntry,
   children,
 }: FoldableModelCardProps): JSX.Element {
   const { t } = useTranslation()
@@ -54,7 +60,7 @@ export function FoldableModelCard({
   const bodyId = React.useId()
 
   return (
-    <div className="border border-nomi-line rounded-nomi bg-nomi-paper overflow-hidden">
+    <div data-model-access-entry={dataAccessEntry} className="border border-nomi-line rounded-nomi bg-nomi-paper overflow-hidden">
       {/* header 行：展开 toggle（flex-1 button）+ 可选动作槽（兄弟节点，非嵌套）。 */}
       <div className={cn('flex items-center', visible && 'bg-nomi-ink-05')}>
       <button
@@ -86,7 +92,10 @@ export function FoldableModelCard({
         </span>
         <span className="flex-1 min-w-0">
           <span className="block text-body-sm font-semibold text-nomi-ink truncate">{name}</span>
-          <span className="block text-caption text-nomi-ink-40 truncate">{subtitle}</span>
+          {/* 副标题常常是一串枚举（「让 Claude Code / Claude Desktop / Codex / Cursor /
+              WorkBuddy 帮…」），一行永远放不下。截成省略号等于把信息丢了而用户还不知道丢了什么
+              （2026-09-17，W-16）——折两行、并把整句挂 title。 */}
+          <span className="block text-caption text-nomi-ink-40 line-clamp-2" title={subtitle}>{subtitle}</span>
         </span>
         {badge ? <span className="shrink-0">{badge}</span> : null}
         <span

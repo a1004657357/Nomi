@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { IconPlayerStopFilled, IconRobot, IconSend2 } from '@tabler/icons-react'
 import { WorkbenchIconButton } from '../../../../design'
@@ -6,6 +7,7 @@ import AssistantModelPicker from '../../../ai/AssistantModelPicker'
 import { handleAiComposerKeyDown } from '../../../ai/aiComposerKeyboard'
 import { AutoGrowTextarea } from '../../../ai/composer/AutoGrowTextarea'
 import type { ToolCallEvent } from '../../../ai/workbenchAgentRunner'
+import { isProjectExecutionContextCurrent, withProjectAction, type ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
 import {
   preferredVibingDirectorAgentProtocol,
   rememberVibingDirectorStructuredProtocol,
@@ -31,6 +33,7 @@ type DirectorMessage = {
 }
 
 type PendingPlan = {
+  project: ProjectExecutionContext
   toolCallId: string
   summary: string
   plan: VibingDirectorPlan
@@ -92,8 +95,10 @@ export default function VibingDirectorAssistantPanel({
     setMessages((current) => current.map((message) => message.id === id ? { ...message, ...patch } : message))
   }, [])
 
-  const queuePlan = React.useCallback((request: { summary: string; plan: VibingDirectorPlan }, confirm?: ToolCallEvent['confirm']) => {
+  const queuePlan = React.useCallback((request: { summary: string; plan: VibingDirectorPlan }, project: ProjectExecutionContext, confirm?: ToolCallEvent['confirm']) => {
+    project.assertCurrent()
     setPendingPlan({
+      project,
       toolCallId: `director-plan-${messageId()}`,
       summary: request.summary,
       plan: request.plan,
@@ -101,7 +106,8 @@ export default function VibingDirectorAssistantPanel({
     })
   }, [])
 
-  const submit = React.useCallback((message: string) => {
+  const submit = React.useCallback((message: string) => withProjectAction(project => {
+    project.assertCurrent()
     const text = message.trim()
     if (!text || busy || applying) return
     const userId = messageId()
@@ -128,6 +134,7 @@ export default function VibingDirectorAssistantPanel({
           state: stateRef.current,
           originalMessage: text,
           onRepairStart: (firstFailure) => {
+            project.assertCurrent()
             updateMessage(assistantId, {
               content: `${failurePrefix}兼容协议响应不可执行：${firstFailure}\n正在自动修复一次…`,
               pending: true,
@@ -136,6 +143,7 @@ export default function VibingDirectorAssistantPanel({
           },
           repair: async (repairMessage) => {
             const repair = await sendVibingDirectorAgentMessage({
+              project,
               directorNodeId,
               state: stateRef.current,
               message: repairMessage,
@@ -144,9 +152,11 @@ export default function VibingDirectorAssistantPanel({
                 cancelRef.current = cancel
               },
             })
+            project.assertCurrent()
             return repair.response.text
           },
         })
+        project.assertCurrent()
         const { resolution } = outcome
         if (!resolution.ok) {
           updateMessage(assistantId, {
@@ -161,6 +171,7 @@ export default function VibingDirectorAssistantPanel({
 
       try {
         const result = await sendVibingDirectorAgentMessage({
+          project,
           directorNodeId,
           state: stateRef.current,
           message: text,
@@ -173,6 +184,7 @@ export default function VibingDirectorAssistantPanel({
             cancelRef.current = cancel
           },
           onToolCall: (event) => {
+            project.assertCurrent()
             const evaluation = evaluateVibingDirectorToolCall({
               toolName: event.toolName,
               args: event.args,
@@ -193,13 +205,15 @@ export default function VibingDirectorAssistantPanel({
               void event.confirm({ ok: false, message: evaluation.message, denied: true })
               return
             }
-            queuePlan(evaluation.request, event.confirm)
+            queuePlan(evaluation.request, project, event.confirm)
           },
         })
+        project.assertCurrent()
         if (initialProtocol === 'structured-text') {
           const request = await resolveStructuredResponse(result.response.text)
+          project.assertCurrent()
           if (!request) return
-          queuePlan(request)
+          queuePlan(request, project)
           updateMessage(assistantId, {
             content: `${request.summary}\n\n已生成 Blender 导演计划，等待确认。`,
             pending: false,
@@ -212,6 +226,7 @@ export default function VibingDirectorAssistantPanel({
           pending: false,
         })
       } catch (error: unknown) {
+        if (!isProjectExecutionContextCurrent(project)) return
         const detail = error instanceof Error && error.message ? error.message : String(error)
         if (initialProtocol !== 'tools' || !isNativeToolTransportError(error)) {
           updateMessage(assistantId, { content: `Director Agent 执行失败：${detail}`, pending: false, error: true })
@@ -227,6 +242,7 @@ export default function VibingDirectorAssistantPanel({
         })
         try {
           const fallback = await sendVibingDirectorAgentMessage({
+            project,
             directorNodeId,
             state: stateRef.current,
             message: text,
@@ -235,14 +251,17 @@ export default function VibingDirectorAssistantPanel({
               cancelRef.current = cancel
             },
           })
+          project.assertCurrent()
           const request = await resolveStructuredResponse(fallback.response.text, '原生工具请求被拒绝；')
+          project.assertCurrent()
           if (!request) return
-          queuePlan(request)
+          queuePlan(request, project)
           updateMessage(assistantId, {
             content: `${request.summary}\n\n已生成 Blender 导演计划，等待确认。`,
             pending: false,
           })
         } catch (fallbackError: unknown) {
+          if (!isProjectExecutionContextCurrent(project)) return
           const fallbackDetail = fallbackError instanceof Error && fallbackError.message ? fallbackError.message : String(fallbackError)
           updateMessage(assistantId, {
             content: `Director Agent 执行失败：原生工具请求被拒绝；兼容协议也未完成（${fallbackDetail}）`,
@@ -251,18 +270,24 @@ export default function VibingDirectorAssistantPanel({
           })
         }
       } finally {
-        setBusy(false)
-        cancelRef.current = null
+        if (isProjectExecutionContextCurrent(project)) {
+          setBusy(false)
+          cancelRef.current = null
+        }
       }
     })()
-  }, [applying, busy, directorNodeId, queuePlan, updateMessage])
+  }), [applying, busy, directorNodeId, queuePlan, updateMessage])
 
-  const approvePendingPlan = React.useCallback(async () => {
+  const approvePendingPlan = React.useCallback(() => withProjectAction(async project => {
     const pending = pendingPlan
     if (!pending || applying) return
     setPendingPlan(null)
     try {
+      pending.project.assertCurrent()
+      project.assertCurrent()
       const result = await onApplyPlan(pending.plan)
+      pending.project.assertCurrent()
+      project.assertCurrent()
       if (pending.confirm) {
         await pending.confirm({
           ok: true,
@@ -275,6 +300,7 @@ export default function VibingDirectorAssistantPanel({
             previewReady: Boolean(result.state.output?.previewUrl),
           },
         })
+        project.assertCurrent()
       }
       setMessages((current) => [...current, {
         id: messageId(),
@@ -284,8 +310,10 @@ export default function VibingDirectorAssistantPanel({
           : 'Blender 已完成场景更新并回传预览。',
       }])
     } catch (error: unknown) {
+      if (!isProjectExecutionContextCurrent(project) || !isProjectExecutionContextCurrent(pending.project)) return
       const message = error instanceof Error ? error.message : String(error)
       if (pending.confirm) await pending.confirm({ ok: false, message })
+      project.assertCurrent()
       setMessages((current) => [...current, {
         id: messageId(),
         role: 'assistant',
@@ -293,7 +321,7 @@ export default function VibingDirectorAssistantPanel({
         error: true,
       }])
     }
-  }, [applying, onApplyPlan, pendingPlan])
+  }), [applying, onApplyPlan, pendingPlan])
 
   const rejectPendingPlan = React.useCallback(() => {
     const pending = pendingPlan

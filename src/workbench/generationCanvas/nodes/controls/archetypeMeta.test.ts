@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { getArchetypeById, specializeArchetypeForVariant, type ModelArchetype } from '../../../../config/modelArchetypes'
+import { getArchetypeById, specializeArchetypeForVariant, type ModelArchetype } from '../../../../../electron/shared/modelArchetypes'
 import { archetypeModeModelEnum, type ResolvedReferenceValues } from './archetypeMeta'
+import { archetypeModeChoices } from './channelModeReach'
 import {
   type ArchetypeArraySlot,
   appendArchetypeArrayValue,
   applyArchetypeModeSwitch,
   applyArchetypeVariantSwitch,
   archetypeModeArraySlots,
-  archetypeModeChoices,
   archetypeModeSlots,
   archetypeVariantChoices,
   buildArchetypeInputParams,
@@ -19,6 +19,7 @@ import {
   modeHasCharacterSlot,
   normalizeArchetypeVariantMeta,
   orderedSentImageReferenceUrls,
+  orderedSentMediaReferenceUrls,
 } from './archetypeMeta'
 
 // C2b：模式分段切换 + 命名空间 meta + flat 帧键投影（M2 互斥）的核心逻辑钉死。
@@ -184,10 +185,10 @@ describe('C3 全能参考 — 数组槽声明', () => {
       { kind: 'audio_ref', label: '参考音频', min: 0, max: 3, requiresAnyOf: ['image_ref', 'video_ref'] },
     ])
     const arr = archetypeModeArraySlots(OMNI)
-    expect(arr.map((s) => [s.metaKey, s.max, s.numbered])).toEqual([
-      ['referenceImageUrls', 9, true],
-      ['referenceVideoUrls', 3, false],
-      ['referenceAudioUrls', 3, false],
+    expect(arr.map((s) => [s.metaKey, s.max, s.accept, s.numbered])).toEqual([
+      ['referenceImageUrls', 9, 'image', true],
+      ['referenceVideoUrls', 3, 'video', false],
+      ['referenceAudioUrls', 3, 'audio', false],
     ])
     expect(arr[0].caption).toMatch(/编号/)
   })
@@ -328,6 +329,27 @@ describe('option 2 单源 — 「有序参考图」连线在前、上传在后�
   it('当前模式无 image 数组槽（首帧模式）→ []（@ 投影回退 no-op）', () => {
     const meta = { archetype: { id: 'seedance-2', modeId: 'first' }, firstFrameUrl: 'F.png' }
     expect(orderedSentImageReferenceUrls(meta, SEEDANCE, ['e1.png'])).toEqual([])
+  })
+
+  it('omni 的图/视频/音频分别按各自槽顺序编号，顺序与发送输入一致', () => {
+    const meta = {
+      archetype: { id: 'seedance-2', modeId: 'omni' },
+      referenceImageUrls: ['u-image.png'],
+      referenceVideoUrls: ['u-video.mp4'],
+      referenceAudioUrls: ['u-audio.mp3'],
+    }
+    expect(orderedSentMediaReferenceUrls(meta, SEEDANCE, {
+      image: ['e-image.png'],
+      video: ['e-video.mp4'],
+      audio: ['e-audio.mp3'],
+    })).toEqual([
+      { url: 'e-image.png', kind: 'image', index: 1 },
+      { url: 'u-image.png', kind: 'image', index: 2 },
+      { url: 'e-video.mp4', kind: 'video', index: 1 },
+      { url: 'u-video.mp4', kind: 'video', index: 2 },
+      { url: 'e-audio.mp3', kind: 'audio', index: 1 },
+      { url: 'u-audio.mp3', kind: 'audio', index: 2 },
+    ])
   })
 })
 
@@ -660,6 +682,22 @@ describe('变体轴 — 旧项目迁移 normalizeArchetypeVariantMeta（最大�
     const meta = { modelKey: 'doubao-seedance-2.0', archetype: { id: 'seedance-2-apimart', modeId: 't2v' } }
     expect(normalizeArchetypeVariantMeta(meta, SEEDANCE_APIMART)).toBeNull()
   })
+
+  // ⚠️ 本函数**供应商无关**（签名里根本没有 vendor），而变体的 identifierPatterns 是裸串——
+  // 不同供应商完全可以用同一个裸串命名不同的行。Runway 的真实 modelKey `veo3.1` 就正好等于
+  // veo-3.1 档案 fast 变体的 pattern。下面这条把这个「危险但有意」的行为钉住：函数照折不误，
+  // **所以调用方必须先确认这个 (vendor, modelKey) 在当前目录里解析不到**，才可以调它。
+  // 2026-09-02 R13 真机走查抓到过这个：少了那道闸，活着的 Runway 节点被改写成 APIMart 的基础串，
+  // 供应商却还留在 runway —— veo3.1 显示成另一家的模式栏/参数，seedance2 直接把生成面板打崩
+  // （(runway, bytedance/seedance-2) 这个组合在目录里不存在）。闸在 useNodeModelAutoSelect。
+  it('供应商无关：别家的真实 modelKey 撞上本档案变体 pattern 时照折 → 调用方必须先排除「活着的行」', () => {
+    const veo = getArchetypeById('veo-3.1')!
+    expect(veo.variants?.some((v) => (v.identifierPatterns ?? []).includes('veo3.1'))).toBe(true)
+    // Runway 的 veo3.1 是活着的行，但本函数看不见 vendor，仍会把它折成 APIMart 的基础串。
+    const patch = normalizeArchetypeVariantMeta({ modelKey: 'veo3.1' }, veo)
+    expect(patch?.modelKey).toBe('veo3.1-fast')
+    expect(patch?.archetype.variantId).toBe('fast')
+  })
   it('旧无连字符变体串 doubao-seedance-2-0-fast → 基础 + fast（identifierPatterns 收纳）', () => {
     const patch = normalizeArchetypeVariantMeta({ modelKey: 'doubao-seedance-2-0-fast' }, SEEDANCE_APIMART)
     expect(patch?.modelKey).toBe('doubao-seedance-2.0')
@@ -725,7 +763,6 @@ describe('变体轴 — ensureArchetypeNodeMeta 初始化变体', () => {
 // ───── apimart 参数补全（2026-06-16）：fixedParams 注入 + flat 合并 + 新变体 model 串 ─────
 describe('apimart 参数补全 — fixedParams / flat 合并 / 变体 model', () => {
   const VEO = getArchetypeById('veo-3.1')!
-  const SORA = getArchetypeById('sora-2')!
   const HAILUO = getArchetypeById('hailuo-2.3')!
   const QWEN = getArchetypeById('qwen-image')!
   const OMNI = getArchetypeById('omni-flash-ext')!
@@ -749,19 +786,11 @@ describe('apimart 参数补全 — fixedParams / flat 合并 / 变体 model', ()
     expect(buildArchetypeInputParams(meta, VEO)).toEqual({ image_urls: ['F.png'], generation_type: 'frame', model: 'veo3.1-fast' })
   })
 
+  // Sora 2 已于 2026-09-28 退役（上游关停），档案随之删除；变体 model 串由下面三家继续覆盖。
   it('变体 model 串：选 Pro/quality/Fast → out.model = 变体 modelKey', () => {
-    expect(buildArchetypeInputParams({ archetype: { id: 'sora-2', modeId: 't2v', variantId: 'pro' } }, SORA).model).toBe('sora-2-pro')
     expect(buildArchetypeInputParams({ archetype: { id: 'veo-3.1', modeId: 't2v', variantId: 'quality' } }, VEO).model).toBe('veo3.1-quality')
     expect(buildArchetypeInputParams({ archetype: { id: 'hailuo-2.3', modeId: 't2v', variantId: 'fast' } }, HAILUO).model).toBe('MiniMax-Hailuo-2.3-Fast')
     expect(buildArchetypeInputParams({ archetype: { id: 'qwen-image', modeId: 't2i', variantId: 'pro' } }, QWEN).model).toBe('qwen-image-2.0-pro')
-  })
-
-  it('Sora Pro 变体：resolution 经 paramOverrides 放宽到 1080p（标准只 720p）', () => {
-    const std = specializeArchetypeForVariant(SORA, 'standard')
-    const pro = specializeArchetypeForVariant(SORA, 'pro')
-    const resOf = (a: ModelArchetype) => a.modes[0].params.find((p) => p.key === 'resolution')!.options.map((o) => o.value)
-    expect(resOf(std)).toEqual(['720p'])
-    expect(resOf(pro)).toEqual(['720p', '1024p', '1080p'])
   })
 
   it('Omni 参考图融合：fixedParams 注入 generation_type=reference（避 3 图被拒）', () => {
@@ -772,9 +801,9 @@ describe('apimart 参数补全 — fixedParams / flat 合并 / 变体 model', ()
   })
 
   it('duration 用数值 option 的 select：option value 是 number（发整数避 400）', () => {
-    const dur = SORA.modes[0].params.find((p) => p.key === 'duration')!
+    const dur = HAILUO.modes[0].params.find((p) => p.key === 'duration')!
     expect(dur.type).toBe('select')
-    expect(dur.options.map((o) => o.value)).toEqual([4, 8, 12, 16, 20])
+    expect(dur.options.map((o) => o.value)).toEqual([6, 10])
   })
 })
 

@@ -1,10 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RecipeRunPlan } from '../../../config/capabilityRecipes'
+import { withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
+import { createProjectSessionTestHarness } from '../../project/projectSessionTestHarness'
 import type { GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
-import { runCapabilityRecipeOnNode } from './capabilityRecipeController'
-import type { CapabilityRecipeMediaProcessor } from './capabilityRecipePostprocess'
+import { runCapabilityRecipeOnNode, type RunCapabilityRecipeOnNodeOptions } from './capabilityRecipeController'
+import { createBrowserCapabilityRecipeMediaProcessor, type CapabilityRecipeMediaProcessor } from './capabilityRecipePostprocess'
 import type { GenerationNodeExecutor } from './generationNodeExecutor'
+import type { CapabilityRecipeVideoInspection } from './capabilityRecipeQuality'
+
+let projectSession: ReturnType<typeof createProjectSessionTestHarness>
+let project: ProjectExecutionContext
+
+// The controller issues from the real coordinator; IO fixtures carry that same action's lifetime.
+function recipeOptions<T extends RunCapabilityRecipeOnNodeOptions>(project: ProjectExecutionContext, options: T) {
+  return {
+    ...options,
+    signal: project.signal,
+    mediaProcessor: options.mediaProcessor ?? createBrowserCapabilityRecipeMediaProcessor(project),
+  }
+}
 
 function imageResult(id: string): GenerationNodeResult {
   return { id, type: 'image', url: `nomi-local://${id}.png`, createdAt: 100 }
@@ -39,7 +54,10 @@ function plan(): RecipeRunPlan {
   }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  projectSession = createProjectSessionTestHarness()
+  await projectSession.open('recipe-project')
+  project = withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })
   const source: GenerationCanvasNode = {
     id: 'source-1', kind: 'image', title: 'Source', position: { x: 0, y: 0 }, prompt: 'same person',
     categoryId: 'shots', result: imageResult('source'), history: [imageResult('source')], status: 'success',
@@ -47,19 +65,23 @@ beforeEach(() => {
   }
   useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [source], edges: [], groups: [], selectedNodeIds: [] })
 })
+afterEach(() => projectSession.dispose())
 
 describe('runCapabilityRecipeOnNode', () => {
   it('creates one derived collection node and leaves the source untouched', async () => {
-    const executor = vi.fn(async (node: GenerationCanvasNode) => {
+    const executor = vi.fn<GenerationNodeExecutor>(async (node, context) => {
+      expect(context?.projectTarget).toEqual(project.binding)
+      expect(context?.signal).toBe(project.signal)
+      expect(context?.grantId).toBe('grant-1')
       const recipeMeta = node.meta?.capabilityRecipe as { output?: { id?: string } } | undefined
       return imageResult(recipeMeta?.output?.id || 'unknown')
     })
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', plan(), {
+    const outcome = await runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, {
       executor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     const state = useGenerationCanvasStore.getState()
     const source = state.nodes.find((node) => node.id === 'source-1')
@@ -94,11 +116,11 @@ describe('runCapabilityRecipeOnNode', () => {
       ],
     }))
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
       executor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     const output = useGenerationCanvasStore.getState().nodes.find((node) => node.id === outcome.nodeId)
     expect(output?.resultCollections?.[0]?.items[0]?.candidates?.map((result) => result.id)).toEqual([
@@ -165,35 +187,133 @@ describe('runCapabilityRecipeOnNode', () => {
       return videoResult('generated-video')
     })
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', videoPlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', videoPlan, recipeOptions(project, {
       executor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     expect(outcome.successCount).toBe(1)
     expect(executor).toHaveBeenCalledOnce()
   })
 
   it('requires a spend grant before creating the derived node', async () => {
-    await expect(runCapabilityRecipeOnNode('source-1', plan(), {
+    await expect(runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, {
       executor: async () => imageResult('unused'),
       grantId: '',
       persist: async () => {},
-    })).rejects.toThrow('缺少付费生成授权')
+    }))).rejects.toThrow('缺少付费生成授权')
 
     expect(useGenerationCanvasStore.getState().nodes).toHaveLength(1)
+  })
+
+  it('rejects an old action lifetime after A to B to A before invoking the executor', async () => {
+    const executor = vi.fn<GenerationNodeExecutor>(async () => imageResult('must-not-run'))
+    const grantFactory = vi.fn(async () => 'must-not-mint')
+    const persist = vi.fn(async () => {})
+    await projectSession.open('recipe-project-B')
+    await projectSession.open('recipe-project')
+    expect(() => project.assertCurrent()).toThrow()
+    const before = useGenerationCanvasStore.getState().nodes
+
+    await expect(runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, {
+      executor, grantFactory, persist,
+    }))).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(executor).not.toHaveBeenCalled()
+    expect(grantFactory).not.toHaveBeenCalled()
+    expect(persist).not.toHaveBeenCalled()
+    expect(useGenerationCanvasStore.getState().nodes).toBe(before)
+  })
+
+  it('rejects a late successful receipt after project switch without persisting it', async () => {
+    let finish!: (result: GenerationNodeResult) => void
+    const executor = vi.fn<GenerationNodeExecutor>(() => new Promise(resolve => { finish = resolve }))
+    const persist = vi.fn(async () => {})
+    const recipePlan = { ...plan(), taskCount: 1, outputCount: 1, outputs: plan().outputs.slice(0, 1) }
+    const pending = runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
+      executor, grantId: 'grant-1', persist,
+    }))
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'project_binding_stale' })
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce())
+    await projectSession.open('recipe-project-B')
+    const oldTarget = useGenerationCanvasStore.getState().nodes.find(node => node.id !== 'source-1')!
+    useGenerationCanvasStore.getState().restoreSnapshot({
+      nodes: [{ ...oldTarget, title: 'project-B same-id node', result: imageResult('B-result'), history: [imageResult('B-result')] }],
+      edges: [], groups: [], selectedNodeIds: [],
+    })
+    const before = useGenerationCanvasStore.getState().nodes
+    finish(imageResult('late-result-A'))
+
+    await rejected
+    expect(project.signal.aborted).toBe(true)
+    expect(persist).not.toHaveBeenCalled()
+    expect(useGenerationCanvasStore.getState().nodes).toBe(before)
+  })
+
+  it('does not create a target in a new project after late source inspection', async () => {
+    const inspection = { width: 1200, height: 800, opaqueRatio: 1, meanLuma: 0.5, lumaStdDev: 0.2,
+      edgeEnergy: 0.1, averageRgb: [0.5, 0.5, 0.5] as [number, number, number], perceptualHash: visualHash(1) }
+    let finish!: (value: typeof inspection) => void
+    const inspectImage = vi.fn(() => new Promise<typeof inspection>(resolve => { finish = resolve }))
+    const executor = vi.fn<GenerationNodeExecutor>(async () => imageResult('must-not-run'))
+    const persist = vi.fn(async () => {})
+    const pending = runCapabilityRecipeOnNode('source-1', { ...plan(), recipeId: 'image.style.transfer' }, recipeOptions(project, {
+      executor, persist, grantId: 'grant-1',
+      mediaProcessor: { inspectImage, splitGrid3x3: async () => [], normalizePanorama2to1: async result => result },
+    }))
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'project_binding_stale' })
+    await vi.waitFor(() => expect(inspectImage).toHaveBeenCalledOnce())
+    await projectSession.open('recipe-project-B')
+    const source = useGenerationCanvasStore.getState().nodes[0]!
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [{ ...source, title: 'project-B source' }], edges: [], groups: [], selectedNodeIds: [] })
+    const before = useGenerationCanvasStore.getState().nodes
+    finish(inspection)
+    await rejected
+    expect(useGenerationCanvasStore.getState().nodes).toBe(before)
+    expect(executor).not.toHaveBeenCalled()
+    expect(persist).not.toHaveBeenCalled()
+  })
+
+  it('does not roll back a same-id node in the new project when grant minting fails late', async () => {
+    let rejectGrant!: (error: Error) => void
+    const grantFactory = vi.fn(() => new Promise<string>((_resolve, reject) => { rejectGrant = reject }))
+    const executor = vi.fn<GenerationNodeExecutor>(async () => imageResult('must-not-run'))
+    const pending = runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, { executor, grantFactory, persist: async () => {} }))
+    const rejected = expect(pending).rejects.toThrow('grant mint failed')
+    await vi.waitFor(() => expect(grantFactory).toHaveBeenCalledOnce())
+    const target = useGenerationCanvasStore.getState().nodes.find(node => node.id !== 'source-1')!
+    await projectSession.open('recipe-project-B')
+    useGenerationCanvasStore.getState().restoreSnapshot({ nodes: [{ ...target, title: 'project-B same-id node' }], edges: [], groups: [], selectedNodeIds: [] })
+    const before = useGenerationCanvasStore.getState().nodes
+    rejectGrant(new Error('grant mint failed'))
+    await rejected
+    expect(useGenerationCanvasStore.getState().nodes).toBe(before)
+    expect(executor).not.toHaveBeenCalled()
+  })
+
+  it('rejects a successful persistence receipt returned after project switch', async () => {
+    let finish!: () => void
+    const persist = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+    const pending = runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, {
+      executor: async () => imageResult('A-result'), grantId: 'grant-1', persist,
+    }))
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'project_binding_stale' })
+    await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce())
+    await projectSession.open('recipe-project-B')
+    finish()
+    await rejected
   })
 
   it('can mint a grant for the newly-created target with the exact task budget', async () => {
     const grantFactory = vi.fn(async () => 'grant-for-target')
     const executor = vi.fn(async () => imageResult('generated'))
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', plan(), {
+    const outcome = await runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, {
       executor,
       grantFactory,
       persist: async () => {},
-    })
+    }))
 
     expect(grantFactory).toHaveBeenCalledWith(outcome.nodeId, 2)
     expect(executor).toHaveBeenCalledTimes(2)
@@ -219,11 +339,11 @@ describe('runCapabilityRecipeOnNode', () => {
       return imageResult('styled')
     })
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
       executor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     expect(executor).toHaveBeenCalledTimes(2)
     expect(outcome.successCount).toBe(2)
@@ -282,12 +402,12 @@ describe('runCapabilityRecipeOnNode', () => {
       inspectImage,
     }
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
       executor: async () => imageResult('styled'),
       mediaProcessor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     const target = useGenerationCanvasStore.getState().nodes.find((node) => node.id === outcome.nodeId)
     expect(inspectImage).toHaveBeenCalledWith(imageResult('style-source'))
@@ -330,12 +450,12 @@ describe('runCapabilityRecipeOnNode', () => {
       return imageResult('styled')
     })
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
       executor,
       mediaProcessor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     const target = useGenerationCanvasStore.getState().nodes.find((node) => node.id === outcome.nodeId)
     const persistedPlan = (target?.meta?.capabilityRecipe as { plan?: RecipeRunPlan } | undefined)?.plan
@@ -371,12 +491,12 @@ describe('runCapabilityRecipeOnNode', () => {
       return imageResult(recipeMeta?.output?.id || 'unknown')
     })
 
-    await runCapabilityRecipeOnNode('source-1', plan(), {
+    await runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, {
       executor,
       mediaProcessor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     expect(executor).toHaveBeenCalledTimes(2)
     expect(inspectImage).toHaveBeenCalledWith(imageResult('source'))
@@ -395,11 +515,11 @@ describe('runCapabilityRecipeOnNode', () => {
       return { id: 'model', type: 'model3d' as const, url: 'nomi-local://model.glb', createdAt: 100 }
     })
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
       executor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     expect(useGenerationCanvasStore.getState().nodes.find((node) => node.id === outcome.nodeId)?.kind).toBe('model3d')
   })
@@ -411,11 +531,11 @@ describe('runCapabilityRecipeOnNode', () => {
       return imageResult(`generated-${prompts.length}`)
     })
 
-    await runCapabilityRecipeOnNode('source-1', plan(), {
+    await runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, {
       executor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     expect(prompts).toHaveLength(2)
     expect(prompts[0]).toContain('方位角 0°')
@@ -463,13 +583,13 @@ describe('runCapabilityRecipeOnNode', () => {
       return imageResult(recipeMeta?.output?.id || 'unknown')
     })
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', plan(), {
+    const outcome = await runCapabilityRecipeOnNode('source-1', plan(), recipeOptions(project, {
       executor,
       mediaProcessor,
       compareMultiviewSubjects,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     const target = useGenerationCanvasStore.getState().nodes.find((node) => node.id === outcome.nodeId)
     expect(compareMultiviewSubjects).toHaveBeenCalledTimes(1)
@@ -532,12 +652,12 @@ describe('runCapabilityRecipeOnNode', () => {
       }),
     }
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
       executor,
       mediaProcessor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     expect(executor).toHaveBeenCalledOnce()
     expect(outcome.successCount).toBe(1)
@@ -580,12 +700,12 @@ describe('runCapabilityRecipeOnNode', () => {
       },
     }
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
       executor: async () => imageResult('composite'),
       mediaProcessor,
       grantId: 'grant-1',
       persist: async () => {},
-    })
+    }))
 
     const target = useGenerationCanvasStore.getState().nodes.find((node) => node.id === outcome.nodeId)
     expect(mediaProcessor.splitGrid3x3).toHaveBeenCalledOnce()
@@ -601,9 +721,8 @@ describe('runCapabilityRecipeOnNode', () => {
 
   it('retries a legacy failed grid collection in place with the grid prompt and split postprocess', async () => {
     const controller = await import('./capabilityRecipeController')
-    const retry = Reflect.get(controller, 'retryCapabilityRecipeOnNode')
+    const retry = controller.retryCapabilityRecipeOnNode
     expect(retry).toBeTypeOf('function')
-    if (typeof retry !== 'function') return
 
     const outputs = Array.from({ length: 9 }, (_, index) => ({
       id: `view-${index + 1}`,
@@ -678,7 +797,7 @@ describe('runCapabilityRecipeOnNode', () => {
       },
     }
 
-    const outcome = await retry('grid-target', {
+    const outcome = await retry('grid-target', recipeOptions(project, {
       executor: async (node: GenerationCanvasNode) => {
         prompts.push(node.prompt || '')
         return imageResult('grid-composite')
@@ -687,7 +806,7 @@ describe('runCapabilityRecipeOnNode', () => {
       grantId: 'retry-grant',
       retryRunId: 'grid-retry-2',
       persist: async () => {},
-    })
+    }))
 
     const state = useGenerationCanvasStore.getState()
     const retried = state.nodes.find((node) => node.id === 'grid-target')
@@ -726,7 +845,7 @@ describe('runCapabilityRecipeOnNode', () => {
       taskCount: 1,
       outputs: [{ id: 'video', label: '视频结果' }],
     }
-    const inspectVideoQuality = vi.fn(async () => ({
+    const inspectVideoQuality = vi.fn(async (): Promise<CapabilityRecipeVideoInspection> => ({
       suspect: false,
       metadata: {
         kind: 'video' as const,
@@ -742,12 +861,12 @@ describe('runCapabilityRecipeOnNode', () => {
       ],
     }))
 
-    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, {
+    const outcome = await runCapabilityRecipeOnNode('source-1', recipePlan, recipeOptions(project, {
       executor: async () => videoResult('generated-video'),
       grantId: 'grant-1',
       persist: async () => {},
       inspectVideoQuality,
-    } as never)
+    }))
 
     const target = useGenerationCanvasStore.getState().nodes.find((node) => node.id === outcome.nodeId)
     expect(inspectVideoQuality).toHaveBeenCalledWith(videoResult('generated-video'))

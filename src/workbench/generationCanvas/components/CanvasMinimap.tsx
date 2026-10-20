@@ -1,11 +1,11 @@
 // 画布缩略导航图（C1，2026-06-14，按获批样张）。右下角小窗：所有节点按内容 bbox 等比缩放成
 // 小矩形（选中=nomi-accent），叠一个当前视口取景框；点击/拖拽 → 把视口中心跳到对应画布点。
 // 仅在节点数 >= MINIMAP_MIN_NODES 时出现（小图全可见，minimap 是噪声，密度优先 R2）。
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../../utils/cn'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
-import { getNodeSize } from './generationCanvasGeometry'
+import { getCanvasNodeVisualSize } from './generationCanvasGeometry'
 
 export const MINIMAP_MIN_NODES = 6
 const MAP_W = 180
@@ -42,7 +42,7 @@ export const CanvasMinimap = React.memo(function CanvasMinimap({
     let maxX = -Infinity
     let maxY = -Infinity
     for (const node of nodes) {
-      const size = getNodeSize(node)
+      const size = getCanvasNodeVisualSize(node)
       minX = Math.min(minX, node.position.x)
       minY = Math.min(minY, node.position.y)
       maxX = Math.max(maxX, node.position.x + size.width)
@@ -131,7 +131,7 @@ export const CanvasMinimap = React.memo(function CanvasMinimap({
     >
       <div ref={innerRef} className="relative w-full h-full cursor-pointer">
         {nodes.map((node) => {
-          const size = getNodeSize(node)
+          const size = getCanvasNodeVisualSize(node)
           const pos = toMap(node.position.x, node.position.y)
           return (
             <div

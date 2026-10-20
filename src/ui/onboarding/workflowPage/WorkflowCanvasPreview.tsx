@@ -12,10 +12,11 @@
  * 媒体槽（首帧/尾帧/源视频）试跑时不带素材——那需要先上传资产，属于画布的活；
  * 槽位仍然画出来，并明说「试跑不带素材」（D4：缺口明着标，不藏）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconPlayerPlay } from '@tabler/icons-react'
 import { cn } from '../../../utils/cn'
+import { translateModelDisplayText } from '../../../i18n/modelDisplayText'
 import { NomiSelect } from '../../../design'
 import type { PreviewField } from '../comfyuiCanvasPreview'
 import { ROLE_TONES } from './roleTone'
@@ -31,9 +32,10 @@ type WorkflowCanvasPreviewProps = {
   onRun: () => void
 }
 
-const MEDIA_LABEL_KEY: Record<'image' | 'video', string> = {
+const MEDIA_LABEL_KEY: Record<'image' | 'video' | 'audio', string> = {
   image: 'comfyuiWorkflowPage.preview.mediaImage',
   video: 'comfyuiWorkflowPage.preview.mediaVideo',
+  audio: 'comfyuiWorkflowPage.preview.mediaAudio',
 }
 
 export function WorkflowCanvasPreview({
@@ -105,7 +107,7 @@ function PreviewControl({
   onChange: (value: string) => void
 }): JSX.Element {
   const { t } = useTranslation()
-  const label = field.label ?? (field.labelKey ? t(ROLE_TONES[field.labelKey as keyof typeof ROLE_TONES].labelKey) : field.key)
+  const label = translateModelDisplayText(field.label ?? (field.labelKey ? t(ROLE_TONES[field.labelKey as keyof typeof ROLE_TONES].labelKey) : field.key))
   const from = t('comfyuiWorkflowPage.preview.fromNode', { id: field.nodeId })
 
   const head = (
@@ -134,7 +136,7 @@ function PreviewControl({
     )
   }
 
-  if (field.kind === 'image' || field.kind === 'video') {
+  if (field.kind === 'image' || field.kind === 'video' || field.kind === 'audio') {
     return (
       <div>
         {head}
@@ -173,7 +175,7 @@ function PreviewControl({
           ariaLabel={label}
           size="xs"
           value={value ?? String(field.defaultValue ?? field.options[0])}
-          options={field.options.map((option) => ({ value: option, label: option }))}
+          options={field.options.map((option) => ({ value: String(option), label: String(option) }))}
           onChange={onChange}
           triggerMaxWidth={170}
           className="w-full max-w-full justify-between"

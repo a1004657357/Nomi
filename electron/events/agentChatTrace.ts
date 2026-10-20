@@ -1,8 +1,8 @@
 // 对话流事件 → NomiEvent 旁路翻译器(harness S3:结构化轨迹最小版)。
-// 挂在 agentChatV2Ipc 的事件出口上:只观察、只追加,任何失败不影响对话主流程。
+// 挂在 Agent 对话的事件出口上:只观察、只追加,任何失败不影响对话主流程。
 // 因果链:tool.completed / proposal.approved|rejected 的 causeId 指回 tool.proposed 事件 id。
 import crypto from "node:crypto";
-import { appendEvents, projectIdFromSessionKey } from "./eventLogRepository";
+import { appendEvents } from "./eventLogRepository";
 import type { NewNomiEvent } from "./types";
 
 const TEXT_HEAD = 2048;
@@ -34,7 +34,13 @@ function append(trace: TurnTrace, event: Omit<NewNomiEvent, "id"> & { id?: strin
 
 /** turn 开始:从 start payload 建 trace(项目不可解析时返回 null,全程 no-op)。 */
 export function beginTurnTrace(sessionId: string, payload: Record<string, unknown>): void {
-  const projectId = projectIdFromSessionKey(typeof payload.sessionKey === "string" ? payload.sessionKey : undefined);
+  const history = payload.history as {
+    kind?: string;
+    binding?: { sessionKey?: string; threadId?: string; project?: { projectId?: string } };
+  } | undefined;
+  const binding = history?.kind === 'persistent' ? history.binding : undefined;
+  const projectId = (typeof binding?.project?.projectId === 'string' ? binding.project.projectId : null)
+    || (typeof payload.projectId === 'string' ? payload.projectId : typeof payload.canvasProjectId === 'string' ? payload.canvasProjectId : null);
   if (!projectId) return;
   const chatContext = payload.chatContext && typeof payload.chatContext === "object"
     ? payload.chatContext as Record<string, unknown>
@@ -51,6 +57,8 @@ export function beginTurnTrace(sessionId: string, payload: Record<string, unknow
       sessionId,
       skillKey: head(payload.skillKey || skill.key, 128),
       playbookStageId: head(payload.playbookStageId, 128),
+      ...(binding ? { sessionKey: binding.sessionKey, threadId: binding.threadId } : {}),
+      ...(typeof payload.featureKey === 'string' ? { featureKey: payload.featureKey } : {}),
       promptHead: head(payload.displayPrompt || payload.prompt, PROMPT_HEAD),
     },
   });
@@ -129,7 +137,7 @@ export function traceChatEvent(sessionId: string, event: unknown): void {
         type: "agent.turn.finished",
         payload: {
           sessionId,
-          status: "ok",
+          status: result.status,
           finalTextHead: text.slice(0, TEXT_HEAD),
           finalTextSha256: crypto.createHash("sha256").update(text).digest("hex"),
           usage: result.usage ?? null,
@@ -186,13 +194,4 @@ export function traceGateDenied(sessionId: string, toolCallId: string, reason: s
     ...(trace.proposedIds.has(toolCallId) ? { causeId: trace.proposedIds.get(toolCallId) } : {}),
     payload: { sessionId, toolCallId, reason },
   });
-}
-
-/** context.capped:截断真的发生时记账(C1 触发器观测 + 对话内提示的数据源)。 */
-export function traceContextCapped(sessionKey: string, droppedCount: number, keptCount: number): void {
-  const projectId = projectIdFromSessionKey(sessionKey);
-  if (!projectId || droppedCount <= 0) return;
-  appendEvents(projectId, [
-    { id: mintId(), source: "system", type: "context.capped", payload: { sessionKey, droppedCount, keptCount } },
-  ]);
 }

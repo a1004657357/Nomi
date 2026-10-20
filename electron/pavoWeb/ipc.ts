@@ -1,4 +1,5 @@
 import { BrowserWindow, session, shell } from "electron";
+import { registerAppWindow } from '../appWindowRegistry';
 import { PAVO_WEB_VENDOR_SEED } from "../catalog/pavoWeb";
 import { probePavoWebServer, resolvePavoWebBaseUrl } from "./bridge";
 import {
@@ -56,6 +57,7 @@ export async function pavoWebOpenLogin(): Promise<{ ok: boolean; url: string }> 
     },
   });
   loginWindow.on("closed", () => { loginWindow = null; });
+  registerAppWindow(loginWindow, 'untrusted', PAVO_URL);
   await loginWindow.loadURL(PAVO_URL);
   loginWindow.show();
   return { ok: true, url: PAVO_URL };

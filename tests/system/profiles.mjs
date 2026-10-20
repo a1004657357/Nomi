@@ -8,22 +8,52 @@ const stage = (id, command, args = [], options = {}) => ({
 
 export const STAGES = {
   matrix: stage("matrix", "node", ["scripts/test-capability-matrix.mjs"]),
+  contracts: stage("contracts", "pnpm", ["run", "gates:contracts"]),
   unit: stage("unit", "pnpm", ["run", "test"]),
-  gates: stage("gates", "pnpm", ["run", "gates"]),
+  // 显式全量档（full-local / release）永远跑 gates:full：默认 gates 自 2026-09-12 起按风险分档，
+  // 若这里跟着默认走，「显式全量本地验证」就会被悄悄降级成 focused（R22）。
+  gates: stage("gates", "pnpm", ["run", "gates:full"]),
   build: stage("build", "pnpm", ["run", "build"]),
   e2e: stage("e2e", "pnpm", ["run", "test:e2e"]),
+  "canvas-critical": stage("canvas-critical", "pnpm", ["run", "test:canvas:critical"]),
+  "canvas-full": stage("canvas-full", "pnpm", ["run", "test:canvas:acceptance"]),
+  "canvas-performance": stage("canvas-performance", "pnpm", ["run", "test:canvas:performance"]),
   "journeys-ci": stage("journeys-ci", "pnpm", ["run", "test:journeys"]),
+  "real-user-journeys": stage("real-user-journeys", "pnpm", ["run", "test:real-user-journeys:ci"], {
+    env: { NOMI_REAL_USER_PROVIDER: "loopback" },
+  }),
   "journeys-all": stage("journeys-all", "pnpm", ["eval:journey"]),
   "third-party-release": stage("third-party-release", "pnpm", ["run", "check:third-party:release"]),
   "real-generation": stage("real-generation", "node", ["tests/ux/camera-move-render-e2e.mjs"], {
     env: { APIMART_E2E: "1", NOMI_SPEND_OK: "1", NOMI_E2E: "1", NOMI_E2E_ALLOW_MULTI_INSTANCE: "1" },
   }),
+  "agent-m0-matrix": stage("agent-m0-matrix", "node", ["scripts/test-agent-m0-m5-matrix.mjs", "M0"]),
+  "agent-m1-matrix": stage("agent-m1-matrix", "node", ["scripts/test-agent-m0-m5-matrix.mjs", "M1"]),
+  "agent-m2-matrix": stage("agent-m2-matrix", "node", ["scripts/test-agent-m0-m5-matrix.mjs", "M2"]),
+  "agent-m3-matrix": stage("agent-m3-matrix", "node", ["scripts/test-agent-m0-m5-matrix.mjs", "M3"]),
+  "agent-m4-matrix": stage("agent-m4-matrix", "node", ["scripts/test-agent-m0-m5-matrix.mjs", "M4"]),
+  "agent-m5-matrix": stage("agent-m5-matrix", "node", ["scripts/test-agent-m0-m5-matrix.mjs", "M5"]),
+  "agent-m0-m5-matrix": stage("agent-m0-m5-matrix", "node", ["scripts/test-agent-m0-m5-matrix.mjs"]),
 };
 
 export const PROFILES = {
   quick: ["matrix", "unit"],
-  ci: ["matrix", "unit", "build", "e2e", "journeys-ci"],
-  "full-local": ["matrix", "gates", "e2e", "journeys-ci"],
+  ci: ["matrix", "unit", "build", "e2e", "journeys-ci", "real-user-journeys"],
+  "ci-contracts": ["contracts"],
+  "ci-unit": ["unit"],
+  "ci-desktop": ["build", "e2e"],
+  "ci-journeys": ["journeys-ci", "real-user-journeys"],
+  "ci-canvas-critical": ["canvas-critical"],
+  "ci-canvas-full": ["canvas-full"],
+  "ci-performance": ["canvas-performance"],
+  "full-local": ["matrix", "gates", "e2e", "canvas-full", "canvas-performance", "journeys-ci", "real-user-journeys"],
   "real-generation": ["real-generation"],
-  release: ["matrix", "gates", "third-party-release", "e2e", "journeys-all", "real-generation"],
+  "agent-m0": ["agent-m0-matrix"],
+  "agent-m1": ["agent-m1-matrix"],
+  "agent-m2": ["agent-m2-matrix"],
+  "agent-m3": ["agent-m3-matrix"],
+  "agent-m4": ["agent-m4-matrix"],
+  "agent-m5": ["agent-m5-matrix"],
+  "agent-m0-m5": ["agent-m0-m5-matrix"],
+  release: ["matrix", "gates", "third-party-release", "e2e", "canvas-full", "canvas-performance", "journeys-all", "real-generation"],
 };

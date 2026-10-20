@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // 运镜预设面板：选中相机时挂在属性面板（scene3dInspector.PropertyPanel）相机段底部。
 // 点按 = 按当前机位/拍摄目标就地落一段轨迹并追加到时间轴末尾（cameraMovePreset 纯函数），
 // 连点即串联多段；落完仍可去轨迹模式逐点精修。样张：docs/design/mockups/scene3d-camera-directing-upgrade.html。

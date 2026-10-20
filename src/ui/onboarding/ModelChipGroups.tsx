@@ -6,10 +6,13 @@
  * 模型切换列表（节点下拉只取 enabled + 已连通厂商，见 modelCatalogCache），取消的不显示。
  * 传 onToggle 即开启交互（chip 变 button + aria-pressed）；不传保持纯展示（老用法零影响）。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
+import type { ModelAvailability } from '../../../electron/shared/modelAvailability'
+import { isLegacyCatalogMeta } from '../../config/modelIdentity'
 import { useTranslation } from 'react-i18next'
 import { IconCheck, IconX } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
+import { translateModelDisplayText } from '../../i18n/modelDisplayText'
 import { groupModelsByKind, isKnownModelChipKind, sortEnabledFirst, type ModelChipKind } from './modelChipGrouping'
 
 export type ChipModel = {
@@ -19,6 +22,14 @@ export type ChipModel = {
   kind: ModelChipKind
   /** 是否启用（enabled:false 的模型不进生成下拉/runtime，供中转站批量启停编辑用）。 */
   enabled: boolean
+  unlisted?: boolean
+  /** 目录发布资格；未认证/未晋级模型不得阻塞 canonical certification picker。 */
+  published?: boolean
+  /**
+   * 「这个模型现在能不能用」——主进程算好的**唯一**答案（`electron/shared/modelAvailability.ts`）。
+   * 模型设置页的「N 个可使用」读它，和首页横幅 / 助手下拉 / 画布选择器同源。
+   */
+  availability?: ModelAvailability
   /** 后端模型扩展信息；通用 chip 不消费，专用卡可透传读取。 */
   meta?: unknown
   /** 经过目录投影层校验的自动适配状态；详情页不直接信任任意 meta。 */
@@ -52,11 +63,12 @@ type ModelChipGroupsProps = {
 
 export function ModelChipGroups({ models, connected, onToggle, onDelete, onOpenModel, kindLabels }: ModelChipGroupsProps): JSX.Element | null {
   const { t } = useTranslation()
+  const [more, setMore] = React.useState(false)
   if (models.length === 0) return null
 
   return (
     <>
-      {groupModelsByKind(models).map(({ kind, models: list }) => {
+      {groupModelsByKind(models.filter((model) => more || model.unlisted || !isLegacyCatalogMeta(model.meta))).map(({ kind, models: list }) => {
         const enabledN = list.filter((m) => m.enabled).length
         // 可切换模式下已启用排前（用户 2026-07-17）；纯展示卡保持 seed 原序。
         const ordered = onToggle ? sortEnabledFirst(list) : list
@@ -72,6 +84,13 @@ export function ModelChipGroups({ models, connected, onToggle, onDelete, onOpenM
             </div>
             <div className="flex flex-wrap gap-2">
               {ordered.map((m) => {
+                if (m.unlisted) return (
+                  <div key={`${m.vendorKey}-${m.modelKey}`} className="flex w-full items-center gap-2 rounded-nomi-sm px-2 py-1.5 text-caption">
+                    <button type="button" onClick={() => onOpenModel ? onOpenModel(m) : onToggle?.(m, !m.enabled)} className="min-w-0 flex-1 truncate text-left text-nomi-ink-60">{translateModelDisplayText(m.labelZh)}</button>
+                    <span className="text-micro text-nomi-ink-60">{t('onboardingProviders.modelControls.unlisted')}</span>
+                    {onDelete ? <button type="button" onClick={() => onDelete(m)} className="shrink-0 text-caption text-workbench-danger">{t('common.delete')}</button> : null}
+                  </div>
+                )
                 const chipInner = (
                   <>
                     {onToggle && m.enabled ? (
@@ -79,13 +98,13 @@ export function ModelChipGroups({ models, connected, onToggle, onDelete, onOpenM
                     ) : (
                       <span className={cn('w-1.5 h-1.5 rounded-full', connected && m.enabled ? 'bg-nomi-accent' : 'bg-nomi-ink-20')} />
                     )}
-                    {m.labelZh}
-                    {onDelete ? (
+                    {translateModelDisplayText(m.labelZh)}
+                    {onDelete && !onOpenModel ? (
                       // span role=button 而非 <button>：chip 在 toggle 模式下本身是 button，嵌套 button 非法。
                       <span
                         role="button"
                         tabIndex={0}
-                        aria-label={t('onboardingProviders.modelControls.removeModelAria', { name: m.labelZh })}
+                        aria-label={t('onboardingProviders.modelControls.removeModelAria', { name: translateModelDisplayText(m.labelZh) })}
                         onClick={(event) => {
                           event.stopPropagation()
                           onDelete(m)
@@ -119,14 +138,14 @@ export function ModelChipGroups({ models, connected, onToggle, onDelete, onOpenM
                     key={`${m.vendorKey}-${m.modelKey}`}
                     type="button"
                     aria-pressed={onOpenModel ? undefined : m.enabled}
-                    title={m.enabled ? t('onboardingProviders.modelControls.enabledTitle') : t('onboardingProviders.modelControls.hiddenTitle')}
+                    title={m.enabled ? t('onboardingProviders.modelControls.hideModelTitle') : t('onboardingProviders.modelControls.showModelTitle')}
                     onClick={() => {
                       if (onOpenModel) onOpenModel(m)
                       else onToggle?.(m, !m.enabled)
                     }}
                     className={cn(
                       'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-caption cursor-pointer',
-                      'transition-colors duration-[var(--nomi-transition-fast)]',
+                      'transition-colors duration-nomi-fast ease-nomi-fast',
                       m.enabled
                         ? 'border-nomi-accent-soft bg-nomi-accent-soft text-nomi-ink hover:border-nomi-accent'
                         : 'border-nomi-line text-nomi-ink-40 hover:border-nomi-ink-20 hover:text-nomi-ink-60',
@@ -140,6 +159,7 @@ export function ModelChipGroups({ models, connected, onToggle, onDelete, onOpenM
           </div>
         )
       })}
+      {!more && models.some((model) => !model.unlisted && isLegacyCatalogMeta(model.meta)) ? <button type="button" onClick={() => setMore(true)} className="self-start text-caption text-nomi-ink-60">{t('onboardingProviders.modelControls.more')}</button> : null}
     </>
   )
 }

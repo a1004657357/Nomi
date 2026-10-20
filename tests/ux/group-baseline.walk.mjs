@@ -1,17 +1,20 @@
+import { expectComposerFooterHit } from './_composerFixedFooter.mjs'
 // R8 前置：把「组 / 选择浮条 / 节点浮条 / 提示词 composer + @ 弹层」的**真实样子**拍下来，
 // 样张才能是「真实布局 + 改动」而不是脑补（CLAUDE.md 三闸①）。
 // 用法: node tests/ux/group-baseline.walk.mjs
-import { launchNomiApp } from './_launchApp.mjs'
+import { launchNomiApp, ACCEPTANCE_WIDE_VIEWPORT } from './_launchApp.mjs'
+import {
+  expectArrivalsReachable, expectNodeInsideCanvas, findCanvasBlankPoint, followArrivalHint, panCanvasUntilInside,
+  waitForCanvasViewportSettled,
+} from './_canvasHit.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { screenshotSettled } from './_assert.mjs'
+import { clickOrFail, expect, expectVisible, screenshotSettled } from './_assert.mjs'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const shotsDir = path.join(repoRoot, 'tests/ux/shots/group-baseline')
 fs.rmSync(shotsDir, { recursive: true, force: true })
 fs.mkdirSync(shotsDir, { recursive: true })
-const userData = path.join(repoRoot, '.tmp', 'nomi-groupbase-userdata')
-fs.mkdirSync(userData, { recursive: true })
 
 let n = 0
 async function snap(win, name, clip) {
@@ -21,8 +24,9 @@ async function snap(win, name, clip) {
   console.log(`  · shot ${tag}`)
 }
 async function snapNear(win, name, locator, pad = 40) {
-  const box = await locator.boundingBox().catch(() => null)
-  if (!box) { console.error(`  ⚠️ 找不到 ${name} 的盒子`); return null }
+  await expectVisible(locator, `${name} 的真实控件已出现`)
+  const box = await locator.boundingBox()
+  if (!box) throw new Error(`${name} 没有可截图的盒子`)
   await snap(win, name, {
     x: Math.max(0, box.x - pad), y: Math.max(0, box.y - pad),
     width: Math.min(1400, box.width + pad * 2), height: Math.min(900, box.height + pad * 2),
@@ -32,39 +36,57 @@ async function snapNear(win, name, locator, pad = 40) {
 
 const { app, win } = await launchNomiApp({
   name: 'group-baseline',
-  userDataDir: userData,
+  ...(process.argv.includes('--wide') ? { viewportSize: ACCEPTANCE_WIDE_VIEWPORT } : {}),
   args: ['--no-proxy-server'],
   settleMs: 0,
+  initialLocalStorage: { 'nomi:splash:v1': 'seen', 'nomi:journey-tour:v1': 'seen' },
 })
-await win.evaluate(() => {
-  window.localStorage.setItem('__nomiE2E', '1')
-  for (const k of ['nomi:splash:v1', 'nomi:journey-tour:v1', 'nomi:canvas-gesture-hint:v1']) {
-    window.localStorage.setItem(k, 'seen')
-  }
-})
-await win.reload()
-await win.waitForLoadState('domcontentloaded')
-await win.waitForTimeout(2200)
-
-for (const label of ['新建空白项目', '开始一个项目']) {
-  const el = win.locator('button', { hasText: label }).first()
-  if (await el.count()) { await el.click({ timeout: 4000 }).catch(() => {}); break }
-}
-await win.waitForTimeout(2500)
-
-const genTab = win.locator('button', { hasText: /^生成$/ }).first()
-if (await genTab.count()) await genTab.click({ timeout: 5000 }).catch(() => {})
-await win.waitForTimeout(2500)
+await win.getByRole('button', { name: '新建空白项目', exact: false }).first().click()
+await win.getByRole('button', { name: '生成', exact: true }).click()
 
 const addImage = win.locator('[aria-label="添加图片节点"]').first()
+await expectVisible(addImage, '生成画布已可添加节点')
 if (!(await addImage.count())) { console.error('❌ 找不到「添加图片节点」'); await app.close(); process.exit(1) }
-for (let i = 0; i < 4; i += 1) { await addImage.click({ timeout: 4000 }); await win.waitForTimeout(280) }
-await win.waitForTimeout(900)
+// 连建四张（2026-09-25 用户拍板「程序不再主动平移 / 缩放画布」之后的样子）：以前连建会触发「连续创建适应」
+// 把画布自己缩小到装下四张，首卡因此留在舞台里；现在画布一格不动，新卡落在当前可见区（空画布上首卡必然
+// 完整落在舞台里），后面几张被螺旋避让推向右 / 下，中心出了舞台的由边缘提示数着。每建一张都验：
+// 视口和建第一张之前逐格相同、「舞台里看得见的」+「提示数到的」= 已建张数（判据在 _canvasHit.mjs）。
+const viewportBeforeCreates = await waitForCanvasViewportSettled(win)
+let firstCreatedId
+let arrivals = null
+for (let i = 0; i < 4; i += 1) {
+  await addImage.click({ timeout: 4000 })
+  arrivals = await expectArrivalsReachable(win, {
+    knownIds: [], expectedCount: i + 1, viewportBefore: viewportBeforeCreates, label: `连建第 ${i + 1} 张图片卡`, followHint: false,
+  })
+  if (i === 0) {
+    expect(arrivals.path, '空画布上第一张新卡直接落在可见区里，不需要边缘提示').toBe('in-view')
+    firstCreatedId = arrivals.ids[0]
+    if (!firstCreatedId) throw new Error('第一张新卡必须有真实 ID，不能把后续可见卡当成首卡')
+    await expectNodeInsideCanvas(win, win.locator(`.generation-canvas-v2-node[data-node-id="${firstCreatedId}"]`), '空画布上第一张新卡完整落在舞台内（画布没挪过去）')
+  }
+}
+await expectNodeInsideCanvas(win, win.locator(`.generation-canvas-v2-node[data-node-id="${firstCreatedId}"]`), '连续建完四张后首卡仍完整在舞台内（画布没自己缩放 / 平移把它挤走）')
+// 有被推出屏的：像用户一样点边缘提示过去（方向、张数、点完完整进舞台都在 followArrivalHint 里验）。
+if (arrivals.path === 'hint-pending') {
+  await followArrivalHint(win, { knownIds: arrivals.ids, label: '连建四张后屏外那几张' })
+}
+// 这一页要拍的是「四张卡 + 选择浮条 / 组框」的真实样子，全选也只选得中已渲染的卡（onlyRenderVisibleElements）：
+// 用户想一眼看全四张，就点「适应视图」——这是他自己的动作，不是画布替他挪。
+await clickOrFail(win.getByLabel('适应视图', { exact: true }), '适应视图：一眼看全四张')
+await waitForCanvasViewportSettled(win)
+await expect(win.locator('.generation-canvas-v2-node[data-node-id]'), '适应视图后四张卡都在画布上').toHaveCount(4)
+for (const id of await win.locator('.generation-canvas-v2-node[data-node-id]').evaluateAll((cards) => cards.map((card) => card.getAttribute('data-node-id')))) {
+  await expectNodeInsideCanvas(win, win.locator(`.generation-canvas-v2-node[data-node-id="${id}"]`), `适应视图后卡 ${id} 完整在舞台内`)
+}
 await snap(win, 'canvas-4-nodes')
 
 // 全选 → 选择浮条（真实样子：计数 + 生成 N + 编组 + 关闭）
-await win.locator('.generation-canvas-v2, [data-canvas-stage]').first().click({ position: { x: 40, y: 40 } }).catch(() => {})
+const blank = await findCanvasBlankPoint(win)
+if (!blank) throw new Error('画布没有可点击的真实空白点')
+await win.mouse.click(blank.x, blank.y)
 await win.keyboard.press('Control+a')
+await expect(win.locator('.generation-canvas-v2-node[data-selected="true"]')).toHaveCount(4)
 await win.waitForTimeout(600)
 const toolbar = win.locator('.generation-canvas-v2__selection-toolbar').first()
 await snapNear(win, 'selection-toolbar-real', toolbar, 24)
@@ -80,37 +102,42 @@ await snapNear(win, 'group-frame-real', groupBox, 30)
 const groupLabel = win.locator('.generation-canvas-v2__group-box-label').first()
 await snapNear(win, 'group-label-real', groupLabel, 16)
 
-// 单选一个节点 → composer 的真实样子
-await win.keyboard.press('Escape')
-await win.waitForTimeout(300)
-const firstNode = win.locator('[data-node-id]').first()
-await firstNode.click({ timeout: 4000 }).catch(() => {})
-await win.waitForTimeout(900)
+// 先证单选，再取 composer；旧尺寸 class 已退役，等待它只会吞掉定位超时。
+await win.getByRole('button', { name: '清除选择', exact: true }).click()
+const firstNode = win.locator('.generation-canvas-v2-node[data-node-id]').first()
+await firstNode.click({ timeout: 4000 })
+await expect(win.locator('.generation-canvas-v2-node[data-selected="true"]')).toHaveCount(1)
 await snap(win, 'canvas-node-selected')
-const composer = win.locator('.generation-canvas-v2 [class*="min-h-\\[150px\\]"]').first()
-const cbox = await composer.boundingBox().catch(() => null)
-if (cbox) {
-  await snap(win, 'composer-real', {
-    x: Math.max(0, cbox.x - 20), y: Math.max(0, cbox.y - 20),
-    width: cbox.width + 40, height: cbox.height + 40,
-  })
-} else {
-  console.error('  ⚠️ composer 盒子没读到，改拍整窗下半')
-}
+const composer = firstNode.locator('.generation-canvas-v2-node__composer-card')
+// 卡贴着舞台左边时，钉在它正下方的浮框（定宽 560）会伸到左侧栏底下——被挡就挡（09-25），人会先把画布拖开再操作。
+const composerPan = await panCanvasUntilInside(win, composer)
+expect(composerPan.ok, `把浮框整张拖进舞台：${JSON.stringify(composerPan)}`).toBe(true)
+await expectComposerFooterHit(composer, '分组后空提示词')
+await snapNear(win, 'composer-real', composer, 20)
+// Reference controls may scroll in their own area after recommendations yield.
+await composer.getByRole('button', { name: '文生图', exact: true }).click()
+await expectComposerFooterHit(composer, '参考区内部滚动后')
 
 // 节点浮动工具栏（图片节点的那条，@ 与抽帧共用同一 shell）
 const nodeToolbar = win.locator('[role="toolbar"]').first()
 await snapNear(win, 'node-floating-toolbar-real', nodeToolbar, 20)
 
 // @ 弹层（无参考图时的空态）
-const editor = win.locator('.ProseMirror').first()
-if (await editor.count()) {
-  await editor.click({ timeout: 4000 }).catch(() => {})
-  await win.waitForTimeout(300)
-  await win.keyboard.type('@')
-  await win.waitForTimeout(700)
-  await snap(win, 'mention-popup-empty')
-}
+const editor = composer.locator('[data-prompt-box] [contenteditable="true"]')
+await expect.poll(() => editor.evaluate(element => element.closest('[data-prompt-box]').parentElement.clientHeight), { message: '分组后图片提示词区仍保留三行可输入空间' }).toBeGreaterThanOrEqual(72)
+await editor.click({ timeout: 4000 })
+await win.waitForTimeout(300)
+await win.keyboard.type('@')
+await expect(editor).toContainText('@')
+await win.waitForTimeout(700)
+await snap(win, 'mention-popup-empty')
+// Fixed controls must already be reachable before Playwright can scroll anything.
+await win.keyboard.press('Escape')
+await expectComposerFooterHit(composer, '分组后填字')
+await composer.locator('[data-effect-more]').click({ timeout: 4000 })
+await expectVisible(win.getByTestId('node-effect-menu'), '受限高度下效果菜单仍可点击打开')
+await snap(win, 'effects-menu-reachable')
+await win.keyboard.press('Escape')
 
 // 组框的几何/配色实测（mockup 要用真值）
 const facts = await win.evaluate(() => {

@@ -1,3 +1,7 @@
+import { hasRealCharacterReferences, normalizeStoryboardAnchorDefaults, validateAnchorModelFit } from './storyboardAnchorPolicy'
+import { getUndoJournalGeneration } from '../events/canvasUndoJournal'
+import { captureCurrentProjectCanvasReadSurfaceBinding } from '../../project/projectCanvasReadSurface'
+import { SurfacePortWireError } from '../../../../electron/shared/surfacePortBinding'
 import type {
   BuiltinCanvasCategoryId,
   GenerationCanvasEdgeMode,
@@ -7,42 +11,49 @@ import { CATEGORY_IDS } from '../model/generationCanvasTypes'
 import { getDefaultCategoryForNodeKind, getGenerationNodeDefaultTitle } from '../model/generationNodeKinds'
 import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
 import { ANCHOR_META_KEYS } from '../model/anchorBibleKeys'
-import { generationCanvasTools, type CreateGenerationNodeToolInput } from './generationCanvasTools'
-import { listAvailableModelsForAgent, type AgentModelEntry } from './availableModels'
-import { buildPlannedNodeMeta } from './plannedNodeMeta'
+import {
+  generationCanvasTools,
+  readGenerationCanvasSnapshot,
+  type CreateGenerationNodeToolInput,
+} from './generationCanvasTools'
+import { listAvailableModelsForAgent } from './availableModels'
+import { getVendorPreference } from '../../api/vendorPreferenceApi'
+import { buildModelEntryIndex, buildPlannedNodeMeta } from './plannedNodeMeta'
+import { indexMaterializedNodes, materializationKey, readNodeInputStamp } from './materializationStamp'
 import { withCanvasGestureContext, type CanvasGestureContext } from '../events/canvasGestureContext'
 import { layoutPlannedNodes, layoutStoryboardNodes } from './trajectoryLayout'
-import { formatCanvasForAgent } from './canvasPromptContext'
-import { buildDependencyWaves } from '../runner/dependencyWaves'
-import { expandNodeIdsWithUngeneratedReferenceAncestors } from '../runner/referenceAncestors'
-import { forkRegenerationNodesInPlan, runPlanWithToasts } from '../components/batchPlanPreview'
-import { resolveAutonomousUploadConsent } from '../runner/generationRunController'
-import { toast } from '../../../ui/toast'
-import { mintSpendGrant } from '../../api/taskApi'
-import { batchSpendGrantTtlMs } from '../spend/spendConfirm'
+import { resolveNodeVisualSize } from '../nodes/nodeSizing'
+import { placeBlockInVisibleArea } from '../store/canvasVisibleArea'
 import { arrangeStoryboardToTimeline } from './sendStoryboardToTimeline'
-import { parseStoryboardPlan, type PlanShot, type StoryboardPlan } from './storyboardPlan'
-import {
-  applyDerivedStoryboardVideoPrompt,
-  collectStoryboardShotPatch,
-  syncStoryboardPlanToCanvas,
-} from './storyboardPlanMutations'
-import type { StagingSpec, StagingCharacterSpec } from '../nodes/scene3d/stagingBuilder'
-import type { CameraMoveSpec } from '../nodes/scene3d/cameraMoveBuilder'
-import type { ScenePropPlacement } from '../nodes/scene3d/scene3dPropSpecs'
-import type { Scene3DSceneTemplate } from '../nodes/scene3d/scene3dSceneTemplates'
-import type { CameraSpeed } from '../nodes/scene3d/cameraMoveVocab'
+import { parseStoryboardPlan } from './storyboardPlanSchema'
+import type { StagingSpec, StagingCharacterSpec } from '../nodes/director/agent/stagingBuilder'
+import type { CameraMoveSpec } from '../nodes/director/agent/cameraMoveBuilder'
+import type { LegacySceneTemplate, ScenePropPlacement } from '../nodes/director/migration/legacySceneBuilders'
+import type { CameraSpeed } from '../nodes/director/agent/cameraMoveVocab'
 import { useWorkbenchStore } from '../../workbenchStore'
+import { assertTurnCanWrite } from '../../ai/agentTurnLifecycle'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { canvasWriteSemanticInputSchema } from '../../../../electron/shared/agentCapabilities/canvasWrite'
 import { registerCanvasToolClientId, resolveCanvasToolNodeId } from './clientIdRegistry'
-import { tryApplyCapabilityToolCall } from './capabilityRecipeToolHandlers'
-import { tryAttachExternalImage } from './externalImageToolHandler'
-import { routeCinematicDirectorToolCall } from './cinematicDirectorToolHandlers'
+import { previewStoryboardPatchShots } from './storyboardPatchShots'
+import { deliverAgentArtifactToAsset, isTextDeliverableFileType } from './deliverAgentArtifact'
+import i18n from '../../../i18n'
 export { resetClientIdRegistry, resolveCanvasToolNodeId } from './clientIdRegistry'
 
 // 批量创建节点的布局由渲染层 derive，而不是信任 LLM 发来的像素坐标。
 // 实现住在 trajectoryLayout（分层 + 避让 + 网格回退，步距由节点尺寸推导）。
 
+/**
+ * Single source of truth for turning an agent canvas tool call into a real
+ * mutation against the renderer `generationCanvasTools` store. Returns the
+ * structured result for the LLM; **throws** on failure / unknown tool (callers
+ * map the throw to `{ ok: false, message }`).
+ *
+ * Used by BOTH the auto-execute path (`generationCanvasAgentClient`) and the
+ * user-confirmed path (resident Agent approval) — there is no parallel
+ * implementation anymore (P1). Tool execution does not depend on any panel
+ * being mounted: the store + tools are global.
+ */
 /**
  * clientId(LLM 在 create_canvas_nodes 里自取的临时号,如 "n1")→ 真实节点 id 注册表。
  * 映射除了回给 LLM,渲染层必须自己留一份:后续 connect/set_prompt/delete 里 LLM
@@ -66,13 +77,14 @@ function normalizeEdgeMode(raw: unknown): GenerationCanvasEdgeMode | undefined {
 /** create 携带边 / connect_canvas_edges 共用的边参数归一（clientId→真实 id + mode 白名单）。 */
 function normalizePlannedEdges(
   rawEdges: unknown[],
-): Array<{ source: string; target: string; mode?: GenerationCanvasEdgeMode }> {
+): Array<{ source: string; target: string; mode?: GenerationCanvasEdgeMode; order?: number }> {
   return rawEdges
     .map((raw) => (raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}))
     .map((edge) => ({
       source: resolveNodeId(String(edge.sourceClientId || edge.source || '').trim()),
       target: resolveNodeId(String(edge.targetClientId || edge.target || '').trim()),
       ...(normalizeEdgeMode(edge.mode) ? { mode: normalizeEdgeMode(edge.mode) } : {}),
+      ...(typeof edge.order === 'number' && Number.isFinite(edge.order) ? { order: edge.order } : {}),
     }))
     .filter((edge) => edge.source && edge.target)
 }
@@ -95,7 +107,7 @@ function appendDirectiveToNodePrompt(
   metaFlagKey: string,
   inCtx: <T>(fn: () => T) => T,
 ): { found: boolean; applied: boolean; alreadyApplied: boolean } {
-  const existing = generationCanvasTools.read_canvas().nodes.find((node) => node.id === nodeId)
+  const existing = readGenerationCanvasSnapshot().nodes.find((node) => node.id === nodeId)
   if (!existing) return { found: false, applied: false, alreadyApplied: false }
   const meta = (existing.meta ?? {}) as Record<string, unknown>
   if (meta[metaFlagKey] === directive) {
@@ -116,7 +128,7 @@ const strValue = (value: unknown): string | undefined =>
 
 /** 灰模布景字段（sceneTemplate + props）容错提取——站位/运镜两工具共用（P4）。 */
 function parseSceneBackdrop(record: Record<string, unknown>): {
-  sceneTemplate?: Scene3DSceneTemplate
+  sceneTemplate?: LegacySceneTemplate
   props?: ScenePropPlacement[]
 } {
   const rawProps = Array.isArray(record.props) ? record.props : []
@@ -142,7 +154,7 @@ function parseSceneBackdrop(record: Record<string, unknown>): {
       ]
     })
   return {
-    sceneTemplate: strValue(record.sceneTemplate) as Scene3DSceneTemplate | undefined,
+    sceneTemplate: strValue(record.sceneTemplate) as LegacySceneTemplate | undefined,
     props: props.length > 0 ? props : undefined,
   }
 }
@@ -192,7 +204,7 @@ export function parseCameraMoveSpec(record: Record<string, unknown>): {
   shot?: CameraMoveSpec['shot']
   subjectPose?: string
   customMove?: string
-  sceneTemplate?: Scene3DSceneTemplate
+  sceneTemplate?: LegacySceneTemplate
   props?: ScenePropPlacement[]
 } {
   const str = strValue
@@ -215,134 +227,162 @@ export async function applyCanvasToolCall(
   toolName: string,
   args: unknown,
   gesture?: CanvasGestureContext,
+  canWrite?: () => boolean,
+  documentId?: string,
+  storyboardId?: string,
+  assertTargetCurrent?: () => Promise<void>,
 ): Promise<unknown> {
+  const assertWritable = () => {
+    if (canWrite) assertTurnCanWrite(canWrite)
+  }
+  assertWritable()
+  // Capture before any model lookup/dynamic import awaits. IO never retargets
+  // itself to whatever project happens to be active when the await completes.
+  const artifactBinding = captureCurrentProjectCanvasReadSurfaceBinding()?.binding
   const record = args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+  // MCP's public entry is canonical; the semantic operation lives in args.
+  // Do not add the retired bare `patch_shots` name back to the public alias
+  // surface just to make this renderer branch reachable.
+  const operation = toolName === 'nomi_canvas_plan' || toolName === 'nomi_canvas_edit'
+    ? typeof record.operation === 'string' ? record.operation : toolName
+    : toolName
   // S6-2:提议事务把手势上下文传进来,store 变更段(纯同步)包在上下文里——途经 action
   // 发出的画布事件统一携带 source:'agent'+txnId/proposalId。只包同步段,await 间隙不持有
   // (异步持有会让并行的用户手势串台,见 canvasGestureContext 纪律)。
-  const inCtx = <T>(fn: () => T): T => (gesture ? withCanvasGestureContext(gesture, fn) : fn())
-
-  const cinematicResult = await routeCinematicDirectorToolCall(
-    toolName, args, (name, delegatedArgs) => applyCanvasToolCall(name, delegatedArgs, gesture),
-  )
-  if (cinematicResult.handled) return cinematicResult.value
-
-  if (toolName === 'read_canvas_state') {
-    // T1 token 优化:回包用紧凑行格式(与 system prompt 的画布段同源),
-    // 不再把全字段快照 JSON 回灌进对话历史(那是每请求 2-3k token 的洞)。
-    const snapshot = generationCanvasTools.read_canvas()
-    const selectedIds = new Set(snapshot.selectedNodeIds ?? [])
-    const selected = snapshot.nodes.filter((node) => selectedIds.has(node.id))
-    return formatCanvasForAgent(snapshot, selected)
+  const inCtx = <T>(fn: () => T): T => {
+    assertWritable()
+    return gesture ? withCanvasGestureContext(gesture, fn) : fn()
   }
 
-  const capabilityResult = await tryApplyCapabilityToolCall({ toolName, record, gesture, mutate: inCtx })
-  if (capabilityResult.handled) return capabilityResult.value
-
-  if (toolName === 'propose_storyboard_plan') {
-    // 规划免费可改:planner 第一手产出结构化方案对象,落创作 store 给用户审/改——不碰画布、零网络、零扣费。
-    // 用户确认后才由 storyboardPlanToCreateNodesArgs 转成 create_canvas_nodes 落画布(S4)。
-    // 校验失败 throw → 调用方映射成 tool error,回喂 LLM 自我修正(与 gate deny 同语义)。
-    const plan = parseStoryboardPlan(record)
+  if (toolName === 'nomi_canvas_plan' && operation === 'patch_shots') {
     const store = useWorkbenchStore.getState()
-    store.setStoryboardPlan(plan)
-    store.setStoryboardEditorOpen(true) // 拆完自动打开编辑器(沿用「立刻看到方案」);卡片同时进对话流。
-    store.setWorkspaceMode('creation')
-    return `已生成分镜方案「${plan.title || '未命名'}」：${plan.anchors.length} 个锚 · ${plan.shots.length} 个镜头，已放到创作区，待你审阅/修改后确认落画布。`
-  }
-
-  if (toolName === 'update_storyboard_shot') {
-    const shotIndex =
-      typeof record.shotIndex === 'number' && Number.isFinite(record.shotIndex) ? Math.trunc(record.shotIndex) : 0
-    if (shotIndex < 1) throw new Error('shotIndex 必须是从 1 开始的镜号')
-    const store = useWorkbenchStore.getState()
-    const plan = store.storyboardPlan
-    if (!plan) throw new Error('storyboard_plan_not_found:当前没有可编辑的分镜方案')
-    const pos = plan.shots.findIndex((shot) => shot.index === shotIndex)
-    if (pos < 0) throw new Error(`storyboard_shot_not_found:找不到镜头 ${shotIndex}`)
-
-    const current = plan.shots[pos]
-    const { patch, updated } = collectStoryboardShotPatch(current, record, { overwriteExisting: true })
-    if (updated.length === 0) throw new Error('update_storyboard_shot 需要至少提供一个要更新的字段')
-
-    const nextPlan = {
-      ...plan,
-      shots: plan.shots.map((shot, index) => (index === pos ? { ...shot, ...patch } : shot)),
+    const targetDocumentId = documentId ?? store.activeDocumentId
+    const targetDesign = store.storyboardDesignsByDocumentId[targetDocumentId]?.find((item) => item.id === (storyboardId ?? store.activeStoryboardId))
+      ?? store.storyboardDesignsByDocumentId[targetDocumentId]?.[0]
+    if (!targetDesign?.plan) {
+      throw Object.assign(new Error('当前原稿还没有分镜方案，先生成一份分镜方案再修改。'), {
+        code: 'capability_target_stale',
+      })
     }
-    inCtx(() => {
-      store.setStoryboardPlan(nextPlan)
-      store.setStoryboardEditorOpen(true)
-      store.setWorkspaceMode('creation')
-    })
-    syncStoryboardPlanToCanvas(nextPlan, new Set([shotIndex]))
-    return { shotIndex, updated: Array.from(new Set(updated)) }
-  }
-
-  if (toolName === 'batch_update_storyboard_shots') {
-    const shotRecords = Array.isArray(record.shots) ? record.shots : []
-    if (shotRecords.length === 0) throw new Error('batch_update_storyboard_shots 需要至少提供一个镜头更新')
-    const store = useWorkbenchStore.getState()
-    const plan = store.storyboardPlan
-    if (!plan) throw new Error('storyboard_plan_not_found:当前没有可编辑的分镜方案')
-    const overwriteExisting = record.overwriteExisting === true
-    const deriveVideoPrompts = record.deriveVideoPrompts !== false
-    const patchByShotIndex = new Map<number, { patch: Partial<PlanShot>; updated: string[] }>()
-    for (const raw of shotRecords) {
-      const item = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-      const shotIndex =
-        typeof item.shotIndex === 'number' && Number.isFinite(item.shotIndex) ? Math.trunc(item.shotIndex) : 0
-      if (shotIndex < 1) throw new Error('shotIndex 必须是从 1 开始的镜号')
-      const current = plan.shots.find((shot) => shot.index === shotIndex)
-      if (!current) throw new Error(`storyboard_shot_not_found:找不到镜头 ${shotIndex}`)
-      const result = collectStoryboardShotPatch(current, item, { overwriteExisting })
-      if (result.updated.length > 0) patchByShotIndex.set(shotIndex, result)
+    const parsed = canvasWriteSemanticInputSchema.safeParse(record)
+    if (!parsed.success || parsed.data.operation !== 'patch_shots') {
+      throw Object.assign(new Error('分镜修改参数无效。'), { code: 'capability_input_invalid' })
     }
-    if (patchByShotIndex.size === 0 && !deriveVideoPrompts) {
-      throw new Error('batch_update_storyboard_shots 没有可更新字段')
+    const preview = previewStoryboardPatchShots(targetDesign.plan, parsed.data)
+    const targetStoryboardId = storyboardId
+      ?? store.activeStoryboardId
+      ?? store.storyboardDesignsByDocumentId[targetDocumentId]?.[0]?.id
+    const updatedDesign = inCtx(() => store.setStoryboardPlan(
+      preview.nextPlan,
+      targetDocumentId,
+      targetStoryboardId,
+      true,
+      false,
+    ))
+    if (!updatedDesign) {
+      throw Object.assign(new Error('目标分镜方案已不存在，未应用修改。'), { code: 'capability_target_stale' })
     }
-    let nextPlan: StoryboardPlan = {
-      ...plan,
-      shots: plan.shots.map((shot) => {
-        const entry = patchByShotIndex.get(shot.index)
-        return entry ? { ...shot, ...entry.patch } : shot
-      }),
-    }
-    const changedShotIndices = new Set(patchByShotIndex.keys())
-    if (deriveVideoPrompts) {
-      const requestedShotIndices = new Set(
-        shotRecords
-          .map((raw) => (raw && typeof raw === 'object' ? (raw as Record<string, unknown>).shotIndex : undefined))
-          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-          .map((value) => Math.trunc(value)),
-      )
-      nextPlan = {
-        ...nextPlan,
-        shots: nextPlan.shots.map((shot) => {
-          if (!requestedShotIndices.has(shot.index)) return shot
-          changedShotIndices.add(shot.index)
-          return applyDerivedStoryboardVideoPrompt(shot)
-        }),
-      }
-    }
-    store.setStoryboardPlan(nextPlan)
-    syncStoryboardPlanToCanvas(nextPlan, changedShotIndices)
     return {
-      updatedShotCount: changedShotIndices.size,
-      updatedShotIndices: Array.from(changedShotIndices).sort((a, b) => a - b),
-      overwriteExisting,
-      deriveVideoPrompts,
-    }
+      status: 'applied',
+      documentId: targetDocumentId,
+      storyboardDesignId: updatedDesign.id,
+      changedShotIndexes: preview.changedShotIndexes,
+      changedFields: preview.changedFields,
+      anchorIssues: preview.anchorIssues,
+      message: `已修改第 ${preview.changedShotIndexes.join('、')} 镜：${preview.changedFields.join('、')}。${preview.anchorIssues.map(issue => issue.correction).join('\n')}`,
+    } as StoryboardPlanApplicationResult & { changedShotIndexes: number[]; changedFields: string[] }
   }
 
-  if (toolName === 'create_canvas_nodes') {
-    const incoming = Array.isArray(record.nodes) ? record.nodes : []
+  if (operation === 'propose_storyboard_plan') {
+    // 规划写入唯一 owner 并同步表节点投影；不生成媒体。间接画布写也继承本提议的上下文。
+    // 校验失败 throw → 调用方映射成 tool error,回喂 LLM 自我修正(与 gate deny 同语义)。
+    const before = useWorkbenchStore.getState()
+    const targetDocumentId = documentId ?? before.activeDocumentId
+    const sourceDocument = before.workbenchDocuments.find(document => document.id === targetDocumentId)
+    const sourceDesign = storyboardId ? before.storyboardDesignsByDocumentId[targetDocumentId]?.find(design => design.id === storyboardId) : undefined
+    const canvasGeneration = getUndoJournalGeneration()
+    // The command discriminator belongs to this boundary, not author content.
+    const { operation: _operation, ...authorPlan } = record
+    const parsedPlan = parseStoryboardPlan(authorPlan)
+    const plan = hasRealCharacterReferences(parsedPlan)
+      ? normalizeStoryboardAnchorDefaults(parsedPlan, await listAvailableModelsForAgent(), (await getVendorPreference()).orderedVendorKeys)
+      : parsedPlan
+    const store = useWorkbenchStore.getState()
+    const currentDocument = store.workbenchDocuments.find(document => document.id === targetDocumentId)
+    const currentDesign = storyboardId ? store.storyboardDesignsByDocumentId[targetDocumentId]?.find(design => design.id === storyboardId) : undefined
+    if (getUndoJournalGeneration() !== canvasGeneration
+      || (currentDocument && currentDocument !== sourceDocument)
+      || (currentDesign && currentDesign !== sourceDesign)) {
+      throw new SurfacePortWireError('capability_target_stale')
+    }
+    if (!store.workbenchDocuments.some((document) => document.id === targetDocumentId)) {
+      return {
+        status: 'obsolete',
+        documentId: targetDocumentId,
+        ...(storyboardId ? { storyboardDesignId: storyboardId } : {}),
+        message: '目标原稿已不存在，未应用迟到的规划结果。',
+      } satisfies StoryboardPlanApplicationResult
+    }
+    const design = inCtx(() => store.setStoryboardPlan(plan, targetDocumentId, storyboardId, true, storyboardId ? false : 'agent'))
+    if (!design) {
+      return {
+        status: 'obsolete',
+        documentId: targetDocumentId,
+        ...(storyboardId ? { storyboardDesignId: storyboardId } : {}),
+        message: '目标分镜已不存在，未应用迟到的规划结果。',
+      } satisfies StoryboardPlanApplicationResult
+    }
+    return {
+      status: 'applied',
+      documentId: targetDocumentId,
+      storyboardDesignId: design.id,
+      anchorIssues: validateAnchorModelFit(plan),
+      message: `已生成分镜方案「${plan.title || '未命名'}」：${plan.anchors.length} 个锚 · ${plan.shots.length} 个镜头，已存进创作页左栏原稿下的方案列表，**没有替用户打开**——请在回话里告诉用户到那里点开审阅/修改，之后在行内或底部批量生成。${validateAnchorModelFit(plan).map(issue => issue.correction).join('\n')}`,
+    } satisfies StoryboardPlanApplicationResult
+  }
+
+  if (operation === 'create_canvas_nodes') {
+    const requested = Array.isArray(record.nodes) ? record.nodes : []
+    // Finish all asynchronous reads before checking stamps. Lookup and creation
+    // must share one synchronous segment so concurrent retries see each other.
     // 任一节点带 modelKey 才加载可用模型清单（校验+补全 agent 选的模型/参数，否则零 IPC）。
-    const needsModels = incoming.some(
+    const needsModels = requested.some(
       (raw) => raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).modelKey === 'string',
     )
-    const entryByKey = new Map<string, AgentModelEntry>(
-      needsModels ? (await listAvailableModelsForAgent()).map((entry) => [entry.modelKey, entry]) : [],
-    )
+    // 裸 modelKey（没带 vendor）落哪家：与模型框回显同一把尺，要用户排的供应商顺序（buildModelEntryIndex 注释）。
+    const entryByKey = needsModels
+      ? buildModelEntryIndex(await listAvailableModelsForAgent(), (await getVendorPreference()).orderedVendorKeys)
+      : buildModelEntryIndex([])
+    if (assertTargetCurrent) await assertTargetCurrent()
+    assertWritable()
+    // 幂等（判据的唯一 owner 在这条写边界，不在调用方）：带物化章的节点，章已经在画布上就**不再建
+    // 第二个**，直接把已有节点 id 回给调用方并登记进 clientId 注册表（后续连边/set_prompt 照样指得到）。
+    // 此前 capabilityApplyHandler 与 multiShotCanvasLanding 各自手写了一份同样的去重（P1 违规）：
+    // 多一个落地入口就多一份实现，而任何一份漏了，用户看到的就是 agent 重试堆出的重复节点。
+    const stampIndex = indexMaterializedNodes(readGenerationCanvasSnapshot().nodes)
+    const reusedByClientId: Record<string, string> = {}
+    const requestedAnchorCount = typeof record.anchorCount === 'number' ? record.anchorCount : null
+    let retainedAnchorCount = 0
+    const incoming = requested.filter((raw, index) => {
+      const stamp = readNodeInputStamp(raw)
+      const existingNodeId = stamp ? stampIndex.get(materializationKey(stamp)) : undefined
+      if (stamp && existingNodeId) {
+        reusedByClientId[stamp.clientId] = existingNodeId
+        registerCanvasToolClientId(stamp.clientId, existingNodeId)
+        const clientId = typeof (raw as Record<string, unknown>)?.clientId === 'string'
+          ? ((raw as Record<string, unknown>).clientId as string)
+          : ''
+        if (clientId && clientId !== stamp.clientId) {
+          reusedByClientId[clientId] = existingNodeId
+          registerCanvasToolClientId(clientId, existingNodeId)
+        }
+        return false
+      }
+      // anchorCount 说的是「入参前 N 个是锚」。丢掉已存在的节点后，锚数必须跟着重算，
+      // 否则布局会把镜头当成锚排在参考行里。
+      if (requestedAnchorCount !== null && index < requestedAnchorCount) retainedAnchorCount += 1
+      return true
+    })
     const total = incoming.length
     // T4 轨迹分层布局：层由 kind 推导（参考/关键帧/视频三列），原点避让画布已有节点
     // 包围盒（修审计 bug D）；单层/不可推导退网格（同样避让）。忽略 LLM 像素坐标。
@@ -352,12 +392,6 @@ export async function applyCanvasToolCall(
     })
     // 分镜方案落画布（storyboardPlanToCreateNodesArgs 给 anchorCount）→ 参考行在上 + 镜头折行网格；
     // 其余（agent 直接建卡）→ 原轨迹分层布局。两者都从已有节点包围盒下方起、不压旧内容。
-    const existingCanvasNodes = generationCanvasTools.read_canvas().nodes
-    const storyboardAnchorCount = typeof record.anchorCount === 'number' ? record.anchorCount : null
-    const layout =
-      storyboardAnchorCount !== null
-        ? layoutStoryboardNodes(plannedKinds, storyboardAnchorCount, existingCanvasNodes)
-        : layoutPlannedNodes(plannedKinds, existingCanvasNodes)
     // 整批强制分类（分镜方案落画布用，用户拍板 A）：角色/场景/镜头落进同一分类，参考边
     // 同屏可见可连。仅程序化调用方（storyboardPlanToCreateNodesArgs）会设；agent 直接建卡
     // 不带 → 走 kind 默认。只认白名单分类，挡住脏值把节点丢进不存在的分类而消失。
@@ -365,6 +399,54 @@ export async function applyCanvasToolCall(
       typeof record.groupCategoryId === 'string' && (CATEGORY_IDS as readonly string[]).includes(record.groupCategoryId)
         ? (record.groupCategoryId as BuiltinCanvasCategoryId)
         : null
+    const existingCanvasNodes = readGenerationCanvasSnapshot().nodes
+    const storyboardAnchorCount = requestedAnchorCount === null ? null : retainedAnchorCount
+    const plannedLayout =
+      storyboardAnchorCount !== null
+        ? layoutStoryboardNodes(plannedKinds, storyboardAnchorCount, existingCanvasNodes)
+        : layoutPlannedNodes(plannedKinds, existingCanvasNodes)
+    // 整批尽量搬进用户此刻看得见的地方（块内相对位置不动）：以前整批落在「全部已有内容下方」、再请求
+    // 适应全图把画布挪过去——那一挪就是「闪一下、找不到」（2026-09-25）。装不下或会压到已有节点就留在
+    // 原处，由画布边缘提示指路。只在整批落同一个分类时搬（跨分类的批次各分类视口不同，没有同一个「可见区」）。
+    const plannedCategories = new Set(plannedKinds.map((kind) => groupCategoryId ?? getDefaultCategoryForNodeKind(kind)))
+    const layout = plannedCategories.size === 1
+      ? (() => {
+          const categoryId = [...plannedCategories][0]
+          const sizes = plannedKinds.map((kind) => resolveNodeVisualSize({ kind } as Parameters<typeof resolveNodeVisualSize>[0]))
+          const occupied = existingCanvasNodes
+            .filter((node) => (node.categoryId || 'shots') === categoryId && node.position)
+            .map((node) => ({ ...node.position!, ...resolveNodeVisualSize(node) }))
+          return placeBlockInVisibleArea(categoryId, plannedLayout.map((point, index) => ({ ...point, ...sizes[index] })), occupied)
+        })()
+      : plannedLayout
+    // agent-artifact 交付：Agent 手写的内容必须先落盘为项目资产（nomi-local://）才能建节点——
+    // 节点不塞内联源码（meta.artifact.url 引用资产文件）。落盘是纯 IO，先全部完成再进 store 事务，
+    // 任一失败即整批中止（一个计划一次意志；不建「指向不存在文件」的半截节点）。
+    const artifactUrlByInputIndex = new Map<number, { fileType: string; url: string }>()
+    for (const [index, raw] of incoming.entries()) {
+      const node = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+      if (node.kind !== 'agent-artifact') continue
+      const artifact = node.artifact && typeof node.artifact === 'object' ? (node.artifact as Record<string, unknown>) : {}
+      const fileType = typeof artifact.fileType === 'string' ? artifact.fileType : ''
+      const content = typeof artifact.content === 'string' ? artifact.content : ''
+      const clientId = typeof node.clientId === 'string' ? node.clientId : ''
+      const title = typeof node.title === 'string' ? node.title : ''
+      const name = title || clientId || i18n.t('runtime.nodeRegistry.agent-artifact.untitled')
+      if (!isTextDeliverableFileType(fileType) || !content.trim()) {
+        throw new Error(i18n.t('runtime.nodeRegistry.agent-artifact.missingContent', { name, fileType: fileType || '—' }))
+      }
+      assertWritable()
+      if (!artifactBinding) throw Object.assign(new Error('project_identity_unavailable'), { code: 'project_identity_unavailable' })
+      const delivered = await deliverAgentArtifactToAsset({ fileType, content, title }, {
+        binding: artifactBinding,
+        assertCurrent: assertWritable,
+      })
+      assertWritable()
+      if (!delivered.ok) {
+        throw new SurfacePortWireError(delivered.failure.code, delivered.failure.reason)
+      }
+      artifactUrlByInputIndex.set(index, { fileType, url: delivered.url })
+    }
     const inputs: CreateGenerationNodeToolInput[] = incoming.map((raw, index) => {
       const node = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
       const kind = plannedKinds[index]
@@ -375,8 +457,10 @@ export async function applyCanvasToolCall(
       // 首帧图身份同机制 → node.meta.storyboardKeyframe：创建时不领号，随后共用所属视频的镜号（见下）。
       // W2 圣经：static/dynamic 特征也透传进 meta（键名走 anchorBibleKeys 单一常量，防 GUI/headless 漂移）——
       // 身份轴对照读 meta.staticFeatures、冻结门/交付可显示；passthrough schema 自动持久化，零 schema 改动。
-      const staticFeatures = typeof node.staticFeatures === 'string' && node.staticFeatures.trim() ? node.staticFeatures.trim() : ''
-      const dynamicFeatures = typeof node.dynamicFeatures === 'string' && node.dynamicFeatures.trim() ? node.dynamicFeatures.trim() : ''
+      const staticFeatures =
+        typeof node.staticFeatures === 'string' && node.staticFeatures.trim() ? node.staticFeatures.trim() : ''
+      const dynamicFeatures =
+        typeof node.dynamicFeatures === 'string' && node.dynamicFeatures.trim() ? node.dynamicFeatures.trim() : ''
       const identityMarks = {
         ...(node.storyboardGroup === true ? { storyboardGroup: true } : {}),
         ...(node.storyboardPlanSnapshot && typeof node.storyboardPlanSnapshot === 'object'
@@ -394,13 +478,10 @@ export async function applyCanvasToolCall(
         node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
           ? (node.metadata as Record<string, unknown>)
           : undefined
-      const meta = structuredMetadata || Object.keys(identityMarks).length
-        ? { ...(plannedMeta ?? {}), ...(structuredMetadata ?? {}), ...identityMarks }
-        : plannedMeta
-      const plannedCategoryId =
-        typeof node.categoryId === 'string' && (CATEGORY_IDS as readonly string[]).includes(node.categoryId)
-          ? (node.categoryId as BuiltinCanvasCategoryId)
-          : null
+      const meta =
+        structuredMetadata || Object.keys(identityMarks).length
+          ? { ...(plannedMeta ?? {}), ...(structuredMetadata ?? {}), ...identityMarks }
+          : plannedMeta
       // 单节点：尊重 agent 指定位置（增量添加可能要贴近某节点），否则同走避让布局。
       const position =
         total > 1
@@ -409,12 +490,34 @@ export async function applyCanvasToolCall(
               x: typeof positionRecord?.x === 'number' ? positionRecord.x : layout[index].x,
               y: typeof positionRecord?.y === 'number' ? positionRecord.y : layout[index].y,
             }
+      // agent-artifact：不走模型/生成 meta，meta.artifact = 落盘资产引用（内容已在上面 deliver 阶段落盘）。
+      // 标题由 agent 给（手艺产物的名字就是用户在画布上看到的）；无 prompt（不调模型）。
+      if (kind === 'agent-artifact') {
+        const clientId = typeof node.clientId === 'string' ? node.clientId : ''
+        const artifact = artifactUrlByInputIndex.get(index)
+        if (!artifact) {
+          throw new Error(i18n.t('runtime.nodeRegistry.agent-artifact.deliverFailed', {
+            name: clientId || i18n.t('runtime.nodeRegistry.agent-artifact.untitled'),
+            reason: 'no-delivered-asset',
+          }))
+        }
+        return {
+          kind,
+          categoryId: groupCategoryId ?? getDefaultCategoryForNodeKind(kind),
+          title: typeof node.title === 'string' && node.title.trim()
+            ? node.title.trim()
+            : i18n.t('runtime.nodeRegistry.agent-artifact.indexedTitle', { index: index + 1 }),
+          position,
+          meta: { artifact: { fileType: artifact.fileType, url: artifact.url } },
+        }
+      }
       return {
         kind,
         // groupCategoryId 在则整批落同一分类（分镜方案：角色/场景/镜头落在一起）；否则按 kind
         // 归类（镜头→分镜、角色→cast、场景→scene）。character/scene kind 不参与 shotIndex，
         // 故落进 shots 也不抢「镜头 N」编号（见 model/shotNumbering.ts）。
-        categoryId: groupCategoryId ?? plannedCategoryId ?? getDefaultCategoryForNodeKind(kind),
+        categoryId: groupCategoryId ?? (typeof node.categoryId === 'string' && (CATEGORY_IDS as readonly string[]).includes(node.categoryId)
+          ? node.categoryId as BuiltinCanvasCategoryId : getDefaultCategoryForNodeKind(kind)),
         title:
           typeof node.title === 'string' && node.title.trim()
             ? node.title.trim()
@@ -425,8 +528,10 @@ export async function applyCanvasToolCall(
         ...(meta ? { meta } : {}),
       }
     })
-    const created = inCtx(() => generationCanvasTools.create_nodes(inputs))
-    const clientIdToNodeId: Record<string, string> = {}
+    assertWritable()
+    const created = inputs.length > 0 ? inCtx(() => generationCanvasTools.create_nodes(inputs)) : []
+    // 复用的（本次没建、章已在画布上的）先进映射，再让本次真建的覆盖同名键。
+    const clientIdToNodeId: Record<string, string> = { ...reusedByClientId }
     incoming.forEach((raw, index) => {
       const node = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
       const clientId = typeof node.clientId === 'string' ? node.clientId : ''
@@ -445,50 +550,10 @@ export async function applyCanvasToolCall(
       connectedCount = outcome.connected
       skippedEdges = outcome.skipped
     }
-    // 图片+视频分镜：首帧图与所属视频共用镜号（同手动「转视频」桥的继承号语义，见 convertShotToVideo）。
-    // 首帧图带 meta.storyboardKeyframe 创建时不自动领号（shotNumbering 跳过），此处按计划里的
-    // first_frame 边把视频已领的编号写回 → 18 镜就是 1..18，角标与「镜头 N 首帧」标题一致。
-    const keyframeClientIds = new Set(
-      incoming
-        .filter((raw) => raw && typeof raw === 'object' && (raw as Record<string, unknown>).storyboardKeyframe === true)
-        .map((raw) => String((raw as Record<string, unknown>).clientId || '')),
-    )
-    if (keyframeClientIds.size) {
-      const canvasStore = useGenerationCanvasStore.getState()
-      const nodeById = new Map(canvasStore.nodes.map((node) => [node.id, node]))
-      for (const rawEdge of rawPlanEdges) {
-        const edge = rawEdge && typeof rawEdge === 'object' ? (rawEdge as Record<string, unknown>) : {}
-        if (edge.mode !== 'first_frame') continue
-        const sourceClientId = String(edge.sourceClientId || '')
-        if (!keyframeClientIds.has(sourceClientId)) continue
-        const keyframeId = clientIdToNodeId[sourceClientId]
-        const videoId = clientIdToNodeId[String(edge.targetClientId || '')]
-        const videoShotIndex = videoId ? nodeById.get(videoId)?.shotIndex : undefined
-        if (keyframeId && typeof videoShotIndex === 'number') {
-          canvasStore.updateNode(keyframeId, { shotIndex: videoShotIndex })
-        }
-      }
-    }
-    // 批量落节点后统一请求适应视图。AI 直接建卡、方案确认和示例引导都走这里，
-    // 避免调用方漏触发后只看到被视口裁断的一部分新节点。单节点保留用户当前视口。
-    if (created.length > 1) {
-      const workbench = useWorkbenchStore.getState()
-      const categoryCounts = new Map<string, { count: number; firstIndex: number }>()
-      created.forEach((node, index) => {
-        const categoryId = node.categoryId || 'shots'
-        const current = categoryCounts.get(categoryId)
-        categoryCounts.set(categoryId, { count: (current?.count ?? 0) + 1, firstIndex: current?.firstIndex ?? index })
-      })
-      const fitCategoryId = categoryCounts.has(workbench.activeCategoryId)
-        ? workbench.activeCategoryId
-        : [...categoryCounts.entries()].sort(
-            ([leftId, left], [rightId, right]) =>
-              right.count - left.count ||
-              Number(rightId === 'shots') - Number(leftId === 'shots') ||
-              left.firstIndex - right.firstIndex,
-          )[0]?.[0]
-      workbench.requestCanvasFit(fitCategoryId)
-    }
+    // 首帧号由共享身份投影沿 first_frame 边读取视频 owner，不复制第二份编号。
+    // 建完**不挪画布、不切分类**（2026-09-25 用户拍板「程序不再主动平移 / 缩放画布」）：以前这里批量请求
+    // 适应全图、单节点派发聚焦事件（放大到 ≥100% 再居中），和付费卡落地那次适应全图叠在一起就是「闪一下」。
+    // 落在屏外 / 别的分类的新节点由画布边缘提示（CanvasArrivalHint）指路，点它才过去。
     return {
       createdNodeIds: created.map((node) => node.id),
       clientIdToNodeId,
@@ -497,7 +562,7 @@ export async function applyCanvasToolCall(
     }
   }
 
-  if (toolName === 'create_staging_reference') {
+  if (operation === 'create_staging_reference') {
     const rawShot = typeof record.shotClientId === 'string' ? record.shotClientId.trim() : ''
     const targetNodeId = rawShot ? resolveNodeId(rawShot) : undefined
     const rawChars = Array.isArray(record.characters) ? record.characters : []
@@ -521,30 +586,11 @@ export async function applyCanvasToolCall(
       }
     }
 
-    // 站位参考：词汇 spec → 3D 场景 → 建 scene3d 节点(带 stagingAutoCapture)。
-    // 节点挂载时离屏出图 + 连 composition_ref 到目标镜头（Scene3DEditor 内完成）。
+    // 站位参考：词汇 spec → 导演台工程 → 建 director 节点(带 stagingAutoCapture)。
+    // 常驻 StagingCaptureHost 扫到标志就离屏出图 + 连 composition_ref 到目标镜头（director/agent）。
     const spec = parseStagingSpec(record)
-    const { buildStagingSceneAudited } = await import('../nodes/scene3d/stagingBuilder')
-    // 运行时自检(F3,零额度几何守卫):修正非法/近似姿势 id(治静默落站立)+ 角色过近自动拉开间距。
-    const { state, issues: stagingIssues } = buildStagingSceneAudited(spec)
-    const existing = generationCanvasTools.read_canvas().nodes
-    const position = layoutPlannedNodes(['image'], existing)[0]
-    const created = inCtx(() =>
-      generationCanvasTools.create_nodes([
-        {
-          kind: 'scene3d',
-          categoryId: getDefaultCategoryForNodeKind('scene3d'),
-          title: '站位参考',
-          prompt: '',
-          position,
-          meta: {
-            scene3dState: state,
-            stagingAutoCapture: targetNodeId ? { targetNodeId } : {},
-          },
-        },
-      ]),
-    )
-    const stagingNodeId = created[0]?.id ?? null
+    const { createStagingReferenceNode } = await import('../nodes/director/agent/createStagingReferenceNode')
+    const { stagingNodeId, issues: stagingIssues } = createStagingReferenceNode({ spec, targetNodeId, inCtx })
     const cam = spec.camera ?? {}
     return {
       stagingNodeId,
@@ -553,7 +599,7 @@ export async function applyCanvasToolCall(
     }
   }
 
-  if (toolName === 'create_camera_move') {
+  if (operation === 'create_camera_move') {
     const parsed = parseCameraMoveSpec(record)
     const rawShot = typeof record.shotClientId === 'string' ? record.shotClientId.trim() : ''
     const targetNodeId = rawShot ? resolveNodeId(rawShot) : undefined
@@ -586,7 +632,7 @@ export async function applyCanvasToolCall(
       }
     }
 
-    // 运镜参考:词汇 spec → 含相机轨迹的 3D 场景 → 建 scene3d 节点(带 cameraMoveAutoCapture)。
+    // 运镜参考:词汇 spec → 含相机轨迹的 3D 场景 → 迁成导演台工程 → 建 director 节点(带 cameraMoveAutoCapture)。
     // 节点挂载时常驻 Host(CameraMoveCaptureHost)离屏沿轨迹采帧拼 mp4 + 喂目标镜头视频参考(S3)。
     // 这里只建节点 + 打标志,不渲(S2 Host 异步出片),与 staging 执行结构对称。
     // 建节点 + 标志的实现抽进 createCameraMoveReferenceNode(单一真相源)——手动运镜控件(B1)也调它,
@@ -600,8 +646,8 @@ export async function applyCanvasToolCall(
       props: parsed.props,
     }
     const [{ createCameraMoveReferenceNode }, { CAMERA_SPEED_DURATION, CAMERA_MOVE_LABEL }] = await Promise.all([
-      import('../nodes/scene3d/cameraMoveReferenceNode'),
-      import('../nodes/scene3d/cameraMoveVocab'),
+      import('../nodes/director/agent/createCameraMoveReferenceNode'),
+      import('../nodes/director/agent/cameraMoveVocab'),
     ])
     const speed: CameraSpeed = spec.speed ?? 'medium'
     const { cameraMoveNodeId } = createCameraMoveReferenceNode({ spec, targetNodeId, inCtx })
@@ -612,7 +658,7 @@ export async function applyCanvasToolCall(
     }
   }
 
-  if (toolName === 'connect_canvas_edges') {
+  if (operation === 'connect_canvas_edges') {
     const rawEdges = Array.isArray(record.edges) ? record.edges : []
     const edges = normalizePlannedEdges(rawEdges)
     const { connected, skipped } = inCtx(() => generationCanvasTools.connect_nodes(edges))
@@ -620,7 +666,7 @@ export async function applyCanvasToolCall(
     return { connectedCount: connected, ...(skipped.length > 0 ? { skippedEdges: skipped } : {}) }
   }
 
-  if (toolName === 'set_node_prompt') {
+  if (operation === 'set_node_prompt') {
     const nodeId = resolveNodeId(String(record.nodeId || '').trim())
     const prompt = typeof record.prompt === 'string' ? record.prompt : ''
     const node = inCtx(() => generationCanvasTools.update_node_prompt(nodeId, prompt))
@@ -628,7 +674,7 @@ export async function applyCanvasToolCall(
     return { nodeId: node.id }
   }
 
-  if (toolName === 'delete_canvas_nodes') {
+  if (operation === 'delete_canvas_nodes') {
     const nodeIds = Array.isArray(record.nodeIds)
       ? record.nodeIds.map((id) => resolveNodeId(String(id || '').trim())).filter(Boolean)
       : []
@@ -636,66 +682,17 @@ export async function applyCanvasToolCall(
     return { deletedNodeIds: deleted }
   }
 
-  const externalImageResult = await tryAttachExternalImage({ toolName, record, mutate: inCtx })
-  if (externalImageResult.handled) return externalImageResult.value
-
-  if (toolName === 'run_generation_batch') {
-    // S6b 受理语义:本分支只在用户批准后到达(确认前零网络调用)。受理 = 按依赖波次
-    // 规划(显示的≡执行的,S2b 纯函数)并启动;立即返回受理回执——生成进度走 run 域
-    // 事件给用户看,不阻塞 LLM 回合。approved nodeIds ≡ requested:只跑请求里解析
-    // 出来的真实节点,一个不多。
-    const requested = Array.isArray(record.nodeIds)
-      ? record.nodeIds.map((id) => resolveNodeId(String(id || '').trim())).filter(Boolean)
-      : []
-    const existing = new Set(generationCanvasTools.read_canvas().nodes.map((node) => node.id))
-    const nodeIds = requested.filter((id) => existing.has(id))
-    if (!nodeIds.length) throw new Error('node_not_found:请求生成的节点都不存在')
-    const state = generationCanvasTools.read_canvas()
-    const expandedNodeIds = expandNodeIdsWithUngeneratedReferenceAncestors(nodeIds, {
-      nodes: state.nodes,
-      edges: state.edges,
-    }).filter((id) => existing.has(id))
-    const plan = buildDependencyWaves(expandedNodeIds, { nodes: state.nodes, edges: state.edges })
-    const requestedAccepted = plan.waves.flat()
-    if (!requestedAccepted.length) {
-      const reasons = plan.blocked.map((item) => item.detail).join(';')
-      throw new Error(`批量被拦:${reasons || '没有可执行节点'}`)
-    }
-    const forked = forkRegenerationNodesInPlan(plan, requestedAccepted)
-    if (!forked) throw new Error('无法为已有结果创建新版本节点')
-    const accepted = forked.plan.waves.flat()
-    // 付费守卫：本分支只在用户批准 pending 卡后到达（人手势在上游）→ 铸令牌绑受理节点，
-    // 随 plan 下到主进程 runTask 核验。删了 defaultExecuteToolCall 的自动放行旁路后此处不会被 AI 静默触发。
-    // 托管同意：这条是**外部 agent 受理**路径，回合不阻塞、也没人在等着点第二张卡。
-    // 交给同一个策略真相源逐节点判定（resolveAutonomousUploadConsent）：策略允许 / KIE 已配
-    // / 本地 ComfyUI → 放行；还需要问一次 → 拒发并把人话原因走 toast 告诉用户，不偷偷上传。
-    void mintSpendGrant(accepted, 1, batchSpendGrantTtlMs(accepted.length))
-      .then(async (grantId) => {
-        const decisions = await Promise.all(accepted.map((id) => resolveAutonomousUploadConsent(id)))
-        const consent = decisions.includes('allow') ? 'allow' as const : 'not-needed' as const
-        await runPlanWithToasts(forked.plan, { grantId, assetUploadConsent: consent })
-      })
-      .catch((error: unknown) => {
-        // 进度/结果本来全走 toast+run 域事件；托管被拒是唯一需要在此说人话的失败。
-        const message = error instanceof Error && error.message ? error.message : ''
-        if (message) toast(message, 'error')
-      })
-    return {
-      accepted: true,
-      acceptedNodeIds: accepted,
-      versionedFrom: Object.fromEntries(forked.sourceToVariant),
-      waves: forked.plan.waves.length,
-      blocked: forked.plan.blocked.map((item) => ({ nodeId: item.nodeId, detail: item.detail })),
-    }
-  }
-
-  if (toolName === 'arrange_storyboard_to_timeline') {
+  if (operation === 'arrange_storyboard_to_timeline') {
     // 排序/选片全在纯函数(planStoryboardTimeline)里——LLM 只触发,顺序按 shotIndex 镜序确定。
     // 不走 inCtx 手势上下文(那是画布事件域);时间轴变更是 workbenchStore 的事。
     const rawIds = Array.isArray(record.nodeIds)
       ? record.nodeIds.map((id) => resolveNodeId(String(id || '').trim())).filter(Boolean)
       : undefined
-    const result = await arrangeStoryboardToTimeline(rawIds && rawIds.length ? { nodeIds: rawIds } : {})
+    const result = await arrangeStoryboardToTimeline({
+      ...(rawIds && rawIds.length ? { nodeIds: rawIds } : {}),
+      assertCanApply: assertWritable,
+    })
+    if (result.scopeError) throw new Error(result.scopeError)
     if (!result.ok && result.total === 0) {
       throw new Error('没有可排片的镜头:画布上还没有生成好的视频或可占位的关键帧')
     }
@@ -708,7 +705,7 @@ export async function applyCanvasToolCall(
     }
   }
 
-  if (toolName === 'tidy_canvas') {
+  if (operation === 'tidy_canvas') {
     // 助手「整理画布」：复用 store 的 tidyCategory（与右下角整理按钮同一实现，P1 无并行版）。
     // categoryId 缺省 = 用户当前正看的子画布（activeCategoryId 在 workbenchStore）；aspect 用视口比例兜底。
     const categoryId =
@@ -725,4 +722,14 @@ export async function applyCanvasToolCall(
   }
 
   throw new Error(`unknown tool ${toolName}`)
+}
+export const STORYBOARD_PLAN_APPLICATION_STATUSES = ['applied', 'obsolete'] as const
+export type StoryboardPlanApplicationStatus = typeof STORYBOARD_PLAN_APPLICATION_STATUSES[number]
+
+export type StoryboardPlanApplicationResult = {
+  anchorIssues?: ReturnType<typeof validateAnchorModelFit>
+  status: StoryboardPlanApplicationStatus
+  documentId: string
+  storyboardDesignId?: string
+  message: string
 }

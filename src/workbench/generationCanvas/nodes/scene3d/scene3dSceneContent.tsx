@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { Grid } from '@react-three/drei'
 import { crowdCount, mannequinRoleLabel } from './scene3dMath'

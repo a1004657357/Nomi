@@ -8,6 +8,10 @@
 // 住在 electron/ 而非 src/：electron tsconfig 是 rootDir:"." 反向 import 不了 src；渲染层则本就 import
 // 得到 electron（bridge.ts 已在做），且本模块依赖链纯净（paramTranslate → jsonUtils，后者零 import）。
 import { bodyReferencedParamKeys } from "./paramTranslate";
+// 渲染层的变体轴收窄也要「这条 create op 引用了哪些参数键」（body ∪ 进程 args）。它的单一实现在
+// paramTranslate；从本模块转出一次，是因为 src→electron 的越界是棘轮门岗，渲染层已放行的入口只有
+// 本文件这一条（archetypeMeta 那条基线）。让渲染层再直连 paramTranslate 会被判成新增违规。
+export { wireReferencedParamKeys } from "./paramTranslate";
 
 /** 一个参考槽在某条渠道上的真实承载力。 */
 export type SlotReach =
@@ -65,7 +69,7 @@ export function modeSlotReach(slots: ReachSlot[], createBody: unknown, combineKe
   // 会把好端端的原生通道判死（reachNoOverNarrow.test 就是这么抓住我的）。认合并键即可。
   if (combineKey && referenced.has(combineKey.trim())) return slots.map(() => "full");
 
-  const reach: SlotReach[] = slots.map((slot) => {
+  const reach: SlotReach[] = slots.map((slot): SlotReach => {
     const key = inputKeyOf(slot);
     return key && referenced.has(key) ? "full" : "none";
   });
@@ -80,6 +84,16 @@ export function modeSlotReach(slots: ReachSlot[], createBody: unknown, combineKe
         break; // 名额用完——后面的槽仍是 none，这正是「首尾帧只过得去首帧」的真相。
       }
     }
+  }
+  // A provider may expose a multi-image array while its shared archetype calls
+  // the first item a first-frame slot (for example fal Gemini Omni's
+  // reference-to-video route). The canonical projection preserves the first
+  // frame as array[0], so count that channel as single rather than reporting a
+  // completely unusable mode. The second optional frame remains conservative.
+  const hasNoReach = reach.some((item) => item !== "none") === false;
+  if (hasNoReach && referenced.has("image_urls")) {
+    const idx = slots.findIndex((slot) => slot.kind === "first_frame" || slot.kind === "image_ref");
+    if (idx >= 0) reach[idx] = "single";
   }
   return reach;
 }

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { inspectGlb } from "../assets/glbValidation";
+import { captureAssetWriteContext, type AssetWriteContext } from "../assets/assetWriteContext";
 import { projectDirById } from "../projects/repository";
 import { writeAsset } from "../runtime";
 import { resolveBlenderExecutable } from "./blenderRunner";
@@ -91,11 +92,13 @@ type BridgeOutput = {
 
 type ActiveJob = {
   child: ChildProcess;
+  closed?: boolean;
   terminationReason?: "cancelled" | "timeout";
   forceKillTimer?: NodeJS.Timeout;
 };
 
 const activeJobs = new Map<string, ActiveJob>();
+const pendingJobs = new Map<string, { cancelled: boolean }>();
 const OUTPUT_LIMIT = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -319,7 +322,7 @@ export function resolveVibingDirectorBlendPath(projectDir: string, directorNodeI
   return candidate;
 }
 
-function persistOutputs(request: VibingDirectorBlenderRequest, projectDir: string, outputDir: string, output: BridgeOutput): VibingDirectorBlenderResult {
+async function persistOutputs(request: VibingDirectorBlenderRequest, projectDir: string, outputDir: string, output: BridgeOutput, context: AssetWriteContext, assertRunning: () => void): Promise<VibingDirectorBlenderResult> {
   const meta = {
     kind: "blender",
     source: "vibing-director",
@@ -327,17 +330,22 @@ function persistOutputs(request: VibingDirectorBlenderRequest, projectDir: strin
     blenderJobId: request.jobId,
     blenderDirector: true,
   };
-  const preview = asAssetRef(writeAsset(request.projectId, outputBytes(outputDir, output.artifacts.preview, "preview"), "vibing-director-preview.png", "image/png", meta));
-  const blend = asAssetRef(writeAsset(request.projectId, outputBytes(outputDir, output.artifacts.blend, "blend"), "vibing-director-scene.blend", "application/x-blender", meta));
+  const preview = asAssetRef(await writeAsset(request.projectId, outputBytes(outputDir, output.artifacts.preview, "preview"), "vibing-director-preview.png", "image/png", meta, "image", context));
+  assertRunning();
+  const blend = asAssetRef(await writeAsset(request.projectId, outputBytes(outputDir, output.artifacts.blend, "blend"), "vibing-director-scene.blend", "application/x-blender", meta, null, context));
+  assertRunning();
   const modelBytes = outputBytes(outputDir, output.artifacts.model, "model");
   const model3dValidation = inspectGlb(modelBytes);
-  const model = asAssetRef(writeAsset(
+  const model = asAssetRef(await writeAsset(
     request.projectId,
     modelBytes,
     "vibing-director-scene.glb",
     "model/gltf-binary",
     { ...meta, model3dValidation },
+    "model3d",
+    context,
   ));
+  assertRunning();
   const blendRelativePath = path.relative(projectDir, output.artifacts.blend);
   return {
     jobId: output.jobId,
@@ -356,9 +364,17 @@ export async function runVibingDirectorBlenderPlan(request: VibingDirectorBlende
   const jobId = safeSegment(request.jobId, "Blender jobId");
   const projectId = String(request.projectId || "").trim();
   if (!projectId) throw new Error("Blender Director projectId 不能为空");
-  if (activeJobs.has(jobId)) throw new Error(`Blender Director 任务 ${jobId} 已在运行`);
-  const projectDir = projectDirById(projectId);
-  if (!projectDir) throw new Error("无法找到 Blender Director 所属的本地项目目录");
+  if (activeJobs.has(jobId) || pendingJobs.has(jobId)) throw new Error(`Blender Director 任务 ${jobId} 已在运行`);
+  const pending = { cancelled: false };
+  pendingJobs.set(jobId, pending);
+  let context: AssetWriteContext;
+  try {
+    context = await captureAssetWriteContext(projectId);
+    if (pending.cancelled) throw new Error("Blender Director 预演已取消");
+  } finally {
+    pendingJobs.delete(jobId);
+  }
+  const projectDir = context.root;
   const root = directorRootPath(projectDir, request.directorNodeId);
   const outputDir = path.join(root, "exports", jobId);
   const existingBlendPath = resolveExistingBlend(projectDir, request.directorNodeId, request.existingBlendRelativePath);
@@ -419,7 +435,11 @@ export async function runVibingDirectorBlenderPlan(request: VibingDirectorBlende
         }
         finish(new Error(`Blender Director 启动失败：${error.message}`));
       });
-      child.once("close", (code, signal) => {
+      child.once("close", async (code, signal) => {
+        if (settled) return;
+        job.closed = true;
+        clearTimeout(timeout);
+        if (job.forceKillTimer) clearTimeout(job.forceKillTimer);
         if (job.terminationReason === "timeout") {
           finish(new Error(`Blender Director 预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
           return;
@@ -434,7 +454,9 @@ export async function runVibingDirectorBlenderPlan(request: VibingDirectorBlende
           return;
         }
         try {
-          finish(undefined, persistOutputs(request, projectDir, outputDir, parseVibingDirectorBridgeOutput(stdout)));
+          finish(undefined, await persistOutputs(request, projectDir, outputDir, parseVibingDirectorBridgeOutput(stdout), context, () => {
+            if (job.terminationReason === "cancelled") throw new Error("Blender Director 预演已取消");
+          }));
         } catch (error) {
           finish(error instanceof Error ? error : new Error(String(error)));
         }
@@ -446,9 +468,12 @@ export async function runVibingDirectorBlenderPlan(request: VibingDirectorBlende
 }
 
 export function cancelVibingDirectorBlenderPlan(jobId: string): boolean {
+  const pending = pendingJobs.get(String(jobId || ""));
+  if (pending) { pending.cancelled = true; return true; }
   const job = activeJobs.get(String(jobId || ""));
   if (!job) return false;
   job.terminationReason = "cancelled";
+  if (job.closed) return true;
   job.child.kill("SIGTERM");
   job.forceKillTimer = setTimeout(() => {
     if (activeJobs.has(jobId)) job.child.kill("SIGKILL");
@@ -458,13 +483,13 @@ export function cancelVibingDirectorBlenderPlan(jobId: string): boolean {
 }
 
 export function cancelAllVibingDirectorBlenderPlans(): number {
-  const jobIds = [...activeJobs.keys()];
+  const jobIds = [...pendingJobs.keys(), ...activeJobs.keys()];
   for (const jobId of jobIds) cancelVibingDirectorBlenderPlan(jobId);
   return jobIds.length;
 }
 
 export function activeVibingDirectorBlenderPlanCount(): number {
-  return activeJobs.size;
+  return pendingJobs.size + activeJobs.size;
 }
 
 export function openVibingDirectorBlend(input: {

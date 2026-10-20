@@ -1,44 +1,89 @@
 # docs 总地图 — 要找 X 去哪
 
-> 查文档前先看这张表，按「我要找什么」跳到对应目录，别全量 grep。
+> 查文档前先看这张表，按「我要找什么」跳到对应目录；索引仍有历史存量缺口，查不到时必须继续全量 grep。
 > 各目录若有自己的索引（如 plan/），表里直接给出。
+
+- [「等用户」只有一个 owner（花钱路状态机 · 门表 · 反方评审）](plan/2026-09-22-waiting-for-user-one-owner.md)
+- [全仓架构治理定稿：单一事实、单向投影、入口收敛（生命周期 · durable commit · 迁移矩阵）](plan/2026-09-26-architecture-single-owner-governance.md)
+- [架构方案质量清单与逐条审查](plan/2026-09-26-architecture-solution-quality-checklist.md)
+- [Phase 0：全仓架构账本与迁移准入](plan/2026-09-26-phase-zero-architecture-ledger.md)
+- [Phase 0 契约卫生账本](audit/2026-09-26-phase-zero-contract-hygiene.md)
+- [Phase 0 逐合同结构映射](audit/2026-09-26-phase-zero-contract-cluster-map.json)
+- [Phase 0 契约例外账](audit/2026-09-26-phase-zero-contract-exceptions.json)
+- [Phase 0 七簇施工卡](audit/2026-09-26-phase-zero-construction-cards.md)
+- [Phase 0 结构簇索引](audit/2026-09-26-phase-zero-cluster-index.md)
+- [Phase 0 依赖与迁移闸门](audit/2026-09-26-phase-zero-dependency-gates.md)
+- [Phase -1：真实对象与生命周期账本执行计划](plan/2026-09-26-phase-minus-one-lifecycle-ledger.md)
+- [Phase -1 审计收据：入口、生命周期、提交边界、对账与恢复探针](audit/2026-09-26-phase-minus-one-entrance-matrix.md)
+- [通用反问：模型自己能问用户一句话（一份契约 · 三振转提问）](plan/2026-09-21-ask-user-tool.md)
+- [交付流程去堵：评审单位、机器锁与合并队列方案](plan/2026-09-08-delivery-flow-unclog.md)
+- [Agent runtime 测试资源生命周期修复](plan/2026-09-08-agent-runtime-flakes.md)
+- [删除未接线的技能 playbook orchestrator](plan/2026-09-08-delete-playbook-orchestrator.md)
 
 ## 按「我要找什么」定位
 
 | 我要找… | 去这里 |
 |---|---|
-| **某个功能的方案/执行计划** | [`plan/`](plan/) → 先读 [`plan/INDEX.md`](plan/INDEX.md)（64 篇按主题分组的查找表）|
+| **接下来要做什么（唯一 TODO 真相源）** | 2026-09-28 起由维护者在私有位置维护，不在公开仓库；派工/出方案/开分支前找协调会话对照 |
+| **某个设计到底落地没有** | 设计落地对账由维护者私下维护（2026-09-28 起不在公开仓库），找协调会话 |
+| **用户当时到底怎么说的（原话 / 截图 / 原始调研）** | 原始资料由维护者私下维护（2026-09-28 起不在公开仓库），找协调会话 |
+| **某个功能的方案/执行计划** | [`plan/`](plan/) → 先读 [`plan/INDEX.md`](plan/INDEX.md)（按主题分组的查找表）|
+| **跨阶段总纲 / master plan** | [`superpowers/plans/`](superpowers/plans/) → 先读 [Nomi 统一 Agent 总体方案](superpowers/plans/2026-08-24-unified-agent-master-plan.md) |
+| **每个子系统现在真正跑的是什么**（防止把三个月前的方案当现状） | [`ARCHITECTURE-NOW.md`](ARCHITECTURE-NOW.md) |
+| **术语表：同一个东西的多个叫法（搜不到时先查这里）** | [`GLOSSARY.md`](GLOSSARY.md) |
+| **已拍板但还没交付的，都欠着什么** | `pnpm run ledger:brief` 看一行摘要（每轮 L0 hook 也会自动顶出来）；`pnpm run gen:ledger` 生成本地 `DELIVERY-LEDGER.md`——**本地视图、不进 git**（它含全局计数，commit 了两个分支会永远抢它）|
 | **设计系统 / token / 组件规范** | [`design/`](design/) → 核心是 `design/nomi-design-system.md`（任何 UI 改动前必读）|
 | **「设计一个页面」的完整流程（可搬到别的产品复用）** | [`design/page-design-process.md`](design/page-design-process.md) → 七道闸 + 每道闸防的真实事故 + 可复制的模板/门岗/断言 |
+| **说一句话触发的设计流程技能（七闸）** | `.claude/skills/nomi-design-flow/SKILL.md`（技能）；[`design/nomi-design-flow-howto.md`](design/nomi-design-flow-howto.md)（使用指南）|
+| **找参考的设计画布源（4 块画板 + 布局）** | [`design/2026-09-07-find-reference-canvas/README.md`](design/2026-09-07-find-reference-canvas/README.md) → 改画布从这里重新生成，别手改发布产物 |
+| **借结构：把一条跑量片子变成我自己的分镜（第二张任务卡·设计中）** | [`design/2026-09-08-borrow-structure-design.md`](design/2026-09-08-borrow-structure-design.md) → 闸①摸出的三个断点、四件产物、10 步砍到 7 步；接的是既有拆解链路的空参考槽 |
+| **找参考的真机走查报告（真 key / 真 Electron，抓到 5 个问题）** | [`qa/2026-09-08-find-reference-walkthrough.md`](qa/2026-09-08-find-reference-walkthrough.md) → 走通了什么、两个 P0（素材库一大片时的共存 / 切平台不换结果）、我自己犯的两个「猜锚点」错误 |
+| **找参考：跨平台素材检索 connector（TikHub 抖音/小红书/TikTok 广告库）** | [`plan/2026-09-07-find-reference-connector.md`](plan/2026-09-07-find-reference-connector.md) → 四列表、每平台归一、媒体直链处理、402/429 错误分类修正、诚实边界；设计见 [`design/2026-09-07-find-reference-design.md`](design/2026-09-07-find-reference-design.md) |
+| **界面为什么越长越杂 · 减法设计（新面必出的三件产物 + 图标语义门岗）** | [`plan/2026-09-07-subtractive-design-process.md`](plan/2026-09-07-subtractive-design-process.md) → 诊断出的两个洞、四件落地、`check:icon-semantics` 判据与三条刻意排除 |
+| **按钮该说话还是该画图标（三档 + 文案硬约束 + 门岗）** | [`plan/2026-09-10-button-icon-rule-gate.md`](plan/2026-09-10-button-icon-rule-gate.md) → 规则落在设计系统 §1.8、动作规范词落在 [`GLOSSARY.md`](GLOSSARY.md)；一手规范摘录（Apple HIG / Material 3 / NN/g，含一处真实分歧）见 [`research/2026-09-10-button-icon-rule/prior-art.md`](research/2026-09-10-button-icon-rule/prior-art.md) |
+| **修之前先数门：一份状态到底有几个写/读入口** | [`plan/2026-09-11-door-map-rule.md`](plan/2026-09-11-door-map-rule.md) → 规则落在 R21.3（合同 `doors`/`door_reduction`）+ R27（派工两段式）；工具 `node scripts/door-map.mjs <符号或文件>`，门表校验在 `check:root-cause-contracts`（原 `check:door-map` 已并入）；全仓七个核心状态的门普查见 [`audit/2026-09-11-door-census.md`](audit/2026-09-11-door-census.md) |
 | **UI 样张（HTML mockup）** | [`mockups/`](mockups/) ｜ 旧版 [`ui-designs/`](ui-designs/) |
 | **代码健康 / 周期审计 / 问题分级** | [`audit/`](audit/) |
 | **某版本改了什么** | [`release-notes/`](release-notes/) |
 | **会话之间的交接（冷启动接手）** | [`handoff/`](handoff/) ｜ plan 里 `*-handoff.md` / `*-HANDOFF.md` 也是交接 |
 | **工作流方法论（如何走查/E2E/自主测试）** | [`workflow/`](workflow/) |
+| **多智能体编排（如何派工/收货/接力多个 Codex/Opus 执行体）** | [`engineering/agent-orchestration-playbook.md`](engineering/agent-orchestration-playbook.md)（CLAUDE.md R27 的 L2 详解）|
+| **做一次调研（模板 / 必查的信息面 / 自媒体来源怎么抓）** | [`research/TEMPLATE.md`](research/TEMPLATE.md) + [`engineering/agent-orchestration-playbook.md`](engineering/agent-orchestration-playbook.md) §15；TikHub 接口契约在 [`research/tikhub-api-notes.md`](research/tikhub-api-notes.md) |
+| **全方位学习竞品 / 每 3 天复查产品与营销** | [`research/competitive/README.md`](research/competitive/README.md) → LibTV/TapNow 核心对标，来源登记、真实鼠标录屏、TikHub、视频拆解与 Nomi 决策；技能 [`nomi-competitive-radar`](../agent-skills/nomi-competitive-radar/SKILL.md) |
+| **当前哪些战线在途 / 哪些文件面被占道（动共享面前必查必登）** | [`engineering/active-lanes.md`](engineering/active-lanes.md) |
+| **Agent 运行时切换前的回放影子夜跑（怎么跑 / 报告在哪 / 7 天绿从哪天起算）** | [`engineering/agent-lane-replay-shadow.md`](engineering/agent-lane-replay-shadow.md) |
+| **本仓踩过的坑（走查假绿 / CI 红绿判读 / 分支合并 / 平台故障 / 产品判断）** | [`lessons/INDEX.md`](lessons/INDEX.md) — 按触发场景查，别通读 |
 | **模型接入实测产物（mapping/试验记录）** | [`onboarding-trials/`](onboarding-trials/) → 见其 `README.md` |
 | **QA / 测试记录** | [`qa/`](qa/) |
 | **架构定义** | [`architecture/`](architecture/) ｜ Agent Harness 架构在 `plan/2026-06-09-agent-harness-architecture.md` |
 | **产品定位 / 营销 / 媒体素材** | [`product/`](product/) ｜ [`marketing/`](marketing/) ｜ [`media/`](media/) |
 | **历史归档（已过时，仅留痕）** | [`archive/`](archive/) |
 
-## 目录一览（文件数）
+## 目录一览
 
-| 目录 | 数量 | 用途 |
-|---|---|---|
-| `plan/` | 64 | 方案/执行文档（**有 INDEX.md**）|
-| `onboarding-trials/` | 21 | 模型接入实测产物 |
-| `design/` | 20 | 设计系统 + 设计提案 |
-| `release-notes/` | 16 | 版本变更记录 |
-| `archive/` | 13 | 历史归档 |
-| `audit/` | 11 | 周期审计 + 诊断 |
-| `mockups/` | 5 | HTML 样张 |
-| `qa/` | 4 | 测试记录 |
-| `workflow/` | 2 | 工作流方法论 |
-| `handoff/` | 2 | 会话交接 |
-| `architecture/` `marketing/` `media/` `product/` `ui-designs/` | 各 1 | — |
+| 目录 | 用途 |
+|---|---|
+| `roadmap/` | 指引：待办、设计落地对账与原始资料 2026-09-28 起由维护者在私有位置维护 |
+| `plan/` | 方案/执行文档（**有 INDEX.md，但仍有历史存量缺口**）|
+| `superpowers/plans/` | 跨阶段总纲 / master plan |
+| `onboarding-trials/` | 模型接入实测产物 |
+| `design/` | 设计系统 + 设计提案 |
+| `release-notes/` | 版本变更记录 |
+| `archive/` | 历史归档 |
+| `audit/` | 周期审计 + 诊断 |
+| `mockups/` | HTML 样张 |
+| `qa/` | 测试记录 |
+| `research/` | 调研与论文雷达（**模板 `research/TEMPLATE.md`**；调研附件放 `research/<date>-<topic>/`）|
+| `workflow/` | 工作流方法论 |
+| `engineering/` | 工程手册（多智能体编排等，CLAUDE.md 规则索引的 L2 详解）|
+| `lessons/` | 教训库：踩过且还会再踩的坑，一条一个文件（**有 INDEX.md，新增必挂号**）|
+| `handoff/` | 会话交接 |
+| `architecture/` `marketing/` `media/` `product/` `ui-designs/` | 其它专题目录 |
 
 ## 相关索引（非 docs/）
 
-- **会话记忆索引**：`~/.claude/.../memory/MEMORY.md`（跨会话事实，每行一条）
+- **会话记忆索引**：`~/.claude/.../memory/MEMORY.md`（跨会话事实，每行一条）。**踩坑教训的真相源已迁入 [`lessons/`](lessons/INDEX.md)**（2026-09-02），本机记忆里对应文件只剩一行指针；那边现在只留本机环境与在途战况。
 - **生成画布代码入口图**：[`../src/workbench/generationCanvas/ENTRY.md`](../src/workbench/generationCanvas/ENTRY.md)
 - **工程纪律**：`../CLAUDE.md`（速览 + R1–R14）
+
+- [技能库样张 v2：真实 Markdown 与排版验收](plan/2026-09-09-skill-library-mockup-v2.md)

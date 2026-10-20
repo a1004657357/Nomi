@@ -1,27 +1,22 @@
 import type { ProviderKind } from '../desktop/providerKind'
-import {
-  requireDesktopRuntime,
-  openDesktopAgentsChatStream,
-  type AgentsChatRequestDto,
-  type AgentsChatStreamHandlers,
-} from './desktopAgentsChatStream'
+import { getDesktopBridge } from '../desktop/bridge'
+import type {
+  AgentChatAttachment,
+  AgentChatRequest,
+  AgentChatResponse,
+  AgentChatUsage,
+} from '../../electron/harness/agentChatContracts'
 
-// 重导出：openDesktopAgentsChatStream + chatV2 事件适配 + agents-chat 相关类型已拆到
-// desktopAgentsChatStream.ts（requireDesktopRuntime 这一守卫也随之搬过去，避免主文件 ↔
-// 流模块循环依赖），但 desktopClient 对外公共导出面保持不变。
-export {
-  coerceAgentUsage,
-  type AgentAttachmentPayload,
-  type AgentsChatRequestDto,
-  type AgentUsage,
-  type AgentsChatResponseDto,
-  type AgentsChatToolStreamPayload,
-  type AgentsChatStreamEvent,
-  type AgentChatV2ToolDecision,
-  type AgentChatV2Session,
-  type AgentHarnessConfig,
-  type AgentsChatStreamHandlers,
-} from './desktopAgentsChatStream'
+export type AgentAttachmentPayload = AgentChatAttachment
+export type AgentsChatRequestDto = AgentChatRequest
+export type AgentsChatResponseDto = AgentChatResponse
+export type AgentUsage = AgentChatUsage
+
+function requireDesktopRuntime(feature: string) {
+  const desktop = getDesktopBridge()
+  if (!desktop) throw new Error(`Desktop runtime is required for ${feature}`)
+  return desktop
+}
 
 export type BillingModelKind = 'text' | 'image' | 'video' | 'audio' | 'model3d'
 
@@ -40,6 +35,8 @@ export type ProfileKind =
   | 'image_to_3d'
 
 export type ModelCatalogVendorAuthType = 'none' | 'bearer' | 'x-api-key' | 'query'
+/** Renderer projection of the code-owned credential flow. Custom vendors omit it. */
+export type ModelCatalogVendorCredentialMode = 'direct-key' | 'certification'
 export type ModelCatalogVendorProviderKind = ProviderKind
 
 export type ModelCatalogIntegrationChannelKind =
@@ -54,10 +51,12 @@ export type ModelCatalogVendorDto = {
   name: string
   enabled: boolean
   hasApiKey?: boolean
+  credentialVerificationPending?: boolean
   baseUrlHint?: string | null
   authType?: ModelCatalogVendorAuthType
   authHeader?: string | null
   authQueryParam?: string | null
+  credentialMode?: ModelCatalogVendorCredentialMode
   providerKind?: ModelCatalogVendorProviderKind
   meta?: unknown
   createdAt: string
@@ -71,6 +70,8 @@ export type ModelCatalogModelDto = {
   labelZh: string
   kind: BillingModelKind
   enabled: boolean
+  published: boolean
+  publishedModes: ProfileKind[]
   meta?: unknown
   pricing?: {
     cost: number
@@ -113,6 +114,7 @@ export type ModelCatalogMappingDto = {
 }
 
 export type ModelCatalogVendorApiKeyStatusDto = {
+  verificationPending?: boolean
   vendorKey: string
   hasApiKey: boolean
   enabled: boolean
@@ -161,12 +163,27 @@ export type ModelCatalogImportPackageDto = {
   }>
 }
 
+export type ModelCatalogImportConflictDto = {
+  kind: 'vendor' | 'model' | 'mapping'
+  vendorKey: string
+  modelKey?: string
+  mappingId?: string
+}
+
 export type ModelCatalogImportResultDto = {
   imported: {
     vendors: number
     models: number
     mappings: number
   }
+  /** 本机已经有同一条、因此**没有被动过**的数量。导入是合并不是覆盖。 */
+  kept: {
+    vendors: number
+    models: number
+    mappings: number
+  }
+  /** 冲突清单：界面据此告诉用户「这几条我保留了你现在的，没有替换」。 */
+  conflicts: ModelCatalogImportConflictDto[]
   errors: string[]
 }
 
@@ -184,7 +201,7 @@ export type ModelCatalogDocsFetchResultDto = {
 export type ModelCatalogMappingTestRequestDto = {
   modelKey?: string
   prompt?: string
-  stage?: 'create' | 'query' | string
+  stage?: 'create' | 'query' | 'result' | string
   execute?: boolean
 }
 
@@ -198,28 +215,6 @@ export type ModelCatalogMappingTestResultDto = {
   diagnostics: string[]
   request: unknown
   response?: unknown
-}
-
-export async function workbenchAgentsChatStream(
-  payload: AgentsChatRequestDto,
-  handlers: AgentsChatStreamHandlers,
-): Promise<() => void> {
-  return openDesktopAgentsChatStream(payload, handlers)
-}
-
-
-/** Wipe the backend conversation memory for a sessionKey ("新对话"). */
-export async function clearWorkbenchAgentSession(sessionKey: string): Promise<void> {
-  await requireDesktopRuntime('clear agent session').agents.clearChatV2Session(sessionKey)
-}
-
-/** 会话历史:从线程气泡重建该 sessionKey 的模型工作缓存(翻回旧对话接着聊)。 */
-export async function seedWorkbenchAgentSession(
-  sessionKey: string,
-  messages: Array<{ role: string; content: string }>,
-): Promise<void> {
-  if (messages.length === 0) return
-  await requireDesktopRuntime('seed agent session').agents.seedChatV2Session?.(sessionKey, messages)
 }
 
 export async function listModelCatalogVendors(): Promise<ModelCatalogVendorDto[]> {
@@ -256,7 +251,7 @@ export async function upsertModelCatalogVendorApiKey(
   vendorKey: string,
   payload: { apiKey: string; enabled?: boolean },
 ): Promise<ModelCatalogVendorApiKeyStatusDto> {
-  return requireDesktopRuntime('model catalog').modelCatalog.upsertVendorApiKey(vendorKey, payload) as ModelCatalogVendorApiKeyStatusDto
+  return await requireDesktopRuntime('model catalog').modelCatalog.upsertVendorApiKey(vendorKey, payload) as ModelCatalogVendorApiKeyStatusDto
 }
 
 export async function clearModelCatalogVendorApiKey(vendorKey: string): Promise<ModelCatalogVendorApiKeyStatusDto> {
@@ -283,12 +278,25 @@ export async function deleteModelCatalogMapping(id: string): Promise<void> {
   requireDesktopRuntime('model catalog').modelCatalog.deleteMapping(id)
 }
 
-export async function exportModelCatalogPackage(params?: { includeApiKeys?: boolean }): Promise<ModelCatalogImportPackageDto> {
-  return requireDesktopRuntime('model catalog').modelCatalog.exportPackage(params) as ModelCatalogImportPackageDto
+/**
+ * 导出一份可搬走的配置包。**不带参数 = 永不含密钥材料**（明文与 safeStorage 密文都不含，
+ * 理由与实现都在 `electron/catalog/catalogPackageFormat.ts`）。
+ * 密钥不跟着包走是刻意的：包会被发群里、贴进对话、留在下载目录，而密钥一旦出门就收不回来。
+ * 导入方在自己机器上逐条补 key，那一步只花十秒。
+ */
+export async function exportModelCatalogPackage(): Promise<ModelCatalogImportPackageDto> {
+  return requireDesktopRuntime('model catalog').modelCatalog.exportPackage() as ModelCatalogImportPackageDto
 }
 
-export async function importModelCatalogPackage(payload: ModelCatalogImportPackageDto): Promise<ModelCatalogImportResultDto> {
-  return requireDesktopRuntime('model catalog').modelCatalog.importPackage(payload) as ModelCatalogImportResultDto
+/**
+ * 导入一份配置包。**默认合并、不覆盖**：同名条目保留本机已有的，冲突照实列出来交给用户。
+ * 只有他明说「用包里的覆盖」才传 `conflictPolicy: 'replace'`。
+ */
+export async function importModelCatalogPackage(
+  payload: ModelCatalogImportPackageDto,
+  options?: { conflictPolicy?: 'keep' | 'replace' },
+): Promise<ModelCatalogImportResultDto> {
+  return requireDesktopRuntime('model catalog').modelCatalog.importPackage(payload, options) as ModelCatalogImportResultDto
 }
 
 export async function fetchModelCatalogDocs(payload: { url: string }): Promise<ModelCatalogDocsFetchResultDto> {

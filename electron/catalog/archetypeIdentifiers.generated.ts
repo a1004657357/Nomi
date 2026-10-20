@@ -10,7 +10,9 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "seedance2fast",
     "bytedance/seedance-2-mini",
     "seedance-2-mini",
-    "seedance2mini"
+    "seedance2mini",
+    "seedance2_fast",
+    "seedance2_mini"
   ],
   "seedance-2.5": [
     "bytedance/seedance-2-5",
@@ -28,18 +30,267 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "hailuo-03",
     "hailuo3"
   ],
+  "minimax-h3-max": [
+    "minimax/h3-max",
+    "MiniMax-H3-Max"
+  ],
   "happyhorse": [
     "happyhorse",
     "happyhorse/text-to-video",
     "happyhorse/image-to-video",
     "happyhorse/reference-to-video",
-    "happyhorse/video-edit"
+    "happyhorse/video-edit",
+    "happyhorse_1_0"
+  ],
+  "vidu-q3": [
+    "viduq3",
+    "viduq3-mix",
+    "vidu-q3"
+  ],
+  "kling-3.0-turbo": [
+    "kling-3.0-turbo",
+    "kling-3-0-turbo",
+    "kling3.0-turbo"
+  ],
+  "happyhorse-1.1": [
+    "happyhorse-1.1",
+    "happyhorse-1-1"
+  ],
+  "grok-imagine-1.5-video": [
+    "grok-imagine-1.5-video-apimart",
+    "grok-imagine-1.5-video-ext",
+    "grok-imagine-1.5-video",
+    "grok-imagine-1.5",
+    "grok_imagine_1_5"
+  ],
+  "veo-3.1": [
+    "veo-3.1",
+    "veo3.1",
+    "veo3.1-fast",
+    "veo3.1-quality",
+    "veo3.1-lite",
+    "veo3.1_fast"
+  ],
+  "gemini-omni-1.1": [
+    "google/gemini-omni-flash-1-1",
+    "gemini-omni-flash-1-1",
+    "gemini_omni_flash"
+  ],
+  "runway-gen4.5": [
+    "gen4.5",
+    "runway-gen4.5",
+    "runway-gen-4.5"
+  ],
+  "runway-gen4-turbo": [
+    "gen4_turbo",
+    "runway-gen4-turbo",
+    "runway-gen-4-turbo"
+  ],
+  "kling-3.0": [
+    "kling-3.0",
+    "kling-3.0/video",
+    "kling-3",
+    "kling3",
+    "kling-v3"
+  ],
+  "seedance-2-apimart": [
+    "doubao-seedance-2.0",
+    "doubao-seedance-2-0",
+    "doubao-seedance-2.0-fast",
+    "doubao-seedance-2-0-fast",
+    "doubao-seedance-2.0-face",
+    "doubao-seedance-2-0-face",
+    "doubao-seedance-2.0-fast-face",
+    "doubao-seedance-2-0-fast-face",
+    "doubao-seedance-2.0-mini",
+    "doubao-seedance-2-0-mini"
+  ],
+  "seedance-2.5-apimart": [
+    "doubao-seedance-2.5",
+    "doubao-seedance-2-5"
+  ],
+  "seedance-2.5-runway": [
+    "seedance2_5"
+  ],
+  "minimax-h3-apimart": [
+    "MiniMax-H3"
+  ],
+  "minimax-h3-pixstag": [
+    "pixstag/MiniMax-H3"
+  ],
+  "wan-2.7": [
+    "wan-2.7",
+    "wan2.7",
+    "wan-2-7",
+    "wan2.7-r2v",
+    "wan-2-7-r2v"
+  ],
+  "wan-3.0": [
+    "wan/3-0-video",
+    "wan/3-0-video-prime",
+    "wan-3.0",
+    "wan3.0",
+    "wan3"
+  ],
+  "wan-3.0-apimart": [
+    "wan3.0-video",
+    "wan3-0-video"
+  ],
+  "hailuo-2.3": [
+    "hailuo-2.3",
+    "minimax-hailuo-2.3",
+    "hailuo-2-3",
+    "minimax-hailuo-2.3-fast",
+    "MiniMax-Hailuo-2.3",
+    "MiniMax-Hailuo-2.3-Fast"
+  ],
+  "omni-flash-ext": [
+    "omni-flash-ext"
+  ],
+  "minimax-h3-regeneration": [
+    "MiniMax-H3-Regeneration"
+  ],
+  "higgsfield-dop": [
+    "higgsfield-ai/dop/standard",
+    "higgsfield-ai/dop/turbo",
+    "higgsfield-dop-standard",
+    "higgsfield-dop-turbo"
+  ],
+  "volcengine-seedance-2": [
+    "doubao-seedance-2-0-260128",
+    "doubao-seedance-2-0-fast-260128",
+    "doubao-seedance-2-0-mini-260615"
+  ],
+  "volcengine-seedance-2-5": [
+    "doubao-seedance-2-5-260628"
+  ],
+  "dreamina-seedance-2": [
+    "dreamina-seedance-2.0",
+    "dreamina-seedance",
+    "seedance2.0fast",
+    "seedance2.0",
+    "seedance2.0_vip",
+    "seedance2.0fast_vip",
+    "seedance2.0mini"
+  ],
+  "dreamina-seedance-2.5": [
+    "dreamina-seedance-2.5",
+    "dreamina/seedance2.5"
+  ],
+  "jimeng-web-seedance-2": [
+    "jimeng-web-seedance-2.0",
+    "jimeng-seedance-2.0-mini",
+    "jimeng-seedance-2.0-fast-vip",
+    "jimeng-seedance-2.0-vip",
+    "jimeng-seedance-2.0-fast",
+    "jimeng-seedance-2.0"
+  ],
+  "dreamina-multiframe": [
+    "dreamina-multiframe"
+  ],
+  "runninghub-seedance": [
+    "bytedance/seedance-2.0-global",
+    "seedance-2.0-global"
+  ],
+  "rh-veo-3.1": [
+    "rhart-video-v3.1-pro-official",
+    "veo3.1-rh"
+  ],
+  "rh-kling-3.0": [
+    "kling-v3.0-pro",
+    "kling-v3.0-rh"
+  ],
+  "rh-wan-2.7": [
+    "rh-wan-2.7"
+  ],
+  "rh-hailuo-2.3": [
+    "rh-hailuo-2.3"
+  ],
+  "agnes-video": [
+    "agnes-video",
+    "agnes-video-v2.0",
+    "agnes-video-v2"
+  ],
+  "agnes-video-2.5": [
+    "agnes-video-2.5"
+  ],
+  "agnes-video-2.5-flash": [
+    "agnes-video-2.5-flash"
+  ],
+  "jimeng-web-image": [
+    "jimeng-web-image",
+    "jimeng-image-5.0-pro",
+    "jimeng-image-5.0-lite",
+    "jimeng-image-4.7",
+    "jimeng-image-4.6",
+    "jimeng-image-4.5",
+    "jimeng-image-4.1",
+    "jimeng-image-4.0",
+    "jimeng-image-3.1",
+    "jimeng-image-3.0"
+  ],
+  "minimax-music-3": [
+    "minimax/music-3",
+    "music-3"
+  ],
+  "minimax-speech-2.8": [
+    "speech-2.8-hd",
+    "speech-2.8-turbo"
+  ],
+  "eleven-v3": [
+    "eleven_v3",
+    "eleven-v3"
+  ],
+  "eleven-multilingual-v2": [
+    "eleven_multilingual_v2",
+    "eleven-multilingual-v2"
+  ],
+  "eleven-music-v2": [
+    "music_v2",
+    "eleven-music-v2"
+  ],
+  "eleven-sfx-v2": [
+    "eleven_text_to_sound_v2",
+    "eleven-sfx-v2"
+  ],
+  "eleven-scribe-v2": [
+    "scribe_v2",
+    "scribe-v2"
+  ],
+  "meshy-7": [
+    "meshy-7",
+    "meshy7"
+  ],
+  "runway-gen4-image": [
+    "gen4_image"
+  ],
+  "runway-gen4-image-turbo": [
+    "gen4_image_turbo"
+  ],
+  "runway-muse-image": [
+    "muse_image"
+  ],
+  "grok-imagine-image-2": [
+    "grok_imagine_image_2",
+    "grok-imagine-2.0-ext"
+  ],
+  "gemini-image-3-pro": [
+    "gemini_image3_pro",
+    "gemini-3-pro-image-preview",
+    "nano-banana-pro"
+  ],
+  "gemini-image-3.1-flash": [
+    "gemini_image3.1_flash"
+  ],
+  "runway-seed-audio": [
+    "seed_audio"
   ],
   "gpt-image-2": [
     "gpt-image-2",
     "gpt-image-2-text-to-image",
     "gpt-image-2-image-to-image",
     "gpt-4o-image",
+    "gpt_image_2",
     "codex-img2",
     "codex-imagegen-img2"
   ],
@@ -59,7 +310,8 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   ],
   "kie-seedream-5-lite": [
     "seedream/5-lite-text-to-image",
-    "seedream/5-lite-image-to-image"
+    "seedream/5-lite-image-to-image",
+    "seedream5_lite"
   ],
   "nano-banana-2": [
     "nano-banana-2",
@@ -74,19 +326,12 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "nano-banana",
     "google/nano-banana",
     "google/nano-banana-edit",
-    "nano-banana-pro",
-    "gemini-2.5-flash-image-preview"
+    "gemini-2.5-flash-image-preview",
+    "gemini_2.5_flash"
   ],
   "flux-2-pro": [
     "flux-2/pro-text-to-image",
     "flux-2/pro-image-to-image"
-  ],
-  "kling-3.0": [
-    "kling-3.0",
-    "kling-3.0/video",
-    "kling-3",
-    "kling3",
-    "kling-v3"
   ],
   "qwen-image-3": [
     "qwen-image-3.0",
@@ -110,98 +355,25 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "z-image-turbo",
     "z-image"
   ],
-  "sora-2": [
-    "sora-2",
-    "sora-2-pro",
-    "sora2"
-  ],
-  "veo-3.1": [
-    "veo-3.1",
-    "veo3.1",
-    "veo3.1-fast",
-    "veo3.1-quality",
-    "veo3.1-lite"
-  ],
-  "wan-2.7": [
-    "wan-2.7",
-    "wan2.7",
-    "wan-2-7",
-    "wan2.7-r2v",
-    "wan-2-7-r2v"
-  ],
-  "wan-3.0": [
-    "wan/3-0-video",
-    "wan/3-0-video-prime",
-    "wan-3.0",
-    "wan3.0"
-  ],
-  "wan-3.0-apimart": [
-    "wan3.0-video",
-    "wan3-0-video"
-  ],
-  "hailuo-2.3": [
-    "hailuo-2.3",
-    "minimax-hailuo-2.3",
-    "hailuo-2-3",
-    "minimax-hailuo-2.3-fast",
-    "MiniMax-Hailuo-2.3",
-    "MiniMax-Hailuo-2.3-Fast"
-  ],
-  "grok-imagine-1.5-video": [
-    "grok-imagine-1.5-video-apimart",
-    "grok-imagine-1.5-video-ext",
-    "grok-imagine-1.5-video",
-    "grok-imagine-1.5"
-  ],
-  "seedance-2-apimart": [
-    "doubao-seedance-2.0",
-    "doubao-seedance-2-0",
-    "doubao-seedance-2.0-fast",
-    "doubao-seedance-2-0-fast",
-    "doubao-seedance-2.0-face",
-    "doubao-seedance-2-0-face",
-    "doubao-seedance-2.0-fast-face",
-    "doubao-seedance-2-0-fast-face",
-    "doubao-seedance-2.0-mini",
-    "doubao-seedance-2-0-mini"
-  ],
-  "seedance-2.5-apimart": [
-    "doubao-seedance-2.5",
-    "doubao-seedance-2-5"
-  ],
-  "minimax-h3-apimart": [
-    "MiniMax-H3"
-  ],
-  "minimax-h3-pixstag": [
-    "MiniMax-H3"
-  ],
-  "minimax-h3-regeneration": [
-    "MiniMax-H3-Regeneration"
-  ],
-  "vidu-q3": [
-    "viduq3",
-    "viduq3-mix",
-    "vidu-q3"
-  ],
-  "kling-3.0-turbo": [
-    "kling-3.0-turbo",
-    "kling-3-0-turbo",
-    "kling3.0-turbo"
-  ],
-  "happyhorse-1.1": [
-    "happyhorse-1.1",
-    "happyhorse-1-1"
-  ],
   "seedream-5-pro": [
     "doubao-seedream-5-0-pro",
     "seedream-5-0-pro",
-    "seedream-5.0-pro"
-  ],
-  "omni-flash-ext": [
-    "omni-flash-ext"
+    "seedream-5.0-pro",
+    "seedream5_pro"
   ],
   "nomi-audio": [
     "nomi-audio"
+  ],
+  "suno-v5.5": [
+    "suno-v5.5",
+    "suno-v5-5"
+  ],
+  "suno-sfx-v5.5": [
+    "suno-sounds-v5.5",
+    "suno-sounds-v5-5"
+  ],
+  "lyria-3.5": [
+    "flowmusic-lyria-3.5"
   ],
   "volcengine-doubao-tts": [
     "doubao-seed-tts-2.0",
@@ -236,29 +408,9 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   "volcengine-seedream-5-pro": [
     "doubao-seedream-5-0-pro-260628"
   ],
-  "volcengine-seedance-2": [
-    "doubao-seedance-2-0-260128",
-    "doubao-seedance-2-0-fast-260128",
-    "doubao-seedance-2-0-mini-260615"
-  ],
-  "volcengine-seedance-2-5": [
-    "doubao-seedance-2-5-260628"
-  ],
-  "dreamina-seedance-2": [
-    "dreamina-seedance-2.0",
-    "dreamina-seedance",
-    "seedance2.0fast",
-    "seedance2.0",
-    "seedance2.0_vip",
-    "seedance2.0fast_vip",
-    "seedance2.0mini"
-  ],
-  "dreamina-seedance-2.5": [
-    "dreamina-seedance-2.5",
-    "seedance2.5"
-  ],
   "dreamina-image": [
     "dreamina-image",
+    "5.0Pro",
     "5.0",
     "4.7",
     "4.6",
@@ -270,29 +422,6 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   ],
   "dreamina-upscale": [
     "dreamina-upscale"
-  ],
-  "dreamina-multiframe": [
-    "dreamina-multiframe"
-  ],
-  "jimeng-web-image": [
-    "jimeng-web-image",
-    "jimeng-image-5.0-pro",
-    "jimeng-image-5.0-lite",
-    "jimeng-image-4.7",
-    "jimeng-image-4.6",
-    "jimeng-image-4.5",
-    "jimeng-image-4.1",
-    "jimeng-image-4.0",
-    "jimeng-image-3.1",
-    "jimeng-image-3.0"
-  ],
-  "jimeng-web-seedance-2": [
-    "jimeng-web-seedance-2.0",
-    "jimeng-seedance-2.0-mini",
-    "jimeng-seedance-2.0-fast-vip",
-    "jimeng-seedance-2.0-vip",
-    "jimeng-seedance-2.0-fast",
-    "jimeng-seedance-2.0"
   ],
   "codex-imagegen": [
     "codex-imagegen"
@@ -314,28 +443,6 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
     "meshy6",
     "meshy-6",
     "meshy"
-  ],
-  "runninghub-seedance": [
-    "bytedance/seedance-2.0-global",
-    "seedance-2.0-global"
-  ],
-  "rh-veo-3.1": [
-    "rhart-video-v3.1-pro-official",
-    "veo3.1-rh"
-  ],
-  "rh-kling-3.0": [
-    "kling-v3.0-pro",
-    "kling-v3.0-rh"
-  ],
-  "rh-wan-2.7": [
-    "rh-wan-2.7"
-  ],
-  "rh-hailuo-2.3": [
-    "rh-hailuo-2.3"
-  ],
-  "rh-sora-2": [
-    "rhart-video-s-official",
-    "sora-2-rh"
   ],
   "rh-seedream-4.5": [
     "seedream-v4.5",
@@ -359,15 +466,38 @@ export const ARCHETYPE_IDENTIFIER_PATTERNS: Record<string, string[]> = {
   "agnes-image-2.1": [
     "agnes-image-2.1-flash"
   ],
-  "agnes-video": [
-    "agnes-video",
-    "agnes-video-v2.0",
-    "agnes-video-v2"
+  "nomi-local-speech": [
+    "whisper-cpp-local",
+    "nomi-local-speech"
   ],
-  "agnes-video-2.5": [
-    "agnes-video-2.5"
+  "higgsfield-soul-2": [
+    "higgsfield-ai/soul/v2/standard",
+    "higgsfield-soul-2",
+    "soul-2"
   ],
-  "agnes-video-2.5-flash": [
-    "agnes-video-2.5-flash"
+  "higgsfield-soul-cinema": [
+    "higgsfield-ai/soul/cinema",
+    "higgsfield-soul-cinema",
+    "soul-cinema"
+  ],
+  "gpt-image-2.5-flare": [
+    "gpt-image-2.5-flare",
+    "gpt-image-2-5-flare-text-to-image",
+    "gpt-image-2-5-flare-image-to-image"
+  ],
+  "gpt-image-2.5-sunburst": [
+    "gpt-image-2.5-sunburst",
+    "gpt-image-2-5-sunburst-text-to-image",
+    "gpt-image-2-5-sunburst-image-to-image"
+  ],
+  "imagen-4-fast": [
+    "google/imagen4-fast",
+    "imagen4-fast",
+    "imagen-4-fast"
+  ],
+  "imagen-4-ultra": [
+    "google/imagen4-ultra",
+    "imagen4-ultra",
+    "imagen-4-ultra"
   ]
 };

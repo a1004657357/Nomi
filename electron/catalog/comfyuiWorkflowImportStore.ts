@@ -1,7 +1,7 @@
 // 本地 ComfyUI「导入工作流」的 store 集成层（S3 电子侧薄壳）。
 // 纯解析/建图/建 model+mapping 在 comfyuiWorkflowImport（可测、零副作用）；这里只接 store 写 + 生成唯一
 // modelKey + 把异常包成 { ok:false, error } 供 IPC 透传。独立成文件是为了不把 catalogStore 顶破 800 行门。
-import { mutateCatalog, readCatalog, upsertModelCatalogModel, upsertModelCatalogMapping } from "./catalogStore";
+import { mutateCatalog, readCatalog } from "./catalogStore";
 import {
   parseComfyApiWorkflow,
   analyzeComfyWorkflow,
@@ -14,16 +14,42 @@ import {
   type WorkflowBinding,
   type WorkflowEnumOption,
 } from "./comfyuiWorkflowImport";
-import { bustComfyObjectInfoCache, fetchComfyuiObjectInfoIndex } from "../comfyuiObjectInfo";
+import { bustComfyObjectInfoCache, fetchComfyuiObjectInfoIndex, isComfyComboValue, type ComfyUnknownComboSpec } from "../comfyuiObjectInfo";
 import { convertUiWorkflowToApi, looksLikeUiWorkflow } from "../comfyuiGraphConvert";
 import { COMFYUI_VENDOR_KEY, isComfyuiVendor } from "./types";
+import {
+  candidateLineageMeta,
+  newCandidateRevisionId,
+  planStagedVendorIdentity,
+  stagedVendorKey,
+  type StagedVendorIdentity,
+} from "./stagedVendorIdentity";
 
 export type AnalyzeWorkflowResult =
   | { ok: true; analysis: WorkflowAnalysis; /** 转换后的 API 文本 + 原 UI 图（执行/可复现各用一份）。 */ convertedText?: string; sourceWorkflowText?: string }
   | { ok: false; error: string };
-export type ImportWorkflowResult = { ok: true; modelKey: string; kind: string; taskKind: string } | { ok: false; error: string };
+export type ImportWorkflowResult = {
+  ok: true;
+  modelKey: string;
+  kind: string;
+  taskKind: string;
+  vendorKey: string;
+  revisionId: string;
+} | { ok: false; error: string };
 export type ReconcileWorkflowResult =
-  | { ok: true; serverReachable: boolean; unknownNodeTypes: string[]; missingEnumValues: MissingEnumValue[]; enumOptions: WorkflowEnumOption[] }
+  | {
+      ok: true;
+      serverReachable: boolean;
+      unknownNodeTypes: string[];
+      missingEnumValues: MissingEnumValue[];
+      enumOptions: WorkflowEnumOption[];
+      /**
+       * 「没见过的」combo 外壳（不是「这个字段没本地列表」，是「这个外壳我们完全不认识」——
+       * 2026-09-11 owner 拍板：以后 ComfyUI 再变新格式，用户能自己一键反馈，不用等我们真机踩一次才发现）。
+       * 直接原样带出这一台 /object_info 遇到的全部（同一台机器一次对账最多 50 条，见 comfyuiObjectInfo.ts）。
+       */
+      unknownComboShapes: ComfyUnknownComboSpec[];
+    }
   | { ok: false; error: string };
 export type ReconcileWorkflowBatchResult =
   | { ok: true; results: Array<{ id: string; result: ReconcileWorkflowResult }> }
@@ -77,9 +103,15 @@ export async function reconcileComfyWorkflowText(text: unknown, vendorKey?: unkn
     // 对账是用户动作（分析/重新检测）：爆缓存拿新鲜事实——刚装好的模型必须立刻被认出来。
     bustComfyObjectInfoCache(baseUrl);
     const index = await fetchComfyuiObjectInfoIndex(baseUrl);
-    if (!index) return { ok: true, serverReachable: false, unknownNodeTypes: [], missingEnumValues: [], enumOptions: [] };
+    if (!index) return { ok: true, serverReachable: false, unknownNodeTypes: [], missingEnumValues: [], enumOptions: [], unknownComboShapes: [] };
     // enumOptions 顺手带出：导入/保存时烤进参数控件（checkpoint/LoRA 在画布变真实文件下拉）。
-    return { ok: true, serverReachable: true, ...reconcileComfyWorkflow(graph, index), enumOptions: collectGraphEnumOptions(graph, index) };
+    return {
+      ok: true,
+      serverReachable: true,
+      ...reconcileComfyWorkflow(graph, index),
+      enumOptions: collectGraphEnumOptions(graph, index),
+      unknownComboShapes: index.unknownComboShapes,
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -128,7 +160,7 @@ export async function reconcileComfyWorkflowTexts(
     results: parsed.map((item) => {
       if ("error" in item) return { id: item.id, result: item.error };
       if (!index) {
-        return { id: item.id, result: { ok: true, serverReachable: false, unknownNodeTypes: [], missingEnumValues: [], enumOptions: [] } };
+        return { id: item.id, result: { ok: true, serverReachable: false, unknownNodeTypes: [], missingEnumValues: [], enumOptions: [], unknownComboShapes: [] } };
       }
       return {
         id: item.id,
@@ -137,6 +169,7 @@ export async function reconcileComfyWorkflowTexts(
           serverReachable: true,
           ...reconcileComfyWorkflow(item.graph, index),
           enumOptions: collectGraphEnumOptions(item.graph, index),
+          unknownComboShapes: index.unknownComboShapes,
         },
       };
     }),
@@ -160,7 +193,7 @@ function sanitizeEnumOptions(raw: unknown): WorkflowEnumOption[] | undefined {
     if (!item || typeof item !== "object") continue;
     const { classType, inputKey, options } = item as { classType?: unknown; inputKey?: unknown; options?: unknown };
     if (typeof classType !== "string" || typeof inputKey !== "string" || !Array.isArray(options)) continue;
-    const clean = options.filter((o): o is string => typeof o === "string");
+    const clean = options.filter(isComfyComboValue); // 保留 wire 原类型（数字/布尔选项不丢、不转字符串）
     if (clean.length > 0) out.push({ classType, inputKey, options: clean });
   }
   return out.length > 0 ? out : undefined;
@@ -178,12 +211,11 @@ export function importComfyWorkflowToCatalog(payload: unknown, uniq: string = Da
     const p = (payload && typeof payload === "object" ? payload : {}) as { text?: string; binding?: WorkflowBinding; labelZh?: string; enumOptions?: unknown; vendorKey?: unknown; uiWorkflowText?: unknown };
     const labelZh = String(p.labelZh || "").trim() || "本地 ComfyUI 工作流";
     const modelKey = slugifyModelKey(labelZh, uniq);
-    const r = importComfyWorkflow(
-      { text: String(p.text ?? ""), binding: p.binding ?? { numeric: [] }, labelZh, modelKey, enumOptions: sanitizeEnumOptions(p.enumOptions), vendorKey: comfyVendorKeyOf(p.vendorKey), uiWorkflowText: sanitizeUiWorkflowText(p.uiWorkflowText) },
-      upsertModelCatalogModel,
-      upsertModelCatalogMapping,
-    );
-    return { ok: true, ...r };
+    return stageComfyWorkflow({
+      text: String(p.text ?? ""), binding: p.binding ?? { numeric: [] }, labelZh, modelKey,
+      enumOptions: sanitizeEnumOptions(p.enumOptions), sourceVendorKey: comfyVendorKeyOf(p.vendorKey),
+      uiWorkflowText: sanitizeUiWorkflowText(p.uiWorkflowText),
+    });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -204,17 +236,79 @@ export function updateComfyWorkflowInCatalog(payload: unknown): ImportWorkflowRe
     const modelKey = String(p.modelKey || "").trim();
     if (!modelKey) throw new Error("缺少要编辑的工作流 modelKey。");
     const labelZh = String(p.labelZh || "").trim() || "本地 ComfyUI 工作流";
-    const vendorKey = comfyVendorKeyOf(p.vendorKey);
-    return mutateCatalog((tx) => {
-      tx.deleteModelMappings(vendorKey, modelKey); // 只删这一台名下的（别台同名工作流不受影响）
-      const r = importComfyWorkflow(
-        { text: String(p.text ?? ""), binding: p.binding ?? { numeric: [] }, labelZh, modelKey, enumOptions: sanitizeEnumOptions(p.enumOptions), vendorKey, uiWorkflowText: sanitizeUiWorkflowText(p.uiWorkflowText) },
-        tx.upsertModel,
-        tx.upsertMapping,
-      );
-      return { ok: true, ...r };
+    return stageComfyWorkflow({
+      text: String(p.text ?? ""), binding: p.binding ?? { numeric: [] }, labelZh, modelKey,
+      enumOptions: sanitizeEnumOptions(p.enumOptions), sourceVendorKey: comfyVendorKeyOf(p.vendorKey),
+      uiWorkflowText: sanitizeUiWorkflowText(p.uiWorkflowText),
     });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+type StageComfyInput = {
+  text: string;
+  binding: WorkflowBinding;
+  labelZh: string;
+  modelKey: string;
+  enumOptions?: WorkflowEnumOption[];
+  sourceVendorKey: string;
+  uiWorkflowText?: string;
+};
+
+function isolatedIdentity(input: StageComfyInput, revisionId: string): StagedVendorIdentity {
+  const state = readCatalog();
+  const planned = planStagedVendorIdentity({
+    state,
+    sourceVendorKey: input.sourceVendorKey,
+    connection: { kind: "comfyui-workflow", modelKey: input.modelKey },
+    revisionId,
+    selectedModelKeys: [input.modelKey],
+    reuseUnpublishedCandidate: false,
+  });
+  if (planned.isolated) return planned;
+  return {
+    ...planned,
+    isolated: true,
+    vendorKey: stagedVendorKey(planned.rootVendorKey, { kind: "comfyui-workflow", modelKey: input.modelKey }, revisionId),
+  };
+}
+
+function stageComfyWorkflow(input: StageComfyInput): ImportWorkflowResult {
+  // Parse/build before opening the catalog transaction so malformed workflows leave no candidate shell.
+  parseComfyApiWorkflow(input.text);
+  const revisionId = newCandidateRevisionId("comfy");
+  const identity = isolatedIdentity(input, revisionId);
+  const before = readCatalog();
+  const sourceVendor = before.vendors.find((vendor) => vendor.key === identity.sourceVendorKey)
+    || before.vendors.find((vendor) => vendor.key === input.sourceVendorKey);
+  return mutateCatalog((tx) => {
+    // A newer save supersedes only unpublished staged vendors. The active predecessor is never in this list.
+    for (const superseded of identity.supersededVendorKeys) tx.deleteVendor(superseded);
+    const vendor = tx.upsertVendor({
+      ...(sourceVendor || {}),
+      key: identity.vendorKey,
+      name: sourceVendor?.name || "本地 ComfyUI",
+      enabled: false,
+      baseUrlHint: sourceVendor?.baseUrlHint || "http://127.0.0.1:8188",
+      authType: "none",
+      meta: { ...(sourceVendor?.meta && typeof sourceVendor.meta === "object" ? sourceVendor.meta : {}), ...candidateLineageMeta(identity) },
+    });
+    const r = importComfyWorkflow(
+      {
+        text: input.text, binding: input.binding, labelZh: input.labelZh, modelKey: input.modelKey,
+        enumOptions: input.enumOptions, vendorKey: vendor.key, uiWorkflowText: input.uiWorkflowText,
+      },
+      (rawModel) => {
+        const meta = rawModel.meta && typeof rawModel.meta === "object" ? rawModel.meta as Record<string, unknown> : {};
+        tx.upsertModel({
+          ...rawModel,
+          enabled: false,
+          meta: { ...meta, adapter: { state: "testing", runId: revisionId, modes: [], updatedAt: new Date().toISOString() } },
+        });
+      },
+      (rawMapping) => tx.upsertMapping({ ...rawMapping, enabled: false }),
+    );
+    return { ok: true, ...r, vendorKey: vendor.key, revisionId };
+  });
 }

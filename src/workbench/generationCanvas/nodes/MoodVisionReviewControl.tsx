@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { IconEye, IconRefresh } from '@tabler/icons-react'
 import { MODEL_REFRESH_EVENT } from '../../../config/modelCatalogCache'

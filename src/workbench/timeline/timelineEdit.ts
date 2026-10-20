@@ -1,9 +1,10 @@
 import type { TimelineClip, TimelineState, TimelineTrack, TimelineTrackType } from './timelineTypes'
 import { getTrackTypeForClipType } from './timelineTypes'
 import { resolveClipFraming, type ClipFraming } from './clipFraming'
+import { nearestLegalStart } from './timelinePlacement'
 
 export const TIMELINE_MIN_SCALE = 0.35
-export const TIMELINE_MAX_SCALE = 4
+export const TIMELINE_MAX_SCALE = 16
 
 function clampInteger(value: unknown, min: number, max = Number.MAX_SAFE_INTEGER): number {
   const next = typeof value === 'number' ? value : Number(value)
@@ -53,10 +54,6 @@ function buildUniqueClipId(track: TimelineTrack, baseId: string): string {
   throw new Error(`Unable to allocate unique timeline clip id for ${normalizedBaseId}`)
 }
 
-function findAppendFrame(track: TimelineTrack): number {
-  return track.clips.reduce((maxFrame, clip) => Math.max(maxFrame, clip.endFrame), 0)
-}
-
 export function withClipStartFrame(clip: TimelineClip, startFrame: number): TimelineClip {
   const nextStartFrame = clampInteger(startFrame, 0)
   return {
@@ -64,14 +61,6 @@ export function withClipStartFrame(clip: TimelineClip, startFrame: number): Time
     startFrame: nextStartFrame,
     endFrame: nextStartFrame + getVisibleFrameCount(clip),
   }
-}
-
-export function canPlaceClip(track: TimelineTrack, clip: TimelineClip): boolean {
-  if (track.type !== clip.type) return false
-  return !track.clips.some((current) => {
-    if (current.id === clip.id) return false
-    return clip.startFrame < current.endFrame && current.startFrame < clip.endFrame
-  })
 }
 
 export function addClipAtFrame(timeline: TimelineState, clip: TimelineClip, trackType: TimelineTrackType, startFrame: number): TimelineState {
@@ -88,54 +77,6 @@ export function addClipAtFrame(timeline: TimelineState, clip: TimelineClip, trac
     }
   })
   return inserted ? { ...timeline, tracks } : timeline
-}
-
-export function moveClipToFrame(timeline: TimelineState, clipId: string, startFrame: number): TimelineState {
-  const id = String(clipId || '').trim()
-  if (!id) return timeline
-  let moved = false
-  const tracks = timeline.tracks.map((track) => {
-    const current = track.clips.find((clip) => clip.id === id)
-    if (!current) return track
-    const movedClip = withClipStartFrame(current, startFrame)
-    if (!canPlaceClip(track, movedClip)) return track
-    moved = true
-    return {
-      ...track,
-      clips: track.clips.map((clip) => (clip.id === id ? movedClip : clip)).sort((left, right) => left.startFrame - right.startFrame),
-    }
-  })
-  return moved ? { ...timeline, tracks } : timeline
-}
-
-/**
- * 给定期望起点，返回轨道上离它最近的"合法起点"（不与其它 clip 重叠）。
- * 找不到 clip 返回 null；否则总能返回一个合法值（最差落到末尾空隙）——
- * 即"撞了滑入最近空位"，绝不弹回原位。用于拖动中的实时落位。
- */
-/** 在 others（已按 startFrame 排序）间为 length 长度找"离期望起点最近的合法起点"。移动与新插入共用此核。 */
-function nearestLegalStart(others: readonly TimelineClip[], length: number, desiredStart: number): number {
-  const desired = clampInteger(desiredStart, 0)
-  // 收集"起点合法区间" [lo, hi]：每个能放下 length 的空隙
-  const ranges: Array<[number, number]> = []
-  let cursor = 0
-  for (const other of others) {
-    if (other.startFrame - cursor >= length) ranges.push([cursor, other.startFrame - length])
-    cursor = Math.max(cursor, other.endFrame)
-  }
-  ranges.push([cursor, Number.MAX_SAFE_INTEGER]) // 末尾开放空隙，保证总有合法位
-
-  let best = desired
-  let bestDistance = Number.POSITIVE_INFINITY
-  for (const [lo, hi] of ranges) {
-    const clamped = Math.min(hi, Math.max(lo, desired))
-    const distance = Math.abs(clamped - desired)
-    if (distance < bestDistance) {
-      bestDistance = distance
-      best = clamped
-    }
-  }
-  return best
 }
 
 export function resolveLegalStartFrame(track: TimelineTrack, clipId: string, desiredStart: number): number | null {
@@ -176,15 +117,33 @@ export function moveClipToLegalFrame(timeline: TimelineState, clipId: string, st
   return moved ? { ...timeline, tracks } : timeline
 }
 
+/**
+ * 删 clip 必须连带清掉引用它的转场（fromClipId/toClipId 悬空会随 normalizeTimeline
+ * 持久化进项目文件，转场标记/渲染指向不存在的接缝）。kernel 删除路径（timelineKernel）
+ * 一直这么做；这里给 timelineEdit 的三条删除入口同款清理。无命中保持原引用。
+ */
+function dropTransitionsForClipIds(
+  transitions: TimelineState['transitions'],
+  removedClipIds: ReadonlySet<string>,
+): TimelineState['transitions'] {
+  if (!transitions?.length || removedClipIds.size === 0) return transitions
+  const next = transitions.filter(
+    (transition) => !removedClipIds.has(transition.fromClipId) && !removedClipIds.has(transition.toClipId),
+  )
+  return next.length === transitions.length ? transitions : next
+}
+
 export function removeClipById(timeline: TimelineState, clipId: string): TimelineState {
   const id = String(clipId || '').trim()
   if (!id) return timeline
+  const transitions = dropTransitionsForClipIds(timeline.transitions, new Set([id]))
   return {
     ...timeline,
     tracks: timeline.tracks.map((track) => ({
       ...track,
       clips: track.clips.filter((clip) => clip.id !== id),
     })),
+    ...(transitions ? { transitions } : {}),
   }
 }
 
@@ -198,7 +157,9 @@ export function removeClipsByIds(timeline: TimelineState, clipIds: readonly stri
     removed = true
     return { ...track, clips: nextClips }
   })
-  return removed ? { ...timeline, tracks } : timeline
+  if (!removed) return timeline
+  const transitions = dropTransitionsForClipIds(timeline.transitions, idSet)
+  return { ...timeline, tracks, ...(transitions ? { transitions } : {}) }
 }
 
 /**
@@ -211,13 +172,20 @@ export function removeClipsBySourceNodeIds(timeline: TimelineState, nodeIds: rea
   const idSet = new Set(nodeIds.map((id) => String(id || '').trim()).filter(Boolean))
   if (idSet.size === 0) return timeline
   let removed = false
+  const removedClipIds = new Set<string>()
   const tracks = timeline.tracks.map((track) => {
-    const nextClips = track.clips.filter((clip) => !idSet.has(clip.sourceNodeId))
+    const nextClips = track.clips.filter((clip) => {
+      if (!idSet.has(clip.sourceNodeId)) return true
+      removedClipIds.add(clip.id)
+      return false
+    })
     if (nextClips.length === track.clips.length) return track
     removed = true
     return { ...track, clips: nextClips }
   })
-  return removed ? { ...timeline, tracks } : timeline
+  if (!removed) return timeline
+  const transitions = dropTransitionsForClipIds(timeline.transitions, removedClipIds)
+  return { ...timeline, tracks, ...(transitions ? { transitions } : {}) }
 }
 
 /**
@@ -378,11 +346,7 @@ export function duplicateClipById(timeline: TimelineState, clipId: string): Time
       ...current,
       id: buildUniqueClipId(track, `${current.id}-copy`),
     }
-    const preferred = withClipStartFrame(baseCopy, current.endFrame)
-    const placed = canPlaceClip(track, preferred)
-      ? preferred
-      : withClipStartFrame(baseCopy, findAppendFrame(track))
-    if (!canPlaceClip(track, placed)) return track
+    const placed = withClipStartFrame(baseCopy, resolveLegalInsertStart(track, baseCopy, current.endFrame))
 
     duplicated = true
     return {
@@ -403,7 +367,18 @@ export function nudgeClipById(timeline: TimelineState, clipId: string, deltaFram
   const track = timeline.tracks.find((candidate) => candidate.clips.some((clip) => clip.id === id))
   const current = track?.clips.find((clip) => clip.id === id)
   if (!track || !current) return timeline
-  return moveClipToFrame(timeline, id, current.startFrame + delta)
+  return moveClipToLegalFrame(timeline, id, current.startFrame + delta)
+}
+
+/** The actual landing point used by nudge buttons, for disabled-state explanations. */
+export function resolveNudgeStartFrame(timeline: TimelineState, clipId: string, deltaFrame: number): number | null {
+  const id = String(clipId || '').trim()
+  const delta = clampInteger(deltaFrame, Number.MIN_SAFE_INTEGER)
+  if (!id || delta === 0) return null
+  const track = timeline.tracks.find((candidate) => candidate.clips.some((clip) => clip.id === id))
+  const current = track?.clips.find((clip) => clip.id === id)
+  if (!track || !current) return null
+  return resolveLegalStartFrame(track, id, current.startFrame + delta)
 }
 
 export function resizeClipEdge(timeline: TimelineState, clipId: string, edge: 'left' | 'right', deltaFrame: number): TimelineState {

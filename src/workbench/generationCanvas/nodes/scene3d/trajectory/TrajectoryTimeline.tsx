@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -477,7 +478,7 @@ function TimelineBindingBar({
   trajectory: Scene3DTrajectory
   totalDuration: number
   readOnly: boolean
-  laneRef: React.RefObject<HTMLDivElement>
+  laneRef: React.RefObject<HTMLDivElement | null>
   onPatchBinding: (bindingId: string, patch: Partial<Scene3DTrajectoryBinding>) => void
   onCommitTimeline: () => void
   onPatchTrajectoryPoint: (trajectoryId: string, pointId: string, patch: Partial<Scene3DTrajectoryPoint>) => void

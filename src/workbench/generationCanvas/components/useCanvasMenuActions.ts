@@ -1,4 +1,6 @@
 import type { GenerationNodeKind } from '../model/generationCanvasTypes'
+import { CENTER_PLACEMENT_ANCHOR, type CanvasPlacementAnchor } from '../model/canvasPlacement'
+import { importLocalFilesToGenerationCanvas } from './canvasStageDrop'
 import { completeNodeConnection } from '../nodes/completeNodeConnection'
 import type { ConnectionAnchorSide } from '../store/canvasStoreTypes'
 import type { CanvasContextNodeMenu } from './useCanvasContextNodeMenu'
@@ -19,6 +21,8 @@ type CanvasMenuActionsInput = {
     sourceSide: ConnectionAnchorSide
     canvasX: number
     canvasY: number
+    /** 线从卡起还是从编组的「+」起；编组起的线新建节点后，组内每个成员各连一条（store.connectToGroup）。 */
+    sourceKind: 'node' | 'group'
   } | null
   setConnectionCreateMenu: (menu: null) => void
   addNode: (input: {
@@ -29,15 +33,17 @@ type CanvasMenuActionsInput = {
     select?: boolean
   }) => { id: string }
   startConnection: (nodeId: string, side: ConnectionAnchorSide) => void
+  startGroupConnection: (groupId: string, side: ConnectionAnchorSide) => void
   copySelectedNodes: () => void
   cutSelectedNodes: () => void
-  pasteNodes: (position: { x: number; y: number }) => void
+  pasteNodes: (position: { x: number; y: number }, anchor?: CanvasPlacementAnchor) => void
   groupSelectedNodes: () => void
   deleteSelectedNodes: () => void
 }
 
 export function buildCanvasMenuActions(input: CanvasMenuActionsInput): {
   handleAddContextNode: (kind: GenerationNodeKind) => void
+  handleImportContextFiles: (files: File[]) => void
   handleNodeContextAction: (action: NodeContextMenuAction) => void
   handleAddConnectedNode: (kind: GenerationNodeKind) => void
 } {
@@ -51,6 +57,15 @@ export function buildCanvasMenuActions(input: CanvasMenuActionsInput): {
     input.setContextNodeMenu(null)
   }
 
+  // 右键菜单「导入 · 文件…」：落点与「右键空白 → 添加节点」同一点，走的是画布本地文件导入
+  // 那条现役路径（与拖文件进画布同一条），不另建 asset 节点。
+  const handleImportContextFiles = (files: File[]) => {
+    if (!input.contextNodeMenu) return
+    const basePosition = { x: input.contextNodeMenu.canvasX, y: input.contextNodeMenu.canvasY }
+    input.setContextNodeMenu(null)
+    void importLocalFilesToGenerationCanvas(files, { basePosition, categoryId: input.activeCategoryId })
+  }
+
   // 节点右键菜单的五个动作。**复用快捷键那条路的同一批 store 动作**——
   // 一个功能一份实现，菜单只是把它们变得看得见（P1 无并行版）。
   const handleNodeContextAction = (action: NodeContextMenuAction) => {
@@ -60,14 +75,14 @@ export function buildCanvasMenuActions(input: CanvasMenuActionsInput): {
     input.setContextNodeMenu(null)
     if (action === 'copy') input.copySelectedNodes()
     else if (action === 'cut') input.cutSelectedNodes()
-    else if (action === 'paste') input.pasteNodes(pastePosition)
+    else if (action === 'paste') input.pasteNodes(pastePosition, CENTER_PLACEMENT_ANCHOR)
     else if (action === 'group') input.groupSelectedNodes()
     else if (action === 'delete') input.deleteSelectedNodes()
   }
 
   const handleAddConnectedNode = (kind: GenerationNodeKind) => {
     if (!input.connectionCreateMenu) return
-    const { sourceNodeId, sourceSide, canvasX, canvasY } = input.connectionCreateMenu
+    const { sourceNodeId, sourceSide, sourceKind, canvasX, canvasY } = input.connectionCreateMenu
     const created = input.addNode({
       kind,
       position: { x: canvasX, y: canvasY },
@@ -75,10 +90,11 @@ export function buildCanvasMenuActions(input: CanvasMenuActionsInput): {
       exactPosition: true,
       select: true,
     })
-    input.startConnection(sourceNodeId, sourceSide)
+    if (sourceKind === 'group') input.startGroupConnection(sourceNodeId, sourceSide)
+    else input.startConnection(sourceNodeId, sourceSide)
     completeNodeConnection(created.id)
     input.setConnectionCreateMenu(null)
   }
 
-  return { handleAddContextNode, handleNodeContextAction, handleAddConnectedNode }
+  return { handleAddContextNode, handleImportContextFiles, handleNodeContextAction, handleAddConnectedNode }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderTextModelsForAgent } from "./agentChatV2";
+import { orderTextModelsForAgent } from "./vendorLanguageModel";
 import type { Model } from "../catalog/types";
 
 function text(modelKey: string, vendorKey: string): Model {

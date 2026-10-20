@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { launchNomiApp } from './_launchApp.mjs'
-import { clickOrFail, expect, screenshotSettled } from './_assert.mjs'
+import { clickOrFail, expect, screenshotSettled, expectNoCjkInEnglishDom } from './_assert.mjs'
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nomi-model-discovery-'))
 const shots = path.join(tempRoot, 'shots')
@@ -54,7 +54,12 @@ const row = id => picker().getByRole('button', { name: id, exact: true })
 const refetch = () => picker().getByRole('button', { name: /获取可用模型|重新获取列表|Get available models|Get list again/ })
 
 async function start() {
-  instance = await launchNomiApp({ name: 'provider-model-discovery', tempRoot, args: ['--no-proxy-server'] })
+  instance = await launchNomiApp({
+    name: 'provider-model-discovery',
+    tempRoot,
+    args: ['--no-proxy-server'],
+    syntheticCredentialStorage: true,
+  })
   win = instance.win
   await win.evaluate(() => {
     localStorage.setItem('nomi:locale:v1', 'zh-CN')
@@ -72,7 +77,7 @@ async function home() {
 async function openPicker(vendorKey) {
   await clickOrFail(win.locator(`[data-model-home-connection="${vendorKey}"]`), `连接 ${vendorKey}`)
   await expect(win.locator(`[data-model-settings-vendor="${vendorKey}"]`)).toBeVisible()
-  await clickOrFail(win.getByRole('button', { name: /添加其他模型|Add more models/, exact: true }), '添加其他模型')
+  await clickOrFail(win.getByRole('button', { name: /添加其他|Add More/, exact: true }), '添加其他')
   await expect(picker()).toContainText(/选择要添加的模型|Choose models to add/)
 }
 async function backHome() {
@@ -209,12 +214,12 @@ try {
   await win.getByPlaceholder('https://api.openai.com/v1').fill(`${base}/relay/v1`)
   await win.getByPlaceholder('sk-...').fill('fixture-discovery-key')
   await clickOrFail(win.getByRole('button', { name: '高级设置（接口协议 / 自定义请求头）', exact: true }), '展开自定义请求头')
-  await clickOrFail(win.getByRole('button', { name: '添加请求头（可选）', exact: true }), '添加鉴权覆盖')
+  await clickOrFail(win.getByRole('button', { name: '添加 Header', exact: true }), '添加鉴权覆盖')
   await win.getByPlaceholder('Header 名，如 HTTP-Referer').fill('AUTHORIZATION')
   await win.getByPlaceholder('值', { exact: true }).fill('Bearer fixture-gateway-override')
   await clickOrFail(win.getByRole('button', { name: '保存连接', exact: true }), '先保存新连接')
   await expect(picker()).toContainText('连接已保存')
-  await clickOrFail(win.getByRole('button', { name: '获取模型列表', exact: true }), '新连接读取模型列表')
+  await clickOrFail(win.getByRole('button', { name: '获取模型', exact: true }), '新连接读取模型列表')
   await expect(row('gpt-discovery-text')).toBeEnabled()
   await clickOrFail(row('gpt-discovery-text'), '选择新连接文本模型')
   relayMode = 'auth'
@@ -235,7 +240,7 @@ try {
   await win.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   await expect(picker()).toContainText('连接已保存')
   relayMode = 'success'
-  await clickOrFail(win.getByRole('button', { name: '获取模型列表', exact: true }), '用户主动返回列表')
+  await clickOrFail(win.getByRole('button', { name: '获取模型', exact: true }), '用户主动返回列表')
   await clickOrFail(row('gpt-discovery-text'), '重新选择新连接文本模型')
   await clickOrFail(picker().getByRole('button', { name: '保存 1 个模型', exact: true }), '保存新连接')
   await expect(win.locator('[data-model-settings-page="connection"]')).toBeVisible()
@@ -248,7 +253,12 @@ try {
   // Cold start proves persistence; final light/en screenshot checks both locale and theme branches.
   await win.evaluate(() => { localStorage.setItem('nomi-color-scheme', 'light'); localStorage.setItem('nomi:locale:v1', 'en') })
   await instance.close()
-  instance = await launchNomiApp({ name: 'provider-model-discovery-cold', tempRoot, args: ['--no-proxy-server'] })
+  instance = await launchNomiApp({
+    name: 'provider-model-discovery-cold',
+    tempRoot,
+    args: ['--no-proxy-server'],
+    syntheticCredentialStorage: true,
+  })
   win = instance.win
   await expect(win.locator('[data-testid="open-model-settings"]').first()).toBeVisible({ timeout: 30_000 })
   expect(await savedKeys('kie')).toEqual(expect.arrayContaining([...originalKieKeys, 'manual-discovery-model']))
@@ -261,6 +271,8 @@ try {
   await clickOrFail(refetch(), 'Cold-start catalog discovery')
   await expect(status()).toContainText('not the provider’s full catalog')
   await expect.poll(() => win.evaluate(() => document.documentElement.dataset.nomiColorScheme)).toBe('light')
+  // EN-DOM 断言网:此刻界面确实是英文(上面刚断言过 catalog 文案的英文原文),整页不该再有中文。
+  await expectNoCjkInEnglishDom(win, { message: '模型发现冷启动页在 en 下出现中文' })
   await snap('06-cold-start-english-light')
   expect(requests.every(r => r.method === 'GET')).toBe(true)
   expect(requests.every(r => r.authorization === (r.path === '/relay/v1/models'

@@ -1,5 +1,6 @@
-import { getDesktopActiveProjectId } from '../../../../desktop/activeProject'
+import { unwrapAssetImportResult } from '../../../../../electron/shared/contracts/assetImportResult'
 import { getDesktopBridge } from '../../../../desktop/bridge'
+import type { ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
 
 export type PersistedScene3DScreenshot = {
   url: string
@@ -16,23 +17,28 @@ export async function persistScene3DScreenshot(
   dataUrl: string,
   ownerNodeId: string,
   title: string,
+  project: ProjectExecutionContext | null,
 ): Promise<PersistedScene3DScreenshot> {
   const desktop = getDesktopBridge()
-  const projectId = getDesktopActiveProjectId()
-  if (!desktop || !projectId) {
+  if (!desktop || !project) {
     return { url: dataUrl, localOnly: true }
   }
+  project.assertCurrent()
 
   const createdAt = Date.now()
   const fileName = `${fileSafePart(title)}-${fileSafePart(ownerNodeId)}-${createdAt}.png`
-  const asset = await desktop.assets.importRemoteUrl({
-    projectId,
+  const asset = unwrapAssetImportResult(await desktop.assets.importRemoteUrl({
+    projectId: project.binding.projectId,
+    projectBinding: project.binding,
     url: dataUrl,
     kind: 'generated',
+    expectedKind: 'image',
     fileName,
     ownerNodeId,
-  })
-  const url = typeof asset.data?.url === 'string' && asset.data.url ? asset.data.url : dataUrl
+  }))
+  project.assertCurrent()
+  const url = typeof asset.data?.url === 'string' ? asset.data.url.trim() : ''
+  if (!url || /^(?:data:|blob:)/i.test(url)) throw new Error('Scene capture did not return a persisted asset URL')
   return {
     url,
     assetId: asset.id,

@@ -1,59 +1,81 @@
-// P4 S6 — 返工/续拍的渲染层动作收口（一功能一个家，P1）。占位节点的重试/续拍钮、失败镜 NodeErrorReport 的
-// onRetry 都走这里，不各自拼一遍 IPC + toast。结构化结果 code → t() 人话反馈（禁拼串穿透 i18n 门）。
+// Node and task hosts own feedback; spend confirmations remain in the main process.
 import i18n from '../../i18n'
-import { toast } from '../../ui/toast'
-import { productionRunApi, type ProductionActionResult } from './productionRunApi'
+import type { TranslationKey } from '../../i18n/translationKey'
+import { notify } from '../../ui/notificationPolicy'
+import { productionRunApi, type ProductionShotActionFailure, type ProductionShotActionResult } from './productionRunApi'
+import { logRendererError } from '../../desktop/rendererLog'
 
-type ToastKind = 'success' | 'error' | 'info' | 'warning'
+/**
+ * 返工 / 续拍没做成：**每一种原因一句人话**，说清怎么了、钱怎么样了、能做什么（2026-09-29）。
+ * 以前所有失败都落进「操作没成功，请稍后再试」，前面还拼着主进程英文原话（「run status pausing is not resumable」）。
+ * 这张表就是唯一的目录：穷尽，没有兜底句——主进程多一种失败而这里没写，类型检查当场过不去；
+ * 一个失败说不清是哪一种，该去源头给它一个码，不在这里兜一句。
+ */
+export const SHOT_ACTION_FAILURE_COPY = {
+  request_invalid: 'generationCommon.production.canvasLanding.actionFailure.requestInvalid',
+  bridge_unavailable: 'generationCommon.production.canvasLanding.actionFailure.bridgeUnavailable',
+  core_starting: 'generationCommon.production.canvasLanding.actionFailure.coreStarting',
+  run_not_open: 'generationCommon.production.canvasLanding.actionFailure.runNotOpen',
+  run_missing: 'generationCommon.production.canvasLanding.actionFailure.runMissing',
+  run_unreadable: 'generationCommon.production.canvasLanding.actionFailure.runUnreadable',
+  not_multishot: 'generationCommon.production.canvasLanding.actionFailure.notMultishot',
+  project_unavailable: 'generationCommon.production.canvasLanding.actionFailure.projectUnavailable',
+  confirmation_unavailable: 'generationCommon.production.canvasLanding.actionFailure.confirmationUnavailable',
+  provider_unavailable: 'generationCommon.production.canvasLanding.actionFailure.providerUnavailable',
+  no_prior_attempt: 'generationCommon.production.canvasLanding.actionFailure.noPriorAttempt',
+  previous_attempt_unsettled: 'generationCommon.production.canvasLanding.actionFailure.previousAttemptUnsettled',
+  attempt_limit: 'generationCommon.production.canvasLanding.actionFailure.attemptLimit',
+  run_changed: 'generationCommon.production.canvasLanding.actionFailure.runChanged',
+  approval_stale: 'generationCommon.production.canvasLanding.actionFailure.approvalStale',
+  approval_expired: 'generationCommon.production.canvasLanding.actionFailure.approvalExpired',
+  run_finished: 'generationCommon.production.canvasLanding.actionFailure.runFinished',
+  not_stopped: 'generationCommon.production.canvasLanding.actionFailure.notStopped',
+  plan_not_submitted: 'generationCommon.production.canvasLanding.actionFailure.planNotSubmitted',
+  ledger_write_failed: 'generationCommon.production.canvasLanding.actionFailure.ledgerWriteFailed',
+  parameter_rejected: 'generationCommon.production.canvasLanding.actionFailure.parameterRejected',
+  internal_error: 'generationCommon.production.canvasLanding.actionFailure.internalError',
+} as const satisfies Record<ProductionShotActionFailure, TranslationKey>
 
-/** 结构化结果 code → (人话文案 key, toast 类型)。unavailable/failed/run_not_open/not_multishot 都归「用不了」桶。 */
-function feedbackFor(result: ProductionActionResult): { messageKey: string; kind: ToastKind } {
-  switch (result.code) {
-    case 'reworked':
-      return { messageKey: 'generationCommon.production.canvasLanding.rework.reworked', kind: 'success' }
-    case 'resumed':
-      return { messageKey: 'generationCommon.production.canvasLanding.rework.resumed', kind: 'success' }
-    case 'rework_declined':
-      return { messageKey: 'generationCommon.production.canvasLanding.rework.reworkDeclined', kind: 'info' }
-    case 'no_prior_attempt':
-      return { messageKey: 'generationCommon.production.canvasLanding.rework.noPriorAttempt', kind: 'warning' }
-    case 'unavailable':
-      return { messageKey: 'generationCommon.production.canvasLanding.rework.unavailable', kind: 'warning' }
-    case 'run_not_open':
-    case 'not_multishot':
-    case 'failed':
-    default:
-      return { messageKey: 'generationCommon.production.canvasLanding.rework.failed', kind: 'error' }
-  }
-}
-
-function reportResult(result: ProductionActionResult): ProductionActionResult {
-  const { messageKey, kind } = feedbackFor(result)
-  toast(i18n.t(messageKey), kind)
+function reportResult(result: ProductionShotActionResult, identity: string, present: (message: string) => void): ProductionShotActionResult {
+  if (result.code !== 'failed') return result
+  notify({ identity, reason: result.failure, level: 'inline', present, type: 'error', message: i18n.t(SHOT_ACTION_FAILURE_COPY[result.failure]) })
   return result
 }
 
 /**
- * 返工一镜：同 Run 新 Job + 单镜确认 + 派发（主进程编排，见 appIntegration.reworkProductionShot）。
- * 弹卡确认发生在主进程侧（Nomi 自有确认漏斗，防注入）；这里只发起 + 按结果 toast。
+ * 调不到主进程（这个窗口没有桌面桥，或主进程没注册这条通道）。主进程那一侧从不往这里抛——它把每一种失败都回成了
+ * 结构化结果——所以走到这里的只有「桥不通」这一种。
  */
-export async function reworkProductionShot(projectId: string, runId: string, shotId?: string): Promise<ProductionActionResult> {
-  try {
-    const result = await productionRunApi.rework(projectId, runId, shotId)
-    return reportResult(result)
-  } catch (error) {
-    console.error('[nomi:production] rework failed', error)
-    return reportResult({ ok: false, code: 'failed', message: error instanceof Error ? error.message : String(error) })
-  }
+function bridgeUnavailable(event: 'production-rework-bridge-unavailable' | 'production-resume-bridge-unavailable', error: unknown): ProductionShotActionResult {
+  logRendererError(event, error)
+  return { ok: false, code: 'failed', failure: 'bridge_unavailable' }
 }
 
-/** 续拍已停批次：manual=急停继续 / budget=提额续拍（主进程转回 running 后重踢 scheduler）。 */
-export async function resumeProductionBatch(projectId: string, runId: string, reason: 'budget' | 'manual'): Promise<ProductionActionResult> {
+/** Rework retains the existing single-shot spend confirmation. */
+export async function reworkProductionShot(projectId: string, runId: string, shotId: string | undefined, present: (message: string) => void): Promise<ProductionShotActionResult> {
+  present('')
+  const identity = `production-rework:${projectId}:${runId}:${shotId ?? 'run'}`
+  let result: ProductionShotActionResult
   try {
-    const result = await productionRunApi.resumeBatch(projectId, runId, reason)
-    return reportResult(result)
+    result = await productionRunApi.rework(projectId, runId, shotId)
   } catch (error) {
-    console.error('[nomi:production] resume failed', error)
-    return reportResult({ ok: false, code: 'failed', message: error instanceof Error ? error.message : String(error) })
+    result = bridgeUnavailable('production-rework-bridge-unavailable', error)
   }
+  return reportResult(result, identity, present)
+}
+
+/**
+ * 「继续剩余」。续额度还是直接接着拍，主进程照 Run 在停下那一刻记下的原因决定——渲染层不替它选
+ * （以前由这里按画布上猜出的「预算」传 budget，于是没有价格时也弹出额度 0 的续拍确认）。
+ */
+export async function resumeProductionBatch(projectId: string, runId: string, present: (message: string) => void): Promise<ProductionShotActionResult> {
+  present('')
+  const identity = `production-resume:${projectId}:${runId}`
+  let result: ProductionShotActionResult
+  try {
+    result = await productionRunApi.resumeBatch(projectId, runId)
+  } catch (error) {
+    result = bridgeUnavailable('production-resume-bridge-unavailable', error)
+  }
+  return reportResult(result, identity, present)
 }

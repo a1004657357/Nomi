@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { normalizeCatalogTaskResult } from './catalogTaskResultParse'
+import type { TaskAssetDto } from '../../api/taskApi'
 
 const model3dNode: GenerationCanvasNode = {
   id: 'model3d-node',
@@ -39,13 +40,20 @@ describe('normalizeCatalogTaskResult model3d output', () => {
     ])
   })
 
-  it('reports a missing GLB instead of claiming that an image URL is missing', () => {
-    expect(() => normalizeCatalogTaskResult({
-      id: 'task-model3d-empty',
-      kind: 'image_to_3d',
-      status: 'succeeded',
-      assets: [],
-      raw: {},
-    }, model3dNode)).toThrow(/3D.*GLB/)
-  })
+  const missingModelCases: Array<{ label: string; assets: TaskAssetDto[] }> = [
+    { label: 'no assets', assets: [] },
+    { label: 'preview only', assets: [{ type: 'image', url: 'https://cdn.example/preview.png' }] },
+    { label: 'blank model URL', assets: [{ type: 'model3d', url: '   ' }] },
+  ]
+  for (const kind of ['text_to_3d', 'image_to_3d'] as const) {
+    it.each(missingModelCases)(`${kind}: reports the missing GLB with a recoverable parse code ($label)`, ({ assets }) => {
+      expect(() => normalizeCatalogTaskResult({
+        id: 'task-model3d-empty',
+        kind,
+        status: 'succeeded',
+        assets,
+        raw: {},
+      }, model3dNode)).toThrow(/^NOMI_ERR::retrieval-parse::.*3D.*GLB/)
+    })
+  }
 })

@@ -7,7 +7,7 @@ import { firstString, trim } from '../jsonUtils'
 import { submitPavoWebTask } from '../pavoWeb/bridge'
 import { pavoWebStartRunner } from '../pavoWeb/runner'
 import type { CachedTask, TaskRequest, TaskResult } from '../runtime'
-import { assertAndConsumeSpendGrant } from '../spendGrant'
+import { consumeTaskSpend } from '../tasks/taskSpend'
 import { traceVendorRequested } from '../events/vendorCallTrace'
 import { buildNormalizedRecipe } from '../vendor/provenance'
 import { readCachedTaskResult, recipeFingerprint } from '../vendor/fingerprintCache'
@@ -70,7 +70,7 @@ export async function dispatchWebBridgeTask(input: Input): Promise<TaskResult | 
   const runner = await bridge.start(vendor.baseUrlHint)
   if (!runner.clientOnline) throw errors.runnerUnavailable(bridge.label, runner.error || '')
 
-  assertAndConsumeSpendGrant(grantId, nodeId)
+  await consumeTaskSpend({ grantId, nodeId, projectId, vendorKey: vendor.key, modelKey: model.modelKey, parameters: request.extras })
   const submitted = await bridge.submit({ request, vendorBaseUrl: vendor.baseUrlHint })
   const queued: TaskResult = {
     id: submitted.taskCode,

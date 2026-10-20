@@ -1,13 +1,14 @@
 import { z } from 'zod'
+import { generationNodeStatusSchema } from '../../../../electron/shared/canvas/generationNodeStatus'
 import { CATEGORY_IDS } from './generationCanvasTypes'
 import { GENERATION_NODE_KINDS } from './generationNodeKinds'
 import { creativeResourceSchema } from '../../../config/capabilityRecipes'
 
 export const generationNodeKindSchema = z.enum(GENERATION_NODE_KINDS)
 
-export const generationNodeStatusSchema = z.enum(['idle', 'queued', 'running', 'success', 'error', 'recoverable'])
+export { generationNodeStatusSchema }
 export const generationNodeTaskKindSchema = z.enum(['text', 'image', 'video', 'audio', 'model3d', 'workflow', 'asset', 'unknown'])
-export const generationNodeRunStatusSchema = z.enum(['queued', 'running', 'success', 'error', 'cancelled', 'recoverable'])
+export const generationNodeRunStatusSchema = generationNodeStatusSchema.exclude(['idle']).or(z.literal('cancelled'))
 export const categoryIdSchema = z.enum(CATEGORY_IDS)
 
 export const generationNodeProgressSchema = z.object({
@@ -29,6 +30,11 @@ export const generationProvenanceSchema = z.object({
   seed: z.number().optional(),
   params: z.record(z.unknown()).optional(),
   vendorRequestId: z.string().optional(),
+  cost: z.object({
+    amount: z.number().finite().nonnegative(),
+    currency: z.string(),
+    unit: z.enum(['estimate', 'actual']),
+  }).optional(),
   timestamp: z.number(),
   agentRunId: z.string().optional(),
 }).strict()
@@ -133,12 +139,15 @@ export const generationResultCollectionSchema = z.object({
 export const generationNodeRunRecordSchema = z.object({
   id: z.string().min(1),
   status: generationNodeRunStatusSchema,
+  attempt: z.object({ vendorKey: z.string().min(1), modelKey: z.string().min(1) }).optional(),
+  projectId: z.string().optional(),
   taskId: z.string().optional(),
   taskKind: generationNodeTaskKindSchema.optional(),
   assetId: z.string().optional(),
   assetRefId: z.string().optional(),
   progress: generationNodeProgressSchema.optional(),
   resultId: z.string().optional(),
+  textDocumentDigest: z.string().regex(/^sha256-[a-f0-9]{64}$/).optional(),
   error: z.string().optional(),
   raw: z.unknown().optional(),
   startedAt: z.number(),
@@ -150,6 +159,14 @@ export const generationNodeRunRecordSchema = z.object({
 export const generationCanvasNodeSchema = z.object({
   id: z.string().min(1),
   kind: generationNodeKindSchema,
+  typeId: z.string().min(1).optional(),
+  pluginState: z.object({
+    pluginId: z.string().min(1),
+    pluginVersion: z.string().min(1),
+    typeId: z.string().min(1),
+    schemaVersion: z.number().int().positive(),
+    state: z.record(z.unknown()),
+  }).optional(),
   title: z.string(),
   position: z.object({
     x: z.number(),
@@ -205,6 +222,8 @@ export const nodeGroupSchema = z.object({
     w: z.number(),
     h: z.number(),
   }).optional(),
+  // 框头部的一句灰字说明（2026-09-06 框工具第一档）；旧快照无 → undefined。
+  description: z.string().optional(),
   collapsed: z.boolean().optional(),
   // 组入参声明（真边仍是普通 node→node 边）；旧快照无 → undefined。
   inputLinks: z.array(z.object({

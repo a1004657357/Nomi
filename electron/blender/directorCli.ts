@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { inspectGlb } from "../assets/glbValidation";
-import { projectDirById } from "../projects/repository";
+import { captureAssetWriteContext, type AssetWriteContext } from "../assets/assetWriteContext";
 import { writeAsset } from "../runtime";
 
 type DirectorAssetRef = { url: string; assetId?: string };
@@ -40,11 +40,13 @@ type BridgeOutput = {
 
 type ActiveDirectorJob = {
   child: ChildProcess;
+  closed?: boolean;
   terminationReason?: "cancelled" | "timeout";
   forceKillTimer?: NodeJS.Timeout;
 };
 
 const activeDirectorJobs = new Map<string, ActiveDirectorJob>();
+const pendingDirectorJobs = new Map<string, { cancelled: boolean }>();
 const OUTPUT_LIMIT = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const STAGE_PRESETS = new Set(["empty", "studio", "coffee_shop", "city_street", "interior_room"]);
@@ -151,7 +153,7 @@ function asAssetRef(value: unknown): DirectorAssetRef {
   return { url, ...(typeof raw.id === "string" ? { assetId: raw.id } : {}) };
 }
 
-function persistDirectorOutputs(request: DirectorBlenderRenderRequest, projectDir: string, output: BridgeOutput): DirectorBlenderRenderResult {
+async function persistDirectorOutputs(request: DirectorBlenderRenderRequest, projectDir: string, output: BridgeOutput, context: AssetWriteContext, assertRunning: () => void): Promise<DirectorBlenderRenderResult> {
   const meta = {
     kind: "blender",
     source: "blender-director",
@@ -160,17 +162,22 @@ function persistDirectorOutputs(request: DirectorBlenderRenderRequest, projectDi
     directorManifestPath: output.manifestPath || null,
     directorSyncPath: output.syncPath || null,
   };
-  const preview = asAssetRef(writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.preview, "preview.png"), "blender-director-preview.png", "image/png", meta));
-  const blend = asAssetRef(writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.blend, "scene.blend"), "blender-director-scene.blend", "application/x-blender", meta));
+  const preview = asAssetRef(await writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.preview, "preview.png"), "blender-director-preview.png", "image/png", meta, "image", context));
+  assertRunning();
+  const blend = asAssetRef(await writeAsset(request.projectId, readProjectDirectorOutput(projectDir, output.artifacts.blend, "scene.blend"), "blender-director-scene.blend", "application/x-blender", meta, null, context));
+  assertRunning();
   const modelBytes = readProjectDirectorOutput(projectDir, output.artifacts.model, "scene.glb");
   const model3dValidation = inspectGlb(modelBytes);
-  const model = asAssetRef(writeAsset(
+  const model = asAssetRef(await writeAsset(
     request.projectId,
     modelBytes,
     "blender-director-scene.glb",
     "model/gltf-binary",
     { ...meta, model3dValidation },
+    "model3d",
+    context,
   ));
+  assertRunning();
   return { jobId: output.jobId, ...(output.blenderVersion ? { blenderVersion: output.blenderVersion } : {}), preview, blend, model };
 }
 
@@ -179,10 +186,18 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
   const projectId = String(request.projectId || "").trim();
   if (!jobId) throw new Error("Blender 导演 jobId 不能为空");
   if (!projectId) throw new Error("Blender 导演 projectId 不能为空");
-  if (activeDirectorJobs.has(jobId)) throw new Error(`Blender 导演任务 ${jobId} 已在运行`);
+  if (activeDirectorJobs.has(jobId) || pendingDirectorJobs.has(jobId)) throw new Error(`Blender 导演任务 ${jobId} 已在运行`);
   if (request.stagePreset && !STAGE_PRESETS.has(request.stagePreset)) throw new Error("Blender 导演 stagePreset 不受支持");
-  const projectDir = projectDirById(projectId);
-  if (!projectDir) throw new Error("无法找到 Blender 导演所属的本地项目目录");
+  const pending = { cancelled: false };
+  pendingDirectorJobs.set(jobId, pending);
+  let context: AssetWriteContext;
+  try {
+    context = await captureAssetWriteContext(projectId);
+    if (pending.cancelled) throw new Error("Blender 导演预演已取消");
+  } finally {
+    pendingDirectorJobs.delete(jobId);
+  }
+  const projectDir = context.root;
   const harnessRoot = path.resolve(request.harnessRoot || resolveDirectorHarnessRoot());
   if (!fs.existsSync(path.join(harnessRoot, "cli_anything", "blender", "bridge.py"))) {
     throw new Error("未找到 Blender 导演 harness；请重新安装或从源码运行 Nomi");
@@ -246,7 +261,11 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
         }
         finish(new Error(`Blender 导演桥接启动失败：${error.message}`));
       });
-      child.once("close", (code, signal) => {
+      child.once("close", async (code, signal) => {
+        if (settled) return;
+        job.closed = true;
+        clearTimeout(timeout);
+        if (job.forceKillTimer) clearTimeout(job.forceKillTimer);
         if (job.terminationReason === "timeout") {
           finish(new Error(`Blender 导演预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
           return;
@@ -261,7 +280,9 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
           return;
         }
         try {
-          finish(undefined, persistDirectorOutputs(request, projectDir, parseDirectorBridgeOutput(stdout)));
+          finish(undefined, await persistDirectorOutputs(request, projectDir, parseDirectorBridgeOutput(stdout), context, () => {
+            if (job.terminationReason === "cancelled") throw new Error("Blender 导演预演已取消");
+          }));
         } catch (error) {
           finish(error instanceof Error ? error : new Error(String(error)));
         }
@@ -273,9 +294,12 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
 }
 
 export function cancelDirectorBlenderRender(jobId: string): boolean {
+  const pending = pendingDirectorJobs.get(String(jobId || ""));
+  if (pending) { pending.cancelled = true; return true; }
   const job = activeDirectorJobs.get(String(jobId || ""));
   if (!job) return false;
   job.terminationReason = "cancelled";
+  if (job.closed) return true;
   job.child.kill("SIGTERM");
   job.forceKillTimer = setTimeout(() => {
     if (activeDirectorJobs.has(jobId)) job.child.kill("SIGKILL");
@@ -285,11 +309,11 @@ export function cancelDirectorBlenderRender(jobId: string): boolean {
 }
 
 export function cancelAllDirectorBlenderRenders(): number {
-  const jobs = [...activeDirectorJobs.keys()];
+  const jobs = [...pendingDirectorJobs.keys(), ...activeDirectorJobs.keys()];
   for (const jobId of jobs) cancelDirectorBlenderRender(jobId);
   return jobs.length;
 }
 
 export function activeDirectorBlenderRenderCount(): number {
-  return activeDirectorJobs.size;
+  return pendingDirectorJobs.size + activeDirectorJobs.size;
 }

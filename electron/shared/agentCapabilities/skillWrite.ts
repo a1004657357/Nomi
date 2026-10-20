@@ -1,0 +1,60 @@
+import { z } from "zod";
+
+import type { CapabilityContract } from "./capabilityContract";
+
+/**
+ * Skill authoring is a project-scoped, reversible package write.  A skill is one
+ * file — SKILL.md, whose YAML frontmatter is the only manifest — so this wire
+ * envelope carries the markdown and nothing else; the authoritative frontmatter
+ * parser lives in electron/skills and is not imported here (that would create a
+ * registry cycle).  See docs/plan/2026-09-07-skill-format-convergence.md.
+ */
+export const skillWriteSemanticInputSchema = z
+  .object({
+    operation: z.literal("author_skill"),
+    dirName: z
+      .string()
+      .trim()
+      .min(1)
+      .max(160)
+      .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, "dirName must be a safe ASCII slug"),
+    skillMarkdown: z.string().trim().min(1).max(1024 * 1024),
+  })
+  .strict();
+
+export const skillWriteResultSchema = z
+  .object({
+    applied: z.literal(true),
+    dirName: z.string().trim().min(1),
+    skillName: z.string().trim().min(1),
+    packageVersion: z.string().trim().min(1),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/i),
+    created: z.boolean(),
+  })
+  .strict();
+
+export type SkillWriteInput = z.infer<typeof skillWriteSemanticInputSchema>;
+export type SkillWriteResult = z.infer<typeof skillWriteResultSchema>;
+
+export const SKILL_WRITE_ALIASES = Object.freeze({
+  author: "author_skill",
+});
+
+export const SKILL_WRITE_CAPABILITY = {
+  id: "skill.write",
+  version: 1,
+  aliases: { pi: "save_skill", method: SKILL_WRITE_ALIASES.author },
+  inputSchema: skillWriteSemanticInputSchema,
+  outputSchema: skillWriteResultSchema,
+  effect: "reversible_write",
+  effectClass: "reversible_local",
+  execution: { port: "skills", availability: "main_only" },
+  exposure: "internal_only",
+  requiredScope: "skills:write",
+  targetKind: "project",
+} as const satisfies CapabilityContract<SkillWriteInput, SkillWriteResult>;
+
+export function skillWriteInputForAlias(alias: string, args: unknown): SkillWriteInput | undefined {
+  if (alias !== SKILL_WRITE_ALIASES.author) return undefined;
+  return skillWriteSemanticInputSchema.parse({ operation: "author_skill", ...(args ?? {}) });
+}

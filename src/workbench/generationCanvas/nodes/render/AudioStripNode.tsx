@@ -1,3 +1,4 @@
+import { notify } from '../../../../ui/notificationPolicy'
 /**
  * AudioStripNode body — 声音分类节点（spec §4.4，2026-06-15 升级）。
  *
@@ -6,18 +7,19 @@
  * - 转写文本（result.type='text'）：文本（clamp）+ 复制 + 生成字幕（SRT）
  * - 空：上传按钮（配音模式则由 composer 填台词生成）
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconPlayerPlay, IconPlayerPause, IconUpload, IconFileText, IconCopy, IconBadgeCc } from '@tabler/icons-react'
+import { IconPlayerPlay, IconPlayerPause, IconWaveSine, IconFileText, IconCopy, IconBadgeCc } from '../../../../vendor/tablerIcons'
 import { cn } from '../../../../utils/cn'
 import { WorkbenchButton } from '../../../../design'
-import { toast } from '../../../../ui/toast'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { readAudioMeta } from '../../model/nodeMetaFields'
 import { useNodeUsageCount } from '../../hooks/useNodeRelationships'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import { persistNodeImageFile } from '../../adapters/persistNodeImage'
+import { isProjectExecutionContextCurrent, isProjectImportCancellation, withProjectAction } from '../../../project/projectCanvasReadSurface'
 import { UsageDot } from './CardCommon'
+import { NodeEmptyState } from './NodeEmptyState'
 import { getDisplayTitle } from '../../model/titleHeuristics'
 
 type Props = {
@@ -65,7 +67,7 @@ function buildSrt(node: GenerationCanvasNode): string {
 function PlayBar({ progress, onSeek }: { progress: number; onSeek: (fraction: number) => void }): JSX.Element {
   const { t } = useTranslation()
   const bars = React.useMemo(
-    () => [0.4, 0.7, 0.5, 0.9, 0.3, 0.8, 0.6, 0.7, 0.4, 0.8, 0.5, 0.6, 0.7, 0.4, 0.9, 0.5, 0.65, 0.45, 0.8, 0.55],
+    () => Array.from({ length: 20 }, () => 0.4),
     [],
   )
   const seekFromEvent = React.useCallback(
@@ -102,6 +104,11 @@ function PlayBar({ progress, onSeek }: { progress: number; onSeek: (fraction: nu
 }
 
 function AudioStripNodeImpl({ node }: Props): JSX.Element {
+  const [feedback, setFeedback] = React.useState<string | null>(null)
+  const reportFeedback = React.useCallback((message: string) => {
+    notify({ identity: `AudioStripNodeImpl:${node.id}`, reason: 'interaction', message, level: 'inline', present: setFeedback })
+  }, [node.id])
+
   const { t } = useTranslation()
   const meta = readAudioMeta(node)
   const usageCount = useNodeUsageCount(node.id, node.title)
@@ -124,21 +131,26 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
       const file = event.currentTarget.files?.[0]
       event.currentTarget.value = ''
       if (!file) return
-      const createdAt = Date.now()
-      // 先落盘再写 store：音频动辄几十 MB，base64 进 store 会被每次写入整段 JSON 深拷贝、
-      // 随每次保存全量序列化（同「九宫格切图卡死」的病根，见 docs/plan/2026-08-20-grid-split-freeze.md）。
-      void persistNodeImageFile(file, node.id).then((localUrl) => {
-        if (!localUrl) {
-          toast(t('generationCommon.audio.uploadFailed'), 'error')
-          return
-        }
-        updateNode(node.id, {
-          result: { id: `upload-audio-${createdAt}`, type: 'audio', url: localUrl, createdAt },
-          meta: { ...(node.meta || {}), audioFilename: file.name, audioMime: file.type },
+      withProjectAction((context) => {
+        const createdAt = Date.now()
+        // 先落盘再写 store：音频动辄几十 MB，base64 进 store 会被每次写入整段 JSON 深拷贝、
+        // 随每次保存全量序列化（同「九宫格切图卡死」的病根，见 docs/plan/2026-08-20-grid-split-freeze.md）。
+        void persistNodeImageFile(file, node.id, context).then((localUrl) => {
+          if (!isProjectExecutionContextCurrent(context)) return
+          if (!localUrl) {
+            reportFeedback(t('generationCommon.audio.uploadFailed'))
+            return
+          }
+          updateNode(node.id, {
+            result: { id: `upload-audio-${createdAt}`, type: 'audio', url: localUrl, createdAt },
+            meta: { ...(node.meta || {}), audioFilename: file.name, audioMime: file.type },
+          })
+        }).catch((error) => {
+          if (isProjectExecutionContextCurrent(context) && !isProjectImportCancellation(error)) reportFeedback(t('generationCommon.audio.uploadFailed'))
         })
       })
     },
-    [node.id, node.meta, updateNode],
+    [node.id, node.meta, updateNode, reportFeedback, t],
   )
 
   const handleTogglePlay = React.useCallback((event: React.MouseEvent) => {
@@ -174,21 +186,22 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
       event.stopPropagation()
       const srt = buildSrt(node)
       if (!srt) {
-        toast(t('generationCommon.audio.noSubtitleContent'), 'error')
+        reportFeedback(t('generationCommon.audio.noSubtitleContent'))
         return
       }
       void navigator.clipboard
         ?.writeText(srt)
-        .then(() => toast(t('generationCommon.audio.subtitleCopied'), 'success'))
+        .then(() => reportFeedback(t('generationCommon.audio.subtitleCopied')))
         .catch(() => {})
     },
-    [node, t],
+    [node, reportFeedback, t],
   )
 
   // 转写文本态：文本 + 复制 + 生成字幕（SRT）。
   if (isTranscript) {
     return (
       <div className={cn('w-full h-full rounded-nomi-lg bg-nomi-paper flex items-center gap-3 px-3')}>
+      {feedback ? <p role="status" className="m-0 px-2 py-1 text-caption text-nomi-ink-60">{feedback}</p> : null}
         <span
           className={cn(
             'inline-flex shrink-0 items-center justify-center w-8 h-8 rounded-full bg-nomi-accent-soft text-nomi-accent',
@@ -228,10 +241,19 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
     )
   }
 
+  if (!hasAudio) {
+    return <label className="block h-full w-full cursor-pointer bg-nomi-paper" title={t('generationCommon.audio.upload')}>
+      {feedback ? <p role="status" className="m-0 px-2 py-1 text-caption text-nomi-ink-60">{feedback}</p> : null}
+      <NodeEmptyState compact icon={<IconWaveSine size={20} stroke={1.6} />} title={t('generationCommon.nodeEmpty.audio.title')} description={t('generationCommon.nodeEmpty.audio.description')} />
+      <input className="hidden" type="file" accept="audio/*" onChange={handleUpload} />
+    </label>
+  }
+
   const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0
 
   return (
     <div className={cn('w-full h-full rounded-nomi-lg bg-nomi-paper flex items-center gap-3 px-3')}>
+      {feedback ? <p role="status" className="m-0 px-2 py-1 text-caption text-nomi-ink-60">{feedback}</p> : null}
       {hasAudio ? (
         <audio
           ref={audioRef}
@@ -269,19 +291,8 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
             <IconPlayerPlay size={14} stroke={1.6} aria-hidden />
           )}
         </button>
-      ) : (
-        <label
-          className={cn(
-            'inline-flex shrink-0 items-center justify-center w-8 h-8 rounded-full cursor-pointer bg-nomi-accent-soft text-nomi-accent hover:bg-nomi-accent hover:text-nomi-paper transition-colors',
-          )}
-          aria-label={t('generationCommon.audio.upload')}
-          title={t('generationCommon.audio.upload')}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <IconUpload size={14} stroke={1.6} aria-hidden />
-          <input className="hidden" type="file" accept="audio/*" onChange={handleUpload} />
-        </label>
-      )}
+      ) : null}
+
 
       <div className="flex flex-col gap-1 min-w-0 shrink-0 max-w-[140px]">
         {audioKindLabel ? (
@@ -296,30 +307,13 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
         <span className="text-body-sm font-semibold text-nomi-ink-80 truncate" title={node.title}>
           {getDisplayTitle(node.title, t('generationCommon.audio.title'))}
         </span>
-        {!hasAudio ? (
-          <span className="text-micro text-nomi-ink-40 truncate">{t('generationCommon.audio.empty')}</span>
-        ) : null}
       </div>
 
-      {hasAudio ? (
-        <PlayBar progress={progress} onSeek={handleSeek} />
-      ) : (
-        <div className="flex-1 min-w-0 text-nomi-ink-20 flex items-center gap-[2px] h-8">
-          {[0.4, 0.7, 0.5, 0.9, 0.3, 0.8, 0.6, 0.7, 0.4, 0.8, 0.5, 0.6].map((h, i) => (
-            <span
-              key={i}
-              className="flex-1 rounded-full"
-              style={{ height: `${Math.round(h * 100)}%`, background: 'currentColor' }}
-            />
-          ))}
-        </div>
-      )}
+      <PlayBar progress={progress} onSeek={handleSeek} />
 
       <div className="shrink-0 flex flex-col items-end gap-0.5">
         <span className="text-caption text-nomi-ink-60 tabular-nums font-mono">
-          {hasAudio
-            ? `${formatDuration(currentTime)} / ${formatDuration(duration || meta.durationSec)}`
-            : formatDuration(meta.durationSec)}
+          {`${formatDuration(currentTime)} / ${formatDuration(duration || meta.durationSec)}`}
         </span>
         <UsageDot count={usageCount} />
       </div>

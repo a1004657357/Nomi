@@ -1,11 +1,18 @@
 // 创作/画布助手 composer 的附件模型（S1）。纯前端：把用户附的文件传成 nomi-local://，
 // 在 composer 里以 chip 呈现。带不带去发送由 S2 的链路决定，本层只描述「一个待发附件」。
 
+import i18n from '../../../i18n'
+import { MEDIA_IMPORT_SURFACES } from '../../../../electron/shared/contracts/mediaImportPolicy'
+
 export type ComposerAttachmentKind = 'image' | 'file'
 export type ComposerAttachmentStatus = 'uploading' | 'ready' | 'error'
 
 export type ComposerAttachment = {
   id: string
+  /** Stable project-asset identity returned by the main-process storage boundary. */
+  assetId?: string
+  version?: number
+  contentHash?: string
   fileName: string
   contentType: string
   sizeBytes: number
@@ -18,8 +25,10 @@ export type ComposerAttachment = {
   error?: string
 }
 
-// 与生成画布图片导入上限一致（GENERATION_CANVAS_IMAGE_IMPORT_MAX_BYTES）。
-export const COMPOSER_ATTACHMENT_MAX_BYTES = 30 * 1024 * 1024
+// 上限由 mediaImportPolicy 的 'agent-composer' 面声明（领域理由：附件整份进模型上下文，
+// 受供应商单请求体积上限约束）。本文件只转出，不再自己拍一个数。
+export const COMPOSER_ATTACHMENT_MAX_BYTES =
+  MEDIA_IMPORT_SURFACES['agent-composer'].hardCapBytes ?? Number.POSITIVE_INFINITY
 
 export function attachmentKindFromContentType(contentType: string | null | undefined): ComposerAttachmentKind {
   return typeof contentType === 'string' && contentType.startsWith('image/') ? 'image' : 'file'
@@ -37,10 +46,10 @@ export function attachmentTypeLabel(fileName: string, contentType: string): stri
   const ext = (fileName.split('.').pop() || '').trim().toLowerCase()
   if (ext && ext !== fileName.toLowerCase() && ext.length <= 5) return ext.toUpperCase()
   const ct = (contentType || '').toLowerCase()
-  if (ct.startsWith('image/')) return '图片'
+  if (ct.startsWith('image/')) return i18n.t('generationCommon.composer.attachmentImage')
   if (ct.includes('pdf')) return 'PDF'
   if (ct.includes('word')) return 'DOCX'
   if (ct.includes('sheet') || ct.includes('excel')) return 'XLSX'
   if (ct.startsWith('text/')) return 'TXT'
-  return '文件'
+  return i18n.t('generationCommon.composer.attachmentFile')
 }

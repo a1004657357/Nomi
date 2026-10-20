@@ -1,0 +1,247 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-20-converted-shot-ownership",
+  "detected_by": "review",
+  "recurrence_check_on": "2026-10-20",
+  "invariant_owner_layer": {
+    "layer": "electron/shared/canvas/shotNumbering.ts",
+    "tests": [
+      "electron/capabilityCore/canvasGraph.test.ts",
+      "src/workbench/generationCanvas/agent/convertShotOwnership.test.ts"
+    ]
+  },
+  "problem_type": "Converted shot ownership lost at creation, clone and graph projection boundaries",
+  "symptom": "Repeated conversion, copying or project reload can duplicate shot owners, misidentify another video or lose a projected shot number; headless additions restart numbering; output node geometry differs between renderer and headless.",
+  "direct_cause": "Legacy owner pointers survived copies; conversion metadata and real edges were normalized separately. Review found a kindless headless factory projection, category copies retaining sourceNodeId, and first-frame owners replacing converted owners instead of unioning them. The electron output size mirror retained 560x420 instead of the canonical 280x170.",
+  "class_root": "Every numbering caller must preserve owner discriminants; every clone must restrict identity references to its copied graph; every reader must expose all live canonical owners without guessing.",
+  "affected_population": [
+    "Headless single and batch creation",
+    "Converted image/video pairs, isolated category/clipboard copies and cross-project workflows",
+    "Legacy project loading, event recovery and continuity reads"
+  ],
+  "scope_paths": [
+    "electron/shared/canvas/shotNumbering.ts",
+    "electron/shared/canvas/shotOrder.ts",
+    "electron/capabilityCore/canvasGraph.ts",
+    "electron/capabilityCore/canvasNodeFactory.ts",
+    "electron/capabilityCore/nodeKindDomain.ts",
+    "src/workbench/generationCanvas/agent/convertShotToVideo.ts",
+    "src/workbench/generationCanvas/events/canvasEventReducer.ts",
+    "src/workbench/generationCanvas/plugins/canvasWorkflowTemplates.ts",
+    "src/workbench/generationCanvas/store/canvasClipboard.ts",
+    "src/workbench/generationCanvas/store/canvasGraphActions.ts",
+    "src/workbench/generationCanvas/store/canvasGroupMoveActions.ts",
+    "src/workbench/generationCanvas/store/canvasNodeActions.ts",
+    "src/workbench/generationCanvas/store/canvasSnapshotNormalizer.ts",
+    "src/workbench/generationCanvas/store/generationCanvasStore.ts",
+    "src/workbench/project/projectPersistenceService.ts",
+    "src/workbench/project/projectV51ToV60Migration.ts"
+  ],
+  "entry_points": [
+    "addNodes -> buildCanvasNodes -> buildCanvasNode",
+    "convertImageShotToVideo and batch conversion",
+    "copyNodeToCategory, clipboard, group and workflow cloning",
+    "Persistence, migration, snapshots and event replay -> backfillShotIndexes",
+    "Canvas reads and shot order -> resolveShotIdentities"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "Repository-owned graph identity and registry contracts decide these invariants; no external provider or library behavior is changed.",
+  "invariants": [
+    "One canonical numbered video owner per converted shot; source image projects through live edges plus sourceNodeId, never a parallel owner pointer.",
+    "First-frame and converted owner sets are unioned and deduplicated; multiple owners expose IDs but no guessed shotIndex.",
+    "composition_ref is never rewritten as first_frame.",
+    "Headless and renderer factories receive kind/category/meta with shotIndex and ignore non-owner counters.",
+    "Clones remap only references within their copied graph; isolated video copies clear sourceNodeId.",
+    "Legacy conversion ownership is normalized before duplicate-number repair at load and replay boundaries.",
+    "Headless output size and safety footprint equal the canonical renderer registry; existing equivalence assertions remain unchanged."
+  ],
+  "doors": [
+    {"kind":"read","path":"electron/capabilityCore/canvasGraph.ts","symbol":"nodeKindDefaultSize"},
+    {"kind":"read","path":"electron/shared/agentCapabilities/canvasRead.ts","symbol":"resolveShotIdentities"},
+    {"kind":"read","path":"electron/shared/canvas/shotOrder.ts","symbol":"resolveShotIdentities"},
+    {"kind":"read","path":"src/workbench/generationCanvas/hooks/useNodeRelationships.ts","symbol":"resolveShotIdentities"},
+    {"kind":"read","path":"src/workbench/generationCanvas/store/rendererNodeFactoryDeps.ts","symbol":"nextShotIndex"},
+    {"kind":"read","path":"src/workbench/sidebar/CategoryTree.tsx","symbol":"copyNodeToCategory"},
+    {"kind":"write","path":"electron/capabilityCore/canvasGraph.ts","symbol":"backfillShotIndexes"},
+    {"kind":"write","path":"electron/capabilityCore/canvasGraph.ts","symbol":"buildCanvasNodes"},
+    {"kind":"write","path":"electron/capabilityCore/canvasNodeFactory.ts","symbol":"nextShotIndex"},
+    {"kind":"write","path":"electron/capabilityCore/canvasNodeFactory.ts","symbol":"buildCanvasNode"},
+    {"kind":"write","path":"electron/capabilityCore/nodeKindDomain.ts","symbol":"nodeKindDefaultSize"},
+    {"kind":"write","path":"electron/shared/canvas/shotNumbering.ts","symbol":"nextShotIndex"},
+    {"kind":"write","path":"electron/shared/canvas/shotNumbering.ts","symbol":"backfillShotIndexes"},
+    {"kind":"write","path":"src/workbench/generationCanvas/agent/convertShotToVideo.ts","symbol":"convertImageShotToVideo"},
+    {"kind":"write","path":"src/workbench/generationCanvas/events/canvasEventReducer.ts","symbol":"backfillShotIndexes"},
+    {"kind":"write","path":"src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts","symbol":"convertImageShotToVideo"},
+    {"kind":"write","path":"src/workbench/generationCanvas/plugins/canvasWorkflowTemplates.ts","symbol":"remapShotNodeReferences"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasClipboard.ts","symbol":"remapShotNodeReferences"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasGraphActions.ts","symbol":"backfillShotIndexes"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasGroupMoveActions.ts","symbol":"assignClonedShotIndexes"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasNodeActions.ts","symbol":"buildCanvasNode"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasNodeActions.ts","symbol":"backfillShotIndexes"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasNodeActions.ts","symbol":"nextShotIndex"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasNodeActions.ts","symbol":"remapShotNodeReferences"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasNodeActions.ts","symbol":"assignClonedShotIndexes"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/canvasSnapshotNormalizer.ts","symbol":"backfillShotIndexes"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/generationCanvasStore.ts","symbol":"assignClonedShotIndexes"},
+    {"kind":"write","path":"src/workbench/generationCanvas/store/rendererNodeFactoryDeps.ts","symbol":"nextShotIndex"},
+    {"kind":"write","path":"src/workbench/project/projectPersistenceService.ts","symbol":"backfillShotIndexes"},
+    {"kind":"write","path":"src/workbench/project/projectV51ToV60Migration.ts","symbol":"backfillShotIndexes"},
+    {"kind":"write","path":"src/workbench/sidebar/CategoryTree.tsx","symbol":"copyNodeToCategory"}
+  ],
+  "door_reduction": {
+    "before": 27,
+    "after": 31,
+    "why_not": "Counts are machine-generated with mapDoors using the staged versions of the 16 scope files versus their working versions, retaining all other current sources (2954 files). Existing creation, cloning, persistence and read doors retain distinct responsibilities but converge on shared owners; four explicit shared-helper calls are added rather than hiding those boundaries."
+  },
+  "door_map_evidence": {
+    "command": "node scripts/door-map.mjs nextShotIndex buildCanvasNode buildCanvasNodes remapShotNodeReferences resolveShotIdentities backfillShotIndexes assignClonedShotIndexes convertImageShotToVideo copyNodeToCategory nodeKindDefaultSize",
+    "generator": "scripts/door-map.mjs: doorsForTargets / mapDoors",
+    "source_files": 2954,
+    "exported_doors": 31
+  },
+  "review_follow_up": [
+    {
+      "finding": "Mencius 1: headless drops kind before owner filtering",
+      "reproduction": "Real addNodes sequential/batch path produced [7,1,1,1,2] instead of [7,8,9,10,11], including excluded reference counters.",
+      "repair": "Pass full existing nodes; factory type requires kind so a bare {shotIndex} projection no longer compiles."
+    },
+    {
+      "finding": "Mencius 2: category copy retains foreign sourceNodeId",
+      "reproduction": "Copy a converted video into shots/scene: reconversion throws multiple-video ambiguity; deleting the original incorrectly reuses the unconnected copy.",
+      "repair": "copyNodeToCategory calls the existing remapShotNodeReferences with an empty copied-source map, clearing external references."
+    },
+    {
+      "finding": "Mencius 3: first-frame projection hides converted owners",
+      "reproduction": "One composition conversion owner plus a different first-frame owner projected only the latter and falsely exposed its number.",
+      "repair": "Union both live-owner sets, deduplicate and expose a number only for exactly one owner."
+    }
+  ],
+  "generality_proof": "The same shared pure numbering, graph normalization, remapping and identity reader serve renderer, headless, persisted and replayed graphs. Actual entry-point regressions cover repeated and batched creation, both category-copy outcomes, cross-project remapping, save/load, mixed owners and edge deduplication.",
+  "shared_boundaries": [
+    {
+      "path": "electron/shared/canvas/shotNumbering.ts",
+      "symbol": "backfillShotIndexes",
+      "responsibility": "Normalize legacy conversion ownership before stable number repair."
+    },
+    {
+      "path": "electron/shared/canvas/shotNumbering.ts",
+      "symbol": "remapShotNodeReferences",
+      "responsibility": "Clear foreign source IDs and remap only copied graph relationships."
+    },
+    {
+      "path": "electron/shared/canvas/shotNumbering.ts",
+      "symbol": "resolveShotIdentities",
+      "responsibility": "Project the union of live owners without ambiguous numbers."
+    },
+    {
+      "path": "electron/capabilityCore/canvasNodeFactory.ts",
+      "symbol": "buildCanvasNodes",
+      "responsibility": "Require owner discriminants and preserve them across batch numbering."
+    },
+    {
+      "path": "src/workbench/generationCanvas/agent/convertShotToVideo.ts",
+      "symbol": "convertImageShotToVideo",
+      "responsibility": "Repair repeated conversions atomically, retaining composition semantics and rejecting ambiguous video candidates."
+    },
+    {
+      "path": "electron/capabilityCore/nodeKindDomain.ts",
+      "symbol": "nodeKindDefaultSize",
+      "responsibility": "Keep the existing electron mirror equal to renderer nodes/registry.ts; production electron cannot import renderer code."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/capabilityCore/canvasGraph.ts",
+      "entry_point": "addNodes",
+      "disposition": "enforced",
+      "evidence": "Real sequential/batch test verifies 7,8,9,10,11 while ignoring reference-sheet, excluded-frame and scene counters."
+    },
+    {
+      "path": "src/workbench/generationCanvas/store/canvasNodeActions.ts",
+      "entry_point": "copyNodeToCategory",
+      "disposition": "enforced",
+      "evidence": "shots/scene copies are tested with both a live and deleted original video, including save/load."
+    },
+    {
+      "path": "src/workbench/generationCanvas/plugins/canvasWorkflowTemplates.ts",
+      "entry_point": "instantiateCanvasWorkflowTemplate",
+      "disposition": "enforced",
+      "evidence": "Cross-project pair remaps sourceNodeId to its cloned image and retains one fresh canonical owner."
+    },
+    {
+      "path": "src/workbench/project/projectPersistenceService.ts",
+      "entry_point": "backfillShotIndexes",
+      "disposition": "enforced",
+      "evidence": "Persistence passes actual edges to the same normalizer; focused persistence and migration regressions pass."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "The same graph identity crosses independent headless, renderer, copy and persisted/replayed entry points. Direct-symbol search missed a wrapper that discarded required fields.",
+    "same_class_scan": [
+      "door-map exports 31 unique real {kind,path,symbol} doors; staged-scope comparison exports 27.",
+      "Followed factory wrapper addNodes into buildCanvasNodes and exercised actual production creation, not only injected factory unit tests.",
+      "Checked category copy separately from clipboard/workflow remapping; checked mixed composition/first-frame owners separately from multiple first-frame owners."
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/shared/canvas/shotNumbering.ts",
+    "invariant": "Owner identity, local graph references and ambiguity-safe projections are shared across all graph lifecycles.",
+    "failure_mode": "Ambiguous conversion throws; multiple projected owners omit shotIndex; outside-copy source IDs are removed; kindless factory input is rejected by TypeScript.",
+    "exception_policy": "none",
+    "strategy": "Reuse official first-frame identity projection and shared owner helpers; do not add owner pointers, parallel conversion engines or grant bypasses.",
+    "artifacts": [
+      "electron/shared/canvas/shotNumbering.ts",
+      "electron/shared/canvas/shotOrder.ts",
+      "electron/capabilityCore/canvasGraph.ts",
+      "electron/capabilityCore/canvasNodeFactory.ts",
+      "electron/capabilityCore/nodeKindDomain.ts",
+      "src/workbench/generationCanvas/agent/convertShotToVideo.ts",
+      "src/workbench/generationCanvas/events/canvasEventReducer.ts",
+      "src/workbench/generationCanvas/plugins/canvasWorkflowTemplates.ts",
+      "src/workbench/generationCanvas/store/canvasClipboard.ts",
+      "src/workbench/generationCanvas/store/canvasGraphActions.ts",
+      "src/workbench/generationCanvas/store/canvasGroupMoveActions.ts",
+      "src/workbench/generationCanvas/store/canvasNodeActions.ts",
+      "src/workbench/generationCanvas/store/canvasSnapshotNormalizer.ts",
+      "src/workbench/generationCanvas/store/generationCanvasStore.ts",
+      "src/workbench/project/projectPersistenceService.ts",
+      "src/workbench/project/projectV51ToV60Migration.ts"
+    ]
+  },
+  "regression_tests": [
+    "electron/capabilityCore/canvasGraph.test.ts",
+    "src/workbench/generationCanvas/agent/convertShotOwnership.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/capabilityCore/canvasGraph.test.ts",
+    "src/workbench/generationCanvas/agent/convertShotOwnership.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "electron/shared/canvas/shotNumbering.ts",
+      "src/workbench/generationCanvas/agent/convertShotToVideo.ts",
+      "electron/capabilityCore/canvasGraph.ts"
+    ],
+    "rationale": "Removed legacy storyboardVideoOwnerNodeId ownership reads/writes, kindless factory projection and first-frame-only precedence. Existing saved pointer values are removed during normalization; production files remain."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Only repository-owned pure graph operations and an existing size mirror change; no dependency upgrade or provider call is involved.",
+    "exit_criteria": []
+  },
+  "migration": "Load/replay receives real edges and repairs legacy pairs before duplicate numbering. Copy boundaries remap internal source IDs or clear foreign ones; repeated conversion repairs existing ownership and missing reference edges. Explicit composition references remain composition references.",
+  "verification": {
+    "red_report": "/Volumes/S7/AiWork/Projects/Nomi-merge-v0232-20261020/shot-owner-size-red.json",
+    "red_result": "33 passed / 9 failed",
+    "focused_report": "/Volumes/S7/AiWork/Projects/Nomi-merge-v0232-20261020/shot-owner-size-focused.json",
+    "focused_result": "13 files / 145 passed / 0 failed",
+    "typecheck": "TypeScript noEmit check of the five changed production files, two changed tests and transitive dependencies: zero owned/dependency errors."
+  },
+  "residual_risks": [
+    "No real provider generation or Electron UI smoke in this scoped side task; main owns merge-wide regression/typechecks and independent review.",
+    "Already persisted ambiguous graphs are not guessed into a unique owner; conversion continues to reject multiple candidates explicitly."
+  ]
+}

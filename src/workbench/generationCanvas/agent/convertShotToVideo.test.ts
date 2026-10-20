@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { convertImageShotToVideo, convertImageShotsToVideos } from './convertShotToVideo'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { isShotNumberedNode } from '../model/shotNumbering'
+import { resolveShotIdentities } from '../model/shotNumbering'
 import { __resetCanvasUndoJournalForTests } from '../events/canvasUndoJournal'
 
 beforeEach(() => {
@@ -29,6 +30,8 @@ describe('convertImageShotToVideo（image-first 桥）', () => {
     const video = state.nodes.find((n) => n.id === nodeId)!
     expect(video.kind).toBe('video')
     expect(video.shotIndex).toBe(3) // 继承源图镜号（同镜两阶段，排片落剧本位置）
+    expect(state.nodes.find(node => node.id === image.id)?.shotIndex).toBeUndefined()
+    expect(resolveShotIdentities(state.nodes, state.edges).get(image.id)).toMatchObject({ shotIndex: 3, shotOwnerNodeIds: [video.id] })
     expect(video.meta?.sourceNodeId).toBe(image.id) // 整理布局紧跟源镜头
     expect(video.meta?.storyboardVideoReferenceStrategy).toBe('full_reference')
     expect(video.meta?.storyboardVideoPromptSource).toBe('compiled_image_fallback')

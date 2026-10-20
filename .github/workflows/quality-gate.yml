@@ -4,61 +4,428 @@ on:
   push:
     branches:
       - main
-      - 'feat/**'
-      - 'fix/**'
   pull_request:
+  # Merge queue builds run required checks on the speculative merge result;
+  # without this trigger a queued PR waits forever for checks that never start.
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Reachable vocabulary baseline for a manual current-HEAD recovery run
+        required: false
+        default: origin/main
+        type: string
+      validation_mode:
+        description: Manual runs are always full; keep this explicit for auditability
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+
+# PR 按 PR 号分组：PR 里 github.sha 每次推送都变，按 sha 分组就不会取消旧班、会堆积；按 PR 号才对。
+# 其余事件（push / merge_group / workflow_dispatch）按 commit SHA 分组。
+#
+# 为什么不能回落到 github.ref：main 的 ref 恒为 refs/heads/main，按它分组会让每个新 merge 取消上一个
+# merge 还在跑的班。实测 2026-09-02 10:51–10:55 连续四班里三班被取消；被取消的班留不下任何证据，
+# delivery:verify-merged 因此在那些 merge SHA 上发不出 exact-SHA 收据（它正确拒绝把 cancelled 当成功）。
+# 没有任何作者能规避——取消你的是下一个 merge。故每个 commit 各跑各的。
+#
+# 这里刻意不用 `event_name == 'push' && github.sha || github.ref` 那套三元惯用法：它依赖「&& 右侧必须
+# 是真值」这个隐式前提，写错一次就静默回落到错误分支。github.sha 在上述每种事件下都有定义且唯一，
+# 两段式就够，少一个能出错的地方。
+concurrency:
+  group: quality-gate-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 permissions:
+  actions: read
+  checks: read
   contents: read
+  # 正文侧门岗现取 PR 正文（见 contracts job 的 env 注释）。只读，够用。
+  pull-requests: read
 
 jobs:
-  quality:
-    name: Quality Gate
+  scope:
+    name: Validation Scope
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    timeout-minutes: 10
+    outputs:
+      core_smoke: ${{ steps.profile.outputs.core_smoke }}
+      unit: ${{ steps.profile.outputs.unit }}
+      desktop: ${{ steps.profile.outputs.desktop }}
+      journeys: ${{ steps.profile.outputs.journeys }}
+      canvas: ${{ steps.profile.outputs.canvas }}
+      performance: ${{ steps.profile.outputs.performance }}
+      package: ${{ steps.profile.outputs.package }}
+      release: ${{ steps.profile.outputs.release }}
+      fail_closed: ${{ steps.profile.outputs.fail_closed }}
+      reason: ${{ steps.profile.outputs.reason }}
+      changed_count: ${{ steps.profile.outputs.changed_count }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Select fail-closed validation profile
+        id: profile
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          NOMI_VALIDATION_MODE: ${{ inputs.validation_mode || '' }}
+          NOMI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || '' }}
+          NOMI_HEAD_SHA: ${{ github.sha }}
+        run: node scripts/select-quality-gate-profile.mjs
+
+  contracts:
+    name: Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VOCAB_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || inputs.base_ref }}
+      ROOT_CAUSE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || inputs.base_ref }}
+      # 正文侧判据（check:prior-art R27）不再读 `github.event.pull_request.body`。
+      # 那是 **push 那一刻**的正文快照：推完再把方案链接补进正文，正在跑的这轮仍判「没引用」，
+      # 只能空提交重推换一轮 40 分钟（2026-09-17 PR #804 就栽在正文比 push 晚 19 秒）。
+      # 现在正文由 scripts/lib/prBody.mjs 用 gh **现取**，所以改完正文重跑这个 job 就能变绿。
+      # 取不到正文 = 红（不是跳过）：一个拿不到证据的门岗只能报它真拿到的那个结论。
+      # 正文不进命令行（外人可写的文本，进命令行就是注入通道）——脚本用 execFile 直连 gh。
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      NOMI_PR_NUMBER: ${{ github.event.pull_request.number }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      PRIOR_ART_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || inputs.base_ref }}
+      DOOR_MAP_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || inputs.base_ref }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.8.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Repository gates
-        run: pnpm run gates
-      - name: Electron smoke journeys
+      - name: Static contracts, lint, and types
+        run: pnpm run test:system:contracts
+      - name: Autosync publication regression
+        run: node --test docs/fixes/docs-autosync.node-test.mjs
+
+  unit:
+    name: Unit
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.8.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium for browser integration tests
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Unit and agent runtime tests (full lane)
+        if: needs.scope.outputs.unit == 'full'
+        run: pnpm run test:system:unit
+      - name: Changed and related tests (fast lane)
+        if: needs.scope.outputs.unit == 'focused'
+        env:
+          NOMI_CHANGED_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
+          NOMI_CHANGED_HEAD: ${{ github.sha }}
+        run: pnpm run test:system:focused
+
+  # 2026-09-02 拆班：此前 smoke/journeys/canvas-full/perf 全串在这一个 job 里（实测 ~22.5 分钟，
+  # 整条 PR 轮的关键路径）。现在按风险面拆成三个并行 job：本 job 只留 smoke + journeys + canvas
+  # critical（~5 分钟），canvas full 走 canvas-acceptance 两片 matrix，perf 走 canvas-performance。
+  # 覆盖一条不少：canvas=='full' 时 full 套件本就是 critical 的超集，由 canvas-acceptance 全量跑。
+  desktop-linux:
+    name: E2E Walkthroughs (Linux)
+    needs: scope
+    if: >-
+      needs.scope.outputs.desktop == 'true' ||
+      needs.scope.outputs.journeys == 'true' ||
+      needs.scope.outputs.canvas == 'critical'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.8.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build selected desktop surfaces once
+        run: pnpm run build
+      - name: Install Chromium for browser mechanism tests
+        run: pnpm exec playwright install --with-deps chromium
+      # 七步一律 continue-on-error + 末尾汇总（2026-09-18）。此前它们是串行 fail-fast：
+      # 第一条走查红了，后面六条根本不跑，于是**每轮 CI 只能学到一件事**——
+      # PR #804 连着三轮，每轮红的都是另一条不同的走查，三轮 ≈ 两小时只为收集三条信息。
+      # 判据不变（任一条红 = job 红，由末尾那步执行），变的只是「一次收齐几条」。
+      # 时长不涨：步数、并行度、跑的命令一个没动；红的时候反而是一轮拿到全部发现。
+      # 单步的 `if:` 保留——没选中的面照常 skipped，汇总把 skipped 与 failure 分开报。
+      - name: Browser feel mechanism
+        id: feel
+        continue-on-error: true
+        run: pnpm run test:feel:browser
+      - name: Electron smoke
+        id: smoke
+        continue-on-error: true
+        if: needs.scope.outputs.desktop == 'true'
         run: xvfb-run -a pnpm run test:e2e
-      - name: Real user journey suite
+      - name: CI-safe user journeys
+        id: journeys
+        continue-on-error: true
+        if: needs.scope.outputs.journeys == 'true'
         run: xvfb-run -a pnpm run test:journeys
+      - name: MCP L1 handshake journey
+        id: mcp-journey
+        continue-on-error: true
+        if: needs.scope.outputs.journeys == 'true'
+        run: xvfb-run -a pnpm run test:mcp-journey
+      - name: MCP elicitation-first journey
+        id: mcp-elicitation
+        continue-on-error: true
+        if: needs.scope.outputs.journeys == 'true'
+        run: xvfb-run -a pnpm run test:mcp-elicitation
+      - name: Real user loopback journey gate
+        id: real-user-journeys
+        continue-on-error: true
+        if: needs.scope.outputs.journeys == 'true'
+        run: xvfb-run -a pnpm run test:real-user-journeys:ci
+      # 金路径（2026-09-18 接进 CI）：Agent 拆镜 → 草稿落画布 + 分镜表 → 表里选镜 → Agent 改一镜 → 生成 → 冷重启。
+      # 它从 09-15 改成 draft_shots 起就没在任何工作流里跑过（package.json 之外零引用）——改完又是一条没人跑的走查。
+      - name: Golden path (Agent storyboard lands on canvas)
+        if: needs.scope.outputs.journeys == 'true'
+        run: xvfb-run -a pnpm run test:golden
+      - name: Critical canvas acceptance
+        id: canvas-critical
+        continue-on-error: true
+        if: needs.scope.outputs.canvas == 'critical'
+        run: xvfb-run -a pnpm run test:canvas:critical
+
+      # 这一步才是 job 的结论。`continue-on-error` 只改 conclusion，不改 outcome——
+      # 所以判据读 outcome，而且必须 fail-closed：认识的三种是 success/skipped/failure，
+      # 出现第四种（cancelled 之类）一律当红，别让一个没见过的字符串变成静默放行。
+      - name: E2E chain summary
+        if: always()
+        env:
+          CHAIN: >-
+            feel:${{ steps.feel.outcome }}
+            smoke:${{ steps.smoke.outcome }}
+            journeys:${{ steps.journeys.outcome }}
+            mcp-journey:${{ steps.mcp-journey.outcome }}
+            mcp-elicitation:${{ steps.mcp-elicitation.outcome }}
+            real-user-journeys:${{ steps.real-user-journeys.outcome }}
+            canvas-critical:${{ steps.canvas-critical.outcome }}
+        run: node scripts/summarize-e2e-chain.mjs
 
       # 走查证据（截图 + output.jsonl）。win-gate.yml 一直有这步，本 job 却没有——
       # 结果是 ubuntu 这边走查一红就只剩一行「✗ 某某检查」，几何类失败隔着 CI 根本判不了因
       # （2026-08-26 实际卡在这：只知道 withinStage=false，拿不到矩形数就没法定位）。
       - name: Upload walkthrough evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-walkthrough-evidence
           path: |
+            artifacts/feel/**
             evals/runs/**/screenshots/**
             evals/runs/**/output.jsonl
+            outputs/canvas-acceptance/**
+            outputs/canvas-smoke/**
+            outputs/canvas-card-stack-20260827/**
+            tests/system/runs/**/report.md
+            tests/system/runs/**/summary.json
+            tests/system/runs/**/*-real-user-journeys/**
+            tests/ux/shots/canvas-drag-pan-gestures/**
+            tests/ux/shots/group-ports/**
+            tests/ux/shots/react-flow-read-only/**
+            tests/ux/perf-results/canvas-*.json
           if-no-files-found: warn
           retention-days: 7
-  mac-package:
-    name: Mac Package
-    runs-on: macos-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+  # full 功能走查 13 个场景按实测耗时装箱成两片并行跑（分桶清单在 tests/ux/canvas-real-suite.mjs
+  # 的 FULL_CANVAS_SHARDS，漏分/重分/幽灵场景会让两片当场 fail-closed 抛错，场景不可能被静默漏跑）。
+  canvas-acceptance:
+    name: Canvas Acceptance (Linux)
+    needs: scope
+    if: needs.scope.outputs.canvas == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.8.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build selected desktop surfaces once
+        run: pnpm run build
+      - name: Full functional canvas acceptance
+        run: xvfb-run -a pnpm run test:canvas:acceptance -- --shard ${{ matrix.shard }}/2
+      - name: Upload walkthrough evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: canvas-acceptance-evidence-${{ matrix.shard }}
+          path: |
+            artifacts/feel/**
+            evals/runs/**/screenshots/**
+            evals/runs/**/output.jsonl
+            outputs/canvas-acceptance/**
+            outputs/canvas-smoke/**
+            outputs/canvas-card-stack-20260827/**
+            tests/system/runs/**/report.md
+            tests/system/runs/**/summary.json
+            tests/ux/shots/canvas-drag-pan-gestures/**
+            tests/ux/shots/group-ports/**
+            tests/ux/shots/react-flow-read-only/**
+            tests/ux/perf-results/canvas-*.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  # perf 预算单场景实测 ~763s，是全流水线最长的一根；独立成 job 后它只拖自己，
+  # 不再把 smoke/journeys/canvas 走查压在同一根串行棒上。预算与校准（仪器）一字未动。
+  canvas-performance:
+    name: Canvas Performance (Linux)
+    needs: scope
+    if: needs.scope.outputs.performance == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.8.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build selected desktop surfaces once
+        run: pnpm run build
+      - name: Canvas performance budget
+        run: xvfb-run -a pnpm run test:canvas:performance
+      - name: Upload walkthrough evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: canvas-performance-evidence
+          path: |
+            artifacts/feel/**
+            evals/runs/**/screenshots/**
+            evals/runs/**/output.jsonl
+            outputs/canvas-acceptance/**
+            outputs/canvas-smoke/**
+            outputs/canvas-card-stack-20260827/**
+            tests/system/runs/**/report.md
+            tests/system/runs/**/summary.json
+            tests/ux/shots/canvas-drag-pan-gestures/**
+            tests/ux/shots/group-ports/**
+            tests/ux/shots/react-flow-read-only/**
+            tests/ux/perf-results/canvas-*.json
+          if-no-files-found: warn
+          retention-days: 7
+  # 核心流程冒烟（2026-09-22 用户拍板，docs/plan/2026-09-22-core-flow-smoke-three-defenses.md）：
+  # 除纯文档外每个 PR、每次 main push 都跑，分类器不许降档。两种夹具各一片：
+  # empty = 空白起点；used = 用过的项目（24 张真实卡、编组 + 空编组框、时间轴展开、Agent 面板开着、1280×800）。
+  # 场景清单唯一 owner：tests/ux/core-smoke/scenarios.mjs；夹具清单与 check 名派生自 scripts/validation-policy.mjs。
+  # 合后 delivery:verify-merged 要这两份 check 在该 merge SHA 上是 success 才发收据。
+  core-smoke:
+    name: Core Flow Smoke (${{ matrix.fixture }})
+    needs: scope
+    if: needs.scope.outputs.core_smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # used 这一格**照跑、照传证据，但不阻断**（2026-09-22 用户拍板）：实测同一份代码连跑 5 次
+    # 只有 1 次全绿，三种失败都出自还没修的小窗布局问题（T-CV-19 / T-CV-20 / T-QA-21），
+    # 证据在 docs/evidence/2026-09-22-core-smoke-negative-control/。continue-on-error 只改 conclusion、
+    # 不改 outcome，所以 used 红了这格仍然亮红给人看，只是不拉垮 needs.core-smoke.result。
+    # 阻断名单的唯一 owner 是 scripts/validation-policy.mjs 的 CORE_SMOKE_BLOCKING_FIXTURES，
+    # check-quality-gate-workflow 钉死这里与它逐字一致；升阻断只改那一处。
+    continue-on-error: ${{ matrix.fixture != 'empty' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [empty, used]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.8.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build selected desktop surfaces once
+        run: pnpm run build
+      - name: Core flow smoke
+        run: xvfb-run -a pnpm run test:core-smoke -- --fixture ${{ matrix.fixture }}
+      # 画布跟手结构断言（2026-09-25 用户拍板：每个非纯文档 PR 都跑，docs/plan/2026-09-25-canvas-follow-hand.md「守住」第 1 条）。
+      # 判的是计数不是毫秒（空闲 <video> = 0、同时在播 ≤ 1、悬停离开不留播放器、打字 / 新建节点别的节点重渲 0、
+      # 叠放拖出不粘、方向键能挪），Linux 软件渲染上也判得准。它自带 76 节点真实素材画布、与冒烟夹具无关，
+      # 所以只在阻断的 empty 那一格跑、复用上面同一次构建（约 +2 分钟，不另起 runner、不重装依赖）。
+      - name: Canvas follow-hand structural
+        if: matrix.fixture == 'empty'
+        run: xvfb-run -a node tests/ux/canvas-follow-hand.perf.mjs --structural
+      - name: Upload walkthrough evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: core-smoke-evidence-${{ matrix.fixture }}
+          path: |
+            artifacts/feel/**
+            outputs/core-smoke/**
+            tests/ux/shots/node-params-and-version-pill/**
+            tests/ux/shots/canvas-drag-pan-gestures/**
+            tests/ux/shots/canvas-follow-hand/**
+          if-no-files-found: warn
+          retention-days: 7
+
+  mac-package:
+    name: Mac Package
+    needs: scope
+    if: needs.scope.outputs.package == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.8.1
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -70,3 +437,59 @@ jobs:
         run: pnpm run dist:mac:dir
       - name: Verify macOS signature
         run: codesign --verify --deep --strict --verbose=4 release/mac-arm64/Nomi.app
+
+  quality:
+    name: Quality Gate
+    needs: [scope, contracts, unit, core-smoke, desktop-linux, canvas-acceptance, canvas-performance, mac-package]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Audit CI annotations
+        id: ci-hygiene
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci-annotation-hygiene.mjs
+      - name: Upload CI hygiene evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-hygiene-evidence
+          path: outputs/ci-hygiene/ci-annotations.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require every validation surface
+        if: ${{ always() }}
+        run: |
+          test "${{ steps.ci-hygiene.outcome }}" = "success"
+          test "${{ needs.scope.result }}" = "success"
+          test "${{ needs.contracts.result }}" = "success"
+          test "${{ needs.unit.result }}" = "success"
+          # 核心冒烟：只有纯文档才允许 skipped；其余（含分类器没给出结论）一律要求 success。
+          # 非阻断的 used 带 continue-on-error，它红时 conclusion 仍是 success，
+          # 所以下面这一行实际判的是**阻断档（empty）过没过**——这正是要的语义。
+          if [ "${{ needs.scope.outputs.core_smoke }}" = "false" ]; then
+            test "${{ needs.scope.outputs.reason }}" = "docs_only"
+            test "${{ needs['core-smoke'].result }}" = "skipped"
+          else
+            test "${{ needs['core-smoke'].result }}" = "success"
+          fi
+          if [ "${{ needs.scope.outputs.desktop }}" = "true" ] || \
+             [ "${{ needs.scope.outputs.journeys }}" = "true" ] || \
+             [ "${{ needs.scope.outputs.canvas }}" = "critical" ]; then
+            test "${{ needs['desktop-linux'].result }}" = "success"
+          fi
+          if [ "${{ needs.scope.outputs.canvas }}" = "full" ]; then
+            test "${{ needs['canvas-acceptance'].result }}" = "success"
+          fi
+          if [ "${{ needs.scope.outputs.performance }}" = "true" ]; then
+            test "${{ needs['canvas-performance'].result }}" = "success"
+          fi
+          if [ "${{ needs.scope.outputs.package }}" = "true" ]; then
+            test "${{ needs['mac-package'].result }}" = "success"
+          fi

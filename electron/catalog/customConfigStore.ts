@@ -34,6 +34,12 @@ export function legacyCustomConfig(vendor: Vendor | undefined): Record<string, s
   return normalizedCustomConfig(meta.customConfig);
 }
 
+export function hasLegacyCustomConfigField(vendor: Vendor | undefined): boolean {
+  return Boolean(
+    isJsonRecord(vendor?.meta) && Object.prototype.hasOwnProperty.call(vendor.meta, "customConfig"),
+  );
+}
+
 export function credentialRecord(state: CatalogState, vendorKey: string): ApiKeyRecord {
   const existing = state.apiKeysByVendor[vendorKey];
   if (existing) return existing;
@@ -62,15 +68,37 @@ export function applyPlainCustomConfig(
 }
 
 export function publicVendor(vendor: Vendor): Vendor {
-  return { ...vendor, meta: withoutLegacyCustomConfig(vendor.meta) };
+  // Strip every credential-bearing config from the renderer/export DTO: the legacy
+  // customConfig blob, the proxy URL (may carry user:pass), and custom request
+  // headers (may carry Authorization). Their values live only in the encrypted
+  // credential record; the DTO never carries a credential-bearing value.
+  const meta = withoutExtraHeaders(withoutLegacyCustomConfig(vendor.meta));
+  const next: Vendor = { ...vendor, meta };
+  if (next.network && typeof next.network === "object") {
+    const rest = { ...next.network };
+    delete rest.proxyUrl;
+    next.network = Object.keys(rest).length > 0 ? rest : undefined;
+  }
+  return next;
 }
 
-/** Returns null while OS safe storage is unavailable so the caller can retry on the next read. */
+function withoutExtraHeaders(meta: unknown): unknown {
+  if (!isJsonRecord(meta) || !Object.prototype.hasOwnProperty.call(meta, "extraHeaders")) return meta;
+  const clean = { ...meta };
+  delete clean.extraHeaders;
+  return Object.keys(clean).length > 0 ? clean : undefined;
+}
+
+/** Returns null while OS safe storage is unavailable so an explicit write can fail without touching disk. */
 export function migrateLegacyCustomConfigSecrets(state: CatalogState): CatalogState | null {
   const legacy = state.vendors
     .map((vendor) => ({ vendor, config: legacyCustomConfig(vendor) }))
-    .filter(({ config }) => Object.keys(config).length > 0);
-  if (legacy.length > 0 && !isSafeStorageAvailable()) return null;
+    .filter(({ vendor }) => hasLegacyCustomConfigField(vendor));
+  const requiresEncryption = legacy.some(({ vendor, config }) => {
+    const current = state.apiKeysByVendor[vendor.key]?.customConfig || {};
+    return Object.keys(config).some((name) => !current[name]);
+  });
+  if (requiresEncryption && !isSafeStorageAvailable()) return null;
 
   const next: CatalogState = {
     ...state,
@@ -78,7 +106,21 @@ export function migrateLegacyCustomConfigSecrets(state: CatalogState): CatalogSt
     vendors: state.vendors.map((vendor) => ({ ...vendor, meta: withoutLegacyCustomConfig(vendor.meta) })),
     apiKeysByVendor: { ...(state.apiKeysByVendor || {}) },
   };
-  for (const { vendor, config } of legacy) applyPlainCustomConfig(next, vendor.key, config);
+  for (const { vendor, config } of legacy) {
+    const existing = credentialRecord(next, vendor.key);
+    const current = existing.customConfig || {};
+    const encryptedLegacy: NonNullable<ApiKeyRecord["customConfig"]> = {};
+    for (const [name, value] of Object.entries(config)) {
+      if (!current[name]) encryptedLegacy[name] = encryptCustomSecretValue(value);
+    }
+    if (Object.keys(encryptedLegacy).length > 0) {
+      next.apiKeysByVendor[vendor.key] = {
+        ...existing,
+        customConfig: { ...encryptedLegacy, ...current },
+        updatedAt: nowIso(),
+      };
+    }
+  }
   return next;
 }
 
@@ -132,4 +174,16 @@ export function replaceCustomCallConfig(
   return Object.keys(next)
     .sort((left, right) => left.localeCompare(right))
     .map((name) => ({ name, hasValue: true }));
+}
+
+/**
+ * 明确的 custom-config 凭据写边界：先加密，再从 vendor.meta 移除旧明文。
+ * 全部 legacy 字段都清理完后，才在同一内存事务中升到 v9。
+ */
+export function applyPlainCustomConfigWrite(state: CatalogState, vendorKey: string, config: Record<string, string>): void {
+  applyPlainCustomConfig(state, vendorKey, config);
+  state.vendors = state.vendors.map((vendor) =>
+    vendor.key === vendorKey ? { ...vendor, meta: withoutLegacyCustomConfig(vendor.meta) } : vendor,
+  );
+  if (state.version === 8 && !state.vendors.some(hasLegacyCustomConfigField)) state.version = 9;
 }

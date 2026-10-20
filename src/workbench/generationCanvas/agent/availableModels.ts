@@ -1,3 +1,10 @@
+import { getVendorPreference } from "../../api/vendorPreferenceApi";
+import {
+  loadGenerationModelDefaults,
+  type GenerationDefaultTaskKind,
+  type GenerationModelDefaultMap,
+} from "../model/generationModelDefaults";
+import { orderByVendorPreference } from "../../../../electron/shared/contracts/vendorPreference";
 // 可用模型清单生成器：把 catalog 真实可用的模型 join 上各自档案（archetype），
 // flatten 成 agent 可读 / 计划清单卡可渲染的清单。
 //
@@ -10,144 +17,189 @@
 // 参数随 (model × mode × vendor) 三元组变：每个 model 带 modes[]，每个 mode 带自己的 params
 // （resolveArchetypeForModel 内部已按 vendor 特化）。agent 必须同时选 modelKey + modeId。
 import type { ModelOption } from "../../../config/models";
-import type { ModelParameterControl } from "../../../config/modelCatalogMeta";
-import type { ArchetypeReferenceSlotKind } from "../../../config/modelArchetypes";
-import type { ModelCapabilitySupport } from "../../../config/modelArchetypes/types";
-import {
-  resolveArchetypeForModel,
-  specializeArchetypeForVariant,
-  type ArchetypeMode,
-} from "../../../config/modelArchetypes";
+import { parseModelParameterControls } from "../../../config/modelCatalogMeta";
+import { resolveArchetypeForModel, specializeArchetypeForVariant, type ArchetypeMode } from "../../../../electron/shared/modelArchetypes";
 import { preloadModelOptions } from "../../../config/modelCatalogCache";
+import { pickImplicitVendorMatch } from "../../../config/modelIdentity";
+import i18n from "../../../i18n";
+import { translateModelDisplayText } from "../../../i18n/modelDisplayText";
 
-/** 该模式声明的一个参考槽——agent 据此知道这个模式吃哪些参考、各能吃几张，从而只连模型真支持的边。 */
-export type AgentModelSlot = {
-  kind: ArchetypeReferenceSlotKind;
-  /** 模型自己的槽名（vendor 原词，如「角色参考」「首帧」）。 */
-  label: string;
-  max?: number;
-  /** 角色参考（按序对应 prompt 的 character1..N）。 */
-  characterIndexed?: boolean;
-};
-
-export type AgentModelMode = {
-  modeId: string;
-  /** 模型自己的叫法（vendor 原词，如「全能参考」）——计划卡副标签 + agent 提示用真名。 */
-  vendorTerm: string;
-  intent: string;
-  hint: string;
-  params: ModelParameterControl[];
-  /** 该模式支持的参考槽（空=纯文生，不接任何参考边）。喂给 agent 让它按模型真实能力连边（T8）。 */
-  slots: AgentModelSlot[];
-  /** 明确声明的配方支持；未列出的能力仍可由结构兼容性判定为 compatible。 */
-  capabilities: ModelCapabilitySupport[];
-};
-
-export type AgentModelVariant = {
-  /** Agent 和节点元数据使用的稳定型号 id，例如 v5_0_lite / vip。 */
-  variantId: string;
-  label: string;
-  /** 传输层最终使用的模型枚举；仅用于审计，不作为节点 modelKey。 */
-  transportModelKey: string;
-  /** 已按该型号收窄参数、并过滤不支持模式后的真实模式清单。 */
-  modes: AgentModelMode[];
-};
-
-export type AgentModelEntry = {
-  modelKey: string;
-  modelAlias: string | null;
-  vendor: string | null;
-  label: string;
-  kind: "image" | "video" | "audio" | "model3d";
-  archetypeId: string;
-  defaultModeId: string;
-  defaultVariantId?: string;
-  modes: AgentModelMode[];
-  variants: AgentModelVariant[];
-};
-
-function toAgentMode(mode: ArchetypeMode): AgentModelMode {
-  return {
-    modeId: mode.id,
-    vendorTerm: mode.vendorTerm,
-    intent: mode.intent,
-    hint: mode.hint,
-    params: mode.params,
-    slots: mode.slots.map((slot) => ({
-      kind: slot.kind,
-      label: slot.label,
-      max: slot.max,
-      ...(slot.characterIndexed ? { characterIndexed: true as const } : {}),
-    })),
-    capabilities: mode.capabilities?.map((capability) => ({ ...capability })) ?? [],
-  };
-}
+import type { AgentModelEntry } from "../../../../electron/shared/agentCapabilities/availableModels";
+export type { AgentModelEntry, AgentModelMode, AgentModelSlot } from "../../../../electron/shared/agentCapabilities/availableModels";
 
 /**
  * 把 catalog 的 ModelOption[] join 档案后 flatten 成 agent 可选模型清单。纯函数，可单测。
- * 无档案的模型直接跳过；同一 modelKey 去重（image/video 两边可能重复）。
+ * 无档案的模型直接跳过。
+ *
+ * **去重键是 `(vendor, modelKey)`，不是 modelKey**——模型身份的唯一键包含供应商。
+ * 2026-08-18 曾按 modelKey 去重（「首家胜出」），后果是两家供应商提供同名模型时身份坍缩：
+ * 用户选 APIMart 的 Qwen-Image，请求实际发去 code-newcli-com（2026-09-03 真实付费闭环走查
+ * 实测 HTTP 400 阻断，见 docs/plan/2026-09-03-storyboard-entry-vendor-identity.md §1 Bug 3）。
+ * image/video 两边真正的重复由 `(vendor, modelKey, kind)` 之外的同源条目负责，不靠丢 vendor 实现。
  */
+function toAgentMode(mode: ArchetypeMode) {
+  return { modeId: mode.id, vendorTerm: mode.vendorTerm, intent: mode.intent, hint: mode.hint,
+    consumesAnchors: mode.consumesAnchors, params: mode.params,
+    slots: mode.slots.map(slot => ({ kind: slot.kind, label: slot.label, max: slot.max,
+      ...(slot.characterIndexed ? { characterIndexed: true as const } : {}) })) };
+}
+
 export function buildAgentModelEntries(options: readonly ModelOption[]): AgentModelEntry[] {
   const entries: AgentModelEntry[] = [];
   const seen = new Set<string>();
   for (const option of options) {
     const modelKey = option.modelKey ?? option.value;
-    if (!modelKey || seen.has(modelKey)) continue;
+    // 身份键含 vendor：同名模型来自不同供应商是**两个模型**，不是重复项。
+    const identity = `${option.vendor ?? ""}::${modelKey}`;
+    if (!modelKey || seen.has(identity)) continue;
     const archetype = resolveArchetypeForModel({
       modelKey: option.modelKey ?? option.value,
       modelAlias: option.modelAlias,
       vendorKey: option.vendor,
       meta: option.meta,
     });
-    if (!archetype) continue;
-    seen.add(modelKey);
-    const defaultVariantId = archetype.defaultVariantId;
-    const defaultArchetype = specializeArchetypeForVariant(archetype, defaultVariantId);
-    const defaultVariant = archetype.variants?.find((variant) => variant.id === defaultVariantId);
-    const defaultModes = defaultArchetype.modes
-      .filter((mode) => !defaultVariant?.supportedModeIds || defaultVariant.supportedModeIds.includes(mode.id))
-      .map(toAgentMode);
-    const variants = (archetype.variants ?? []).map((variant) => {
-      const specialized = specializeArchetypeForVariant(archetype, variant.id);
-      return {
-        variantId: variant.id,
-        label: variant.label,
-        transportModelKey: variant.modelKey,
-        modes: specialized.modes
-          .filter((mode) => !variant.supportedModeIds || variant.supportedModeIds.includes(mode.id))
-          .map(toAgentMode),
-      };
-    });
+    // Text/chat models deliberately have no media archetype. Their catalog kind
+    // plus the published `chat` mode is sufficient to preserve an explicit
+    // user/agent selection; dropping them here silently changes the request to
+    // whatever default model happens to be mounted on the node.
+    const kind = archetype?.kind ?? option.kind;
+    if (!kind || (!archetype && kind !== "text")) continue;
+    const defaultVariant = archetype?.variants?.find(variant => variant.id === archetype.defaultVariantId);
+    const modes = archetype
+      ? specializeArchetypeForVariant(archetype, archetype.defaultVariantId).modes
+        .filter(mode => !defaultVariant?.supportedModeIds || defaultVariant.supportedModeIds.includes(mode.id))
+        .map(toAgentMode)
+      : [{
+          modeId: "chat",
+          vendorTerm: "对话",
+          intent: "生成或改写文本",
+          hint: i18n.t("generationCommon.agentRuntime.textModelHint"),
+          params: parseModelParameterControls(option.meta),
+          slots: [],
+        }];
+    seen.add(identity);
     entries.push({
-      modelKey,
+      // 目录状态里这个字段叫 `modelKey`（宿主/持久化的名字）；`AgentModelEntry` 是**模型看的那一面**，
+      // 那边它叫 `modelId`——与 `draft_shots` 收的字段同名。投影就发生在这一行。
+      modelId: modelKey,
       modelAlias: option.modelAlias ?? null,
       vendor: option.vendor ?? null,
       label: option.label,
-      kind: archetype.kind,
-      archetypeId: archetype.id,
-      defaultModeId: archetype.defaultModeId,
-      ...(defaultVariantId ? { defaultVariantId } : {}),
-      modes: defaultModes,
-      variants,
+      // 界面上这个模型叫什么：与卡上 / 模型框 / 设置同一个函数翻出来（身份与落盘的 `label` 不随语言变）。
+      displayName: translateModelDisplayText(option.label),
+      kind,
+      ...(archetype ? { archetypeId: archetype.id } : {}),
+      defaultModeId: archetype?.defaultModeId ?? "chat",
+      modes,
+      // 变体随档案一起投出去：准入层会拒未知 variantId，不投就是「可被拒、不可发现」。
+      ...(archetype?.variants?.length
+        ? {
+            variants: archetype.variants.map((variant) => ({
+              id: variant.id,
+              label: variant.label,
+              ...(variant.modelKey ? { modelKey: variant.modelKey } : {}),
+              modes: specializeArchetypeForVariant(archetype, variant.id).modes
+                .filter(mode => !variant.supportedModeIds || variant.supportedModeIds.includes(mode.id))
+                .map(toAgentMode),
+            })),
+            ...(archetype.defaultVariantId ? { defaultVariantId: archetype.defaultVariantId } : {}),
+          }
+        : {}),
     });
   }
   return entries;
 }
 
-/** 拉取 image+video+model3d 三类真实可用模型，join 档案生成 agent 可选清单（渲染层，走 catalog IPC）。 */
+/** 拉取 image+video 两类真实可用模型，join 档案生成 agent 可选清单（渲染层，走 catalog IPC）。 */
 export async function listAvailableModelsForAgent(): Promise<AgentModelEntry[]> {
-  const [imageOptions, videoOptions, model3dOptions] = await Promise.all([
-    preloadModelOptions("image"),
-    preloadModelOptions("video"),
-    preloadModelOptions("model3d"),
+  const [options, preference] = await Promise.all([
+    Promise.all([
+      preloadModelOptions("text", "chat"),
+      preloadModelOptions("image"),
+      preloadModelOptions("imageEdit"),
+      preloadModelOptions("video"),
+      preloadModelOptions("video", "image_to_video"),
+      preloadModelOptions("model3d"),
+    ]),
+    getVendorPreference(),
   ]);
-  return buildAgentModelEntries([...imageOptions, ...videoOptions, ...model3dOptions]);
+  return orderByVendorPreference(buildAgentModelEntries(options.flat()), preference.orderedVendorKeys, (row) => row.vendor);
+}
+
+/**
+ * 用户保存的「新建卡片默认模型」在这四类任务上的键。图片卡先读文生图、没设再读图生图；
+ * 视频卡先读文生视频、没设再读图生视频——一份偏好覆盖同一媒介的两个模式，用户不必设四遍。
+ */
+const DEFAULT_TASK_KINDS: Record<'image' | 'video', readonly GenerationDefaultTaskKind[]> = {
+  image: ['text_to_image', 'image_edit'],
+  video: ['text_to_video', 'image_to_video'],
+}
+
+/**
+ * 按**用户保存的默认**挑模型。身份必须两段都对（`(vendorKey, modelKey)`）：只比模型段会串台——
+ * 两个中转站提供同名模型时，用户选的是 A 家的，落到卡片上却可能是 B 家的，账单和结果都不对。
+ * 偏好指向的模型此刻不在可用清单里（供应商删了 / 模型禁用了 / 换了台机器）→ 返回 undefined，
+ * 由调用方回落，绝不把卡片钉在一个跑不了的模型上。
+ */
+export function pickSavedDefaultModel(
+  entries: readonly AgentModelEntry[],
+  kind: 'image' | 'video',
+  defaults: GenerationModelDefaultMap,
+): AgentModelEntry | undefined {
+  const candidates = entries.filter((entry) => entry.kind === kind)
+  for (const taskKind of DEFAULT_TASK_KINDS[kind]) {
+    const preferred = defaults[taskKind]
+    if (!preferred) continue
+    const match = candidates.find(
+      (entry) => entry.vendor === preferred.vendorKey && entry.modelId === preferred.modelKey,
+    )
+    if (match) return match
+  }
+  return undefined
+}
+
+/**
+ * **兜底**阶梯（只在「用户一个默认都没配」或配的那个此刻不可用时才轮到它）。
+ *
+ * 保留理由：全新用户还没进过设置页，此刻仍必须给出一个能跑的模型，否则 agent 建的卡是空的、
+ * 生成钮直接是灰的——「什么都不给」比「给一个通用的好模型」更伤。它**不是权威**：
+ * 权威是用户保存的默认（`pickSavedDefaultModel`），这条阶梯只在权威缺席时补位。
+ */
+export function pickStoryboardDefaultModel(entries: readonly AgentModelEntry[], kind: 'image' | 'video', orderedVendorKeys: readonly string[] = []): AgentModelEntry | undefined {
+  const candidates = entries.filter(entry => entry.kind === kind)
+  const byName = (re: RegExp) => candidates.find(entry => re.test(`${entry.modelId} ${entry.modelAlias ?? ''} ${entry.label}`))
+  const model = kind === 'image'
+    ? byName(/gpt[\s-]?image/i) ?? byName(/nano[\s-]?banana/i) ?? candidates[0]
+    : byName(/seedance/i) ?? candidates[0]
+  if (!model) return undefined
+  // 阶梯只决定「哪个模型」；同名多家时「哪一家」走全仓同一把尺（pickImplicitVendorMatch），
+  // 不是列表里第一个同名的——目录新接入的在前，自定义同名中转会悄悄变成默认（2026-09-21 同类扫描）。
+  return pickImplicitVendorMatch(candidates.filter(entry => entry.modelId === model.modelId), entry => entry.vendor, orderedVendorKeys) ?? model
+}
+
+/**
+ * 「给 agent 建的卡挑哪个模型」的**唯一入口**：用户保存的默认优先，缺席才走兜底阶梯。
+ * 偏好的 owner 是主进程那份设置（`generationDefaultModelResolver` 读的同一份），这里只做只读投影，
+ * 不复制它的解析逻辑、也不另存一份偏好。
+ */
+async function preferredDefaultModel(
+  entries: readonly AgentModelEntry[],
+  kind: 'image' | 'video',
+): Promise<AgentModelEntry | undefined> {
+  let defaults: GenerationModelDefaultMap = {}
+  try {
+    defaults = await loadGenerationModelDefaults()
+  } catch {
+    defaults = {}
+  }
+  return pickSavedDefaultModel(entries, kind, defaults) ?? pickStoryboardDefaultModel(entries, kind, (await getVendorPreference()).orderedVendorKeys)
 }
 
 /**
  * 分镜方案落画布时给镜头/定妆卡选的默认图片模型 + 两个模式（用户拍板 2026-06-15：image-first）。
- * 通用解析（不硬编码 vendor 目录，P4）：偏好 GPT Image → Nano Banana → 第一个可用图片模型
- * （总能给个默认；用户在画布上仍可自己换，不强制不禁用）。返回两个模式供调用方逐节点选：
+ * 解析顺序（2026-09-10 收敛）：**用户在设置里保存的默认模型优先**（text_to_image → image_edit），
+ * 只有他一个都没配、或配的那个此刻不可用时，才走「GPT Image → Nano Banana → 第一个可用图片模型」
+ * 这条兜底阶梯（总能给个默认；用户在画布上仍可自己换，不强制不禁用）。返回两个模式供调用方逐节点选：
  * - `modeId`：默认模式（纯文生，无必填输入图）——给定妆卡、以及**没有任何参考入边**的镜头用。
  * - `refModeId`：声明了 image_ref 槽的**图生图**模式——给**有参考入边**的镜头用（定妆卡→镜头、
  *   镜头→镜头的参考才喂得进，T8 能力校验）。GPT Image 2 的 i2i 输入图槽 `min:1`，故只给真有
@@ -155,22 +207,21 @@ export async function listAvailableModelsForAgent(): Promise<AgentModelEntry[]> 
  *   省略（参考边在生成期按能力降级跳过，不假装喂入）。
  * 无任何可用图片模型 → 全空，节点不带模型、用户自己选。
  */
-export async function resolveStoryboardImageDefault(): Promise<{ modelKey?: string; modeId?: string; refModeId?: string }> {
+export async function resolveStoryboardImageDefault(): Promise<{ modelKey?: string; modelVendor?: string; modeId?: string; refModeId?: string }> {
   let entries: AgentModelEntry[]
   try {
     entries = await listAvailableModelsForAgent()
   } catch {
     return {}
   }
-  const images = entries.filter((entry) => entry.kind === 'image')
-  if (images.length === 0) return {}
-  const byName = (re: RegExp) =>
-    images.find((entry) => re.test(`${entry.modelKey} ${entry.modelAlias ?? ''} ${entry.label}`))
-  const prefer = byName(/gpt[\s-]?image/i) ?? byName(/nano[\s-]?banana/i) ?? images[0]
+  const prefer = await preferredDefaultModel(entries, 'image')
+  if (!prefer) return {}
   const plainMode = prefer.modes.find((m) => m.modeId === prefer.defaultModeId) ?? prefer.modes[0]
   const refMode = prefer.modes.find((m) => m.slots.some((s) => s.kind === 'image_ref'))
   return {
-    modelKey: prefer.modelKey,
+    modelKey: prefer.modelId,
+    // vendor 与 key 一起返回：调用方据此写节点，避免落地时按 key 反查命中别家（身份唯一键）。
+    ...(prefer.vendor ? { modelVendor: prefer.vendor } : {}),
     ...(plainMode ? { modeId: plainMode.modeId } : {}),
     ...(refMode ? { refModeId: refMode.modeId } : {}),
   }
@@ -178,88 +229,37 @@ export async function resolveStoryboardImageDefault(): Promise<{ modelKey?: stri
 
 /**
  * 分镜方案落画布时给镜头选的默认视频模型 + 模式（用户拍板 B-clean：有时长就是视频）。
- * 通用解析（不硬编码 vendor 目录，P4）：偏好 Seedance → 第一个可用视频模型。镜头会连定妆卡参考
+ * 解析顺序同图片：**用户保存的默认优先**（text_to_video → image_to_video），缺席才走
+ * 「Seedance → 第一个可用视频模型」这条兜底阶梯（不硬编码 vendor 目录，P4）。镜头会连定妆卡参考
  * （图→视频），故模式优先挑带 image_ref / first_frame 槽的 i2v（参考才喂得进），否则默认模式。
  * 无任何可用视频模型 → 全空，镜头不带模型、用户在画布上自己选；编辑器为某镜选了模型则覆盖本默认。
  */
-export async function resolveStoryboardVideoDefault(): Promise<{ modelKey?: string; modeId?: string }> {
+export async function resolveStoryboardVideoDefault(): Promise<{ modelKey?: string; modelVendor?: string; modeId?: string }> {
   let entries: AgentModelEntry[]
   try {
     entries = await listAvailableModelsForAgent()
   } catch {
     return {}
   }
-  return selectStoryboardVideoDefault(entries)
+  const prefer = await preferredDefaultModel(entries, 'video')
+  if (!prefer) return {}
+  return selectStoryboardVideoDefault([prefer])
 }
 
-export function selectStoryboardVideoDefault(
-  entries: readonly AgentModelEntry[],
-): { modelKey?: string; modeId?: string } {
-  const compatible = entries.flatMap((entry) => {
-    if (entry.kind !== 'video') return []
-    // 叙事分镜默认要运动自由度，不应把分镜图锁成首帧。优先选可同时接角色、
-    // 场景、道具和分镜构图的多图 image_ref 模式；只有模型没有该模式时才退到首帧。
-    const mode = entry.modes.find((candidate) => (
-      candidate.slots.some((slot) => slot.kind === 'image_ref' && (slot.max ?? Infinity) > 1)
-    )) || entry.modes.find((candidate) => (
-      candidate.slots.some((slot) => slot.kind === 'image_ref')
-    )) || entry.modes.find((candidate) => (
-      candidate.slots.some((slot) => slot.kind === 'first_frame')
-    ))
-    return mode ? [{ entry, mode }] : []
-  })
-  if (compatible.length === 0) return {}
-  const preferred = compatible.find(({ entry }) => (
-    /seedance/i.test(`${entry.modelKey} ${entry.modelAlias ?? ''} ${entry.label}`)
-  )) || compatible[0]
+/** Prefer identity/scene references over a locked first frame; explicit saved model choice is resolved by the caller. */
+export function selectStoryboardVideoDefault(entries: readonly AgentModelEntry[]): { modelKey?: string; modelVendor?: string; modeId?: string } {
+  const videos = entries.filter(entry => entry.kind === 'video')
+  const hasReference = (entry: AgentModelEntry) => entry.modes.some(mode => mode.slots.some(slot => slot.kind === 'image_ref' || slot.kind === 'first_frame'))
+  const prefer = videos.find(hasReference) ?? videos[0]
+  if (!prefer) return {}
+  const mode = prefer.modes.find(mode => mode.slots.some(slot => slot.kind === 'image_ref' && (slot.max ?? 1) > 1))
+    ?? prefer.modes.find(mode => mode.slots.some(slot => slot.kind === 'image_ref'))
+    ?? prefer.modes.find(mode => mode.slots.some(slot => slot.kind === 'first_frame'))
+    ?? prefer.modes.find(mode => mode.modeId === prefer.defaultModeId) ?? prefer.modes[0]
   return {
-    modelKey: preferred.entry.modelKey,
-    modeId: preferred.mode.modeId,
+    modelKey: prefer.modelId,
+    // vendor 与 key 一起返回（身份唯一键）——见 buildAgentModelEntries 去重键的注释。
+    ...(prefer.vendor ? { modelVendor: prefer.vendor } : {}),
+    ...(mode ? { modeId: mode.modeId } : {}),
   }
-}
-
-/** 把可选模型清单格式化成注入 agent 系统提示词的紧凑文本。空清单返回 ''（不注入）。 */
-export function formatAvailableModelsForPrompt(entries: readonly AgentModelEntry[]): string {
-  if (entries.length === 0) return "";
-  const formatParams = (params: readonly ModelParameterControl[]): string =>
-    params
-      .map((param) => {
-        const options = param.options?.map((option) => option.value).join(",");
-        return options ? `${param.key}[${options}]` : param.key;
-      })
-      .join(" ");
-  const formatVariant = (variant: AgentModelVariant): string => {
-    const modes = variant.modes.map((mode) => mode.modeId).join("/");
-    const paramGroups = variant.modes.map((mode) => formatParams(mode.params));
-    const uniqueParamGroups = [...new Set(paramGroups)];
-    const params = uniqueParamGroups.length <= 1
-      ? uniqueParamGroups[0] ?? ""
-      : variant.modes.map((mode) => `${mode.modeId}{${formatParams(mode.params)}}`).join(" ");
-    return `variantId=${variant.variantId}(${variant.label};模式=${modes};参数=${params || "无"})`;
-  };
-  const lines = entries.map((entry) => {
-    const modes = entry.modes
-      .map((m) => {
-        // 每个模式带它的参考槽——agent 据此知道这个模式吃哪些参考、各能吃几张，只连模型真支持的边。
-        const slots = m.slots.length
-          ? `[参考槽:${m.slots.map((s) => `${s.label}${s.max !== undefined && s.max > 1 ? `×${s.max}` : ""}`).join("/")}]`
-          : "[纯文生,不接参考边]";
-        const capabilities = m.capabilities.length
-          ? `[能力:${m.capabilities.map((item) => `${item.capabilityId}(${item.tier})`).join("/")}]`
-          : "";
-        return `${m.modeId}(${m.vendorTerm})${slots}${capabilities}`;
-      })
-      .join(" / ");
-    const params = formatParams(entry.modes[0]?.params ?? []);
-    const variants = entry.variants.length
-      ? `；型号（默认 ${entry.defaultVariantId ?? entry.variants[0].variantId}）: ${entry.variants.map(formatVariant).join(" | ")}`
-      : "";
-    return `- modelKey=${entry.modelKey}（${entry.label}，${entry.kind}）模式: ${modes}；默认参数: ${params}${variants}`;
-  });
-  return [
-    "可用模型（为每个节点选一个，在 create_canvas_nodes 的节点里给出 modelKey、可选 variantId、modeId、params）：",
-    ...lines,
-    "规则：modelKey 必须用上面列出的；有型号清单且用户点名型号时，型号必须填写 variantId（如 v5_0_lite），不要把型号名写进 modelKey；modeId 用该型号支持的模式 id；params 用对应型号/模式支持的取值（如 ratio=9:16、resolution_type=4K）。配错会按该型号的真实约束自动纠正。",
-    "连参考边只连目标模型支持的：character_ref/style_ref/composition_ref 需要目标模式有图片参考槽（角色参考/参考图/输入图）；first_frame/last_frame 需要对应的首/尾帧槽；纯文生模式（无参考槽）不要连任何参考边。文本/镜头/输出节点不能作参考源（它们没有可参考的产物）。配错的边会被跳过并在 skippedEdges 里告知原因。",
-  ].join("\n");
 }

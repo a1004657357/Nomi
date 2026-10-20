@@ -1,13 +1,20 @@
+import { filmBibleSchema } from '../domain/cinematicSchema'
+import type { FilmBibleV1 } from '../domain/cinematicTypes'
+import type { StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
 import { z } from 'zod'
 
 import { createDefaultTimeline } from '../timeline/timelineMath'
 import type { TimelineState } from '../timeline/timelineTypes'
-import { createDefaultWorkbenchDocument, type WorkbenchDocument } from '../workbenchTypes'
+import {
+  createDefaultWorkbenchDocument,
+  STORYBOARD_DESIGN_STATUSES,
+  type WorkbenchDocument,
+} from '../workbenchTypes'
+import type { StoryboardDesign } from '../workbenchTypes'
 import { createDefaultGenerationCanvasSnapshot } from '../generationCanvas/store/generationCanvasDefaults'
 import type { GenerationCanvasSnapshot } from '../generationCanvas/model/generationCanvasTypes'
-import { storyboardPlanSchema, type StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
-import { filmBibleSchema } from '../domain/cinematicSchema'
-import type { FilmBibleV1 } from '../domain/cinematicTypes'
+import { editingPanelLayoutSchema, type EditingPanelLayout } from '../preview/panelLayout'
+import { storyboardPlanSchema } from '../generationCanvas/agent/storyboardPlanSchema'
 import { cloneBuiltinCategories, projectCategorySchema, type ProjectCategory } from './projectCategories'
 
 // Persisted records come in two shapes that carry an identical `payload`:
@@ -47,7 +54,11 @@ export const workbenchProjectPayloadSchema = z.object({
   // 可默认字段（画布内容完好）时会 safeParse 失败 → 整个项目硬抛「缺少必要字段」打不开。降为
   // z.unknown().optional()：缺失或 present-but-malformed 都交给 normalizer 降级，不再让项目锁死。
   // generationCanvas（真实画布内容）保持必填——它是关键字段，缺它才走空项目兜底/上报。
+  // P2 多文档：workbenchDocuments[]（新）+ activeDocumentId 取代单 workbenchDocument；
+  // 单 workbenchDocument 保留只读兼容（老项目迁移用）。
   workbenchDocument: z.unknown().optional(),
+  workbenchDocuments: z.array(z.unknown()).optional(),
+  activeDocumentId: z.string().optional(),
   timeline: z.unknown().optional(),
   // Keep project loading tolerant of legacy v0.5 category ids so the
   // v5→v6 migration can run before the stricter canvas schema is enforced.
@@ -64,10 +75,27 @@ export const workbenchProjectPayloadSchema = z.object({
   storyboardPlanCommitted: z.boolean().optional(),
   /** 项目级跨镜头事实。老项目无字段时由当前分镜按需派生，首次应用补丁后持久化。 */
   filmBible: filmBibleSchema.nullable().optional(),
+  /** 每篇原稿的分镜设计（唯一持久化 owner）。 */
+  storyboardDesignsByDocumentId: z.record(
+    z.array(z.object({
+      id: z.string().min(1),
+      documentId: z.string().min(1),
+      title: z.string(),
+      plan: storyboardPlanSchema,
+      committed: z.boolean(),
+      status: z.enum(STORYBOARD_DESIGN_STATUSES),
+      sourceDocumentUpdatedAt: z.number().finite(),
+      createdAt: z.number().finite(),
+      updatedAt: z.number().finite(),
+    })),
+  ).optional(),
+  editingPanelLayout: editingPanelLayoutSchema.optional(),
 })
 
 export const workbenchProjectRecordSchema = workbenchProjectSummarySchema.extend({
   version: workbenchProjectRecordVersionSchema,
+  immutableProjectUuid: z.string().uuid().optional(),
+  projectGeneration: z.number().int().positive().optional(),
   payload: workbenchProjectPayloadSchema,
 })
 
@@ -112,7 +140,11 @@ export type WorkbenchProjectSummary = {
 }
 
 export type WorkbenchProjectPayload = {
-  workbenchDocument: WorkbenchDocument
+  /** P2 多文档：原稿集合（新真相源）。旧项目读侧兼容见 normalizePayload。 */
+  workbenchDocuments?: WorkbenchDocument[]
+  activeDocumentId?: string
+  /** @deprecated 单文档（旧字段，读侧迁移用，写侧不再产出）。 */
+  workbenchDocument?: WorkbenchDocument
   timeline: TimelineState
   generationCanvas: GenerationCanvasSnapshot
   categories?: ProjectCategory[]
@@ -124,9 +156,14 @@ export type WorkbenchProjectPayload = {
   storyboardPlanCommitted?: boolean
   /** 电影项目级事实；禁止放入 API Key、Cookie 或 Provider 私有配置。 */
   filmBible?: FilmBibleV1 | null
+  storyboardDesignsByDocumentId?: Record<string, StoryboardDesign[]>
+  /** Preview editing surface dimensions and visibility are project-local UI state. */
+  editingPanelLayout?: EditingPanelLayout
 }
 
 export type WorkbenchProjectRecordV1 = WorkbenchProjectSummary & {
+  immutableProjectUuid?: string
+  projectGeneration?: number
   version: 1
   payload: WorkbenchProjectPayload
 }
@@ -143,8 +180,10 @@ export type WorkbenchProjectRecordLegacy = {
 }
 
 export function createDefaultWorkbenchProjectPayload(): WorkbenchProjectPayload {
+  const doc = createDefaultWorkbenchDocument()
   return {
-    workbenchDocument: createDefaultWorkbenchDocument(),
+    workbenchDocuments: [doc],
+    activeDocumentId: doc.id,
     timeline: createDefaultTimeline(),
     generationCanvas: createDefaultGenerationCanvasSnapshot(),
     categories: cloneBuiltinCategories(),

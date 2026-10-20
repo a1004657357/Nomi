@@ -1,17 +1,20 @@
 // 异步任务「续查」收口（从 runtime.ts 拆出，巨壳门岗·只减不增 R12）。
 // 单一真相：缓存命中与无状态重建共用同一段 query。与 runtime 是调用时（函数体内）的循环依赖——
 // ESM/CJS 都按 live binding 在调用时取值，加载期不触碰，安全。
+import { taskCache } from "./taskCache";
 import { trim, type JsonRecord } from "../jsonUtils";
 import type { Model, ProfileKind } from "../catalog/types";
 import { readCatalog } from "../catalog/catalogStore";
 import { desktopT } from "../i18n";
 import { classifyTaskCacheMiss, wasTaskAdmitted } from "./taskAdmission";
 import { taskFailureMessageFromResponse } from "./responseParsing";
-import { activeTaskProjectFallback, unlocalizedTaskAsset } from "./activeProjectFallback";
+import { unlocalizedTaskAsset } from "./unlocalizedTaskAsset";
 import { traceVendorCompleted } from "../events/vendorCallTrace";
+import { extractProviderCostActual } from "../vendor/cost";
 import { rememberTaskResult } from "../vendor/fingerprintCache";
 import { isWebBridgeVendor, queryWebBridgeTask } from "../webBridge/registry";
-import { writeDeterministicAsset } from "../assets/projectAssetStore";
+import { writeAsset, writeDeterministicAsset } from "../assets/projectAssetStore";
+import { resolveComfyCandidateExecution } from "../catalog/comfyuiCandidateLifecycle";
 import {
   type CachedTask,
   type TaskResult,
@@ -19,13 +22,15 @@ import {
   billingKindForTaskKind,
   buildProfileTaskResult,
   executeProfileOperation,
-  extractAssetUrl,
   findExecutableModel,
   findTaskMapping,
   localizeTaskAsset,
-  taskCache,
-  writeAsset,
 } from "../runtime";
+import { logWarn } from "../logging/logger";
+import { matchNomiErrorCode, tagNomiError } from "../shared/nomiErrorCodes";
+import { VendorRequestError } from "../vendor/vendorHttp";
+import { noteRelayQueryOutcome } from "../catalog/relayNativeWireUpgrade";
+import { expectedMediaKind, readTaskResponse } from "./taskResultReading";
 
 // ── 未登记状态动词的有界容忍（根因修复，见 docs/plan/2026-08-11-unrecognized-task-status-root-fix.md）──
 //
@@ -52,11 +57,13 @@ function reportUnrecognizedStatus(cached: CachedTask, taskId: string, verb: stri
   const dedupeKey = `${cached.vendor}::${verb.toLowerCase()}`;
   if (reportedUnrecognizedStatuses.has(dedupeKey)) return;
   reportedUnrecognizedStatuses.add(dedupeKey);
-  console.warn(
-    `[nomi:task] 上游返回了未登记的任务状态动词 "${verb}" —— 已按「未知」处理（暂继续轮询）。` +
-      ` vendor=${cached.vendor} model=${cached.model?.modelKey || "?"} kind=${cached.request.kind} taskId=${taskId}。` +
-      ` 若它其实是终态，请补进该 vendor 的 statusMapping。`,
-  );
+  logWarn("tasks", "unregistered-status-verb", {
+    verb,
+    vendor: cached.vendor,
+    model: cached.model?.modelKey || "?",
+    kind: cached.request.kind,
+    taskId,
+  });
 }
 
 /**
@@ -81,6 +88,43 @@ export function unrecognizedStatusExhausted(streak: CachedTask["unrecognizedStat
   return streak.polls >= UNRECOGNIZED_STATUS_MIN_POLLS && now - streak.firstSeenAt >= UNRECOGNIZED_STATUS_GRACE_MS;
 }
 
+/** 上游原话的摘录：读不出结果时，用户和我们都要看到上游到底回了什么（只截一段，不整包落盘）。 */
+function upstreamExcerpt(response: unknown): string {
+  try {
+    const text = typeof response === "string" ? response : JSON.stringify(response);
+    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 取回失败的统一出口：带上阶段码（shared/nomiErrorCodes 的 retrieval-*）与阶段说明。已经带码的错误
+ * （出站被拦 / 产物读不出……）原样放行——那是更具体的事实。VendorRequestError 保留结构化字段（IPC 那头
+ * 靠它说出「服务商原话」）。渲染层见码即落「可找回」：任务已受理，免费重新取回，绝不重新提交。
+ */
+export function retrievalStageError(code: "retrieval-query" | "retrieval-parse" | "retrieval-download", error: unknown, note = ""): Error {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (matchNomiErrorCode(message)) return error instanceof Error ? error : new Error(message);
+  const stageKey = code === "retrieval-query" ? "tasks.retrievalStage.query" : code === "retrieval-parse" ? "tasks.retrievalStage.parse" : "tasks.retrievalStage.download";
+  const human = `${note ? `${note} ` : ""}${desktopT(stageKey)}${message}`;
+  const tagged = tagNomiError(code, human);
+  // 只带 message + structured（IPC 那头读 structured 说出服务商原话）：providerAnswer 只服务「提交有没有被受理」的判定，
+  // 查询 / 下载阶段用不上；两参构造也让这段能原样回补到 0.23.x（那里的 VendorRequestError 只有两参）。
+  return error instanceof VendorRequestError ? new VendorRequestError(tagged, error.structured) : new Error(tagged);
+}
+
+/**
+ * 上游说成了、却没取到产物：**不判失败**（#1213 原则 1：上游说成了，Nomi 就不能判失败）。
+ * 返回一个 retrieval-parse 错误（带上游原话摘录），调用方抛出——任务留在缓存里、节点落「可找回」，
+ * 之后的查询或「重新取回」可能拿到地址（有的中转先报成功、后补地址）。文本任务与同步音频不走这里。
+ */
+export function missingAsyncMediaOutput(result: TaskResult, wantedKind: string, upstream: unknown): Error | null {
+  if (result.status !== "succeeded" || !["image", "video", "audio", "model3d"].includes(wantedKind) || result.assets.length > 0) return null;
+  const excerpt = upstreamExcerpt(upstream);
+  return retrievalStageError("retrieval-parse", desktopT("tasks.completedWithoutOutput") + (excerpt ? desktopT("tasks.upstreamSaid", { detail: excerpt }) : ""));
+}
+
 /**
  * 无状态重建续查上下文（治本核心）：内存 taskCache 是 TTL 1h/上限 200/重启即空 的工作缓存，
  * 但续查其实只需 {vendor, modelKey, taskKind, taskId}——mapping/model 都是 catalog 的纯函数产物，
@@ -91,19 +135,36 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
   const vendorKey = trim(raw.vendor);
   const taskKind = trim(raw.taskKind) as ProfileKind;
   const modelKey = trim(raw.modelKey);
+  const modeId = trim(raw.modeId) || (raw.archetype && typeof raw.archetype === "object" ? trim((raw.archetype as JsonRecord).modeId) : "");
   if (!vendorKey || !taskKind || !modelKey) return null;
   const wantedKind = billingKindForTaskKind(taskKind);
+  const certificationRevisionId = trim(raw.comfyCertificationRevisionId);
   let model: Model;
+  let stagedCandidate: ReturnType<typeof resolveComfyCandidateExecution> | undefined;
   try {
-    model = findExecutableModel(vendorKey, modelKey, wantedKind).model;
+    if (certificationRevisionId) {
+      const resolved = resolveComfyCandidateExecution({
+        kind: taskKind,
+        extras: {
+          modelKey,
+          comfyCertificationRevisionId: certificationRevisionId,
+          certifyOutput: true,
+        },
+      });
+      if (!resolved) return null;
+      stagedCandidate = resolved;
+      model = resolved.model;
+    } else {
+      model = findExecutableModel(vendorKey, modelKey, wantedKind).model;
+    }
   } catch {
     return null; // 模型已不可用/未配置 → 无法重建，落回诚实诊断
   }
   if (isWebBridgeVendor(vendorKey)) {
-    const projectId = trim(raw.projectId) || activeTaskProjectFallback();
+    const projectId = trim(raw.projectId);
     return {
       vendor: vendorKey,
-      request: { kind: taskKind, prompt: trim(raw.prompt), extras: { modelKey } },
+      request: { kind: taskKind, prompt: trim(raw.prompt), extras: { modelKey, ...(projectId ? { projectId } : {}) } },
       raw: {},
       mapping: null,
       model,
@@ -112,12 +173,21 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
       wantedKind,
     };
   }
-  const mapping = findTaskMapping(vendorKey, taskKind, modelKey);
+  const mapping = stagedCandidate?.mapping || findTaskMapping(vendorKey, taskKind, modelKey, modeId || undefined);
   if (!mapping?.query) return null; // 同步模型无 query op，没法续查
-  const projectId = trim(raw.projectId) || activeTaskProjectFallback();
+  const projectId = trim(raw.projectId);
   return {
     vendor: vendorKey,
-    request: { kind: taskKind, prompt: trim(raw.prompt), extras: { modelKey } },
+    request: {
+      kind: taskKind,
+      prompt: trim(raw.prompt),
+      extras: {
+        modelKey,
+        ...(projectId ? { projectId } : {}),
+        ...(modeId ? { archetype: { modeId } } : {}),
+        ...(certificationRevisionId ? { comfyCertificationRevisionId: certificationRevisionId, certifyOutput: true } : {}),
+      },
+    },
     raw: {},
     mapping,
     model,
@@ -141,7 +211,7 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
       nodeId: cached.nodeId,
       serverUrl: cached.providerMeta?.serverUrl,
       writeAsset: cached.vendor === "pavo-web"
-        ? (projectId, bytes, name, mime, meta) => writeDeterministicAsset(projectId, bytes, name, mime, meta,
+        ? (projectId, bytes, name, mime, meta, expectedKind) => writeDeterministicAsset(projectId, bytes, name, mime, meta, expectedKind,
           JSON.stringify(["pavo-web", meta.sourceServerUrl, meta.pavoTaskCode, meta.sourceFileId, meta.ownerNodeId]))
         : writeAsset,
     });
@@ -162,73 +232,155 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
   const queryOperation = cached.mapping?.query;
   if (cached.mapping && queryOperation && cached.model) {
     // 不再用缓存的明文 key，轮询时按 vendor 重新派生（并重新校验 key 仍可用）。
-    const { vendor, model, apiKey } = findExecutableModel(cached.vendor, cached.model.modelKey, cached.wantedKind);
-    const executed = await executeProfileOperation({
+    // ComfyUI certification intentionally keeps its candidate disabled until
+    // this query has produced and decoded a real artifact. Resolve the exact
+    // staged revision instead of treating that disabled model as unavailable.
+    const stagedCandidate = resolveComfyCandidateExecution(cached.request);
+    // 模型解析必须可守（与 rebuildCachedTaskFromPayload 同款）：模型下架/凭证失效是**永久
+    // 条件**，裸抛会被渲染层当可恢复轮询错误、45s 后落「可找回」——错误既不指向根因也
+    // 不会再自愈。落诚实失败终态（用户去供应商后台核对或重配模型）。
+    let vendor: ReturnType<typeof findExecutableModel>["vendor"], model: Model, apiKey: string;
+    try {
+      ({ vendor, model, apiKey } = stagedCandidate || findExecutableModel(cached.vendor, cached.model.modelKey, cached.wantedKind));
+    } catch {
+      return { vendor: cached.vendor, result: { id: taskId, kind: cached.request.kind, status: "failed", assets: [], raw: {}, error: desktopT("tasks.modelUnresolvable") } };
+    }
+    const queryProviderMeta = {
+      ...(cached.providerMeta || {}),
+      query_id: cached.providerMeta?.query_id || taskId,
+      task_id: cached.providerMeta?.task_id || taskId,
+    };
+    const runQuery = (operation: NonNullable<typeof queryOperation>) => executeProfileOperation({
       vendor,
       model,
       apiKey,
       request: cached.request,
-      operation: queryOperation,
+      operation,
       stage: "query",
-      providerMeta: {
+      providerMeta: queryProviderMeta,
+    });
+    // 「查」这一步只有一种构造（首次轮询与「重新取回」都走这里，缓存命中与无状态重建只差上下文来源）。
+    // 中转上的原生通道连续按合同认出的非瞬时失败（无可用渠道 / 路由不存在 / 任务号无效）→ 体检 owner
+    // 单向退回通用通道、记日志；这一单免费用通用查询再试一次，不重新提交（#1213 原则 2）。
+    let mapping = cached.mapping;
+    let activeQuery = queryOperation;
+    let fellBackNote = "";
+    let executed: Awaited<ReturnType<typeof executeProfileOperation>>;
+    try {
+      executed = await runQuery(activeQuery);
+      noteRelayQueryOutcome({ vendorKey: cached.vendor, model, mapping, error: null });
+    } catch (error) {
+      const fallback = noteRelayQueryOutcome({ vendorKey: cached.vendor, model, mapping, error });
+      const archetype = cached.request.extras?.archetype;
+      const modeId = archetype && typeof archetype === "object" ? trim((archetype as JsonRecord).modeId) : "";
+      const replacement = fallback ? findTaskMapping(cached.vendor, cached.request.kind, model.modelKey, modeId || undefined) : null;
+      if (!fallback || !replacement?.query) throw retrievalStageError("retrieval-query", error);
+      fellBackNote = desktopT("tasks.wireFellBack", { from: fallback.from, to: fallback.to, count: fallback.count });
+      mapping = replacement;
+      activeQuery = replacement.query;
+      try {
+        executed = await runQuery(activeQuery);
+      } catch (retryError) {
+        throw retrievalStageError("retrieval-query", retryError, fellBackNote);
+      }
+    }
+    const readResult = async (response: unknown, operation: NonNullable<typeof queryOperation>) => {
+      try {
+        return await buildProfileTaskResult({
+          response,
+          mapping,
+          operation,
+          operationTimings: executed.timings,
+          request: cached.request,
+          taskIdFallback: taskId,
+          wantedKind: cached.wantedKind || model.kind,
+          projectId: cached.projectId,
+          nodeId: cached.nodeId,
+          vendor,
+          model,
+        });
+      } catch (error) {
+        // 读到地址后落盘没成（下载 / 落盘）：带 download 阶段；出站被拦等更具体的码原样放行。
+        throw retrievalStageError("retrieval-download", error, fellBackNote);
+      }
+    };
+    let normalized = await readResult(executed.response, activeQuery);
+    if (normalized.result.status === "succeeded" && mapping.result) {
+      const resultProviderMeta = {
         ...(cached.providerMeta || {}),
-        query_id: cached.providerMeta?.query_id || taskId,
-        task_id: cached.providerMeta?.task_id || taskId,
-        video_id: cached.providerMeta?.video_id || taskId,
-      },
-    });
-    const normalized = await buildProfileTaskResult({
-      response: executed.response,
-      mapping: cached.mapping,
-      operation: queryOperation,
-      request: cached.request,
-      taskIdFallback: taskId,
-      wantedKind: cached.wantedKind || model.kind,
-      projectId: cached.projectId,
-      nodeId: cached.nodeId,
-      vendor,
-      model,
-      operationTimings: executed.timings,
-    });
-    // 未知动词的有界容忍：连击够久 → 把「假装排队」翻成诚实的失败，并如实带上原始动词。
+        ...normalized.providerMeta,
+        query_id: normalized.providerMeta.query_id || cached.providerMeta?.query_id || taskId,
+        task_id: normalized.providerMeta.task_id || cached.providerMeta?.task_id || taskId,
+      };
+      try {
+        executed = await executeProfileOperation({
+          vendor,
+          model,
+          apiKey,
+          request: cached.request,
+          operation: mapping.result,
+          stage: "result",
+          providerMeta: resultProviderMeta,
+        });
+      } catch (error) {
+        throw retrievalStageError("retrieval-query", error, fellBackNote);
+      }
+      const resultNormalized = await readResult(executed.response, mapping.result);
+      normalized = { ...resultNormalized, providerMeta: { ...resultProviderMeta, ...resultNormalized.providerMeta } };
+    }
+    // 认不出的动词：连击够久也**不判失败**（原则 1），而是交「可找回」并如实报出原始动词。
     const now = Date.now();
     const streak = advanceUnrecognizedStatusStreak(cached.unrecognizedStatusStreak, normalized.unrecognizedStatus, now);
     if (normalized.unrecognizedStatus) reportUnrecognizedStatus(cached, taskId, normalized.unrecognizedStatus);
-    const result = unrecognizedStatusExhausted(streak, now)
-      ? {
-          ...normalized.result,
-          status: "failed" as const,
-          error: desktopT("tasks.unrecognizedStatus", {
-            status: streak?.verb || "",
-            polls: streak?.polls || 0,
-            seconds: Math.round((now - (streak?.firstSeenAt || now)) / 1000),
-          }),
-        }
-      : normalized.result;
+    const lastResponse = executed.response;
+    const keepWaiting = () => admitTask(taskId, {
+      ...cached,
+      mapping,
+      raw: lastResponse,
+      providerMeta: {
+        ...(cached.providerMeta || {}),
+        ...normalized.providerMeta,
+      },
+      // 必须显式回写：认得的动词会让 streak 变 undefined，靠 ...cached 会把旧连击带回来。
+      unrecognizedStatusStreak: streak,
+    });
+    if (unrecognizedStatusExhausted(streak, now)) {
+      keepWaiting();
+      throw retrievalStageError("retrieval-parse", desktopT("tasks.unrecognizedStatus", {
+        status: streak?.verb || "",
+        polls: streak?.polls || 0,
+        seconds: Math.round((now - (streak?.firstSeenAt || now)) / 1000),
+      }), fellBackNote);
+    }
+    // 「说成了却没产物」对 query 与 result 两跳统一生效：不判失败，留在缓存里等下一次查 / 重新取回。
+    const missingOutput = missingAsyncMediaOutput(normalized.result, cached.wantedKind || model.kind, lastResponse);
+    if (missingOutput) {
+      keepWaiting();
+      throw missingOutput;
+    }
+    const result = normalized.result;
 
     if (result.status === "succeeded" || result.status === "failed") {
       // 终态才入日志(轮询 tick 不记);cache.delete 保证单次触发
-      traceVendorCompleted(cached.projectId, { runId: taskId, nodeId: cached.nodeId, status: result.status, assetCount: result.assets.length });
+      traceVendorCompleted(cached.projectId, {
+        runId: taskId,
+        nodeId: cached.nodeId,
+        status: result.status,
+        assetCount: result.assets.length,
+        ...(normalized.actualCost ? { cost: normalized.actualCost } : {}),
+      });
       rememberTaskResult(cached.projectId || "", cached.fingerprint, result);
       taskCache.delete(taskId);
     } else {
-      admitTask(taskId, {
-        ...cached,
-        raw: executed.response,
-        providerMeta: {
-          ...(cached.providerMeta || {}),
-          ...normalized.providerMeta,
-        },
-        // 必须显式回写：认得的动词会让 streak 变 undefined，靠 ...cached 会把旧连击带回来。
-        unrecognizedStatusStreak: streak,
-      });
+      keepWaiting();
     }
     return { vendor: cached.vendor, result };
   }
 
-  const assetUrl = extractAssetUrl(cached.raw);
+  // 没有 query 的任务：create 那一刻的响应也只经唯一读法读（tasks/taskResultReading），不另走一份兜底路径表。
+  const assetUrl = readTaskResponse({ response: cached.raw, responseMapping: null, statusMapping: undefined, wantedKind: expectedMediaKind(cached.wantedKind) }).assetUrls[0] ?? "";
   if (assetUrl) {
-    const type: "image" | "video" | "model3d" = cached.wantedKind === "video" ? "video" : cached.wantedKind === "model3d" ? "model3d" : "image";
+    const type: "image" | "video" | "audio" | "model3d" = cached.wantedKind === "video" ? "video" : cached.wantedKind === "audio" ? "audio" : cached.wantedKind === "model3d" ? "model3d" : "image";
     // vendor 提示必须带上：本地 ComfyUI 的产物 URL 是私网 /view，缺它 hardenedFetch 会按 SSRF 拒下载。
     const vendorHint = readCatalog().vendors.find((item) => item.key === cached.vendor);
     const asset = cached.projectId
@@ -247,8 +399,8 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
   //      `cached.mapping` 是受理那刻的快照，不会自己长出 query op。
   //   ② create 响应里也没有产物。而 `cached.raw` **只在**上面那段 query 分支里被改写——对没有
   //      query op 的任务那段永不执行，raw 于是永远冻结在 create 那一刻。
-  // 同样的输入喂给同一个 extractAssetUrl ⇒ 答案永远相同。fallback 那条路更绝：它正是在
-  // extractAssetUrl 为空时才受理的（runtime.ts:502-506），这里注定再算一次同一个空值。
+  // 同样的输入喂给同一个读法 ⇒ 答案永远相同。fallback 那条路更绝：它正是在
+  // 读法取不到地址时才受理的（runtime.ts:502-506），这里注定再算一次同一个空值。
   // 此处过去返回 queued —— 而 queued 是**「再查一次」的指令**：渲染层于是一路空转到硬超时
   // （快道 2min / 视频 20min），最后报一句含糊的「可能仍在上游运行」，真因一次都没到过用户眼前。
   // 事实既然终态且**可知**，就如实报失败，并带上上游自己给的原因（中转的「no available channel」/
@@ -266,35 +418,43 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
       desktopT("tasks.noQueryOperation") +
       (upstreamReason ? desktopT("tasks.upstreamSaid", { detail: upstreamReason }) : ""),
   };
-  traceVendorCompleted(cached.projectId, { runId: taskId, nodeId: cached.nodeId, status: "failed", assetCount: 0 });
+  const lateFailureCost = extractProviderCostActual(cached.vendor, cached.raw);
+  traceVendorCompleted(cached.projectId, {
+    runId: taskId,
+    nodeId: cached.nodeId,
+    status: "failed",
+    assetCount: 0,
+    ...(lateFailureCost ? { cost: lateFailureCost } : {}),
+  });
   // 与其它终态一致地清缓存；额外好处：用户之后「重新拉取」会走无状态重建，那条路**重读 catalog**，
   // 模型若后来补上了 query op 就真能查出来（留着旧快照反而钉死在「永远查不了」）。
   taskCache.delete(taskId);
   return { vendor: cached.vendor, result: unpollable };
 }
 
-/** 提交时 projectId 空窗会毒化整个任务生命周期（cached.projectId 恒空 → 每次轮询都跳过本地化、
- *  终态只存易失 CDN url）。轮询 payload 带的 projectId / 主进程活动项目给它第二次机会。 */
-function withProjectIdSecondChance(cached: CachedTask, pollProjectId: string): CachedTask {
-  if (cached.projectId) return cached;
-  const projectId = pollProjectId || activeTaskProjectFallback();
-  return projectId ? { ...cached, projectId } : cached;
+/** 任务的项目身份在提交那一刻固定（cached.projectId），轮询只能复述它、不能改写它：
+ *  带了不同的 projectId 说明调用方拿错了身份，拒绝而不是把结果落进另一个项目。 */
+function assertPollProjectMatchesTask(cached: CachedTask, pollProjectId: string): CachedTask {
+  if (pollProjectId && pollProjectId !== cached.projectId) throw new Error("TASK_PROJECT_MISMATCH");
+  return cached;
 }
 
 export async function fetchTaskResult(payload: unknown): Promise<{ vendor: string; result: TaskResult }> {
   const raw = payload as JsonRecord;
   const taskId = trim(raw.taskId);
   const cached = taskCache.get(taskId);
-  if (cached) return executeTaskQuery(taskId, withProjectIdSecondChance(cached, trim(raw.projectId)));
+  if (cached) return executeTaskQuery(taskId, assertPollProjectMatchesTask(cached, trim(raw.projectId)));
 
   // 缓存 miss：先试无状态重建（重启/驱逐后仍能续查的治本点）。重建得了就走同一段 query。
   const rebuilt = rebuildCachedTaskFromPayload(taskId, raw);
   if (rebuilt) {
-    try {
-      return await executeTaskQuery(taskId, rebuilt);
-    } catch {
-      // 重建后查询失败(网络/上游) → 落回诚实诊断，别把可重试当未知 id。
-    }
+    // Never turn a real provider/retrieval error into task_tracking_lost. The
+    // renderer treats a thrown query error as recoverable and can retry it for
+    // free; converting it to a terminal cache-miss result made a valid task
+    // unrecoverable after restart (especially when localization hit a transient
+    // CDN/proxy failure). Only an actually unreconstructable task reaches the
+    // cache-miss classifier below.
+    return executeTaskQuery(taskId, rebuilt);
   }
 
   // 区分两种 miss：曾受理但被驱逐/过期(可能 vendor 侧已完成) vs 真·未知 id（修 P1）。

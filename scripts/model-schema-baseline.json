@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "模型可见 schema 棘轮基线（方案 §8.2）：身份式，只减不增。",
+    "规则住 scripts/check-model-schema.ts；本文件冻结存量违规的具体身份（非裸数字）。",
+    "身份 = <profile>/<tool> 或 <profile>/<tool>#<json-pointer>。",
+    "修掉一条必须同步删这里对应一行；新增违规当场报红，不许追加进本文件抬高基线。",
+    "归零时点：方案阶段 4（切换 PR）。基线不归零 = 重做没做完（G7）。"
+  ],
+  "thin-description": [
+    "mcp/nomi_artifact_review",
+    "mcp/nomi_asset_import",
+    "mcp/nomi_canvas_maintenance",
+    "mcp/nomi_operation_control",
+    "mcp/nomi_operation_execute",
+    "mcp/nomi_operation_gate",
+    "mcp/nomi_operation_plan",
+    "mcp/nomi_operation_preview",
+    "mcp/nomi_project_create",
+    "mcp/nomi_run_control",
+    "mcp/nomi_run_gate",
+    "mcp/nomi_run_start",
+    "mcp/nomi_session_open"
+  ],
+  "missing-example": [
+    "mcp/nomi_canvas_edit",
+    "mcp/nomi_operation_plan",
+    "mcp/nomi_read"
+  ]
+}

@@ -11,6 +11,8 @@
 // （P1：不开并行版）。GPT Image 2 的视频形状坏 mapping repair 是 kie 历史包袱，仍 kie 专属。
 
 import type { CatalogState, HttpOperation, Mapping, Model, Vendor } from "./types";
+// 身份与分档表住在隔壁（表随模型雷达增删，对账逻辑几乎不动 —— 两者变更理由不同）。
+import { CANONICAL_MODEL_IDS, curatedCatalogLifecycle } from "./seedModelIdentity";
 import {
   KIE_VENDOR_SEED,
   SEEDANCE_2_CREATE_OP,
@@ -61,7 +63,7 @@ import { MODELSCOPE_VENDOR_SEED } from "./modelscopeVendor";
 import { MODELSCOPE_IMAGE_MODELS, MODELSCOPE_IMAGE_QUERY, MODELSCOPE_IMAGE_STATUS } from "./modelscopeImages";
 import { MODELSCOPE_TEXT_MODELS } from "./modelscopeTexts";
 import { VOLCENGINE_VENDOR_SEED, VOLCENGINE_SPEECH_VENDOR_SEED } from "./volcengineVendor";
-import { BUILTIN_VENDOR_SEEDS, type VendorSeed } from "./builtinVendorSeeds";
+import { BUILTIN_VENDOR_SEEDS, builtinVendorSeed, type VendorSeed } from "./builtinVendorSeeds";
 import { DREAMINA_VENDOR_SEED } from "./dreaminaVendor";
 import { DREAMINA_CURATED_MODELS, DREAMINA_CURATED_MAPPINGS } from "./dreaminaVideos";
 import { DREAMINA_IMAGE_CURATED_MODELS, DREAMINA_IMAGE_CURATED_MAPPINGS } from "./dreaminaImages";
@@ -81,6 +83,17 @@ import {
   JIMENG_WEB_VENDOR_SEED,
 } from "./jimengWeb";
 import { PAVO_WEB_AGNES_FLASH_MODEL_SEED, PAVO_WEB_VENDOR_SEED } from "./pavoWeb";
+import { modelHasPublishedExecution } from "../shared/modelPublication";
+import { GEMINI_OMNI_11_MAPPINGS, GEMINI_OMNI_11_MODEL_SEED } from "./kieGeminiOmni11";
+import { KIE_SUNO_MUSIC_MAPPINGS, KIE_SUNO_MUSIC_MODEL_SEED, KIE_SUNO_SFX_MAPPING, KIE_SUNO_SFX_MODEL_SEED } from "./kieSunoAudio";
+import { MINIMAX_OFFICIAL_MODELS, MINIMAX_VENDOR_SEED } from "./minimaxOfficial";
+import { ELEVENLABS_MODELS, ELEVENLABS_VENDOR_SEED } from "./elevenlabs";
+import { LOCAL_SPEECH_CURATED_MAPPINGS, LOCAL_SPEECH_CURATED_MODELS, LOCAL_SPEECH_VENDOR_SEED } from "./localSpeech";
+import { MESHY_MODELS, MESHY_VENDOR_SEED } from "./meshyOfficial";
+import { HIGGSFIELD_MODELS } from "./higgsfieldModels";
+import { HIGGSFIELD_VENDOR_SEED } from "./higgsfieldVendor";
+import { FAL_OFFICIAL_MODELS, FAL_VENDOR_SEED } from "./falOfficial";
+import { RUNWAY_OFFICIAL_MODELS, RUNWAY_VENDOR_SEED } from "./runwayOfficial";
 
 /** curated 模型/mapping 的内部类型（reconcile 两函数的输入）。 */
 type CuratedModel = {
@@ -90,14 +103,20 @@ type CuratedModel = {
   archetypeId?: string;
   /** 代码所有的额外 meta（如 ComfyUI 长尾 workflow 的 parameters 动态控件）；与 archetypeId 合并进 meta。 */
   meta?: Record<string, unknown>;
+  /** 按 token 计费的价目（USD / 每百万 token）。代码所有，随 seed 对账自愈。 */
+  tokenPricing?: Model["tokenPricing"];
+  /** 显式不按 token 计费。与 `tokenPricing` 互斥（`check:archetype-sources` 的价目段守着）。 */
+  free?: true;
 };
 type CuratedMapping = {
   id: string;
   taskKind: Mapping["taskKind"];
   modelKey?: string;
+  modeId?: string;
   name: string;
   create: HttpOperation;
   query?: HttpOperation;
+  result?: HttpOperation;
   statusMapping?: Mapping["statusMapping"];
 };
 
@@ -135,6 +154,9 @@ const KIE_CURATED_MODELS: CuratedModel[] = [
   { modelKey: WAN_3_0_MODEL_SEED.modelKey, labelZh: WAN_3_0_MODEL_SEED.labelZh, kind: WAN_3_0_MODEL_SEED.kind, archetypeId: "wan-3.0" },
   // 2026-08 代图像（表驱动单源，见 kieImages2026）：Nano Banana 2 / 2 Lite、Seedream 5.0 Pro / Lite、FLUX.2 Pro。
   ...KIE_IMAGE_MODELS_2026.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "image" as const, archetypeId: m.archetypeId })),
+  { ...GEMINI_OMNI_11_MODEL_SEED, archetypeId: "gemini-omni-1.1" },
+  { ...KIE_SUNO_MUSIC_MODEL_SEED, archetypeId: "suno-v5.5" },
+  { ...KIE_SUNO_SFX_MODEL_SEED, archetypeId: "suno-sfx-v5.5" },
 ];
 
 /** kie 的 curated mapping（单源；create/query/statusMapping = 代码所有，强制对账）。 */
@@ -164,6 +186,9 @@ const KIE_CURATED_MAPPINGS: CuratedMapping[] = [
       create: mp.create, query: KIE_IMAGE_2026_QUERY, statusMapping: KIE_IMAGE_2026_STATUS,
     })),
   ),
+  ...GEMINI_OMNI_11_MAPPINGS,
+  ...KIE_SUNO_MUSIC_MAPPINGS,
+  KIE_SUNO_SFX_MAPPING,
 ];
 
 /** apimart 的 curated 模型 + mapping，从单源 APIMART_IMAGE_MODELS / APIMART_VIDEO_MODELS 派生。 */
@@ -176,6 +201,8 @@ const APIMART_CURATED_MODELS: CuratedModel[] = [
     labelZh: m.labelZh,
     kind: "text" as const,
     ...(m.meta ? { meta: m.meta } : {}),
+    ...(m.tokenPricing ? { tokenPricing: m.tokenPricing } : {}),
+    ...(m.free ? { free: m.free } : {}),
   })),
   ...APIMART_IMAGE_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "image" as const, archetypeId: m.archetypeId })),
   ...APIMART_VIDEO_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "video" as const, archetypeId: m.archetypeId })),
@@ -202,6 +229,7 @@ const APIMART_CURATED_MAPPINGS: CuratedMapping[] = [
   ...APIMART_AUDIO_MODELS.flatMap((m) =>
     m.mappings.map((mp) => ({
       id: mp.id, taskKind: mp.taskKind, modelKey: m.modelKey, name: mp.name, create: mp.create,
+      query: mp.query, statusMapping: mp.statusMapping,
     })),
   ),
 ];
@@ -209,7 +237,7 @@ const APIMART_CURATED_MAPPINGS: CuratedMapping[] = [
 /** Agnes AI 公开模型 curated 种子；实际调用权限和费用由账户决定。文本(无 mapping，直连 chat)；
  *  图片：同步 create(无 query)；视频：异步 create→poll(query 参数版轮询，见 agnesVendor)。 */
 const AGNES_CURATED_MODELS: CuratedModel[] = [
-  ...AGNES_TEXT_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "text" as const, meta: m.meta })),
+  ...AGNES_TEXT_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "text" as const, meta: m.meta, tokenPricing: m.tokenPricing })),
   ...AGNES_IMAGE_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "image" as const, archetypeId: m.archetypeId })),
   ...AGNES_VIDEO_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "video" as const, archetypeId: m.archetypeId })),
 ];
@@ -241,7 +269,7 @@ const PIXSTAG_CURATED_MAPPINGS: CuratedMapping[] = PIXSTAG_VIDEO_MODELS.flatMap(
 /** 魔搭社区（官方原生）curated 模型 + mapping。图片：async create→poll；文本：免费 LLM(无 mapping，直连 chat)。 */
 const MODELSCOPE_CURATED_MODELS: CuratedModel[] = [
   // 免费文本大脑（Qwen3 系，真实验证 chat+tool_use 双通）：补 Issue #9，给没付费用户免费大脑。
-  ...MODELSCOPE_TEXT_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "text" as const })),
+  ...MODELSCOPE_TEXT_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "text" as const, free: m.free })),
   ...MODELSCOPE_IMAGE_MODELS.map((m) => ({ modelKey: m.modelKey, labelZh: m.labelZh, kind: "image" as const, archetypeId: m.archetypeId })),
 ];
 const MODELSCOPE_CURATED_MAPPINGS: CuratedMapping[] = MODELSCOPE_IMAGE_MODELS.flatMap((m) =>
@@ -311,6 +339,68 @@ const PAVO_WEB_CURATED_MODELS: CuratedModel[] = [
   },
 ];
 
+const officialCuratedModels = <T extends CuratedModel & { mappings: unknown }>(models: readonly T[]): CuratedModel[] =>
+  models.map(({ modelKey, labelZh, kind, archetypeId, meta }) => ({ modelKey, labelZh, kind, archetypeId, meta }));
+
+const officialCuratedMappings = <T extends { modelKey: string; mappings: readonly CuratedMapping[] }>(
+  models: readonly T[],
+): CuratedMapping[] => models.flatMap((model) =>
+  model.mappings.map((mapping) => ({ ...mapping, modelKey: model.modelKey })),
+);
+
+const MINIMAX_OFFICIAL_CURATED_MODELS = officialCuratedModels(MINIMAX_OFFICIAL_MODELS);
+const MINIMAX_OFFICIAL_CURATED_MAPPINGS = officialCuratedMappings(MINIMAX_OFFICIAL_MODELS);
+const ELEVENLABS_CURATED_MODELS = officialCuratedModels(ELEVENLABS_MODELS);
+const ELEVENLABS_CURATED_MAPPINGS = officialCuratedMappings(ELEVENLABS_MODELS);
+const HIGGSFIELD_CURATED_MODELS = officialCuratedModels(HIGGSFIELD_MODELS);
+const HIGGSFIELD_CURATED_MAPPINGS = officialCuratedMappings(HIGGSFIELD_MODELS);
+const MESHY_CURATED_MODELS = officialCuratedModels(MESHY_MODELS);
+const MESHY_CURATED_MAPPINGS = officialCuratedMappings(MESHY_MODELS);
+const FAL_CURATED_MODELS = officialCuratedModels(FAL_OFFICIAL_MODELS);
+const FAL_CURATED_MAPPINGS = officialCuratedMappings(FAL_OFFICIAL_MODELS);
+const RUNWAY_CURATED_MODELS = officialCuratedModels(RUNWAY_OFFICIAL_MODELS);
+const RUNWAY_CURATED_MAPPINGS = officialCuratedMappings(RUNWAY_OFFICIAL_MODELS);
+
+/**
+ * **curated 执行契约登记表 —— 单一真相源**（2026-09-10）。
+ *
+ * 在此之前，「这家有哪些代码拥有的模型 / mapping」以**两份手抄清单**的形式存在
+ * （applyBuiltinSeeds 里 18 行 reconcileModels + 18 行 reconcileMappings），
+ * 而「这家能不能凭 key 发布」是第三份、写死成 `vendorKey !== apimart` 的白名单。
+ * 三份描述同一件事就一定会漂：新接一家只加了播种那两行，发布判据不认它，
+ * 于是「填了 key 模型却全消失」——2026-09-10 用户反馈的正是这个（18 家里 17 家中招）。
+ *
+ * 收成这一张表之后：播种走它，发布判据也走它，加一家只加一行，判据自动跟上（P1）。
+ * 表的顺序 = 原播种顺序，装机行为逐字不变。
+ */
+const CURATED_VENDOR_CONTRACTS: readonly { vendorKey: string; models: CuratedModel[]; mappings: CuratedMapping[] }[] = [
+  { vendorKey: KIE_VENDOR_SEED.key, models: KIE_CURATED_MODELS, mappings: KIE_CURATED_MAPPINGS },
+  { vendorKey: APIMART_VENDOR_SEED.key, models: APIMART_CURATED_MODELS, mappings: APIMART_CURATED_MAPPINGS },
+  { vendorKey: AGNES_VENDOR_SEED.key, models: AGNES_CURATED_MODELS, mappings: AGNES_CURATED_MAPPINGS },
+  { vendorKey: PIXSTAG_VENDOR_SEED.key, models: PIXSTAG_CURATED_MODELS, mappings: PIXSTAG_CURATED_MAPPINGS },
+  { vendorKey: CODEX_VENDOR_SEED.key, models: CODEX_CURATED_MODELS, mappings: [] },
+  { vendorKey: JIMENG_WEB_VENDOR_SEED.key, models: JIMENG_WEB_CURATED_MODELS, mappings: [] },
+  { vendorKey: PAVO_WEB_VENDOR_SEED.key, models: PAVO_WEB_CURATED_MODELS, mappings: [] },
+  { vendorKey: MODELSCOPE_VENDOR_SEED.key, models: MODELSCOPE_CURATED_MODELS, mappings: MODELSCOPE_CURATED_MAPPINGS },
+  { vendorKey: VOLCENGINE_VENDOR_SEED.key, models: VOLCENGINE_CURATED_MODELS, mappings: VOLCENGINE_CURATED_MAPPINGS },
+  { vendorKey: VOLCENGINE_SPEECH_VENDOR_SEED.key, models: VOLCENGINE_SPEECH_CURATED_MODELS, mappings: VOLCENGINE_SPEECH_CURATED_MAPPINGS },
+  { vendorKey: DREAMINA_VENDOR_SEED.key, models: DREAMINA_CURATED_MODELS, mappings: DREAMINA_CURATED_MAPPINGS },
+  { vendorKey: DREAMINA_VENDOR_SEED.key, models: DREAMINA_IMAGE_CURATED_MODELS, mappings: DREAMINA_IMAGE_CURATED_MAPPINGS },
+  { vendorKey: RUNNINGHUB_VENDOR_SEED.key, models: RUNNINGHUB_3D_CURATED_MODELS, mappings: RUNNINGHUB_3D_CURATED_MAPPINGS },
+  { vendorKey: RUNNINGHUB_VENDOR_SEED.key, models: RUNNINGHUB_VIDEO_CURATED_MODELS, mappings: RUNNINGHUB_VIDEO_CURATED_MAPPINGS },
+  { vendorKey: RUNNINGHUB_VENDOR_SEED.key, models: RUNNINGHUB_IMAGE_CURATED_MODELS, mappings: RUNNINGHUB_IMAGE_CURATED_MAPPINGS },
+  { vendorKey: COMFYUI_VENDOR_SEED.key, models: COMFYUI_CURATED_MODELS, mappings: COMFYUI_CURATED_MAPPINGS },
+  { vendorKey: CODEX_LOCAL_VENDOR_SEED.key, models: CODEX_IMAGE_CURATED_MODELS, mappings: CODEX_IMAGE_CURATED_MAPPINGS },
+  { vendorKey: MINIMAX_VENDOR_SEED.key, models: MINIMAX_OFFICIAL_CURATED_MODELS, mappings: MINIMAX_OFFICIAL_CURATED_MAPPINGS },
+  { vendorKey: ELEVENLABS_VENDOR_SEED.key, models: ELEVENLABS_CURATED_MODELS, mappings: ELEVENLABS_CURATED_MAPPINGS },
+  { vendorKey: MESHY_VENDOR_SEED.key, models: MESHY_CURATED_MODELS, mappings: MESHY_CURATED_MAPPINGS },
+  { vendorKey: FAL_VENDOR_SEED.key, models: FAL_CURATED_MODELS, mappings: FAL_CURATED_MAPPINGS },
+  { vendorKey: RUNWAY_VENDOR_SEED.key, models: RUNWAY_CURATED_MODELS, mappings: RUNWAY_CURATED_MAPPINGS },
+  // 本地转写：transcribe taskKind 的第三个 provider（前两个是 APIMart Whisper / ElevenLabs Scribe）。
+  { vendorKey: LOCAL_SPEECH_VENDOR_SEED.key, models: LOCAL_SPEECH_CURATED_MODELS, mappings: LOCAL_SPEECH_CURATED_MAPPINGS },
+  { vendorKey: HIGGSFIELD_VENDOR_SEED.key, models: HIGGSFIELD_CURATED_MODELS, mappings: HIGGSFIELD_CURATED_MAPPINGS },
+];
+
 /**
  * **退役的 curated 记录（变体合并迁移，2026-06-16）**：Seedance 一族原是 4 个独立 catalog 行
  * （标准/fast/face/fast-face），合并成 1 行后，老装机里残留 3 个变体模型 + 6 条 mapping 成孤儿
@@ -339,9 +429,27 @@ const RETIRED_KIE_VIDEO_MODEL_KEYS: readonly string[] = [
  */
 const RETIRED_APIMART_IMAGE_MODEL_KEYS: readonly string[] = ["imagen-4.0-apimart"];
 const RETIRED_APIMART_IMAGE_MAPPING_IDS: readonly string[] = ["seed-apimart-imagen-4-text_to_image"];
-// APIMart 早期误种的 DeepSeek V3.1 250821 已不在当前官方模型目录中；精确清理旧 curated 行，
-// 再由 APIMART_TEXT_MODELS 种入官方当前 DeepSeek 集合。只命中 apimart vendor，不碰用户其它供应商。
-const RETIRED_APIMART_TEXT_MODEL_KEYS: readonly string[] = ["deepseek-v3.1-250821"];
+// 退役的 apimart 文本模型（与 APIMART_TEXT_MODELS 互斥，curated 必须同删，否则启动时插回来来回抖）：
+// `deepseek-v3.1-250821` 早期误种；`deepseek-v3.2-think` 2026-09-06 实测退役（仍列在目录里但调用 400 ——
+// 教训同 imagen-4.0-apimart：目录列表不是可用性证据）。证据与回归见 apimartTextMigration.test.ts。
+const RETIRED_APIMART_TEXT_MODEL_KEYS: readonly string[] = ["deepseek-v3.1-250821", "deepseek-v3.2-think"];
+/**
+ * Sora 2 退役（2026-09-28 用户拍板，随 0.23.0 发出）：OpenAI 官方文档写明「The Sora 2 models and Videos API were
+ * shut down on September 24, 2026」，APIMart 文档里也已经没有 Sora 2——两家的 Sora 2 都只剩必死的请求。
+ * 两条目录都撤：APIMart `sora-2`（标准 / Pro 两个变体是同一行）与 RunningHub `rhart-video-s-official`。
+ * 旧项目里用过它的节点照样能打开：记录不在了，生成时 findExecutableModel 报「Model is retired」→
+ * 节点显示「这个模型已经下线了」+「换个模型」（classifyError 的 model-retired 那一档）。
+ *
+ * ⚠️ 与 APIMART_VIDEO_MODELS / RUNNINGHUB_VIDEO_CURATED_MODELS 互斥：curated 里必须**同时**删掉，否则
+ * reconcileModels 每次启动又插回来、和这里的 prune 来回抖。
+ */
+const RETIRED_APIMART_SORA_MODEL_KEYS: readonly string[] = ["sora-2"];
+const RETIRED_APIMART_SORA_MAPPING_IDS: readonly string[] = [
+  "seed-apimart-sora-2-text_to_video",
+  "seed-apimart-sora-2-image_to_video",
+];
+const RETIRED_RUNNINGHUB_VIDEO_MODEL_KEYS: readonly string[] = ["rhart-video-s-official"];
+const RETIRED_RUNNINGHUB_VIDEO_MAPPING_IDS: readonly string[] = ["seed-rh-sora2-t2v", "seed-rh-sora2-i2v"];
 
 const RETIRED_APIMART_VIDEO_MAPPING_IDS: readonly string[] = [
   "seed-apimart-seedance-2-apimart-fast-text_to_video",
@@ -376,14 +484,24 @@ function pruneRetiredMappings(mappings: Mapping[], retiredIds: readonly string[]
   return changed;
 }
 
-/** 供应商种子（裸 baseUrl + bearer）。存在即跳过（用户配置不覆盖）。返回是否变更。
+/** 供应商种子（裸 baseUrl + bearer）。存在即跳过（用户配置不覆盖）；仅对账代码声明的旧官方 host。
  *  多数种子默认 enabled:true；无鉴权本地后端（ComfyUI）带 `enabled:false` → 默认关、用户显式启用（污染防护）。 */
 function seedVendor(vendors: Vendor[], seed: VendorSeed, now: string): boolean {
-  if (vendors.some((v) => v.key === seed.key)) return false;
+  const existingIndex = vendors.findIndex((v) => v.key === seed.key);
+  if (existingIndex >= 0) {
+    const existing = vendors[existingIndex];
+    // 只迁移仍指向我们旧默认值的记录。用户改成自建中转/代理时，绝不能因为升级而覆盖。
+    if (seed.legacyBaseUrls?.includes(String(existing.baseUrlHint ?? ""))) {
+      vendors[existingIndex] = { ...existing, baseUrlHint: seed.baseUrl, updatedAt: now };
+      return true;
+    }
+    return false;
+  }
   const enabled = seed.enabled === false ? false : true;
   vendors.push({
     key: seed.key, name: seed.name, enabled,
-    baseUrlHint: seed.baseUrl, authType: seed.authType, authHeader: seed.authHeader ?? null,
+    baseUrlHint: seed.baseUrl, authType: seed.authType, authHeader: seed.authHeader,
+    ...(seed.authScheme ? { authScheme: seed.authScheme } : {}),
     // 本地素材吞入声明（仅 Replicate 等声明了 assetIngestion 的 vendor 带；resolveAssetIngestionWithFallback 据此把本地图传文件 API）。
     ...(seed.assetIngestion ? { assetIngestion: seed.assetIngestion } : {}),
     createdAt: now, updatedAt: now,
@@ -432,85 +550,30 @@ function reconcileAgnesFlashMappingIds(mappings: Mapping[], now: string): boolea
  * 某供应商的 curated 模型 insert + 启动对账（供应商无关）。代码所有：kind + meta.archetypeId（漂移强制对账，
  * 否则模型套错能力）；用户所有：enabled/labelZh/createdAt 保留。返回是否变更。
  */
-/**
- * 跨供应商同一逻辑模型的**版本级** canonical 身份（modelKey → canonicalModelId，全局无键冲突）。
- * 消费方：src/config/modelIdentity.deriveCanonicalModelId（priority-1 去重键）——填了它，节点模型
- * 下拉的「同模型多家合并成一条 + N 家」不再赌 labelZh 字符串（label 漂移=不合并、撞名=错合并的根因）。
- * 纪律：
- *  - **版本级**（seedream 4.5 ≠ 5.0 ≠ 4.0），绝不用 archetype 家族级；
- *  - 单家独有的模型（happyhorse/agnes/imagen…）不填——无叠加可治，缺省走 label 归一化回退；
- *  - **值刻意 = normalizeModelLabel(labelZh) 的产物**（小写、空格分隔）：没进表的同名模型
- *    （静态表条目 / 未来新家）走 label 回退会得到同一个键 → 永不把现有合并组拆开；
- *    显式填表的价值只在「对抗 label 改名/漂移」，不在换一套 id 风格。
- */
-const CANONICAL_MODEL_IDS: Record<string, string> = {
-  // Seedream 4.5（kie / apimart / 火山 / RunningHub 四家）
-  "seedream": "seedream 4.5",
-  "doubao-seedream-4.5": "seedream 4.5",
-  "doubao-seedream-4-5-251128": "seedream 4.5",
-  "seedream-v4.5": "seedream 4.5",
-  // Seedance 2.0（kie / apimart / 火山 / RunningHub；即梦 label 为「即梦 Seedance 2.0（会员）」本就独立，不填）
-  "bytedance/seedance-2": "seedance 2.0",
-  "doubao-seedance-2.0": "seedance 2.0",
-  "doubao-seedance-2-0-260128": "seedance 2.0",
-  "bytedance/seedance-2.0-global": "seedance 2.0",
-  // Nano Banana（kie / apimart / RunningHub；静态 gemini 表同名条目走 label 回退同键）
-  "nano-banana": "nano banana",
-  "gemini-2.5-flash-image-preview": "nano banana",
-  "rhart-image-v1": "nano banana",
-  // Nano Banana 2（kie 主款 / apimart；**版本级**故与上面 2.5 代的 "nano banana" 分键，绝不合并）
-  // Lite 是独立档次（更快更便宜、参考图上限 10 而非 14）→ 自己一个键，不与主款合并成一条。
-  "nano-banana-2": "nano banana 2",
-  "gemini-3.1-flash-image-preview": "nano banana 2",
-  "nano-banana-2-lite": "nano banana 2 lite",
-  // Seedream 5.0（kie 的 pro / lite 两档 + apimart pro + 火山 pro；lite 与 pro 是不同档次故分键）
-  "seedream/5-pro-text-to-image": "seedream 5.0 pro",
-  "doubao-seedream-5-0-pro": "seedream 5.0 pro",
-  "doubao-seedream-5-0-pro-260628": "seedream 5.0 pro",
-  "seedream/5-lite-text-to-image": "seedream 5.0 lite",
-  // GPT Image 2（kie 拆「· 文生图 / · 图生图」两行 / apimart / RunningHub → 同一 canonical 合并成一条）
-  "gpt-image-2-text-to-image": "gpt image 2",
-  "gpt-image-2-image-to-image": "gpt image 2",
-  "gpt-image-2": "gpt image 2",
-  "rhart-image-g-2-official": "gpt image 2",
-  // 可灵 3.0（kie / apimart / RunningHub）
-  "kling-3.0": "可灵 3.0",
-  "kling-v3": "可灵 3.0",
-  "kling-v3.0-pro": "可灵 3.0",
-  // Qwen-Image 2.0（apimart / RunningHub）
-  "qwen-image-2.0": "qwen-image 2.0",
-  "rh-qwen-image-2.0": "qwen-image 2.0",
-  // Qwen-Image 3.0（apimart 独家；**版本级**故与 2.0 分键）
-  "qwen-image-3.0": "qwen-image 3.0",
-  // Veo 3.1（apimart / RunningHub）
-  "veo3.1-fast": "veo 3.1",
-  "rhart-video-v3.1-pro-official": "veo 3.1",
-  // Sora 2（apimart / RunningHub）
-  "sora-2": "sora 2",
-  "rhart-video-s-official": "sora 2",
-  // Wan 2.7（apimart / RunningHub）
-  "wan2.7": "wan 2.7",
-  "rh-wan-2.7": "wan 2.7",
-  // Hailuo 2.3（apimart / RunningHub）
-  "MiniMax-Hailuo-2.3": "hailuo 2.3",
-  "rh-hailuo-2.3": "hailuo 2.3",
-};
-
-function reconcileModels(models: Model[], vendorKey: string, curated: CuratedModel[], now: string): boolean {
+function reconcileModels(models: Model[], vendorKey: string, curated: CuratedModel[], now: string, suppressed: CatalogState["suppressedBuiltinModels"]): boolean {
   let changed = false;
   for (const c of curated) {
+    if (suppressed?.some((row) => row.vendorKey === vendorKey && row.modelKey === c.modelKey)) continue;
     const canonicalId = CANONICAL_MODEL_IDS[c.modelKey];
     // 代码所有的 meta = archetypeId（能力档案指针）+ canonicalModelId（跨家去重键）+ c.meta 合并。
     const curatedMeta: Record<string, unknown> = {
       ...(c.archetypeId ? { archetypeId: c.archetypeId } : {}),
       ...(canonicalId ? { canonicalModelId: canonicalId } : {}),
       ...(c.meta || {}),
+      catalogLifecycle: curatedCatalogLifecycle(c.modelKey),
     };
+    // 价目是**代码所有**的事实（和 kind / archetypeId 同级），不是用户配置：官网调价后老装机
+    // 必须跟着自愈，否则面板上会长期印一个过期金额，而过期金额比没有金额更难发现。
+    const curatedPricing = {
+      ...(c.tokenPricing ? { tokenPricing: c.tokenPricing } : {}),
+      ...(c.free ? { free: c.free } : {}),
+    } as Pick<Model, "tokenPricing" | "free">;
     const i = models.findIndex((m) => m.modelKey === c.modelKey && m.vendorKey === vendorKey);
     if (i < 0) {
       models.push({
         modelKey: c.modelKey, vendorKey, labelZh: c.labelZh, kind: c.kind, enabled: true,
         ...(Object.keys(curatedMeta).length > 0 ? { meta: curatedMeta } : {}),
+        ...curatedPricing,
         createdAt: now, updatedAt: now,
       });
       changed = true;
@@ -521,12 +584,17 @@ function reconcileModels(models: Model[], vendorKey: string, curated: CuratedMod
     // Compare every code-owned capability, including supportsImageInput added to existing text rows.
     // Unrelated user metadata is not compared or removed.
     const metaDrift = Object.entries(curatedMeta).some(([key, value]) => JSON.stringify(exMeta[key]) !== JSON.stringify(value));
-    const drift = ex.kind !== c.kind || metaDrift;
+    // 撤价（curated 不再声明）也算漂移：留着一份没人维护的旧价目就是留一个会说谎的数字。
+    const pricingDrift = JSON.stringify(ex.tokenPricing) !== JSON.stringify(c.tokenPricing)
+      || JSON.stringify(ex.free) !== JSON.stringify(c.free);
+    const drift = ex.kind !== c.kind || metaDrift || pricingDrift;
     if (drift) {
       const nextMeta = { ...exMeta, ...curatedMeta };
+      const { tokenPricing: _stalePricing, free: _staleFree, ...rest } = ex;
       models[i] = {
-        ...ex, kind: c.kind,
+        ...rest, kind: c.kind,
         ...(Object.keys(nextMeta).length > 0 ? { meta: nextMeta } : {}),
+        ...curatedPricing,
         updatedAt: now,
       };
       changed = true;
@@ -537,8 +605,8 @@ function reconcileModels(models: Model[], vendorKey: string, curated: CuratedMod
 
 /**
  * 某供应商的 curated mapping insert + 对账（供应商无关，根因修复见原注释）。
- *   · 已存在（按稳定 seed id）→ 强制对账 create/query/statusMapping/taskKind/modelKey（代码所有），老装机自愈；
- *   · 缺失 → 仅当同 (vendor, taskKind, modelKey) 身份未被用户/onboarding 记录占用时插入（不重复占槽）。
+ *   · 已存在（按稳定 seed id）→ 强制对账 create/query/result/statusMapping/taskKind/modelKey/modeId（代码所有），老装机自愈；
+ *   · 缺失 → 仅当同 (vendor, taskKind, modelKey, modeId) 身份未被用户/onboarding 记录占用时插入（不重复占槽）。
  * name/enabled/createdAt = 用户所有，保留。返回是否变更。
  */
 function reconcileMappings(mappings: Mapping[], vendorKey: string, curated: CuratedMapping[], now: string): boolean {
@@ -550,20 +618,23 @@ function reconcileMappings(mappings: Mapping[], vendorKey: string, curated: Cura
       const drift =
         ex.taskKind !== c.taskKind ||
         (ex.modelKey || undefined) !== (c.modelKey || undefined) ||
+        (ex.modeId || undefined) !== (c.modeId || undefined) ||
         JSON.stringify(ex.create) !== JSON.stringify(c.create) ||
         JSON.stringify(ex.query) !== JSON.stringify(c.query) ||
+        JSON.stringify(ex.result) !== JSON.stringify(c.result) ||
         JSON.stringify(ex.statusMapping) !== JSON.stringify(c.statusMapping);
       if (drift) {
-        mappings[i] = { ...ex, taskKind: c.taskKind, modelKey: c.modelKey, name: ex.name ?? c.name, create: c.create, query: c.query, statusMapping: c.statusMapping, updatedAt: now };
+        mappings[i] = { ...ex, taskKind: c.taskKind, modelKey: c.modelKey, modeId: c.modeId, name: ex.name ?? c.name, create: c.create, query: c.query, result: c.result, statusMapping: c.statusMapping, updatedAt: now };
         changed = true;
       }
       continue;
     }
-    if (mappings.some((m) => m.vendorKey === vendorKey && m.taskKind === c.taskKind && (m.modelKey || undefined) === (c.modelKey || undefined))) continue;
+    if (mappings.some((m) => m.vendorKey === vendorKey && m.taskKind === c.taskKind && (m.modelKey || undefined) === (c.modelKey || undefined) && (m.modeId || undefined) === (c.modeId || undefined))) continue;
     mappings.push({
       id: c.id, vendorKey, taskKind: c.taskKind,
       ...(c.modelKey ? { modelKey: c.modelKey } : {}),
-      name: c.name, enabled: true, create: c.create, query: c.query, statusMapping: c.statusMapping,
+      ...(c.modeId ? { modeId: c.modeId } : {}),
+      name: c.name, enabled: true, create: c.create, query: c.query, result: c.result, statusMapping: c.statusMapping,
       createdAt: now, updatedAt: now,
     });
     changed = true;
@@ -593,27 +664,28 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   // 只有走 prune 才摘得掉已经落在用户 catalog 里的那条。
   if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_IMAGE_MODEL_KEYS)) changed = true;
   if (pruneRetiredMappings(mappings, RETIRED_APIMART_IMAGE_MAPPING_IDS)) changed = true;
-  if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_TEXT_MODEL_KEYS)) changed = true;
+  // Explicit one-time migration: keep user configuration, including manual re-enabling afterwards.
+  // 2026-09-21：这里原来连 `enabled: false` 一起写——和上面那行「种子不碰 enabled（那是用户数据）」
+  // 自相矛盾，也和后台对账是同一个毛病：把「供应商不再列出」当成「替用户停用」。现在只落旁注，
+  // 停不停用由用户在模型设置里自己决定（`unlisted` 在界面上如实显示）。
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    if (model.vendorKey === APIMART_VENDOR_SEED.key && RETIRED_APIMART_TEXT_MODEL_KEYS.includes(model.modelKey) && model.unlisted === undefined) {
+      models[index] = { ...model, unlisted: true, meta: { ...(model.meta as Record<string, unknown> || {}), catalogLifecycle: "legacy" }, updatedAt: now };
+      changed = true;
+    }
+  }
   if (pruneRetiredModels(models, KIE_VENDOR_SEED.key, RETIRED_KIE_VIDEO_MODEL_KEYS)) changed = true;
+  // Sora 2 退役（上游 2026-09-24 关停）：两家的行与 mapping 都摘，对老装机同样生效。
+  if (pruneRetiredModels(models, APIMART_VENDOR_SEED.key, RETIRED_APIMART_SORA_MODEL_KEYS)) changed = true;
+  if (pruneRetiredMappings(mappings, RETIRED_APIMART_SORA_MAPPING_IDS)) changed = true;
+  if (pruneRetiredModels(models, RUNNINGHUB_VENDOR_SEED.key, RETIRED_RUNNINGHUB_VIDEO_MODEL_KEYS)) changed = true;
+  if (pruneRetiredMappings(mappings, RETIRED_RUNNINGHUB_VIDEO_MAPPING_IDS)) changed = true;
 
   // 模型 insert + 对账（两家各跑同一套逻辑）。
-  if (reconcileModels(models, KIE_VENDOR_SEED.key, KIE_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, APIMART_VENDOR_SEED.key, APIMART_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, AGNES_VENDOR_SEED.key, AGNES_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, PIXSTAG_VENDOR_SEED.key, PIXSTAG_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, MODELSCOPE_VENDOR_SEED.key, MODELSCOPE_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, VOLCENGINE_VENDOR_SEED.key, VOLCENGINE_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, VOLCENGINE_SPEECH_VENDOR_SEED.key, VOLCENGINE_SPEECH_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, DREAMINA_VENDOR_SEED.key, DREAMINA_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, DREAMINA_VENDOR_SEED.key, DREAMINA_IMAGE_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_3D_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_VIDEO_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_IMAGE_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, COMFYUI_VENDOR_SEED.key, COMFYUI_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, CODEX_LOCAL_VENDOR_SEED.key, CODEX_IMAGE_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, CODEX_VENDOR_SEED.key, CODEX_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, JIMENG_WEB_VENDOR_SEED.key, JIMENG_WEB_CURATED_MODELS, now)) changed = true;
-  if (reconcileModels(models, PAVO_WEB_VENDOR_SEED.key, PAVO_WEB_CURATED_MODELS, now)) changed = true;
+  for (const contract of CURATED_VENDOR_CONTRACTS) {
+    if (reconcileModels(models, contract.vendorKey, contract.models, now, state.suppressedBuiltinModels)) changed = true;
+  }
 
   // kie 历史包袱 repair：把视频形状的坏 (kie, text_to_image) 替换成正确的 GPT Image 2 文生图契约
   // （旧 onboarding 抽错留下的；契约见 kieGptImage2.ts 直连实测确认）。apimart 无此历史，不需要。
@@ -632,21 +704,79 @@ export function applyBuiltinSeeds(state: CatalogState, now: string): { state: Ca
   }
 
   // mapping insert + 对账（两家各跑同一套逻辑）。
-  if (reconcileMappings(mappings, KIE_VENDOR_SEED.key, KIE_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, APIMART_VENDOR_SEED.key, APIMART_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, AGNES_VENDOR_SEED.key, AGNES_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, PIXSTAG_VENDOR_SEED.key, PIXSTAG_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, MODELSCOPE_VENDOR_SEED.key, MODELSCOPE_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, VOLCENGINE_VENDOR_SEED.key, VOLCENGINE_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, VOLCENGINE_SPEECH_VENDOR_SEED.key, VOLCENGINE_SPEECH_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, DREAMINA_VENDOR_SEED.key, DREAMINA_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, DREAMINA_VENDOR_SEED.key, DREAMINA_IMAGE_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_3D_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_VIDEO_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, RUNNINGHUB_VENDOR_SEED.key, RUNNINGHUB_IMAGE_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, COMFYUI_VENDOR_SEED.key, COMFYUI_CURATED_MAPPINGS, now)) changed = true;
-  if (reconcileMappings(mappings, CODEX_LOCAL_VENDOR_SEED.key, CODEX_IMAGE_CURATED_MAPPINGS, now)) changed = true;
+  for (const contract of CURATED_VENDOR_CONTRACTS) {
+    if (reconcileMappings(mappings, contract.vendorKey, contract.mappings, now)) changed = true;
+  }
 
   if (!changed) return { state, changed: false };
   return { state: { ...state, vendors, models, mappings }, changed: true };
+}
+
+/**
+ * 这家**内置目录里**有哪些模型（curated 登记表里的 modelKey；不在表里的家返回空集）。
+ * 「用户自己加的模型」与「代码拥有的模型」只靠这张表分得开——`meta` 上的任何字段渲染层都写得动，
+ * 拿来判身份就是让用户自己给自己的行盖章。`certificationOwnership` 靠它判「标记落在谁身上」。
+ */
+export function builtinCatalogModelKeys(vendorKey: string): ReadonlySet<string> {
+  return new Set(CURATED_VENDOR_CONTRACTS
+    .filter((contract) => contract.vendorKey === vendorKey)
+    .flatMap((contract) => contract.models.map((model) => model.modelKey)));
+}
+
+/**
+ * 这家在当前 catalog 里，是否仍指向**代码拥有的**执行契约。
+ *
+ * 判据用在凭据发布与 provider 两个边界上，所以后来的一次 catalog 编辑（改了 create/query、
+ * 删了 mapping、被认证适配器接管）都会让它 fail-closed。渲染层自己建/改出来的行故意不算数：
+ * 一条启用但无 adapter 的 mapping 否则会对旧发布助手装成「已发布」。
+ *
+ * 2026-09-10：判据从 `vendorKey !== apimart` 的硬编码白名单改为**登记表驱动**
+ * （CURATED_VENDOR_CONTRACTS）。旧写法让 18 家里的另外 17 家永远返回 false，于是它们填完 key
+ * 就被 de-publish 且再也回不来——用户反馈「写入 key 没有像以前一样一次性打开所有模型」的类根因。
+ * 见 docs/fixes/2026-09-10-vendor-key-publish-class.root-cause.json。
+ */
+export function hasBuiltinCuratedExecution(state: CatalogState, vendorKey: string): boolean {
+  const seed = builtinVendorSeed(vendorKey);
+  if (!seed) return false;
+  // 执行契约住在主进程专用路径（多输出的 Replicate 元素拆解）——它没有 mapping，但同样是
+  // 代码拥有且实测固化的契约。为它编一条没人消费的 mapping 才是不诚实的那条路。
+  if (seed.bespokeExecution) return true;
+  const contracts = CURATED_VENDOR_CONTRACTS.filter((contract) => contract.vendorKey === vendorKey);
+  if (contracts.length === 0) return false;
+  const curatedModelByKey = new Map(contracts.flatMap((contract) => contract.models).map((model) => [model.modelKey, model] as const));
+  const curatedMappingsById = new Map(contracts.flatMap((contract) => contract.mappings).map((mapping) => [mapping.id, mapping] as const));
+  const models = state.models.filter((model) => model.vendorKey === vendorKey && model.enabled);
+  for (const model of models) {
+    const curated = curatedModelByKey.get(model.modelKey);
+    if (!curated || model.kind !== curated.kind) continue;
+    const meta = model.meta && typeof model.meta === "object" && !Array.isArray(model.meta)
+      ? model.meta as Record<string, unknown>
+      : {};
+    if (curated.archetypeId && meta.archetypeId !== curated.archetypeId) continue;
+    if (curated.meta && Object.entries(curated.meta).some(([key, value]) => JSON.stringify(meta[key]) !== JSON.stringify(value))) continue;
+
+    // This predicate gates the media GenerationProvider. Text models are
+    // consumed by the separate language-model path and must not make a
+    // catalog with all image/video mappings removed look generation-ready.
+    // 现役 curated 家全都至少出一个媒体模型，所以这里不为「只出文本的家」预留分支：
+    // 真出现那么一家时，装配期不变量 (b) 会当场红，由那次改动的作者显式决定怎么算（P1：不写投机路径）。
+    if (model.kind === "text") continue;
+    // For media models, require exactly one intact code-owned mapping
+    // (duplicate IDs are ambiguous and fail closed).
+    const candidates = [...curatedMappingsById.values()].filter((mapping) =>
+      mapping.modelKey === model.modelKey && mapping.taskKind !== "chat" && mapping.taskKind !== "prompt_refine",
+    );
+    for (const curatedMapping of candidates) {
+      const actuals = state.mappings.filter((mapping) => mapping.id === curatedMapping.id);
+      if (actuals.length !== 1) continue;
+      const actual = actuals[0];
+      if (!actual.enabled || actual.vendorKey !== vendorKey || actual.modelKey !== curatedMapping.modelKey
+        || actual.taskKind !== curatedMapping.taskKind
+        || JSON.stringify(actual.create) !== JSON.stringify(curatedMapping.create)
+        || JSON.stringify(actual.query) !== JSON.stringify(curatedMapping.query)
+        || JSON.stringify(actual.statusMapping) !== JSON.stringify(curatedMapping.statusMapping)) continue;
+      if (modelHasPublishedExecution(model, { mappings: state.mappings })) return true;
+    }
+  }
+  return false;
 }

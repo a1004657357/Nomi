@@ -19,11 +19,11 @@ type LaunchCreationPlaybookInput = {
 }
 
 /** Route a manifest-backed playbook through its canvas Skill node. */
-export function launchCreationPlaybook(input: LaunchCreationPlaybookInput): boolean {
+export async function launchCreationPlaybook(input: LaunchCreationPlaybookInput): Promise<boolean> {
   if (!input.selectedSkillKey) return false
   let playbook
   try {
-    playbook = listWorkbenchSkills().find((skill) => skill.name === input.selectedSkillKey)
+    playbook = (await listWorkbenchSkills()).find((skill) => skill.name === input.selectedSkillKey)
   } catch {
     return false
   }

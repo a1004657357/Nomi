@@ -24,6 +24,7 @@
  * 不含 electron import，可在纯 Node 单测直接导入（aiSdkVendorError.test.ts）。
  */
 import { APICallError, RetryError } from "ai";
+import { isJsonRecord, pickUpstreamCode } from "../jsonUtils";
 import { VendorRequestError, categorizeVendorFailure } from "../vendor/vendorHttp";
 
 /** 上游报文里的人话：{error:{message}} / {error} / {message} / {msg} 四种常见信封。 */
@@ -58,6 +59,16 @@ export function upstreamMessageFromBody(body: string): string {
   return trimmed.replace(/\s+/g, " ").slice(0, 300);
 }
 
+/** 上游响应体里它**自己给的错误码**（与图/视频侧同一个 `pickUpstreamCode`，键优先级表全仓一份）。 */
+export function upstreamCodeFromBody(body: string): string {
+  try {
+    const parsed: unknown = JSON.parse(body.trim());
+    return isJsonRecord(parsed) ? pickUpstreamCode(parsed) : "";
+  } catch {
+    return "";
+  }
+}
+
 /** 拆 RetryError 套壳，拿到真正的最后一次失败。深度上限防自引用死循环。 */
 function unwrapRetry(error: unknown, depth = 0): unknown {
   if (depth >= 4 || !RetryError.isInstance(error)) return error;
@@ -73,8 +84,7 @@ export type AiSdkErrorContext = {
  * 厂商请求失败 → 结构化错误；**不是**厂商请求失败（工具报错、没配模型、空响应截断、
  * 用户点停止）→ null，由调用方退回裸字符串走 legacy 兜底。
  *
- * 已经是 VendorRequestError 的原样放行——流式超时守卫（agentStreamConsumer）在触发那一刻
- * 就造好了结构化错误，这里不该再拆一遍。
+ * 已经是 VendorRequestError 的原样放行；非 Agent 文本任务的结构化错误不该再拆一遍。
  */
 export function vendorErrorFromAiSdkError(error: unknown, ctx: AiSdkErrorContext = {}): VendorRequestError | null {
   if (error instanceof VendorRequestError) return error;
@@ -86,12 +96,16 @@ export function vendorErrorFromAiSdkError(error: unknown, ctx: AiSdkErrorContext
   const upstreamMsg =
     (unwrapped.responseBody ? upstreamMessageFromBody(unwrapped.responseBody) : "") ||
     (unwrapped.message || "").trim();
+  const upstreamCode = unwrapped.responseBody ? upstreamCodeFromBody(unwrapped.responseBody) : "";
   // 分类只认 vendorHttp 那张表（单一真相）——APICallError 自带的 isRetryable 不另开一路，
   // 免得同一个 429 在图像侧和文本侧给出两个不同的「要不要重试」。
   const { category, retryable } = categorizeVendorFailure(httpStatus);
-  // 展示串保持文本侧既有措辞（用户今天看到的就是这句），只是外面多包一层结构化标记。
-  const statusLabel = httpStatus != null ? `HTTP ${httpStatus}` : "请求失败";
-  const message = upstreamMsg ? `（${statusLabel}）${upstreamMsg}` : statusLabel;
+  // 展示串：有状态码就报状态码，没有就报**错误类名**（AI SDK 的 `AI_APICallError` 这种名字本身
+  // 就是线索）。刻意不再用「请求失败」当兜底——那句话与顶部状态徽标同义，用户读完不知道下一步是
+  // 什么，还盖掉了本可展示的类名；它正是 check:outbound-policy 规则 4 盯的那一族（本文件必须保持
+  // electron-free，用不了 desktopT，所以这一侧的「有信息的替代品」是类名而不是一句 i18n 文案）。
+  const statusLabel = httpStatus != null ? `HTTP ${httpStatus}` : (unwrapped.name || "").trim();
+  const message = [statusLabel ? `（${statusLabel}）` : "", upstreamMsg].join("") || String(unwrapped);
 
   return new VendorRequestError(message, {
     vendorKey: ctx.vendorKey || "",
@@ -100,6 +114,7 @@ export function vendorErrorFromAiSdkError(error: unknown, ctx: AiSdkErrorContext
     url: unwrapped.url || "",
     ...(httpStatus != null ? { httpStatus } : {}),
     upstreamMsg: upstreamMsg.slice(0, 256),
+    ...(upstreamCode ? { upstreamCode } : {}),
     category,
     retryable,
   });

@@ -17,9 +17,32 @@
 // issue reporter 跑 tests/transport-spike/newapi.mjs 探测确认。
 
 import type { HttpOperation, ProfileKind } from "./types";
+import {
+  assertTransportDeliveryContract,
+  type DeliveryShapedMode,
+  type TransportDeliveryContract,
+} from "./transportDelivery";
 import type { ParamMap } from "./paramTranslate";
 
 const JSON_HEADERS = { Authorization: "Bearer {{user_api_key}}", "Content-Type": "application/json" };
+
+/**
+ * 中转所有 op 的 model 字段引用——**参数化，不是字面量**（内置变体模型早就是这个写法，
+ * apimartVideos.VARIANT_MODEL_REF / apimartImages / volcengineVideos 同串）。
+ *
+ * 为什么必须参数化：变体（seedance-2 的 标准/快速/mini 等）的全部意义就是「换一个真正发出去的
+ * model 串」。渲染层的收窄判据 `archetypeVariantAxisIsLive` 读的正是「这条 create op 的 wire 有没有
+ * 引用 params.model」（channelModeReach.ts:80-83）——写死 `{{model.modelKey}}` 的渠道切变体什么也
+ * 不会发生，所以那个判据（正确地）把变体栏整条藏掉。结果：中转用户**永远只能跑默认档**，每一次
+ * 生成都更贵更慢，且界面上根本看不出还有别的档 —— 这就是内置模型与中转模型体验分家的那道口子。
+ *
+ * 回落（关键）：`params.model` 只有带变体的档案才产出，裸模型是 undefined，而模板层对整 token 的
+ * undefined 是**整键丢弃**（不是留空串）→ 每个没变体的中转模型都会发出没有 model 字段的请求。
+ * 回落因此补在**参数层**（taskTemplateParams：`extras.model || selected.wireModelKey`），值与
+ * `{{model.modelKey}}` 同源，保证裸模型换写法前后线上字节逐字节一致。模板层没有 `||` 语法，
+ * 也刻意不给它加一套（那会是第二套「发哪个 model 串」的机制，P1）。
+ */
+const RELAY_MODEL_REF = "{{request.params.model}}";
 
 // new-api 状态动词 → 归一态。
 export const NEWAPI_STATUS_MAPPING: Record<string, string[]> = {
@@ -53,7 +76,7 @@ export const NEWAPI_IMAGE_CREATE_OP: HttpOperation = {
   path: "/v1/images/generations",
   headers: JSON_HEADERS,
   body: {
-    model: "{{model.modelKey}}",
+    model: RELAY_MODEL_REF,
     prompt: "{{request.prompt}}",
     size: "{{request.params.size}}",
     quality: "{{request.params.quality}}",
@@ -77,7 +100,7 @@ export const NEWAPI_IMAGE_EDIT_OP: HttpOperation = {
   path: "/v1/chat/completions",
   headers: JSON_HEADERS,
   body: {
-    model: "{{model.modelKey}}",
+    model: RELAY_MODEL_REF,
     messages: [
       {
         role: "user",
@@ -102,7 +125,7 @@ export const XAI_JSON_IMAGE_EDIT_OP: HttpOperation = {
   path: "/v1/images/edits",
   headers: JSON_HEADERS,
   body: {
-    model: "{{model.modelKey}}",
+    model: RELAY_MODEL_REF,
     prompt: "{{request.prompt}}",
     image: "{{request.params.json_edit_image}}",
     images: "{{request.params.json_edit_images}}",
@@ -128,7 +151,7 @@ export const OPENAI_MULTIPART_IMAGE_EDIT_OP: HttpOperation = {
   headers: { Authorization: "Bearer {{user_api_key}}" }, // 不设 Content-Type：multipart 由 fetch 自动加 boundary
   multipart: {
     fields: {
-      model: "{{model.modelKey}}",
+      model: RELAY_MODEL_REF,
       prompt: "{{request.prompt}}",
       size: "{{request.params.size}}",
       quality: "{{request.params.quality}}",
@@ -202,13 +225,24 @@ export const NEWAPI_VIDEO_CREATE_OP: HttpOperation = {
   path: "/v1/video/generations",
   headers: JSON_HEADERS,
   body: {
-    model: "{{model.modelKey}}",
+    model: RELAY_MODEL_REF,
     prompt: "{{request.prompt}}",
     duration: "{{request.params.duration}}",
     size: "{{request.params.size}}",
     // i2v 首帧：取 taskParams 聚合后的 image_url（含节点填的 firstFrameUrl / referenceImages[0]），
     // 不是裸 image 键（那个 taskParams 从不产出 → 通用路 i2v 首帧此前根本到不了 wire）。可选，未填模板丢弃。
     image: "{{request.params.image_url}}",
+    // seed / negative_prompt：**文档明写的字段，此前静默丢弃**（R5 核 doc.newapi.pro/api/kling-jimeng/
+    // 2026-09-03：seed「随机种子」是顶层可选 integer；negative_prompt 是 metadata 的官方示例字段之一，
+    // 原文 "供应商特定/自定义参数（如 negative_prompt, style, quality_level 等）"）。
+    // 两者 taskParams 早就归一好了（seed 走 numericWireParam 保数字、negative_prompt 认 camel/snake 两种来源），
+    // 只是 body 没给位置 —— 于是用户在节点上填的种子/负向词一路走到发送前被无声吃掉，
+    // 产出不可复现、负向词完全不生效，且界面上没有任何迹象。未填 → 模板整键丢弃，严格端点不会收到空字段。
+    seed: "{{request.params.seed}}",
+    // metadata 用**整 token**引用（不是 `{ negative_prompt: "{{...}}" }` 逐键写）：模板层丢得掉
+    // undefined 的**键**，却丢不掉那个已经变空的**父对象** —— 实测逐键写法在什么都没填时仍会发出
+    // `"metadata":{}`，给严格端点凭空多一个空对象。整 token 引用则在没内容时整键消失（见 relay_metadata）。
+    metadata: "{{request.params.relay_metadata}}",
   },
   response_mapping: { task_id: "task_id" },
   provider_meta_mapping: { task_id: "task_id" },
@@ -216,6 +250,35 @@ export const NEWAPI_VIDEO_CREATE_OP: HttpOperation = {
 };
 
 // ── 视频：轮询 query（task_id 走路径参数）──
+//
+// 结果地址在哪：**按 new-api 官方源码定，不按我们自己写的 mock 定**（#1213）。旧映射只认 `data[*].url`——
+// 那是 tests/transport-spike/newapi-mock.mjs 自己编的形状；官方 new-api 的
+// `GET /v1/video/generations/{task_id}`（relay/relay_task.go videoFetchByIDRespBodyBuilder，
+// v1.0.0-rc.10 ~ rc.44 同款）回的是任务信封：
+//   {code:"success", data:{task_id, status:"SUCCESS"|"IN_PROGRESS"|…, result_url, fail_reason, data:<上游原始 JSON>}}
+// 状态 `data.status` 一直认得（resolveTaskStatus 的通用词表），地址却一个都取不到 → 钱扣了、片在上游，
+// 节点报「完成但没有产物」。现在按优先级全认（mappingCandidates 支持数组，collectAssetUrls 只收 http(s)/data:）：
+//   data.result_url                 新版 new-api（PrivateData.ResultURL）
+//   data.fail_reason                旧版 new-api 成功时把地址存在 FailReason（model/task.go GetResultURL 的历史兼容）；
+//                                   失败时这里是原因文本，不是 URL，collectAssetUrls 自然丢掉
+//   data.data.content.video_url     信封里带的方舟原始响应
+//   content.video_url               中转把方舟原始 JSON 直接透传到这条通用路由
+//   url                             new-api Gemini/Vertex 实时查询的简化形状 {status,url}
+//   data[*].url                     部分中转的数组形状（保留）
+// 合同夹具：electron/catalog/relayVideoQueryContract.test.ts（每个形状注明来源）。
+/**
+ * 中转视频查询里结果地址可能在的位置——**唯一一份**，通用 new-api 查询与「中转上的方舟原生查询」
+ * （nativeWireProfiles）共用：中转在方舟原生路由上回的也可能是它自己的任务信封。
+ */
+export const RELAY_VIDEO_RESULT_URL_PATHS: readonly string[] = [
+  "data.result_url",
+  "data.fail_reason",
+  "data.data.content.video_url",
+  "content.video_url",
+  "url",
+  "data[*].url",
+];
+
 export const NEWAPI_VIDEO_QUERY_OP: HttpOperation = {
   method: "GET",
   path: "/v1/video/generations/{{providerMeta.task_id}}",
@@ -223,10 +286,22 @@ export const NEWAPI_VIDEO_QUERY_OP: HttpOperation = {
   response_mapping: {
     task_id: "task_id",
     status: "status",
-    video_url: "data[*].url", // 取回全部产物（n>1 / 多结果），不再只落第一个（旧 data.0.url）
+    video_url: [...RELAY_VIDEO_RESULT_URL_PATHS],
     error_message: "error.message",
   },
 };
+
+/**
+ * 存量目录里的旧版通用视频查询（落盘时抄的是当时的常量，常量改了它不会跟着变）。只认**我们自己
+ * 发过的那两版**原样（`data[*].url` / 更早的 `data.0.url`），用户手改过的 query 一律不碰。
+ * 启动体检（relayNativeWireUpgrade）据此把存量刷成上面的 canonical op。
+ */
+export function isLegacyNewapiVideoQuery(op: HttpOperation | undefined): boolean {
+  if (!op || op.method !== "GET" || op.path !== NEWAPI_VIDEO_QUERY_OP.path) return false;
+  const mapping = op.response_mapping as Record<string, unknown> | undefined;
+  const videoUrl = mapping?.video_url;
+  return typeof videoUrl === "string" && (videoUrl === "data[*].url" || videoUrl === "data.0.url");
+}
 
 // ── 标准参数（落 model.meta.parameters，节点 UI 渲染；key 与上方 body 模板对齐）──
 type ParamControl = {
@@ -269,12 +344,13 @@ export const NEWAPI_AUDIO_TTS_OP: HttpOperation = {
   path: "/v1/audio/speech",
   headers: JSON_HEADERS,
   body: {
-    model: "{{model.modelKey}}",
+    model: RELAY_MODEL_REF,
     input: "{{request.prompt}}",
     voice: "{{request.params.voice}}",
     speed: "{{request.params.speed}}", // OpenAI /v1/audio/speech 标准语速（0.25~4.0，缺省由模板丢弃→站默认）
     response_format: "mp3",
   },
+  audioResponse: { type: "binary", contentType: "audio/mpeg", extension: "mp3" },
 };
 
 // 通用中转配音参数（裸 relay 模型的兜底；模型若命中 seed-tts 档案，UI 由档案给火山音色下拉）。
@@ -284,17 +360,70 @@ export const NEWAPI_STANDARD_AUDIO_PARAMS: ParamControl[] = [
   { key: "speed", label: "语速", type: "number", options: [], min: 0.25, max: 4, defaultValue: 1 },
 ];
 
-/** 一个 new-api 模型的传输配方（按 kind 取 create/query + taskKind；图像另带 image_edit 改图 op、
- *  视频另带 image_to_video 图生视频 op）。 */
-export function newapiTransportFor(kind: "image" | "video" | "audio"): {
+/**
+ * **交付形状的单一真相源**：每条 wire 各自声明同步还是异步，而不是由 `kind` 顺手决定。
+ *
+ * 这张表就是 2026-09-11 类根因的落点（详见 transportDelivery.ts）。旧写法把「图片=同步」
+ * 写死在 `newapiTransportFor` 的 return 里，于是任何把图片做成任务制的中转都必然撞上
+ * `pending task but the adapter has no query operation`——而这句话 08-30 已经从音频那边来过一次。
+ * 现在每格都得自己说清楚，异步那格还得交出查询端点与「任务不要了怎么办」，否则
+ * `assertTransportDeliveryContract` 在模块加载时就抛（R28：能让进程起不来的别留给门岗）。
+ *
+ * 依据（R5 已核 doc.newapi.pro / newapi.ai，见文件头）：
+ *  - `/v1/images/generations` 同步回 `data[]`；`/v1/chat/completions` 改图同步回 message。
+ *  - `/v1/video/generations` 回 `{task_id,status}`，配套 `GET /v1/video/generations/{task_id}`。
+ *    **公开契约里没有取消端点**，所以处置只能是 `poll-to-completion`——编一个取消端点出来违反 R5。
+ *  - `/v1/audio/speech` 同步回裸字节。
+ */
+export const NEWAPI_DELIVERY_CONTRACTS = {
+  text_to_image: { delivery: "synchronous" },
+  image_edit: { delivery: "synchronous" },
+  text_to_video: {
+    delivery: "asynchronous",
+    query: NEWAPI_VIDEO_QUERY_OP,
+    statusMapping: NEWAPI_STATUS_MAPPING,
+    abandon: { via: "poll-to-completion" },
+  },
+  image_to_video: {
+    delivery: "asynchronous",
+    query: NEWAPI_VIDEO_QUERY_OP,
+    statusMapping: NEWAPI_STATUS_MAPPING,
+    abandon: { via: "poll-to-completion" },
+  },
+  text_to_audio: { delivery: "synchronous" },
+} as const satisfies Record<string, TransportDeliveryContract & DeliveryShapedMode>;
+
+// 加载即校验：新增一格异步却忘了 query / statusMapping / 任务处置，进程直接起不住。
+for (const [taskKind, contract] of Object.entries(NEWAPI_DELIVERY_CONTRACTS)) {
+  assertTransportDeliveryContract(`newapi.${taskKind}`, contract);
+}
+
+/** 一条 new-api wire 的完整配方：op + 它自己声明的交付形状。 */
+export type NewapiTransportMode = TransportDeliveryContract & {
   taskKind: ProfileKind;
   create: HttpOperation;
-  /** 图像专有：图生图/改图 mapping（chat/completions 多模态）。落库时按 taskKind:"image_edit" 注册。 */
-  edit?: HttpOperation;
-  /** 视频专有：图生视频 mapping。落库时按 taskKind:"image_to_video" 注册（与 create 共用轮询 query）。 */
-  imageToVideo?: HttpOperation;
   query?: HttpOperation;
   statusMapping?: Record<string, string[]>;
+};
+
+function modeFor(taskKind: keyof typeof NEWAPI_DELIVERY_CONTRACTS, create: HttpOperation): NewapiTransportMode {
+  const contract = NEWAPI_DELIVERY_CONTRACTS[taskKind] as TransportDeliveryContract & DeliveryShapedMode;
+  return {
+    taskKind: taskKind as ProfileKind,
+    create,
+    delivery: contract.delivery,
+    ...(contract.abandon ? { abandon: contract.abandon } : {}),
+    ...(contract.query ? { query: contract.query } : {}),
+    ...(contract.statusMapping ? { statusMapping: contract.statusMapping } : {}),
+  };
+}
+
+/** 一个 new-api 模型的传输配方。交付形状来自 NEWAPI_DELIVERY_CONTRACTS，**不再由 kind 顺手决定**。 */
+export function newapiTransportFor(kind: "image" | "video" | "audio"): NewapiTransportMode & {
+  /** 图像专有：图生图/改图 mapping（chat/completions 多模态）。落库时按 taskKind:"image_edit" 注册。 */
+  edit?: NewapiTransportMode;
+  /** 视频专有：图生视频 mapping。落库时按 taskKind:"image_to_video" 注册（与 create 共用轮询 query）。 */
+  imageToVideo?: NewapiTransportMode;
   params: ParamControl[];
 } {
   if (kind === "video") {
@@ -302,10 +431,18 @@ export function newapiTransportFor(kind: "image" | "video" | "audio"): {
     // 但 taskKind 必须各注册一条 mapping——runtime 按 taskKind 选投递通道，只有 text_to_video 时
     // 图生视频请求找不到通道，参考图整条掉地（imageEditGuardError 会拒发）。共用同一个 op 对象，
     // 不造第二份形状（P1）。
-    return { taskKind: "text_to_video", create: NEWAPI_VIDEO_CREATE_OP, imageToVideo: NEWAPI_VIDEO_CREATE_OP, query: NEWAPI_VIDEO_QUERY_OP, statusMapping: NEWAPI_STATUS_MAPPING, params: NEWAPI_STANDARD_VIDEO_PARAMS };
+    return {
+      ...modeFor("text_to_video", NEWAPI_VIDEO_CREATE_OP),
+      imageToVideo: modeFor("image_to_video", NEWAPI_VIDEO_CREATE_OP),
+      params: NEWAPI_STANDARD_VIDEO_PARAMS,
+    };
   }
   if (kind === "audio") {
-    return { taskKind: "text_to_audio", create: NEWAPI_AUDIO_TTS_OP, params: NEWAPI_STANDARD_AUDIO_PARAMS };
+    return { ...modeFor("text_to_audio", NEWAPI_AUDIO_TTS_OP), params: NEWAPI_STANDARD_AUDIO_PARAMS };
   }
-  return { taskKind: "text_to_image", create: NEWAPI_IMAGE_CREATE_OP, edit: NEWAPI_IMAGE_EDIT_OP, params: NEWAPI_STANDARD_IMAGE_PARAMS };
+  return {
+    ...modeFor("text_to_image", NEWAPI_IMAGE_CREATE_OP),
+    edit: modeFor("image_edit", NEWAPI_IMAGE_EDIT_OP),
+    params: NEWAPI_STANDARD_IMAGE_PARAMS,
+  };
 }

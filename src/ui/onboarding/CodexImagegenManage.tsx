@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { IconPhoto, IconTerminal2 } from '@tabler/icons-react'
 

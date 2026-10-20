@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // 运镜小片的全局出图 Host：常驻挂载（不随画布节点剔除），扫描带 meta.cameraMoveAutoCapture 的
 // scene3d 节点 → 离屏沿相机轨迹采 N 帧 → ffmpeg 拼成 mp4 → 落项目素材 → 写回 scene3d 节点
 // meta.cameraMoveVideo（{ url, assetId, fps, targetNodeId }）+ 清标志。
@@ -20,6 +21,7 @@ import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import type { CameraMove } from './cameraMoveVocab'
 import { computeAttachCameraMove } from './attachCameraMoveToTarget'
 import { toast } from '../../../../ui/toast'
+import { withProjectAction, type ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
 
 type CameraMoveAutoCapture = {
   targetNodeId?: string
@@ -108,12 +110,14 @@ function attachCameraMoveToTarget(targetNodeId: string, mp4Url: string, move: Ca
 }
 
 /** 把成功产物写回 scene3d 节点 meta + 喂入目标镜头。清标志留给调用方（重试期间不清）。 */
-async function persistAndAttach(nodeId: string, fps: number, capture: CameraMoveCaptureResult): Promise<boolean> {
+async function persistAndAttach(nodeId: string, fps: number, capture: CameraMoveCaptureResult, project: ProjectExecutionContext | null): Promise<boolean> {
+  project?.assertCurrent()
   const store = useGenerationCanvasStore.getState()
   const node = store.nodes.find((candidate) => candidate.id === nodeId)
   if (!node) return false
   const config = readCameraMove(node)
-  const persisted = await persistCameraMoveVideo(capture.frames, nodeId, capture.title, fps)
+  const persisted = await persistCameraMoveVideo(capture.frames, nodeId, capture.title, fps, project)
+  project?.assertCurrent()
   if (!persisted.url) return false
   const videoResult: CameraMoveVideoResult = {
     url: persisted.url,
@@ -155,7 +159,7 @@ export function CameraMoveCaptureHost(): JSX.Element | null {
   )
   // 正在处理的节点 id + 该节点当前的尝试轮次（1=首次；每次重试 +1）。
   // attempt 也当挂载 key：变一次就整棵 Scene3DTrajectoryCapture 卸载重挂（离屏 Canvas 全新、上下文腾出）。
-  const [processing, setProcessing] = React.useState<{ nodeId: string; attempt: number } | null>(null)
+  const [processing, setProcessing] = React.useState<{ nodeId: string; attempt: number; project: ProjectExecutionContext | null } | null>(null)
   // 单次尝试的看门狗：捕获循环若被上下文丢失停死（onResult 永不回调），到点判 'timeout' 走重试。
   const watchdogRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const retryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -192,6 +196,7 @@ export function CameraMoveCaptureHost(): JSX.Element | null {
       fps: number,
       outcome: CameraMoveCaptureOutcome,
       capture: CameraMoveCaptureResult | null,
+      project: ProjectExecutionContext | null,
     ) => {
       if (settledRef.current) return // 同一轮 watchdog 与 onResult 竞态：先到者定结局，后到者忽略。
       settledRef.current = true
@@ -202,11 +207,12 @@ export function CameraMoveCaptureHost(): JSX.Element | null {
         let done = effectiveOutcome === 'ok'
         if (effectiveOutcome === 'ok' && capture) {
           try {
-            done = await persistAndAttach(nodeId, fps, capture)
+            done = await persistAndAttach(nodeId, fps, capture, project)
           } catch {
             done = false // 落盘/喂入抛错也当失败，走重试兜底。
           }
         }
+        if (project?.signal.aborted) { setProcessing(null); return }
         const decision = decideCameraMoveRetry(
           done ? 'ok' : effectiveOutcome === 'ok' ? 'null' : effectiveOutcome,
           attempt,
@@ -215,7 +221,7 @@ export function CameraMoveCaptureHost(): JSX.Element | null {
         if (decision.kind === 'retry') {
           // 保留标志：延迟后 +attempt 触发整棵重挂（上下文腾出配额后重采）。
           retryTimerRef.current = setTimeout(() => {
-            setProcessing((prev) => (prev && prev.nodeId === nodeId ? { nodeId, attempt: decision.nextAttempt } : prev))
+            setProcessing((prev) => (prev && prev.nodeId === nodeId ? { ...prev, attempt: decision.nextAttempt } : prev))
           }, decision.delayMs)
           return
         }
@@ -236,7 +242,7 @@ export function CameraMoveCaptureHost(): JSX.Element | null {
       }
       return
     }
-    if (!processing) setProcessing({ nodeId: pendingNode.id, attempt: 1 })
+    if (!processing) setProcessing({ nodeId: pendingNode.id, attempt: 1, project: withProjectAction(project => project) ?? null })
   }, [pendingNode, processing, clearTimers])
 
   // 每轮尝试开始时装看门狗：到 attemptTimeoutMs 仍无 onResult → 判 timeout 走重试（治「循环停死不回调」）。
@@ -244,7 +250,7 @@ export function CameraMoveCaptureHost(): JSX.Element | null {
     if (!processing) return
     settledRef.current = false
     watchdogRef.current = setTimeout(() => {
-      settleAttempt(processing.nodeId, processing.attempt, currentFpsRef.current, 'timeout', null)
+      settleAttempt(processing.nodeId, processing.attempt, currentFpsRef.current, 'timeout', null, processing.project)
     }, DEFAULT_CAMERA_MOVE_RETRY.attemptTimeoutMs)
     return () => {
       if (watchdogRef.current) {
@@ -272,7 +278,7 @@ export function CameraMoveCaptureHost(): JSX.Element | null {
       frameCount={frameCount}
       fps={fps}
       title={t('scene3d.capture.cameraMoveReference')}
-      onResult={(result) => settleAttempt(nodeId, processing.attempt, fps, result ? 'ok' : 'null', result)}
+      onResult={(result) => settleAttempt(nodeId, processing.attempt, fps, result ? 'ok' : 'null', result, processing.project)}
     />
   )
 }

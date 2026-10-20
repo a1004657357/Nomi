@@ -1,3 +1,4 @@
+import { spendAuthorizationGates } from "../shared/productionSpendAuthority";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { compileExecutionContract, type PlanCandidate } from "../capabilityCore/
 import { createModuleRegistry } from "../capabilityCore/moduleRegistry";
 import { applyProductionCommand, SealBudgetExceededError } from "./productionRunReducer";
 import { createProductionGenerationSubmission } from "./productionGenerationSubmission";
+import { sealAndApproveProductionGeneration } from "./productionGenerationAuthorizationTestUtils";
 import { createProductionRunRepository } from "./productionRunRepository";
 import type { ProductionGenerationShot, ProductionRun } from "./productionRunTypes";
 
@@ -66,8 +68,8 @@ function threeShotDraft(maxSpend: number | null): ProductionRun {
     schemaVersion: 1, runId: "op-seal", projectId: "project-1", revision: 2,
     status: "draft", stageId: "generate", playbook: { name: "generation.single-shot", version: "1.0.0" },
     origin: { host: "semantic-mcp" },
-    policy: { mode: "balanced", trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend, maxAttemptsPerJob: 2, minimizeUploads: true },
-    budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0 },
+    policy: { trustedHosts: [], allowedProviders: [], allowedModels: [], maxSpend, maxAttemptsPerJob: 2, minimizeUploads: true },
+    budget: { currency: "CNY", authorized: 0, reserved: 0, actual: 0, unsettled: 0, unknownInFlight: 0 },
     planVersion: 1, snapshotCursor: 2, stages: [], gates: [], jobs: [], artifacts: [],
     generationPlan: {
       operationId: "op-seal", state: "draft", candidate: a,
@@ -133,6 +135,23 @@ describe("P4 S2 seal precheck", () => {
     expect(effect.run.generationPlan?.costCertainty).toBe("known");
   });
 
+  it("counts prior liability against the total cap without shrinking an exact-cap decimal shot", () => {
+    const base = threeShotDraft(10.1);
+    const draft = { ...base, budget: { ...base.budget, actual: 10, authorized: 10 } };
+    const exact = applyProductionCommand(draft, sealCommand(draft, [
+      { shotId: "shot-a", price: { known: true, amount: 0.1 } },
+      { shotId: "shot-b", price: { known: true, amount: 0 } },
+      { shotId: "shot-c", price: { known: true, amount: 0 } },
+    ]), now);
+    expect(exact.run.generationPlan?.state).toBe("sealed");
+
+    expect(() => applyProductionCommand(draft, sealCommand(draft, [
+      { shotId: "shot-a", price: { known: true, amount: 0.100001 } },
+      { shotId: "shot-b", price: { known: true, amount: 0 } },
+      { shotId: "shot-c", price: { known: true, amount: 0 } },
+    ]), now)).toThrow(SealBudgetExceededError);
+  });
+
   it("seals and marks costCertainty=partial when a shot price is unknown (cap satisfied by known ones)", () => {
     const draft = threeShotDraft(25);
     const effect = applyProductionCommand(draft, sealCommand(draft, [
@@ -182,13 +201,25 @@ function sealedApprovedSingleShot(priceAmount: number | null) {
     operationId: "op-1", projectId: "project-1", origin: { host: "semantic-mcp" }, candidate: planCandidate,
     policy: { trustedHosts: ["semantic-mcp"], allowedProviders: ["fixture-provider"], allowedModels: ["fixture-model"], maxSpend: null, maxAttemptsPerJob: 2 },
   });
-  repository.execute("project-1", "op-1", { commandId: "generation.seal:op-1", expectedRevision: 0, type: "generation.seal", payload: { contract }, issuedAt: now });
-  repository.execute("project-1", "op-1", { commandId: "generation.approve:op-1:receipt-1", expectedRevision: 1, type: "generation.approve", payload: { receiptId: "receipt-1", contractHash: contract.contractHash }, issuedAt: now });
   const submit = vi.fn(async () => ({ providerTaskId: "provider-task-1", raw: { accepted: true } }));
-  const runner = createProductionGenerationSubmission({
-    repository, projectRoot: root, immutableProjectUuid: "project-uuid-1", projectGeneration: 1, intentMacKey: "test-intent-key",
-    provider: { providerId: "fixture-provider", capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true }, buildRequest: (input) => input, submit },
+  const provider = { providerId: "fixture-provider", capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true }, buildRequest: (input: unknown) => input, submit } as const;
+  sealAndApproveProductionGeneration({
+    repository,
+    projectId: "project-1",
+    operationId: "op-1",
+    immutableProjectUuid: "project-uuid-1",
+    projectGeneration: 1,
+    projectRevision: 0,
+    candidate: planCandidate,
+    contract,
+    providers: [provider],
     resolveShotPrice: () => (priceAmount === null ? { known: false } : { known: true, amount: priceAmount }),
+    receiptId: "receipt-1",
+    now,
+  });
+  const runner = createProductionGenerationSubmission({
+    repository, beforeDispatch: () => undefined, projectRoot: root, immutableProjectUuid: "project-uuid-1", projectGeneration: 1, intentMacKey: "test-intent-key",
+    provider,
     now: () => now,
   });
   return { repository, runner, submit };
@@ -208,15 +239,22 @@ describe("P4 S2 real-number ledger on submission", () => {
     expect(approval?.maxSpend).toBe(12);
   });
 
-  it("keeps the ledger at 0 for an unknown-priced model (unpriced models still submit, pre-S2 behavior)", async () => {
+  // 2026-09-21 未知价开闸：这条从前钉的是「算不出价 → 封印前就抛」。今天钉的是整条链**跑得通**，
+  // 而且账本里那一笔是「未知」不是「0 元」——两件事必须同时成立，缺一条这次改动就白做了。
+  it("submits an unpriced shot and books it as an unknown-price liability, never ¥0", async () => {
     const { repository, runner, submit } = sealedApprovedSingleShot(null);
-    await expect(runner.start({ projectId: "project-1", operationId: "op-1" })).resolves.toMatchObject({ nextAction: "observe" });
+    await runner.start({ projectId: "project-1", operationId: "op-1" });
     expect(submit).toHaveBeenCalledTimes(1);
 
     const run = repository.read("project-1", "op-1")!;
-    expect(run.budget.authorized).toBe(0);
+    const envelope = spendAuthorizationGates(run)[0].authorizationEnvelope;
+    expect(envelope.jobs[0].price.maximum).toBeNull();
+    expect(envelope.budget.unknownJobCount).toBe(1);
+    // 已知价之和是 0 —— 因为**一笔已知的都没有**，不是因为这一笔是免费的。那句话由 unknownJobCount 说。
     expect(run.budget.reserved).toBe(0);
-    const approval = repository.readApprovals("project-1", "op-1").find((a) => a.jobIds.includes(run.jobs[0].jobId));
-    expect(approval?.maxSpend).toBe(0);
+    expect(run.budget.unknownInFlight).toBe(1);
+    const ledger = repository.readBudgetLedger("project-1", "op-1");
+    const reserve = ledger.entries.find((entry) => entry.kind === "reserve");
+    expect(reserve).toMatchObject({ kind: "reserve", amount: null });
   });
 });

@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 // 离屏自动截图：不打开全屏编辑器，用一个隐藏 Canvas 渲染 staging 场景 + 选定机位，
 // GLB 加载(Suspense)+几帧落地后用 captureScene 出图，回调一次。供 create_staging_reference 工具用。
 // 复用 Mannequin(带自动落地) + captureScene，渲染==3D 编辑器。

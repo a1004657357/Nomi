@@ -102,6 +102,7 @@ export async function evaluateVisionReviewAdapterContract(): Promise<VisionRevie
         sendCalls += 1
         requestSnapshot = request
         return {
+          id: 'eval-vision-response', status: 'finished', toolCalls: [], artifacts: [],
           text: JSON.stringify({
             sourceSubjectDetected: true,
             items: VIEW_IDS.map((itemId) => ({
@@ -119,6 +120,7 @@ export async function evaluateVisionReviewAdapterContract(): Promise<VisionRevie
           }),
           finishReason: 'stop',
           usage: {
+            cachedPromptTokens: 0,
             promptTokens: 180,
             completionTokens: 60,
             totalTokens: 240,

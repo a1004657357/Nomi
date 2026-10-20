@@ -20,6 +20,58 @@ function store(): ProviderAdapterStore {
 }
 
 describe("provider connection save-first registration", () => {
+  it("keeps an unverified replacement in registration staging while the catalog returns the active contract", () => {
+    const catalog: ProviderAdapterCatalogPort = {
+      register: vi.fn((input: Parameters<ProviderAdapterCatalogPort["register"]>[0]) => ({
+        vendor: {
+          key: input.vendorKey,
+          name: input.vendorName,
+          enabled: true,
+          authType: "none" as const,
+          createdAt: now,
+          updatedAt: now,
+        },
+        models: [{
+          vendorKey: input.vendorKey,
+          modelKey: "same-model",
+          labelZh: "Published image",
+          kind: "image" as const,
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        }],
+      })),
+      stage: vi.fn(() => { throw new Error("not used"); }),
+      load: vi.fn(() => null),
+      promote: vi.fn(() => ({ status: "no-lease" as const })),
+      fail: vi.fn(),
+    };
+
+    const registration = new ProviderAdapterService(store(), {
+      catalog,
+      schedule: vi.fn(),
+      discover: vi.fn(),
+      resolveLanguageModels: vi.fn(() => []),
+      compile: vi.fn(),
+      verify: vi.fn(),
+      now: () => now,
+      id: vi.fn(),
+    }).register({
+      vendorName: "Relay",
+      baseUrl: "https://relay.example.test/v1",
+      apiKey: "",
+      authType: "none",
+      models: [{ modelKey: "same-model", labelZh: "Replacement video", kind: "video" }],
+    });
+
+    expect(registration.models).toEqual([{
+      modelKey: "same-model",
+      labelZh: "Replacement video",
+      kind: "video",
+      state: "unverified",
+    }]);
+  });
+
   it("persists a configured connection with no models and starts no background work", () => {
     const register = vi.fn((input: Parameters<ProviderAdapterCatalogPort["register"]>[0]) => ({
       vendor: {
@@ -38,7 +90,7 @@ describe("provider connection save-first registration", () => {
       register,
       stage: vi.fn(() => { throw new Error("stage must not run while saving"); }),
       load: vi.fn(() => null),
-      promote: vi.fn(),
+      promote: vi.fn(() => ({ status: "no-lease" as const })),
       fail: vi.fn(),
     };
     const adapterStore = store();
@@ -48,7 +100,6 @@ describe("provider connection save-first registration", () => {
       discover: vi.fn(async () => { throw new Error("discover must not run"); }),
       resolveLanguageModels: vi.fn(() => []),
       compile: vi.fn(async () => { throw new Error("compile must not run"); }),
-      repair: vi.fn(async () => { throw new Error("repair must not run"); }),
       verify: vi.fn(async () => { throw new Error("verify must not run"); }),
       now: () => now,
       id: vi.fn(() => { throw new Error("id must not be allocated"); }),
@@ -103,7 +154,6 @@ describe("provider connection save-first registration", () => {
     const discover = vi.fn(async () => { throw new Error("docs must not run while saving"); });
     const resolveLanguageModels = vi.fn(() => { throw new Error("AI resolution must not run while saving"); });
     const compile = vi.fn(async () => { throw new Error("compiler must not run while saving"); });
-    const repair = vi.fn(async () => { throw new Error("repair must not run while saving"); });
     const verify = vi.fn(async () => { throw new Error("real verification must not run while saving"); });
     const catalog: ProviderAdapterCatalogPort = {
       register,
@@ -119,7 +169,6 @@ describe("provider connection save-first registration", () => {
       discover,
       resolveLanguageModels,
       compile,
-      repair,
       verify,
       now: () => now,
       id: vi.fn(() => { throw new Error("run id must not be allocated while saving"); }),
@@ -157,7 +206,7 @@ describe("provider connection save-first registration", () => {
       models,
     }));
     expect(adapterStore.snapshot().runs).toEqual([]);
-    for (const dependency of [stage, schedule, discover, resolveLanguageModels, compile, repair, verify]) {
+    for (const dependency of [stage, schedule, discover, resolveLanguageModels, compile, verify]) {
       expect(dependency).not.toHaveBeenCalled();
     }
   });

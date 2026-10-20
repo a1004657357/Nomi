@@ -1,3 +1,5 @@
+import type { JSX } from 'react'
+import { withProjectAction } from '../../../project/projectCanvasReadSurface'
 import React from 'react'
 import {
   IconAdjustmentsHorizontal,
@@ -164,6 +166,8 @@ export default function Model3DCameraNodeBody({
   }, [camera?.distance, camera?.target, persistCamera])
 
   const handleCapture = React.useCallback(async () => {
+    const project = withProjectAction(project => project)
+    if (!project) return
     if (!camera || !viewerRef.current || capturing) return
     const dimensions = model3dCaptureDimensions(ratio, longEdge)
     const frame = viewerRef.current.capture(dimensions)
@@ -174,6 +178,7 @@ export default function Model3DCameraNodeBody({
     setCapturing(true)
     try {
       await createModel3DCameraCapture({
+        project,
         sourceNodeId: node.id,
         camera,
         capture: frame,
@@ -188,6 +193,8 @@ export default function Model3DCameraNodeBody({
   }, [camera, capturing, longEdge, node.id, ratio])
 
   const handleGrid9Capture = React.useCallback(async () => {
+    const project = withProjectAction(project => project)
+    if (!project) return
     if (!camera || !viewerRef.current || capturing) return
     setCapturing(true)
     try {
@@ -198,6 +205,7 @@ export default function Model3DCameraNodeBody({
         return { ...guide, capture }
       })
       await createModel3DGrid9CaptureCollection({
+        project,
         sourceNodeId: node.id,
         frames,
       })

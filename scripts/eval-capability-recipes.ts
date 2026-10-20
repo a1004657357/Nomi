@@ -9,8 +9,8 @@ import {
   resolveRecipeCompatibility,
   type RecipeRunPlan,
 } from '../src/config/capabilityRecipes'
-import { GPT_IMAGE_2_ARCHETYPE } from '../src/config/modelArchetypes/gptImage2'
-import { HAPPYHORSE_ARCHETYPE } from '../src/config/modelArchetypes/happyhorse'
+import { GPT_IMAGE_2_ARCHETYPE } from '../electron/shared/modelArchetypes/gptImage2'
+import { HAPPYHORSE_ARCHETYPE } from '../electron/shared/videoCapabilities/happyhorse'
 import { centeredCropForAspectRatio } from '../src/workbench/generationCanvas/runner/capabilityRecipePostprocess'
 import { compileCapabilityRecipePrompt } from '../src/workbench/generationCanvas/runner/capabilityRecipePrompt'
 import {

@@ -3,6 +3,8 @@ export type DesktopProxyMode = 'system' | 'custom' | 'off'
 
 /** 用户选了什么 × 实际生效什么。两者不一致时正是用户最需要看见的（如探到 SOCKS 但用不了）。 */
 export type DesktopProxyStatus = {
+  localProxyDetected?: boolean
+  localProxySample?: string
   mode: DesktopProxyMode
   customUrl: string
   /** 实际生效的代理地址；直连时空串。 */

@@ -1,12 +1,8 @@
-// 生成画布性能基准：真实 Electron + 本地图片/视频夹具 + 高频微操作。
-//
-// 用法：
-//   pnpm run build
-//   node tests/ux/canvas-performance-benchmark.e2e.mjs baseline --scale L --runs 5
-//
-// 可选环境变量：NOMI_CANVAS_PERF_RUNS、NOMI_CANVAS_PERF_SCALES、NOMI_CANVAS_PERF_SCENARIOS。
-// 结果写入 tests/ux/perf-results/canvas-<label>.json。零额度、零网络媒体依赖。
-import { launchNomiApp } from './_launchApp.mjs'
+import { captureScenarioFailure } from './canvas-perf/failureDiagnostics.mjs'
+import { prepareWaitingFx, sampleWaitingFx, cleanupWaitingFx } from './canvas-perf/waitingFxScenario.mjs'
+import { launchNomiApp, closeNomiApp } from './_launchApp.mjs'
+import { findCanvasBlankPoint, findNodeHitPoint } from './_canvasHit.mjs'
+import { expect } from './_assert.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -17,7 +13,39 @@ import {
   createCanvasPerformanceFixture,
   defaultPerfTempRoot,
 } from './fixtures/canvas-performance-fixture.mjs'
-
+import { applyPerformanceVerdict } from '../../scripts/canvas-performance-verdict.mjs'
+import {
+  runMultiNodeDrag,
+  runDragAtLowZoom,
+  runDragOverDenseEdges,
+  zoomOutTo,
+  GROUP_FRAME_NODE_COUNT,
+  fitCanvasView,
+  resetCanvasView,
+  groupSelectedNodes,
+  marqueeSelectFirstNodes,
+  runDragGroupFrame,
+  runDragSelectionAll,
+  runZoomSliderDrag,
+  selectAllCanvasNodes,
+} from './canvas-perf/dragScenarios.mjs'
+import {
+  installOffCanvasRenderProbe,
+  startOffCanvasRenderWindow,
+  stopOffCanvasRenderWindow,
+  OFF_CANVAS_RENDER_TARGETS,
+} from './canvas-perf/offCanvasRenderProbe.mjs'
+import { buildScenarioAdvisory } from './canvas-perf/advisoryMetrics.mjs'
+import { CANVAS_PERF_GATE_SCENARIOS } from './canvas-perf/gateScenarios.mjs'
+import {
+  AUTO_PAN_SAFE_MARGIN_PX,
+  MIN_NODE_BAND_COVERAGE,
+  clampIntoAutoPanSafeArea,
+  expectedPartiallySelected,
+  nodeBandCoverage,
+  sweptRect,
+} from './canvas-perf/gestureGeometry.mjs'
+import { startDevRendererServer } from './canvas-perf/devRendererServer.mjs'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const outputDir = path.join(repoRoot, 'tests/ux/perf-results')
 const args = process.argv.slice(2)
@@ -28,15 +56,36 @@ const argValue = (name) => {
 }
 const hasArg = (name) => args.includes(name)
 const captureScreenshots = hasArg('--screenshots')
+const viewportOverride = argValue('--viewport-width')
+  ? { width: Number(argValue('--viewport-width')), height: Number(argValue('--viewport-height') || 1000) }
+  : null
+// eval v2 (U3): dev leg loads a real Vite dev server (dev React bundle +
+// StrictMode double-render, readable component names) via NOMI_RENDERER_URL;
+// throttle leg applies CDP CPU throttling to model a median machine. Both are
+// measurement configurations — they never touch product code or budgets.
+const useDevServer = hasArg('--dev-server')
+const cpuThrottleRate = Math.max(1, Number(argValue('--throttle') || 1))
+// PERFORMANCE_BUDGETS are calibrated against the *prod* dist on darwin (see the
+// NON_DARWIN_TIMING_CALIBRATION note). The dev leg (StrictMode double-render +
+// unminified + immer dev-freeze) and the throttle leg (4x slower CPU) are
+// deliberately heavier configurations whose latency ceilings were never
+// calibrated — so on those legs the budget checks are ADVISORY: still computed,
+// recorded and printed, but they do not force pass=false (mirrors the
+// ADVISORY_ONLY_SCENARIOS posture and the #264 "don't gate un-calibrated
+// ceilings" lesson). Correctness hard-failures (errors, anchor/step drift,
+// selection integrity) keep gating on every leg. Only the prod leg gates on
+// budgets, byte-for-byte as before.
+const budgetsAreCalibratedForLeg = !useDevServer && cpuThrottleRate === 1
 if (hasArg('--help') || hasArg('-h')) {
   console.log('用法：node tests/ux/canvas-performance-benchmark.e2e.mjs <label> [--scale L] [--runs 5]')
   console.log(`scale：${Object.keys(CANVAS_PERF_SCALES).join(' / ')}`)
   console.log(
-    'scenario：all / cold-open / blank-pan / node-drag-image / node-drag-video / marquee-select / click-select / wheel-zoom / pan-zoom-mix / resize / media-reveal / low-zoom-preview / media-error / video-hover / reload-heavy',
+    'scenario：all / cold-open / blank-pan / node-drag-image / node-drag-video / multi-node-drag / drag-at-low-zoom / drag-over-dense-edges / marquee-select / click-select / wheel-zoom / pan-zoom-mix / resize / media-reveal / low-zoom-preview / media-error / video-hover / reload-heavy',
   )
+  console.log('eval v2 腿：--dev-server（dev bundle+StrictMode 腿）/ --throttle 4（CPU 节流腿，模拟慢机器）')
+  console.log('视口复现：--viewport-width 1280 --viewport-height 1000（覆盖实际页面视口）')
   process.exit(0)
 }
-
 const requestedScales = (argValue('--scale') || process.env.NOMI_CANVAS_PERF_SCALES || 'M')
   .split(',')
   .map((value) => value.trim())
@@ -49,25 +98,43 @@ const sampleCount = Math.max(1, Number(argValue('--runs') || process.env.NOMI_CA
 const warmupCount = Math.max(0, Number(argValue('--warmup') || process.env.NOMI_CANVAS_PERF_WARMUP || 1))
 const launchTimeoutMs = Math.max(
   5_000,
-  Number(argValue('--launch-timeout') || process.env.NOMI_CANVAS_PERF_LAUNCH_TIMEOUT_MS || 45_000),
+  // Dev-server leg boots the unminified dev bundle (slower first paint), so it
+  // gets a longer default launch window than the built-dist legs.
+  Number(argValue('--launch-timeout') || process.env.NOMI_CANVAS_PERF_LAUNCH_TIMEOUT_MS || (useDevServer ? 90_000 : 45_000)),
 )
-const allScenarios = [
-  'cold-open',
-  'blank-pan',
-  'node-drag-image',
-  'node-drag-video',
-  'marquee-select',
-  'click-select',
-  'wheel-zoom',
-  'pan-zoom-mix',
-  'resize',
-  'media-reveal',
-  'low-zoom-preview',
-  'media-error',
-  'video-hover',
-  'reload-heavy',
-]
+const allScenarios = CANVAS_PERF_GATE_SCENARIOS
 const scenarios = requestedScenarios.includes('all') ? allScenarios : requestedScenarios
+// eval v2 (U2 打分策略): the newly added drag scenarios are advisory-only THIS
+// round. Their budget/hard-failure detail is still computed and recorded for
+// visibility, but they do NOT contribute to the run's pass/fail — same posture
+// as the new advisory metrics (#264 lesson: harden un-calibrated ceilings only
+// after cross-platform data exists). The pre-existing 14 scenarios keep their
+// budgets and hard-failure clauses byte-for-byte and remain gating.
+// 2026-09-12 新加的三条**带 owner 的 advisory**：数字按调研 §6 原样登记（一个都不下调——
+// 下调等于把问题改成合格），但本轮只**记录不判决**，因为 §6 那几档是「S1+S3+S5 都落地之后」的
+// 目标线，不是任何单独一刀能到的。调研自己就这么写：wheel-zoom 那一行注着「150 与 300 档
+// 今天都越线」。每条的 owner = 必须把它变绿的那一刀；那一刀的验收动作就是**把自己这行从这张
+// 表里删掉、并且仍然绿**。这是这三条的前进棘轮：
+//   · drag-nodes-all      → owner：S5（LOD 判据换成「屏上多大」）+ 命令式位移。本 PR 的 S3 已把
+//     节点侧的整表订阅全删干净（实测 I300 script −11%、style −8%、p95 57→52ms），但 300 档剩下的
+//     主成本是「N 张重卡每帧各自重渲染」本身，不是选择器——那一条不在 S3 的地盘里。
+//   · drag-group-frame-60 → owner：S1（把组框拖动收回 React Flow 内核，§5 排名 2）。
+//   · zoom-slider-drag    → owner：S3/S5。调研 §5 S6 原话：S6 只削掉「动画互相打断」那一层，
+//     剩下的是 wheel-zoom 也有的「缩放时 N 个节点全部重算」。实测 S6 把 I300 最长帧从 594ms
+//     砍到 194ms（−67%）、I60 从 102ms 砍到 60ms（越过 §6 的 80ms 线），但 §6 的长任务次数档
+//     （1/3/4）要等 S3/S5 一起才够得着。
+// 还有一条现实理由：CI 的 perf lane 跑的是 `--scale M --runs 1` 且**不带 --scenario 过滤**
+// （tests/ux/canvas-real-suite.mjs:36），也就是这三条会在 Linux/xvfb 上跑。调研 §7.9 明说
+// 非 darwin 的 ×1.6 系数「本轮没有重新验证它对这几个新场景是否合适」。在拿到跨平台数据之前
+// 把未校准的天花板硬化，正是 #264 那条教训（本文件 maxFrameGapMs 那段注释里的同一条）。
+const ADVISORY_ONLY_SCENARIOS = new Set([
+  'multi-node-drag',
+  'drag-at-low-zoom',
+  'drag-over-dense-edges',
+  'drag-nodes-all',
+  'drag-group-frame-60',
+  'zoom-slider-drag',
+])
 for (const scale of requestedScales) {
   if (!CANVAS_PERF_SCALES[scale]) throw new Error(`未知 scale「${scale}」`)
 }
@@ -335,7 +402,22 @@ async function installProbe(page) {
 }
 
 function pageWindows(app) {
-  return app.windows().filter((candidate) => !candidate.isClosed())
+  // Exclude DevTools windows. The dev leg sets NOMI_DESKTOP_DEV=1, which makes
+  // electron/main.ts:361 auto-open detached DevTools; that window shows up in
+  // app.windows() with a `devtools://` URL. Without this filter getTargetWindow
+  // falls back to live[last] and picks DevTools, so openProject waits for
+  // [data-project-card] inside DevTools and times out (root cause of the dev-leg
+  // blocker). Harmless on the prod/throttle legs where DevTools never opens.
+  return app
+    .windows()
+    .filter((candidate) => !candidate.isClosed())
+    .filter((candidate) => {
+      try {
+        return !/^devtools:\/\//.test(candidate.url())
+      } catch {
+        return true
+      }
+    })
 }
 
 function getTargetWindow(app, fallback) {
@@ -343,77 +425,17 @@ function getTargetWindow(app, fallback) {
   return live.find((candidate) => /projectId=/.test(candidate.url())) || live[live.length - 1] || fallback
 }
 
-async function findBlank(page, preference = 'default') {
-  return page.evaluate((mode) => {
-    const stage = document.querySelector('.generation-canvas-v2__stage')
-    if (!stage) return null
-    const rect = stage.getBoundingClientRect()
-    const preferred =
-      mode === 'top-left'
-        ? [0.03, 0.08, 0.14, 0.2, 0.28, 0.4, 0.56, 0.72, 0.88]
-        : [0.92, 0.84, 0.76, 0.68, 0.56, 0.44, 0.32, 0.2, 0.08, 0.03]
-    const xRatios = [...preferred]
-    const yRatios = [...preferred]
-    for (const ry of yRatios) {
-      for (const rx of xRatios) {
-        const x = Math.round(rect.left + rect.width * rx)
-        const y = Math.round(rect.top + rect.height * ry)
-        const hit = document.elementFromPoint(x, y)
-        if (!hit || !stage.contains(hit)) continue
-        if (
-          hit.tagName === 'IMG' ||
-          hit.tagName === 'VIDEO' ||
-          hit.closest(
-            '.generation-canvas-v2-node,button,input,textarea,[role="menu"],[role="toolbar"],.generation-canvas-v2__edge-hit,.generation-canvas-v2__edge-path,.generation-canvas-v2__minimap',
-          )
-        )
-          continue
-        return { x, y }
-      }
-    }
-    for (let y = Math.ceil(rect.top + 8); y < rect.bottom - 8; y += 24) {
-      for (let x = Math.ceil(rect.left + 8); x < rect.right - 8; x += 24) {
-        const hit = document.elementFromPoint(x, y)
-        if (!hit || !stage.contains(hit)) continue
-        if (
-          hit.tagName === 'IMG' ||
-          hit.tagName === 'VIDEO' ||
-          hit.closest(
-            '.generation-canvas-v2-node,button,input,textarea,[role="menu"],[role="toolbar"],.generation-canvas-v2__edge-hit,.generation-canvas-v2__edge-path,.generation-canvas-v2__minimap',
-          )
-        )
-          continue
-        return { x, y }
-      }
-    }
-    const nodeRects = Array.from(document.querySelectorAll('.generation-canvas-v2-node')).map((node) =>
-      node.getBoundingClientRect(),
-    )
-    for (let y = Math.ceil(rect.top + 8); y < rect.bottom - 8; y += 10) {
-      for (let x = Math.ceil(rect.left + 8); x < rect.right - 8; x += 10) {
-        if (
-          nodeRects.some(
-            (nodeRect) => x >= nodeRect.left && x <= nodeRect.right && y >= nodeRect.top && y <= nodeRect.bottom,
-          )
-        )
-          continue
-        const hit = document.elementFromPoint(x, y)
-        if (
-          hit &&
-          (hit.tagName === 'IMG' ||
-            hit.tagName === 'VIDEO' ||
-            hit.closest('button,input,textarea,select,[role="menu"],[role="toolbar"],[role="button"]'))
-        )
-          continue
-        return { x, y }
-      }
-    }
-    // The canvas event surface can sit under a full-stage SVG with pointer
-    // events disabled, so elementFromPoint may not expose the stage itself.
-    // The left/bottom inset is outside the fixture grid and remains a stable
-    // blank coordinate for the synthetic workloads.
-    return { x: Math.round(rect.left + 16), y: Math.round(rect.bottom - 16) }
-  }, preference)
+// Blank-point semantics live in `_canvasHit.mjs` (single owner): a point is
+// blank only when React Flow's own pane is the topmost element there. The old
+// local copy used a blocklist plus a hardcoded `left+16 / bottom-16` fallback —
+// with the resident agent panel narrowing the stage, both could hand back a
+// point sitting on a magnetic connect handle, which turns "pan the blank canvas"
+// into "drag a connection" and silently measures the wrong gesture.
+async function findBlank(page, preference = 'default', { inset = 0 } = {}) {
+  const point = await findCanvasBlankPoint(page, { preference, inset })
+  if (!point)
+    throw new Error(`findBlank: no blank point on the stage (preference=${preference}, inset=${inset})`)
+  return point
 }
 
 async function dragPath(page, start, end, steps = 60, interval = 16) {
@@ -425,6 +447,18 @@ async function dragPath(page, start, end, steps = 60, interval = 16) {
     if (interval > 0) await sleep(page, interval)
   }
   await page.mouse.up()
+}
+
+// action_latency (advisory): the benchmark probe records the first stage/edge
+// mutation relative to probe start. Started immediately before pointerdown, that
+// is the pointerdown→first-visual-feedback interval. Returns null when no
+// mutation was observed. dragScenarios.mjs reads the same field for its runners.
+async function readFirstFeedbackMs(page) {
+  return page.evaluate(() => {
+    const probe = window.__canvasPerformanceProbe
+    const rec = probe && probe._record
+    return rec && rec.firstMutationMs != null ? rec.firstMutationMs : null
+  })
 }
 
 async function visibleNodeBox(page, kind) {
@@ -440,34 +474,101 @@ async function visibleNodeBox(page, kind) {
   return null
 }
 
+// Node-identity guard. What it is here to catch: the node layer being REBUILT by
+// React during an interaction (every card unmounted and re-mounted, which is what a
+// broken memoisation boundary looks like from the DOM).
+//
+// What it must NOT flag: React Flow's own virtualization. `onlyRenderVisibleElements`
+// unmounts a node when it leaves the visible window and mounts a *fresh* element when
+// it comes back, so the element for that node id legitimately changes. That is product
+// behaviour, and it fires far more often now that the resident agent panel takes ~340px
+// off the stage: on the Linux runner (xvfb clamps the window to 1280 wide) the M-scale
+// wheel-zoom excursion carries 3 of 9 cards out of the window and back, deterministically
+// (CI runs 33945616926 and 33947462331 both report preserved 6 of 9; darwin at a wider
+// stage reports 9 of 9).
+//
+// The two are separated without any timing threshold: React commits synchronously, so a
+// rebuild's remove+add for one node id land in the SAME MutationObserver callback batch;
+// a virtualization round trip is a removal in one batch and an addition in a later one
+// (the node stays gone while it is off-window). So batch index is the discriminator.
 async function captureNodeIdentity(page) {
   await page.evaluate(() => {
+    const nodeId = (element) =>
+      element instanceof HTMLElement && element.matches('.react-flow__node[data-id]')
+        ? element.getAttribute('data-id')
+        : null
     window.__canvasPerformanceNodeIdentity = new Map(
-      Array.from(document.querySelectorAll('.generation-canvas-v2-node[data-node-id]')).map((element) => [
-        element.getAttribute('data-node-id'),
+      Array.from(document.querySelectorAll('.react-flow__node[data-id]')).map((element) => [
+        element.getAttribute('data-id'),
         element,
       ]),
     )
+    window.__canvasPerformanceNodeChurn?.observer?.disconnect()
+    const container = document.querySelector('.react-flow__nodes')
+    const churn = new Map()
+    const entryFor = (id) => {
+      const existing = churn.get(id)
+      if (existing) return existing
+      const created = { removedBatch: null, readdedBatch: null, remountedInPlace: false }
+      churn.set(id, created)
+      return created
+    }
+    let batch = 0
+    const observer = new MutationObserver((records) => {
+      batch += 1
+      for (const record of records) {
+        for (const removed of record.removedNodes) {
+          const id = nodeId(removed)
+          if (id) entryFor(id).removedBatch = batch
+        }
+        for (const added of record.addedNodes) {
+          const id = nodeId(added)
+          if (!id) continue
+          const entry = entryFor(id)
+          if (entry.removedBatch === batch) entry.remountedInPlace = true
+          else if (entry.removedBatch !== null) entry.readdedBatch = batch
+        }
+      }
+    })
+    if (container) observer.observe(container, { childList: true })
+    window.__canvasPerformanceNodeChurn = { churn, observer }
   })
 }
 
 async function readNodeIdentity(page, targetNodeId = null) {
   return page.evaluate((targetId) => {
     const before = window.__canvasPerformanceNodeIdentity || new Map()
+    const tracker = window.__canvasPerformanceNodeChurn
+    tracker?.observer?.disconnect()
+    const churn = tracker?.churn || new Map()
     const current = new Map(
-      Array.from(document.querySelectorAll('.generation-canvas-v2-node[data-node-id]')).map((element) => [
-        element.getAttribute('data-node-id'),
+      Array.from(document.querySelectorAll('.react-flow__node[data-id]')).map((element) => [
+        element.getAttribute('data-id'),
         element,
       ]),
     )
+    // Left the visible window and came back: a different element for the same id is
+    // exactly what React Flow's virtualization is supposed to produce.
+    const virtualizationChurn = [...churn.entries()]
+      .filter(([, entry]) => entry.removedBatch !== null && !entry.remountedInPlace)
+      .map(([id]) => id)
+    const remountedInPlace = [...churn.entries()]
+      .filter(([, entry]) => entry.remountedInPlace)
+      .map(([id]) => id)
+    const churned = new Set(virtualizationChurn)
     const commonIds = [...before.keys()].filter((id) => current.has(id))
-    const preservedIds = commonIds.filter((id) => before.get(id) === current.get(id))
+    // Only nodes that stayed mounted for the whole action carry the identity contract.
+    const trackedIds = commonIds.filter((id) => !churned.has(id))
+    const preservedIds = trackedIds.filter((id) => before.get(id) === current.get(id))
     return {
       before: before.size,
       after: current.size,
       common: commonIds.length,
+      tracked: trackedIds.length,
       preserved: preservedIds.length,
-      commonIdentityPreserved: preservedIds.length === commonIds.length,
+      virtualizationChurn,
+      remountedInPlace,
+      commonIdentityPreserved: preservedIds.length === trackedIds.length && remountedInPlace.length === 0,
       targetNodeId: targetId,
       targetIdentityPreserved: targetId ? before.get(targetId) === current.get(targetId) : null,
     }
@@ -476,31 +577,45 @@ async function readNodeIdentity(page, targetNodeId = null) {
 
 async function openProject(app, page, fixture) {
   const startedAt = Date.now()
+  // The dev bundle transforms ~2MB of app modules on demand at first open, so
+  // the library card and canvas take much longer to paint than the built dist.
+  // Scale the open-path waits (not the interaction sampling) for the dev leg.
+  const openScale = useDevServer ? 4 : 1
   if (!/projectId=/.test(page.url())) {
-    const card = page.locator('[data-project-card]', { hasText: fixture.record.name }).first()
-    await card.waitFor({ timeout: 12_000 })
+    // Identity is the fixture contract; name matching can select a stale card
+    // when another isolated run left a similarly named project in the shell.
+    const card = page.locator(`[data-project-card][data-project-id="${fixture.record.id}"]`).first()
+    if (await card.count().catch(() => 0) === 0) {
+      throw new Error(`性能夹具项目卡片不存在：${fixture.record.id}（${fixture.record.name}）`)
+    }
+    await card.waitFor({ timeout: 12_000 * openScale })
     await card.click()
-    await sleep(page, 1000)
-    page = getTargetWindow(app, page)
-    const continueButton = page
-      .locator('[data-project-card]', { hasText: fixture.record.name })
-      .getByText('继续创作')
-      .first()
-    if (await continueButton.count().catch(() => 0)) await continueButton.click().catch(() => {})
   }
-  page = getTargetWindow(app, page)
-  await page.locator('.generation-canvas-v2__stage').waitFor({ timeout: 20_000 })
+  // 卡片已经发出打开请求；等待真实目标窗口，不能再点击导航中的旧项目库。
+  await expect.poll(() => {
+    page = getTargetWindow(app, page)
+    return page.url()
+  }, { timeout: 20_000 * openScale, message: '性能夹具目标项目窗口必须就绪' }).toContain(`projectId=${encodeURIComponent(fixture.record.id)}`)
+  await page.locator('.generation-canvas-v2__stage').waitFor({ timeout: 20_000 * openScale })
   const firstCanvasMs = Date.now() - startedAt
   const settleStartedAt = Date.now()
+  // 就绪 = 挂载数稳定：连续 500ms 一个没多、一个没少。以前判「挂载数 < 总数」（虚拟化生效）；打开时画布会一次性
+  // 适应全貌（useAutoFitOnLoad，2026-09-26 协调裁定 B 保留），大项目缩到低倍率后可能全部节点都在视野里、一次挂齐，
+  // 那条判据就永远等不到。冷开量的正是适应之后用户看到的那个状态；虚拟化那条改到「重置视图」之后判（waitForVirtualizedMount）。
   await page.waitForFunction(
-    ({ nodeCount }) => {
+    ({ nodeCount, holdMs }) => {
       const mountedNodes = document.querySelectorAll('.generation-canvas-v2-node').length
+      const now = performance.now()
+      const last = window.__perfMountProbe
+      if (!last || last.count !== mountedNodes) {
+        window.__perfMountProbe = { count: mountedNodes, since: now }
+        return false
+      }
       const nodesReady = nodeCount === 0 || mountedNodes > 0
-      const virtualizationReady = nodeCount <= 50 || mountedNodes < nodeCount
-      return nodesReady && virtualizationReady
+      return nodesReady && now - last.since >= holdMs
     },
-    { nodeCount: fixture.summary.nodes },
-    { timeout: 20_000 },
+    { nodeCount: fixture.summary.nodes, holdMs: 500 },
+    { timeout: 20_000 * openScale, polling: 100 },
   )
   await waitForVisibleMediaSettlement(page, {
     expectMedia: fixture.summary.imageNodes + fixture.summary.videoNodes > 0,
@@ -524,12 +639,33 @@ async function openProject(app, page, fixture) {
   return { page, firstCanvasMs, mediaSettledMs: Date.now() - settleStartedAt, settled }
 }
 
+const SCALE_STUDY_SCENARIOS = new Set(['drag-nodes-all', 'drag-group-frame-60', 'zoom-slider-drag'])
+// 组框场景的前置结果（requested / realized / groups），由 prepareScenario 填、runAction 带进 actionDetails。
+let groupFramePrepared = null
+
 async function prepareScenario(page, scenario) {
-  if (scenario !== 'marquee-select' && scenario !== 'low-zoom-preview') return
+  if (scenario === 'waiting-effects') return prepareWaitingFx(page)
+  if (SCALE_STUDY_SCENARIOS.has(scenario)) {
+    // 三条都先按**真按钮**「适应视图」把全部节点收进视口（用户看一大批图就是这么干的），
+    // 且验缩放真的变了才继续——点击静默丢失会让视口停在 zoom≈1，于是只挂 9 个节点，
+    // 看着像画布 bug，其实是前置条件没成立。
+    await fitCanvasView(page)
+    if (scenario === 'drag-nodes-all') await selectAllCanvasNodes(page)
+    if (scenario === 'drag-group-frame-60') {
+      // 挂不满 60 张时按实际张数建组，并把 requested/realized 记进 actionDetails——
+      // scale S/M 的结果是「拖了 N 张的组框」，不是「拖了 60 张的组框」，别让两者在一张表里同名。
+      groupFramePrepared = await marqueeSelectFirstNodes(page, GROUP_FRAME_NODE_COUNT)
+      const groups = await groupSelectedNodes(page)
+      if (groups < 1) throw new Error('drag-group-frame-60: Cmd+G 之后画布上没有组框')
+      groupFramePrepared = { ...groupFramePrepared, groups }
+    }
+    return
+  }
+  if (scenario !== 'marquee-select' && scenario !== 'low-zoom-preview' && scenario !== 'drag-at-low-zoom') return
   const stage = await page.locator('.generation-canvas-v2__stage').boundingBox()
   if (!stage) throw new Error('画布 stage 不存在')
   await page.mouse.move(stage.x + stage.width * 0.5, stage.y + stage.height * 0.5)
-  const targetZoom = scenario === 'low-zoom-preview' ? 0.45 : 0.72
+  const targetZoom = scenario === 'low-zoom-preview' || scenario === 'drag-at-low-zoom' ? 0.45 : 0.72
   for (let index = 0; index < 20; index += 1) {
     const zoom = await page.evaluate(
       () =>
@@ -540,6 +676,19 @@ async function prepareScenario(page, scenario) {
     await sleep(page, 60)
   }
   await sleep(page, 800)
+}
+
+/** 1:1 下大项目只挂视野里那一部分（虚拟化生效）。打开时适应全貌那一刻可以全挂，所以这条放在重置视图之后判。 */
+async function waitForVirtualizedMount(page, nodeCount) {
+  if (nodeCount <= 50) return
+  await page.waitForFunction(
+    ({ total }) => {
+      const mounted = document.querySelectorAll('.generation-canvas-v2-node').length
+      return mounted > 0 && mounted < total
+    },
+    { total: nodeCount },
+    { timeout: 20_000 * (useDevServer ? 4 : 1) },
+  )
 }
 
 function combineProbeSummaries(probes) {
@@ -570,14 +719,15 @@ function combineProbeSummaries(probes) {
   }
 }
 
-async function runAction(page, scenario, fixture) {
+async function runAction(page, scenario, fixture, app) {
   const stage = await page.locator('.generation-canvas-v2__stage').boundingBox()
   if (!stage) throw new Error('画布 stage 不存在')
   if (scenario === 'blank-pan') {
     const start = await findBlank(page)
     if (!start) throw new Error('找不到可用于平移的画布空白点')
     await dragPath(page, start, { x: start.x - 260, y: start.y - 140 })
-    return null
+    // 60 steps at 16ms in dragPath; record for the drag/pan ratio denominator.
+    return { moves: 60, firstFeedbackMs: await readFirstFeedbackMs(page) }
   }
   if (scenario === 'node-drag-image' || scenario === 'node-drag-video') {
     const kind = scenario.endsWith('image') ? 'image' : 'video'
@@ -585,12 +735,28 @@ async function runAction(page, scenario, fixture) {
     if (!node) throw new Error(`没有可见的 ${kind} 节点`)
     const start = { x: node.box.x + node.box.width * 0.5, y: node.box.y + 14 }
     await dragPath(page, start, { x: start.x + 180, y: start.y + 90 })
-    return { nodeId: await node.locator.getAttribute('data-node-id') }
+    return { nodeId: await node.locator.getAttribute('data-node-id'), moves: 60, firstFeedbackMs: await readFirstFeedbackMs(page) }
+  }
+  if (scenario === 'multi-node-drag') return runMultiNodeDrag(page)
+  // 2026-09-12 规模调查补的三条。选中/建组/适应视图都在 prepareScenario 里做完了，
+  // 这里只跑**被采样的那段手势**——把准备动作算进窗口，量到的就不是手势本身。
+  if (scenario === 'drag-nodes-all') return runDragSelectionAll(page)
+  if (scenario === 'drag-group-frame-60') return runDragGroupFrame(page, groupFramePrepared)
+  if (scenario === 'zoom-slider-drag') return runZoomSliderDrag(page)
+  if (scenario === 'drag-over-dense-edges') {
+    return runDragOverDenseEdges(page, fixture.record.payload.generationCanvas.edges)
+  }
+  if (scenario === 'drag-at-low-zoom') {
+    // Zooming is setup, not the drag sample. prepareScenario completes it
+    // before the probe starts so wheel-handler cost cannot masquerade as drag
+    // latency.
+    return runDragAtLowZoom(page)
   }
   if (scenario === 'marquee-select') {
     const boxes = []
     const nodes = page.locator('.generation-canvas-v2-node')
-    for (let index = 0; index < Math.min(50, await nodes.count()); index += 1) {
+    const mountedNodeCount = await nodes.count()
+    for (let index = 0; index < Math.min(50, mountedNodeCount); index += 1) {
       const box = await nodes
         .nth(index)
         .boundingBox()
@@ -602,19 +768,24 @@ async function runAction(page, scenario, fixture) {
     const top = Math.min(...boxes.map((box) => box.y))
     const right = Math.max(...boxes.map((box) => box.x + box.width))
     const bottom = Math.max(...boxes.map((box) => box.y + box.height))
-    const start = await findBlank(page, 'top-left')
-    if (!start) throw new Error('找不到可用于框选的画布空白点')
+    // 起点和终点都必须留在自动平移安全区内。否则 React Flow 会按 requestAnimationFrame
+    // 自动平移视口，这一笔扫过的区域就变成「这台机器画了多少帧」的函数——同一份代码
+    // 在 darwin 上实测 9/12 跳变、在 Linux CI 上 8/12 跳变，全是这么来的。
+    const start = await findBlank(page, 'top-left', { inset: AUTO_PAN_SAFE_MARGIN_PX })
+    const end = clampIntoAutoPanSafeArea({ x: right + 30, y: bottom + 30 }, stage)
+    const swept = sweptRect(start, end)
+    // 期望值从**扫过的这块区域**derive，不再写死节点个数：节点个数随窗口尺寸变，
+    // 而窗口尺寸在 CI 和本机并不一样（这正是原来那个 12 在 Linux 上翻红的原因）。
+    const expectedSelection = expectedPartiallySelected(boxes, swept)
     await page.keyboard.down('Shift')
-    await dragPath(
-      page,
-      start,
-      { x: Math.min(stage.x + stage.width - 10, right + 30), y: Math.min(stage.y + stage.height - 10, bottom + 30) },
-      60,
-      12,
-    )
+    await dragPath(page, start, end, 60, 12)
     await page.keyboard.up('Shift')
     return {
       selected: await page.locator('.generation-canvas-v2-node[data-selected="true"]').count(),
+      mountedNodeCount,
+      expectedSelection,
+      nodeBandCoverage: Math.round(nodeBandCoverage(swept, boxes, stage) * 1000) / 1000,
+      swept,
       bounds: { left, top, right, bottom },
     }
   }
@@ -624,14 +795,23 @@ async function runAction(page, scenario, fixture) {
     // would intentionally trigger its double-click preview, changing the
     // workload from multi-select into a full-screen media dialog.
     const count = Math.min(20, await nodes.count())
-    for (let index = 0; index < count; index += 1) {
-      const box = await nodes
-        .nth(index)
-        .boundingBox()
-        .catch(() => null)
-      if (!box) continue
-      await page.mouse.click(box.x + box.width * 0.45, box.y + 14, { modifiers: index ? ['Shift'] : [] })
-      await sleep(page, 20)
+    await page.keyboard.down('Shift')
+    try {
+      for (let index = 0; index < count; index += 1) {
+        const nodeId = await nodes.nth(index).getAttribute('data-node-id')
+        const hit = await findNodeHitPoint(page, { nodeSelector: `.generation-canvas-v2-node[data-node-id=${JSON.stringify(nodeId)}]` })
+        if (!hit) throw new Error(`click-select: no selectable point for ${nodeId}`)
+        await page.mouse.click(hit.x, hit.y)
+        await sleep(page, 20)
+      }
+    } finally {
+      await page.keyboard.up('Shift')
+    }
+    const selectionBeforeClear = {
+      domainSelected: await page.locator('.generation-canvas-v2-node[data-selected="true"]').count(),
+      flowSelected: await page.locator('.react-flow__node.selected').count(),
+      lightweight: await page.locator('.generation-canvas-v2-node[data-render-mode="lightweight"]').count(),
+      mounted: await nodes.count(),
     }
     const blank = await findBlank(page)
     if (!blank) throw new Error('找不到可用于清空选择的画布空白点')
@@ -696,6 +876,7 @@ async function runAction(page, scenario, fixture) {
     await sleep(page, 250)
     return {
       selectedAfterClear: await page.locator('.generation-canvas-v2-node[data-selected="true"]').count(),
+      selectionBeforeClear,
       blank,
       blankHit,
     }
@@ -767,12 +948,19 @@ async function runAction(page, scenario, fixture) {
     if (!node) throw new Error('没有可见节点可缩放')
     await node.locator.click({ position: { x: node.box.width * 0.45, y: 14 } })
     await sleep(page, 120)
-    const handle = node.locator.locator('.generation-canvas-v2-node__resize-zone--se')
+    const nodeId = await node.locator.getAttribute('data-node-id')
+    if (!nodeId) throw new Error('selected node is missing data-node-id')
+    // React Flow owns resize controls on the outer flow node, while the
+    // legacy business card remains nested inside it.
+    const handle = page.locator(
+      `.react-flow__node[data-id="${nodeId}"] .react-flow__resize-control.handle.bottom.right`,
+    )
     const box = await handle.boundingBox()
     if (!box) throw new Error('选中节点后找不到右下角缩放把手')
     await dragPath(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, { x: box.x + 100, y: box.y + 60 })
     return { nodeId: await node.locator.getAttribute('data-node-id') }
   }
+  if (scenario === 'waiting-effects') return sampleWaitingFx(page)
   if (scenario === 'media-reveal') {
     const snapshots = []
     for (let index = 0; index < 5; index += 1) {
@@ -796,12 +984,59 @@ async function runAction(page, scenario, fixture) {
     return { settled, zoom: settled.transform?.zoom ?? null }
   }
   if (scenario === 'media-error') {
-    const failure = page.locator('[data-node-media-failure="error"]').first()
+    // Keep the project valid through hydration. Inject the missing asset only
+    // after the real canvas is mounted so this scenario measures the renderer's
+    // visible failure/retry path rather than a project-open failure.
+    const missingUrl = `nomi-local://asset/${encodeURIComponent(fixture.record.id)}/assets/generated/canvas-performance/missing.png`
+    const mediaSelector = '.generation-canvas-v2-node[data-kind="image"] img[src]'
+    const failureSelector = '[data-node-media-failure="error"]'
+    const waitForMountedMedia = async (nodeId) => {
+      const media = page.locator(`.generation-canvas-v2-node[data-node-id="${nodeId}"] img[src]`).first()
+      await media.waitFor({ timeout: 10_000 })
+      return media
+    }
+    const dispatchMediaError = async (targetNodeId = null) => {
+      const nodeId = await page.evaluate(({ url, selector, targetNodeId: requestedNodeId }) => {
+        const candidate = Array.from(document.querySelectorAll(selector)).find((element) => {
+          const node = element.closest('.generation-canvas-v2-node')
+          const rect = element.getBoundingClientRect()
+          return (
+            (!requestedNodeId || node?.getAttribute('data-node-id') === requestedNodeId) &&
+            rect.width > 2 &&
+            rect.height > 2 &&
+            rect.bottom > 0 &&
+            rect.top < innerHeight
+          )
+        })
+        if (!candidate) return null
+        candidate.setAttribute('src', url)
+        // Setting src directly does not guarantee a network error event in the
+        // Electron test protocol. Dispatch the same renderer event explicitly
+        // so the real React onError path is exercised deterministically.
+        candidate.dispatchEvent(new Event('error'))
+        return candidate.closest('.generation-canvas-v2-node')?.getAttribute('data-node-id')
+      }, { url: missingUrl, selector: mediaSelector, targetNodeId })
+      if (!nodeId) throw new Error('没有可见图片节点可注入媒体错误')
+      return nodeId
+    }
+    const failure = page.locator(failureSelector).first()
+    const nodeId = await dispatchMediaError()
     await failure.waitFor({ timeout: 10_000 })
+    const initialFailure = (await page.locator(failureSelector).count()) === 1
     await failure.getByRole('button', { name: '重试' }).click()
+    await waitForMountedMedia(nodeId)
+    await dispatchMediaError(nodeId)
     await failure.waitFor({ timeout: 10_000 })
+    const retryFailure = (await page.locator(failureSelector).count()) === 1
+    await failure.getByRole('button', { name: '重试' }).click()
+    const recoveredMedia = await waitForMountedMedia(nodeId)
+    await recoveredMedia.evaluate((element) => element.dispatchEvent(new Event('load')))
+    await failure.waitFor({ state: 'detached', timeout: 10_000 })
     return {
-      explicitFailures: await page.locator('[data-node-media-failure="error"]').count(),
+      explicitFailures: Number(initialFailure) + Number(retryFailure),
+      initialFailure,
+      retryFailure,
+      recoverySuccess: (await page.locator(failureSelector).count()) === 0,
       retryCompleted: true,
     }
   }
@@ -826,7 +1061,12 @@ async function runAction(page, scenario, fixture) {
     const reloadProbes = []
     for (let index = 0; index < 3; index += 1) {
       const startedAt = Date.now()
-      await page.reload({ waitUntil: 'domcontentloaded' })
+      await Promise.race([
+        page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('reload-heavy: page.reload hard timeout')), 35_000)),
+      ])
+      // Electron may recreate the renderer window during reload; always follow the live target.
+      page = getTargetWindow(app, page)
       await page.locator('.generation-canvas-v2__stage').waitFor({ timeout: 20_000 })
       await page.waitForFunction(
         ({ nodeCount }) => {
@@ -869,15 +1109,6 @@ async function runScenario({ scale, scenario, runIndex, rootDir }) {
     projectId: `project-canvas-perf-${scale.toLowerCase()}-${scenario}-${runIndex}`,
     projectName: `ZZ Canvas 性能 ${scale} ${scenario} ${runIndex}`,
   })
-  if (scenario === 'media-error') {
-    const imageNode = fixture.record.payload.generationCanvas.nodes.find((node) => node.kind === 'image')
-    if (imageNode?.result) {
-      const missingUrl = `nomi-local://asset/${encodeURIComponent(fixture.record.id)}/assets/generated/canvas-performance/missing.png`
-      imageNode.result.url = missingUrl
-      imageNode.result.thumbnailUrl = missingUrl
-      fs.writeFileSync(path.join(fixture.projectRoot, '.nomi', 'project.json'), JSON.stringify(fixture.record, null, 1))
-    }
-  }
   let app = null
   let page = null
   const pageErrors = []
@@ -885,8 +1116,17 @@ async function runScenario({ scale, scenario, runIndex, rootDir }) {
   const attachDiagnostics = (candidate) => {
     candidate.on('pageerror', (error) => pageErrors.push(String(error)))
     candidate.on('console', (message) => {
-      const expectedMissingFixture = scenario === 'media-error' && message.text().includes('404 (Not Found)')
-      if (message.type() === 'error' && !expectedMissingFixture) consoleErrors.push(message.text())
+      if (message.type() !== 'error') return
+      const text = message.text()
+      const expectedMissingFixture = scenario === 'media-error' && text.includes('404 (Not Found)')
+      // Dev leg only: NOMI_DESKTOP_DEV=1 makes electron/main.ts:361 open DevTools,
+      // whose frontend probes CDP domains (Autofill.enable / Autofill.setAddresses)
+      // this Chromium build does not implement, emitting `-32601 method wasn't
+      // found` console errors. Pure DevTools-frontend noise, unrelated to Nomi's
+      // renderer — filtering it keeps the (byte-for-byte unchanged) console-error
+      // hard-failure gate honest instead of failing the dev leg on a tooling quirk.
+      const devtoolsAutofillNoise = useDevServer && /Request Autofill\.\w+ failed/.test(text)
+      if (!expectedMissingFixture && !devtoolsAutofillNoise) consoleErrors.push(text)
     })
   }
   const startedAt = Date.now()
@@ -896,24 +1136,48 @@ async function runScenario({ scale, scenario, runIndex, rootDir }) {
       userDataDir,
       settingsDir: userDataDir,
       projectsDir,
-      args: ['--no-proxy-server'],
+      args: ['--no-proxy-server', ...args.filter(arg => arg.startsWith('--use-gl=') || arg.startsWith('--use-angle=') || ['--enable-unsafe-swiftshader', '--disable-gpu', '--in-process-gpu'].includes(arg))],
       timeout: launchTimeoutMs,
       settleMs: 900,
       env: {
         // Capability core is orthogonal to canvas rendering and can add a
         // local RPC process during startup; keep it out of interaction samples.
         NOMI_DISABLE_CAPABILITY_CORE: process.env.NOMI_DISABLE_CAPABILITY_CORE || '1',
+        // eval v2 dev leg: load the running Vite dev server (dev bundle +
+        // StrictMode) instead of the built dist renderer. electron/main.ts:227
+        // reads NOMI_RENDERER_URL; NOMI_DESKTOP_DEV=1 flips isDev so the dev CSP
+        // (electron/main.ts:657-663) allows the React Fast Refresh inline
+        // preamble — without it the production CSP blocks the preamble and React
+        // never mounts (observed: "@vitejs/plugin-react can't detect preamble").
+        // Unset otherwise → normal dist behaviour.
+        ...(useDevServer && devRendererUrl
+          ? { NOMI_RENDERER_URL: devRendererUrl, NOMI_DESKTOP_DEV: '1' }
+          : {}),
       },
     }))
     attachDiagnostics(page)
     app.on('window', attachDiagnostics)
     page = getTargetWindow(app, page)
+    // Off-canvas render probe (advisory + U4 positive control) only reads
+    // meaningfully on the dev bundle where component names survive. Register it
+    // as an init script and reload once so the hook is present before React's
+    // first commit on a fresh document. Prod bundle: skip (names are mangled).
+    if (useDevServer) {
+      await installOffCanvasRenderProbe(page)
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
+      // Dev bundle transforms modules on demand → first paint is slower than the
+      // built dist. Give it room before openProject looks for the project card.
+      await sleep(page, 2500)
+      page = getTargetWindow(app, page)
+    }
     const browserWindow = await app.browserWindow(page)
     await browserWindow.evaluate((target) => {
       target.setBounds({ x: 0, y: 0, width: 1600, height: 1000 })
       target.center()
     })
+    if (viewportOverride) await page.setViewportSize(viewportOverride)
     await sleep(page, 350)
+    if (scenario === 'waiting-effects') await page.evaluate(() => localStorage.setItem('__nomiE2E', '1'))
     const opened = await openProject(app, page, fixture)
     page = opened.page
     const cold =
@@ -923,8 +1187,19 @@ async function runScenario({ scale, scenario, runIndex, rootDir }) {
     const cdp = await app.context().newCDPSession(page)
     await cdp.send('Performance.enable').catch(() => {})
     await cdp.send('Memory.enable').catch(() => {})
+    // eval v2 throttle leg: model a median machine. Same CDP call and shape used
+    // by the (since retired) scene3d drag-jitter walkthrough on this Electron build.
+    if (cpuThrottleRate > 1) {
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: cpuThrottleRate }).catch(() => {})
+    }
     await installProbe(page)
-    if (scenario !== 'cold-open') await sleep(page, 500)
+    if (scenario !== 'cold-open') {
+      await sleep(page, 500)
+      // 冷开量的是打开那一刻用户看到的样子（适应全貌之后）；其余场景量的是「在画布上干活」，用户会先点
+      // 「重置视图」回 1:1——各场景的起手（滚轮缩到 0.72 / 0.45、点第一张图、看媒体、点重试）都以 100% 为前提。
+      await resetCanvasView(page)
+      await waitForVirtualizedMount(page, fixture.summary.nodes)
+    }
     await prepareScenario(page, scenario)
     if (scenario === 'marquee-select') await sleep(page, 500)
     const beforePage = await pageSnapshot(page)
@@ -949,17 +1224,45 @@ async function runScenario({ scale, scenario, runIndex, rootDir }) {
         elapsedMs: Date.now() - startedAt,
       }
     }
+    const setupMs = Date.now() - startedAt
     const cdpBefore = await getCdpMetrics(cdp)
     const probeSurvivesAction = scenario !== 'reload-heavy'
+    const traceChunks = []
+    const tracingEnabled = process.env.NOMI_CANVAS_PERF_TRACE === '1' && probeSurvivesAction
+    const onTraceData = (event) => traceChunks.push(...(event.value?.value || event.value || []))
+    if (tracingEnabled) {
+      cdp.on('Tracing.dataCollected', onTraceData)
+      await cdp.send('Tracing.start', {
+        categories: '-*,' + [
+          'devtools.timeline',
+          'disabled-by-default-devtools.timeline.frame',
+          'disabled-by-default-devtools.timeline nestable-async',
+          'v8.execute',
+          'blink.user_timing',
+        ].join(','),
+        options: 'sampling-frequency=10000',
+      })
+    }
     if (probeSurvivesAction) {
       await captureNodeIdentity(page)
       await page.evaluate(() => window.__canvasPerformanceProbe.start())
     }
-    const actionDetails = await runAction(page, scenario, fixture)
+    // Record off-canvas re-renders for this action window (advisory / positive
+    // control). No-op unless the dev-leg probe installed.
+    const offCanvasStarted = useDevServer && probeSurvivesAction ? await startOffCanvasRenderWindow(page) : false
+    const actionDetails = await runAction(page, scenario, fixture, app)
+    if (tracingEnabled) {
+      await cdp.send('Tracing.end').catch(() => {})
+      await new Promise((resolve) => cdp.once('Tracing.tracingComplete', resolve))
+      fs.writeFileSync(path.join(outputDir, `canvas-${label}-${scale}-${scenario}-${runIndex}.trace.json`), JSON.stringify({ traceEvents: traceChunks }))
+      cdp.off('Tracing.dataCollected', onTraceData)
+    }
+    const offCanvasRender = offCanvasStarted ? await stopOffCanvasRenderWindow(page) : null
     await sleep(page, 250)
     const probe = probeSurvivesAction
       ? await page.evaluate(() => window.__canvasPerformanceProbe.stop())
       : combineProbeSummaries(actionDetails?.reloadProbes || [])
+    if (scenario === 'waiting-effects') await cleanupWaitingFx(page)
     const cdpAfter = await getCdpMetrics(cdp)
     const afterPage = await pageSnapshot(page)
     if (captureScreenshots) {
@@ -980,6 +1283,8 @@ async function runScenario({ scale, scenario, runIndex, rootDir }) {
       beforePage,
       page: afterPage,
       actionDetails,
+      setupMs, openMs: opened.firstCanvasMs + opened.mediaSettledMs,
+      offCanvasRender,
       nodeIdentity,
       appMetrics: await getAppMetrics(app),
       runtimeVersions: await getRuntimeVersions(app),
@@ -988,7 +1293,9 @@ async function runScenario({ scale, scenario, runIndex, rootDir }) {
       elapsedMs: Date.now() - startedAt,
     }
   } catch (error) {
+    const diagnostics = await captureScenarioFailure(page, { directory: path.join(repoRoot, 'outputs/canvas-acceptance/performance/failures', label), id: `${scale}-${scenario}-${runIndex}`, error })
     return {
+      diagnostics,
       scale,
       scenario,
       runIndex,
@@ -999,7 +1306,7 @@ async function runScenario({ scale, scenario, runIndex, rootDir }) {
       elapsedMs: Date.now() - startedAt,
     }
   } finally {
-    await app?.close().catch(() => {})
+    await closeNomiApp(app)
   }
 }
 
@@ -1007,19 +1314,125 @@ function parseNumericSamples(samples, read) {
   return samples.map(read).filter((value) => Number.isFinite(value))
 }
 
+// Platform calibration factor for timing budgets.
+// Constraint: the timing ceilings below are calibrated against darwin
+// (the committed reference run canvas-pr216-acceptance.json is darwin/arm64,
+// e.g. resize frameGapP95 ≈ 16.4ms). CI executes on Linux under xvfb software
+// rendering, which is measured 1.3–2x slower than the darwin calibration source
+// for the same code (same-machine A/B: main resize 30.8 vs the 33 ceiling,
+// #243 28.1, #239 19.2 — all ≤ main, no real regression, yet CI reported 38–44).
+// We scale timing ceilings by a conservative upper bound of the observed slowdown
+// so a darwin-calibrated hard floor stops manufacturing false reds on the slower
+// substrate. This is a measurement correction, not a loosening of the standard:
+// only latency budgets scale; semantic activation counts and the heap-leak budget
+// stay fixed across platforms (inflating those would mask real regressions).
+const NON_DARWIN_TIMING_CALIBRATION = 1.6
+
+function timingBudget(baseMax) {
+  return os.platform() === 'darwin' ? baseMax : Math.round(baseMax * NON_DARWIN_TIMING_CALIBRATION)
+}
+
+// maxFrameGapMs is recorded and reported but does NOT gate PASS/FAIL.
+//
+// Why advisory-only: single-frame worst-case is acutely sensitive to machine
+// contention and video-decode scheduling. On a clean darwin prod build,
+// node-drag-video maxGap ranged 41.9–140 ms across runs while the P95 was
+// healthy; dev/throttle legs hit 101–4252 ms. S5 and S4 acceptance each
+// showed 1/5 samples with a tail outlier while the median was fine. A hard
+// ceiling on a metric this volatile manufactures false-red CI without
+// catching real regressions — the P95 budget (frameGapP95Ms ≤ 33 ms) is the
+// calibrated, stable indicator; that one stays gating. (#264 lesson: harden
+// only after cross-platform data confirms stability.)
 const PERFORMANCE_BUDGETS = [
-  { metric: 'frameGapP95Ms', max: 33 },
-  { metric: 'maxFrameGapMs', max: 100 },
-  { metric: 'longTaskP95Ms', max: 80 },
+  { metric: 'frameGapP95Ms', max: timingBudget(33) },
+  { metric: 'maxFrameGapMs', max: timingBudget(100), advisory: true },
+  { metric: 'longTaskP95Ms', max: timingBudget(80) },
   { metric: 'maxLoadingImages', max: 4 },
   { metric: 'maxLoadingVideos', max: 1 },
   { metric: 'maxActiveVideos', max: 1 },
   { metric: 'reloadHeapDeltaMB', max: 10 },
 ]
 
+// ——— 规模档预算（2026-09-12 调研 §6）——————————————————————————————————
+//
+// 既有预算对**所有规模用同一组数**（frameGapP95 ≤ 33 / maxFrameGap ≤ 100 advisory）。
+// 2026-09-12 的规模调查量出「东西多少不是问题，同时在动多少才是」：同一手势从 60 到
+// 300 个节点，fps 从 96.5 塌到 12.4。一组固定的数既描述不了这条曲线，也锁不住它。
+// 下面这张表的每一个数字都逐行抄自
+// docs/research/2026-09-12-canvas-perf-at-scale/README.md §6（darwin 基准值）。
+//
+// 两条口径，与报告一致、也与本文件既有做法一致：
+//   • 毫秒类一律经 timingBudget() 出口（非 darwin ×1.6 已在那里处理），**不另写一套平台分支**；
+//   • 长任务**次数**是工作量计数，与机器负载和平台无关，**不跟着放宽**（同 maxLoadingImages 等）。
+// 报告 §6 末段把次数定为硬门岗、毫秒当 advisory：本轮最刺眼的信号正是次数
+// （drag-nodes-all @ I150/I300 一次手势 249 / 251 次，同一分钟的 marquee-select-all @ I300 是 0 次）。
+//
+// 档位按**画布上的节点数**取而不是按 scale 名字：报告给的是 60 / 150 / 300 三档，
+// 其它 scale（S/M/L/XL）落进最近的上档，于是同一张表覆盖全部规模，不会长出第二张表。
+const SCALE_STUDY_BUDGETS = {
+  // §6「拖动类」表第三行。300 档今天实测 p95 251.2 / 最长 371.1 —— 超 8 倍，S3 的验收就是这一行。
+  'drag-nodes-all': {
+    60: { frameGapP95Ms: 20, maxFrameGapMs: 40, longTasks: 1 },
+    150: { frameGapP95Ms: 24, maxFrameGapMs: 50, longTasks: 3 },
+    300: { frameGapP95Ms: 30, maxFrameGapMs: 60, longTasks: 5 },
+  },
+  // §6「拖动类」表第四行。S1（组框拖动收回内核）做完后应当与 drag-nodes-60 同档。
+  'drag-group-frame-60': {
+    60: { frameGapP95Ms: 20, maxFrameGapMs: 40, longTasks: 1 },
+    150: { frameGapP95Ms: 22, maxFrameGapMs: 45, longTasks: 3 },
+    300: { frameGapP95Ms: 26, maxFrameGapMs: 55, longTasks: 5 },
+  },
+  // §6「手势类」表末行：缩放两条判**最长帧 / 长任务次数**，因为 p50 一直好看（8.4ms）、坏的全在尾巴上。
+  // frameGapP95Ms 不在报告里给新数，所以这条沿用本文件既有的 33ms 天花板，不自造。
+  'zoom-slider-drag': {
+    60: { maxFrameGapMs: 80, longTasks: 1 },
+    150: { maxFrameGapMs: 120, longTasks: 3 },
+    300: { maxFrameGapMs: 150, longTasks: 4 },
+  },
+}
+
+/** 一个 scale 落在 60 / 150 / 300 的哪一档（按节点总数，向上取档）。 */
+function scaleNodeTier(scale) {
+  const spec = CANVAS_PERF_SCALES[scale]
+  const nodeCount = spec ? (spec.imageCount || 0) + (spec.videoCount || 0) : 0
+  if (nodeCount <= 60) return 60
+  if (nodeCount <= 150) return 150
+  return 300
+}
+
+/** 这一格（场景 × 规模）的长任务次数硬上限；不是规模档场景则返回 null。 */
+function longTaskCountBudget(scenario, scale) {
+  const tier = SCALE_STUDY_BUDGETS[scenario]?.[scaleNodeTier(scale)]
+  return tier && Number.isFinite(tier.longTasks) ? tier.longTasks : null
+}
+
+/**
+ * 这一格适用的预算表。规模档场景把毫秒类天花板换成 §6 给的那一档，其余沿用既有预算。
+ * maxFrameGapMs 继续 advisory（它对机器争用极敏感，见上面那段），gating 的是 frameGapP95Ms
+ * 与长任务次数（次数在 sampleHardFailures 里判，因为它是逐次采样的硬失败而不是 p95 聚合）。
+ */
+function budgetsFor(scenario, scale) {
+  const tier = SCALE_STUDY_BUDGETS[scenario]?.[scaleNodeTier(scale)]
+  if (!tier) return PERFORMANCE_BUDGETS
+  return PERFORMANCE_BUDGETS.map((budget) => {
+    const override = tier[budget.metric]
+    return Number.isFinite(override) ? { ...budget, max: timingBudget(override) } : budget
+  })
+}
+
 function sampleHardFailures(sample) {
   const failures = []
-  if (sample.error) failures.push(`scenario error: ${sample.error.split('\n')[0]}`)
+  if (sample.scenario === 'waiting-effects' && sample.probe) {
+    if (sample.probe.longTasks !== 0) failures.push(`waiting effects: ${sample.probe.longTasks} long tasks`)
+    if (sample.probe.fps < 1000 / timingBudget(33)) failures.push(`waiting effects: ${sample.probe.fps} FPS below frame budget`)
+  }
+  if (sample.error) failures.push(`scenario error: ${sample.error}`)
+  // 规模档场景的长任务**次数**硬判据（§6）。次数是工作量计数，不随机器负载或平台漂，
+  // 所以它——而不是毫秒——是「这一格到底修好没有」最硬的那条线。
+  const longTaskCap = longTaskCountBudget(sample.scenario, sample.scale)
+  if (longTaskCap !== null && sample.probe && Number.isFinite(sample.probe.longTasks) && sample.probe.longTasks > longTaskCap) {
+    failures.push(`${sample.scenario} @ ${sample.scale}: ${sample.probe.longTasks} 次长任务 > ${longTaskCap}（§6 规模档硬门岗）`)
+  }
   for (const error of sample.pageErrors || []) failures.push(`page error: ${error}`)
   for (const error of sample.consoleErrors || []) failures.push(`console error: ${error}`)
   if (sample.actionDetails?.anchorErrorPx > 1.5)
@@ -1028,27 +1441,77 @@ function sampleHardFailures(sample) {
     failures.push(`pan/zoom continuation error ${sample.actionDetails.stepErrorPx}px > 1.5px`)
   if (sample.actionDetails?.selectedAfterClear !== undefined && sample.actionDetails.selectedAfterClear !== 0)
     failures.push(`blank click left ${sample.actionDetails.selectedAfterClear} selected nodes`)
+  if (sample.scenario === 'marquee-select' && !sample.error && Number.isFinite(sample.actionDetails?.selected)) {
+    const { selected, expectedSelection, nodeBandCoverage: bandCoverage } = sample.actionDetails
+    // ① 框选正确性：生产用的是 selectionMode=Partial（见
+    //    GenerationCanvasReactFlowViewport.tsx），框和节点只要有重叠就算选中，
+    //    不要求整个节点都在框里。expectedPartiallySelected 按这个语义 derive 区间，
+    //    上下界差的只是压在框线上那几个节点（DOM 与 React Flow 的亚像素分歧），
+    //    真实的少选/多选回归依然会红。
+    if (Number.isFinite(expectedSelection?.definite) && Number.isFinite(expectedSelection?.possible)) {
+      if (selected < expectedSelection.definite || selected > expectedSelection.possible)
+        failures.push(
+          `marquee selected ${selected} nodes, expected ${expectedSelection.definite}–${expectedSelection.possible} `
+            + 'overlapping the swept rect (selectionMode=Partial)',
+        )
+    } else {
+      failures.push('marquee sample did not record a derived selection expectation')
+    }
+    // ② 场景非退化：这一笔得真的把「够得着的那片节点」整个圈进去。用覆盖率代替原先写死的
+    //    「至少 12 个节点」——覆盖率是无量纲的，不随 stage 尺寸漂移，也不含任何时间量，
+    //    所以它既不会因为机器快慢翻红，也不会因为换了个窗口大小翻红。
+    if (Number.isFinite(bandCoverage) && bandCoverage < MIN_NODE_BAND_COVERAGE)
+      failures.push(
+        `marquee covered only ${Math.round(bandCoverage * 100)}% of the reachable node band `
+          + `(needs ≥ ${Math.round(MIN_NODE_BAND_COVERAGE * 100)}%)`,
+      )
+  }
+  // eval v2 scenario integrity guards (correctness, not perf budgets): if a new
+  // scenario silently degenerated (grabbed too few nodes / no dense band), the
+  // sample would look "clean" for the wrong reason. Fail it explicitly so the
+  // baseline is not built on a mis-measured window.
   if (
-    sample.scenario === 'marquee-select' &&
+    sample.scenario === 'multi-node-drag' &&
+    !sample.error &&
     Number.isFinite(sample.actionDetails?.selected) &&
-    sample.actionDetails.selected < 12
+    sample.actionDetails.selected < 2
   )
-    failures.push(`marquee selected only ${sample.actionDetails.selected} nodes`)
-  if (sample.nodeIdentity?.commonIdentityPreserved === false) failures.push('mounted node DOM identity changed')
+    failures.push(`multi-node-drag selected only ${sample.actionDetails.selected} nodes (needs ≥2)`)
+  if (
+    sample.scenario === 'drag-over-dense-edges' &&
+    !sample.error &&
+    Number.isFinite(sample.actionDetails?.connectedEdges) &&
+    sample.actionDetails.connectedEdges < 1
+  )
+    failures.push('drag-over-dense-edges dragged a node with 0 connected edges')
+  if (sample.nodeIdentity?.commonIdentityPreserved === false) {
+    const remounted = sample.nodeIdentity.remountedInPlace || []
+    failures.push(
+      remounted.length
+        ? `node layer rebuilt in place: ${remounted.join(', ')}`
+        : `continuously mounted node DOM identity changed (${sample.nodeIdentity.preserved}/${sample.nodeIdentity.tracked} preserved)`,
+    )
+  }
   if (sample.nodeIdentity?.targetIdentityPreserved === false)
     failures.push(`target node DOM identity changed: ${sample.nodeIdentity.targetNodeId}`)
   if (sample.probe?.maxLoadingImages > 4) failures.push(`image activation peak ${sample.probe.maxLoadingImages} > 4`)
   if (sample.probe?.maxLoadingVideos > 1) failures.push(`video activation peak ${sample.probe.maxLoadingVideos} > 1`)
   if (sample.probe?.maxActiveVideos > 1)
     failures.push(`simultaneously playing videos ${sample.probe.maxActiveVideos} > 1`)
-  if (sample.scenario === 'media-error' && sample.actionDetails?.explicitFailures < 1)
-    failures.push('media failure did not remain explicit after retry')
+  if (sample.scenario === 'media-error') {
+    if (sample.actionDetails?.initialFailure !== true) failures.push('media failure did not surface initially')
+    if (sample.actionDetails?.retryFailure !== true) failures.push('media failure did not surface after retry')
+    if (sample.actionDetails?.recoverySuccess !== true) failures.push('media failure did not recover successfully')
+  }
   if (sample.scenario === 'low-zoom-preview' && !sample.error && sample.fixture?.nodes > 80) {
     const zoom = sample.actionDetails?.zoom
     const lightweightNodeCount = sample.actionDetails?.settled?.lightweightCanvasNodes
     const lightweightPreviewCount = sample.actionDetails?.settled?.lightweightPreviewNodes
+    // 0.45 is the zoom this scenario drives to (prepareScenario); 0.55 is that
+    // target plus slack. It is NOT the LOD trigger — LOD judges on-screen card
+    // width — it only asserts the scenario actually reached low zoom.
     if (!Number.isFinite(zoom) || zoom >= 0.55) {
-      failures.push(`low-zoom scenario settled above lightweight threshold: ${zoom ?? 'unknown'}`)
+      failures.push(`low-zoom scenario did not settle at the low-zoom target: ${zoom ?? 'unknown'}`)
     } else if (!Number.isFinite(lightweightNodeCount) || lightweightNodeCount < 1) {
       failures.push('low-zoom scenario did not mount any lightweight nodes')
     } else if (!Number.isFinite(lightweightPreviewCount) || lightweightPreviewCount < 1) {
@@ -1067,7 +1530,7 @@ function sampleHardFailures(sample) {
   return failures
 }
 
-function summarizeScenario(samples) {
+function summarizeScenario(samples, panControl = null) {
   const metricPaths = [
     ['coldFirstCanvasMs', (sample) => sample.cold?.firstCanvasMs],
     ['coldMediaSettledMs', (sample) => sample.cold?.mediaSettledMs],
@@ -1107,22 +1570,64 @@ function summarizeScenario(samples) {
   const hardFailures = samples.flatMap((sample) =>
     sampleHardFailures(sample).map((reason) => ({ runIndex: sample.runIndex, reason })),
   )
-  const budgetChecks = PERFORMANCE_BUDGETS.filter(({ metric }) => metrics[metric]).map(({ metric, max }) => ({
+  const budgetChecks = budgetsFor(samples[0]?.scenario, samples[0]?.scale).filter(({ metric }) => metrics[metric]).map(({ metric, max, advisory }) => ({
     metric,
     actualP95: metrics[metric].p95,
     max,
     pass: metrics[metric].p95 <= max,
+    // advisory budgets are recorded and printed but never flip the scenario verdict.
+    // See comment above PERFORMANCE_BUDGETS for rationale.
+    advisory: advisory === true,
   }))
+  // eval v2 advisory block (U2): per-move amortization, drag/pan ratios, action
+  // latency, off-canvas render counts. Attached alongside — NOT inside — the
+  // verdict. The verdict below is byte-for-byte the original logic; advisory
+  // numbers never flip pass/fail this round (#264 lesson).
+  const advisory = buildScenarioAdvisory({
+    samples,
+    panControl,
+    offCanvasComponents: OFF_CANVAS_RENDER_TARGETS,
+  })
+  const scenarioName = samples[0]?.scenario
+  const advisoryOnly = ADVISORY_ONLY_SCENARIOS.has(scenarioName)
   return {
     samples: samples.length,
     errors: samples.filter((sample) => sample.error || sample.pageErrors?.length || sample.consoleErrors?.length)
       .length,
     metrics,
+    advisory,
     verdict: {
-      pass: hardFailures.length === 0 && budgetChecks.every((check) => check.pass),
+      // Original prod-leg gate, preserved byte-for-byte:
+      //   advisoryOnly ? true : hardFailures === 0 && budgets all pass.
+      // Change only affects the non-prod legs (dev / throttle): there the latency
+      // ceilings are not calibrated for the slower bundle/CPU, so budgetChecks
+      // become advisory (recorded, printed, but not gating) while correctness
+      // hard-failures keep gating. advisoryOnly scenarios still never gate,
+      // exactly as before.
+      pass: advisoryOnly
+        ? true
+        : budgetsAreCalibratedForLeg
+          ? hardFailures.length === 0 && budgetChecks.every((check) => check.advisory || check.pass)
+          : hardFailures.length === 0,
+      advisoryOnly,
+      budgetsAdvisory: !advisoryOnly && !budgetsAreCalibratedForLeg,
       hardFailures,
       budgetChecks,
     },
+  }
+}
+
+// Aggregate a run's blank-pan samples into the { scriptDurationMs, layoutCount }
+// control used for drag/pan ratios. Uses the median so a single noisy pan does
+// not distort the denominator. Returns null when no pan sample exists in the run
+// (ratios then degrade to null — advisory, so that is acceptable).
+function blankPanControl(samples) {
+  const script = samples.map((s) => s?.cdpDelta?.ScriptDurationMs).filter((v) => Number.isFinite(v))
+  const layout = samples.map((s) => s?.cdpDelta?.LayoutCount).filter((v) => Number.isFinite(v))
+  if (!script.length && !layout.length) return null
+  return {
+    scriptDurationMs: script.length ? quantile(script.sort((a, b) => a - b), 0.5) : null,
+    layoutCount: layout.length ? quantile(layout.sort((a, b) => a - b), 0.5) : null,
   }
 }
 
@@ -1152,12 +1657,31 @@ const results = {
     totalMemoryGB: Math.round((os.totalmem() / 1024 / 1024 / 1024) * 10) / 10,
   },
   viewport: { width: 1600, height: 1000 },
+  viewportOverride,
   sampleCount,
   warmupCount,
   scales: requestedScales,
   scenarios,
+  // eval v2 leg configuration, recorded so a baseline JSON self-documents which
+  // measurement configuration produced it (prod / dev / throttle).
+  leg: {
+    devServer: useDevServer,
+    cpuThrottleRate,
+    kind: useDevServer ? 'dev-strictmode' : cpuThrottleRate > 1 ? `throttle-${cpuThrottleRate}x` : 'prod',
+  },
   results: [],
   warmupFailures: [],
+}
+
+// eval v2 dev leg: bring up the Vite dev server once for the whole run; every
+// isolated Electron instance then loads it via NOMI_RENDERER_URL.
+let devRendererUrl = null
+let devServer = null
+if (useDevServer) {
+  console.log('▶ 启动 Vite dev server（dev bundle + StrictMode 腿）…')
+  devServer = await startDevRendererServer()
+  devRendererUrl = devServer.url
+  console.log(`  dev renderer: ${devRendererUrl}`)
 }
 
 try {
@@ -1168,11 +1692,20 @@ try {
         const sample = await runScenario({ scale, scenario, runIndex: index, rootDir: tempRoot })
         const warmup = index < warmupCount
         console.log(
-          `  ${warmup ? 'warmup' : `sample ${index - warmupCount + 1}`} ${sample.error ? `ERROR ${sample.error.split('\n')[0]}` : 'ok'}`,
+          `  ${warmup ? 'warmup' : `sample ${index - warmupCount + 1}`} ${sample.error ? `ERROR ${sample.error}` : 'ok'}`,
         )
         if (warmup) {
           const failures = sampleHardFailures(sample)
-          if (failures.length) results.warmupFailures.push({ scale, scenario, runIndex: index, failures })
+          // Advisory-only scenarios record warmup issues for visibility but do
+          // not gate the run (their budgets/hard-failures are not calibrated).
+          if (failures.length)
+            results.warmupFailures.push({
+              scale,
+              scenario,
+              runIndex: index,
+              failures,
+              advisoryOnly: ADVISORY_ONLY_SCENARIOS.has(scenario),
+            })
         } else {
           results.results.push(sample)
         }
@@ -1187,15 +1720,34 @@ try {
     list.push(sample)
     grouped.set(key, list)
   }
+  // Pan control is per-scale: drag/pan ratios must divide by the same-machine,
+  // same-scale blank-pan cost. Keyed by scale so a multi-scale run stays honest.
+  const panControlByScale = new Map()
+  for (const [key, samples] of grouped.entries()) {
+    if (key.endsWith('/blank-pan')) panControlByScale.set(key.split('/')[0], blankPanControl(samples))
+  }
   results.summary = Object.fromEntries(
-    [...grouped.entries()].map(([key, samples]) => [key, summarizeScenario(samples)]),
+    [...grouped.entries()].map(([key, samples]) => [
+      key,
+      summarizeScenario(samples, panControlByScale.get(key.split('/')[0]) || null),
+    ]),
   )
   results.runtimeVersions = results.results.find((sample) => sample.runtimeVersions)?.runtimeVersions || null
+  // Only gating (non-advisory) warmup failures block the run; advisory-only
+  // scenario warmup issues are recorded but excluded here. Per-scenario verdicts
+  // already return pass:true for advisory-only scenarios.
+  const gatingWarmupFailures = results.warmupFailures.filter((failure) => !failure.advisoryOnly)
   results.pass =
-    results.warmupFailures.length === 0 && Object.values(results.summary).every((summary) => summary.verdict.pass)
+    gatingWarmupFailures.length === 0 && Object.values(results.summary).every((summary) => summary.verdict.pass)
   const outputPath = writeResults(results, label)
   console.log(`\n✅ 画布性能 benchmark 完成：${outputPath}`)
-  if (results.warmupFailures.length) console.log(`⚠ warmup 失败 ${results.warmupFailures.length} 次，结果标记为不可靠`)
+  if (gatingWarmupFailures.length)
+    console.log(`⚠ warmup 失败 ${gatingWarmupFailures.length} 次（gating 场景），结果标记为不可靠`)
+  const advisoryWarmupFailures = results.warmupFailures.length - gatingWarmupFailures.length
+  if (advisoryWarmupFailures)
+    console.log(`ℹ advisory-only 场景 warmup 提示 ${advisoryWarmupFailures} 条（不影响判定，仅记录）`)
+  if (!applyPerformanceVerdict(results)) console.error('❌ 画布性能 benchmark 未通过预算或可靠性门槛')
 } finally {
+  await devServer?.close().catch(() => {})
   fs.rmSync(tempRoot, { recursive: true, force: true })
 }

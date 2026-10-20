@@ -132,6 +132,40 @@ const PARAMETER_CONTROL_BINDING_KEYS: Record<string, string[]> = buildAliasMap([
   FORMAT_ALIASES,
 ])
 
+/**
+ * 控件的**语义角色**——「这个声明出来的参数，在人话里叫什么」。
+ *
+ * 这不是新词表：上面那三组别名（比例 / 时长 / 清晰度）和 catalog 的 `binding` 早就是本仓
+ * 「哪个键表示哪件事」的唯一出处（去重、写回多键、视频比例默认覆盖都读它）。这里只是把
+ * 「读得出角色」这件事显式命名并导出，让底栏「哪几个参数直接露出」也走同一份声明，
+ * 而不是在 UI 里再抄一张 `['aspect_ratio','duration','resolution']`（R14.1：同一语义只能有一个 owner）。
+ *
+ * 刻意不收 `format`：输出格式（png/jpg）既不影响画面也不影响价格，它是长尾。
+ */
+export type ParameterRole = 'aspect' | 'duration' | 'resolution'
+
+const PARAMETER_ROLE_BY_KEY: Record<string, ParameterRole> = {
+  ...Object.fromEntries(ASPECT_RATIO_ALIASES.map((key) => [key, 'aspect' as const])),
+  ...Object.fromEntries(DURATION_ALIASES.map((key) => [key, 'duration' as const])),
+  ...Object.fromEntries(RESOLUTION_ALIASES.map((key) => [key, 'resolution' as const])),
+}
+
+const PARAMETER_ROLE_BY_BINDING: Partial<Record<DynamicCatalogControl['binding'], ParameterRole>> = {
+  aspectRatio: 'aspect',
+  imageSize: 'aspect',
+  size: 'aspect',
+  durationSeconds: 'duration',
+  resolution: 'resolution',
+  // orientation 不给角色：它和比例是同一件事的另一种说法，档案两个都声明时由去重决定留哪个，
+  // 角色表再认它一次就会出现两枚说同一件事的 chip。
+}
+
+/** 档案没有声明这个角色 → null（调用方据此「没有的不显示」，而不是补一个默认值假装有）。 */
+export function parameterControlRole(control: DynamicModelControl): ParameterRole | null {
+  if (!isParameterControl(control)) return PARAMETER_ROLE_BY_BINDING[control.binding] ?? null
+  return PARAMETER_ROLE_BY_KEY[control.key] ?? null
+}
+
 export function readMeta(meta: Record<string, unknown> | undefined, key: string): string {
   const value = meta?.[key]
   return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
@@ -219,6 +253,16 @@ export function controlValueToString(value: unknown): string {
   return ''
 }
 
+/**
+ * 下拉选中的字符串 → 该选项**声明的** wire 值（数值 option → 发整数，如 duration 离散枚举 4/8/12；
+ * 字符串 option 如 "720p"/"16:9" 仍是字符串；ComfyUI 的 [False, True] 开关发布尔）。没匹配上原样返回。
+ * 根治「duration 用 select 发字符串被 vendor 400」——既要离散合法值（select 不能输非法），又要按原类型
+ * 传输。单源：option 自身的类型即真相；画布控件与 ComfyUI 导入预览都走这里，别另写一份。
+ */
+export function declaredOptionValue(values: readonly (string | number | boolean)[], selected: string): string | number | boolean {
+  return values.find((value) => controlValueToString(value) === selected) ?? selected
+}
+
 export function parseControlInput(control: ModelParameterControl, value: string): string | number | boolean | null {
   if (control.type === 'boolean') return value === 'true'
   if (control.type === 'number') {
@@ -226,13 +270,7 @@ export function parseControlInput(control: ModelParameterControl, value: string)
     const parsed = Number(value)
     return Number.isFinite(parsed) ? parsed : null
   }
-  // select：按选中 option 的**声明类型**回类型（数值 option → 发整数，如 duration 离散枚举 4/8/12；
-  // 字符串 option 如 "720p"/"16:9" 仍是字符串）。根治「duration 用 select 发字符串被 vendor 400」——
-  // 既要离散合法值（select 不能输非法），又要整数传输（option value 为 number）。单源：option 自身的类型即真相。
-  if (control.type === 'select') {
-    const matched = control.options.find((o) => controlValueToString(o.value) === value)
-    if (matched && typeof matched.value !== 'undefined') return matched.value
-  }
+  if (control.type === 'select') return declaredOptionValue(control.options.map((option) => option.value), value)
   return value
 }
 
@@ -254,6 +292,17 @@ export function catalogControlInitialValue(control: DynamicCatalogControl, meta:
 
 export function isParameterControl(control: DynamicModelControl): control is DynamicParameterControl {
   return control.binding === 'parameter'
+}
+
+/**
+ * 这个控件在参数面板里是不是渲成「一组摊开的候选项」。
+ *
+ * 判据就是**它有没有候选项**：有 → 面板里画的是可点的项（chip 一排/一列，或带搜索的列表）；
+ * 没有 → 滑杆 / 数字框 / 开关。单参数直出那条路（底栏 pill 只管一个参数时，点开直接给这组项、
+ * 不套面板壳）只对前者成立——把一根没有标题的滑杆直接弹在半空中，谁也不知道它在调什么。
+ */
+export function hasFlatOptions(control: DynamicModelControl): boolean {
+  return control.options.length > 0
 }
 
 function controlEquivalentKeys(key: string): string[] {

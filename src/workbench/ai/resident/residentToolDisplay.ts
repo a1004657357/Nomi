@@ -1,0 +1,625 @@
+import { MODEL_FACING_TOOL_SPECS, resolveModelToolCapabilityId } from '../../../../electron/shared/agentCapabilities/modelFacingToolRegistry'
+import { GENERATION_METHOD_NAMES } from '../../../../electron/shared/agentCapabilities/generation'
+import type { TranslationKey } from '../../../i18n/translationKey'
+import type { ResidentApprovalDetail, ResidentProposalData } from './residentProposalDisplay'
+
+type Translate = (key: string, options?: Record<string, unknown>) => string
+
+/** 「会造/提交生成」的契约：草稿与付费门。读（context / run.read）与取消（control）不算——它们各有自己的叫法。 */
+const GENERATION_WRITE_CAPABILITIES = new Set(['generation.plan', 'generation.gate', 'generation.resolve'])
+
+export function isGenerationToolName(name: string): boolean {
+  // 先问注册表（20 动词：`draft_shots` / `generate` 归 `generation.plan`）；方法名（宿主/dispatcher 词表）
+  // 从 `GENERATION_METHOD_NAMES` 派生，不再手抄一份；最后才按字面猜（旧转录里的名字）。
+  const capabilityId = resolveModelToolCapabilityId(name)
+  if (capabilityId) return GENERATION_WRITE_CAPABILITIES.has(capabilityId)
+  const normalized = name.toLowerCase()
+  return GENERATION_METHOD_NAMES.has(normalized as never)
+    || normalized.includes('generation')
+    || normalized.includes('image')
+    || normalized.includes('video')
+}
+/**
+ * What this tool call actually does — name **and** `args.operation` together.
+ *
+ * After the MCP surface collapse the tool name is generic (`nomi_canvas_maintenance`,
+ * `nomi_canvas_edit`, `nomi_canvas_plan`, …) and the semantics moved into `args.operation`. Every
+ * recognizer below used to substring-match the name alone, so a real `delete_canvas_nodes` arriving
+ * as `nomi_canvas_maintenance` matched nothing and fell through to the generic
+ * `agentResident.toolInspectDetails` label. Measured 2026-09-06: the approval card for an
+ * irreversible canvas delete named neither the action nor the count — a human was asked to approve a
+ * destructive write with no information about what it destroyed.
+ *
+ * Matching on both halves fixes every branch at once, and keeps working for the pi-side aliases whose
+ * names still carry the operation.
+ */
+/**
+ * 动词参数 → 契约语义输入，用**执行层同一张翻译表**（声明上的 `semanticInputOf`）。识别器全部按契约的
+ * `operation` 词表写；20 动词的参数形状（`make_artifact` 的 fileType/title/content）在这里先翻成
+ * `create_canvas_nodes` + agent-artifact 节点，不再为每个动词名各写一套识别分支。翻不动就按原样。
+ */
+function semanticArgsOf(name: string, args?: unknown): unknown {
+  const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : undefined
+  if (!record) return args
+  const spec = MODEL_FACING_TOOL_SPECS.find((candidate) => candidate.name === name)
+  if (!spec?.semanticInputOf) return args
+  try { return spec.semanticInputOf(record) } catch { return args }
+}
+
+function toolIdentity(name: string, rawArgs?: unknown): string {
+  const args = semanticArgsOf(name, rawArgs)
+  const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {}
+  const operation = typeof record.operation === 'string' ? record.operation : ''
+  // Ask the registry that owns the tool what it is before falling back to reading its name. Every
+  // surface names the same capability differently — pi says `apply_edit_plan` / `insert_at_cursor`,
+  // MCP says `nomi_timeline_edit` / `nomi_document_edit` — and matching those by hand is how the
+  // recognisers drifted in the first place. The canonical contract id (`timeline.write`,
+  // `document.write`, …) is the one name that does not move.
+  return `${canonicalCapabilityId(name, args)} ${name} ${operation}`.toLowerCase()
+}
+
+function canonicalCapabilityId(name: string, args?: unknown): string {
+  return resolveModelToolCapabilityId(name, args) ?? ''
+}
+
+function isStoryboardPlanWrite(name: string, args?: unknown): boolean {
+  return /(?:^|\s)(?:propose_storyboard_plan|patch_shots)(?:$|\s)/.test(toolIdentity(name, args))
+}
+
+/** True for canvas *creation* only. A delete is not a write here — it has its own, louder treatment. */
+export function isCanvasWriteToolName(name: string, args?: unknown): boolean {
+  const normalized = toolIdentity(name, args)
+  if (isCanvasDeleteToolName(name, args) || isStoryboardPlanWrite(name, args)) return false
+  return normalized.includes('create_canvas_nodes') || normalized.includes('canvas.write') || normalized.includes('canvas_nodes')
+}
+
+/**
+ * Read-only tools. They had no branch of their own in `readableToolPreview`, so every read fell
+ * through to the generic `toolInspectDetails` — the row for "read the draft" said the same thing as
+ * the row for a tool nobody could identify. A read's honest effect line is that nothing changes.
+ */
+export function isReadOnlyToolName(name: string, args?: unknown): boolean {
+  if (name === 'read' || name === 'ls' || name === 'grep' || name === 'find') return true
+  // When the registry owns this name its contract id is authoritative: `propose_edit_plan` is a
+  // `timeline.read` despite the word "edit" in the alias, and no word-matching gets that right.
+  const canonical = canonicalCapabilityId(name, args)
+  if (canonical) return canonical.endsWith('.read')
+  const normalized = toolIdentity(name, args)
+  if (/write|edit|delete|create|apply|maintenance/.test(normalized)) return false
+  // `nomi_export_job` publishes only `status` / `verify` today — the Host starts and cancels exports,
+  // this tool can only ask about them. If it ever gains a write operation, that operation must be
+  // matched above (the `write|edit|…` guard) rather than quietly inheriting this read classification.
+  return /(?:^|[._])read(?:$|[._\s])/.test(normalized) || normalized.includes('media_query')
+    || normalized.includes('operation_preview') || normalized.includes('export_job')
+}
+
+/**
+ * Deletes must be recognised before writes: `canvas_nodes` is a substring of `delete_canvas_nodes`,
+ * so the write matcher swallowed every delete that carried the operation in its name, and
+ * `readableToolPreview`'s delete branch had been unreachable for that alias the whole time.
+ */
+export function isCanvasDeleteToolName(name: string, args?: unknown): boolean {
+  const normalized = toolIdentity(name, args)
+  return normalized.includes('delete_canvas_nodes') || normalized.includes('canvas.delete')
+}
+
+// 整键，不拼命名空间（拼接会让死键门岗对整棵 agentResident 失明）。
+// 用 `as const satisfies`（而不是把 TranslationKey 当值类型标注）：TranslationKey 只适合做**约束**，
+// 标注成值类型会把字面量擦成它自身、`t()` 收不了。见 src/i18n/translationKey.ts。
+const READABLE_PARAMETER_LABELS = {
+  size: 'agentResident.toolParameterSize',
+  aspectRatio: 'agentResident.toolParameterAspectRatio',
+  aspect_ratio: 'agentResident.toolParameterAspectRatio',
+  duration: 'agentResident.toolParameterDuration',
+  fps: 'agentResident.toolParameterFrameRate',
+  frameRate: 'agentResident.toolParameterFrameRate',
+  quality: 'agentResident.toolParameterQuality',
+  count: 'agentResident.toolParameterCount',
+  copies: 'agentResident.toolParameterCount',
+  resolution: 'agentResident.toolParameterResolution',
+  negative_prompt: 'agentResident.toolParameterNegativePrompt',
+  negativePrompt: 'agentResident.toolParameterNegativePrompt',
+  // The model's own justification. It is the single most useful thing on an approval card and it was
+  // being swallowed into the anonymous "other settings" count.
+  reason: 'agentResident.toolParameterReason',
+  seed: 'agentResident.toolParameterSeed',
+  steps: 'agentResident.toolParameterSteps',
+  guidance_scale: 'agentResident.toolParameterGuidance',
+  guidanceScale: 'agentResident.toolParameterGuidance',
+} as const satisfies Record<string, TranslationKey>
+
+type ParameterLabelKey = (typeof READABLE_PARAMETER_LABELS)[keyof typeof READABLE_PARAMETER_LABELS]
+
+// `operation` is already what the card is titled with; counting it as an anonymous "other setting"
+// turned a delete card into "生成设置：其他设置 2 项" and buried the model's own stated reason with it.
+const TOOL_CONTEXT_KEYS = new Set(['model', 'modelKey', 'modelId', 'providerId', 'moduleId', 'variantId', 'prompt', 'text', 'content', 'nodes', 'edges', 'nodeIds', 'clientId', 'title', 'kind', 'summary', 'parameters', 'candidate', 'patch', 'shots', 'references', 'scriptText', 'operationId', 'taskKind', 'mode', 'modeId', 'leaseHandle', 'operation'])
+
+function readableParameterValue(t: Translate, value: unknown): string {
+  if (typeof value === 'boolean') return value ? t('agentResident.toolParameterOn') : t('agentResident.toolParameterOff')
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  return ''
+}
+
+/** Keep internal schema keys out of the first layer; controls expose exact values later. */
+function readableParameters(t: Translate, record: Record<string, unknown>): string {
+  const readable: string[] = []
+  let hidden = 0
+  for (const [key, rawValue] of Object.entries(record)) {
+    if (TOOL_CONTEXT_KEYS.has(key)) continue
+    const value = readableParameterValue(t, rawValue)
+    if (!value) continue
+    const labelKey = (READABLE_PARAMETER_LABELS as Record<string, ParameterLabelKey | undefined>)[key]
+    if (!labelKey) {
+      hidden += 1
+      continue
+    }
+    readable.push(`${t(labelKey)}: ${value}`)
+  }
+  if (hidden) readable.push(t('agentResident.toolParameterHidden', { count: hidden }))
+  return readable.join(' · ')
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+/** Generation tools keep effective settings under patch/candidate/parameters or per-shot records. */
+function nestedParameterRecords(record: Record<string, unknown>): Record<string, unknown>[] {
+  const records: Record<string, unknown>[] = []
+  const patch = asRecord(record.patch)
+  if (patch) {
+    records.push(patch)
+    const patchParameters = asRecord(patch.parameters)
+    if (patchParameters) records.push(patchParameters)
+  }
+  const parameters = asRecord(record.parameters)
+  if (parameters) records.push(parameters)
+  const candidate = asRecord(record.candidate)
+  if (candidate) {
+    records.push(candidate)
+    const candidateParameters = asRecord(candidate.parameters)
+    if (candidateParameters) records.push(candidateParameters)
+  }
+  const shots = Array.isArray(record.shots) ? record.shots : []
+  for (const shot of shots) {
+    const shotRecord = asRecord(shot)
+    if (!shotRecord) continue
+    records.push(shotRecord)
+    const shotCandidate = asRecord(shotRecord.candidate)
+    if (shotCandidate) {
+      records.push(shotCandidate)
+      const shotCandidateParameters = asRecord(shotCandidate.parameters)
+      if (shotCandidateParameters) records.push(shotCandidateParameters)
+    }
+    const shotParameters = asRecord(shotRecord.parameters)
+    if (shotParameters) records.push(shotParameters)
+  }
+  return records
+}
+
+function readableParameterSummary(t: Translate, record: Record<string, unknown>, proposal = false): string {
+  const formatter = proposal ? readableProposalParameters : readableParameters
+  return [formatter(t, record), ...nestedParameterRecords(record).map((nested) => formatter(t, nested))]
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(' · ')
+}
+
+
+/**
+ * 这一次 canvas 写入交付的**全是手艺产物**吗？
+ *
+ * 为什么要问：回执的措辞原先只看工具名，看不见这次到底写了什么。于是 Agent 交付一张 SVG 构图
+ * 线稿，面板也照样报「创建或修改镜头卡 · 把镜头卡写入当前画布 · 只建卡不生成」——三句里没有
+ * 一句是真的。工具是同一个（create_canvas_nodes），交付物不是同一种东西，人话就不能是同一句。
+ *
+ * 判据落在 payload 的 kind 上：nodes 非空且每一个都是 agent-artifact 才算，混着镜头卡的批次
+ * 仍按镜头卡说（那批里确实有镜头卡）。
+ */
+function isAllArtifactDelivery(args: unknown): boolean {
+  const record = args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+  const nodes = Array.isArray(record.nodes) ? record.nodes : []
+  if (nodes.length === 0) return false
+  return nodes.every((node) => !!node && typeof node === 'object' && (node as Record<string, unknown>).kind === 'agent-artifact')
+}
+
+export function readableToolName(t: Translate, name: string, rawArgs?: unknown): string {
+  const args = semanticArgsOf(name, rawArgs)
+  if (name === 'nomi_request_tools') return t('agentResident.toolPrepareTools')
+  if (name === 'read' || name === 'ls') return t('agentResident.toolFileRead')
+  if (name === 'grep' || name === 'find') return t('agentResident.toolFileSearch')
+  if (name === 'edit' || name === 'write') return t('agentResident.toolFileWrite')
+  if (name === 'bash') return t('agentResident.toolShell')
+  const normalized = toolIdentity(name, args)
+  if (isStoryboardPlanWrite(name, args)) return t('agentResident.toolStoryboardWrite')
+  if (normalized.includes('arrange_storyboard_to_timeline')) return t('agentResident.toolTimelineAdd')
+  if (normalized.includes('create_canvas_nodes') && !isAllArtifactDelivery(args)) return t('agentResident.toolCanvasCreate')
+  if (isCanvasDeleteToolName(name, args)) return t('agentResident.toolCanvasDelete')
+  if (normalized.includes('append_to_end') || normalized.includes('document_append')) return t('agentResident.toolDocumentWrite')
+  if (isCanvasWriteToolName(name, args) && isAllArtifactDelivery(args)) return t('agentResident.toolCanvasWriteArtifact')
+  if (normalized.includes('create_canvas_nodes') || normalized.includes('canvas_nodes')) return t('agentResident.toolCanvasWrite')
+  if (normalized.includes('document.read') || normalized.includes('document_read')) return t('agentResident.toolDocumentRead')
+  if (normalized.includes('document.write') || normalized.includes('document_edit')) return t('agentResident.toolDocumentWrite')
+  if (normalized.includes('canvas.read') || normalized.includes('canvas_read')) return t('agentResident.toolCanvasRead')
+  if (normalized.includes('canvas.write') || normalized.includes('canvas_edit')) return t('agentResident.toolCanvasWrite')
+  if (normalized.includes('timeline.read') || normalized.includes('timeline_read')) return t('agentResident.toolTimelineRead')
+  if (normalized.includes('timeline.write') || normalized.includes('timeline_edit')) return t('agentResident.toolTimelineWrite')
+  if (normalized.includes('asset.read') || normalized.includes('media_query')) return t('agentResident.toolAssetRead')
+  if (normalized.includes('production.artifact')) return t('agentResident.toolArtifactRevise')
+  if (normalized.includes('production.run.read') || normalized.includes('generation.run.read')) return t('agentResident.toolProductionRead')
+  if (normalized.includes('generation.context.read')) return t('agentResident.toolModelsRead')
+  if (normalized.includes('generation.control')) return t('agentResident.toolJobCancel')
+  if (normalized.includes('model.setup.open')) return t('agentResident.toolModelSetup')
+  // 接模型的两口（#754）：连/交卡/显示隐藏说「接入模型」，永久删除单独说一句——
+  // 面板上这两件事长得一样的话，用户就分不出「他在接」和「他在删」。
+  if (normalized.includes('model.onboarding.remove') || normalized.includes('remove_model_provider')) {
+    return t('agentResident.toolModelRemove')
+  }
+  // 2026-09-21 通用反问。它在面板上必须有自己的名字：用户看到的那一行是
+  // 「它在问我一句话」，而不是一个工具在跑——这也是 residentToolDisplay 那两条
+  // 「每个工具/每个契约都得有人话名」的断言存在的理由。
+  if (normalized.includes('agent.ask') || normalized.includes('ask_user')) {
+    return t('agentResident.toolAsk')
+  }
+  if (normalized.includes('model.onboarding.setup') || normalized.includes('connect_model_provider')) {
+    return t('agentResident.toolModelSetup')
+  }
+  // 2026-09-21 合并 ①：试跑是**花钱**的那一口（一次真实生成），不能和「接入模型」共用一句话——
+  // 面板上长得一样，用户就分不出「他在接」和「他在花我的钱」。和上面 remove 单列是同一条理由。
+  if (normalized.includes('model.onboarding.try') || normalized.includes('try_model')) {
+    return t('agentResident.toolModelTry')
+  }
+  if (normalized.includes('production.run.write')) return t('agentResident.toolProductionWrite')
+  if (normalized.includes('skill.read')) return t('agentResident.toolSkillRead')
+  if (normalized.includes('skill.write')) return t('agentResident.toolSkillWrite')
+  if (normalized.includes('layout_read') || normalized.includes('layout.read')) return t('agentResident.toolLayoutRead')
+  if (normalized.includes('layout_write') || normalized.includes('layout.write')) return t('agentResident.toolLayoutWrite')
+  if (normalized.includes('asset_import')) return t('agentResident.toolAssetImport')
+  if (normalized.includes('nomi_read')) return t('agentResident.toolProjectRead')
+  if (normalized.includes('export')) return t('agentResident.toolExport')
+  if (isGenerationToolName(name)) return t('agentResident.toolGeneration')
+  return t('agentResident.toolGeneric')
+}
+
+export function readableToolSummary(t: Translate, name: string, rawArgs?: unknown): string {
+  const args = semanticArgsOf(name, rawArgs)
+  if (isStoryboardPlanWrite(name, args)) return t('agentResident.toolStoryboardWriteSummary')
+  if (isReadOnlyToolName(name, args)) return t('agentResident.toolReadNoChange')
+  const normalized = toolIdentity(name, args)
+  const record = args && typeof args === 'object' ? args as Record<string, unknown> : {}
+  const patch = asRecord(record.patch) ?? {}
+  const candidate = asRecord(record.candidate) ?? {}
+  const model = typeof record.model === 'string' ? record.model : typeof record.modelKey === 'string' ? record.modelKey : typeof record.modelId === 'string' ? record.modelId : typeof record.variantId === 'string' ? record.variantId : typeof patch.model === 'string' ? patch.model : typeof patch.modelKey === 'string' ? patch.modelKey : typeof patch.modelId === 'string' ? patch.modelId : typeof patch.variantId === 'string' ? patch.variantId : typeof candidate.model === 'string' ? candidate.model : typeof candidate.modelKey === 'string' ? candidate.modelKey : typeof candidate.modelId === 'string' ? candidate.modelId : typeof candidate.variantId === 'string' ? candidate.variantId : ''
+  const prompt = typeof record.prompt === 'string' ? record.prompt : typeof record.text === 'string' ? record.text : typeof record.scriptText === 'string' ? record.scriptText : typeof patch.prompt === 'string' ? patch.prompt : typeof candidate.prompt === 'string' ? candidate.prompt : ''
+  const parameters = readableParameterSummary(t, record)
+  const modelKind = model.toLowerCase().includes('video') ? t('agentResident.toolVideoModel') : model.toLowerCase().includes('image') ? t('agentResident.toolImageModel') : ''
+  const details = [model ? `${modelKind || t('agentResident.toolModel', { model })}${modelKind ? ` (${model})` : ''}` : '', parameters ? t('agentResident.toolParameters', { parameters }) : '', prompt ? t('agentResident.toolPrompt', { prompt: prompt.slice(0, 96) }) : ''].filter(Boolean).join(' · ')
+  const shotCards = Array.isArray(record.nodes) ? record.nodes.slice(0, 4).map((node) => {
+    if (!node || typeof node !== 'object') return ''
+    const shot = node as Record<string, unknown>
+    const title = typeof shot.title === 'string' ? shot.title : t('agentResident.untitledShot')
+    const shotModelKey = typeof shot.modelKey === 'string' ? shot.modelKey : ''
+    const shotModel = shotModelKey ? (shotModelKey.toLowerCase().includes('video') ? t('agentResident.toolVideoModel') : shotModelKey.toLowerCase().includes('image') ? t('agentResident.toolImageModel') : shotModelKey) : ''
+    const shotPrompt = typeof shot.prompt === 'string' ? shot.prompt.slice(0, 72) : ''
+    const shotParams = shot.params && typeof shot.params === 'object' ? readableParameters(t, shot.params as Record<string, unknown>) : ''
+    return [title, shotModel, shotParams, shotPrompt].filter(Boolean).join(' · ')
+  }).filter(Boolean).join(' | ') : ''
+  const relations = Array.isArray(record.edges) && record.edges.length ? t('agentResident.toolReferences', { count: record.edges.length }) : ''
+  if (isCanvasDeleteToolName(name, args)) return t('agentResident.toolCanvasDeleteSummary')
+  if (normalized.includes('append_to_end') || normalized.includes('document.write') || normalized.includes('document_edit') || normalized.includes('document_append')) return details ? `${t('agentResident.toolDocumentWriteSummary')} · ${details}` : t('agentResident.toolDocumentWriteSummary')
+  if (isCanvasWriteToolName(name, args) && isAllArtifactDelivery(args)) {
+    // 产物没有模型/参数/prompt，把标题列出来就够了；「不生成不花钱」对手艺产物是废话（它本来就不调模型）。
+    return [t('agentResident.toolCanvasWriteArtifactSummary'), shotCards ? t('agentResident.toolShotConfig', { details: shotCards }) : ''].filter(Boolean).join(' · ')
+  }
+  if (isCanvasWriteToolName(name, args)) return [t('agentResident.toolCanvasWriteSummary'), shotCards ? t('agentResident.toolShotConfig', { details: shotCards }) : '', relations, t('agentResident.toolNoGeneration'), details].filter(Boolean).join(' · ')
+  if (normalized.includes('timeline.write') || normalized.includes('timeline_edit')) return details ? `${t('agentResident.toolTimelineWriteSummary')} · ${details}` : t('agentResident.toolTimelineWriteSummary')
+  if (isGenerationToolName(name)) return details ? `${t('agentResident.toolGenerationSummary')} · ${details}` : t('agentResident.toolGenerationSummary')
+  return details || t('agentResident.toolPendingSummary')
+}
+
+/**
+ * 介入槽卡上那一行摘要。
+ *
+ * 兜底**不能**是「查看细节」——那是下面折叠区的按钮文案，把它当摘要用，卡片就成了
+ * 「需要你确认 / 查看细节 / [查看细节 ▸]」：一句都没说这次到底要动什么，等于让人盲批。
+ * 认不出的工具至少说清「它要做哪件事、动的是谁」（合同 §2.6：逐条给人话）。
+ */
+export function readableToolPreview(t: Translate, name: string, rawArgs?: unknown): string {
+  const args = semanticArgsOf(name, rawArgs)
+  const normalized = toolIdentity(name, args)
+  const record = args && typeof args === 'object' ? args as Record<string, unknown> : {}
+  if (isStoryboardPlanWrite(name, args)) return Array.isArray(record.shots) && record.shots.length
+    ? t('agentResident.toolShotCount', { count: record.shots.length }) : t('agentResident.toolStoryboardWriteSummary')
+  if (normalized.includes('append_to_end') || normalized.includes('document.write') || normalized.includes('document_edit') || normalized.includes('document_append')) return typeof record.content === 'string' && record.content.trim() ? t('agentResident.toolContentCount', { count: 1 }) : t('agentResident.toolDocumentWriteSummary')
+  if (isCanvasDeleteToolName(name, args)) {
+    const count = Array.isArray(record.nodeIds) ? record.nodeIds.length : 0
+    return count ? t('agentResident.toolTargetCount', { count }) : t('agentResident.toolCanvasDeleteSummary')
+  }
+  if (isCanvasWriteToolName(name, args)) {
+    const nodes = Array.isArray(record.nodes) ? record.nodes.length : 0
+    const edges = Array.isArray(record.edges) ? record.edges.length : 0
+    if (isAllArtifactDelivery(args)) return t('agentResident.toolArtifactCount', { count: nodes })
+    return [nodes ? t('agentResident.toolShotCount', { count: nodes }) : '', edges ? t('agentResident.toolRelationCount', { count: edges }) : '', t('agentResident.toolNoGenerationShort')].filter(Boolean).join(' · ') || t('agentResident.toolCanvasWriteSummary')
+  }
+  if (normalized.includes('timeline.write') || normalized.includes('timeline_edit')) return t('agentResident.toolTimelineWriteSummary')
+  if (isGenerationToolName(name)) return t('agentResident.toolGenerationSummary')
+  if (normalized.includes('layout_write') || normalized.includes('layout.write')) return t('agentResident.toolLayoutWriteSummary')
+  if (normalized.includes('asset_import')) return t('agentResident.toolAssetImportSummary')
+  if (isReadOnlyToolName(name, args)) return t('agentResident.toolReadNoChange')
+  // 兜底仍然不是「查看细节」（见函数头）：main 这一轮补的是**覆盖**（document_edit /
+  // canvas 删除的 args 判定 / timeline_edit / layout_write / asset_import / 只读工具），
+  // 认不出的那一档该说什么是本分支修的那件事——说清「哪件事、动的是谁」，别让人盲批。
+  return `${readableToolName(t, name)} · ${readableToolTarget(t, name, record)}`
+}
+
+export function readableToolTarget(t: Translate, name: string, rawArgs?: unknown): string {
+  const args = semanticArgsOf(name, rawArgs)
+  const normalized = toolIdentity(name, args)
+  const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {}
+  if (Array.isArray(record.nodeIds) && record.nodeIds.length) return t('agentResident.targetShotCount', { count: record.nodeIds.length })
+  if (Array.isArray(record.nodes) && record.nodes.length) return t('agentResident.targetShotCount', { count: record.nodes.length })
+  if (Array.isArray(record.shots) && record.shots.length) return t('agentResident.targetShotCount', { count: record.shots.length })
+  if (Array.isArray(record.clipIds) && record.clipIds.length) return t('agentResident.targetClipCount', { count: record.clipIds.length })
+  if ((typeof record.runId === 'string' && record.runId.trim()) || (typeof record.operationId === 'string' && record.operationId.trim())) return t('agentResident.targetProductionRun')
+  if (typeof record.documentId === 'string' && record.documentId.trim()) return t('agentResident.targetDocument')
+  if (normalized.includes('timeline') || normalized.includes('export')) return t('agentResident.targetTimeline')
+  if (normalized.includes('canvas') || isGenerationToolName(name)) return t('agentResident.targetCanvas')
+  if (normalized.includes('document')) return t('agentResident.targetDocument')
+  return t('agentResident.targetCurrentScene')
+}
+
+function readableEstimate(t: Translate, record: Record<string, unknown>): string {
+  const raw = record.estimatedCost ?? record.estimated_cost ?? record.cost ?? record.price ?? record.credits
+  if (typeof raw === 'number' && Number.isFinite(raw)) return t('agentResident.proposalEstimateAmount', { amount: raw.toFixed(2) })
+  if (typeof raw === 'string' && raw.trim()) return raw.trim()
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const amount = (raw as Record<string, unknown>).amount
+    const currency = (raw as Record<string, unknown>).currency
+    if ((typeof amount === 'number' || typeof amount === 'string') && String(amount).trim()) return `${currency ? `${String(currency)} ` : ''}${String(amount)}`
+  }
+  return t('agentResident.costUnknown')
+}
+
+function readableProposalModel(t: Translate, model: string): string {
+  const normalized = model.toLowerCase()
+  const machineId = normalized.includes('agent-runtime') || normalized.includes('/')
+  if (machineId && normalized.includes('image')) return t('agentResident.toolImageModel')
+  if (machineId && normalized.includes('video')) return t('agentResident.toolVideoModel')
+  if (machineId && normalized.includes('text')) return t('agentResident.proposalText')
+  return model
+}
+
+function readableProposalParameters(t: Translate, record: Record<string, unknown>): string {
+  return readableParameters(t, record)
+    .replace(/21:9/g, t('agentResident.proposalAspectCinematic'))
+    .replace(/16:9/g, t('agentResident.proposalAspectLandscape'))
+    .replace(/9:16/g, t('agentResident.proposalAspectPortrait'))
+    .replace(/1:1/g, t('agentResident.proposalAspectSquare'))
+}
+
+export function proposalForTool(t: Translate, name: string, rawArgs?: unknown): ResidentProposalData | undefined {
+  const args = semanticArgsOf(name, rawArgs)
+  const record = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {}
+  const storyboardPlan = isStoryboardPlanWrite(name, record)
+  const generationLike = isGenerationToolName(name) || isCanvasWriteToolName(name, record) || storyboardPlan
+  if (!generationLike) return undefined
+  const nodes = Array.isArray(record.nodes) ? record.nodes.filter((node): node is Record<string, unknown> => Boolean(node && typeof node === 'object' && !Array.isArray(node))) : []
+  const shots = Array.isArray(record.shots) ? record.shots.map(asRecord).filter((shot): shot is Record<string, unknown> => Boolean(shot)) : []
+  const candidate = asRecord(record.candidate)
+  const patch = asRecord(record.patch)
+  const prompts = [
+    typeof record.prompt === 'string' ? record.prompt.trim() : '',
+    typeof record.text === 'string' ? record.text.trim() : '',
+    typeof record.scriptText === 'string' ? record.scriptText.trim() : '',
+    typeof patch?.prompt === 'string' ? patch.prompt.trim() : '',
+    typeof candidate?.prompt === 'string' ? candidate.prompt.trim() : '',
+    ...nodes.map((node) => typeof node.prompt === 'string' ? node.prompt.trim() : ''),
+    ...shots.map((shot) => typeof shot.prompt === 'string' ? shot.prompt.trim() : ''),
+    ...shots.map((shot) => asRecord(shot.candidate)).map((shotCandidate) => typeof shotCandidate?.prompt === 'string' ? shotCandidate.prompt.trim() : ''),
+  ].filter(Boolean)
+  const models = [
+    typeof record.model === 'string' ? record.model.trim() : '',
+    typeof record.modelKey === 'string' ? record.modelKey.trim() : '',
+    typeof record.modelId === 'string' ? record.modelId.trim() : '',
+    typeof record.variantId === 'string' ? record.variantId.trim() : '',
+    typeof patch?.model === 'string' ? patch.model.trim() : '',
+    typeof patch?.modelKey === 'string' ? patch.modelKey.trim() : '',
+    typeof patch?.modelId === 'string' ? patch.modelId.trim() : '',
+    typeof patch?.variantId === 'string' ? patch.variantId.trim() : '',
+    typeof candidate?.model === 'string' ? candidate.model.trim() : '',
+    typeof candidate?.modelKey === 'string' ? candidate.modelKey.trim() : '',
+    typeof candidate?.modelId === 'string' ? candidate.modelId.trim() : '',
+    typeof candidate?.variantId === 'string' ? candidate.variantId.trim() : '',
+    ...nodes.map((node) => typeof node.modelKey === 'string' ? node.modelKey.trim() : ''),
+    ...shots.map((shot) => typeof shot.modelId === 'string' ? shot.modelId.trim() : ''),
+    ...shots.map((shot) => typeof shot.variantId === 'string' ? shot.variantId.trim() : ''),
+    ...shots.map((shot) => { const shotCandidate = asRecord(shot.candidate); return typeof shotCandidate?.modelId === 'string' ? shotCandidate.modelId.trim() : '' }),
+    ...shots.map((shot) => { const shotCandidate = asRecord(shot.candidate); return typeof shotCandidate?.variantId === 'string' ? shotCandidate.variantId.trim() : '' }),
+  ].filter(Boolean)
+  const parameterParts = [
+    readableParameterSummary(t, record, true),
+    ...nodes.map((node) => node.params && typeof node.params === 'object' && !Array.isArray(node.params) ? readableProposalParameters(t, node.params as Record<string, unknown>) : ''),
+  ].filter(Boolean)
+  const referenceCount = [
+    record.references,
+    patch?.references,
+    candidate?.references,
+    ...shots.map((shot) => shot.references),
+    ...shots.map((shot) => asRecord(shot.candidate)?.references),
+  ].reduce<number>((count, value) => count + (Array.isArray(value) ? value.length : 0), 0)
+  const fields: ResidentApprovalDetail[] = []
+  if (prompts.length) fields.push({ label: t('agentResident.proposalPrompt'), value: prompts.slice(0, 2).join(' · '), kind: 'prompt' })
+  fields.push({ label: t('agentResident.proposalModel'), value: models.length ? Array.from(new Set(models.map((model) => readableProposalModel(t, model)))).join(' · ') : t('agentResident.modelAuto'), kind: 'model' })
+  fields.push({ label: t('agentResident.proposalParameters'), value: parameterParts.length ? parameterParts.join(' · ') : t('agentResident.proposalParametersPending'), kind: 'parameters' })
+  fields.push({ label: t('agentResident.proposalEstimate'), value: readableEstimate(t, record), kind: 'estimate' })
+  fields.push({ label: t('agentResident.proposalTarget'), value: readableToolTarget(t, name, record), kind: 'target' })
+  if (referenceCount) fields.push({ label: t('agentResident.referencesLabel'), value: t('agentResident.proposalReferences', { count: referenceCount }), kind: 'references' })
+  fields.push({ label: t('agentResident.proposalBoundary'), value: storyboardPlan ? t('agentResident.toolStoryboardWriteSummary') : isCanvasWriteToolName(name, record) ? t('agentResident.boundaryCanvasOnly') : t('agentResident.boundaryGeneration'), kind: 'boundary' })
+  return { fields }
+}
+
+export function readableToolDetailRows(t: Translate, name: string, rawArgs?: unknown): readonly ResidentApprovalDetail[] {
+  const args = semanticArgsOf(name, rawArgs)
+  const normalized = name.toLowerCase()
+  const record = args && typeof args === 'object' ? args as Record<string, unknown> : {}
+  const rows: ResidentApprovalDetail[] = []
+  rows.push({ label: t('agentResident.toolTargetLabel'), value: readableToolTarget(t, name, record), kind: 'target' })
+  if (typeof record.content === 'string' && record.content.trim()) rows.push({ label: t('agentResident.toolContentLabel'), value: record.content.trim(), kind: 'prompt' })
+  const nodes = Array.isArray(record.nodes) ? record.nodes : []
+  if (nodes.length) {
+    const shots = nodes.slice(0, 4).map((node) => {
+      if (!node || typeof node !== 'object') return ''
+      const shot = node as Record<string, unknown>
+      const title = typeof shot.title === 'string' ? shot.title : t('agentResident.untitledShot')
+      const model = typeof shot.modelKey === 'string' ? shot.modelKey : ''
+      const prompt = typeof shot.prompt === 'string' ? shot.prompt : ''
+      const params = shot.params && typeof shot.params === 'object' ? readableParameters(t, shot.params as Record<string, unknown>) : ''
+      return [title, model, params, prompt].filter(Boolean).join(' · ')
+    }).filter(Boolean).join(' | ')
+    if (shots) rows.push({ label: t('agentResident.toolShotLabel'), value: shots, kind: 'target' })
+  }
+  if (Array.isArray(record.edges) && record.edges.length) {
+    const titles = new Map(nodes.map((node) => {
+      const shot = node && typeof node === 'object' ? node as Record<string, unknown> : {}
+      return [typeof shot.clientId === 'string' ? shot.clientId : '', typeof shot.title === 'string' ? shot.title : t('agentResident.untitledShot')] as const
+    }))
+    const relations = record.edges.slice(0, 4).map((edge) => {
+      if (!edge || typeof edge !== 'object') return ''
+      const relation = edge as Record<string, unknown>
+      const source = typeof relation.sourceClientId === 'string' ? relation.sourceClientId : ''
+      const target = typeof relation.targetClientId === 'string' ? relation.targetClientId : ''
+      const mode = relation.mode === 'reference' ? t('agentResident.referenceRelation') : typeof relation.mode === 'string' ? relation.mode : t('agentResident.referenceRelation')
+      return `${titles.get(source) || source || t('agentResident.untitledShot')} → ${titles.get(target) || target || t('agentResident.untitledShot')} · ${mode}`
+    }).filter(Boolean)
+    rows.push({ label: t('agentResident.toolRelationLabel'), value: relations.join(' | ') || t('agentResident.toolRelationCount', { count: record.edges.length }), kind: 'target' })
+  }
+  if (isCanvasWriteToolName(name, args)) rows.push({ label: t('agentResident.toolBoundaryLabel'), value: t('agentResident.toolNoGeneration'), kind: 'boundary' })
+  const patch = asRecord(record.patch)
+  const candidate = asRecord(record.candidate)
+  const modelValues = [record.model, record.modelKey, record.modelId, record.variantId, patch?.model, patch?.modelKey, patch?.modelId, patch?.variantId, candidate?.model, candidate?.modelKey, candidate?.modelId, candidate?.variantId].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  if (modelValues.length) rows.push({ label: t('agentResident.toolModelLabel'), value: Array.from(new Set(modelValues)).join(' · '), kind: 'model' })
+  const promptValues = [record.prompt, record.text, record.scriptText, patch?.prompt, candidate?.prompt].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  if (promptValues.length) rows.push({ label: t('agentResident.toolPromptLabel'), value: Array.from(new Set(promptValues)).join(' · '), kind: 'prompt' })
+  if (!nodes.length && Array.isArray(record.shots) && record.shots.length) rows.push({ label: t('agentResident.toolShotLabel'), value: t('agentResident.targetShotCount', { count: record.shots.length }), kind: 'target' })
+  const parameterEntries = readableParameterSummary(t, record)
+  // 「生成设置」 on a delete card is inherited from the generation path and is plainly wrong there —
+  // nothing is being generated. Label the row for what this tool actually is.
+  if (parameterEntries) rows.push({ label: t(isGenerationToolName(name) ? 'agentResident.toolParametersLabel' : 'agentResident.toolOperationDetailsLabel'), value: parameterEntries, kind: 'parameters' })
+  if (isGenerationToolName(name) || normalized.includes('canvas.write')) rows.push({ label: t('agentResident.proposalEstimate'), value: readableEstimate(t, record), kind: 'estimate' })
+  if (!rows.length && isCanvasDeleteToolName(name, args)) rows.push({ label: t('agentResident.toolTargetLabel'), value: t('agentResident.toolTargetCount', { count: Array.isArray(record.nodeIds) ? record.nodeIds.length : 0 }), kind: 'target' })
+  if (!rows.length) rows.push({ label: t('agentResident.toolDetailLabel'), value: readableToolSummary(t, name, args), kind: 'technical' })
+  return rows
+}
+
+/**
+ * 校验回执（一串 zod issue 的 JSON）→ 人话。
+ *
+ * 2026-09-06 真机走查看到的原样是 `[{"code":"invalid_type","expected":"array","received":"string",…}]`，
+ * 而一行收据只塞得下六十个字——于是行内的「原因」变成了 `"code": "in…`，等于没说。
+ * 这里把它翻成「nodes：期望 array，收到 string」：**哪个字段、要什么、给了什么**，
+ * 一句话就能照着改。认不出的形状原样返回，不硬翻。
+ */
+function humanizeSchemaIssues(t: Translate, text: string): string | undefined {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return undefined
+  }
+  const issues = (Array.isArray(parsed) ? parsed : [parsed])
+    .map(asRecord)
+    .filter((issue): issue is Record<string, unknown> => Boolean(issue) && typeof issue?.code === 'string')
+  if (!issues.length) return undefined
+  const lines: string[] = []
+  for (const issue of issues) {
+    const field = Array.isArray(issue.path) && issue.path.length ? issue.path.join('.') : t('agentResident.issueRoot')
+    // 2026-09-21：这里原来有第三支 `issueMessage`，把 `issue.message` **原样**插进中文模板。
+    // 那个 message 是写给模型看的英文散文（产地 `verbs/writeVerbs.ts` 的 `expectedOf()`），
+    // 于是中文用户在行内读到 `shots.0.role：an anchor is a reference card …`。
+    // 与 `humanizeValidationProse` 对齐成同一条纪律：**翻得出才说，翻不出就说一句通用的**，
+    // 英文全文只留在展开区的「输出」里。
+    const expected = typeof issue.expected === 'string' ? issue.expected.trim() : ''
+    const received = typeof issue.received === 'string' ? issue.received.trim() : ''
+    const line = JSON_TYPE_WORDS.has(expected.toLowerCase()) && received
+      ? t('agentResident.issueType', { field, expected, received })
+      : /required/i.test(typeof issue.code === 'string' ? issue.code : '')
+        || (expected && !received)
+        ? t('agentResident.issueRequired', { field })
+        : ''
+    if (line && !lines.includes(line)) lines[lines.length] = line
+    if (lines.length >= 6) break
+  }
+  // 一条都翻不出来时**也不放英文过去**：给一句通用的「参数不合法」（同 `humanizeValidationProse`）。
+  return lines.length ? lines.join('\n') : t('agentResident.issueInvalidArgs')
+}
+
+/** 校验回执行里那句 `Expected array` 里的类型词。只认 JSON 的七个类型，别的不硬翻。 */
+const JSON_TYPE_WORDS = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'null'])
+const VALIDATION_PROSE_HEAD = /^Validation failed for tool\s+"[^"]*"\s*:$/
+const VALIDATION_ISSUE_LINE = /^-\s*([^\s:][^:]*)\s*:\s*(.+)$/
+const VALIDATION_ARGS_ECHO = /^Received arguments:/
+
+/**
+ * 运行时的**散文体**校验回执 → 人话。
+ *
+ * pi 的 `validateToolCall` 抛的是一段英文（`@earendil-works/pi-ai/dist/utils/validation.js`）：
+ *
+ * ```
+ * Validation failed for tool "nomi_canvas_edit":
+ *   - nodes: Expected array
+ *
+ * Received arguments:
+ * { …模型这次发过去的整包入参… }
+ * ```
+ *
+ * 它和上面那串 zod issue JSON 是**同一类东西的另一种写法**，所以必须走同一条翻译：
+ * 2026-09-06 打包版真实使用里，用户在 28px 的收据行上读到的是
+ * 「读取画布 · Validation failed for tool "no…」——一行英文机器话，说不出哪个字段错了。
+ *
+ * 两条纪律写在这里：
+ *   · 尾巴那段 `Received arguments:` 是**入参回显**，收据的「输入」栏已经有它。
+ *     行内再印一遍就是 2026-09-06 那行只剩一个 `[` 的来路（回显的第一行正是 `[`），所以到此为止。
+ *   · 认出了这条回执就**再也不把英文原文放进行内**：一条都翻不出来时给一句通用的
+ *     「参数不合法」，英文全文只留在展开区的「输出」。
+ */
+function humanizeValidationProse(t: Translate, text: string): string | undefined {
+  const lines = text.trim().split('\n')
+  if (!VALIDATION_PROSE_HEAD.test((lines[0] ?? '').trim())) return undefined
+  const humanized: string[] = []
+  for (const raw of lines.slice(1)) {
+    const line = raw.trim()
+    if (!line) continue
+    if (VALIDATION_ARGS_ECHO.test(line)) break
+    const match = VALIDATION_ISSUE_LINE.exec(line)
+    if (!match) continue
+    const path = match[1]!.trim()
+    const field = !path || path === 'root' ? t('agentResident.issueRoot') : path
+    const message = match[2]!.trim()
+    const expected = /^Expected\s+(\S+)$/.exec(message)?.[1] ?? ''
+    const humanizedLine = /required/i.test(message)
+      ? t('agentResident.issueRequired', { field })
+      : JSON_TYPE_WORDS.has(expected.toLowerCase())
+        ? t('agentResident.issueExpected', { field, expected })
+        : ''
+    if (humanizedLine && !humanized.includes(humanizedLine)) humanized.push(humanizedLine)
+    if (humanized.length >= 6) break
+  }
+  return humanized.length ? humanized.join('\n') : t('agentResident.issueInvalidArgs')
+}
+
+/**
+ * 失败正文 → 人话，**唯一那条门**。
+ *
+ * 校验失败在这套系统里有两种写法（运行时的散文体、宿主/适配层的 zod issue JSON），
+ * 而消费它的地方有三处（收据行内摘要、收据展开体、回合失败的错误条）。
+ * 两种写法 × 三处消费如果各翻各的，就会像 2026-09-06 那样：同一次失败在一处是
+ * 「nodes：期望 array」、在另一处是一整段英文。翻译只有这一条门，认不出就返回
+ * `undefined`——由调用方决定退回什么，不在这里编。
+ */
+export function humanizeToolFailure(t: Translate, text: string | undefined): string | undefined {
+  const trimmed = (text ?? '').trim()
+  if (!trimmed) return undefined
+  return humanizeSchemaIssues(t, trimmed) ?? humanizeValidationProse(t, trimmed)
+}

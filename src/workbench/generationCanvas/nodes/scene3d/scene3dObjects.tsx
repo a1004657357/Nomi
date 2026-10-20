@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { Text, useGLTF } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'

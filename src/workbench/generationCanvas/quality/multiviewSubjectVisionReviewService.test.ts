@@ -62,6 +62,11 @@ describe('reviewMultiviewCollectionWithVisionModel', () => {
   it('builds one reusable batch comparator for the generation pipeline', async () => {
     const clearSession = vi.fn(async () => {})
     const send = vi.fn<SendVisionReview>(async () => ({
+      id: 'multiview-comparator-response',
+      status: 'finished',
+      toolCalls: [],
+      artifacts: [],
+      usage: { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, totalTokens: 0 },
       text: JSON.stringify({
         sourceSubjectDetected: true,
         items: [{ itemId: 'front', outputSubjectDetected: true, sameSubject: true }],
@@ -92,6 +97,10 @@ describe('reviewMultiviewCollectionWithVisionModel', () => {
   it('uses one isolated multimodal chat call and records usage in the report', async () => {
     const clearSession = vi.fn(async () => {})
     const send = vi.fn<SendVisionReview>(async () => ({
+      id: 'multiview-review-response',
+      status: 'finished',
+      toolCalls: [],
+      artifacts: [],
       text: JSON.stringify({
         sourceSubjectDetected: true,
         items: [{
@@ -111,6 +120,7 @@ describe('reviewMultiviewCollectionWithVisionModel', () => {
       usage: {
         promptTokens: 150,
         completionTokens: 50,
+        cachedPromptTokens: 0,
         totalTokens: 200,
       },
     }))

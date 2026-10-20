@@ -1,12 +1,18 @@
-import { changeEdgeMode, connectNodes, disconnectEdge, removeNodes } from '../model/graphOps'
+import { backfillShotIndexes } from '../model/shotNumbering'
+import { materializeGroupLink, materializeGroupOutputLink, type GroupMaterializedConnection } from './canvasConnectionMaterialization'
+import { connectNodes, disconnectEdge, removeNodes } from '../model/graphOps'
 import { normalizeParameterEdges, readParameterReferenceSlots } from '../model/parameterReferenceSlots'
 import { resolveCanvasReferenceConnection } from '../model/canvasReferenceConnection'
 import { archetypeForNode, resolveTargetModeForEdge } from '../agent/referenceEdgeCapability'
 import { applyArchetypeModeSwitch } from '../nodes/controls/archetypeMeta'
 import type { GenerationCanvasEdge, GenerationCanvasEdgeMode, GenerationCanvasNode, NodeGroup } from '../model/generationCanvasTypes'
-import { groupMemberNodes, planGroupLinkEdges, removeGroupLinkEdgesForMember, upsertGroupInputLink, upsertGroupOutputLink } from '../model/groupInputLinks'
+import { groupMemberNodes, removeGroupLinkEdgesForMember, upsertGroupInputLink, upsertGroupOutputLink } from '../model/groupInputLinks'
 import { createGroupId } from './canvasIds'
-import { bumpPersistRevision, isCategoryId, shouldEmitCanvasMutation, shouldPersistCanvasMutation } from './canvasGuards'
+import { frameBoundsFromMembers } from '../model/canvasFrameBounds'
+import { createCanvasFrameStoreActions } from './canvasFrameStoreActions'
+import { createCanvasGroupMoveActions } from './canvasGroupMoveActions'
+import { resolveNodeVisualSize } from '../nodes/nodeSizing'
+import { bumpPersistRevision, isCategoryId } from './canvasGuards'
 import { getHistoryFlags, pushUndoSnapshot } from '../events/canvasUndoJournal'
 import { emitCanvasGesture } from '../events/canvasEventEmitter'
 import type { CanvasGraphActions, CanvasSliceCreator } from './canvasStoreTypes'
@@ -17,10 +23,16 @@ import type { CanvasGraphActions, CanvasSliceCreator } from './canvasStoreTypes'
  * 杜绝「拉图进新图片节点却停在文生图」这类 bug 从任一入口复发(P2)。**幂等**：当前模式已能落该参考则
  * resolveTargetModeForEdge 返回 null → no-op，故对「已正确规划模式」的 agent 路径零影响。走 updateNode
  * 单一写路径(与手动切 ModeBar 同)。须在边已确认建上之后调用。
+ *
+ * **`history: false` 不是可选项**（2026-09-07 真机走查测出来的）：这次切模式是**连线这一个手势的
+ * 后果**，不是用户另做的一件事。updateNode 默认会给 `meta` patch 打一个自己的 undo barrier，
+ * 于是连完一条线后日志里叠了两个 barrier——第一下 ⌘Z 只把模式切回去（用户眼里画布毫无变化），
+ * 得按第二下才撤掉那条边。用户按一下没反应就不会再按第二下，他得到的结论是「连线撤不了」。
+ * 关掉的只是 barrier：这条 meta 变更照常入日志、照常落盘，所以撤到连线那个 barrier 时它跟着回退。
  */
 type ModeSwitchStore = {
   nodes: GenerationCanvasNode[]
-  updateNode: (nodeId: string, patch: { meta: Record<string, unknown> }) => void
+  updateNode: (nodeId: string, patch: { meta: Record<string, unknown> }, options?: { history?: boolean }) => void
 }
 function autoPromoteTargetModeForEdge(
   store: ModeSwitchStore,
@@ -35,30 +47,11 @@ function autoPromoteTargetModeForEdge(
   if (!nextModeId) return
   const archetype = archetypeForNode(target)
   if (!archetype) return
-  store.updateNode(targetNodeId, { meta: applyArchetypeModeSwitch((target.meta || {}) as Record<string, unknown>, archetype, nextModeId) })
-}
-
-/**
- * 把一条组入参物化成真边（组内每个成员一根）。**唯一物化点**——`connectToGroup`（新建入参）和
- * `moveNodeToGroup`（新成员进组补边）都走它，杜绝两处各写一遍再慢慢漂。
- * 返回计数供调用方出人话 toast（跳过的必须说，不许静默丢）。
- */
-type GroupLinkStore = {
-  nodes: GenerationCanvasNode[]
-  edges: GenerationCanvasEdge[]
-  groups: NodeGroup[]
-}
-type GroupMaterializedConnection = {
-  sourceNodeId: string
-  targetNodeId: string
-  mode: GenerationCanvasEdgeMode
-  edge: GenerationCanvasEdge
-}
-type GroupMaterializeOutcome = {
-  edges: GenerationCanvasEdge[]
-  connected: GroupMaterializedConnection[]
-  skipped: number
-  alreadyConnected: number
+  store.updateNode(
+    targetNodeId,
+    { meta: applyArchetypeModeSwitch((target.meta || {}) as Record<string, unknown>, archetype, nextModeId) },
+    { history: false },
+  )
 }
 
 type GroupEdgeDisconnectScope =
@@ -95,76 +88,66 @@ function isEdgeInDisconnectScope(edge: GenerationCanvasEdge, scope: GroupEdgeDis
   if (scope.direction === 'output') return edge.target === scope.targetNodeId
   return edge.source === scope.sourceNodeId && (scope.mode == null || edge.mode === scope.mode)
 }
-function materializeGroupLink(
-  pre: GroupLinkStore,
-  groupId: string,
-  sourceNodeId: string,
-  targets: GenerationCanvasNode[],
-): GroupMaterializeOutcome {
-  const plan = planGroupLinkEdges({ link: { sourceNodeId }, targets, nodes: pre.nodes, edges: pre.edges })
-  let edges = pre.edges
-  const connected: GroupMaterializedConnection[] = []
-  for (const item of plan.connect) {
-    const next = connectNodes(edges, item.sourceNodeId, item.targetNodeId, item.mode, item.targetParamKey)
-    if (next === edges) continue
-    // connectNodes 是 append；给刚加的那条盖上溯源章（成员移出组时据此精确撤边、不误伤手工边）。
-    const added = next[next.length - 1]
-    if (!added) continue
-    const materialized = { ...added, viaGroupId: groupId }
-    next[next.length - 1] = materialized
-    edges = next
-    connected.push({ sourceNodeId: item.sourceNodeId, targetNodeId: item.targetNodeId, mode: item.mode ?? 'reference', edge: materialized })
-  }
-  return { edges, connected, skipped: plan.skipped.length, alreadyConnected: plan.alreadyConnected.length }
-}
-
-/** 编组作为来源：每个成员各向同一目标物化一条真边；顺序计算使用逐条追加后的 edges。 */
-function materializeGroupOutputLink(
-  pre: GroupLinkStore,
-  groupId: string,
-  sources: GenerationCanvasNode[],
-  target: GenerationCanvasNode,
-): GroupMaterializeOutcome {
-  let edges = pre.edges
-  const connected: GroupMaterializedConnection[] = []
-  let skipped = 0
-  let alreadyConnected = 0
-  for (const source of sources) {
-    if (source.id === target.id) continue
-    const connection = resolveCanvasReferenceConnection(source, target, pre.nodes, edges)
-    const slots = readParameterReferenceSlots(target.meta)
-    if (edges.some((edge) => edge.source === source.id && edge.target === target.id &&
-      (edge.targetParamKey ? slots.some((slot) => slot.key === edge.targetParamKey) : connection.ok && edge.mode === connection.mode))) {
-      alreadyConnected += 1
-      continue
-    }
-    if (!connection.ok) {
-      skipped += 1
-      continue
-    }
-    const { mode, targetParamKey } = connection
-    const next = connectNodes(edges, source.id, target.id, mode, targetParamKey)
-    if (next === edges) continue
-    const added = next[next.length - 1]
-    if (!added) continue
-    const materialized = { ...added, viaGroupId: groupId }
-    next[next.length - 1] = materialized
-    edges = next
-    connected.push({ sourceNodeId: source.id, targetNodeId: target.id, mode: mode ?? 'reference', edge: materialized })
-  }
-  return { edges, connected, skipped, alreadyConnected }
-}
-
-export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = (set, get) => ({
+export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = (set, get, store) => ({
+  // 框（Frame）自己的两个写口住在隔壁（R9 分层：本文件已顶到 800 行门岗）。
+  ...createCanvasFrameStoreActions(set, get, store),
+  ...createCanvasGroupMoveActions(set, get, store),
   startConnection: (nodeId, side = 'right') => {
-    set({ pendingConnectionSourceId: nodeId, pendingConnectionSourceSide: side })
+    set({ pendingConnectionSourceId: nodeId, pendingConnectionSourceSide: side, pendingConnectionSourceKind: 'node' })
+  },
+  startGroupConnection: (groupId, side = 'right') => {
+    const group = get().groups.find((candidate) => candidate.id === groupId)
+    if (!group?.nodeIds.length) return
+    set({ pendingConnectionSourceId: groupId, pendingConnectionSourceSide: side, pendingConnectionSourceKind: 'group' })
   },
   cancelConnection: () => {
-    set({ pendingConnectionSourceId: '', pendingConnectionSourceSide: 'right' })
+    set({ pendingConnectionSourceId: '', pendingConnectionSourceSide: 'right', pendingConnectionSourceKind: 'node' })
   },
   connectToNode: (connectedNodeId) => {
     const pendingNodeId = get().pendingConnectionSourceId
     if (!pendingNodeId) return { ok: false, reason: 'dangling' }
+    if (get().pendingConnectionSourceKind === 'group') {
+      const groupId = pendingNodeId
+      const groupSide = get().pendingConnectionSourceSide
+      // Re-express the group-origin gesture through the existing node→group
+      // commit path. This keeps materialization, declarations, undo and event
+      // replay in one implementation instead of creating a parallel graph API.
+      set({
+        pendingConnectionSourceId: connectedNodeId,
+        pendingConnectionSourceSide: groupSide === 'right' ? 'left' : 'right',
+        pendingConnectionSourceKind: 'node',
+      })
+      return get().connectToGroup(groupId)
+    }
+    const selected = new Set(get().selectedNodeIds)
+    const preBatch = get()
+    const anchorId = selected.has(pendingNodeId) ? pendingNodeId : selected.has(connectedNodeId) ? connectedNodeId : null
+    if (anchorId && selected.size > 1) {
+      const anchor = preBatch.nodes.find((node) => node.id === anchorId)
+      const members = preBatch.nodes.filter((node) => selected.has(node.id) && node.categoryId === anchor?.categoryId)
+      const otherId = anchorId === pendingNodeId ? connectedNodeId : pendingNodeId
+      const other = preBatch.nodes.find((node) => node.id === otherId)
+      if (!other) { get().cancelConnection(); return { ok: false, reason: 'dangling' } }
+      const selectedIsSource = (anchorId === pendingNodeId) === (preBatch.pendingConnectionSourceSide === 'right')
+      const outcome = selectedIsSource
+        ? materializeGroupOutputLink(preBatch, undefined, members, other)
+        : materializeGroupLink(preBatch, undefined, otherId, members)
+      if (outcome.connected.length) {
+        pushUndoSnapshot(preBatch)
+        set((state) => {
+          state.edges = outcome.edges
+          bumpPersistRevision(state)
+          Object.assign(state, getHistoryFlags())
+        })
+        emitCanvasGesture(outcome.connected.map(({ edge }) => ({ type: 'canvas.edge.added' as const, payload: { edge } })))
+        for (const item of outcome.connected) autoPromoteTargetModeForEdge(get(), item.sourceNodeId, item.targetNodeId, item.mode)
+      }
+      get().cancelConnection()
+      const counts = { connected: outcome.connected.length, skipped: outcome.skipped, alreadyConnected: outcome.alreadyConnected }
+      return outcome.connected.length || outcome.alreadyConnected
+        ? { ok: true, ...counts }
+        : { ok: false, reason: 'all_skipped', ...counts }
+    }
     // mode 选择在 set 外用同一份 pre-state 计算(与原内嵌逻辑等价),事件要带上它
     const pre = get()
     // 右端口是输出：pending → 松手节点；左端口是输入：松手节点 → pending。
@@ -175,13 +158,6 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
     const targetNode = pre.nodes.find((n) => n.id === targetNodeId)
     // 边语义按**目标当前模式**挑（单一真相源 selectConnectionEdgeMode）：数组参考槽（omni 角色参考）→
     // character_ref（有序，对应 character1..N）；单帧 i2v → 首/尾帧填空。无源/目标 → 默认通用 reference。
-    if (targetNode?.kind === 'compare' && pre.edges.filter((edge) => edge.target === targetNodeId).length >= 2) {
-      set((state) => {
-        state.pendingConnectionSourceId = ''
-        state.pendingConnectionSourceSide = 'right'
-      })
-      return { ok: false, reason: 'target_input_full' }
-    }
     const connection = sourceNode && targetNode
       ? resolveCanvasReferenceConnection(sourceNode, targetNode, pre.nodes, pre.edges)
       : { ok: false as const, reason: 'dangling' as const }
@@ -193,6 +169,7 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
       set((state) => {
         state.pendingConnectionSourceId = ''
         state.pendingConnectionSourceSide = 'right'
+        state.pendingConnectionSourceKind = 'node'
       })
       return connection
     }
@@ -206,11 +183,22 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
       }
       state.pendingConnectionSourceId = ''
       state.pendingConnectionSourceSide = 'right'
+      state.pendingConnectionSourceKind = 'node'
     })
     const afterEdges = get().edges
     if (afterEdges !== beforeEdges) {
       const addedEdge = afterEdges.find((candidate) => !beforeEdges.some((edge) => edge.id === candidate.id))
-      if (addedEdge) emitCanvasGesture([{ type: 'canvas.edge.added', payload: { edge: addedEdge } }])
+      if (addedEdge) {
+        // 手拖出来的这一条边**必须能撤销**。barrier 存的是日志位置，所以要在这条边的
+        // `canvas.edge.added` 事件**之前**打——打在 emit 之后就等于 undo 停在它后面，
+        // Cmd+Z 会去撤上一笔（用户眼里是「撤销把别的东西弄没了」）。
+        // 2026-09-07 真机走查发现这里一直没打 barrier：连错一条线按 Cmd+Z 毫无反应，
+        // 而同族的 connectToGroup（同文件 275 行）一直是打的——这不是设计，是漏了一处。
+        // 只补这一处还不够：紧跟着的 autoPromoteTargetModeForEdge 会再打一个自己的 barrier，
+        // 于是要按两下才撤掉边。那一半修在它自己身上（history: false，见该函数的 JSDoc）。
+        pushUndoSnapshot(pre)
+        emitCanvasGesture([{ type: 'canvas.edge.added', payload: { edge: addedEdge } }])
+      }
       // 边真建上了才切模式(重复连线等空操作不写 meta)。
       autoPromoteTargetModeForEdge(get(), sourceNodeId, targetNodeId, mode)
     }
@@ -218,12 +206,16 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
   },
   connectToGroup: (groupId) => {
     const pendingNodeId = get().pendingConnectionSourceId
-    if (!pendingNodeId) return { ok: false, reason: 'dangling', connected: 0, skipped: 0, alreadyConnected: 0 }
+    if (!pendingNodeId || get().pendingConnectionSourceKind !== 'node') {
+      get().cancelConnection()
+      return { ok: false, reason: 'dangling', connected: 0, skipped: 0, alreadyConnected: 0 }
+    }
     const pre = get()
     const group = pre.groups.find((candidate) => candidate.id === groupId)
-    const clearPending = (state: { pendingConnectionSourceId: string; pendingConnectionSourceSide: 'left' | 'right' }) => {
+    const clearPending = (state: { pendingConnectionSourceId: string; pendingConnectionSourceSide: 'left' | 'right'; pendingConnectionSourceKind: 'node' | 'group' }) => {
       state.pendingConnectionSourceId = ''
       state.pendingConnectionSourceSide = 'right'
+      state.pendingConnectionSourceKind = 'node'
     }
     if (!group) {
       set(clearPending)
@@ -276,7 +268,7 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
     }
     return { ok: true, connected: outcome.connected.length, skipped: outcome.skipped, alreadyConnected: outcome.alreadyConnected }
   },
-  connectNodes: (sourceNodeId, targetNodeId, mode, targetParamKey) => {
+  connectNodes: (sourceNodeId, targetNodeId, mode, targetParamKey, order) => {
     const beforeEdges = get().edges
     set((state) => {
       const target = state.nodes.find((node) => node.id === targetNodeId)
@@ -287,7 +279,7 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
         : { ok: true as const, mode: mode ?? 'reference', targetParamKey }
       if (!connection.ok) return
       const key = connection.targetParamKey
-      let nextEdges = connectNodes(state.edges, sourceNodeId, targetNodeId, connection.mode, key)
+      let nextEdges = connectNodes(state.edges, sourceNodeId, targetNodeId, connection.mode, key, order)
       if (nextEdges === state.edges) return
       if (key) nextEdges = nextEdges.filter((edge) => edge.target !== targetNodeId || edge.targetParamKey !== key || (edge.source === sourceNodeId && edge.mode === connection.mode))
       state.edges = normalizeParameterEdges(state.nodes, nextEdges)
@@ -306,16 +298,17 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
     }
   },
   updateEdgeMode: (edgeId, mode) => {
-    const beforeEdges = get().edges
+    const existing = get().edges.find((candidate) => candidate.id === edgeId)
+    if (!existing || existing.mode === mode) return
+    pushUndoSnapshot(get())
     set((state) => {
-      const nextEdges = changeEdgeMode(state.edges, edgeId, mode)
-      if (nextEdges === state.edges) return
-      state.edges = nextEdges
+      const edge = state.edges.find((candidate) => candidate.id === edgeId)
+      if (!edge || edge.mode === mode) return
+      edge.mode = mode
       bumpPersistRevision(state)
+      Object.assign(state, getHistoryFlags())
     })
-    if (get().edges !== beforeEdges) {
-      emitCanvasGesture([{ type: 'canvas.edge.mode-changed', payload: { edgeId, mode } }])
-    }
+    emitCanvasGesture([{ type: 'canvas.edge.mode-changed', payload: { edgeId, mode } }])
   },
   disconnectEdge: (edgeId, options) => {
     const pre = get()
@@ -333,7 +326,8 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
           return retained
         })
       : []
-    if (options?.scope === 'parameter') pushUndoSnapshot(pre)
+    // Menu, keyboard and parameter deletion share one user gesture boundary.
+    pushUndoSnapshot(pre)
     set((state) => {
       const nextEdges = groupScope
         ? [...state.edges.filter((edge) => !isEdgeInDisconnectScope(edge, groupScope)), ...retainedEdges]
@@ -359,7 +353,7 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
         }
       }
       bumpPersistRevision(state)
-      if (options?.scope === 'parameter') Object.assign(state, getHistoryFlags())
+      Object.assign(state, getHistoryFlags())
     })
     const post = get()
     if (post.edges.length === pre.edges.length) return
@@ -373,42 +367,6 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
         ]
       : [{ type: 'canvas.edge.disconnected', payload: { edgeId } }])
   },
-  moveGroupNodes: (groupId, delta, options) => {
-    // 预判"会不会真的动"(与内嵌守卫同条件),动了才发事件
-    const shouldEmit = shouldEmitCanvasMutation(options)
-    const pre = shouldEmit ? get() : null
-    const preGroup = pre?.groups.find((candidate) => candidate.id === groupId)
-    const preNodeIds = preGroup?.nodeIds.length ? new Set(preGroup.nodeIds) : null
-    const willMoveIds = pre && preGroup && preNodeIds && (delta.x !== 0 || delta.y !== 0)
-      ? pre.nodes.filter((node) => preNodeIds.has(node.id) && (node.categoryId || 'shots') === preGroup.categoryId).map((node) => node.id)
-      : []
-    set((state) => {
-      if (delta.x === 0 && delta.y === 0) return
-      const group = state.groups.find((candidate) => candidate.id === groupId)
-      if (!group?.nodeIds.length) return
-      const nodeIds = new Set(group.nodeIds)
-      let moved = false
-      for (const node of state.nodes) {
-        if (!nodeIds.has(node.id) || (node.categoryId || 'shots') !== group.categoryId) continue
-        node.position = {
-          x: Math.round(node.position.x + delta.x),
-          y: Math.round(node.position.y + delta.y),
-        }
-        moved = true
-      }
-      if (!moved) return
-      group.updatedAt = Date.now()
-      if (shouldPersistCanvasMutation(options)) bumpPersistRevision(state)
-    })
-    if (shouldEmit && willMoveIds.length) {
-      const post = get()
-      const postGroup = post.groups.find((candidate) => candidate.id === groupId)
-      emitCanvasGesture([
-        ...post.nodes.filter((node) => willMoveIds.includes(node.id)).map((node) => ({ type: 'canvas.node.moved', payload: { nodeId: node.id, position: node.position } })),
-        ...(postGroup ? [{ type: 'canvas.group.updated', payload: { group: postGroup } }] : []),
-      ])
-    }
-  },
   createGroup: (categoryId, name, options) => {
     const id = String(categoryId || '').trim()
     if (!isCategoryId(id)) return null
@@ -420,11 +378,19 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
       ? get().nodes.filter((node) => options!.nodeIds!.includes(node.id) && (node.categoryId || 'shots') === id).map((node) => node.id)
       : []
     const stamp = options?.materializationOperationId?.trim()
+    // 框的边界（2026-09-06 起是真相之一）：调用方给了就用它；没给就按成员包围盒算一次——
+    // 建组当下算好，画布不必再靠「成员包围盒」这层皮反推（那正是拖出去框会追着长大的成因）。
+    const frameBounds = options?.frameBounds ?? frameBoundsFromMembers(
+      get().nodes
+        .filter((node) => explicitNodeIds.includes(node.id))
+        .map((node) => ({ x: node.position.x, y: node.position.y, ...resolveNodeVisualSize(node) })),
+    )
     const group: NodeGroup = {
       id: createGroupId(id),
       name: (name || '').trim() || `组 ${existingCount + 1}`,
       categoryId: id,
       nodeIds: explicitNodeIds,
+      ...(frameBounds ? { frameBounds } : {}),
       ...(stamp ? { materializationOperationId: stamp } : {}),
       createdAt: now,
       updatedAt: now,
@@ -458,11 +424,19 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
     if (nodeIds.length < 2) return null
     const now = Date.now()
     const existingCount = current.groups.filter((group) => group.categoryId === id).length
+    // 先选后组（⌘G）得到的和画出来的是**同一种框**（P1：框只有一种），
+    // 只是它的初始边界由当时的成员包围盒决定，而不是由用户拖出来。
+    const frameBounds = frameBoundsFromMembers(
+      current.nodes
+        .filter((node) => nodeIds.includes(node.id))
+        .map((node) => ({ x: node.position.x, y: node.position.y, ...resolveNodeVisualSize(node) })),
+    )
     const group: NodeGroup = {
       id: createGroupId(id),
       name: (name || '').trim() || `组 ${existingCount + 1}`,
       categoryId: id,
       nodeIds,
+      ...(frameBounds ? { frameBounds } : {}),
       createdAt: now,
       updatedAt: now,
     }
@@ -524,6 +498,26 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
     })
     const recolored = get().groups.find((candidate) => candidate.id === groupId)
     if (recolored) emitCanvasGesture([{ type: 'canvas.group.updated', payload: { group: recolored } }])
+  },
+  setGroupCollapsed: (groupId, collapsed) => {
+    const current = get()
+    const existing = current.groups.find((group) => group.id === groupId)
+    if (!existing || Boolean(existing.collapsed) === collapsed) return
+    pushUndoSnapshot(current)
+    set((state) => {
+      const group = state.groups.find((candidate) => candidate.id === groupId)
+      if (!group) return
+      group.collapsed = collapsed
+      group.updatedAt = Date.now()
+      if (collapsed) {
+        const memberIds = new Set(group.nodeIds)
+        state.selectedNodeIds = state.selectedNodeIds.filter((nodeId) => !memberIds.has(nodeId))
+      }
+      bumpPersistRevision(state)
+      Object.assign(state, getHistoryFlags())
+    })
+    const updated = get().groups.find((candidate) => candidate.id === groupId)
+    if (updated) emitCanvasGesture([{ type: 'canvas.group.updated', payload: { group: updated } }])
   },
   ungroup: (groupId) => {
     const current = get()
@@ -711,17 +705,24 @@ export const createCanvasGraphActions: CanvasSliceCreator<CanvasGraphActions> = 
     // S6-5 整笔撤销补偿:按原 id 放回被删节点/边。幂等:已存在的 id 跳过(不覆盖现状态)。
     const existingNodeIds = new Set(get().nodes.map((node) => node.id))
     const existingEdgeIds = new Set(get().edges.map((edge) => edge.id))
-    const addNodes = nodes.filter((node) => node?.id && !existingNodeIds.has(node.id))
+    const incoming = nodes.filter((node) => node?.id && !existingNodeIds.has(node.id))
     const addEdges = edges.filter((edge) => edge?.id && !existingEdgeIds.has(edge.id))
+    const beforeNodes = get().nodes
+    const repaired = backfillShotIndexes([...beforeNodes, ...incoming], [...get().edges, ...addEdges]).nodes
+    const addNodes = repaired.slice(beforeNodes.length)
+    const existingRepaired = beforeNodes.some((node, index) => node !== repaired[index])
     if (!addNodes.length && !addEdges.length) return
     pushUndoSnapshot(get())
     set((state) => {
-      state.nodes = [...state.nodes, ...addNodes]
+      state.nodes = repaired
       state.edges = [...state.edges, ...addEdges]
       bumpPersistRevision(state)
       Object.assign(state, getHistoryFlags())
     })
-    emitCanvasGesture([
+    if (existingRepaired) {
+      const { nodes, edges, groups } = get()
+      emitCanvasGesture([{ type: 'canvas.snapshot.restored', payload: { snapshot: { nodes, edges, groups } } }])
+    } else emitCanvasGesture([
       ...addNodes.map((node) => ({ type: 'canvas.node.added', payload: { node } })),
       ...addEdges.map((edge) => ({ type: 'canvas.edge.added', payload: { edge } })),
     ])

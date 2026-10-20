@@ -1,5 +1,5 @@
 import { IconZoomIn } from '@tabler/icons-react'
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { NomiLoadingMark, WorkbenchButton } from '../../../design'
@@ -17,8 +17,6 @@ import type { AnchorCheckpointCardModel } from './anchorCheckpointView'
 
 type Props = {
   model: AnchorCheckpointCardModel
-  /** 自动放行倒计时（秒）：仅当 run 配了 anchorAutoReleaseMs 才 >0；生产默认不设 → 0 → 脚注不显示。 */
-  autoReleaseSeconds?: number
   /** 「开拍」= 批准。resolve(true)。 */
   onApprove: () => void
   /** 「先不拍」= 不表态。resolve(false)、门保持 waiting。 */
@@ -35,7 +33,7 @@ function formatMoney(value: number, currency: string, language: string): string 
   }
 }
 
-export function AnchorCheckpointCard({ model, autoReleaseSeconds = 0, onApprove, onDefer, onRework }: Props): JSX.Element {
+export function AnchorCheckpointCard({ model, onApprove, onDefer, onRework }: Props): JSX.Element {
   const { t, i18n } = useTranslation()
   const [selected, setSelected] = React.useState<Set<string>>(() => new Set())
   const [zoomUrl, setZoomUrl] = React.useState<string | null>(null)
@@ -50,9 +48,10 @@ export function AnchorCheckpointCard({ model, autoReleaseSeconds = 0, onApprove,
   }, [])
 
   const reworkMode = selected.size > 0
-  const budgetText = model.approvedBudget === null
-    ? t('generationCommon.production.checkpoint.budgetUnknown')
-    : formatMoney(model.approvedBudget, model.budgetCurrency, i18n.language)
+  // 说明行只在真有已知金额时才提金额；价格未知（今天的常态）就只说「都是你已经确认过的」，不出现预算两个字。
+  const note = model.approvedBudget === null
+    ? t('generationCommon.production.checkpoint.note', { count: model.shotCount })
+    : t('generationCommon.production.checkpoint.noteWithBudget', { budget: formatMoney(model.approvedBudget, model.budgetCurrency, i18n.language), count: model.shotCount })
 
   return (
     <>
@@ -101,7 +100,7 @@ export function AnchorCheckpointCard({ model, autoReleaseSeconds = 0, onApprove,
                       <span
                         className={cn(
                           'absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full opacity-0 transition-opacity',
-                          'bg-nomi-overlay-chip text-nomi-paper group-hover:opacity-100',
+                          'bg-nomi-overlay-chip text-nomi-media-ink group-hover:opacity-100',
                         )}
                         aria-hidden
                       >
@@ -156,18 +155,12 @@ export function AnchorCheckpointCard({ model, autoReleaseSeconds = 0, onApprove,
 
         {/* 说明行：两句承诺（不新增花费 + 只花重拍那张的钱）。零内部词。 */}
         <p className={cn('m-0 mt-4 text-caption leading-relaxed text-nomi-ink-60')} data-anchor-checkpoint-note>
-          {t('generationCommon.production.checkpoint.note', { budget: budgetText, count: model.shotCount })}
+          {note}
         </p>
       </div>
 
-      {/* 固定 footer（不随网格滚）：左=自动放行脚注（默认空）；右=先不拍 + 开拍/重拍。 */}
-      <div className={cn('shrink-0 mt-3 flex items-center gap-2.5 border-t border-nomi-line pt-3')} data-anchor-checkpoint-footer>
-        <span className={cn('text-micro leading-relaxed text-nomi-ink-40')} data-anchor-checkpoint-footnote>
-          {autoReleaseSeconds > 0
-            ? t('generationCommon.production.checkpoint.autoRelease', { minutes: Math.max(1, Math.round(autoReleaseSeconds / 60)) })
-            : ''}
-        </span>
-        <span className={cn('flex-1')} />
+      {/* 固定 footer（不随网格滚）：右=先不拍 + 开拍/重拍。检查点永不自动放行，所以左边没有脚注要摆。 */}
+      <div className={cn('shrink-0 mt-3 flex items-center justify-end gap-2.5 border-t border-nomi-line pt-3')} data-anchor-checkpoint-footer>
         <WorkbenchButton className={cn('h-8 px-4 cursor-pointer')} onClick={onDefer} data-anchor-checkpoint-defer>
           {t('generationCommon.production.checkpoint.defer')}
         </WorkbenchButton>

@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { IconBrandBlender, IconMaximize } from '@tabler/icons-react'
 import { getDesktopBridge } from '../../../desktop/bridge'
@@ -5,7 +6,8 @@ import type { VibingDirectorCatalogAsset } from '../../../desktop/vibingDirector
 import { lazyWithChunkBoundary } from '../../../ui/chunkBoundary'
 import { toast } from '../../../ui/toast'
 import { cn } from '../../../utils/cn'
-import { getActiveWorkbenchProjectId, persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
+import { isProjectExecutionContextCurrent, withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import type { GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import {
@@ -102,6 +104,7 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
   const [fullscreen, setFullscreen] = React.useState(false)
   const [blenderJobId, setBlenderJobId] = React.useState<string | null>(null)
   const blenderJobIdRef = React.useRef<string | null>(null)
+  const editorProjectRef = React.useRef<ProjectExecutionContext | null>(null)
   const updateNode = useGenerationCanvasStore((store) => store.updateNode)
   const state = React.useMemo(() => readVibingDirectorState(node), [node])
   const thumbnailUrl = state.output?.previewUrl ?? node.result?.url
@@ -111,7 +114,8 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     if (jobId) void getDesktopBridge()?.vibingDirector.cancelBlenderPlan(jobId).catch(() => {})
   }, [])
 
-  const persistDirectorState = React.useCallback((nextState: VibingDirectorState) => {
+  const persistDirectorState = React.useCallback((nextState: VibingDirectorState, project: ProjectExecutionContext) => {
+    project.assertCurrent()
     const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id)
     const previous = normalizeVibingDirectorState(current?.meta?.vibingDirectorState)
     const patch: Partial<GenerationCanvasNode> = {
@@ -134,14 +138,16 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     updateNode(node.id, patch)
   }, [node.id, updateNode])
 
-  const applyPlan = React.useCallback(async (
+  const applyPlan = React.useCallback((
     directorState: VibingDirectorState,
     plan: VibingDirectorPlan,
-  ): Promise<VibingDirectorPlanResult> => {
+  ): Promise<VibingDirectorPlanResult> => withProjectAction(async project => {
+    if (!editorProjectRef.current) throw new Error('project_identity_unavailable')
+    editorProjectRef.current.assertCurrent()
+    project.assertCurrent()
     const desktop = getDesktopBridge()
     if (!desktop?.vibingDirector) throw new Error('当前运行环境不支持 Blender Director')
-    const projectId = getActiveWorkbenchProjectId()
-    if (!projectId) throw new Error('请先打开一个本地项目')
+    const projectId = project.binding.projectId
     if (blenderJobIdRef.current) throw new Error('Blender Director 正在执行另一个计划')
 
     const executablePlan = materializeVibingDirectorPlan(plan)
@@ -157,16 +163,19 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
       progress: { phase: 'blender', message: 'Blender 正在执行导演计划', updatedAt: Date.now() },
     })
     try {
-      const result = await desktop.vibingDirector.applyBlenderPlan({
+      const payload = {
         jobId,
         projectId,
+        projectBinding: project.binding,
         directorNodeId: node.id,
         plan: executablePlan,
         assets: directorState.assets.map((asset) => ({ id: asset.id, fileName: asset.fileName })),
         ...(executablePlan.mode === 'amend' && directorState.output?.blendRelativePath
           ? { existingBlendRelativePath: directorState.output.blendRelativePath }
           : {}),
-      })
+      }
+      const result = await desktop.vibingDirector.applyBlenderPlan(payload)
+      project.assertCurrent()
       const output: BlenderDirectorOutput = {
         jobId: result.jobId,
         previewUrl: result.preview.url,
@@ -184,19 +193,21 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
       }
       const applied = applyVibingDirectorPlan(directorState, executablePlan, output)
       if (applied.rejected.length) throw new Error(applied.rejected.join('；'))
-      persistDirectorState(applied.state)
+      persistDirectorState(applied.state, project)
       await persistActiveWorkbenchProjectNow()
+      project.assertCurrent()
       toast('Blender 导演预演已回传当前节点', 'success')
       return applied
     } catch (error: unknown) {
+      if (!isProjectExecutionContextCurrent(project)) throw error
       const message = error instanceof Error ? error.message : String(error)
       updateNode(node.id, { status: 'error', error: message, progress: undefined })
       throw error
     } finally {
       if (blenderJobIdRef.current === jobId) blenderJobIdRef.current = null
-      setBlenderJobId(null)
+      if (isProjectExecutionContextCurrent(project)) setBlenderJobId(null)
     }
-  }, [node.id, persistDirectorState, updateNode])
+  }, () => { throw new Error('请先打开一个本地项目') }), [node.id, persistDirectorState, updateNode])
 
   const cancelBlender = React.useCallback(() => {
     const jobId = blenderJobIdRef.current
@@ -204,17 +215,20 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     void getDesktopBridge()?.vibingDirector.cancelBlenderPlan(jobId).catch(() => {})
   }, [])
 
-  const importAsset = React.useCallback(async (
+  const importAsset = React.useCallback((
     source: BlenderDirectorAssetSource,
     license?: string,
-  ): Promise<BlenderDirectorAsset | null> => {
+  ): Promise<BlenderDirectorAsset | null> => withProjectAction(async project => {
+    if (!editorProjectRef.current) throw new Error('project_identity_unavailable')
+    editorProjectRef.current.assertCurrent()
+    project.assertCurrent()
     const desktop = getDesktopBridge()
     if (!desktop?.vibingDirector) throw new Error('当前运行环境不支持 Blender 资产库')
-    const projectId = getActiveWorkbenchProjectId()
-    if (!projectId) throw new Error('请先打开一个本地项目')
-    const result = await desktop.vibingDirector.importAsset({ projectId, directorNodeId: node.id, source, ...(license ? { license } : {}) })
+    const payload = { projectId: project.binding.projectId, projectBinding: project.binding, directorNodeId: node.id, source, ...(license ? { license } : {}) }
+    const result = await desktop.vibingDirector.importAsset(payload)
+    project.assertCurrent()
     return result.canceled ? null : result.asset ?? null
-  }, [node.id])
+  }, () => { throw new Error('请先打开一个本地项目') }), [node.id])
 
   const listCatalogAssets = React.useCallback(async (query: string): Promise<VibingDirectorCatalogAsset[]> => {
     const director = getDesktopBridge()?.vibingDirector
@@ -222,35 +236,42 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     return director.listCatalogAssets({ query, limit: 60 })
   }, [])
 
-  const importCatalogAsset = React.useCallback(async (catalogAssetId: string): Promise<BlenderDirectorAsset> => {
+  const importCatalogAsset = React.useCallback((catalogAssetId: string): Promise<BlenderDirectorAsset> => withProjectAction(async project => {
+    if (!editorProjectRef.current) throw new Error('project_identity_unavailable')
+    editorProjectRef.current.assertCurrent()
+    project.assertCurrent()
     const director = getDesktopBridge()?.vibingDirector
     if (!director) throw new Error('当前运行环境不支持 Director 开源资产目录')
-    const projectId = getActiveWorkbenchProjectId()
-    if (!projectId) throw new Error('请先打开一个本地项目')
-    const result = await director.importCatalogAsset({
-      projectId,
+    const payload = {
+      projectId: project.binding.projectId,
+      projectBinding: project.binding,
       directorNodeId: node.id,
       catalogAssetId,
-    })
+    }
+    const result = await director.importCatalogAsset(payload)
+    project.assertCurrent()
     return result.asset
-  }, [node.id])
+  }, () => { throw new Error('请先打开一个本地项目') }), [node.id])
 
-  const openBlender = React.useCallback((directorState: VibingDirectorState) => {
+  const openBlender = React.useCallback((directorState: VibingDirectorState) => withProjectAction(project => {
+    if (!editorProjectRef.current) throw new Error('project_identity_unavailable')
+    editorProjectRef.current.assertCurrent()
+    project.assertCurrent()
     const output = directorState.output
     if (!output) {
       toast('请先让 Director Agent 应用一个 Blender 计划', 'info')
       return
     }
     const desktop = getDesktopBridge()
-    const projectId = getActiveWorkbenchProjectId()
-    if (!desktop?.vibingDirector || !projectId) {
+    if (!desktop?.vibingDirector) {
       toast('当前运行环境无法打开 Blender 工程', 'error')
       return
     }
-    void desktop.vibingDirector.openBlender({ projectId, directorNodeId: node.id, blendRelativePath: output.blendRelativePath })
-      .then(() => toast('已在 Blender 中打开 Director 工程', 'success'))
-      .catch((error: unknown) => toast(error instanceof Error ? error.message : '无法打开 Blender 工程', 'error'))
-  }, [node.id])
+    const payload = { projectId: project.binding.projectId, projectBinding: project.binding, directorNodeId: node.id, blendRelativePath: output.blendRelativePath }
+    void desktop.vibingDirector.openBlender(payload)
+      .then(() => { project.assertCurrent(); toast('已在 Blender 中打开 Director 工程', 'success') })
+      .catch((error: unknown) => { if (isProjectExecutionContextCurrent(project)) toast(error instanceof Error ? error.message : '无法打开 Blender 工程', 'error') })
+  }), [node.id])
 
   const openAssetSource = React.useCallback((source: Exclude<BlenderDirectorAssetSource, 'local'>) => {
     void getDesktopBridge()?.vibingDirector.openAssetSource(source).catch((error: unknown) => {
@@ -260,7 +281,10 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
 
   const openDirector = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
-    setFullscreen(true)
+    withProjectAction(project => {
+      editorProjectRef.current = project
+      setFullscreen(true)
+    }, () => { toast('请先打开一个本地项目', 'error') })
   }, [])
 
   return (
@@ -303,9 +327,17 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
             readOnly={readOnly}
             onClose={() => {
               setFullscreen(false)
-              void persistActiveWorkbenchProjectNow().catch(() => {})
+              withProjectAction(project => {
+                if (!isProjectExecutionContextCurrent(editorProjectRef.current ?? undefined)) return
+                project.assertCurrent()
+                void persistActiveWorkbenchProjectNow().then(() => project.assertCurrent()).catch(() => {})
+              })
+              editorProjectRef.current = null
             }}
-            onStateChange={persistDirectorState}
+            onStateChange={nextState => withProjectAction(project => {
+              if (!isProjectExecutionContextCurrent(editorProjectRef.current ?? undefined)) return
+              persistDirectorState(nextState, project)
+            })}
             onApplyPlan={applyPlan}
             onImportAsset={importAsset}
             onListCatalogAssets={listCatalogAssets}

@@ -19,17 +19,46 @@ import { deriveModelListing, referenceModeForIntent, videoBodyKeysForModel } fro
 import { apiKeyDecryptStatus } from "./secrets";
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
+// 主进程诊断输出已收口到 electron/logging/logger（打包后 console.* 没人接住，见
+// docs/fixes/2026-09-06-main-process-logs-into-the-void.root-cause.json）。
+// 这里改断言那个出口而不是 console：断言从「有人往终端喷了点什么」升级成
+// 「哪个模块、什么事件、带哪些字段」，比原来更能说明问题。
+const logged = vi.hoisted(() => [] as { level: string; scope: string; event: string; rest: unknown[] }[])
+vi.mock("../logging/logger", () => {
+  const record = (level: string) => (scope: string, event: string, ...rest: unknown[]) => {
+    logged.push({ level, scope, event, rest })
+  }
+  return {
+    logInfo: record("info"),
+    logWarn: record("warn"),
+    logError: record("error"),
+    logDevDetail: () => undefined,
+    logVendorCall: () => undefined,
+    installMainLogger: () => undefined,
+    currentLogFile: () => "",
+  }
+})
+
 const vendor = (over: Partial<Vendor>): Vendor => ({ key: "v", name: "V", enabled: true, authType: "bearer", createdAt: "t", updatedAt: "t", ...over });
-const model = (over: Partial<Model>): Model => ({ modelKey: "m", vendorKey: "v", labelZh: "M", kind: "image", enabled: true, createdAt: "t", updatedAt: "t", ...over } as Model);
+const model = (over: Partial<Model>): Model => ({
+  modelKey: "m",
+  vendorKey: "v",
+  labelZh: "M",
+  kind: "image",
+  enabled: true,
+  customCall: { script: "return { assets: [] }", updatedAt: "t" },
+  createdAt: "t",
+  updatedAt: "t",
+  ...over,
+} as Model);
 const mapping = (over: Partial<Mapping>): Mapping => ({ id: "id", vendorKey: "v", taskKind: "text_to_image", name: "n", enabled: true, create: { method: "POST", path: "/x", body: {} }, createdAt: "t", updatedAt: "t", ...over } as Mapping);
 
 function state(over: Partial<CatalogState>): CatalogState {
   return { version: 8, vendors: [], models: [], mappings: [], apiKeysByVendor: {}, ...over } as CatalogState;
 }
 
-// locked 路会 console.error（解密失败日志）——静音，避免污染测试输出。
 beforeEach(() => {
-  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  logged.length = 0;
 });
 
 describe("Pavo browser bridge reference contract", () => {
@@ -117,6 +146,84 @@ describe("deriveModelListing — keyStatus 三态（ok / missing / locked）", (
     });
     expect(deriveModelListing(withDisabled).map((e) => e.modelKey)).toEqual(["on"]);
   });
+
+  // 2026-09-11 拍板「自检失败不下架」。旧行为：`meta.adapter` 一存在就只认 activeRevision，
+  // 而一次失败的自检恰好只写 state:"failed"、不写 activeRevision —— 按一次验证按钮就把一个
+  // 手动配好、本来能在模型框里选到的模型永久抹掉，且没有回头路。自检只增不减。
+  it("keeps staged or failed adapter models listed when their raw mappings are enabled", () => {
+    const hidden = state({
+      vendors: [vendor({ key: "relay", authType: "none" })],
+      models: [
+        model({ modelKey: "staged", vendorKey: "relay", customCall: undefined, meta: { adapter: { state: "unverified", modes: [], updatedAt: "t" } } }),
+        model({ modelKey: "failed", vendorKey: "relay", customCall: undefined, meta: { adapter: { state: "failed", modes: [], updatedAt: "t" } } }),
+      ],
+      mappings: [
+        mapping({ id: "staged-map", vendorKey: "relay", modelKey: "staged", enabled: true }),
+        mapping({ id: "failed-map", vendorKey: "relay", modelKey: "failed", enabled: true }),
+      ],
+    });
+
+    expect(deriveModelListing(hidden).map((entry) => entry.modelKey)).toEqual(["staged", "failed"]);
+  });
+
+  it("keeps only legacy text fallback plus a failed repair with a preserved active revision visible", () => {
+    const visible = state({
+      vendors: [vendor({ key: "relay", authType: "none" })],
+      models: [
+        model({ modelKey: "legacy-text", vendorKey: "relay", kind: "text", customCall: undefined }),
+        model({ modelKey: "legacy-image", vendorKey: "relay", kind: "image", customCall: undefined }),
+        model({ modelKey: "legacy-video", vendorKey: "relay", kind: "video", customCall: undefined }),
+        model({ modelKey: "legacy-audio", vendorKey: "relay", kind: "audio", customCall: undefined }),
+        model({
+          modelKey: "active",
+          vendorKey: "relay",
+          customCall: undefined,
+          meta: { adapter: { state: "failed", activeRevision: "revision-good", modes: [{ taskKind: "text_to_image", state: "verified" }], updatedAt: "t" } },
+        }),
+      ],
+    });
+
+    expect(deriveModelListing(visible).map((entry) => entry.modelKey)).toEqual(["legacy-text", "active"]);
+  });
+
+  it("lets a raw custom-call script keep an adapter model listed when its self-check has not certified a revision", () => {
+    const customCall = state({
+      vendors: [vendor({ key: "relay", authType: "none" })],
+      models: [
+        model({
+          modelKey: "scripted",
+          vendorKey: "relay",
+          customCall: { script: "return { text: 'ok' }", updatedAt: "t" },
+          meta: { adapter: { state: "failed", modes: [], updatedAt: "t" } },
+        }),
+        model({
+          modelKey: "failed-without-execution",
+          vendorKey: "relay",
+          customCall: undefined,
+          meta: { adapter: { state: "failed", modes: [], updatedAt: "t" } },
+        }),
+      ],
+    });
+
+    // scripted 有可执行脚本 → 仍然可用；failed-without-execution 没有任何可执行证据 → 仍然不列。
+    // 判据回到「这一行到底有没有能跑的东西」，而不是「它进没进过认证域」。
+    expect(deriveModelListing(customCall).map((entry) => entry.modelKey)).toEqual(["scripted"]);
+  });
+
+  it("reports legacy plaintext credentials as needs_resave with a migration action", () => {
+    const legacy = state({
+      vendors: [vendor({ key: "relay", name: "Relay" })],
+      models: [model({ modelKey: "legacy", vendorKey: "relay" })],
+      apiKeysByVendor: {
+        relay: { vendorKey: "relay", apiKey: "sk-legacy", enc: "plain", enabled: true, createdAt: "t", updatedAt: "t" },
+      },
+    });
+
+    expect(deriveModelListing(legacy)[0]).toMatchObject({
+      keyStatus: "needs_resave",
+      statusReason: expect.stringContaining("重新保存"),
+    });
+  });
 });
 
 describe("deriveModelListing — 解密探测按 vendor 记忆化（单 vendor 多模型只探一次）", () => {
@@ -141,9 +248,7 @@ describe("deriveModelListing — 解密探测按 vendor 记忆化（单 vendor �
     expect(probe).toHaveBeenCalledWith(singleVendorManyModels.apiKeysByVendor.apimart);
   });
 
-  it("locked vendor 多模型：解密只探一次 → 只吐一行 console.error（不再 N 行重复日志）", () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    errorSpy.mockClear();
+  it("locked vendor 多模型：解密只探一次 → 只吐一行解密失败日志（不再 N 行重复）", () => {
     const lockedManyModels = state({
       vendors: [vendor({ key: "volcengine", name: "火山" })],
       models: [
@@ -155,10 +260,10 @@ describe("deriveModelListing — 解密探测按 vendor 记忆化（单 vendor �
         volcengine: { vendorKey: "volcengine", apiKey: b64("FAIL"), enc: "safeStorage", enabled: true, createdAt: "t", updatedAt: "t" },
       },
     });
-    // 用真 apiKeyDecryptStatus（会触发 decryptString→抛错→console.error）；记忆化后只应有 1 行。
+    // 用真 apiKeyDecryptStatus（会触发 decryptString→抛错→logError）；记忆化后只应有 1 行。
     const listing = deriveModelListing(lockedManyModels);
     expect(listing.every((e) => e.keyStatus === "locked")).toBe(true);
-    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(logged.filter((entry) => entry.event === "api-key-decrypt-failed")).toHaveLength(1);
   });
 
   it("多 vendor：每个 vendor 各探一次（记忆化不跨 vendor 串台）", () => {
@@ -172,11 +277,12 @@ describe("deriveModelListing — 解密探测按 vendor 记忆化（单 vendor �
       ],
       apiKeysByVendor: {
         apimart: { vendorKey: "apimart", apiKey: b64("k"), enc: "safeStorage", enabled: true, createdAt: "t", updatedAt: "t" },
-        // kie 无记录 → probe 收到 undefined，仍算一次探测。
+        // kie 无记录 → 记录本身就不算数（credentialRecordCounts），连探针都不调。
       },
     });
     deriveModelListing(twoVendors, { keyStatusProbe: probe });
-    expect(probe).toHaveBeenCalledTimes(2); // apimart 一次 + kie 一次，非 3 次
+    // apimart 两个模型只探一次（记忆化）；kie 没有记录，一次都不探（没材料就别开钥匙串）。
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 
   it("authType='none' 的 vendor 恒 ok，压根不调探测（记忆化 + 短路都不触发解密）", () => {
@@ -306,5 +412,25 @@ describe("referenceModeForIntent — 带参考时按目录选生成 kind（不�
       mappings: [mapping({ id: "g", vendorKey: "relay", taskKind: "image_edit", create: { method: "POST", path: "/x", body: { image: "{{request.params.image_url}}" } } })],
     });
     expect(referenceModeForIntent(s, "relay", "relay-img", "image")).toBe("image_edit");
+  });
+});
+
+// 这个模块的**导出面**是一条锁（2026-09-22）。
+//
+// 为什么要它：`7df4c036f` 在这里只删了两个没人读的 import（合并后压 lint 用的是删真死代码，
+// 不是抬上限）。那次改动没有症状、没有直接原因、没有类根因——编一份纠正性根因合同出来，
+// 只会让根因台账多一条假记录，所以走的是 `change_kind: "structural"` 那条正规出口。
+// 而结构性合同宣称的是「行为逐字不变」，这条断言就是那句话**机器可核**的形状：
+// 导出集合少一个、多一个、改个名字，它当场红。
+describe("modelCatalogListing 的导出面", () => {
+  it("导出集合是一条锁——纯删死 import 不许动它", async () => {
+    const module = await import("./modelCatalogListing");
+    expect(Object.keys(module).sort()).toEqual([
+      "deriveModelListing",
+      "mappingsForModel",
+      "modelModeBodies",
+      "referenceModeForIntent",
+      "videoBodyKeysForModel",
+    ]);
   });
 });

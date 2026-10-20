@@ -1,6 +1,8 @@
+import { expectComposerFooterHit } from './_composerFixedFooter.mjs'
 // Real Electron journey for canvas batch production. The UI, spend gate, IPC, queue, HTTP transport,
 // persistence, retry, and screenshots are real; only the remote vendor is replaced by a loopback fixture.
-import { launchNomiApp } from './_launchApp.mjs'
+import { launchNomiApp, ACCEPTANCE_WIDE_VIEWPORT } from './_launchApp.mjs'
+import { findCanvasBlankPoint, findConnectionStartPoint, findNodeHitPoint, panCanvasUntilInside, waitForCanvasViewportSettled } from './_canvasHit.mjs'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -78,7 +80,7 @@ function imageMapping(modelKey, taskKind) {
     create: {
       method: 'POST',
       path: '/v1/images/generations',
-      headers: { Authorization: 'Bearer {{user_api_key}}', 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: {
         model: '{{model.modelKey}}',
         prompt: '{{request.prompt}}',
@@ -96,6 +98,26 @@ function imageMapping(modelKey, taskKind) {
   }
 }
 
+function videoMapping(modelKey) {
+  return {
+    id: `${modelKey}-text_to_video`,
+    vendorKey: VENDOR,
+    taskKind: 'text_to_video',
+    modelKey,
+    name: `${modelKey} text_to_video`,
+    enabled: true,
+    create: {
+      method: 'POST',
+      path: '/v1/videos/generations',
+      headers: { 'Content-Type': 'application/json' },
+      body: { model: '{{model.modelKey}}', prompt: '{{request.prompt}}' },
+      response_mapping: { video_url: 'data.0.url' },
+    },
+    createdAt: NOW,
+    updatedAt: NOW,
+  }
+}
+
 fs.writeFileSync(path.join(settingsDir, 'model-catalog.json'), JSON.stringify({
   version: 8,
   vendors: [{
@@ -103,7 +125,11 @@ fs.writeFileSync(path.join(settingsDir, 'model-catalog.json'), JSON.stringify({
     name: 'Batch Mock',
     enabled: true,
     baseUrlHint: `http://127.0.0.1:${port}`,
-    authType: 'bearer',
+    // The loopback fixture accepts the upstream image inline. Declaring this
+    // keeps the real runtime from falling back to public anonymous upload
+    // hosts during the dependency-wave assertion.
+    assetIngestion: { strategy: 'inline-base64', accepts: ['image'] },
+    authType: 'none',
     authHeader: null,
     authQueryParam: null,
     providerKind: 'openai-compatible',
@@ -116,13 +142,15 @@ fs.writeFileSync(path.join(settingsDir, 'model-catalog.json'), JSON.stringify({
     { modelKey: VIDEO_A, vendorKey: VENDOR, labelZh: '批量视频 A', kind: 'video', enabled: true, createdAt: NOW, updatedAt: NOW },
     { modelKey: VIDEO_B, vendorKey: VENDOR, labelZh: '批量视频 B', kind: 'video', enabled: true, createdAt: NOW, updatedAt: NOW },
   ],
-  mappings: [IMAGE_A, IMAGE_B].flatMap((modelKey) => [
-    imageMapping(modelKey, 'text_to_image'),
-    imageMapping(modelKey, 'image_edit'),
-  ]),
-  apiKeysByVendor: {
-    [VENDOR]: { apiKey: 'sk-batch-mock', vendorKey: VENDOR, enabled: true, enc: 'plain', createdAt: NOW, updatedAt: NOW },
-  },
+  mappings: [
+    ...[IMAGE_A, IMAGE_B].flatMap((modelKey) => [
+      imageMapping(modelKey, 'text_to_image'),
+      imageMapping(modelKey, 'image_edit'),
+    ]),
+    videoMapping(VIDEO_A),
+    videoMapping(VIDEO_B),
+  ],
+  apiKeysByVendor: {},
 }, null, 2))
 
 let shotIndex = 0
@@ -139,35 +167,41 @@ function check(condition, message, details = '') {
   console.log(`  ok: ${message}`)
 }
 
-async function dismissFirstRun(win) {
-  await win.evaluate(() => {
-    window.localStorage.setItem('__nomiE2E', '1')
-    for (const key of ['nomi:splash:v1', 'nomi:journey-tour:v1', 'nomi:canvas-gesture-hint:v1', 'nomi-onboarding-checklist:v1']) {
-      window.localStorage.setItem(key, 'seen')
-    }
-  })
-  await win.reload()
-  await win.waitForTimeout(1200)
-  for (let index = 0; index < 5; index += 1) {
-    const skip = win.locator('button,[role="button"],a', { hasText: /跳过|开始创作|进入|完成|先逛逛/ }).first()
-    if (await skip.count()) await skip.click({ timeout: 800 }).catch(() => {})
-    await win.keyboard.press('Escape').catch(() => {})
-    await win.waitForTimeout(200)
-  }
-}
-
 async function addNodeWithPrompt(win, kind, prompt) {
   await win.locator(`[aria-label="添加${kind}节点"]`).first().click({ timeout: 5000 })
   await win.waitForTimeout(900)
+  // 2026-09-25 起程序不替人挪画布：舞台放不下时新卡落在屏外、画布边缘出一颗「新节点在…」提示（1800 宽窗口里
+  // Agent 面板开着，两张大卡并排就放不下第二张）。人会点提示过去——走查照做。
+  const arrivalHint = win.locator('[data-canvas-arrival-hint]')
+  if (await arrivalHint.count()) {
+    await arrivalHint.first().click()
+    await expect(arrivalHint).toHaveCount(0)
+  }
   const nodes = win.locator(`[data-kind="${kind === '图片' ? 'image' : 'video'}"][data-node-id]`)
   const target = nodes.last()
   await target.waitFor({ timeout: 5000 })
   const id = await target.getAttribute('data-node-id')
-  const editor = win.locator('div[contenteditable="true"]').last()
+  // 卡贴着舞台边时浮框（钉在正下方、定宽 560、被挡就挡）会伸出舞台；先把卡整张拖进来。
+  const cardPan = await panCanvasUntilInside(win, win.locator(`.generation-canvas-v2-node[data-node-id="${id}"]`))
+  check(cardPan.ok, `${kind}卡整张拖进舞台`, JSON.stringify(cardPan))
+  const editor = win.locator(`[data-node-id="${id}"] div[contenteditable="true"]`).last()
+  // The editor's own box can remain tall while its flex scrollport collapses to zero.
+  // Assert the actual visible input region for both image and video composers.
+  await expect.poll(() => editor.evaluate(element => element.closest('[data-prompt-box]').parentElement.clientHeight), { message: `${kind}提示词区保留三行可输入空间` }).toBeGreaterThanOrEqual(72)
   await editor.click({ timeout: 5000 })
-  await win.keyboard.insertText(prompt)
+  const composerCard = editor.locator('xpath=ancestor::*[contains(@class, "generation-canvas-v2-node__composer-card")]')
+  const composerPan = await panCanvasUntilInside(win, composerCard)
+  check(composerPan.ok, `${kind}浮框整张拖进舞台`, JSON.stringify(composerPan))
+  await expectComposerFooterHit(composerCard, `${kind}生成`)
+  await editor.fill(prompt)
   await win.waitForTimeout(500)
   return id
+}
+
+async function clickCanvasBlank(win) {
+  const point = await findCanvasBlankPoint(win)
+  if (!point) throw new Error('No unobstructed canvas pane for selection')
+  await win.mouse.click(point.x, point.y)
 }
 
 async function clearSelection(win) {
@@ -175,9 +209,7 @@ async function clearSelection(win) {
   if (await clear.count()) {
     await clear.click()
   } else {
-    const stage = win.locator('.generation-canvas-v2__stage').first()
-    const box = await stage.boundingBox()
-    if (box) await stage.click({ position: { x: Math.max(20, box.width - 80), y: 80 } })
+    await clickCanvasBlank(win)
   }
   await win.waitForTimeout(500)
 }
@@ -213,21 +245,38 @@ const pageErrors = []
 const consoleErrors = []
 const { app, win } = await launchNomiApp({
   name: 'canvas-batch-production',
+  ...(process.argv.includes('--wide') ? { viewportSize: ACCEPTANCE_WIDE_VIEWPORT } : {}),
   userDataDir,
   settingsDir,
   projectsDir,
-  settleMs: 1200,
+  settleMs: 0,
+  args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'],
+  initialLocalStorage: { 'nomi:splash:v1': 'seen', 'nomi:journey-tour:v1': 'seen' },
   env: {
     NOMI_RENDERER_URL: `file://${path.join(repoRoot, 'dist/index.html')}`,
   },
 })
 
 try {
-  const browserWindow = await app.browserWindow(win)
-  await browserWindow.evaluate((window) => window.setBounds({ x: 0, y: 0, width: 1680, height: 1020 }))
+  console.log('GL_RENDERER', await win.evaluate(() => {
+    const gl = document.createElement('canvas').getContext('webgl')
+    const ext = gl?.getExtension('WEBGL_debug_renderer_info')
+    return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'unavailable'
+  }))
   win.on('pageerror', (error) => pageErrors.push(String(error)))
-  win.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
-  await dismissFirstRun(win)
+  win.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+    if (message.text().startsWith('CANVAS_CLICK_DIAGNOSTIC')) console.log(message.text())
+  })
+  await win.evaluate(() => document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null
+    if (target?.closest('.react-flow__node, .workbench-generation__timeline-handle')) {
+      console.log('CANVAS_CLICK_DIAGNOSTIC', JSON.stringify({
+        tag: target.tagName, label: target.closest('[aria-label]')?.getAttribute('aria-label'),
+        nodeId: target.closest('.react-flow__node')?.getAttribute('data-id'), x: event.clientX, y: event.clientY,
+      }))
+    }
+  }, true))
 
   await win.getByText('新建空白项目', { exact: false }).first().click({ timeout: 5000 })
   await win.waitForTimeout(2200)
@@ -239,7 +288,7 @@ try {
   //  并撤掉了旧的按能力上色的 chip / 连通小绿点 UI）。这里只作为前置：确认种子进去的 Batch Mock
   //  供应商已在设置里出现（= 可被批量模型选择器选到），能力 chip 的配色是设置面板的事、与本走查无关。
   await win.getByRole('button', { name: /打开模型设置/ }).first().click({ timeout: 5000 })
-  const modelPanel = win.getByRole('dialog', { name: '设置' })
+  const modelPanel = win.locator('[data-settings-dialog]').first()
   await modelPanel.waitFor({ state: 'visible', timeout: 5000 })
   await win.waitForTimeout(900)
   const batchMockRow = modelPanel.locator('button').filter({ hasText: 'Batch Mock' }).first()
@@ -255,14 +304,20 @@ try {
   await win.waitForTimeout(1400)
   await clearSelection(win)
 
-  const source = win.locator(`[data-node-id="${sourceId}"]`)
-  await source.click({ position: { x: 36, y: 36 } })
+  const source = win.locator(`.react-flow__node[data-id="${sourceId}"]`)
+  // 选中源节点：点哪儿现问一句「这点归谁」，不写死节点内偏移。写死的 (36,36) 在
+  // 2026-09-11 之后永远点不到——main 把「文字」提成左缘工具条的常驻按钮，工具条高了
+  // 一格，正好盖住这颗节点的左上角，Playwright 重试到 30s 超时（判据见 _canvasHit.mjs）。
+  const sourceHit = await findNodeHitPoint(win, { nodeSelector: `.react-flow__node[data-id="${sourceId}"]` })
+  check(Boolean(sourceHit), '源节点身上找得到一个没被画布浮层盖住的点')
+  await win.mouse.click(sourceHit.x, sourceHit.y)
   await win.waitForTimeout(500)
-  const target = win.locator(`[data-node-id="${targetId}"]`)
-  const handleBox = await source.locator('[data-side="right"]').boundingBox()
+  const target = win.locator(`.react-flow__node[data-id="${targetId}"]`)
+  // 按人按的地方起线：卡外那颗「+」圈（见 _canvasHit.mjs findConnectionStartPoint 的根因注释）。
+  const startPoint = await findConnectionStartPoint(win, { handleSelector: `.react-flow__node[data-id="${sourceId}"] .generation-canvas-react-flow__handle--source[data-side="right"]` })
   const targetBox = await target.boundingBox()
-  check(Boolean(handleBox && targetBox), '连接点和目标节点都有可点击区域')
-  await win.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2)
+  check(Boolean(startPoint && targetBox), '连接点和目标节点都有可点击区域', JSON.stringify(startPoint))
+  await win.mouse.move(startPoint.x, startPoint.y)
   await win.mouse.down()
   await win.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 12 })
   await win.waitForTimeout(300)
@@ -273,9 +328,10 @@ try {
 
   const generateAll = win.locator('[data-batch-scope="all"]')
   await generateAll.waitFor({ timeout: 5000 })
-  const generateAllProof = await proveProbe(generateAll, '待生成节点存在时批量生成入口可见')
+  const generateAllProbe = await proveProbe(generateAll, '待生成节点存在时显示批量生成入口')
   check((await generateAll.textContent())?.includes('2'), '无选择入口显示两个待生成节点')
-  await chooseSelectOption(win, '图片 ×2', '批量图片 B')
+  await chooseSelectOption(win, '文生图 ×1', '批量图片 B')
+  await chooseSelectOption(win, '参考图改图 ×1', '批量图片 B')
   await win.waitForTimeout(1200)
   const allScopeProjectFile = findProjectJson(projectsDir)
   check(Boolean(allScopeProjectFile), '未框选时批量模型更新已触发项目持久化')
@@ -297,11 +353,18 @@ try {
 
   await generateAll.click()
   dialog = await spendDialog(win)
+  console.log('CONFIRM_HIT', JSON.stringify(await dialog.getByRole('button', { name: '生成', exact: true }).evaluate(button => {
+    const rect = button.getBoundingClientRect()
+    const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2
+    return { x, y, hit: document.elementFromPoint(x, y)?.outerHTML.slice(0, 1500), stack: document.elementsFromPoint(x, y).map(el => ({ tag: el.tagName, cls: el.className, pointer: getComputedStyle(el).pointerEvents })).slice(0, 8) }
+  })))
   await dialog.getByRole('button', { name: '生成', exact: true }).click()
   await win.waitForFunction(() => document.querySelectorAll('[data-kind="image"][data-status="success"]').length >= 2, null, { timeout: 30000 })
   await snap(win, 'generate-all-completed')
-  await win.waitForTimeout(400)
-  await expectAbsent(generateAll, { provenBy: generateAllProof })
+  await expectAbsent(generateAll, {
+    provenBy: generateAllProbe,
+    message: '全部节点完成后批量生成底栏退出，不显示“生成全部 0 个”',
+  })
   const sourceCall = wireCalls.find((call) => call.prompt.includes('源图'))
   const targetCall = wireCalls.find((call) => call.prompt.includes('下游图'))
   check(Boolean(sourceCall && targetCall), '依赖波次两个请求都完成')
@@ -314,14 +377,16 @@ try {
   const videoId = await addNodeWithPrompt(win, '视频', '批量视频模型切换验证')
   check(Boolean(retryImageId && videoId), '真实点击新增图片和视频节点')
   await clearSelection(win)
-  await win.locator('.generation-canvas-v2__stage').click({ position: { x: 900, y: 100 } }).catch(() => {})
+  await clickCanvasBlank(win)
+  await expect(win.getByRole('button', { name: '展开生成时间轴' })).toHaveCount(1)
   await win.keyboard.press('Meta+a')
   await win.waitForTimeout(900)
 
   const selectedGenerate = win.locator('[data-batch-scope="selection"]')
   await selectedGenerate.waitFor({ timeout: 5000 })
   check((await selectedGenerate.textContent())?.includes('2'), '混合选择只统计两个待生成节点')
-  await chooseSelectOption(win, '图片 ×3', '批量图片 B')
+  await chooseSelectOption(win, '文生图 ×2', '批量图片 B')
+  await chooseSelectOption(win, '参考图改图 ×1', '批量图片 B')
   await chooseSelectOption(win, '视频 ×1', '批量视频 B')
   await win.waitForTimeout(1200)
   const projectFile = findProjectJson(projectsDir)
@@ -350,10 +415,19 @@ try {
   const modelNotificationBoxes = await win
     .locator('.mantine-Notifications-root[data-position="top-right"]')
     .getByRole('alert')
-    .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect()).map(({ x, width }) => ({ x, width })))
+    .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect()).map(({ x, y, width, height }) => ({ x, y, width, height })))
   check(modelNotificationBoxes.length > 0, '模型切换反馈通知仍然可见')
   check(
-    Boolean(modelPanelBox && modelNotificationBoxes.every((box) => box.x + box.width <= modelPanelBox.x - 8)),
+    Boolean(
+      modelPanelBox &&
+        modelNotificationBoxes.every(
+          (box) =>
+            box.x + box.width <= modelPanelBox.x - 8 ||
+            box.x >= modelPanelBox.x + modelPanelBox.width + 8 ||
+            box.y + box.height <= modelPanelBox.y - 8 ||
+            box.y >= modelPanelBox.y + modelPanelBox.height + 8,
+        ),
+    ),
     '模型面板打开时通知不会遮挡面板',
     JSON.stringify({ modelPanelBox, modelNotificationBoxes })
   )
@@ -369,40 +443,55 @@ try {
   check(wireCalls.length === callsBeforeSelectedCancel, '混合选中生成取消后 vendor 零新增调用')
 
   await win.locator('button[aria-label="清除选择"]').click()
-  await win.locator(`[data-node-id="${retryImageId}"]`).click({ position: { x: 40, y: 40 } })
-  await win.locator(`[data-node-id="${sourceId}"]`).click({ position: { x: 40, y: 40 }, modifiers: ['Shift'] })
+  // 前面为让浮框整张进舞台拖过画布，要点的两张卡可能已出视野（被按可见性卸载）。人会先点「适应视图」看全再点。
+  await win.getByRole('button', { name: '适应视图', exact: true }).first().click()
+  await waitForCanvasViewportSettled(win)
+  await win.locator(`.react-flow__node[data-id="${retryImageId}"]`).click()
+  await win.locator(`.react-flow__node[data-id="${sourceId}"]`).click({ modifiers: ['Shift'] })
   await win.waitForTimeout(800)
   const retrySelectionGenerate = win.locator('[data-batch-scope="selection"]')
   check((await retrySelectionGenerate.textContent())?.includes('1'), '选中批量只生成一个失败待测节点')
+  // 选中批量里只有 1 张 = 一次只跑 1 份、用户自己点的：不弹付费确认卡，直接开始（2026-09-25 拍板，判据按份数不按入口）。
+  // 下面「节点进入排队 / 生成中」本身就是证据：若中间弹了卡而走查不去点，节点永远到不了排队态。
   await retrySelectionGenerate.click()
-  dialog = await spendDialog(win)
-  await dialog.getByRole('button', { name: '生成', exact: true }).click()
   const notificationRoot = win.locator('.mantine-Notifications-root[data-position="top-right"]')
-  const runningAlert = notificationRoot.getByRole('alert').filter({ hasText: /开始生成/ }).first()
+  const retryNode = win.locator(`[data-node-id="${retryImageId}"]`)
+  const runningAlert = retryNode.and(win.locator('[data-status="queued"], [data-status="running"]'))
   await runningAlert.waitFor({ timeout: 5000 })
-  await runningAlert.evaluate((element) => { element.dataset.batchStable = 'true' })
-  check(await notificationRoot.getByRole('alert').filter({ hasText: /开始生成/ }).count() === 1, '批量开始时只有一条对应通知')
-  const runningBox = await runningAlert.boundingBox()
+  await retryNode.evaluate((element) => { element.dataset.batchStable = 'true' })
+  const failedAlert = retryNode.and(win.locator('[data-status="error"]'))
+  await failedAlert.waitFor({ timeout: 15000 })
+  check(await retryNode.getAttribute('data-batch-stable') === 'true', '进度到失败复用同一个节点 DOM')
+  await expect(retryNode).toContainText('mock fail once')
+  const batchFailureAlert = notificationRoot.getByRole('alert').filter({ hasText: /生成失败/ }).first()
+  const notificationProof = await proveProbe(batchFailureAlert, '同一通知容器确实能测到本批失败反馈')
+  await expectAbsent(notificationRoot.getByRole('alert').filter({ hasText: /开始生成/ }), {
+    provenBy: notificationProof, message: '节点已承担进度，不再弹开始生成通知',
+  })
+  check(await notificationRoot.getByRole('alert').filter({ hasText: /生成失败/ }).count() === 1, '失败后只有一条批量重试通知')
+  const runningBox = await batchFailureAlert.boundingBox()
   check(Boolean(runningBox && Math.abs(runningBox.width - 344) <= 1), '通知宽度为 344px', JSON.stringify(runningBox))
   const notificationRootTop = await notificationRoot.evaluate((element) => Number.parseFloat(getComputedStyle(element).top))
   const expectedNotificationTop = process.platform === 'win32' ? 100 : 68
   check(Math.abs(notificationRootTop - expectedNotificationTop) <= 1, `通知容器避开窗口栏和顶栏（top=${expectedNotificationTop}px）`, JSON.stringify({ notificationRootTop, runningBox }))
   check(Boolean(runningBox && runningBox.y >= notificationRootTop), '堆叠通知不会越过通知容器顶部', JSON.stringify({ notificationRootTop, runningBox }))
-  const failedAlert = notificationRoot.getByRole('alert').filter({ hasText: /生成失败/ }).first()
-  await failedAlert.waitFor({ timeout: 15000 })
-  check(await failedAlert.getAttribute('data-batch-stable') === 'true', '开始到失败原位更新同一个通知 DOM')
-  check(await notificationRoot.getByRole('alert').filter({ hasText: /生成失败/ }).count() === 1, '失败后没有堆叠第二条批量通知')
-  const retryAction = failedAlert.getByRole('button', { name: /重试失败的/ })
+  const retryAction = batchFailureAlert.getByRole('button', { name: /重试失败的/ })
   check(await retryAction.count() === 1, '失败通知提供独立的重试按钮')
   await retryAction.waitFor({ timeout: 15000 })
   await snap(win, 'failed-with-retry-action')
+  // 「重试失败的」这里只有 1 张：同上，不弹卡、直接开始。
   await retryAction.click()
-  dialog = await spendDialog(win)
-  await dialog.getByRole('button', { name: '生成', exact: true }).click()
+  await expect(retryNode).toHaveAttribute('data-status', /queued|running/)
+  await expectAbsent(notificationRoot.getByRole('alert').filter({ hasText: /开始生成/ }), {
+    provenBy: notificationProof, message: '重试确已运行时持续观测，不允许进度 toast 短暂出现',
+  })
   await win.waitForFunction((id) => document.querySelector(`[data-node-id="${id}"]`)?.getAttribute('data-status') === 'success', retryImageId, { timeout: 30000 })
-  const completedAlert = notificationRoot.getByRole('alert').filter({ hasText: /已完成/ }).first()
+  const completedAlert = retryNode.and(win.locator('[data-status="success"]'))
   await completedAlert.waitFor({ timeout: 5000 })
-  check(await notificationRoot.getByRole('alert').filter({ hasText: /已完成/ }).count() === 1, '重试完成后仍只有一条对应通知')
+  check(await retryNode.getAttribute('data-batch-stable') === 'true', '失败到重试成功仍为同一个节点 DOM')
+  await expectAbsent(notificationRoot.getByRole('alert').filter({ hasText: /已完成/ }), {
+    provenBy: notificationProof, message: '节点已成功，普通完成不重复弹通知',
+  })
   check(wireCalls.filter((call) => call.prompt.includes('重试')).map((call) => call.status).join(',') === '500,200', '失败节点通过一键重试成功')
   check(await win.evaluate(() => window.localStorage.getItem('nomi.canvas.batch-concurrency')) === '2', '重试后并发偏好仍为 2')
   await snap(win, 'retry-completed-dark')
@@ -412,7 +501,24 @@ try {
   const finalBatchDock = win.locator('[data-batch-dock="true"]')
   await finalBatchDock.waitFor({ timeout: 5000 })
   const timelineHandle = win.getByRole('button', { name: '展开生成时间轴' })
+  console.log('TIMELINE_HANDLE_DIAGNOSTIC', JSON.stringify({
+    previousScenario: process.env.NOMI_CANVAS_PREVIOUS_SCENARIO ?? null,
+    count: await timelineHandle.count(),
+    elements: await timelineHandle.evaluateAll((elements) => elements.map((element) => element.outerHTML)),
+    document: await win.evaluate(() => ({
+      viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+      handles: [...document.querySelectorAll('.workbench-generation__timeline-handle')].map((element) => ({
+        html: element.outerHTML,
+        hiddenAncestor: element.closest('[aria-hidden="true"]')?.outerHTML.slice(0, 300),
+      })),
+      timelines: document.querySelectorAll('section[aria-label="生成时间轴"]').length,
+      timelineExpanded: document.querySelector('section[aria-label="生成时间轴"]') !== null,
+      timelineState: document.querySelector('.workbench-generation')?.outerHTML.slice(0, 650),
+      dialogs: [...document.querySelectorAll('[role="dialog"]')].map((element) => element.textContent.slice(0, 200)),
+    })),
+  }))
   check(await timelineHandle.count() === 1, '批量底栏没有盖住时间轴展开入口')
+  await snap(win, 'batch-dock-timeline-handle')
   const dismissBatchDock = win.getByRole('button', { name: '隐藏批量生成栏' })
   check(await dismissBatchDock.count() === 1, '批量底栏提供可识别的隐藏入口')
   await dismissBatchDock.click()
@@ -430,6 +536,12 @@ try {
   console.log(`  expected console errors from fail-once path: ${consoleErrors.length - unexpectedConsoleErrors.length}`)
   console.log(`  screenshots: ${shotsDir}`)
   console.log('CANVAS BATCH PRODUCTION WALK: PASS')
+} catch (error) {
+  console.error('BATCH_FAILURE', error)
+  const failureDir = path.join(repoRoot, 'outputs/canvas-batch-production')
+  fs.mkdirSync(failureDir, { recursive: true })
+  await win.screenshot({ path: path.join(failureDir, 'failure.png') }).catch(() => {})
+  throw error
 } finally {
   await app.close().catch(() => {})
   await new Promise((resolve) => vendorServer.close(resolve))

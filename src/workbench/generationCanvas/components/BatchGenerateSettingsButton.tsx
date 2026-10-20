@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { Popover } from '@mantine/core'
 import { IconAdjustmentsHorizontal, IconPlayerPlay } from '@tabler/icons-react'
@@ -166,7 +167,6 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
       })
     }
     for (const node of applyTargets) {
-      if (regenerationTargetIds.has(node.id)) continue
       applySettings(node, state.nodes, state.edges)
     }
     if (!run) {
@@ -178,17 +178,7 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
     const plan = buildDependencyWaves(expandedIds, { nodes: afterState.nodes, edges: afterState.edges })
     setOpen(false)
     await confirmAndRunPlan(plan, {
-      regenerationNodeIds: [...regenerationTargetIds],
-      onForked: (sourceToVariant) => {
-        const forkState = useGenerationCanvasStore.getState()
-        for (const sourceNodeId of regenerationTargetIds) {
-          const variantNodeId = sourceToVariant.get(sourceNodeId)
-          const variant = variantNodeId
-            ? forkState.nodes.find((candidate) => candidate.id === variantNodeId)
-            : null
-          if (variant) applySettings(variant, forkState.nodes, forkState.edges)
-        }
-      },
+      initiator: 'user',
     })
   }, [draftMeta, modelOptions, modelValue, selectedIdSet, skipExisting, targetKind, updateNode])
 

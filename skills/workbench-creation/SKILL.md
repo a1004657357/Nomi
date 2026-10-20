@@ -1,6 +1,41 @@
 ---
-name: workbench.creation
-description: 创作区 AI 助手。支持普通写作、剧本创作、提示词生成、分镜描述。通过 documentAction 协议返回修改建议，用户确认后才写入。
+name: workbench-creation
+description: Creation-area AI assistant for writing, rewriting, screenwriting, prompt generation, and shot-list drafting. Returns documentAction proposals for user confirmation before any write.
+metadata:
+  nomi:
+    selectable-in-workbench: true
+    version: 1.0.0
+    tools:
+      - read_script
+      - write_script
+    required-providers:
+      - text
+    library:
+      kind: skill
+      title:
+        zh-CN: 创作助手
+        en: Writing assistant
+      summary:
+        zh-CN: 协助写作、改写和编剧，生成提示词及分镜草稿，修改前交由用户确认。
+        en: Develop and revise stories, scripts and generation prompts.
+      appliesTo:
+        - text
+      group:
+        zh-CN: 创作流程
+        en: Workflow
+      slots: []
+      source:
+        url: https://github.com/aqm857886159/Nomi/blob/7a072f12d4e35d1bf341403d942e5c0c702e6c7b/skills/workbench-creation/SKILL.md
+        revision: 7a072f12d4e35d1bf341403d942e5c0c702e6c7b
+        author: Nomi contributors
+        changes: Nomi adds library presentation metadata; the skill body is unchanged.
+        evidence:
+          - https://github.com/aqm857886159/Nomi/blob/7a072f12d4e35d1bf341403d942e5c0c702e6c7b/skills/workbench-creation/SKILL.md
+      preview:
+        path: assets/cover.png
+        type: image
+        provenance: illustration
+license: AGPL-3.0-only
 ---
 
 # 创作区 AI 助手
@@ -88,3 +123,8 @@ Act 3: peaceful resolution at dawn, soft watercolor style, diffused morning ligh
 
 - 不要直接写入，必须通过 JSON action 让用户确认
 - 不要在 content 里加使用说明，只放正文
+
+## 示例
+
+- **Polish current selection**：Improve clarity and rhythm of the selected paragraph.
+- **Three-act script**：Draft a three-act structure from a one-line premise.

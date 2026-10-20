@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./availableModels', () => ({ listAvailableModelsForAgent: vi.fn(async () => []) }))
 vi.mock('../../../desktop/bridge', () => ({ getDesktopBridge: vi.fn() }))
@@ -11,17 +11,39 @@ vi.mock('../../api/taskApi', () => ({
   cancelWorkbenchTask: taskApiMocks.cancelWorkbenchTask,
 }))
 
-import { applyCanvasToolCall } from './applyCanvasToolCall'
+import { applyCanvasToolCall as applyCanonicalCanvasMutation } from './applyCanvasToolCall'
+import { routeCinematicDirectorToolCall } from './cinematicDirectorToolHandlers'
+import { MODEL_FACING_TOOL_SPECS } from '../../../../electron/shared/agentCapabilities/modelFacingToolRegistry'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { useWorkbenchStore } from '../../workbenchStore'
+import { createProjectSessionTestHarness } from '../../project/projectSessionTestHarness'
+import { withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 
-describe('cinematic director runtime tools', () => {
-  beforeEach(() => {
+let session: ReturnType<typeof createProjectSessionTestHarness>
+let project: ProjectExecutionContext
+afterEach(() => session.dispose())
+
+async function applyCanvasToolCall(toolName: string, args: unknown): Promise<unknown> {
+  const reply = await routeCinematicDirectorToolCall(toolName, args, applyCanonicalCanvasMutation, project)
+  if (!reply.handled) throw new Error(`Unsupported helper ${toolName}`)
+  return reply.value
+}
+
+describe('cinematic document and revision helpers behind the canonical approval bridge', () => {
+  beforeEach(async () => {
+    session = createProjectSessionTestHarness()
+    await session.open('project-1')
+    project = withProjectAction(project => project)!
     const canvas = useGenerationCanvasStore.getState()
     for (const node of [...canvas.nodes]) canvas.deleteNode(node.id)
-    useWorkbenchStore.getState().hydrateStoryboardPlan(null, false)
+    useWorkbenchStore.getState().hydrateStoryboardDesigns({})
     useWorkbenchStore.getState().hydrateFilmBible(null)
     taskApiMocks.cancelWorkbenchTask.mockClear()
+  })
+
+  it('does not advertise retired legacy tool names to the new Agent', () => {
+    expect(MODEL_FACING_TOOL_SPECS.some(tool => tool.name === 'apply_film_bible_patch')).toBe(false)
+    expect(MODEL_FACING_TOOL_SPECS.some(tool => tool.name === 'select_asset_revision')).toBe(false)
   })
 
   it('propose_film_bible_patch returns a proposal without mutating project state', async () => {
@@ -43,7 +65,7 @@ describe('cinematic director runtime tools', () => {
 
     expect(useWorkbenchStore.getState().filmBible).toEqual({
       version: 1,
-      projectId: 'local',
+      projectId: 'project-1',
       theme: '选择与代价',
       aspectRatio: '9:16',
     })
@@ -86,10 +108,30 @@ describe('cinematic director runtime tools', () => {
     })
 
     expect(taskApiMocks.cancelWorkbenchTask).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      projectBinding: project.binding,
       vendor: 'codex',
       runId: 'intent-run-1',
       nodeId: 'node-1',
     })
     expect(result).toEqual({ cancelled: true, remoteCancelled: false })
+  })
+
+  it('refuses a stale project before document mutation, including A to B to A', async () => {
+    await session.open('project-2')
+    await session.open('project-1')
+    const before = useWorkbenchStore.getState().filmBible
+    await expect(applyCanvasToolCall('apply_film_bible_patch', { patch: { theme: 'must not write' } })).rejects.toThrow()
+    expect(useWorkbenchStore.getState().filmBible).toBe(before)
+  })
+
+  it('rejects a delegated result returned after project switch', async () => {
+    let release!: (value: unknown) => void
+    const delegate = vi.fn(() => new Promise(resolve => { release = resolve }))
+    const pending = routeCinematicDirectorToolCall('create_asset_records', {}, delegate, project)
+    expect(delegate).toHaveBeenCalledOnce()
+    await session.open('project-2')
+    release({ from: 'project-1' })
+    await expect(pending).rejects.toThrow()
   })
 })

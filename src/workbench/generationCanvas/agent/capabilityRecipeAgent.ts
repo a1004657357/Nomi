@@ -8,8 +8,8 @@ import {
   resolveArchetypeForModel,
   specializeArchetypeForVariant,
   type ModelArchetype,
-} from '../../../config/modelArchetypes'
-import type { ModelCapabilityTier } from '../../../config/modelArchetypes/types'
+} from '../../../../electron/shared/modelArchetypes'
+import type { ModelCapabilityTier } from '../../../../electron/shared/modelArchetypes/types'
 import type { AgentModelEntry } from './availableModels'
 import type { ModelParameterControl } from '../../../config/modelCatalogMeta'
 
@@ -61,7 +61,7 @@ function compatibleTargets(
     const vendorKey = entry.vendor?.trim()
     if (!vendorKey) continue
     const archetype = resolveArchetypeForModel({
-      modelKey: entry.modelKey,
+      modelKey: entry.modelId,
       modelAlias: entry.modelAlias,
       vendorKey,
       meta: { archetypeId: entry.archetypeId },
@@ -70,10 +70,13 @@ function compatibleTargets(
     const variants = entry.variants ?? []
     const candidates = variants.length
       ? variants.map((variant) => ({
-          variantId: variant.variantId,
+          variantId: variant.id,
           variantLabel: variant.label,
-          archetype: specializeArchetypeForVariant(archetype, variant.variantId),
-          modes: variant.modes,
+          archetype: specializeArchetypeForVariant(archetype, variant.id),
+          modes: specializeArchetypeForVariant(archetype, variant.id).modes.filter((mode) => {
+            const allowed = archetype.variants?.find((item) => item.id === variant.id)?.supportedModeIds
+            return !allowed || allowed.includes(mode.id)
+          }).map((mode) => ({ modeId: mode.id, vendorTerm: mode.vendorTerm, params: mode.params })),
         }))
       : [{ variantId: undefined, variantLabel: undefined, archetype, modes: entry.modes }]
     for (const candidate of candidates) {
@@ -86,7 +89,7 @@ function compatibleTargets(
         if (!compatibility.supported) continue
         targets.push({
           vendorKey,
-          modelKey: entry.modelKey,
+          modelKey: entry.modelId,
           modelLabel: candidate.variantLabel ? `${entry.label} · ${candidate.variantLabel}` : entry.label,
           archetypeId: archetype.id,
           ...(candidate.variantId ? { variantId: candidate.variantId } : {}),

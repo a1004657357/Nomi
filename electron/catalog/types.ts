@@ -3,25 +3,25 @@
 // 渲染层不消费这些（electron 专用；渲染层有自己的 DTO，经 desktopClient 单源）。
 import type { ApiKeyRecord } from "./secrets";
 import type { ParamMap } from "./paramTranslate";
+import type { TransportAbandonDisposition, TransportDelivery } from "./transportDelivery";
+import catalogVersion from "./catalogVersion.json";
+import {
+  AI_SDK_PROVIDER_KINDS,
+  ASSET_MEDIA_KINDS,
+  BILLING_MODEL_KINDS,
+  PROFILE_KINDS,
+  VENDOR_AUTH_TYPES,
+} from "../shared/contracts/modelAccessCapabilities";
 
-export type BillingModelKind = "text" | "image" | "video" | "audio" | "model3d";
-export type ProfileKind =
-  | "chat"
-  | "prompt_refine"
-  | "text_to_image"
-  | "image_to_prompt"
-  | "image_to_video"
-  | "text_to_video"
-  | "image_edit"
-  | "text_to_audio"
-  | "image_to_audio"
-  | "transcribe"
-  | "text_to_3d"
-  | "image_to_3d";
+// 这些值的单一真相源是 electron/shared/contracts/modelAccessCapabilities（可枚举、可被旅程门岗读取）；
+// 运行时类型从常量反推，避免手写 union 落后于真实能力面。
+export { AI_SDK_PROVIDER_KINDS, ASSET_MEDIA_KINDS, BILLING_MODEL_KINDS, PROFILE_KINDS, VENDOR_AUTH_TYPES };
+export type BillingModelKind = (typeof BILLING_MODEL_KINDS)[number];
+export type ProfileKind = (typeof PROFILE_KINDS)[number];
 
 // openai-responses：OpenAI Responses API（/responses，非 /chat/completions）。
 // 中转（如 foxcode codex 渠道 wire_api=responses）只认 Responses → chat/completions 会 502（2026-06-06 实测根因）。
-export type AiSdkProviderKind = "openai-compatible" | "anthropic" | "openai-responses";
+export type AiSdkProviderKind = (typeof AI_SDK_PROVIDER_KINDS)[number];
 
 /**
  * 供应商「怎么吞本地素材」的声明(R1,通用第一)。本地素材(nomi-local://)只有 app 自己能读,
@@ -31,16 +31,56 @@ export type AiSdkProviderKind = "openai-compatible" | "anthropic" | "openai-resp
  *  - upload-url   ：把字节传到 vendor 文件接口 → 拿回临时公网 URL → 填进 body。
  *  - upload-stream：multipart 流式上传(二进制,大文件高效)→ 拿回临时公网 URL。用于视频 mp4
  *                   (KIE file-stream-upload),base64 对 mp4 低效/受限。
+ *  - upload-presigned：先向 vendor 创建一次性上传声明，再把字节 multipart 传到返回的
+ *                      uploadUrl，最后使用 vendor 自己的 URI（如 runway://），不依赖公共图床。
  *  - none         ：vendor 只收公网 URL 且无上传通道 → 明确报错(不静默失败)。
  *
  * `accepts`：该通道接受的媒体类型(image/video/audio)。缺省视为 ['image']——今天的通道都面向图片
  * (apimart 的 /uploads/images 仅图片)。视频素材必须路由到声明 'video' 的通道(如 KIE 通用文件托管)。
  */
-export type AssetMediaKind = "image" | "video" | "audio";
+export type AssetMediaKind = (typeof ASSET_MEDIA_KINDS)[number];
+export type VendorAuthType = (typeof VENDOR_AUTH_TYPES)[number];
+
+/** 见 `catalog/credentialBinding.ts`。类型住这里，判据住那里（types.ts 不长逻辑）。 */
+export type CredentialBinding = {
+  origin: string;
+  authType?: string;
+  authHeader?: string;
+  authQueryParam?: string;
+  authScheme?: string;
+  confirmedAt: string;
+};
 
 export type AssetIngestion =
   | { strategy: "inline-base64"; accepts?: ReadonlyArray<AssetMediaKind>; visibility?: "provider-private"; ttlSeconds?: number }
   | { strategy: "none"; accepts?: ReadonlyArray<AssetMediaKind>; visibility?: "provider-private"; ttlSeconds?: number }
+  | {
+      /**
+       * 两步供应商自有上传：POST 初始化 JSON → POST 预签名 uploadUrl → 返回供应商 URI。
+       * 初始化与实际字节上传分开，故 uploadUrl 请求不携带 API key；只把初始化请求的
+       * Authorization 交给供应商。Runway Dev 的 POST /v1/uploads(type=ephemeral) 使用此形状。
+       */
+      strategy: "upload-presigned";
+      /** 初始化端点（完整 URL）。 */
+      endpoint: string;
+      /** 初始化响应里的实际上传 URL。 */
+      uploadUrlPath: string;
+      /** 初始化响应里的供应商 URI（如 runwayUri）。 */
+      uriPath: string;
+      /** 初始化响应里传给 multipart 的字段对象，默认 `fields`。 */
+      fieldsPath?: string;
+      /** 初始化请求的固定字段（动态文件名/type 会由解析器补上）。 */
+      initFields?: Record<string, string>;
+      /** 初始化请求的固定协议头（例如 Runway 的 X-Runway-Version）。 */
+      initHeaders?: Record<string, string>;
+      filenameField?: string;
+      typeField?: string;
+      uploadFileField?: string;
+      accepts?: ReadonlyArray<AssetMediaKind>;
+      visibility?: "provider-private";
+      ttlSeconds?: number;
+      requiresConsent?: false;
+    }
   | {
       strategy: "upload-stream";
       /** 上传端点(完整 URL)。multipart/form-data,file 字段为二进制,另带 uploadPath/fileName。 */
@@ -53,7 +93,7 @@ export type AssetIngestion =
       /** 响应里公网 URL 的点路径(如 KIE 的 "data.downloadUrl")。 */
       urlPath: string;
       /** 鉴权:复用 vendor 的 api key(默认 bearer)。 */
-      authType?: "bearer";
+      authType?: "bearer" | "key";
       /** 该通道接受的媒体类型;缺省 ['image']。 */
       accepts?: ReadonlyArray<AssetMediaKind>;
       visibility?: "provider-private";
@@ -78,7 +118,7 @@ export type AssetIngestion =
       /** 响应里公网 URL 的点路径(如 kie 的 "data.downloadUrl")。 */
       urlPath: string;
       /** 鉴权:复用 vendor 的 api key(默认 bearer)。 */
-      authType?: "bearer";
+      authType?: "bearer" | "key";
       visibility?: "provider-private";
       ttlSeconds?: number;
       requiresConsent?: false;
@@ -87,6 +127,12 @@ export type AssetIngestion =
       strategy: "upload-multipart";
       /** 上传端点(完整 URL)。multipart/form-data，file 字段为二进制。 */
       endpoint: string;
+      /**
+       * 端点相对「用户保存的这条连接的 base」的路径(如 apimart 的 "/v1/uploads/images")。
+       * 声明了它，endpoint 只是没有用户连接时的默认值；解析时由 userVendorBase 的 base 重算——
+       * 用户在设置里把接口地址改成国内线路，参考图上传也必须跟着走（2026-10-03 走查铁律 1）。
+       */
+      endpointPath?: string;
       /**
        * 响应里公网 URL 的点路径(如 apimart 的 "url")。
        * 当 responseIsPlainTextUrl 为 true 时整个响应体即 URL,此字段可省。
@@ -110,12 +156,60 @@ export type AssetIngestion =
        */
       urlTransform?: { search: string; replace: string };
       /** 鉴权:复用 vendor 的 api key(默认 bearer)。无 key 时不发 Authorization。 */
-      authType?: "bearer";
+      authType?: "bearer" | "key";
       /** 该通道接受的媒体类型;缺省 ['image']。 */
       accepts?: ReadonlyArray<AssetMediaKind>;
-      visibility?: "provider-private" | "public-anonymous";
+      visibility?: "provider-private" | "public-provider" | "public-anonymous";
       ttlSeconds?: number;
       requiresConsent?: boolean;
+    }
+  | {
+      /**
+       * 两阶段上传：先用 JSON 初始化，再把本地字节 PUT 到供应商返回的 signed URL。
+       * fal CDN 使用此形状；signed URL 本身不带供应商 API key。
+       */
+      strategy: "upload-initiate-put";
+      endpoint: string;
+      initFileNameField?: string;
+      initContentTypeField?: string;
+      uploadUrlPath: string;
+      /**
+       * 初始化响应里「PUT 时必须原样带上的头」对象的点路径（如 Higgsfield 的 `upload_headers`）。
+       *
+       * 为什么不是写死一组头：预签名 URL 把哪些头算进签名是**供应商侧决定**的。Higgsfield 的
+       * `X-Amz-SignedHeaders = content-type;host;x-amz-tagging` —— 2026-09-17 实测，PUT 只带
+       * `Content-Type`（本策略在此之前的行为）会拿到 403 `SignatureDoesNotMatch`，带上响应给的
+       * `upload_headers` 才 200。把头从响应里读出来，就不用为每家猜一遍它签了什么
+       * （R5：别照二手资料写死，按供应商自己给的来）。
+       * 缺省 undefined ⇒ 仍只发 Content-Type，fal 等既有通道逐字节不变。
+       */
+      uploadHeadersPath?: string;
+      urlPath: string;
+      authType?: "bearer" | "key";
+      accepts?: ReadonlyArray<AssetMediaKind>;
+      visibility?: "provider-private" | "public-provider";
+      ttlSeconds?: number;
+      requiresConsent?: false;
+    }
+  | {
+      /**
+       * 两阶段上传：先初始化 multipart 表单，再把初始化返回的 fields + file POST 到 signed URL。
+       * Runway ephemeral upload 使用此形状，并返回只能给 Runway 使用的 runway:// URI。
+       */
+      strategy: "upload-initiate-multipart";
+      endpoint: string;
+      uploadUrlPath: string;
+      fieldsPath: string;
+      uriPath: string;
+      fileField?: string;
+      initFileNameField?: string;
+      initTypeField?: string;
+      initType?: string;
+      authType?: "bearer" | "key";
+      accepts?: ReadonlyArray<AssetMediaKind>;
+      visibility?: "provider-private" | "public-provider";
+      ttlSeconds?: number;
+      requiresConsent?: false;
     }
   | {
       /**
@@ -167,9 +261,27 @@ export type Vendor = {
   name: string;
   enabled: boolean;
   hasApiKey?: boolean;
+  credentialVerificationPending?: boolean;
   baseUrlHint?: string | null;
-  authType?: "none" | "bearer" | "x-api-key" | "query";
+  authType?: VendorAuthType;
   authHeader?: string | null;
+  /**
+   * `Authorization` 头里 key 前面的**方案词**，缺省 `Bearer`。
+   *
+   * 为什么要它：`authType` 那张 enum（none/bearer/x-api-key/query）回答的是「key 放哪」，
+   * 回答不了「放进 Authorization 时前缀写什么词」。Higgsfield 要的是
+   * `Authorization: Key <id>:<secret>` —— 既不是 Bearer，也不是「换个头名字」，
+   * 而是同一个头里换一个方案词。
+   *
+   * 为什么不给 authType 加第五个值：那张 union 今天被**手抄在 15 处**
+   * （providerAdapter/types.ts、integrationCertification/httpConnector.ts、
+   *  mcpIntegrationTools.ts、src/api/desktopClient.ts …），加一个值要同时改 15 份副本，
+   * 且会撞上正在重写的认证面。方案词是正交的新概念，独立一个可选字段表达最省
+   * （R17：能在最早一层声明就别散进每条 mapping 的字面量）。
+   *
+   * 缺省 undefined ⇒ 行为与今天逐字节相同。
+   */
+  authScheme?: string | null;
   authQueryParam?: string | null;
   /**
    * Which Vercel AI SDK provider implementation to use for this vendor.
@@ -177,8 +289,18 @@ export type Vendor = {
    * so existing model-catalog.json files keep working without migration.
    */
   providerKind?: AiSdkProviderKind;
+  /** Optional per-connection egress. Empty/absent preserves the application-level route. */
+  network?: { proxyUrl?: string; proxyEnabled?: boolean };
   /** R1:本地素材吞入策略。curated vendor 也可由代码注册表兜底(见 assetLocalization.curatedAssetIngestion)。 */
   assetIngestion?: AssetIngestion;
+  /**
+   * 用户按下「保存密钥」那一刻，这把 key 被绑在哪个 origin 上（catalog/credentialBinding.ts）。
+   *
+   * 顶层字段而不是塞进 `meta`：`meta` 是没有类型的杂物袋，一条**安全不变量**住在杂物袋里，
+   * 等于把它交给字符串键去维护。缺省 undefined ⇒ 没有绑定（旧装机 / curated 种子 / ComfyUI），
+   * 那时这条判据不成立、交回私网策略——不许把「不知道」当成「拒绝」。
+   */
+  credentialBinding?: CredentialBinding;
   meta?: unknown;
   createdAt: string;
   updatedAt: string;
@@ -191,6 +313,8 @@ export type Model = {
   labelZh: string;
   kind: BillingModelKind;
   enabled: boolean;
+  /** Complete provider-list evidence; recovery clears this without enabling. */
+  unlisted?: boolean;
   meta?: unknown;
   /**
    * 自定义调用脚本（用户数据，2026-08-04 拍板）：存在即整体接管该模型的请求构造/轮询/响应解析
@@ -211,6 +335,45 @@ export type Model = {
     updatedAt?: string;
     specCosts: Array<{ specKey: string; cost: number; enabled: boolean; createdAt?: string; updatedAt?: string }>;
   };
+  /**
+   * 按 token 计费的价目，**单位一律「美元 / 每百万 token」**（USD per 1M tokens）。
+   *
+   * **和上面的 `pricing` 是两件事，永远不要混**：`pricing` 是「生成一次图 / 一段视频扣多少点」
+   * （per-generation，见 `shotPricing.ts`），只对 image / video / audio 那几类模型有意义；
+   * `tokenPricing` 是对话模型（`kind: "text"`）按 token 结算的单价，是 Agent 花费那一行的唯一来源。
+   * 一个模型不会同时用到两者——把两个数放进同一个字段，第一次就会印出一个差几个数量级的金额。
+   *
+   * **为什么必须是「每百万」而不是「每千」或「每个」**：下游 `createNomiProvider` 把它原样交给
+   * pi 的 `Model.cost`，而 pi 的 `calculateCost` 写死 `rates.input / 1_000_000 * tokens`
+   * （`pi-ai/dist/models.js:543-547`）。单位选错不会报错，只会让面板上的金额差 1000 倍——
+   * 这正是 `tests/agent-runtime/lane-cost.test.mts` 那条手算对账要钉住的东西。
+   *
+   * 缺席 = 「我们没有这个模型的价目」，**不是 0**。运行时据此把花费那一行渲染成「不可知」
+   * 而不是一个 ¥0.00（方案 §1.7）。真正不花钱的模型走下面的 `free`。
+   */
+  tokenPricing?: {
+    /** 未命中缓存的输入单价（USD / 1M tokens）。 */
+    inputPerMTokUsd: number;
+    /** 输出单价（USD / 1M tokens）。思考型模型的 thinking token 计在输出里。 */
+    outputPerMTokUsd: number;
+    /** 命中缓存前缀的输入单价。缺省 = 与 `inputPerMTokUsd` 同价（供应商不单列时的真实行为）。 */
+    cacheReadPerMTokUsd?: number;
+    /** 写入缓存前缀的单价。缺省 = 与 `inputPerMTokUsd` 同价。 */
+    cacheWritePerMTokUsd?: number;
+    /**
+     * 出处。**必填**，与 `ModelArchetype.sources` 同一条纪律（`check:archetype-sources`）：
+     * 注释可以写「已对过官网」而没人能反证，结构化出处才检查得了。
+     */
+    source: { url: string; checkedAt: string };
+  };
+  /**
+   * 显式「这个模型不按 token 计费」（例如魔搭的免费推理额度）。**只对 `kind: "text"` 有意义**，
+   * 和生成模型的点数（`pricing`）无关。
+   *
+   * 它和「没有 `tokenPricing`」是两件不同的事：前者是我们查过、答案是不花钱；后者是我们不知道。
+   * 面板上前者印「免费」，后者印「不可知」——两者都不许印 ¥0.00。
+   */
+  free?: true;
   /**
    * Catalog v2+: present when this model was produced by the onboarding agent.
    * Carries the doc-quote evidence per parameter so we can audit / re-trial later.
@@ -279,7 +442,7 @@ export type HttpOperation = {
   request_transform?: string;
   /**
    * **wire 必填参数的兜底默认值**（headless/MCP 路专用）。UI 路由 NodeGenerationComposer 会按档案
-   * (src/config/modelArchetypes) 把用户选的 size/voice/model 等填进 request.params；但 MCP/CLI 的
+   * (electron/shared/modelArchetypes) 把用户选的 size/voice/model 等填进 request.params；但 MCP/CLI 的
    * `generate` 不经 UI、调用方也无从知道每家 vendor 的必填参数（nomi_generate 根本不暴露 params）。
    * 缺这些参数时 vendor 直接拒（实测：火山 Seedream 缺 size→HTTP 400；apimart TTS 缺 model→HTTP 500；
    * 豆包语音缺 voice→「未选择音色」）。runtime.runTask 解析出 mapping 后，把这里的默认值**合并到
@@ -294,7 +457,23 @@ export type HttpOperation = {
    *                           code===20000000 收尾）——豆包语音 /api/v3/tts/unidirectional。
    * 任何未来同形状的 vendor 声明此值即复用解码，无需碰 runtime（runTextToSpeech 按它分流）。
    */
-  audioResponse?: "binary" | "ndjson-base64";
+  audioResponse?:
+    | "binary"
+    | "ndjson-base64"
+    | {
+        /** The response body is the generated audio bytes. */
+        type: "binary";
+        contentType: string;
+        extension: string;
+      }
+    | {
+        /** The response is JSON and the declared dot path contains encoded audio bytes. */
+        type: "json";
+        dataPath: string;
+        encoding: "hex" | "base64";
+        contentType: string;
+        extension: string;
+      };
   /**
    * **进程型 transport 声明**（仅 processOperation 消费，P4 声明驱动不 hardcode vendor）。
    * 当一个 vendor 不是 HTTP 端点而是本地 CLI 二进制（如即梦官方 `dreamina`）时，create/query op
@@ -333,6 +512,20 @@ export type HttpOperation = {
     }>;
   };
   /**
+   * **本地引擎 transport 声明**（仅 audioTaskRunner 消费，P4 声明驱动不 hardcode vendor）。
+   * 当一条 mapping 的执行者不是远端 HTTP 端点、也不是一次性 CLI，而是**本机常驻 sidecar**
+   * （whisper.cpp 的 `whisper-server`）时，create op 声明 localEngine，runner 据此分流到
+   * `electron/localSpeech/` 的编排（装引擎 → 切段 → 逐段推理 → 折回全局时间轴），
+   * 出的结果与云端 whisper 的 `verbose_json` 同形状，因此上层解析器一份就够（P1）。
+   *  - kind      ：引擎选择子。将来同形状的第二个本地引擎声明各自的 kind 即复用这条路。
+   *  - tierParam ：`request.params` 里哪个键携带权重档位（值的白名单在 catalog/localSpeech.ts）。
+   * 可序列化（持久化进 catalog JSON）：纯数据声明。
+   */
+  localEngine?: {
+    kind: "whisper-cpp";
+    tierParam: string;
+  };
+  /**
    * **multipart/form-data transport 声明**（P4 声明驱动不 hardcode vendor）。当端点收的是二进制文件上传
    * 而非 URL-in-JSON（OpenAI 官方 /v1/images/edits 图生图：image[] 文件字段 + 文本字段），create op 声明
    * multipart，executeProfileOperation 据此分流到 FormData 分支（而非 requestJson）：
@@ -346,8 +539,13 @@ export type HttpOperation = {
    */
   multipart?: {
     fields?: Record<string, string>;
-    imageField: string;
-    imageSource: string;
+    /** Generic file declaration used by image, audio, and video upload endpoints. */
+    fileField?: string;
+    fileSource?: string;
+    fileKind?: "image" | "audio" | "video";
+    /** Legacy image-only aliases retained for existing catalog rows. */
+    imageField?: string;
+    imageSource?: string;
     multiple?: boolean;
     filename?: string;
   };
@@ -362,8 +560,9 @@ export type HttpOperation = {
 };
 
 /**
- * One (vendor, taskKind) → one mapping row. `create` is the synchronous POST
- * (or whatever initiates the task). `query` is the poll for async APIs.
+ * One (vendor, taskKind) → one mapping row. `create` initiates the task,
+ * `query` observes an async task, and optional `result` fetches endpoint-specific
+ * output after the observation reaches a successful terminal state.
  * Vendors that map their status strings to ours can use `statusMapping`
  * (e.g. `{ succeeded: ["completed", "done"] }`).
  */
@@ -380,10 +579,19 @@ export type Mapping = {
    * （不再「任意 enabled 兜底」静默套别的模型模板）。
    */
   modelKey?: string;
+  /** Optional archetype mode discriminator. A mapping may share one model row while
+   * exposing different transport contracts for its modes (for example Suno music,
+   * upload-extend and upload-cover). */
+  modeId?: string;
   name: string;
   enabled: boolean;
   create: HttpOperation;
+  /** 见 transportDelivery.ts：上游契约声明的交付形状。缺省按「有 query 即异步」推断（存量数据）。 */
+  delivery?: TransportDelivery;
+  /** 异步任务不要了怎么办（取消端点 / 轮询到底）。 */
+  abandon?: TransportAbandonDisposition;
   query?: HttpOperation;
+  result?: HttpOperation;
   statusMapping?: Record<string, string[]>;
   createdAt: string;
   updatedAt: string;
@@ -406,15 +614,35 @@ export function selectTaskMapping(
   vendorKey: string,
   taskKind: ProfileKind,
   modelKey?: string,
+  modeId?: string,
 ): Mapping | null {
   const inBucket = mappings.filter((m) => m.enabled && m.vendorKey === vendorKey && m.taskKind === taskKind);
   if (inBucket.length === 0) return null;
   const key = (modelKey || "").trim();
-  return (
-    (key ? inBucket.find((m) => (m.modelKey || "").trim() === key) : undefined) ||
-    inBucket.find((m) => !m.modelKey) ||
-    null
-  );
+  const exact = key ? inBucket.filter((m) => (m.modelKey || "").trim() === key) : [];
+  const generic = inBucket.filter((m) => !m.modelKey);
+  // Exact model bindings win. When there is no exact binding, retain the
+  // legacy generic template fallback; never borrow another model's wire shape.
+  const candidates = exact.length > 0 ? exact : generic;
+  if (candidates.length === 0) return null;
+  const requestedMode = (modeId || "").trim();
+  if (requestedMode) {
+    const exactMode = candidates.filter((m) => (m.modeId || "").trim() === requestedMode);
+    if (exactMode.length === 1) return exactMode[0];
+    // A single **mode-less** candidate can safely serve several UI modes: that is the
+    // designed shared-wire case (one vendor endpoint behind several UI modes, and older
+    // rows predate modeId entirely). A single candidate that declares a **different**
+    // mode must never be borrowed — its body is that other mode's contract, so the
+    // requested mode's reference keys are simply absent and the request silently
+    // degrades to the other mode's shape. That is how `runway/happyhorse_1_0/reference`
+    // (declares 10 reference images) quietly became "one promptImage", and how three fal
+    // modes borrowed a sibling's wire. Fail closed instead; the caller surfaces the gap.
+    const onlyCandidateIsModeless = candidates.length === 1 && !(candidates[0].modeId || "").trim();
+    return exactMode.length === 0 && onlyCandidateIsModeless ? candidates[0] : null;
+  }
+  // Once a model has multiple mode-specific mappings, an omitted mode is
+  // ambiguous and must fail closed instead of silently selecting the first row.
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 /**
@@ -472,10 +700,21 @@ export function billingKindForTaskKind(kind: ProfileKind): BillingModelKind {
 /*  v9 moves custom-call named configuration out of vendor.meta and into the
  *  existing safeStorage-backed vendor credential record. */
 /* v10 corrects stored ComfyUI model/output/task contracts from the selected file output. */
-export type CatalogVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
-export const CURRENT_CATALOG_VERSION: CatalogVersion = 10;
+/* v11 repairs provable stored ComfyUI media-role violations: image placeholders in numeric widgets. */
+/* v12 moves credential-bearing connection network config (proxyUrl, which may carry user:pass, and
+ *  extraHeaders, which may carry Authorization) out of the plaintext vendor row into the existing
+ *  safeStorage-backed vendor credential record. Legacy plaintext stays readable until an explicit
+ *  vendor write migrates every secret atomically (mirrors the v8→v9 customConfig deferral). */
+/* v13 一次性修复上一版 upsert 抹掉的供应商声明（authScheme / assetIngestion）：内置家按
+ *  BUILTIN_VENDOR_SEEDS 补回「键整个不存在」的那两项（值不同=用户改过，一律不碰）；自建家没有
+ *  代码侧出处补不了，盖一条 meta 提示让界面明着告诉用户去重新导入接入包。写路径的类根因已由
+ *  upsertDraft.ts 在编译期闭合，故这是一次性的、不再重跑的修复。见 vendorFieldLossRepair.ts。 */
+export type CatalogVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+export const CURRENT_CATALOG_VERSION: CatalogVersion = catalogVersion.current as CatalogVersion;
 
 export type CatalogState = {
+  /** User-deleted builtin identities must not be inserted by subsequent seeding. */
+  suppressedBuiltinModels?: Array<{ vendorKey: string; modelKey: string }>;
   version: CatalogVersion;
   vendors: Vendor[];
   models: Model[];

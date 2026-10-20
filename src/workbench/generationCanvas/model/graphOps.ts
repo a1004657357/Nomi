@@ -6,15 +6,8 @@ import {
 
 export { DEFAULT_NODE_SIZE, NODE_KIND_LABEL } from './generationNodeKinds'
 
-export const EDGE_MODE_LABEL: Record<GenerationCanvasEdgeMode, string> = {
-  reference: '素材参考',
-  first_frame: '首帧',
-  last_frame: '尾帧',
-  style_ref: '风格',
-  character_ref: '角色',
-  composition_ref: '构图',
-}
-
+// 连接语义的**显示名**单源在 i18n(`generationCommon.canvas.edge.modes.*`);这里只留顺序,
+// 不再并存一份中文标签表(P1:显示名有了 i18n 这一个家,旧表同 commit 删掉)。
 export const EDGE_MODE_ORDER: GenerationCanvasEdgeMode[] = [
   'reference',
   'first_frame',
@@ -86,6 +79,7 @@ export function connectNodes(
   target: string,
   mode: GenerationCanvasEdgeMode = 'reference',
   targetParamKey?: string,
+  explicitOrder?: number,
 ): GenerationCanvasEdge[] {
   if (!source || !target || source === target) return edges
   // 去重按 (source,target,mode,targetParamKey)：同图可进入两个声明槽；未声明槽仍保留旧语义。
@@ -95,7 +89,9 @@ export function connectNodes(
   if (edges.some((edge) => edge.source === source && edge.target === target && edge.mode === mode && edge.targetParamKey === targetParamKey)) return edges
   // order = 该 target 现有入边数：保住「放入顺序」= 数组参考 character1..N 的真相源（audit 2026-06-16 §1d）。
   // 全模式单调（不按 mode 分桶）→ 数组槽落槽用单调序、首尾帧用 mode 位置偏好，互不打架。
-  const order = nextEdgeOrderForTarget(edges, target)
+  const order = typeof explicitOrder === 'number' && Number.isFinite(explicitOrder)
+    ? explicitOrder
+    : nextEdgeOrderForTarget(edges, target)
   return [...edges, { id: createEdgeId(source, target, order), source, target, mode, order, ...(targetParamKey ? { targetParamKey } : {}) }]
 }
 

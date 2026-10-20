@@ -2,18 +2,14 @@
  * 模型配置 - 与TaskNode保持一致
  */
 import { isAnthropicModel } from './modelSource'
+import type { BillingModelKind } from '../workbench/api/modelCatalogApi'
 
-export interface ModelOptionPricingSpec {
-  specKey: string
-  cost: number
-  enabled: boolean
-}
-
-export interface ModelOptionPricing {
-  cost: number
-  enabled: boolean
-  specCosts: ReadonlyArray<ModelOptionPricingSpec>
-}
+// 价目的形状与算式住在中立契约层（`electron/shared/contracts/shotPricingRule.ts`）：
+// 主进程封印合同、付费确认卡本地重算、画布确认条预估，三处必须报同一个数，
+// 所以形状与算式都只留一份（2026-09-11 收敛；此前渲染层另有一份只累加基价的算法，
+// 有规格加价时比真正要扣的少报——少报比不报更坏）。
+export type { ModelPricingSpec as ModelOptionPricingSpec, ModelPricing as ModelOptionPricing } from '../../electron/shared/contracts/shotPricingRule'
+import type { ModelPricing as ModelOptionPricing } from '../../electron/shared/contracts/shotPricingRule'
 
 /** Display grouping only; each option still addresses its own executable catalog row. */
 export type ModelOptionVariant = Readonly<{
@@ -31,6 +27,13 @@ export interface ModelOption {
   vendorName?: string
   modelKey?: string
   modelAlias?: string | null
+  /** Catalog billing kind. Kept alongside the option so non-media models (chat) retain their identity. */
+  kind?: BillingModelKind
+  /**
+   * 供应商最近一次给的清单里没有它（旁注，不是停用——见 `ModelCatalogModelDto.unlisted`）。
+   * 模型框据此在那一行后面加一句实话；它**不**影响可选性，用户照样选得了。
+   */
+  unlisted?: true
   meta?: unknown
   pricing?: ModelOptionPricing
   variant?: ModelOptionVariant
@@ -105,17 +108,6 @@ export function getModelLabel(kind: NodeKind | undefined, modelValue: string): s
   const models = getAllowedModelsByKind(kind)
   const model = models.find(m => m.value === modelValue)
   return model?.label || modelValue
-}
-
-export function getDefaultModel(kind?: NodeKind): string {
-  if (kind === 'image') {
-    return DEFAULT_IMAGE_MODEL_VALUE
-  }
-  if (kind === 'imageEdit') {
-    return DEFAULT_IMAGE_EDIT_MODEL_VALUE
-  }
-  const models = getAllowedModelsByKind(kind)
-  return models[0]?.value || TEXT_MODELS[0].value
 }
 
 // Provider映射

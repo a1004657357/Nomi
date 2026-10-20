@@ -45,6 +45,8 @@ function fullSkill(input: {
       ? { recipeIds: input.recipeIds, defaultRecipeId: input.recipeIds[0] ?? null }
       : input.canvas,
     origin: input.origin ?? 'builtin',
+    packageVersion: 'nomi-skill-v1',
+    contentHash: 'a'.repeat(64),
   }
 }
 

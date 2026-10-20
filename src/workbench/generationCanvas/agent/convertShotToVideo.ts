@@ -1,7 +1,7 @@
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
-import { isShotNumberedNode } from '../model/shotNumbering'
+import { isShotNumberedNode, isValidShotIndex } from '../model/shotNumbering'
 import {
   storyboardContainedRowIndex,
   storyboardContainerNodeId,
@@ -53,30 +53,26 @@ export function compileImageShotFallbackVideoPrompt(imagePrompt: string): string
  *
  * 语义要点：
  * - 视频节点**继承源图的镜号**（同一镜的两阶段——排片按视频镜位落在剧本位置 3 而非新号 13）；
- *   addNode 会先自动领新号，随即 updateNode 覆写回继承号（nextShotIndex 按 max 计算，空号无影响）。
+ *   addNode 先领新号，再原子转移源图镜号；图片只按真实参考关系投影视频镜号。
  * - meta.sourceNodeId 指回源图 → 一键整理会把视频紧跟其源镜头摆放。
  * - 不写 modelKey：让 useNodeModelAutoSelect 的「modelKey 空时自动选默认视频模型」既有路径接管。
- * - 幂等：该图已转出过视频（存在 image→video 的构图/首帧出边）→ 返回已有节点 id，不重复建。
+ * - 幂等：优先复用 sourceNodeId 指回源图的视频，断边只补回构图边，不重复建。
  *
  * 返回 { nodeId, existed }；UI 层据此吐 toast。纯 store 编排，可单测（store 可在测试里 setState 铺底）。
  */
-export function convertImageShotToVideo(node: GenerationCanvasNode): { nodeId: string; existed: boolean } {
+export function convertImageShotToVideo(input: GenerationCanvasNode): { nodeId: string; existed: boolean } {
   const state = useGenerationCanvasStore.getState()
-  const existing = state.nodes.find(
-    (candidate) =>
-      getGenerationNodeExecutionKind(candidate.kind) === 'video' &&
-      state.edges.some((edge) => (
-        edge.source === node.id
-        && edge.target === candidate.id
-        && (edge.mode === 'composition_ref' || edge.mode === 'first_frame')
-      )),
-  )
-  if (existing) {
-    state.selectNode(existing.id)
-    return { nodeId: existing.id, existed: true }
-  }
+  const node = state.nodes.find(candidate => candidate.id === input.id)
+  if (!node || node.kind !== 'image') throw new Error('图片镜头已不存在，请在当前项目重新操作')
+  const hasReferenceEdge = (id: string) => state.edges.some(edge => edge.source === node.id && edge.target === id
+    && (edge.mode === 'composition_ref' || edge.mode === 'first_frame'))
+  const videos = state.nodes.filter(candidate => getGenerationNodeExecutionKind(candidate.kind) === 'video')
+  const derived = videos.filter(candidate => candidate.meta?.sourceNodeId === node.id)
+  const candidates = derived.length ? derived : videos.filter(candidate => !candidate.meta?.sourceNodeId && hasReferenceEdge(candidate.id))
+  if (candidates.length > 1) throw new Error('图片镜头关联了多个视频，请先明确要转换的镜头')
+  const existing = candidates[0]
   const storyboardPrompt = storyboardPromptForImageNode(node, state.nodes)
-  const video = state.addNode({
+  const video = existing || state.addNode({
     kind: 'video',
     title: node.title ? i18n.t('generationCommon.shotConversion.videoTitle', { name: node.title }) : '',
     prompt: storyboardPrompt || compileImageShotFallbackVideoPrompt(node.prompt || ''),
@@ -90,8 +86,20 @@ export function convertImageShotToVideo(node: GenerationCanvasNode): { nodeId: s
     ...(node.categoryId ? { categoryId: node.categoryId } : {}),
     select: true,
   })
-  if (typeof node.shotIndex === 'number') {
-    useGenerationCanvasStore.getState().updateNode(video.id, { shotIndex: node.shotIndex })
+  const { storyboardVideoOwnerNodeId: _legacyOwner, ...sourceMeta } = node.meta || {}
+  const shotIndex = isValidShotIndex(node.shotIndex) ? node.shotIndex : video.shotIndex
+  if (node.meta?.excludeFromShotNumbering !== true || _legacyOwner !== undefined
+    || video.meta?.sourceNodeId !== node.id || video.shotIndex !== shotIndex) {
+    // One atomic identity transfer; repeated conversions also repair legacy ownership.
+    useGenerationCanvasStore.getState().updateNodes([
+      { nodeId: node.id, patch: { meta: { ...sourceMeta, excludeFromShotNumbering: true } } },
+      { nodeId: video.id, patch: { shotIndex, meta: { ...video.meta, sourceNodeId: node.id } } },
+    ])
+  }
+  if (existing) {
+    if (!hasReferenceEdge(video.id)) useGenerationCanvasStore.getState().connectNodes(node.id, video.id, 'composition_ref')
+    useGenerationCanvasStore.getState().selectNode(video.id)
+    return { nodeId: video.id, existed: true }
   }
   // 先把角色/场景/道具参考直接复制到视频节点，避免只通过分镜图递归继承时丢失
   // 参考语义和顺序；再把分镜图本身作为构图/镜头意图参考放在最后。
@@ -110,7 +118,8 @@ export function convertImageShotToVideo(node: GenerationCanvasNode): { nodeId: s
 }
 
 export function isConvertibleImageShotNode(node: GenerationCanvasNode): boolean {
-  return node.kind === 'image' && typeof node.shotIndex === 'number' && isShotNumberedNode(node)
+  return node.kind === 'image' && (node.categoryId ?? 'shots') === 'shots' && node.meta?.referenceSheet !== true
+    && ((isValidShotIndex(node.shotIndex) && isShotNumberedNode(node)) || node.meta?.excludeFromShotNumbering === true)
 }
 
 export type ConvertImageShotsToVideosResult = {

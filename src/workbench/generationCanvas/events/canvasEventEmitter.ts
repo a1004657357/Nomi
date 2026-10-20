@@ -6,6 +6,7 @@
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { appendToUndoJournal } from './canvasUndoJournal'
 import { getActiveCanvasGestureContext } from './canvasGestureContext'
+import { assertTurnCanWrite } from '../../ai/agentTurnLifecycle'
 
 export type CanvasShadowEvent = {
   id: string
@@ -25,14 +26,9 @@ let buffer: CanvasShadowEvent[] = []
 let timer: ReturnType<typeof setTimeout> | null = null
 let testSink: ((events: readonly CanvasShadowEvent[]) => void) | null = null
 
-/** NomiStudioApp 在 hydrate 时注入(flush 时刻取值,防切换期错绑——同 conversationPersistence 教训)。 */
+/** NomiStudioApp 在 hydrate 时注入(flush 时刻取值,防切换期错绑)。 */
 export function setCanvasEventProjectIdProvider(provider: () => string | null): void {
   projectIdProvider = provider
-}
-
-/** S9:记忆卡/prompt 注入要按项目取记忆——取当前活跃 projectId(同 flush 语义,调用时刻取值)。 */
-export function getCanvasEventsProjectId(): string | null {
-  return projectIdProvider()
 }
 
 /** 测试用:捕获发射的事件(属性测试的对账输入)。 */
@@ -87,6 +83,9 @@ export function emitCanvasGesture(
 ): void {
   if (events.length === 0) return
   const ctx = getActiveCanvasGestureContext()
+  // A synchronous store observer may have handed ownership to a new edit
+  // after the old set. Never append that old action's now-obsolete event.
+  if (ctx?.canWrite) assertTurnCanWrite(ctx.canWrite)
   const txnId = opts.txnId ?? ctx?.txnId ?? `txn_${crypto.randomUUID().slice(0, 10)}`
   const source = opts.source ?? ctx?.source ?? 'user'
   const proposalId = ctx?.proposalId

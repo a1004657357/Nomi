@@ -30,8 +30,12 @@ vi.mock("../projects/repository", () => ({
   resolveProjectRelativePath: vi.fn((_projectId: string, relativePath: string) => path.join(projectRoot, relativePath)),
 }));
 
+const { appendEvents } = vi.hoisted(() => ({ appendEvents: vi.fn() }));
+vi.mock("../events/eventLogRepository", () => ({ appendEvents }));
+
 import { handleNomiLocalRequest } from "./localProtocol";
 import { createArtifactProjection, getArtifactPreviewSecret } from "../productionRun/artifactProjection";
+import { LOCAL_ARTIFACT_CONTENT_SECURITY_POLICY } from "../contentSecurityPolicy";
 
 beforeAll(() => {
   projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-local-protocol-"));
@@ -39,9 +43,9 @@ beforeAll(() => {
   fs.mkdirSync(path.dirname(assetPath), { recursive: true });
   fs.writeFileSync(assetPath, Buffer.from("0123456789"));
   fs.writeFileSync(path.join(projectRoot, "assets", "generated", "clip.bin"), Buffer.concat([
-    Buffer.from([0, 0, 0, 0x20]),
+    Buffer.from([0, 0, 0, 0x10]),
     Buffer.from("ftypisom", "ascii"),
-    Buffer.alloc(16),
+    Buffer.alloc(4),
   ]));
 });
 
@@ -74,6 +78,30 @@ describe("handleNomiLocalRequest", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("0123456789");
+  });
+
+  // 类级不变量：nomi-local 是不受信内容离开磁盘的唯一出口——**每一条**响应都得带产物 CSP，
+  // 不管它是 HTML 产物、SVG、还是视频分片。谁也别指望消费方各自记得加 sandbox。
+  it("stamps the sandboxed artifact CSP on every nomi-local response", async () => {
+    const full = await handleNomiLocalRequest(new Request(assetUrl()));
+    expect(full.headers.get("Content-Security-Policy")).toBe(LOCAL_ARTIFACT_CONTENT_SECURITY_POLICY);
+
+    const ranged = await handleNomiLocalRequest(new Request(assetUrl(), { headers: { Range: "bytes=0-0" } }));
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get("Content-Security-Policy")).toBe(LOCAL_ARTIFACT_CONTENT_SECURITY_POLICY);
+
+    // 产物出不去网，是这条头的全部意义：任何 https/http 白名单出现在这里都算破防。
+    expect(full.headers.get("Content-Security-Policy")).not.toMatch(/https?:/);
+  });
+
+  it("records the local response status for playback diagnosis", async () => {
+    appendEvents.mockClear();
+    const response = await handleNomiLocalRequest(new Request(assetUrl(), { headers: { Range: "bytes=0-0" } }));
+    expect(response.status).toBe(206);
+    expect(appendEvents).toHaveBeenCalledWith("project-a", [expect.objectContaining({
+      type: "preview.local.response",
+      payload: expect.objectContaining({ status: 206, method: "GET" }),
+    })]);
   });
 
   it("serves byte ranges for video playback", async () => {
@@ -166,5 +194,24 @@ describe("handleNomiLocalRequest", () => {
     expect(missing.status).toBe(404);
     const forged = await handleNomiLocalRequest(new Request("nomi-local://production-preview/project-a/run-a/artifact-a/assets/generated/clip.mp4?preview=forged"));
     expect(forged.status).toBe(404);
+  });
+});
+
+describe("curated media protocol", () => {
+  it("streams the actual declared media bytes independently of the renderer base URL", async () => {
+    const store = await import("../skills/skillStore");
+    const { discoverSkillRecords } = await import("../agentLane/laneSkillCatalog.mjs");
+    const records = (await discoverSkillRecords([{ path: path.resolve(__dirname, "../../skills"), origin: "builtin" }])).records;
+    const record = records.find((item) => item.directoryName === "curated-multi-view")!;
+    // 协议层每次请求都 `await readSkillRecords()`（目录 async）；这里把桥换成真目录。
+    const spy = vi.spyOn(store, "readSkillRecords").mockResolvedValue(records);
+    try {
+      const response = await handleNomiLocalRequest(new Request("nomi-local://skill-preview/curated-multi-view"));
+      expect(response.status).toBe(200);
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(fs.readFileSync(path.join(path.dirname(record.filePath), record.curation!.preview!.path)));
+      for (const name of ["unknown", "curated-multi-view/assets/preview.jpg", "%2e%2e%2fprivate"]) {
+        expect((await handleNomiLocalRequest(new Request(`nomi-local://skill-preview/${name}`))).status).toBe(404);
+      }
+    } finally { spy.mockRestore(); }
   });
 });

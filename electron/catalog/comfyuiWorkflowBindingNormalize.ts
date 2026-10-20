@@ -67,8 +67,8 @@ export function roleBoundInputKeys(binding: WorkflowBinding): Set<string> {
   return keys;
 }
 
-function mediaKindOf(value: unknown, fallback: "image" | "video"): "image" | "video" {
-  return value === "video" || value === "image" ? value : fallback;
+function mediaKindOf(value: unknown, fallback: "image" | "video" | "audio"): "image" | "video" | "audio" {
+  return value === "video" || value === "image" || value === "audio" ? value : fallback;
 }
 
 /** 三个老角色的保留 paramKey。模板图里写死的就是它们，且画布靠 key 名推首帧/尾帧分组。 */
@@ -102,11 +102,12 @@ function normalizeImageBindings(
   const seenTargets = new Set<string>();
   const seenKeys = new Set<string>();
 
-  const push = (nodeId: string, inputKey: string, paramKey: string, label: string, mediaKind: "image" | "video") => {
+  const push = (nodeId: string, inputKey: string, paramKey: string, label: string, mediaKind: "image" | "video" | "audio") => {
     const targetKey = inputKeyOf(nodeId, inputKey);
     if (seenTargets.has(targetKey) || seenKeys.has(paramKey)) return;
-    // 有图就校验这个 input 真的存在且是标量 widget（连线口不是可填的槽）。
-    if (graph && !isScalar(graph[nodeId]?.inputs?.[inputKey])) return;
+    // 媒体占位最终会写入字符串 URL/文件名。数字/布尔虽然也是 scalar widget，却不是媒体槽；
+    // 接受它们会让旧 binding 把图片文件名写进 VHS frame_rate 等数值参数。
+    if (graph && typeof graph[nodeId]?.inputs?.[inputKey] !== "string") return;
     seenTargets.add(targetKey);
     seenKeys.add(paramKey);
     images.push({ nodeId, inputKey, paramKey, label, mediaKind });

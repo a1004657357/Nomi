@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   parseComfyApiWorkflow,
@@ -444,6 +445,7 @@ describe("buildComfyImportModelMapping", () => {
     const { model, mapping } = buildComfyImportModelMapping(built, { modelKey: "comfy-wan-i2v", labelZh: "本地 WAN 图生视频" });
     expect(model.vendorKey).toBe("comfyui-local");
     expect(model.kind).toBe("video");
+    expect(model.enabled).toBe(false);
     expect((model.meta as { parameters: unknown[] }).parameters.length).toBeGreaterThan(0);
     expect(mapping.taskKind).toBe("image_to_video");
     const query = mapping.query as { response_transform: string; response_mapping: Record<string, string> };
@@ -653,6 +655,75 @@ describe("combo 真实选项烤入（collectGraphEnumOptions + buildImportedWork
     expect(offline.parameters[0].type).toBe("text");
     const online = buildImportedWorkflow(graph, binding, collectGraphEnumOptions(graph, index));
     expect(online.parameters.find((p) => p.key === "comfy_seed")?.type).toBe("number");
+  });
+});
+
+// 类级不变量：combo 选项的 wire 类型从 /object_info 一路保到发给 ComfyUI 的 /prompt。
+// ComfyUI 校验 combo 是 Python `val not in combo_options`（execution.py validate_inputs），类型敏感。
+describe("combo 选项 wire 类型往返（issue #861 同类：布尔/数字选项不许被转成字符串）", () => {
+  /** 与生产同一条渲染路：defaultParams + 用户改的值 → taskTemplateParams → 模板渲染出的 /prompt 图。 */
+  function renderPrompt(built: ReturnType<typeof buildImportedWorkflow>, userExtras: Record<string, unknown>) {
+    const { mapping } = buildComfyImportModelMapping(built, { modelKey: "comfy-wire-type", labelZh: "wire" });
+    const create = mapping.create as { body: unknown; defaultParams: Record<string, unknown> };
+    const extras = applyWireDefaults(userExtras, create.defaultParams);
+    const params = taskTemplateParams({ extras });
+    const context = buildTemplateContext({ request: { prompt: "", extras }, params, model: {}, modelKey: "comfy-wire-type", apiKey: "" });
+    return (renderTemplateValue(create.body, context) as { prompt: Record<string, { inputs: Record<string, unknown> }> }).prompt;
+  }
+
+  it("全布尔老格式 combo（issue #861 原样 spec）：布尔值不报缺、不烤下拉，开关参数按布尔发回", () => {
+    // spec 逐字取自 issue #861 正文（用户机器 /object_info），与上游 ComfyUI-Easy-Use
+    // py/nodes/fix.py:24 `"rescale_after_model": ([False, True], {"default": True})` 一致。
+    const index = parseObjectInfoIndex({
+      "easy hiresFix": { input: { required: { rescale_after_model: [[false, true], { default: true }] } } },
+      SaveImage: { input: { required: {} } },
+    });
+    const graph: ComfyGraph = {
+      "10": { class_type: "easy hiresFix", inputs: { rescale_after_model: true } },
+      "9": { class_type: "SaveImage", inputs: { filename_prefix: "x", images: ["10", 0] } },
+    };
+    expect(index.unknownComboShapes).toEqual([]);
+    expect(reconcileComfyWorkflow(graph, index)).toEqual({ unknownNodeTypes: [], missingEnumValues: [] });
+    const enumOptions = collectGraphEnumOptions(graph, index);
+    expect(enumOptions).toEqual([]); // 布尔值的 widget 是开关，不是下拉
+    const built = buildImportedWorkflow(graph, {
+      outputNodeId: "9", outputKind: "image",
+      params: [{ nodeId: "10", inputKey: "rescale_after_model", paramKey: "comfy_rescale", label: "rescale", type: "boolean", default: true }],
+    }, enumOptions);
+    expect(built.parameters).toEqual([{ key: "comfy_rescale", label: "rescale", type: "boolean", default: true }]);
+    expect(renderPrompt(built, {})["10"].inputs.rescale_after_model).toBe(true);
+    expect(renderPrompt(built, { comfy_rescale: false })["10"].inputs.rescale_after_model).toBe(false);
+  });
+
+  describe("字符串混数字的 combo（真机夹具 CreateVideo.bit_depth = [\"auto\", 8, 10]）", () => {
+    const fixture = JSON.parse(readFileSync(new URL("../__fixtures__/comfyui-object-info-real-sample.json", import.meta.url), "utf8"));
+    const index = parseObjectInfoIndex({ ...fixture, SaveVideo: { input: { required: {} } } });
+    const graph: ComfyGraph = {
+      "1": { class_type: "CreateVideo", inputs: { bit_depth: "auto" } },
+      "9": { class_type: "SaveVideo", inputs: { filename_prefix: "x", video: ["1", 0] } },
+    };
+    const binding = {
+      outputNodeId: "9", outputKind: "video" as const,
+      params: [{ nodeId: "1", inputKey: "bit_depth", paramKey: "comfy_bit_depth", label: "bit depth", type: "text" as const, default: "auto" }],
+    };
+
+    it("烤成下拉时选项保留数字（改前是 [\"auto\",\"8\",\"10\"]）", () => {
+      const built = buildImportedWorkflow(graph, binding, collectGraphEnumOptions(graph, index));
+      expect(built.parameters[0]).toMatchObject({ type: "select", default: "auto", options: ["auto", 8, 10] });
+    });
+
+    it("画布按选中项的声明类型发回：选 8 → /prompt 里是数字 8（改前发 \"8\"，ComfyUI value_not_in_list）", () => {
+      const built = buildImportedWorkflow(graph, binding, collectGraphEnumOptions(graph, index));
+      expect(renderPrompt(built, {})["1"].inputs.bit_depth).toBe("auto");
+      expect(renderPrompt(built, { comfy_bit_depth: 8 })["1"].inputs.bit_depth).toBe(8);
+    });
+
+    it("对账与 ComfyUI 同口径：工作流里写成字符串 \"8\" 对不上数字选项 8 → 如实报缺", () => {
+      const stringified: ComfyGraph = { ...graph, "1": { class_type: "CreateVideo", inputs: { bit_depth: "8" } } };
+      expect(reconcileComfyWorkflow(stringified, index).missingEnumValues).toEqual([
+        { nodeId: "1", classType: "CreateVideo", title: undefined, inputKey: "bit_depth", value: "8" },
+      ]);
+    });
   });
 });
 
@@ -923,5 +994,69 @@ describe("视频输入通道（补帧/视频超分/视频去背景 —— 语料
     const a = analyzeComfyWorkflow(graph);
     expect(a.suggested.sourceVideoNodeId).toBe("1");
     expect(a.suggested.firstFrameNodeId).toBe("2");
+  });
+});
+
+describe("音频输入通道（用户报的根因「ComfyUI 音频输入用不了」——MEDIA_INPUT_KEYS 早就预留了 audio 键名，唯独没有配套的 class_type 识别正则，音频输入被降级成裸文本 widget）", () => {
+  // 真实 ComfyUI LoadAudio 节点：class_type="LoadAudio"，装文件名的输入键叫 audio。
+  const AUDIO_CONDITIONED: ComfyGraph = {
+    "1": { class_type: "LoadAudio", inputs: { audio: "voice.mp3" } },
+    "2": { class_type: "CLIPTextEncode", inputs: { text: "album cover reacting to this audio", clip: ["4", 1] } },
+    "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "ace-step.safetensors" } },
+    "9": { class_type: "SaveImage", inputs: { filename_prefix: "x", images: ["2", 0] } },
+  };
+
+  it("LoadAudio.audio 认得出来是媒体输入（此前落进 pushScalarWidgetCandidate，只能手填裸 URL）", () => {
+    const a = analyzeComfyWorkflow(AUDIO_CONDITIONED);
+    expect(a.imageInputs.map((i) => `${i.nodeId}.${i.inputKey}`)).toContain("1.audio");
+    expect(a.widgetInputs.map((i) => `${i.nodeId}.${i.inputKey}`)).not.toContain("1.audio");
+    expect(a.imageInputs.find((i) => i.nodeId === "1")?.mediaKind).toBe("audio");
+  });
+
+  it("音频输入不冒充首帧图（唯一的 still 输入是 0 张，不会把音频错当图片首帧）", () => {
+    const a = analyzeComfyWorkflow(AUDIO_CONDITIONED);
+    expect(a.suggested.firstFrameNodeId).toBeUndefined();
+    expect(a.suggested.lastFrameNodeId).toBeUndefined();
+    expect(a.suggested.sourceVideoNodeId).toBeUndefined();
+    expect(a.suggested.images?.[0]).toMatchObject({ nodeId: "1", inputKey: "audio", mediaKind: "audio" });
+  });
+
+  it("建图时注入音频占位并保留 mediaKind:audio（画布据此渲染成可拖拽的音频槽，不是裸文本框）", () => {
+    const built = buildImportedWorkflow(AUDIO_CONDITIONED, analyzeComfyWorkflow(AUDIO_CONDITIONED).suggested);
+    const audioParamKey = analyzeComfyWorkflow(AUDIO_CONDITIONED).suggested.images?.[0]?.paramKey;
+    expect(audioParamKey).toBeDefined();
+    expect(built.templatedGraph["1"]?.inputs?.audio).toBe(`{{request.params.${audioParamKey}}}`);
+    expect(built.parameters.find((p) => p.key === audioParamKey)).toMatchObject({ type: "image-url", mediaKind: "audio" });
+  });
+
+  it("图片、视频、音频三种媒体输入同时出现 → 各进各的槽，互不误判", () => {
+    const graph: ComfyGraph = {
+      "1": { class_type: "LoadAudio", inputs: { audio: "voice.mp3" } },
+      "2": { class_type: "LoadImage", inputs: { image: "ref.png" } },
+      "3": { class_type: "LoadVideo", inputs: { file: "clip.mp4" } },
+      "9": { class_type: "SaveVideo", inputs: { video: ["3", 0] } },
+    };
+    const a = analyzeComfyWorkflow(graph);
+    expect(a.suggested.sourceVideoNodeId).toBe("3");
+    expect(a.suggested.firstFrameNodeId).toBe("2");
+    const audioImage = a.suggested.images?.find((i) => i.nodeId === "1");
+    expect(audioImage).toMatchObject({ inputKey: "audio", mediaKind: "audio" });
+  });
+
+  it("音频输入不冒充图片输入去驱动 taskKind（纯音频条件的图生工作流仍是 text_to_image，不是 image_edit）", () => {
+    // 根因回归：resolveComfyWorkflowTaskKind 曾用 `mediaKind !== 'video'` 判「有没有图输入」——
+    // 这把 audio 也算进了"有图输入"，纯 LoadAudio(无 LoadImage) 的工作流会被错分类成 image_edit，
+    // 画布侧再按 image_edit 去找 mapping/提示必传首帧图，对不上导入时其实半张图都没有的事实。
+    const audioOnlyImageGraph: ComfyGraph = {
+      "1": { class_type: "LoadAudio", inputs: { audio: "voice.mp3" } },
+      "2": { class_type: "CLIPTextEncode", inputs: { text: "album cover for this song", clip: ["4", 1] } },
+      "4": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "author.safetensors" } },
+      "9": { class_type: "SaveImage", inputs: { filename_prefix: "cover", images: ["2", 0] } },
+    };
+    const suggested = analyzeComfyWorkflow(audioOnlyImageGraph).suggested;
+    expect(suggested.images?.every((image) => image.mediaKind === "audio")).toBe(true);
+    const built = buildImportedWorkflow(audioOnlyImageGraph, suggested);
+    expect(built.kind).toBe("image");
+    expect(built.taskKind).toBe("text_to_image");
   });
 });

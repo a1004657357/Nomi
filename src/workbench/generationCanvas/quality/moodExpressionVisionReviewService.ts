@@ -2,7 +2,6 @@ import type {
   AgentAttachmentPayload,
   AgentsChatResponseDto,
 } from '../../../api/desktopClient'
-import { clearWorkbenchAgentSession } from '../../../api/desktopClient'
 import {
   sendWorkbenchAiMessage,
   type WorkbenchAiRequest,
@@ -119,7 +118,7 @@ export async function reviewMoodCollectionWithVisionModel(input: {
 }): Promise<GenerationResultCollection> {
   const assets = validateMoodVisionReviewAssets(input.collection)
   const deps: MoodVisionReviewDeps = {
-    clearSession: input.deps?.clearSession ?? clearWorkbenchAgentSession,
+    clearSession: input.deps?.clearSession ?? (async () => {}),
     send: input.deps?.send ?? sendWorkbenchAiMessage,
     now: input.deps?.now ?? Date.now,
   }

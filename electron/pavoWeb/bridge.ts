@@ -394,6 +394,7 @@ export async function queryPavoWebTask(input: {
       sourceServerUrl: serverUrl,
       sourceFileId: file.fileId,
     },
+    'video',
   ) as { id?: string; name?: string; data?: { url?: string } };
   const url = trim(saved.data?.url);
   if (!url) throw new Error("Pavo Web 结果已生成，但写入 Nomi 项目资产失败");

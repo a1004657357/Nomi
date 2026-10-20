@@ -5,35 +5,10 @@
 import { extractTaskId as extractTaskIdShared } from "../ai/requestPipeline";
 import { firstString, isJsonRecord, readNestedRecord, trim, type JsonRecord } from "../jsonUtils";
 
-/**
- * 任务状态（§10.2）。
- *
- * Gate 1 Slice 5 扩展：原先仅 queued/running/succeeded/failed 四态；
- * 新增 cancelled（从 failed 独立）与 unknown（既非成功资产、也无明确失败关键词、且无 statusMapping 命中）。
- *
- * 钱安全不变量（§10.2）：`unknown` 态在 runTask/poll 路径绝不触发新 create——
- * `taskStatusFromResponse` 返回 unknown 后，调用方只查询、不重发（见 submissionLedger / taskResultQuery）。
- *
- * 终态判定：succeeded/failed/cancelled 是终态；unknown 非终态（持续查询）。
- * 兼容辅助：`isTerminalStatus` / `isFailureStatus`（cancelled 视为失败类，保留旧 `=== 'failed'` 语义的调用方迁移用）。
- */
-export type TaskStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled"
-  | "unknown";
-
-/** 终态：不再变化。unknown 不是终态（持续查询）。 */
-export function isTerminalStatus(status: TaskStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
-}
-
-/** 失败类终态：failed 或 cancelled（保留旧 `=== 'failed'` 调用方的语义迁移）。 */
-export function isFailureStatus(status: TaskStatus): boolean {
-  return status === "failed" || status === "cancelled";
-}
+export type { TaskStatus } from "../shared/taskStatus";
+export { isTerminalStatus, isFailureStatus } from "../shared/taskStatus";
+import type { TaskStatus } from "../shared/taskStatus";
+import { classifyUpstreamTaskStatus } from "../shared/taskStatus";
 
 export function maybeParseJsonString(value: unknown): unknown {
   if (typeof value !== "string") return value;
@@ -136,21 +111,15 @@ export function resolveTaskStatus(response: unknown, responseMapping: JsonRecord
   const fallbackStatus = rawStatus.toLowerCase();
   const recognized = (status: TaskStatus): TaskStatusResolution => ({ status, unrecognizedStatus: "" });
   const sm = statusMapping || {};
-  for (const status of ["queued", "running", "succeeded", "failed"] as const) {
+  for (const status of ["queued", "running", "succeeded", "failed", "cancelled"] as const) {
     const values = Array.isArray(sm[status]) ? sm[status] : [];
     if (values.map((item) => String(item).toLowerCase()).includes(fallbackStatus)) return recognized(status);
   }
-  // statusMapping 显式 cancelled（Gate 1 Slice 5：允许供应商在 statusMapping 里声明取消态）
-  if (Array.isArray(sm["cancelled"]) && sm["cancelled"].map((item) => String(item).toLowerCase()).includes(fallbackStatus)) {
-    return recognized("cancelled");
-  }
-  // 通用状态词表（供应商无关）。kie 用 waiting/generating/fail，故并入默认 —— 让所有走这套
-  // 动词的供应商无需各自声明 statusMapping（避免每家一份并行映射）。
-  if (["queued", "queuing", "pending", "waiting", "in_queue", "starting"].includes(fallbackStatus)) return recognized("queued");
-  if (["running", "processing", "in_progress", "generating"].includes(fallbackStatus)) return recognized("running");
-  if (["succeeded", "success", "completed", "complete", "done", "stop", "length"].includes(fallbackStatus)) return recognized("succeeded");
-  if (["canceled", "cancelled"].includes(fallbackStatus)) return recognized("cancelled");
-  if (["failed", "fail", "error", "timeout", "expired"].includes(fallbackStatus)) return recognized("failed");
+  // 通用状态词表（供应商无关）：全仓唯一一份 shared/taskStatus，引擎 B 与这里问的是同一张表
+  // （#1213：四张表各漏不同的词，同一个上游动词在画布与制作 Run 里被判成两样）。
+  const vocabulary = classifyUpstreamTaskStatus(fallbackStatus);
+  if (vocabulary === "queued" || vocabulary === "running" || vocabulary === "succeeded") return recognized(vocabulary);
+  if (vocabulary === "failed" || vocabulary === "cancelled") return recognized(vocabulary);
   // 词表都没认出来 → 先看有没有**硬证据**能定案（有产物=成了、有 error 字段=挂了）。
   // 硬证据比动词可信，且能定案就不算「不知道」，故不标 unrecognizedStatus。
   if (assetUrls.length > 0) return recognized("succeeded");

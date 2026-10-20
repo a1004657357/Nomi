@@ -1,9 +1,10 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { IconArchive, IconCheck, IconFile3d, IconFolderOpen, IconMusic, IconPhoto, IconVideo } from '@tabler/icons-react'
 import { getDesktopBridge } from '../../../../desktop/bridge'
 import { toast } from '../../../../ui/toast'
 import { buildVideoPlaybackUrl } from '../../../../media/videoPlaybackUrl'
-import { getActiveWorkbenchProjectId } from '../../../project/workbenchProjectSession'
+import { isProjectExecutionContextCurrent, withProjectAction } from '../../../project/projectCanvasReadSurface'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import {
@@ -52,13 +53,14 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
     writeSelection(next)
   }
 
-  const archive = async () => {
+  const archive = () => withProjectAction(async project => {
+    project.assertCurrent()
     const chosen = items.filter((item) => selected.has(item.id))
     if (!chosen.length) {
       toast('请先选择至少一个输出', 'warning')
       return
     }
-    const projectId = getActiveWorkbenchProjectId()
+    const projectId = project.binding.projectId
     const bridge = getDesktopBridge()
     if (!projectId || !bridge?.assets.archiveOutputCollection) {
       toast('本地归档需要已保存的 Nomi 桌面端项目', 'error')
@@ -66,8 +68,9 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
     }
     setBusy(true)
     try {
-      const result = await bridge.assets.archiveOutputCollection({
+      const payload = {
         projectId,
+        projectBinding: project.binding,
         collectionName: collectionName.trim() || node.title,
         items: chosen.map((item) => ({
           nodeId: item.sourceNodeId,
@@ -77,7 +80,9 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
           url: item.result.url,
           createdAt: item.result.createdAt,
         })),
-      })
+      }
+      const result = await bridge.assets.archiveOutputCollection(payload)
+      project.assertCurrent()
       updateNode(node.id, {
         meta: {
           ...(node.meta || {}),
@@ -92,21 +97,26 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
       })
       toast(`已归档 ${result.items.length} 个输出`, 'success')
     } catch (error) {
+      if (!isProjectExecutionContextCurrent(project)) return
       toast(`归档失败：${error instanceof Error ? error.message : String(error)}`, 'error')
     } finally {
-      setBusy(false)
+      if (isProjectExecutionContextCurrent(project)) setBusy(false)
     }
-  }
+  }, () => { toast('本地归档需要已打开的 Nomi 桌面端项目', 'error') })
 
-  const reveal = async () => {
-    const projectId = getActiveWorkbenchProjectId()
-    if (!projectId || typeof lastManifest !== 'string') return
+  const reveal = () => withProjectAction(async project => {
+    project.assertCurrent()
+    const projectId = project.binding.projectId
+    if (typeof lastManifest !== 'string') return
     try {
-      await getDesktopBridge()?.workspace.revealFile({ projectId, relativePath: lastManifest })
+      const payload = { projectId, projectBinding: project.binding, relativePath: lastManifest }
+      await getDesktopBridge()?.workspace.revealFile(payload)
+      project.assertCurrent()
     } catch (error) {
+      if (!isProjectExecutionContextCurrent(project)) return
       toast(`无法打开归档目录：${error instanceof Error ? error.message : String(error)}`, 'error')
     }
-  }
+  })
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-nomi-paper p-3 text-nomi-ink">

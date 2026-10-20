@@ -7,9 +7,18 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { assertElectronInstallIdentity } from '../electron-install-identity.mjs'
 
 const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+let verifiedElectronBinary = ''
+
+function resolveVerifiedElectronBinary() {
+  if (verifiedElectronBinary) return verifiedElectronBinary
+  assertElectronInstallIdentity(repoRoot)
+  verifiedElectronBinary = require('electron')
+  return verifiedElectronBinary
+}
 
 // 传输层兜底超时（堵无界阻塞：即便主进程/host 某处 hang 死，外部 agent 也等够即拿到错误，不永久转圈）。
 // 必须 ≥ 服务端最长合法耗时（core.ts 视频轮询 300s）才不误杀真生成；默认 360s，可经 env 调。
@@ -127,9 +136,13 @@ function callViaHost(token, method, params, spawnEnv) {
   return new Promise((resolve, reject) => {
     let electronBinary
     try {
-      electronBinary = require('electron')
-    } catch {
-      reject(new Error('找不到 electron 可执行文件（dev 用；打包版 CLI 走应用内置 Electron，后续切片）'))
+      electronBinary = resolveVerifiedElectronBinary()
+    } catch (error) {
+      reject(
+        error instanceof Error
+          ? error
+          : new Error('找不到 electron 可执行文件（dev 用；打包版 CLI 走应用内置 Electron，后续切片）'),
+      )
       return
     }
     const hostScript = path.join(repoRoot, 'dist-electron', 'capabilityCore', 'host.js')
@@ -147,7 +160,7 @@ function callViaHost(token, method, params, spawnEnv) {
     }
     const child = spawn(electronBinary, [hostScript, '--cmd', JSON.stringify({ token, method, params })], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      // spawnEnv：调用方按本次调用注入的环境（如付费确认通过后传 NOMI_LOOP_SPEND_OK=1 给本次 host），
+      // spawnEnv：调用方按本次调用注入的环境（如指定模型目录、超时），
       // per-call 注入避免改 process.env 全局态在并发调用间串台。
       env: { ...process.env, ...(process.env.NOMI_APP_NAME || appName ? { NOMI_APP_NAME: process.env.NOMI_APP_NAME || appName } : {}), ...(spawnEnv || {}) },
     })

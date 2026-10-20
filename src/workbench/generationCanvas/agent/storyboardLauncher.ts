@@ -1,9 +1,8 @@
 /**
  * 分镜规划师的技能标识 + 用户消息构造。
  *
- * 触发入口在创作区 AI 助手（说「拆镜头」）→ 调 runStoryboardPlanner 就地跑（流程 A：不切区）。
- * 原先经 window CustomEvent 把请求甩到生成区助手面板的「事件桥」已删除——规划改在创作区原地完成，
- * 产出 propose_storyboard_plan 落创作 store，编辑器随即在创作区主列展开。
+ * 生产编排请求一份只读方案，用户确认后由既有 materialize 阶段落画布。
+ * 规划本身是一条独立的单次模型请求，只返回 JSON，不发工具调用。
  */
 
 import { SCREEN_VISIBILITY_PROMPT_RULE, type StoryboardPlan } from './storyboardPlan'
@@ -41,7 +40,7 @@ function shotModeDirective(mode: StoryboardShotMode): string {
       'shot.prompt 写视频部分：从这张首帧继续发生的动作演进、运镜、节奏与时长感，不要复述锚的静态外貌。',
       'keyframe.modelKey 从可用模型清单里选图片模型；shot.modelKey 从可用模型清单里选视频模型。拿不准就留空，系统用默认模型兜底。',
       'anchorIds 只引用 anchors 里的 id，绝对不要引用 image-1、shot-1-keyframe 等系统派生 id；系统会自动创建首帧图并把它用 first_frame 连到视频。',
-      'propose_storyboard_plan 的 shots 字段必须是**数组本体**，形如 shots: [{...}, {...}]；绝对不要写成字符串，禁止 shots: "[{...}]" 或任何转义 JSON 文本。',
+      '返回方案的 shots 字段必须是**数组本体**，形如 shots: [{...}, {...}]；绝对不要写成字符串，禁止 shots: "[{...}]" 或任何转义 JSON 文本。',
     ].join('\n')
   }
   return [
@@ -57,14 +56,12 @@ export function buildStoryboardPlanningMessage(input: {
   currentPlan?: StoryboardPlan | null
   revisionRequest?: string
   shotMode?: StoryboardShotMode
+  profileKey?: string
 }): string {
   if (input.currentPlan && input.revisionRequest?.trim()) {
     return [
       '用户正在审阅你之前产出的分镜方案，现在要求你修改它。请基于下面的「当前方案」按用户要求改——',
-      '**只改用户点名要改的部分，其余镜头/锚/已选模型/镜号一律原样保留**；改完通过 propose_storyboard_plan 重新产出**整份**方案（不是增量、不是片段）。',
-      '如果用户要求改景别、机位、运镜、对白、音乐、表演、道具或备注，请优先改对应的 scene/shotSize/cameraAngle/cameraMove/characters/performance/dialogue/props/sound/notes 字段，再同步必要的 imagePrompt/videoPrompt。',
-      '',
-      SCREEN_VISIBILITY_PROMPT_RULE,
+      '**只改用户点名要改的部分，其余镜头/锚/已选模型/镜号一律原样保留**；改完只返回 JSON 对象，重新产出**整份**方案（不是增量、不是片段）。',
       '',
       '--- 当前方案(JSON) ---',
       JSON.stringify(input.currentPlan),
@@ -77,11 +74,15 @@ export function buildStoryboardPlanningMessage(input: {
   }
   const trimmed = (input.storyText || '').trim()
   return [
-    '请把下面这段故事规划成一份「分镜方案」（跨镜头要一致的角色/场景/道具/风格 + 每个镜头），通过 propose_storyboard_plan 产出结构化方案对象——先给用户在创作区审阅、修改，不要直接写画布。',
+    '遵守宿主的回复语言规则；用户明确要求的语言优先。用户给定的标题、角色名、字幕和台词保持原文，除非用户要求改写或翻译。',
+    '请把下面这段故事规划成一份「分镜方案」（跨镜头要一致的角色/场景/道具/风格 + 每个镜头），只返回符合所附 JSON Schema 的结构化方案 JSON 对象——先给用户在创作区审阅、修改，不要直接写画布。',
     '',
     shotModeDirective(input.shotMode ?? 'image'),
+    '片种模板只能从以下内置 profile 选择：genre.short-drama（9:16、带台词轨、骨架段 shotSize/emotion）或 genre.free-form（16:9、无骨架、纯自由文本）。默认使用 genre.short-drama；输出 profileKey，并在 storyboardProfile 中原样带出所选声明。',
+    '使用有骨架模板时，先按 promptSkeleton 填 prompt，再用 promptSegments 标注每段在 prompt 中的 start/end 字符范围；范围只是可丢失的视图标注，不要另造列字段或 promptOverridden。',
+    '画幅是**整片级**的：写在方案顶层 aspectRatio（如 "9:16"），只有"这一镜真的不一样"时才在那一镜的 params.aspect_ratio 上覆盖。不要把同一个画幅抄进每一镜。',
     '',
-    SCREEN_VISIBILITY_PROMPT_RULE,
+    '输出硬约束：JSON 根必须是对象，anchors/shots 必须是数组本体；不要把任何数组序列化成字符串。',
     '',
     '--- 故事正文 ---',
     trimmed,

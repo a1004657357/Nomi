@@ -14,7 +14,7 @@ import { registerScene3DObjectRef, unregisterScene3DObjectRef } from './trajecto
  */
 export function useScene3DObjectRefRegistration(
   runtimeId: string,
-  ref: React.RefObject<THREE.Object3D>,
+  ref: React.RefObject<THREE.Object3D | null>,
   options: { enabled?: boolean; positionOffsetY?: number; followTangent?: boolean } = {},
 ): void {
   const enabled = options.enabled ?? true

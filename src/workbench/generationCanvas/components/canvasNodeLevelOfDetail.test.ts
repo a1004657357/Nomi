@@ -2,19 +2,25 @@ import { describe, expect, it } from 'vitest'
 import {
   DENSE_EDGE_PAN_THRESHOLD,
   LIGHTWEIGHT_NODE_RENDER_THRESHOLD,
-  MEDIA_HEAVY_NODE_THRESHOLD,
-  resolveCanvasPerformanceProfile,
-  shouldDeferCanvasEdgesWhilePanning,
+  LIGHTWEIGHT_NODE_ZOOM_THRESHOLD,
+  isLargeCanvas,
+  isZoomedOutForLightweight,
+  retainLargeCanvasLightweightRendering,
   resolveLightweightNodePreview,
   shouldRenderFullNodeContent,
   shouldUseLightweightNodeRendering,
+  shouldUseLightweightNodeRenderingForSelection,
 } from './canvasNodeLevelOfDetail'
 
 describe('canvas node level of detail', () => {
   it('uses lightweight rendering only for large zoomed-out canvases', () => {
-    expect(shouldUseLightweightNodeRendering(LIGHTWEIGHT_NODE_RENDER_THRESHOLD, 0.3)).toBe(false)
-    expect(shouldUseLightweightNodeRendering(LIGHTWEIGHT_NODE_RENDER_THRESHOLD + 1, 0.3)).toBe(true)
-    expect(shouldUseLightweightNodeRendering(LIGHTWEIGHT_NODE_RENDER_THRESHOLD + 1, 1)).toBe(false)
+    expect(isLargeCanvas(LIGHTWEIGHT_NODE_RENDER_THRESHOLD)).toBe(false)
+    expect(isLargeCanvas(LIGHTWEIGHT_NODE_RENDER_THRESHOLD + 1)).toBe(true)
+    expect(isZoomedOutForLightweight(LIGHTWEIGHT_NODE_ZOOM_THRESHOLD)).toBe(false)
+    expect(isZoomedOutForLightweight(0.3)).toBe(true)
+    expect(shouldUseLightweightNodeRendering(false, true)).toBe(false)
+    expect(shouldUseLightweightNodeRendering(true, true)).toBe(true)
+    expect(shouldUseLightweightNodeRendering(true, false)).toBe(false)
   })
 
   it('keeps selected and focused nodes fully interactive in lightweight mode', () => {
@@ -24,47 +30,17 @@ describe('canvas node level of detail', () => {
     expect(shouldRenderFullNodeContent({ lightweightMode: false, selected: false, focusFlash: false })).toBe(true)
   })
 
-  it('defers expensive SVG edges only on dense canvases while the viewport moves', () => {
-    expect(shouldDeferCanvasEdgesWhilePanning(DENSE_EDGE_PAN_THRESHOLD - 1)).toBe(false)
-    expect(shouldDeferCanvasEdgesWhilePanning(DENSE_EDGE_PAN_THRESHOLD)).toBe(true)
+  it('keeps large-canvas multi-selection lightweight without degrading single selection', () => {
+    expect(shouldUseLightweightNodeRenderingForSelection({ largeCanvas: true, zoomedOut: false, selected: true, primarySelection: false })).toBe(true)
+    expect(shouldUseLightweightNodeRenderingForSelection({ largeCanvas: true, zoomedOut: false, selected: true, primarySelection: true })).toBe(false)
+    expect(shouldUseLightweightNodeRenderingForSelection({ largeCanvas: false, zoomedOut: false, selected: true, primarySelection: false })).toBe(false)
   })
 
-  it('automatically reduces effects for media-heavy canvases without hiding normal-size nodes', () => {
-    expect(resolveCanvasPerformanceProfile({
-      preference: 'auto',
-      nodeCount: 20,
-      edgeCount: 10,
-      mediaNodeCount: MEDIA_HEAVY_NODE_THRESHOLD,
-      videoNodeCount: 0,
-      zoom: 1,
-    })).toEqual({
-      lightweightNodes: false,
-      reduceEffects: true,
-      suspendMediaWhileMoving: true,
-      deferEdgesWhileMoving: false,
-    })
-  })
-
-  it('makes smooth mode aggressively defer edges and media while preserving selected-node recovery', () => {
-    const profile = resolveCanvasPerformanceProfile({
-      preference: 'smooth',
-      nodeCount: 30,
-      edgeCount: 2,
-      mediaNodeCount: 2,
-      videoNodeCount: 1,
-      zoom: 0.7,
-    })
-    expect(profile).toEqual({
-      lightweightNodes: true,
-      reduceEffects: true,
-      suspendMediaWhileMoving: true,
-      deferEdgesWhileMoving: true,
-    })
-    expect(shouldRenderFullNodeContent({
-      lightweightMode: profile.lightweightNodes,
-      selected: true,
-      focusFlash: false,
-    })).toBe(true)
+  it('retains lightweight nodes after clearing a large multi-selection until single selection', () => {
+    expect(retainLargeCanvasLightweightRendering({ retained: false, largeCanvas: true, selected: true, primarySelection: false })).toBe(true)
+    expect(retainLargeCanvasLightweightRendering({ retained: true, largeCanvas: true, selected: false, primarySelection: false })).toBe(true)
+    expect(retainLargeCanvasLightweightRendering({ retained: true, largeCanvas: true, selected: true, primarySelection: true })).toBe(false)
+    expect(retainLargeCanvasLightweightRendering({ retained: true, largeCanvas: false, selected: false, primarySelection: false })).toBe(false)
   })
 })
 

@@ -7,21 +7,23 @@ import type {
   Vendor,
 } from "../catalog/types";
 import type { ModelListFailureKind, ModelListResult } from "../ai/onboarding/modelListProbe";
+import type { VendorAuthSpec } from "../ai/requestPipeline";
+import { vendorAuthSpec } from "../catalog/vendorAuthSpec";
 import { modelListErrorRedactor, publicModelListUrl } from "../ai/onboarding/modelListSafety";
-import type { ProviderAdapterRegistration, ProviderAdapterRun } from "./types";
+import type { CertificationContractBinding } from "../integrationCertification/types";
+import type { ProviderAdapterRun } from "./types";
+import { derivePublishedExecution } from "../shared/modelPublication";
 
 export type ExistingConnectionErrorCode =
   | "CONNECTION_NOT_FOUND"
   | "BASE_URL_MISSING"
   | "CREDENTIAL_MISSING"
   | "MODEL_LIST_UNAVAILABLE"
-  | "NO_NEW_MODELS"
   | "NO_MODELS_SELECTED"
   | "RUN_NOT_FOUND"
   | "RUN_ACTIVE"
   | "RUN_MODELS_MISSING"
-  | "START_FAILED"
-  | "REGISTER_FAILED";
+  | "START_FAILED";
 
 export type ExistingConnectionModel = {
   modelKey: string;
@@ -52,10 +54,10 @@ export type ExistingConnectionAdapterStartInput = {
   authHeader?: string;
   authQueryParam?: string;
   headers?: Record<string, string>;
+  proxyUrl?: string;
   models: ExistingConnectionModel[];
+  certification: CertificationContractBinding;
 };
-
-export type ExistingConnectionAdapterRegisterInput = Omit<ExistingConnectionAdapterStartInput, "apiKey">;
 
 export type PublicProviderAdapterRun = Omit<ProviderAdapterRun, "connectionFingerprint">;
 
@@ -76,17 +78,12 @@ export type ExistingConnectionStartResult =
   | { ok: true; run: PublicProviderAdapterRun }
   | PublicFailure;
 
-export type ExistingConnectionRegisterResult =
-  | { ok: true; registration: ProviderAdapterRegistration }
-  | PublicFailure;
-
 type ResolvedConnection = {
   summary: ExistingConnectionSummary;
   baseUrl: string;
   vendor: Vendor;
   apiKey: string;
   headers?: Record<string, string>;
-  existingModelKeys: Set<string>;
 };
 
 export type ExistingConnectionActionsDependencies = {
@@ -96,37 +93,32 @@ export type ExistingConnectionActionsDependencies = {
     providerKind: AiSdkProviderKind;
     baseUrl: string;
     apiKey: string;
-    authType: "none" | "bearer" | "x-api-key" | "query";
-    authHeader?: string;
-    authQueryParam?: string;
+    /**
+     * 这条已保存连接的**整份**鉴权说法（含 `authScheme`）。2026-09-21 之前这里是
+     * `authType` / `authHeader` / `authQueryParam` 三个散字段，方案词在契约上根本没有位置：
+     * 于是 Higgsfield 那把 key 生成能跑、列模型 401。字段一起走，别再拆开。
+     */
+    auth: VendorAuthSpec;
     headers: Record<string, string>;
+    proxyUrl?: string;
     signal: AbortSignal;
   }) => Promise<ModelListResult>;
   startAdapter: (
     input: ExistingConnectionAdapterStartInput,
-  ) => ProviderAdapterRun | Promise<ProviderAdapterRun>;
-  registerAdapter: (
-    input: ExistingConnectionAdapterRegisterInput,
-  ) => ProviderAdapterRegistration | Promise<ProviderAdapterRegistration>;
+  ) => Promise<ProviderAdapterRun>;
   getAdapterRun: (runId: string) => ProviderAdapterRun | undefined;
+  getCertificationSourceVendorKey?: (runId: string) => string | undefined;
   listTimeoutMs?: number;
 };
 
 export type ExistingConnectionActions = {
   listModels: (input: { vendorKey: string }) => Promise<ExistingConnectionListResult>;
-  register: (input: {
-    vendorKey: string;
-    models: ExistingConnectionModel[];
-  }) => Promise<ExistingConnectionRegisterResult>;
   start: (input: {
     vendorKey: string;
     models: ExistingConnectionModel[];
+    certification: CertificationContractBinding;
   }) => Promise<ExistingConnectionStartResult>;
-  adapt: (input: {
-    vendorKey: string;
-    models: ExistingConnectionModel[];
-  }) => Promise<ExistingConnectionStartResult>;
-  retry: (input: { runId: string; modelKey?: string }) => Promise<ExistingConnectionStartResult>;
+  retry: (input: { runId: string; modelKey?: string; certification: CertificationContractBinding }) => Promise<ExistingConnectionStartResult>;
 };
 
 const TERMINAL_RUN_STAGES = new Set<ProviderAdapterRun["stage"]>([
@@ -173,26 +165,9 @@ function scrubCredential<T>(value: T, credential: string): T {
 }
 
 function publicRun(run: ProviderAdapterRun, credential: string): PublicProviderAdapterRun {
-  return scrubCredential({
-    id: run.id,
-    vendorKey: run.vendorKey,
-    vendorName: run.vendorName,
-    selectedModelKeys: [...run.selectedModelKeys],
-    stage: run.stage,
-    ...(run.currentModelKey ? { currentModelKey: run.currentModelKey } : {}),
-    ...(run.completedCount !== undefined ? { completedCount: run.completedCount } : {}),
-    ...(run.totalCount !== undefined ? { totalCount: run.totalCount } : {}),
-    ...(run.lastProgressAt ? { lastProgressAt: run.lastProgressAt } : {}),
-    ...(run.stageStartedAt ? { stageStartedAt: run.stageStartedAt } : {}),
-    ...(run.deadlineAt ? { deadlineAt: run.deadlineAt } : {}),
-    repairAttempt: run.repairAttempt,
-    models: structuredClone(run.models),
-    sourceUrls: [...run.sourceUrls],
-    ...(run.activeRevision ? { activeRevision: run.activeRevision } : {}),
-    ...(run.error ? { error: run.error } : {}),
-    createdAt: run.createdAt,
-    updatedAt: run.updatedAt,
-  }, credential);
+  const projected = structuredClone(run) as Partial<ProviderAdapterRun>;
+  delete projected.connectionFingerprint;
+  return scrubCredential(projected as PublicProviderAdapterRun, credential);
 }
 
 function resolveConnection(
@@ -210,7 +185,18 @@ function resolveConnection(
     return { ok: false, code: "BASE_URL_MISSING", error: "Saved connection has no usable API address" };
   }
   const models = state.models
-    .filter((candidate) => candidate.vendorKey === vendorKey)
+    .filter((candidate) => {
+      if (candidate.vendorKey !== vendorKey || candidate.enabled !== true) return false;
+      const adapter = candidate.meta && typeof candidate.meta === "object" && !Array.isArray(candidate.meta)
+        ? candidate.meta as Record<string, unknown>
+        : {};
+      const adapterMeta = adapter.adapter;
+      const adapterState = adapterMeta && typeof adapterMeta === "object" && !Array.isArray(adapterMeta)
+        ? (adapterMeta as Record<string, unknown>).state
+        : undefined;
+      return adapterState === "verified"
+        && derivePublishedExecution(candidate, { mappings: state.mappings }).published;
+    })
     .map(({ modelKey, labelZh, kind }) => ({ modelKey, labelZh, kind }));
   const summary: ExistingConnectionSummary = {
     vendorKey,
@@ -236,33 +222,10 @@ function resolveConnection(
     vendor,
     apiKey,
     headers: extraHeaders(vendor),
-    existingModelKeys: new Set(models.map((model) => model.modelKey)),
   };
 }
 
-function dedupeNewModels(
-  rawModels: readonly ExistingConnectionModel[],
-  existing: ReadonlySet<string>,
-): ExistingConnectionModel[] {
-  const seen = new Set<string>();
-  return rawModels
-    .map((model) => {
-      const labelZh = String(model?.labelZh || "").trim();
-      return {
-        modelKey: String(model?.modelKey || "").trim(),
-        ...(labelZh ? { labelZh } : {}),
-        kind: model?.kind,
-      };
-    })
-    .filter((model): model is ExistingConnectionModel => {
-      if (!model.modelKey || existing.has(model.modelKey) || seen.has(model.modelKey)) return false;
-      seen.add(model.modelKey);
-      return model.kind === "text" || model.kind === "image" || model.kind === "video" ||
-        model.kind === "audio" || model.kind === "model3d";
-    });
-}
-
-function selectedPersistedModels(
+function selectedCertificationModels(
   rawModels: readonly ExistingConnectionModel[],
   connection: ExistingConnectionSummary,
 ): ExistingConnectionModel[] {
@@ -273,9 +236,11 @@ function selectedPersistedModels(
     const modelKey = String(raw?.modelKey || "").trim();
     if (!modelKey || seen.has(modelKey)) continue;
     seen.add(modelKey);
-    const model = persisted.get(modelKey);
-    if (!model) continue;
-    selected.push({ modelKey, labelZh: model.labelZh, kind: model.kind });
+    const existing = persisted.get(modelKey);
+    const kind = existing?.kind || raw?.kind;
+    if (kind !== "text" && kind !== "image" && kind !== "video" && kind !== "audio" && kind !== "model3d") continue;
+    const labelZh = String(existing?.labelZh || raw?.labelZh || "").trim();
+    selected.push({ modelKey, ...(labelZh ? { labelZh } : {}), kind });
   }
   return selected;
 }
@@ -310,6 +275,7 @@ async function startResolvedConnection(
   dependencies: ExistingConnectionActionsDependencies,
   connection: ResolvedConnection,
   models: ExistingConnectionModel[],
+  certification: CertificationContractBinding,
 ): Promise<ExistingConnectionStartResult> {
   try {
     const run = await dependencies.startAdapter({
@@ -322,41 +288,15 @@ async function startResolvedConnection(
       ...(connection.vendor.authHeader ? { authHeader: connection.vendor.authHeader } : {}),
       ...(connection.vendor.authQueryParam ? { authQueryParam: connection.vendor.authQueryParam } : {}),
       ...(connection.headers ? { headers: connection.headers } : {}),
+      ...(connection.vendor.network?.proxyUrl ? { proxyUrl: connection.vendor.network.proxyUrl } : {}),
       models,
+      certification,
     });
     return { ok: true, run: publicRun(run, connection.apiKey) };
   } catch (error) {
     return {
       ok: false,
       code: "START_FAILED",
-      error: scrubCredential(error instanceof Error ? error.message : String(error), connection.apiKey),
-      connection: connection.summary,
-    };
-  }
-}
-
-async function registerResolvedConnection(
-  dependencies: ExistingConnectionActionsDependencies,
-  connection: ResolvedConnection,
-  models: ExistingConnectionModel[],
-): Promise<ExistingConnectionRegisterResult> {
-  try {
-    const registration = await dependencies.registerAdapter({
-      vendorKey: connection.summary.vendorKey,
-      vendorName: connection.summary.vendorName,
-      baseUrl: connection.baseUrl,
-      authType: connection.vendor.authType || "bearer",
-      providerKind: providerKind(connection.vendor.providerKind),
-      ...(connection.vendor.authHeader ? { authHeader: connection.vendor.authHeader } : {}),
-      ...(connection.vendor.authQueryParam ? { authQueryParam: connection.vendor.authQueryParam } : {}),
-      ...(connection.headers ? { headers: connection.headers } : {}),
-      models,
-    });
-    return { ok: true, registration: scrubCredential(registration, connection.apiKey) };
-  } catch (error) {
-    return {
-      ok: false,
-      code: "REGISTER_FAILED",
       error: scrubCredential(error instanceof Error ? error.message : String(error), connection.apiKey),
       connection: connection.summary,
     };
@@ -378,10 +318,9 @@ export function createExistingConnectionActions(
           providerKind: providerKind(connection.vendor.providerKind),
           baseUrl: connection.baseUrl,
           apiKey: connection.apiKey,
-          authType: connection.vendor.authType || "bearer",
-          ...(connection.vendor.authHeader ? { authHeader: connection.vendor.authHeader } : {}),
-          ...(connection.vendor.authQueryParam ? { authQueryParam: connection.vendor.authQueryParam } : {}),
+          auth: vendorAuthSpec(connection.vendor),
           headers: connection.headers || {},
+          ...(connection.vendor.network?.proxyUrl ? { proxyUrl: connection.vendor.network.proxyUrl } : {}),
           signal: controller.signal,
         });
         if (!listed.ok) {
@@ -408,52 +347,22 @@ export function createExistingConnectionActions(
       }
     },
 
-    async register({ vendorKey, models }) {
+    async start({ vendorKey, models, certification }) {
       const connection = resolveConnection(vendorKey, dependencies);
       if ("ok" in connection) return connection;
-      const selected = dedupeNewModels(Array.isArray(models) ? models : [], connection.existingModelKeys);
-      if (selected.length === 0) {
-        return {
-          ok: false,
-          code: "NO_NEW_MODELS",
-          error: "Select at least one model that is not already in this connection",
-          connection: connection.summary,
-        };
-      }
-      return registerResolvedConnection(dependencies, connection, selected);
-    },
-
-    async start({ vendorKey, models }) {
-      const connection = resolveConnection(vendorKey, dependencies);
-      if ("ok" in connection) return connection;
-      const selected = dedupeNewModels(Array.isArray(models) ? models : [], connection.existingModelKeys);
-      if (selected.length === 0) {
-        return {
-          ok: false,
-          code: "NO_NEW_MODELS",
-          error: "Select at least one model that is not already in this connection",
-          connection: connection.summary,
-        };
-      }
-      return startResolvedConnection(dependencies, connection, selected);
-    },
-
-    async adapt({ vendorKey, models }) {
-      const connection = resolveConnection(vendorKey, dependencies);
-      if ("ok" in connection) return connection;
-      const selected = selectedPersistedModels(Array.isArray(models) ? models : [], connection.summary);
+      const selected = selectedCertificationModels(Array.isArray(models) ? models : [], connection.summary);
       if (selected.length === 0) {
         return {
           ok: false,
           code: "NO_MODELS_SELECTED",
-          error: "Select at least one saved model to adapt",
+          error: "Select at least one model to certify",
           connection: connection.summary,
         };
       }
-      return startResolvedConnection(dependencies, connection, selected);
+      return startResolvedConnection(dependencies, connection, selected, certification);
     },
 
-    async retry({ runId, modelKey }) {
+    async retry({ runId, modelKey, certification }) {
       const previous = dependencies.getAdapterRun(String(runId || "").trim());
       if (!previous) {
         return {
@@ -469,7 +378,10 @@ export function createExistingConnectionActions(
           error: "This verification task is still running and cannot be retried yet",
         };
       }
-      const connection = resolveConnection(previous.vendorKey, dependencies);
+      const sourceVendorKey = previous.lineageRootVendorKey
+        || dependencies.getCertificationSourceVendorKey?.(previous.id)
+        || previous.vendorKey;
+      const connection = resolveConnection(sourceVendorKey, dependencies);
       if ("ok" in connection) return connection;
       const requestedModelKey = String(modelKey || "").trim() || undefined;
       const models = persistedRetryModels(previous, connection.summary, requestedModelKey);
@@ -481,7 +393,7 @@ export function createExistingConnectionActions(
           connection: connection.summary,
         };
       }
-      return startResolvedConnection(dependencies, connection, models);
+      return startResolvedConnection(dependencies, connection, models, certification);
     },
   };
 }

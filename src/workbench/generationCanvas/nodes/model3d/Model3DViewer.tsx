@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useThree } from '@react-three/fiber'
 import { FencedCanvas } from '../fencedCanvas'
@@ -13,13 +13,15 @@ import {
   type Model3DCameraState,
 } from './model3dCamera'
 import type { Model3DCameraCaptureFrame } from './model3dCameraCapture'
+import { validateGlbStructure } from '../../../../../electron/assets/model3dValidation'
+import { logRendererError } from '../../../../desktop/rendererLog'
 
 /**
  * 生成出的 3D 模型（.glb）的卡内交互预览。
  *
- * 复用 scene3d 同一套 R3F + drei + three 栈（CSP 已为 Three.js WASM/blob 放行，见 electron/main.ts），
+ * 复用导演台同一套 R3F + drei + three 栈（CSP 已为 Three.js WASM/blob 放行，见 electron/main.ts），
  * 但**不引 Environment/Stage 的远程 HDR 预设**——那会去 CDN 拉 .hdr，触 CSP/离线失败，违 local-first。
- * 改用手动三点光（仿 scene3dEnvironment）。Bounds 自动取景、OrbitControls 让用户拖转、autoRotate 给转盘感。
+ * 改用手动三点光。Bounds 自动取景、OrbitControls 让用户拖转、autoRotate 给转盘感。
  *
  * 只吃 glTF/glb（useGLTF = three GLTFLoader）；.obj 不在栈里（MVP 不做）。
  */
@@ -217,6 +219,34 @@ function ConnectedOrbitControls({
   )
 }
 
+function ValidatedGlb({ url, onRadius }: { url: string; onRadius: (radius: number) => void }): JSX.Element | null {
+  const [validatedUrl, setValidatedUrl] = React.useState<string | null>(null)
+  const [error, setError] = React.useState<unknown>(null)
+  React.useEffect(() => {
+    const controller = new AbortController()
+    let objectUrl = ''
+    setValidatedUrl(null)
+    setError(null)
+    void fetch(url, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('MODEL3D_FETCH_FAILED')
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        validateGlbStructure(bytes)
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'model/gltf-binary' }))
+        setValidatedUrl(objectUrl)
+      })
+      .catch((caught) => {
+        if (!controller.signal.aborted) setError(caught)
+      })
+    return () => {
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [url])
+  if (error) throw error
+  return validatedUrl ? <Glb url={validatedUrl} onRadius={onRadius} /> : null
+}
+
 class GlbBoundary extends React.Component<
   { fallback: React.ReactNode; children: React.ReactNode },
   { failed: boolean }
@@ -226,7 +256,7 @@ class GlbBoundary extends React.Component<
     return { failed: true }
   }
   componentDidCatch(error: unknown): void {
-    console.error('Failed to load 3D model glb.', error)
+    logRendererError('model3d-load-failed', error)
   }
   render(): React.ReactNode {
     return this.state.failed ? this.props.fallback : this.props.children
@@ -263,6 +293,7 @@ const Model3DViewer = React.forwardRef<Model3DViewerHandle, Model3DViewerProps>(
       onWheel={keepPointerInViewer}
     >
       <GlbBoundary
+        key={url}
         fallback={
           <div className={cn('flex h-full w-full items-center justify-center text-caption text-nomi-ink-40')}>
             {t('generationCommon.node.model3dLoadFailed')}
@@ -287,7 +318,7 @@ const Model3DViewer = React.forwardRef<Model3DViewerHandle, Model3DViewerProps>(
           <directionalLight position={[-3, 2, -2]} intensity={0.4} />
           <React.Suspense fallback={null}>
             <Bounds fit={shouldAutoFitModelCamera(cameraState)} clip observe margin={1.25}>
-              <Glb url={url} onRadius={setModelRadius} />
+              <ValidatedGlb url={url} onRadius={setModelRadius} />
             </Bounds>
           </React.Suspense>
           <ConnectedOrbitControls

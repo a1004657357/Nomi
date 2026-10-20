@@ -11,7 +11,6 @@ import {
   generateOnProject,
   listAvailableModels,
   listAllProjects,
-  readProjectCanvas,
   referencesFromEdges,
   renderDirectorOnProject,
   resolveCapabilityPollIntervalMs,
@@ -19,6 +18,16 @@ import {
   setProjectNodePrompt,
 } from './core'
 import { createDiskGateway, type PlanConfirmInfo, type ProjectGateway } from './gateway'
+
+async function readRawProjectCanvas(projectId: string): Promise<{
+  nodes: Array<{ id: string; prompt?: string; result?: unknown }>
+  edges: unknown[]
+}> {
+  return await createDiskGateway(projectId).readDoc() as {
+    nodes: Array<{ id: string; prompt?: string; result?: unknown }>
+    edges: unknown[]
+  }
+}
 
 describe('referencesFromEdges（连参考边=喂参考图，headless 兜底）', () => {
   const snap = {
@@ -52,6 +61,28 @@ describe('headless 轮询预算', () => {
     expect(resolveCapabilityPollTimeoutMs('image_to_video', undefined)).toBe(900_000)
     expect(resolveCapabilityPollTimeoutMs('text_to_image', undefined)).toBe(240_000)
     expect(resolveCapabilityPollTimeoutMs('image_to_video', '1234')).toBe(1234)
+  })
+
+  // 回归：任务已提交（付费已发生）后，查结果的瞬时网络失败绝不能冒泡终止任务——
+  // 与渲染层 catalogTaskActions 的 POLL_FAILURE_GRACE_MS 免费宽限同策。
+  // 修复前：第一次 fetchTaskResult 抛错直接冒泡，generateOnProject reject、节点落 error。
+  it('查结果瞬时失败在宽限期内免费重试，恢复后照常落 succeeded', async () => {
+    const project = createNamedProject('轮询宽限测试')
+    let polls = 0
+    const out = await generateOnProject(
+      { projectId: project.id, intent: 'image', prompt: '一只赛博朋克猫', vendor: 'apimart', modelKey: 'seedream-4' },
+      createDiskGateway(project.id),
+      async () => ({ id: 't1', status: 'queued' }),
+      async () => {
+        polls += 1
+        if (polls <= 2) throw new Error('network blip')
+        return { result: { id: 't1', status: 'succeeded', assets: [{ type: 'image', url: 'nomi-local://gen.png' }] } }
+      },
+    )
+    expect(polls).toBe(3)
+    expect(out.status).toBe('succeeded')
+    const canvas = await readRawProjectCanvas(project.id)
+    expect(canvas.nodes.find((node) => node.id === out.nodeId)?.result).toBeTruthy()
   })
 })
 
@@ -174,7 +205,7 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
     expect(prompted.changed).toBe(true)
 
     // 重新读（从盘）—— 验证持久化往返一致。
-    const canvas = await readProjectCanvas(createDiskGateway(project.id))
+    const canvas = await readRawProjectCanvas(project.id)
     expect(canvas.nodes).toHaveLength(2)
     expect(canvas.edges).toHaveLength(1)
     const shot = canvas.nodes.find((node) => node.id === ids[1])
@@ -225,7 +256,7 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
     await connectProjectNodes(gateway, [{ source: ids[0], target: ids[1] }])
     const removed = await deleteProjectNodes(gateway, [ids[0]])
     expect(removed.deleted).toEqual([ids[0]])
-    const canvas = await readProjectCanvas(createDiskGateway(project.id))
+    const canvas = await readRawProjectCanvas(project.id)
     expect(canvas.nodes).toHaveLength(1)
     expect(canvas.edges).toHaveLength(0)
   })
@@ -265,8 +296,8 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
     expect(req.extras.referenceImages).toEqual(['https://cdn/ref.png'])
 
     // 结果落回节点：重读画布该节点 hasResult。
-    const canvas = await readProjectCanvas(createDiskGateway(project.id))
-    expect(canvas.nodes.find((node) => node.id === out.nodeId)?.hasResult).toBe(true)
+    const canvas = await readRawProjectCanvas(project.id)
+    expect(canvas.nodes.find((node) => node.id === out.nodeId)?.result).toBeTruthy()
   })
 
   it('generate：image + 没有参考图 → text_to_image（别反过来把纯文生也当改图）', async () => {
@@ -555,7 +586,7 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
   })
 
   it('未知项目抛清晰错误', async () => {
-    await expect(readProjectCanvas(createDiskGateway('ghost-id'))).rejects.toThrow(/项目不存在/)
+    await expect(readRawProjectCanvas('ghost-id')).rejects.toThrow(/项目不存在/)
   })
 
   // ── W2 §3 I2V 两跳（参考图 → 首帧 I2I → I2V）：接线层断言。判据/编排的分支矩阵在 i2vTwoHop.test.ts。 ──

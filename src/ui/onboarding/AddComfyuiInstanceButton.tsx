@@ -7,12 +7,12 @@
  * 身份：第 2+ 台的 vendorKey = `comfyui-local-{slug}`（前缀判据见 electron/catalog/types.isComfyuiVendor）。
  * 起的名字直接当 vendor.name，卡头显示它，画布上模型名也带它——用户靠名字认机器。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconPlus, IconServerBolt } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { getDesktopBridge } from '../../desktop/bridge'
-import { toast } from '../toast'
+import { notify } from '../notificationPolicy'
 import { COMFYUI_VENDOR_KEY } from './ComfyuiLocalCard'
 import { normalizeComfyuiAddressInput } from './comfyuiAddress'
 
@@ -28,6 +28,7 @@ export function AddComfyuiInstanceButton({ onAdded }: { onAdded: () => void }): 
   const [name, setName] = React.useState('')
   const [addr, setAddr] = React.useState('http://192.168.1.10:8188')
   const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState('')
 
   const submit = () => {
     const bridge = getDesktopBridge()?.modelCatalog
@@ -35,18 +36,20 @@ export function AddComfyuiInstanceButton({ onAdded }: { onAdded: () => void }): 
     const trimmedName = name.trim()
     const trimmedAddr = addr.trim()
     if (!trimmedName || !trimmedAddr) return
+    setError('')
     setBusy(true)
     try {
       const existing = (bridge.listVendors() as Array<{ key?: unknown }>).map((v) => String(v.key))
       let key = `${COMFYUI_VENDOR_KEY}-${slugFromName(trimmedName)}`
       while (existing.includes(key)) key = `${key}-2` // 重名不覆盖既有那台（宁可多一台也不丢用户配置）
-      bridge.upsertVendor({ key, name: trimmedName, baseUrlHint: normalizeComfyuiAddressInput(trimmedAddr), authType: 'none', enabled: true })
-      toast(t('onboardingProviders.comfyInstance.added', { name: trimmedName }), 'success')
+      // Adding an instance only creates a disabled candidate. Native route
+      // detection, workflow binding and the canonical run must promote it.
+      bridge.upsertVendor({ key, name: trimmedName, baseUrlHint: normalizeComfyuiAddressInput(trimmedAddr), authType: 'none', enabled: false })
       setOpen(false)
       setName('')
       onAdded()
     } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), 'error')
+      notify({ identity: `comfy-instance:${trimmedName}`, reason: 'add', level: 'inline', message: e instanceof Error ? e.message : String(e), type: 'error', present: setError })
     } finally {
       setBusy(false)
     }
@@ -85,6 +88,7 @@ export function AddComfyuiInstanceButton({ onAdded }: { onAdded: () => void }): 
         aria-label={t('onboardingProviders.comfyInstance.addrLabel')}
         className="h-8 px-2.5 rounded-nomi-sm border border-nomi-line bg-nomi-paper font-mono text-caption text-nomi-ink focus:border-nomi-accent outline-none"
       />
+      {error ? <p role="alert" className="m-0 text-caption text-nomi-danger">{error}</p> : null}
       <div className="flex items-center gap-2 pt-0.5">
         <button
           type="button" onClick={submit} disabled={busy || !name.trim() || !addr.trim()}

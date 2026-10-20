@@ -8,7 +8,8 @@
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HttpOperation } from "./types";
+import { billingKindForTaskKind, type HttpOperation, type ProfileKind } from "./types";
+import { localizedAssetTypeOf, type LocalizedAssetType } from "../assets/localizedAsset";
 import { runDreaminaCli, resolveDreaminaBin } from "./dreaminaCli";
 import { normalizeDreaminaOutput, buildMultiframeArgs, splitTransitionLines, describeDreaminaFailure } from "./dreaminaCodec";
 import { renderTemplateValue } from "../ai/requestPipeline";
@@ -23,7 +24,8 @@ export { assertCanonicalAntigravityOperation };
 export { prepareAntigravityCreateOperation } from "./antigravityCreatePreflight";
 
 /** runtime 注入的写资产原语（写本地字节进项目素材，返回含 data.url 的记录）。 */
-export type WriteAsset = (projectId: string, bytes: Buffer, fileName: string, contentType: string, meta: JsonRecord) => unknown;
+/** expectedKind = 这份产物该是哪一类，落盘关口按字节核。 */
+export type WriteAsset = (projectId: string, bytes: Buffer, fileName: string, contentType: string, meta: JsonRecord, expectedKind: LocalizedAssetType) => unknown;
 export type WriteDeterministicAsset = (...args: [...Parameters<WriteAsset>, materializationKey: string]) => unknown;
 
 export type ProcessOperationInput = {
@@ -102,7 +104,8 @@ export async function executeProcessOperation(input: ProcessOperationInput): Pro
     const imagePaths = Array.isArray(reqParams.mf_image_paths) ? (reqParams.mf_image_paths as unknown[]).map(String) : [];
     const prompt = String((input.context.request as JsonRecord)?.prompt ?? "");
     // 过渡描述用节点提示词（本就是多行 textarea）：2 图用整段当主提示；3+ 图按行拆，每行一句相邻图过渡。
-    args = buildMultiframeArgs({ imagePaths, prompt, transitionLines: splitTransitionLines(prompt), duration: reqParams.duration });
+    // video_resolution 必发（v1.4.14 required）：从档案默认写入的 request.params.video_resolution 取，非法回落 720p。
+    args = buildMultiframeArgs({ imagePaths, prompt, transitionLines: splitTransitionLines(prompt), duration: reqParams.duration, videoResolution: reqParams.video_resolution });
   } else {
     // 渲染参数（与 HTTP body 同一套 renderTemplateValue）；空值参数（`--flag=`）丢弃 → dreamina 回落该项默认。
     // 数组结果（repeat-flag 模式：`["--image=/a","--image=/b"]`）展开成多参数。
@@ -152,10 +155,13 @@ export async function executeProcessOperation(input: ProcessOperationInput): Pro
     // 本地下载文件导入项目素材 → nomi-local://；远端 URL 直接交给现有 buildProfileTaskResult 下载。
     const localUrls: string[] = [];
     if (input.projectId) {
+      // 下载目录里的文件该是哪一类，只信这条任务的种类（不看文件扩展名）；说不清就不导入，远端 URL 照旧交给取回。
+      const expectedKind = input.identity ? localizedAssetTypeOf(billingKindForTaskKind(input.identity.taskKind as ProfileKind)) : null;
+      if (!expectedKind) throw new Error("PROCESS_OUTPUT_KIND_UNKNOWN");
       for (const p of normalized.localPaths) {
         if (!existsSync(p)) continue;
         try {
-          const written = input.writeAsset(input.projectId, readFileSync(p), path.basename(p), contentTypeFromPath(p), { kind: "generated" }) as { data?: { url?: string } };
+          const written = input.writeAsset(input.projectId, readFileSync(p), path.basename(p), contentTypeFromPath(p), { kind: "generated" }, expectedKind) as { data?: { url?: string } };
           const url = String(written.data?.url || "");
           if (url && !localUrls.includes(url)) localUrls.push(url);
         } catch {

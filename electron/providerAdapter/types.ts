@@ -4,6 +4,20 @@ import type {
   HttpOperation,
   ProfileKind,
 } from "../catalog/types";
+import type {
+  CertificationMediaErrorParams,
+  CertificationMediaEvidence,
+  CertificationMediaReasonCode,
+} from "./certificationMedia";
+import type {
+  CertificationContractBinding,
+  CertificationSettledResult,
+  CertificationSubmissionState,
+} from "../integrationCertification/types";
+import type { AdapterRunStage as SharedAdapterRunStage } from "../shared/providerAdapterContract";
+import type { TransportAbandonDisposition, TransportDelivery } from "../catalog/transportDelivery";
+import type { AdapterSelfCheckReason } from "./selfCheck";
+import type { DeclaredAssetIngestion, DeclaredSelfCheck } from "./declarationCard";
 
 export type AdapterAuthType = "none" | "bearer" | "x-api-key" | "query";
 
@@ -24,7 +38,24 @@ export type ProviderAdapterConnectionInput = {
   authHeader?: string;
   authQueryParam?: string;
   headers?: Record<string, string>;
+  /** Optional proxy for this connection only; never inherited by other vendors or local services. */
+  proxyUrl?: string;
+  /**
+   * 用户 / 驱动 Agent 交进来的接口文档：**正文**或**每行一个 http(s) URL 的列表**。
+   * 给了就是编译器的首选来源（providedDocs.ts 的 resolveProviderDocs），按域名猜文档站只在没给时兜底。
+   */
+  docs?: string;
+  /**
+   * 由 Nomi 之外（驱动 Agent）编译好的说明卡。给了就跳过「抓文档 + 叫内置文本模型编译」，
+   * 但**不跳过校验**：执行边界仍然要过 validateProviderAdapterDraft，再走同一条真实验证。
+   */
+  adapterDraft?: ProviderAdapterDraft;
   models: ProviderAdapterModelSelection[];
+};
+
+/** Start-only contract minted by the canonical certification boundary. */
+export type ProviderAdapterCertificationInput = ProviderAdapterConnectionInput & {
+  certification: CertificationContractBinding;
 };
 
 export type ProviderAdapterRegisterInput = ProviderAdapterConnectionInput & {
@@ -50,7 +81,16 @@ export type AdapterSourceEvidence = {
 export type AdapterModeDraft = {
   taskKind: ProfileKind;
   create: HttpOperation;
+  /**
+   * 这条 wire 是同步返回结果还是提交任务后轮询——**上游契约的事实，不是 kind 的常量**
+   * （类根因见 electron/catalog/transportDelivery.ts）。缺省时按「有 query 即异步」向后兼容推断；
+   * 声明成 asynchronous 却不给 query/statusMapping 会在免费自检里直接判缺陷，不会再拿用户的钱去试。
+   */
+  delivery?: TransportDelivery;
+  /** 异步任务不要了怎么办（取消端点 / 轮询到底）。**没有第三种叫「丢掉」**。 */
+  abandon?: TransportAbandonDisposition;
   query?: HttpOperation;
+  result?: HttpOperation;
   statusMapping?: Record<string, string[]>;
   /** request.params key that receives the local reference fixture during verification. */
   referenceParam?: string;
@@ -71,6 +111,8 @@ export type AdapterModelDraft = {
     default?: string | number | boolean;
     min?: number;
     max?: number;
+    /** §5：这个参数的取值范围与默认值是从哪一页读来的（mode 级 sourceUrls 已有，参数级补齐）。 */
+    sourceUrl?: string;
   }>;
   modes: AdapterModeDraft[];
 };
@@ -81,15 +123,39 @@ export type ProviderAdapterDraft = {
     authType: AdapterAuthType;
     authHeader?: string;
     authQueryParam?: string;
+    /**
+     * `Authorization` 里 key 前面的方案词（Higgsfield 的 `Key id:secret`）。由 Nomi 从已绑定的
+     * vendor 填；卡上只能复述、不能改——它属于「key 怎么放」，与地址同一档（§6.1）。
+     */
+    authScheme?: string;
     providerKind?: AiSdkProviderKind;
   };
   sources: AdapterSourceEvidence[];
   models: AdapterModelDraft[];
+  /** §5：本地素材怎么进这家。Agent 交件时**必填**（`none` 必须显式）；内部编译器那条路可空。 */
+  assetIngestion?: DeclaredAssetIngestion;
+  /** §5：免费自检的形状。缺省 = 打这家自己的模型列表。 */
+  selfCheck?: DeclaredSelfCheck;
+  /** §5：文档写了但这张卡刻意不声明的字段 + 理由。不参与执行，只让取舍可审计。 */
+  omitted?: Array<{ field: string; reason: string; sourceUrl: string }>;
+  /** §2.3：指回供应商自己的 OpenAPI 文档作为证据（我们指向它，不复制它）。 */
+  openapi?: { url: string; operationIds?: Record<string, string> };
 };
+
+/**
+ * 编译期失败的**结构化**原因。渲染层据它说人话（adapterFailureAdvice），
+ * **绝不用关键词去猜 error 字符串**——那是已反复漏了 5 轮的反模式。
+ *
+ * - `no_generic_contract`：这个 kind 在 OpenAI 兼容面上没有标准端点（当前只有 model3d），
+ *   我们**刻意不编造**契约。用户不是配错了，是这条路本来就不通，得走直接脚本 / ComfyUI 工作流。
+ * - `docs_not_understood`：我们没读懂这家的接口文档，没生成出调用方式。和用户填的东西无关。
+ */
+export type AdapterCompileFailureReason = "no_generic_contract" | "docs_not_understood";
 
 export type ProviderAdapterCompileFailure = {
   modelKey: string;
   error: string;
+  reason: AdapterCompileFailureReason;
 };
 
 export type ProviderAdapterCompilation = {
@@ -97,19 +163,7 @@ export type ProviderAdapterCompilation = {
   failures: ProviderAdapterCompileFailure[];
 };
 
-export type AdapterRunStage =
-  | "queued"
-  | "discovering_docs"
-  | "compiling"
-  | "testing"
-  | "repairing"
-  | "completed"
-  | "partial"
-  | "failed"
-  | "needs_ai"
-  | "cancelled"
-  | "timed_out"
-  | "stale";
+export type AdapterRunStage = SharedAdapterRunStage;
 
 export type AdapterModeState = "queued" | "testing" | "repairing" | "verified" | "failed";
 
@@ -117,16 +171,36 @@ export type AdapterModeResult = {
   taskKind: ProfileKind;
   state: AdapterModeState;
   attempts: number;
-  stage?: "docs" | "compile" | "localize_reference" | "create" | "poll" | "verify_asset" | "promote";
+  /**
+   * 失败发生在哪一段。付费验证删掉之后，中转自检只剩 `credential`（鉴权/可达）与 `contract`
+   * （说明卡形状）两段；`verify_asset` 留给本地 ComfyUI 候选那条免费的真实产物校验。
+   */
+  stage?: "docs" | "compile" | "credential" | "contract" | "verify_asset" | "promote";
   error?: string;
   /**
    * 失败归类，抛出点查表得来（vendorHttp：401/403→auth、402→balance、429→quota、400/422→input、5xx→server）。
    * 渲染层据此说人话 + 给对应的下一步动作；**不要在 UI 里用关键词猜**（同型 bug 已反复出现 5 轮，
    * 见 2026-08-12 `fix(errors): 文本侧错误也在源头留住 category`）。
    */
-  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "unknown";
+  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "unknown";
+  /**
+   * stage === "compile" 时的结构化细分原因。`compile` 这个 stage 混着两种完全不同的处境：
+   * 「我们没读懂这家文档」与「这个 kind 压根没有通用协议」——给用户的话和该点的按钮都不一样，
+   * 所以原因必须由生产者带过来，不能在 UI 侧从 error 文案里猜。
+   */
+  compileFailureReason?: AdapterCompileFailureReason;
   httpStatus?: number;
+  /**
+   * 「我们这边缺什么」这一维（与上游 errorCategory 正交）。渲染层据它给修复路径，
+   * 而不是把英文原文甩给用户再建议「你自己接」。
+   */
+  selfCheckReason?: AdapterSelfCheckReason;
   verifiedAt?: string;
+  /** One bounded, sanitized evidence record for every promoted media asset. */
+  mediaEvidence?: CertificationMediaEvidence[];
+  reasonCode?: CertificationMediaReasonCode;
+  errorParams?: CertificationMediaErrorParams;
+  submissionState?: Extract<CertificationSubmissionState, "unknown">;
 };
 
 export type AdapterModelResult = {
@@ -139,6 +213,8 @@ export type AdapterModelResult = {
 export type ProviderAdapterRun = {
   id: string;
   vendorKey: string;
+  /** Stable family identity shared by root and every candidate revision. */
+  lineageRootVendorKey?: string;
   vendorName: string;
   connectionFingerprint: string;
   selectedModelKeys: string[];
@@ -154,6 +230,15 @@ export type ProviderAdapterRun = {
   sourceUrls: string[];
   activeRevision?: string;
   error?: string;
+  recovery?: {
+    reasonCode: "submission_unknown" | "submission_reconcile_unavailable" | "promotion_commit_unknown" | "certification_start_rolled_back";
+    userAction: "reconcile_or_contact_provider" | "restart_certification";
+  };
+  certificationOperations?: Record<string, {
+    operationKey: string;
+    submissionState: CertificationSubmissionState;
+    settledResult?: CertificationSettledResult;
+  }>;
   createdAt: string;
   updatedAt: string;
 };
@@ -167,10 +252,26 @@ export type ProviderAdapterRevision = {
   createdAt: string;
 };
 
+/**
+ * 一次认证 run 的**外部输入**（文档正文 / 外部编译好的说明卡）。
+ *
+ * 为什么单开一张边表而不是塞进 `ProviderAdapterRun`：run 是要投影给渲染层与 MCP 的 DTO，
+ * 把 64KB 文档和整份说明卡塞进去，每次列 run 都要抬着它们走。这里只有 service 自己读，
+ * 落盘是为了「装机重启后 resume 的那次 run 仍然认得用户给的文档」。
+ */
+export type ProviderAdapterRunInput = {
+  runId: string;
+  docs?: string;
+  draft?: ProviderAdapterDraft;
+  updatedAt: string;
+};
+
 export type ProviderAdapterStoreState = {
   version: 1;
+  revision: number;
   runs: ProviderAdapterRun[];
   revisions: ProviderAdapterRevision[];
+  inputs: ProviderAdapterRunInput[];
 };
 
 export type AdapterModelMeta = {

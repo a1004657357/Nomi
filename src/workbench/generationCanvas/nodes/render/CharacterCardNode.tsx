@@ -9,7 +9,7 @@
  *
  * 注：本组件**只渲染卡片 body**。节点拖动 / 选中 / 缩放 仍由 BaseGenerationNode 提供。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { localAssetThumbnailUrl } from '../../../../design/localAssetThumbnail'
 import { cn } from '../../../../utils/cn'
@@ -19,6 +19,7 @@ import { useNodeUsageCount, useNodeVariantCount } from '../../hooks/useNodeRelat
 import { STRIPED_BG_CLASS, UsageDot, VariantChip, UploadFallback } from './CardCommon'
 import { useNodeImageUpload } from '../../adapters/useNodeImageUpload'
 import { EditableNodeTitle } from './EditableNodeTitle'
+import { useNodeMediaMeasurement } from '../useNodeMediaMeasurement'
 import { DeferredNodeImage } from '../DeferredNodeMedia'
 
 const CARD_IMAGE_PREVIEW_SIZE = { width: 256, height: 256 } as const
@@ -29,6 +30,7 @@ type Props = {
 
 function CharacterCardNodeImpl({ node }: Props): JSX.Element {
   const { t } = useTranslation()
+  const mediaMeasurement = useNodeMediaMeasurement(node)
   const meta = readCharacterMeta(node)
   const usageCount = useNodeUsageCount(node.id, node.title)
   const variantCount = useNodeVariantCount(node.id)
@@ -47,17 +49,17 @@ function CharacterCardNodeImpl({ node }: Props): JSX.Element {
         {hasImage ? (
           <DeferredNodeImage
             src={node.result!.url!}
-            thumbnailSrc={localAssetThumbnailUrl(node.result!.thumbnailUrl || node.result!.url!, CARD_IMAGE_PREVIEW_SIZE)}
+            onLoad={mediaMeasurement.onImageLoad}
             alt={node.title || ''}
             className="w-full h-full object-contain object-center select-none pointer-events-none"
           />
         ) : (
-          <UploadFallback accept="image/*" label={t('generationCommon.card.character.image')} onUpload={handleUpload} />
+          <UploadFallback accept="image/*" label={t('generationCommon.card.character.image')} onUpload={handleUpload} kind="character" />
         )}
       </div>
 
       {hasInfoArea ? (
-        <div className="shrink-0 px-3 py-2 flex flex-col gap-1">
+        <div ref={mediaMeasurement.infoRef} className="shrink-0 px-3 py-2 flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2">
             <EditableNodeTitle
               nodeId={node.id}

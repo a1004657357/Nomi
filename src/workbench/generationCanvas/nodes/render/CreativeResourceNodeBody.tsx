@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { IconBrush, IconPalette, IconSparkles, IconUserCheck } from '@tabler/icons-react'
 import type { CreativeResource } from '../../../../config/capabilityRecipes'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'

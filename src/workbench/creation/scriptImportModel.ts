@@ -37,6 +37,7 @@ export function buildImportedWorkbenchDocument(
     ? markdownToTiptapContent(text)
     : plainTextToTiptapContent(text)
   return {
+    id: crypto.randomUUID(),
     version: 1,
     title: scriptFileTitle(fileName),
     contentJson: { type: 'doc', content },

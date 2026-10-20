@@ -10,15 +10,18 @@
  *
  * 复用唯一真相源 useNomiRichTextEditor。本组件只渲染 body，节点选中/拖动/缩放由 BaseGenerationNode 提供。
  */
-import React from 'react'
+import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { IconGripVertical } from '@tabler/icons-react'
+import { IconGripVertical, IconWriting } from '@tabler/icons-react'
 import { EditorContent, useEditorState, type JSONContent } from '@tiptap/react'
 import { cn } from '../../../../utils/cn'
 import type { GenerationCanvasNode, TiptapDocJson } from '../../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import { useNomiRichTextEditor } from '../../../common/useNomiRichTextEditor'
+import { NODE_SCROLL_REGION_CLASS_NAME } from '../nodeScrollRegionClassName'
 import { buildRichTextActions } from '../../../common/richTextActions'
+import { NodeEmptyState } from './NodeEmptyState'
+import { textDocumentDigest } from '../../runner/textGenerationDocument'
 
 const EMPTY_DOC: JSONContent = { type: 'doc', content: [] }
 type Props = {
@@ -62,7 +65,7 @@ function TextDocumentNodeImpl({ node }: Props): JSX.Element {
 
   const { editor, tools } = useNomiRichTextEditor({
     content,
-    placeholder: t('generationCommon.textDocument.placeholder'),
+    placeholder: '',
     onChange: handleChange,
     onSelectionChange: handleSelectionChange,
   })
@@ -87,10 +90,13 @@ function TextDocumentNodeImpl({ node }: Props): JSX.Element {
     if (text) tools.replaceSelection(text)
     const store = useGenerationCanvasStore.getState()
     const current = store.nodes.find((candidate) => candidate.id === node.id)
+    if (!current?.result || current.result.id !== resultId) return
+    const appliedRun = current.runs?.find(run => run.resultId === resultId)
+    const runs = current.runs?.map(run => run.id === appliedRun?.id
+      ? { ...run, textDocumentDigest: textDocumentDigest(current.contentJson) } : run)
     store.updateNode(
       node.id,
-      { meta: { ...(current?.meta || {}), textPendingSelectionApply: null } },
-      { persist: false },
+      { runs, meta: { ...(current.meta || {}), textPendingSelectionApply: null } },
     )
   }, [resultId, pendingApplyId, node.id, node.result?.text, tools])
 
@@ -155,6 +161,7 @@ function TextDocumentNodeImpl({ node }: Props): JSX.Element {
             的系统 focus 描边（否则 macOS 强调色会画出黄/橙框）。 */}
         <section
           className={cn(
+            NODE_SCROLL_REGION_CLASS_NAME,
             'relative flex-1 min-h-0 overflow-auto cursor-text select-text touch-auto',
             '[&_.ProseMirror]:outline-none [&_.ProseMirror:focus]:outline-none [&_.ProseMirror:focus-visible]:outline-none',
           )}
@@ -162,10 +169,10 @@ function TextDocumentNodeImpl({ node }: Props): JSX.Element {
           onKeyUp={(event) => event.stopPropagation()}
           onBlur={() => commitPersistedChange()}
         >
-          {showPlaceholder ? (
-            <span className="pointer-events-none absolute left-8 top-6 text-title leading-relaxed text-nomi-ink-40">
-              {t('generationCommon.textDocument.placeholder')}
-            </span>
+          {showPlaceholder && !isFocused ? (
+            <div className="pointer-events-none absolute inset-0">
+              <NodeEmptyState icon={<IconWriting size={20} stroke={1.6} />} title={t('generationCommon.nodeEmpty.text.title')} description={t('generationCommon.nodeEmpty.text.description')} />
+            </div>
           ) : null}
           <EditorContent editor={editor} />
         </section>

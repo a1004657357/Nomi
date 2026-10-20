@@ -1,4 +1,4 @@
-import { getGenerationNodeDefaultSize, getNodeSize } from '../model/generationNodeKinds'
+import { getGenerationNodeDefaultSize } from '../model/generationNodeKinds'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 
 export type ExtractedVideoKeyframe = {
@@ -49,7 +49,7 @@ export function buildVideoKeyframeNodeDrafts(
   frames: readonly ExtractedVideoKeyframe[],
   createdAt = Date.now(),
 ): VideoKeyframeNodeDraft[] {
-  const sourceSize = getNodeSize(source)
+  const sourceSize = source.size ?? getGenerationNodeDefaultSize(source.kind)
   const keyframeSize = getGenerationNodeDefaultSize('keyframe')
   const columns = 2
   const gap = 32

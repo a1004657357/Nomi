@@ -14,13 +14,13 @@
 // 用途：design-sync 组件库预览卡（cfg.provider）、以及任何需要在 App 之外单独挂载设计
 // 系统组件的场景。
 
-import React from 'react'
+import React, { type JSX } from 'react'
 import { MantineProvider } from '@mantine/core'
 import { I18nextProvider } from 'react-i18next'
 import i18next, { type i18n as I18nInstance } from 'i18next'
 import { initReactI18next } from 'react-i18next'
 import { resources } from '../i18n/resources'
-import { buildNomiTheme } from '../theme/nomiTheme'
+import { buildNomiTheme, nomiCssVariablesResolver } from '../theme/nomiTheme'
 
 const nomiTheme = buildNomiTheme()
 
@@ -76,7 +76,7 @@ export function NomiPreviewHost({
 
   return (
     <I18nextProvider i18n={i18n}>
-      <MantineProvider theme={nomiTheme} forceColorScheme={colorScheme} defaultColorScheme={colorScheme}>
+      <MantineProvider theme={nomiTheme} cssVariablesResolver={nomiCssVariablesResolver} forceColorScheme={colorScheme} defaultColorScheme={colorScheme}>
         {children}
       </MantineProvider>
     </I18nextProvider>

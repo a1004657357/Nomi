@@ -1,3 +1,4 @@
+import { useWorkbenchStore } from '../../workbenchStore'
 import type { SkillListItemDto, SkillProviderKind } from '../../api/skillApi'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { FOCUS_GENERATION_NODE_EVENT } from '../nodes/nodeSizing'
@@ -245,7 +246,9 @@ export function parseCanvasSkillDrag(raw: string): SkillListItemDto | null {
 }
 
 export function defaultCanvasSkillPosition(): { x: number; y: number } {
-  const { canvasOffset, canvasZoom } = useGenerationCanvasStore.getState()
+  const viewport = useWorkbenchStore.getState().categoryViewports[useWorkbenchStore.getState().activeCategoryId]
+  const canvasOffset = viewport?.offset ?? { x: 0, y: 0 }
+  const canvasZoom = viewport?.zoom ?? 1
   const width = typeof window === 'undefined' ? 1280 : window.innerWidth
   const height = typeof window === 'undefined' ? 800 : window.innerHeight
   return {

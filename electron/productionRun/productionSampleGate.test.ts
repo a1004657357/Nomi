@@ -53,7 +53,7 @@ async function driveToContract(service: ReturnType<typeof createProductionRunSer
     origin: { host: 'codex' }, brief: { goal: 'sample gate', durationSeconds: 30 },
   })
   await service.command('project-1', runId, {
-    commandId: 'direction', expectedRevision: service.readFull('project-1', runId)!.revision, type: 'gate.decide',
+    commandId: 'direction', expectedRevision: service.readFull('project-1', runId)!.revision, type: 'gate.decide', humanGesture: true,
     payload: { gateId: 'gate-direction-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
   })
   await approveLatestScript(service, 'project-1', runId)
@@ -69,7 +69,7 @@ async function driveToContract(service: ReturnType<typeof createProductionRunSer
     issuedAt: new Date().toISOString(),
   })
   await service.command('project-1', runId, {
-    commandId: 'contract', expectedRevision: attached.run.revision, type: 'gate.decide',
+    commandId: 'contract', expectedRevision: attached.run.revision, type: 'gate.decide', humanGesture: true,
     payload: { gateId: 'gate-contract-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
   })
 }
@@ -95,13 +95,13 @@ describe('sample gate (B2 · 首镜停门 + 窗口化)', () => {
 
     // MCP 转述：nomi_get_run 把「样片就绪、先过目再批量」摊给模型（终端看不了图，走深链）。
     const runProjection = service.readProjection('project-1', runId)
-    const getRunNarration = buildToolOutcome('nomi_get_run', { projectId: 'project-1', runId }, runProjection, 'zh-CN')
+    const getRunNarration = buildToolOutcome('nomi_read', { target: 'run', projectId: 'project-1', runId }, runProjection, 'zh-CN')
     expect(getRunNarration.text).toContain('样片就绪')
     expect(getRunNarration.outcome).toMatchObject({ sampleGateId: 'gate-sample-v1', nextActions: ['review_sample'] })
 
     // 批准样片门 → driver 续跑镜 2 → 全批完成走到粗剪。
     await service.command('project-1', runId, {
-      commandId: 'approve-sample', expectedRevision: atSample.revision, type: 'gate.decide',
+      commandId: 'approve-sample', expectedRevision: atSample.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-sample-v1', status: 'approved' }, issuedAt: new Date().toISOString(),
     })
     await waitFor(() => service.readFull('project-1', runId)!.status === 'awaiting_rough_cut_review')
@@ -120,7 +120,7 @@ describe('sample gate (B2 · 首镜停门 + 窗口化)', () => {
     await waitFor(() => service.readFull('project-1', runId)!.gates.some((g) => g.gateId === 'gate-sample-v1' && g.status === 'waiting'))
     const atSample = service.readFull('project-1', runId)!
     await service.command('project-1', runId, {
-      commandId: 'reject-sample', expectedRevision: atSample.revision, type: 'gate.decide',
+      commandId: 'reject-sample', expectedRevision: atSample.revision, type: 'gate.decide', humanGesture: true,
       payload: { gateId: 'gate-sample-v1', status: 'rejected' }, issuedAt: new Date().toISOString(),
     })
     // 否决 → run 落 paused（首镜无在途任务，直接落停）；镜 2 从未提交。
@@ -132,7 +132,7 @@ describe('sample gate (B2 · 首镜停门 + 窗口化)', () => {
     expect(paused.artifacts.filter((a) => a.kind === 'video')).toHaveLength(1)
 
     // MCP 转述：样片打回 → 「已暂停 + 样片保留 + 改提示词后可继续」，别让用户以为全废了。
-    const rejectNarration = buildToolOutcome('nomi_decide_gate', { projectId: 'project-1', runId, gateId: 'gate-sample-v1', decision: 'rejected' }, service.readProjection('project-1', runId), 'zh-CN')
+    const rejectNarration = buildToolOutcome('nomi_run_gate', { action: 'decide', projectId: 'project-1', runId, gateId: 'gate-sample-v1', decision: 'rejected' }, service.readProjection('project-1', runId), 'zh-CN')
     expect(rejectNarration.text).toContain('样片打回')
     expect(rejectNarration.text).toContain('保留')
   })

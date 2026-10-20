@@ -2,10 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { generateText } from "ai";
-import { adaptToolSchemasForProfile, buildAiSdkModel } from "./buildAiSdkModel";
+import { adaptToolSchemasForProfile, anthropicBaseUrl, buildAiSdkModel } from "./buildAiSdkModel";
 import { getModelProfile } from "./modelProfiles";
 import { buildLanguageModelForVendor, selectTextModelCandidates } from "./vendorLanguageModel";
-import { composeAgentSystemPrompt } from "./agentChatV2";
+import { composeAgentSystemPrompt } from "../harness/context/agentContext";
 import type { CatalogState, Model, Vendor } from "../catalog/types";
 
 let noAuthServer: http.Server;
@@ -86,8 +86,12 @@ describe("buildAiSdkModel", () => {
     expect(observedUrl).toBe(expectedPath);
   });
 
+  // anthropic 的两行都必须落在 `/v1/messages`：库里存的是 host root（onboarding 探测会剥掉尾随 /v1），
+  // 而 @ai-sdk/anthropic 的 baseURL 必须自带版本段。此前第一行断言的是 `/messages`，把 bug 钉成了契约——
+  // 连接检查过、画布 Agent 每次 404（2026-08-28 用户实测）。补 /v1 后两种存储形态都收敛到同一个端点，
+  // 且已带 /v1 的不会被拼成 /v1/v1。
   it.each([
-    ["anthropic", "", "/messages"],
+    ["anthropic", "", "/v1/messages"],
     ["anthropic", "/v1/", "/v1/messages"],
     ["openai-responses", "", "/v1/responses"],
     ["openai-responses", "/custom/v3/", "/custom/v3/responses"],
@@ -150,6 +154,13 @@ describe("buildAiSdkModel", () => {
     expect(model.specificationVersion).toBe("v1");
     expect(model.modelId).toBe("claude-3-5-sonnet-latest");
     expect(model.provider).toMatch(/anthropic/);
+  });
+
+  it("normalizes Anthropic host roots without double-versioning", () => {
+    expect(anthropicBaseUrl("https://api.anthropic.com")).toBe("https://api.anthropic.com/v1");
+    expect(anthropicBaseUrl("https://api.anthropic.com/v1/")).toBe("https://api.anthropic.com/v1");
+    expect(anthropicBaseUrl("https://relay.example.com/anthropic")).toBe("https://relay.example.com/anthropic/v1");
+    expect(anthropicBaseUrl("https://relay.example.com/anthropic/v2")).toBe("https://relay.example.com/anthropic/v2");
   });
 
   it("accepts custom request headers without breaking model construction", () => {
@@ -281,10 +292,12 @@ describe("merged agent model compatibility", () => {
     expect(selectTextModelCandidates({ ...state, models: [{ ...model, meta: { promptRefineOnly: true } }] }, preference, false, false)).toEqual([]);
   });
 
-  it("keeps the structured-text protocol after the skill and before changing project memory", () => {
-    expect(composeAgentSystemPrompt({
+  it("keeps stable prompt layers before changing project memory on the current harness API", () => {
+    const parts = composeAgentSystemPrompt({
       identity: "identity", panelSystemPrompt: "panel", skillSystemPrompt: "playbook",
-      toolFreeProtocol: "json-only", memoryBlock: "memory",
-    })).toBe("identity\n\npanel\n\nplaybook\n\njson-only\n\nmemory");
+      memoryBlock: "memory",
+    })?.split("\n\n");
+    expect(parts).toEqual([expect.any(String), "identity", "panel", "playbook", "memory", expect.any(String)]);
+    expect(parts?.[0]).toBe(parts?.at(-1));
   });
 });

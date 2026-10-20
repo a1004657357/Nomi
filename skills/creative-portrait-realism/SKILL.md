@@ -1,6 +1,57 @@
 ---
-name: creative.portrait-realism
-description: 身份保护的人像真实化与材质修复 playbook
+name: creative-portrait-realism
+description: 在保护身份的前提下改善皮肤、光线、材质、清晰度和场景融合。当用户提到人像真实化、去塑料感、皮肤质感、光影融合或照片感时使用。
+metadata:
+  nomi:
+    selectable-in-workbench: true
+    version: 1.0.0
+    label: 人像真实化
+    author: '@nomi'
+    canvas:
+      recipeIds:
+        - portrait.refine
+      defaultRecipeId: portrait.refine
+    inputs:
+      - name: portrait
+        description: 包含清晰面部的人像节点，以及希望改善的真实化维度。
+        required: true
+    tools:
+      - look_at_canvas
+      - look_at_media
+      - list_models
+      - draft_shots
+      - generate
+      - check_job
+      - make_artifact
+    required-providers:
+      - image
+    stages:
+      - id: inspect
+        goal: 读取来源人像，识别身份锚、真实化问题和不可改变项。
+        tools:
+          - look_at_canvas
+          - look_at_media
+          - list_models
+        pause: true
+      - id: refine
+        goal: 用图像编辑草稿表达已确认的修复维度，按真实生成结果比较人物身份。
+        tools:
+          - draft_shots
+          - generate
+          - check_job
+        depends-on:
+          - inspect
+        pause: true
+        model-prefs:
+          - kind: image
+      - id: identity-resource
+        goal: 记录选定人像的真实素材身份与来源，作为后续镜头参考，不冒充资源库注册。
+        tools:
+          - look_at_media
+          - make_artifact
+        depends-on:
+          - refine
+        pause: true
 ---
 
 # 人像真实化
@@ -10,8 +61,8 @@ description: 身份保护的人像真实化与材质修复 playbook
 ## 流程规划
 
 1. `inspect`：读取来源图，分别判断皮肤、光线、表面材质、锐度和场景融合问题。
-2. `refine`：用 `portrait.refine`，只调整已确认维度，生成新版本集合。
-3. `identity-resource`：用户确认主版本后，按需保存 identity 资源供后续镜头引用。
+2. `refine`：用 `look_at_media` 取得原图素材身份，`list_models` 核对图像编辑模式；将已确认的修复维度写入 `draft_shots` 提示词并引用原图，再按用户要求调用 `generate`，用 `check_job` 查询。
+3. `identity-resource`：用户选定后，用 `make_artifact` 保存身份说明与返回的素材身份，后续镜头引用该素材。该说明不是 CreativeResource 注册表记录；若用户要入资源库，交给现有画布控件处理。
 
 强度从低到高逐步增加；第一次不满意就新增版本，不覆盖旧结果。
 
@@ -31,10 +82,10 @@ description: 身份保护的人像真实化与材质修复 playbook
 
 ## 媒体生成
 
-- `sceneBlend` 控制人物与背景的综合色温、边缘和景深融合。
-- `lightingMatch` 控制面部光向、阴影软硬与环境反射一致性。
-- `skinTexture`、`surfaceTexture`、`sharpness` 分别处理皮肤、服装/道具材质和清晰度。
-- `realismStrength` 只控制修复幅度；`identityLock` 默认保持开启。
+- 将人物与背景的综合色温、边缘和景深融合要求写进提示词。
+- 说明面部光向、阴影软硬与环境反射的目标。
+- 分开描述皮肤、服装/道具材质、清晰度和修复幅度，锁定未授权改变的身份特征。
+- 这些是创作意图，不把旧配方控件名当作模型参数；仅传目录明示的参数。
 
 ## 提示词写法
 
@@ -48,3 +99,12 @@ description: 身份保护的人像真实化与材质修复 playbook
 - 本 Skill 输出参考图；用于视频时，把确认的人像版本作为首帧或身份参考。
 - 相邻镜头的人像修复强度应一致，避免切镜时肤质、年龄感或锐度突变。
 - 最终剪辑前逐镜检查身份漂移、闪烁皮肤纹理和不连续的光照。
+
+## 输入
+
+- **portrait**（必填）：包含清晰面部的人像节点，以及希望改善的真实化维度。
+
+## 示例
+
+- **去除塑料皮肤**
+  > 保持人物完全一致，只修复皮肤蜡感、光线不融合和过锐问题。

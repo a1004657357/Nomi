@@ -1,22 +1,10 @@
 import React from 'react'
 import i18n from '../i18n'
+import { reloadRendererWindow } from '../desktop/bridge'
+import { logRendererCrash } from '../desktop/rendererLog'
 
 type Props = { children: React.ReactNode }
 type State = { error: Error | null; info: string }
-type DesktopReloadBridge = { nomiDesktop?: { app?: { hardReloadWindow?: () => void } } }
-
-function reloadRendererWindow(): void {
-  try {
-    const hardReloadWindow = (window as unknown as DesktopReloadBridge).nomiDesktop?.app?.hardReloadWindow
-    if (hardReloadWindow) {
-      hardReloadWindow()
-      return
-    }
-  } catch {
-    /* fall back to browser reload */
-  }
-  window.location.reload()
-}
 
 /**
  * 根 ErrorBoundary（多维审计 P0-8）：渲染层任意抛错时，给可读兜底 + 可复制错误，
@@ -32,15 +20,8 @@ export class RootErrorBoundary extends React.Component<Props, State> {
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     const detail = info.componentStack || ''
     this.setState({ info: detail })
-    // 落到主进程崩溃日志（contextBridge 暴露的话）；否则至少 console。
-    try {
-      ;(window as unknown as { nomiDesktop?: { logRendererCrash?: (m: string) => void } }).nomiDesktop?.logRendererCrash?.(
-        `${error.name}: ${error.message}\n${error.stack || ''}\n--- componentStack ---${detail}`,
-      )
-    } catch {
-      /* ignore */
-    }
-    console.error('[nomi] renderer crashed:', error, detail)
+    // 落到主进程崩溃日志（桌面端）+ DevTools；组件栈只留组件名。
+    logRendererCrash('root-boundary', error, detail)
   }
 
   private handleCopy = (): void => {
@@ -56,10 +37,10 @@ export class RootErrorBoundary extends React.Component<Props, State> {
       <div className="flex h-screen w-screen items-center justify-center bg-nomi-bg p-8 text-nomi-ink">
         <div className="max-w-lg rounded-nomi border border-nomi-line bg-white p-6 shadow-nomi-md">
           <h1 className="text-title font-nomi-display">{i18n.t('errors.rootTitle')}</h1>
-          <p className="mt-2 text-body text-nomi-ink-soft">
+          <p className="mt-2 text-body text-nomi-ink-60">
             {i18n.t('errors.rootDescription')}
           </p>
-          <pre className="mt-3 max-h-40 overflow-auto rounded-nomi bg-nomi-bg p-3 text-caption text-nomi-ink-soft">
+          <pre className="mt-3 max-h-40 overflow-auto rounded-nomi bg-nomi-bg p-3 text-caption text-nomi-ink-60">
             {error.name}: {error.message}
           </pre>
           <div className="mt-4 flex gap-2">

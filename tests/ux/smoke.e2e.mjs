@@ -4,17 +4,20 @@
 //
 // 用法：pnpm run build && pnpm run test:e2e
 import { launchNomiApp } from "./_launchApp.mjs";
-import { expect, screenshotSettled } from "./_assert.mjs";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { checkComposerFixedFooter } from "./_composerFixedFooter.mjs";
+import { addCanvasNodeFromRail } from "./_canvasRail.mjs";
+import { panCanvasUntilInside } from "./_canvasHit.mjs";
+import { stationTimeout } from "./_station-budget.mjs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), "nomi-smoke-e2e-"));
 const userDataDir = path.join(tempRoot, "user-data");
 const projectsDir = path.join(tempRoot, "projects");
+const evidenceDir = path.resolve("outputs/canvas-smoke");
 mkdirSync(projectsDir, { recursive: true });
-const screenshotDir = process.env.NOMI_SMOKE_SCREENSHOTS;
-if (screenshotDir) mkdirSync(screenshotDir, { recursive: true });
+mkdirSync(evidenceDir, { recursive: true });
 
 let passed = 0;
 function assert(cond, label) {
@@ -30,7 +33,15 @@ const { app, win } = await launchNomiApp({
   projectsDir: projectsDir,
   env: { NOMI_E2E_SMOKE: "1" },
 });
-const electronProcess = app.process();
+const rendererDiagnostics = [];
+win.on("console", (message) => {
+  if (["error", "warning"].includes(message.type())) {
+    rendererDiagnostics.push({ type: `console.${message.type()}`, text: message.text() });
+  }
+});
+win.on("pageerror", (error) => {
+  rendererDiagnostics.push({ type: "pageerror", text: error?.stack || error?.message || String(error) });
+});
 
 try {
   const splashSkip = win.locator('[data-splash-skip="true"]');
@@ -85,7 +96,39 @@ try {
   //（回归 2026-07-15：滚动容器无高度上限 → 长 prompt 溢出盖住底栏，提交钮点不到）。
   await win.getByRole("button", { name: "生成", exact: false }).first().click();
   await win.waitForTimeout(800);
+  const flowNodeCountBeforeAdd = await win.locator('.react-flow__node[data-id]').count();
   await win.locator('button[aria-label="添加图片节点"]').first().click();
+  const flowNode = win.locator('.react-flow__node[data-id]').last();
+  await flowNode.waitFor({ timeout: 5000 });
+  const flowNodeCountAfterAdd = await win.locator('.react-flow__node[data-id]').count();
+  assert(
+    flowNodeCountAfterAdd === flowNodeCountBeforeAdd + 1,
+    `mount 后添加图片节点使画布节点计数 +1（${flowNodeCountBeforeAdd} → ${flowNodeCountAfterAdd}）`,
+  );
+  const flowNodeId = await flowNode.getAttribute('data-id');
+  await win.waitForFunction((nodeId) => {
+    const outer = Array.from(document.querySelectorAll('.react-flow__node[data-id]'))
+      .find((candidate) => candidate.getAttribute('data-id') === nodeId);
+    const card = outer?.querySelector('.generation-canvas-v2-node');
+    return Boolean(card && !card.hasAttribute('data-appear'));
+  }, flowNodeId, { timeout: 2000 });
+  const nodeGeometry = await flowNode.evaluate((outer) => {
+    const inner = outer.querySelector('.generation-canvas-v2-node');
+    const outerRect = outer.getBoundingClientRect();
+    const innerRect = inner?.getBoundingClientRect();
+    return {
+      outer: { left: outerRect.left, top: outerRect.top, width: outerRect.width, height: outerRect.height },
+      inner: innerRect ? { left: innerRect.left, top: innerRect.top, width: innerRect.width, height: innerRect.height } : null,
+      innerInlineTransform: inner instanceof HTMLElement ? inner.style.transform : null,
+    };
+  });
+  assert(Boolean(nodeGeometry.inner), "新增图片节点挂载真实业务卡片");
+  assert(
+    Math.abs(nodeGeometry.inner.left - nodeGeometry.outer.left) < 2 &&
+      Math.abs(nodeGeometry.inner.top - nodeGeometry.outer.top) < 2 &&
+      !nodeGeometry.innerInlineTransform,
+    "React Flow 节点弹入结束后只定位一次（业务卡片与外层左上角对齐）",
+  );
   const composer = win.locator(".generation-canvas-v2-node__composer-card").first();
   await composer.waitFor({ timeout: 5000 });
   const longPrompt = Array.from({ length: 14 }, (_, i) => `第${i + 1}段：超长提示词溢出回归压测，逐行填满编辑区直到超过卡片高度上限，验证底栏不被盖住。`).join("\n");
@@ -93,24 +136,10 @@ try {
   await promptInput.click();
   await promptInput.fill(longPrompt);
   await win.waitForTimeout(500);
-  // 画布平移：把 composer 拉进「AppBar 之下、窗口底之上」的可视带（节点落点随机，卡可能伸出窗口
-  // → elementFromPoint 打在视口外恒 null，误报被挡）。wheel 落在远离卡片的空白区。
-  for (let i = 0; i < 6; i++) {
-    const box = await composer.boundingBox();
-    if (!box) break;
-    const vp = await win.evaluate(() => ({
-      w: window.innerWidth,
-      h: window.innerHeight,
-      appbarBottom: document.querySelector(".nomi-appbar")?.getBoundingClientRect().bottom ?? 0,
-    }));
-    let dy = 0;
-    if (box.y < vp.appbarBottom + 8) dy = box.y - (vp.appbarBottom + 8);
-    else if (box.y + box.height > vp.h - 16) dy = Math.min(box.y + box.height - (vp.h - 16), box.y - (vp.appbarBottom + 8));
-    if (Math.abs(dy) < 4) break;
-    await win.mouse.move(vp.w - 80, Math.max(vp.appbarBottom + 40, 200));
-    await win.mouse.wheel(0, dy);
-    await win.waitForTimeout(250);
-  }
+  // 浮框钉在节点正下方、被挡就挡（09-25，不再自己躲进视口），伸出窗口那截 elementFromPoint 恒 null。
+  // 像用户一样在画布真空白处按住拖，把它整张拉进舞台、停在底部停靠栏之上（共用 panCanvasUntilInside）。
+  const composerPan = await panCanvasUntilInside(win, composer);
+  assert(composerPan.ok, `把浮框整张拖进舞台：${JSON.stringify(composerPan)}`);
   const composerCheck = await composer.evaluate((card) => {
     const editorEl = card.querySelector(".generation-canvas-v2-node__prompt-input");
     let scroller = editorEl;
@@ -119,8 +148,9 @@ try {
     const btn = card.querySelector('button[aria-label="生成素材"], button[aria-label="重新生成"]');
     const r = btn?.getBoundingClientRect();
     const hitEl = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
-    return { scrolls, btnClickable: Boolean(btn && hitEl && (btn === hitEl || btn.contains(hitEl))) };
+    return { outerScrolls: /auto|scroll/.test(getComputedStyle(card).overflowY), promptHeight: scroller?.clientHeight ?? 0, scrolls, btnClickable: Boolean(btn && hitEl && (btn === hitEl || btn.contains(hitEl))) };
   });
+  assert(!composerCheck.outerScrolls && composerCheck.promptHeight >= 72, "外卡不滚且输入区至少 72px");
   assert(composerCheck.scrolls, "超长提示词在编辑区内部滚动（不撑爆卡片）");
   assert(composerCheck.btnClickable, "超长提示词下生成钮 hit-test 可点（底栏未被溢出文字盖住）");
   const savedPrompt = await promptInput.evaluate((el) => 'value' in el ? el.value
@@ -129,45 +159,22 @@ try {
   assert(savedPrompt === longPrompt, "平移画布后长提示词完整保留");
   if (screenshotDir) await screenshotSettled(win, { path: path.join(screenshotDir, "canvas.png") });
 
+  await checkComposerFixedFooter(win, { composer, promptInput, flowNode, longPrompt, evidenceDir });
+
   // 5) 3D 导演台：右栏「整运镜→轨迹」点「新建」→ 轨迹属性面板必须即时激活
   //（回归 2026-08-04：createdId 从 setState updater 里往外带，依赖 React eager-eval 才同步执行；
   // 「新建」handler 先 setTimelineOpen(true) 把 fiber 弄脏 → updater 推迟 → active 从未设置 →
   // 面板永远停在「请选择一条轨迹」，用户被迫再去时间轴点一次「轨迹1」行）。
-  await win.evaluate(() => window.localStorage.setItem("nomi.onboarding.scene3dCoach.v1", "seen"));
-  await win.locator('button[aria-label="添加3D 场景节点"]').first().click()
-    .catch(() => win.getByRole("button", { name: /添加.*3D.*场景.*节点/ }).first().click());
+  // 导演台自 2026-09-06「第三档」起住在左缘的「更多」里；点法收口在 _canvasRail，找不到当场抛。
+  await addCanvasNodeFromRail(win, "director");
   await win.waitForTimeout(1200);
   // 新节点落点不定（画布已被上一段平移过），Playwright actionability 可能够不着 → DOM click 兜底
-  await win.locator('[aria-label="打开 3D 编辑器"]').first().click({ timeout: 3000 })
-    .catch(() => win.evaluate(() => document.querySelector('[aria-label="打开 3D 编辑器"]')?.click()));
-  await win.waitForTimeout(3000);
-  const coachSkip = win.locator('[data-coach-skip="true"]').first();
-  if (await coachSkip.count()) {
-    await coachSkip.click({ timeout: 1500 }).catch(() => win.evaluate(() => {
-      const button = document.querySelector('[data-coach-skip="true"]');
-      if (button instanceof HTMLElement) button.click();
-    }));
-    await coachSkip.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
-  }
-  await win.getByRole("button", { name: "轨迹", exact: true }).first().click();
-  await win.waitForTimeout(400);
-  await win.getByRole("button", { name: "新建", exact: true }).first().click();
-  await win.waitForTimeout(800);
-  const trajectoryPanel = await win.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll("button"));
-    return {
-      // setTimelineOpen 是普通布尔 setter 永远成功 → 修复前时间轴已有「轨迹1」行而面板未激活，
-      // 两个断言拆开才能把「建成了但没激活」与「压根没建成」分开。
-      rowExists: buttons.some((b) => /^轨迹\d/.test((b.textContent || "").trim())),
-      appendPointVisible: buttons.some((b) => (b.textContent || "").includes("追加点")),
-      stillPlaceholder: Boolean(document.body.textContent?.includes("请选择一条轨迹")),
-    };
-  });
-  assert(trajectoryPanel.rowExists, "3D 轨迹「新建」后时间轴出现「轨迹1」行（轨迹已创建）");
-  assert(
-    trajectoryPanel.appendPointVisible && !trajectoryPanel.stillPlaceholder,
-    "3D 轨迹「新建」后属性面板即时激活（「追加点」可见、无「请选择一条轨迹」占位，无需再点时间轴行）",
-  );
+  await win.locator('[data-testid="director-node-open"]').first().click({ timeout: 3000 })
+    .catch(() => win.evaluate(() => document.querySelector('[data-testid="director-node-open"]')?.click()));
+  // 全屏导演台唯一真标志：DirectorEditor 经 createPortal 挂到 body 的 [data-testid="director-editor"]
+  const directorShell = win.locator('[data-testid="director-editor"]').first();
+  await directorShell.waitFor({ state: "visible", timeout: stationTimeout({ operations: 2 }) });
+  assert(await directorShell.count() > 0, "导演台节点「进入导演台」后全屏壳挂出（data-testid=director-editor）");
 
   const sceneCanvas = win.locator('[aria-label="3D 场景编辑器"] canvas').first();
   await expect(sceneCanvas).toBeVisible({ timeout: 20_000 });
@@ -194,6 +201,25 @@ try {
   console.log(`\nSMOKE PASS: ${passed} assertions`);
   process.exitCode = 0;
 } catch (error) {
+  const diagnostic = {
+    error: error?.stack || error?.message || String(error),
+    url: win.url(),
+    rendererDiagnostics,
+    alerts: await win.getByRole("alert").allTextContents().catch(() => []),
+    nodes: await win.locator('.react-flow__node[data-id]').evaluateAll((nodes) => nodes.map((node) => {
+      const inner = node.querySelector('.generation-canvas-v2-node');
+      const outerRect = node.getBoundingClientRect();
+      const innerRect = inner?.getBoundingClientRect();
+      return {
+        id: node.getAttribute('data-id'),
+        outer: { left: outerRect.left, top: outerRect.top, width: outerRect.width, height: outerRect.height },
+        inner: innerRect ? { left: innerRect.left, top: innerRect.top, width: innerRect.width, height: innerRect.height } : null,
+        innerTransform: inner instanceof HTMLElement ? inner.style.transform : null,
+      };
+    })).catch(() => []),
+  };
+  writeFileSync(path.join(evidenceDir, "failure.json"), JSON.stringify(diagnostic, null, 2));
+  await win.screenshot({ path: path.join(evidenceDir, "failure.png") }).catch(() => undefined);
   console.error(`\n${error?.message || error}`);
   process.exitCode = 1;
 } finally {

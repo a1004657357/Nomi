@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { type JSX } from 'react'
+import { MODEL_ACCESS_ENTRY } from '../../../electron/shared/contracts/modelAccessCapabilities'
 import { Group, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle, IconCheck, IconRefresh } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +15,8 @@ import {
   shouldShowAdapterModelRecovery,
 } from './adapterVerificationViewModel'
 import { adapterFailureAdvice } from './adapterFailureAdvice'
+import { FeedbackButton } from '../community/FeedbackButton'
+import { translateModelDisplayText } from '../../i18n/modelDisplayText'
 
 const MODE_LABEL_KEYS: Record<string, string> = {
   chat: 'chat',
@@ -81,7 +84,7 @@ export function AdapterVerificationScreen({
   const allPassed = completed && progress.total > 0 && progress.verified === progress.total && needsAttentionCount === 0
 
   return (
-    <Stack gap={12}>
+    <Stack gap={12} data-model-access-entry={MODEL_ACCESS_ENTRY.providerAdapter}>
       <Group gap={10} wrap="nowrap" align="center">
         <span
           className={cn(
@@ -153,7 +156,7 @@ export function AdapterVerificationScreen({
             <div key={model.modelKey} className="rounded-nomi border border-nomi-line bg-nomi-paper px-3 py-2.5">
               <Group justify="space-between" wrap="nowrap" align="center" gap={8}>
                 <div className="min-w-0 flex-1">
-                  <Text size="sm" fw={600} c="var(--nomi-ink)" truncate>{model.labelZh}</Text>
+                  <Text size="sm" fw={600} c="var(--nomi-ink)" truncate>{translateModelDisplayText(model.labelZh)}</Text>
                   <Text size="xs" c="var(--nomi-ink-40)" truncate>{model.modelKey}</Text>
                 </div>
                 <span
@@ -217,6 +220,8 @@ export function AdapterVerificationScreen({
                   errorCategory: failure.errorCategory,
                   httpStatus: failure.httpStatus,
                   stage: failure.stage,
+                  compileFailureReason: failure.compileFailureReason,
+                  selfCheckReason: failure.selfCheckReason,
                 })
                 const status = failure.httpStatus
                   ? String(failure.httpStatus)
@@ -250,6 +255,19 @@ export function AdapterVerificationScreen({
                           {t('onboardingProviders.adapterVerification.action.manualSetup')}
                         </DesignButton>
                       ) : null}
+                      {/* 失败面之一（四处共用同一颗钮 + 同一张卡）。那句人话由**适配器域自己的
+                          owner** 给：`adapterFailureAdvice` 已经把 reasonKey 算出来了，这里直接取它的译文。 */}
+                      <FeedbackButton
+                        request={{
+                          intent: 'problem',
+                          surface: 'model-validation',
+                          stage: 'model',
+                          errorKind: advice.reasonKey,
+                          summary: t(`onboardingProviders.adapterVerification.why.${advice.reasonKey}` as 'onboardingProviders.adapterVerification.why.unknown', { status }),
+                          provider: run.vendorKey,
+                          model: model.modelKey,
+                        }}
+                      />
                     </Group>
                     {failure.error ? (
                       <details className="text-micro text-nomi-ink-40">

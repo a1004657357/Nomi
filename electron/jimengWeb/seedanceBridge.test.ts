@@ -268,6 +268,7 @@ describe("jimengWeb seedance bridge", () => {
         jimengTaskCode: "SD-1",
         sourceFileId: "F0001",
       }),
+      'video',
     );
     for (const [, options] of fetchImpl.mock.calls) {
       expect(new Headers((options as RequestInit | undefined)?.headers).get("X-Nomi-Token")).toMatch(/^[a-f0-9]{64}$/);
@@ -412,6 +413,7 @@ describe("jimengWeb seedance bridge", () => {
       "result-1.png",
       "image/png",
       expect.objectContaining({ generator: "jimeng-web", jimengTaskCode: "IMG-1" }),
+      'image',
     );
   });
 

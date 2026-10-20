@@ -1,11 +1,15 @@
 import * as React from 'react'
 import i18n from '../../i18n'
 import { getDesktopBridge, type DesktopAssetDto } from '../../desktop/bridge'
-import { toast } from '../../ui/toast'
+import { notify } from '../../ui/notificationPolicy'
+import { mediaImportRejectionMessages } from './mediaImportMessage'
+import type { MediaImportRejection } from '../../../electron/shared/contracts/mediaImportPolicy'
+import { logRendererError } from '../../desktop/rendererLog'
 
 export type LocalImageImportResult = {
   created: DesktopAssetDto[]
-  skippedUnsupportedCount: number
+  /** 被准入闸挡下的文件，带机器可读原因与数字。 */
+  rejected: Array<{ fileName: string; rejection: MediaImportRejection }>
   failedCount: number
 }
 
@@ -40,23 +44,19 @@ export function isTextEditingTarget(target: EventTarget | null): boolean {
   return typeof closest === 'function' && Boolean(closest.call(target, 'input, textarea, [contenteditable="true"]'))
 }
 
-export async function importImagePathsToLibrary(projectId: string | null, paths: string[]): Promise<LocalImageImportResult> {
+/** Finder 拖入 / 粘贴素材库的落盘路。与「上传」按钮同一条（主进程 importLocalFiles），收全部媒体。 */
+export async function importLocalPathsToLibrary(projectId: string | null, paths: string[]): Promise<LocalImageImportResult> {
   const normalizedProjectId = String(projectId || '').trim()
-  if (!normalizedProjectId) throw new Error('projectId is required for local image copy')
+  if (!normalizedProjectId) throw new Error('projectId is required for local media import')
   const copyFiles = getDesktopBridge()?.assets?.copyFiles
-  if (!copyFiles) throw new Error('native local image copy is unavailable')
+  if (!copyFiles) throw new Error('native local media import is unavailable')
   return copyFiles({ projectId: normalizedProjectId, paths })
 }
 
-function reportImport(result: LocalImageImportResult): void {
-  if (result.created.length > 0) {
-    toast(i18n.t('assetLibrary.importedAssets', { count: result.created.length }), 'success')
-  }
-  if (result.skippedUnsupportedCount > 0) {
-    toast(i18n.t('assetLibrary.skippedUnsupported', { count: result.skippedUnsupportedCount }), 'warning')
-  }
+function reportImport(result: LocalImageImportResult, report: (message: string) => void): void {
+  for (const message of mediaImportRejectionMessages(result.rejected ?? [])) report(message)
   if (result.failedCount > 0) {
-    toast(i18n.t('assetLibrary.localImportFailed', { count: result.failedCount }), 'error')
+    report(i18n.t('assetLibrary.localImportFailed', { count: result.failedCount }))
   }
 }
 
@@ -64,12 +64,14 @@ type UseAssetLibraryLocalImportOptions = {
   projectId: string | null
   refreshProjectAssets: () => void
   refreshAllProjectAssets: () => void
+  present: (message: string) => void
 }
 
 export function useAssetLibraryLocalImport({
   projectId,
   refreshProjectAssets,
   refreshAllProjectAssets,
+  present,
 }: UseAssetLibraryLocalImportOptions): {
   isDragOver: boolean
   onDragOver: React.DragEventHandler<HTMLDivElement>
@@ -78,22 +80,26 @@ export function useAssetLibraryLocalImport({
   onPaste: React.ClipboardEventHandler<HTMLDivElement>
 } {
   const [isDragOver, setIsDragOver] = React.useState(false)
+  const report = React.useCallback((message: string, type: 'warning' | 'error' = 'warning') => {
+    notify({ identity: `asset-import:${projectId ?? ''}`, reason: 'local-import', message, type, level: 'inline', present })
+  }, [projectId, present])
 
   const runImport = React.useCallback(async (paths: string[]) => {
+    present('')
     if (paths.length === 0) {
-      toast(i18n.t('assetLibrary.localImportNoImages'), 'warning')
+      report(i18n.t('assetLibrary.localImportNoImages'), 'warning')
       return
     }
     try {
-      const result = await importImagePathsToLibrary(projectId, paths)
+      const result = await importLocalPathsToLibrary(projectId, paths)
       refreshProjectAssets()
       refreshAllProjectAssets()
-      reportImport(result)
+      reportImport(result, report)
     } catch (error) {
-      console.error('asset library local image copy failed', error)
-      toast(i18n.t('assetLibrary.localImportFailed', { count: paths.length }), 'error')
+      logRendererError('asset-local-import-failed', error)
+      report(i18n.t('assetLibrary.localImportFailed', { count: paths.length }), 'error')
     }
-  }, [projectId, refreshAllProjectAssets, refreshProjectAssets])
+  }, [projectId, refreshAllProjectAssets, refreshProjectAssets, present, report])
 
   const onDragOver = React.useCallback<React.DragEventHandler<HTMLDivElement>>((event) => {
     if (!Array.from(event.dataTransfer.types).includes('Files')) return
@@ -117,18 +123,19 @@ export function useAssetLibraryLocalImport({
   const onPaste = React.useCallback<React.ClipboardEventHandler<HTMLDivElement>>((event) => {
     if (isTextEditingTarget(event.target)) return
     event.preventDefault()
+    present('')
     const readFilePaths = getDesktopBridge()?.clipboard?.readFilePaths
     if (!readFilePaths) {
-      toast(i18n.t('assetLibrary.localImportUnavailable'), 'error')
+      report(i18n.t('assetLibrary.localImportUnavailable'), 'error')
       return
     }
     void readFilePaths()
       .then((paths) => runImport(paths))
       .catch((error) => {
-        console.error('asset library clipboard read failed', error)
-        toast(i18n.t('assetLibrary.localImportFailed', { count: 1 }), 'error')
+        logRendererError('asset-clipboard-read-failed', error)
+        report(i18n.t('assetLibrary.localImportFailed', { count: 1 }), 'error')
       })
-  }, [runImport])
+  }, [runImport, present, report])
 
   return { isDragOver, onDragOver, onDragLeave, onDrop, onPaste }
 }

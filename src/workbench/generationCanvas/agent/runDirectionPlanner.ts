@@ -2,7 +2,7 @@
 // driver 侧 proposeDirections 停在 awaiting_direction 时，会让渲染层拟 2-3 个「创意方向」候选，
 // 供用户在方向门三选一（每个候选：短标题 + 一句话描述）。
 //
-// 通道选型：走**无工具**的一次性文本链路（sendWorkbenchAiMessage + mode:'chat'），
+// 通道选型：走**无工具**的一次性文本链路（single-shot text capability），
 // 不用 storyboard 那套画布 agent 工具循环——方向候选是纯文本产出，不碰画布、不花生成额度。
 // 参照 shotVerifyJudge.ts 的轻量判断通道（独立会话键 + 助手模型偏好 + mode:'chat'）。
 //
@@ -28,6 +28,7 @@ export type DirectionPlannerBrief = {
 }
 
 export type RunDirectionPlannerInput = {
+  projectId?: string
   brief?: DirectionPlannerBrief | null
   /** playbook 声明（key/name 等），用于给模型「这是哪类片子」的上下文；结构宽松，只读取文本字段。 */
   playbook?: Record<string, unknown> | null
@@ -99,6 +100,7 @@ export function parseDirectionCandidates(text: string): DirectionCandidate[] {
   if (fence) s = fence[1].trim()
   const brace = s.match(/\{[\s\S]*\}/)
   const candidate = brace ? brace[0] : s
+  // eslint-disable-next-line no-control-regex -- Legacy JSON repair intentionally strips emitted control characters.
   const repaired = candidate.replace(/[\u0000-\u001f]+/g, ' ').replace(/,(\s*[}\]])/g, '$1')
   let parsed: unknown = null
   for (const c of [candidate, repaired]) {
@@ -131,21 +133,18 @@ export function parseDirectionCandidates(text: string): DirectionCandidate[] {
 }
 
 /**
- * 跑一次方向候选规划（副作用）：清独立会话 → 无工具 chat 调模型 → 解析出 2-3 个候选。
+ * 一次 ephemeral、零工具的方向规划，再由原领域 schema 解析候选。
  * 返回 { candidates }，形状与 driver 期待一致（productionRunDriverOps.normalizeDirectionCandidates 再清一遍）。
  */
 export async function runDirectionPlanner(
   input: RunDirectionPlannerInput,
 ): Promise<{ candidates: DirectionCandidate[] }> {
-  const projectId = readWindowUrlParam('projectId') || ''
-  // 单次链路（清会话 + mode:'chat' + 模型偏好）收口到 runSingleShotAgent；方向候选不碰画布、不花生成额度。
+  const projectId = input.projectId ?? readWindowUrlParam('projectId') ?? ''
   const response = await runSingleShotAgent({
-    sessionKey: directionSessionKey(),
+    featureKey: directionSessionKey(projectId),
     prompt: buildDirectionPlannerPrompt(input),
     displayPrompt: '构思创意方向',
     ...(projectId ? { projectId } : {}),
-    skillKey: 'workbench.production.direction-planner',
-    skillName: '方向候选规划',
   })
   const candidates = parseDirectionCandidates(response.text ?? '')
   return { candidates }

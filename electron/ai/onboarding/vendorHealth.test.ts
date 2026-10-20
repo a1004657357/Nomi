@@ -1,22 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const broadcast = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => ({
+  BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: broadcast } }] },
   app: { getPath: () => process.cwd(), getAppPath: () => process.cwd() },
   ipcMain: { handle: () => {} },
+  safeStorage: {
+    decryptString: (value: Buffer) => value.toString("utf8"),
+  },
 }));
 
 const readCatalog = vi.fn();
 vi.mock("../../catalog/catalogStore", () => ({
   readCatalog: () => readCatalog(),
+  mutateCatalog: (fn: (tx: { upsertModel: (patch: unknown) => void }, state: ReturnType<typeof readCatalog>) => void) => {
+    const state = readCatalog();
+    fn({ upsertModel: (raw) => {
+      const patch = raw as { vendorKey: string; modelKey: string };
+      const model = state.models.find((row: { vendorKey: string; modelKey: string }) => row.vendorKey === patch.vendorKey && row.modelKey === patch.modelKey);
+      Object.assign(model, patch);
+    } }, state);
+  },
   normalizeProviderKind: (v: unknown, fallback = "openai-compatible") =>
     v === "anthropic" || v === "openai-compatible" || v === "openai-responses" ? v : fallback,
 }));
 
-vi.mock("../../catalog/secrets", () => ({
-  decryptApiKeyRecord: (rec: { apiKey?: string } | undefined) => rec?.apiKey ?? "",
-}));
-
 import { checkVendorHealth, classifyProbe, resetVendorHealthCache } from "./vendorHealth";
+
+const encryptedRecord = (plain: string, updatedAt: string) => ({
+  apiKey: Buffer.from(plain).toString("base64"),
+  enc: "safeStorage" as const,
+  enabled: true,
+  updatedAt,
+});
 
 describe("classifyProbe — 探测结果 → 四态的唯一映射表", () => {
   const at = 1_700_000_000_000;
@@ -100,9 +116,26 @@ describe("checkVendorHealth — 前置跳过（不发请求的那些）", () => 
   function catalog(vendor: Record<string, unknown> | null, apiKey = "sk-test") {
     return {
       vendors: vendor ? [vendor] : [],
-      apiKeysByVendor: apiKey ? { v: { apiKey, updatedAt: "2026-08-11T00:00:00Z" } } : {},
+      apiKeysByVendor: apiKey ? { v: encryptedRecord(apiKey, "2026-08-11T00:00:00Z") } : {},
     };
   }
+
+  it("legacy plaintext never reaches a health-probe request, header, error, or log", async () => {
+    const sentinel = "SENTINEL-LEGACY-HEALTH";
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    readCatalog.mockReturnValue({
+      models: [],
+      vendors: [{ key: "v", authType: "bearer", hasApiKey: true, baseUrlHint: "https://api.example.com/v1" }],
+      apiKeysByVendor: { v: { apiKey: sentinel, enc: "plain", enabled: true, updatedAt: "one" } },
+    });
+    const result = await checkVendorHealth("v");
+    expect(result.state).toBe("unsupported");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(JSON.stringify([result, errorSpy.mock.calls, warnSpy.mock.calls])).not.toContain(sentinel);
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
 
   it("没这家 → unsupported，一个请求都不发", async () => {
     readCatalog.mockReturnValue(catalog(null));
@@ -139,6 +172,7 @@ describe("checkVendorHealth — 缓存与并发（「重开面板不回退」靠
   function okResponse() {
     return {
       ok: true,
+      headers: new Headers(),
       status: 200,
       text: async () => JSON.stringify({ data: [{ id: "gpt-4o" }] }),
     };
@@ -150,8 +184,9 @@ describe("checkVendorHealth — 缓存与并发（「重开面板不回退」靠
     fetchSpy.mockResolvedValue(okResponse());
     vi.stubGlobal("fetch", fetchSpy);
     readCatalog.mockReturnValue({
+      models: [],
       vendors: [{ key: "v", authType: "bearer", hasApiKey: true, baseUrlHint: "https://api.example.com/v1" }],
-      apiKeysByVendor: { v: { apiKey: "sk-a", updatedAt: "2026-08-11T00:00:00Z" } },
+      apiKeysByVendor: { v: encryptedRecord("sk-a", "2026-08-11T00:00:00Z") },
     });
   });
 
@@ -185,8 +220,9 @@ describe("checkVendorHealth — 缓存与并发（「重开面板不回退」靠
     await checkVendorHealth("v");
     const callsAfterFirst = fetchSpy.mock.calls.length;
     readCatalog.mockReturnValue({
+      models: [],
       vendors: [{ key: "v", authType: "bearer", hasApiKey: true, baseUrlHint: "https://api.example.com/v1" }],
-      apiKeysByVendor: { v: { apiKey: "sk-b", updatedAt: "2026-08-11T09:00:00Z" } },
+      apiKeysByVendor: { v: encryptedRecord("sk-b", "2026-08-11T09:00:00Z") },
     });
     await checkVendorHealth("v");
     expect(fetchSpy.mock.calls.length).toBeGreaterThan(callsAfterFirst);
@@ -196,8 +232,9 @@ describe("checkVendorHealth — 缓存与并发（「重开面板不回退」靠
     await checkVendorHealth("v");
     const callsAfterFirst = fetchSpy.mock.calls.length;
     readCatalog.mockReturnValue({
+      models: [],
       vendors: [{ key: "v", authType: "bearer", hasApiKey: true, baseUrlHint: "https://api.other.com/v1" }],
-      apiKeysByVendor: { v: { apiKey: "sk-a", updatedAt: "2026-08-11T00:00:00Z" } },
+      apiKeysByVendor: { v: encryptedRecord("sk-a", "2026-08-11T00:00:00Z") },
     });
     await checkVendorHealth("v");
     expect(fetchSpy.mock.calls.length).toBeGreaterThan(callsAfterFirst);
@@ -212,9 +249,10 @@ describe("checkVendorHealth — 缓存与并发（「重开面板不回退」靠
 
   it("replays saved custom-header auth and gateway headers instead of inventing Bearer", async () => {
     readCatalog.mockReturnValue({
+      models: [],
       vendors: [{ key: "v", authType: "x-api-key", authHeader: "X-Tenant-Key", hasApiKey: true,
         baseUrlHint: "https://api.example.com/v1", meta: { extraHeaders: { "X-Gateway": "private-tenant" } } }],
-      apiKeysByVendor: { v: { apiKey: "custom-key", updatedAt: "one" } },
+      apiKeysByVendor: { v: encryptedRecord("custom-key", "one") },
     });
     expect((await checkVendorHealth("v")).state).toBe("reachable");
     expect(fetchSpy.mock.calls[0][1].headers).toEqual({ "X-Tenant-Key": "custom-key", "X-Gateway": "private-tenant" });
@@ -223,7 +261,8 @@ describe("checkVendorHealth — 缓存与并发（「重开面板不回退」靠
   it("replays saved query auth and invalidates cache when its configuration changes", async () => {
     const vendor = { key: "v", authType: "query", authQueryParam: "token", hasApiKey: true,
       baseUrlHint: "https://api.example.com/v1", meta: { extraHeaders: { "X-Gateway": "tenant-one" } } };
-    readCatalog.mockReturnValue({ vendors: [vendor], apiKeysByVendor: { v: { apiKey: "query-key", updatedAt: "one" } } });
+    readCatalog.mockReturnValue({
+      models: [], vendors: [vendor], apiKeysByVendor: { v: encryptedRecord("query-key", "one") } });
     await checkVendorHealth("v");
     expect(new URL(fetchSpy.mock.calls[0][0]).searchParams.get("token")).toBe("query-key");
     expect(fetchSpy.mock.calls[0][1].headers).toEqual({ "X-Gateway": "tenant-one" });
@@ -238,16 +277,50 @@ describe("checkVendorHealth — 缓存与并发（「重开面板不回退」靠
 
   it("does not report a business auth failure in HTTP200 as unsupported", async () => {
     fetchSpy.mockResolvedValue({ ok: true, status: 200, text: async () => JSON.stringify({ code: 401, data: [], message: "expired" }) });
-    expect(await checkVendorHealth("v")).toMatchObject({ state: "unreachable", reason: "expired" });
+    expect(await checkVendorHealth("v")).toMatchObject({
+      state: "unreachable",
+      reason: expect.stringContaining("HTTP 200: provider returned expired."),
+    });
+    expect((await checkVendorHealth("v")).reason).toContain("Next:");
   });
 
   it.each(["authorization", "AUTHORIZATION"])("sends only the saved %s override, not two Bearer values", async (header) => {
     readCatalog.mockReturnValue({
+      models: [],
       vendors: [{ key: "v", authType: "bearer", hasApiKey: true, baseUrlHint: "https://api.example.com/v1",
         meta: { extraHeaders: { [header]: "Bearer gateway-override" } } }],
-      apiKeysByVendor: { v: { apiKey: "stored", updatedAt: "one" } },
+      apiKeysByVendor: { v: encryptedRecord("stored", "one") },
     });
     expect((await checkVendorHealth("v")).state).toBe("reachable");
     expect(new Headers(fetchSpy.mock.calls[0][1].headers).get("authorization")).toBe("Bearer gateway-override");
   });
 });
+
+describe('live catalog reconciliation delivery', () => {
+  const row = () => ({ vendorKey: 'v', modelKey: 'gone', kind: 'text', enabled: true, meta: { catalogLifecycle: 'value' } })
+  const state = () => ({ vendors: [{ key: 'v', authType: 'bearer', hasApiKey: true, baseUrlHint: 'https://gateway.test/v1' }], models: [row()], apiKeysByVendor: { v: encryptedRecord('synthetic', 'one') } })
+  beforeEach(() => { resetVendorHealthCache(); broadcast.mockClear() })
+  afterEach(() => vi.unstubAllGlobals())
+  it('marks unlisted from a full response and broadcasts invalidation, without touching the user enable decision', async () => {
+    // 2026-09-21：后台对账只落旁注。两处同改：① 断言从 enabled:false 改成 enabled 原样为 true
+    // ② 清单从空数组改成「有内容但不含这一条」——一份成功但空的清单不再算证据（网关抖动会回它）。
+    const catalog = state()
+    readCatalog.mockReturnValue(catalog)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'still-here' }] }))))
+    expect((await checkVendorHealth('v')).state).toBe('reachable')
+    expect(catalog.models[0]).toMatchObject({ enabled: true, unlisted: true })
+    expect(broadcast).toHaveBeenCalledWith('nomi:model-catalog:changed')
+  })
+  it('drops old list evidence if the connection changes while the request is in flight', async () => {
+    const catalog = state()
+    readCatalog.mockReturnValue(catalog)
+    let respond!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { respond = resolve })))
+    const pending = checkVendorHealth('v')
+    catalog.vendors[0].baseUrlHint = 'https://replacement.test/v1'
+    respond(new Response(JSON.stringify({ data: [{ id: 'still-here' }] })))
+    await pending
+    expect(catalog.models[0].enabled).toBe(true)
+    expect(broadcast).not.toHaveBeenCalled()
+  })
+})

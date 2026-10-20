@@ -1,12 +1,16 @@
+import type { ProgressNarrationContext } from '../../observability/narrate'
 import type { GenerationNodeKind } from './generationNodeKinds'
 import type { NodeRenderKind } from '../../project/projectCategories'
 import type { CreativeResource } from '../../../config/capabilityRecipes'
+import type { GenerationNodeStatus as SharedGenerationNodeStatus } from '../../../../electron/shared/canvas/generationNodeStatus'
+import type { CanvasPluginNodeState } from '../plugins/canvasPluginTypes'
+import type { CanvasWorkflowTemplate } from '../plugins/canvasWorkflowTemplates'
 
 export type { GenerationNodeKind } from './generationNodeKinds'
 
 // recoverable：异步任务超时但上游可能仍在跑/已出片——可「重新拉取结果」找回，不是失败。
 // 刻意独立于 error：① 不进红色错误桶误导用户 ② 批量/下游逻辑不把它当真失败传染。
-export type GenerationNodeStatus = 'idle' | 'queued' | 'running' | 'success' | 'error' | 'recoverable'
+export type GenerationNodeStatus = SharedGenerationNodeStatus
 
 export type GenerationResultType = 'image' | 'video' | 'text' | 'audio' | 'model3d'
 
@@ -51,7 +55,7 @@ export type CategoryId = string
  * 此前两处各持一份映射且互相矛盾（text 在迁移侧被判 null 删除），是「新建空白项目
  * 走 legacy 迁移并删默认节点」的根因（2026-06-13 审计 A4）。
  * - character → 'cast'（角色）
- * - scene / panorama / scene3d → 'scene'（场景资产）
+ * - scene / panorama / director / model3d → 'scene'（场景资产）
  * - 其余（image/video/keyframe/shot/output/text…）→ 'shots'（分镜）
  * prop/audio 无独占 kind，由各自创建流程显式指定，不在此推断。
  */
@@ -63,6 +67,7 @@ export function getDefaultCategoryForNodeKind(kind: GenerationNodeKind): Builtin
     case 'panorama':
     case 'scene3d':
     case 'vibingDirector':
+    case 'director':
     case 'model3d':
     case 'resource':
       return 'scene'
@@ -91,6 +96,7 @@ export type GenerationProvenance = {
   seed?: number
   params?: Record<string, unknown>
   vendorRequestId?: string
+  cost?: { amount: number; currency: string; unit: 'estimate' | 'actual' }
   timestamp: number
   agentRunId?: string
 }
@@ -204,6 +210,7 @@ export type GenerationResultCollection = {
 }
 
 export type GenerationNodeProgress = {
+  narrationContext?: ProgressNarrationContext
   runId?: string
   taskId?: string
   taskKind?: GenerationNodeTaskKind
@@ -215,15 +222,29 @@ export type GenerationNodeProgress = {
 
 export type GenerationNodeRunStatus = Exclude<GenerationNodeStatus, 'idle'> | 'cancelled'
 
+/**
+ * 一次运行**实际发给的**是哪家供应商的哪个模型。运行开始那一刻从被执行的节点读出、随运行记录落盘，
+ * 之后失败、找回都读这一份——失败属于「发出去的那一次」，不属于「节点现在选着谁」。
+ * （2026-09-29：用户点了提示里的「切到另一家」，旧失败还挂在节点上，提示按新选的那家去点名，说它失败了。）
+ * 旧记录没有这一栏：读不出是谁失败的，就不替它点名。
+ */
+export type GenerationNodeRunAttempt = { vendorKey: string; modelKey: string }
+
 export type GenerationNodeRunRecord = {
   id: string
   status: GenerationNodeRunStatus
+  /** 这次运行发给谁（提交那一刻固定，见 GenerationNodeRunAttempt）。制作流程写的记录不带它。 */
+  attempt?: GenerationNodeRunAttempt
+  /** 运行所属项目（提交那一刻固定）。旧记录没有这一栏：由记录所在项目派生，派生不出即拒绝找回。 */
+  projectId?: string
   taskId?: string
   taskKind?: GenerationNodeTaskKind
   assetId?: string
   assetRefId?: string
   progress?: GenerationNodeProgress
   resultId?: string
+  /** Sealed atomically with this run's generated document, never ordinary editing. */
+  textDocumentDigest?: string
   error?: string
   raw?: unknown
   startedAt: number
@@ -242,6 +263,9 @@ export type TiptapDocJson = { type: 'doc'; content?: unknown[] }
 export type GenerationCanvasNode = {
   id: string
   kind: GenerationNodeKind
+  /** Optional host-owned plugin renderer identity; `kind` remains the closed semantic kind. */
+  typeId?: string
+  pluginState?: CanvasPluginNodeState
   title: string
   position: { x: number; y: number }
   size?: { width: number; height: number }
@@ -257,7 +281,10 @@ export type GenerationCanvasNode = {
   runs?: GenerationNodeRunRecord[]
   status?: GenerationNodeStatus
   error?: string
-  meta?: Record<string, unknown>
+  meta?: Record<string, unknown> & {
+    /** Original storyboard node fields explicitly edited on canvas; duration is excluded. */
+    overriddenFields?: string[]
+  }
   /**
    * Phase E: category this node belongs to within the project's directory tree.
    * Legacy v0.4 nodes have no value here; the project loader normalizes them
@@ -304,8 +331,17 @@ export type NodeGroup = {
   name: string
   categoryId: CategoryId
   nodeIds: string[]
+  /** @deprecated Kept only for persisted-project compatibility; group chrome is design-system neutral. */
   color?: string
+  /**
+   * 框（Frame）的边界——**用户画出来的那个矩形**，2026-09-06 起是真相之一。
+   * 画布渲染的框 = `union(frameBounds, 成员外接矩形 + padding)`：只长不缩，永不小于用户画的那个。
+   * 几何算式的唯一 owner 是 `model/canvasFrameBounds.ts`；旧快照缺此字段的组在
+   * `store/canvasSnapshotNormalizer.ts` 载入时按成员包围盒回填一次（幂等）。
+   */
   frameBounds?: { x: number; y: number; w: number; h: number }
+  /** 框头部那一句灰字说明（可空，画布上双击改）。旧快照无此字段 → optional。 */
+  description?: string
   collapsed?: boolean
   /**
    * 组入参：连到这个组上的来源节点。**只是声明**——真边仍是普通 node→node 边（见 model/groupInputLinks.ts）。
@@ -364,4 +400,6 @@ export type GenerationCanvasSnapshot = {
   /** S5-b-0:选区是会话态——工具视图(readSnapshot)带,持久化视图(readDocumentSnapshot)不带。 */
   selectedNodeIds?: string[]
   groups: NodeGroup[]
+  /** User-authored local workflow templates; optional for pre-plugin projects. */
+  workflowTemplates?: CanvasWorkflowTemplate[]
 }

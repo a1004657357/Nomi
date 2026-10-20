@@ -1,5 +1,6 @@
 import { recordPersistedTaskResult, runTaskWithIdempotency } from '../submissionLedger'
 import type { IdempotencyRecord } from './idempotencyStore'
+import { withNodeSubmitExclusive } from './nodeSubmitInFlight'
 
 type RuntimeModule = typeof import('../runtime')
 
@@ -26,7 +27,8 @@ export function createTaskSubmissionRuntime(loadRuntime: () => Promise<RuntimeMo
   return {
     run: async (payload) => {
       const runtime = await loadRuntime()
-      return runTaskWithIdempotency(payload, () => runtime.runTask(payload), {
+      const extras = (payload as { request?: { extras?: Record<string, unknown> } } | null)?.request?.extras;
+      return runTaskWithIdempotency(payload, () => withNodeSubmitExclusive(extras, () => runtime.runTask(payload)), {
         recoverPersisted: async (record) => {
           const recovered = await runtime.fetchTaskResult(recoveryPayload(payload, record))
           return recovered.result

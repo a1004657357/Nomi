@@ -1,3 +1,4 @@
+import { declareStoreLifetime } from '../project/storeLifetime'
 /**
  * 引导旅途的状态机 + 模块级 runner。
  *
@@ -23,7 +24,7 @@ import {
   DEMO_CANVAS_SPOTLIGHTS,
   seedDemoNodeImages,
 } from './demoProject'
-import { getDesktopActiveProjectId } from '../../desktop/activeProject'
+import { isProjectExecutionContextCurrent, withProjectAction } from '../project/projectCanvasReadSurface'
 
 type TourPhase = 'idle' | 'running' | 'finale'
 
@@ -58,7 +59,9 @@ export const useJourneyTourStore = create<JourneyTourState>((set) => {
 
   const run = async () => {
     const myToken = (runToken += 1)
-    const aborted = () => runToken !== myToken
+    // 导览在开始那一刻打开的项目里演示：示例图落进它；中途换了项目就收场，不往新项目里铺示例。
+    const project = withProjectAction((issued) => issued) ?? null
+    const aborted = () => runToken !== myToken || (project !== null && !isProjectExecutionContextCurrent(project))
     const ws = () => useWorkbenchStore.getState()
     set({ phase: 'running', beat: null, teachIndex: 0, selectors: null })
 
@@ -72,7 +75,6 @@ export const useJourneyTourStore = create<JourneyTourState>((set) => {
     }
 
     // ── 创作区：打字回放 ──
-    ws().setStoryboardEditorOpen(false)
     ws().setStoryboardPlan(null)
     ws().setWorkspaceMode('creation')
     await settle()
@@ -90,7 +92,7 @@ export const useJourneyTourStore = create<JourneyTourState>((set) => {
     // ── 创作区：AI 拆分镜（预置方案直接展示）──
     const plan = buildDemoStoryboardPlan()
     ws().setStoryboardPlan(plan)
-    ws().setStoryboardEditorOpen(true)
+    ws().setWorkspaceMode('creation')
     cinematic('split')
     await delay(2600)
     if (aborted()) return
@@ -104,7 +106,7 @@ export const useJourneyTourStore = create<JourneyTourState>((set) => {
     // 注入预置成图：示例画布即显成片(status=success),像一个做完的示例项目(诚实——这就是示例项目)。
     // 图先由主进程落成本项目的真实资产再拿 URL——节点结果会持久化,只有 nomi-local 这种稳定地址
     // 才经得起重新构建/升级/换机(此前写的是构建产物 URL,换环境即裂图,见 demoProject.ts 注释)。
-    const demoImages = await seedDemoNodeImages(getDesktopActiveProjectId() || '')
+    const demoImages = await seedDemoNodeImages(project?.binding.projectId ?? '')
     if (aborted()) return
     const canvas = useGenerationCanvasStore.getState()
     for (const [clientId, nodeId] of Object.entries(map)) {
@@ -113,6 +115,14 @@ export const useJourneyTourStore = create<JourneyTourState>((set) => {
         canvas.addNodeResult(nodeId, { id: `demo-${clientId}`, type: 'image', url, createdAt: Date.now() })
       }
     }
+    // 引导的一步：把刚落下的整张示例画布铺进视野，后面的聚光才对得准。以前靠 Agent 批量建卡后的自动适应顺带完成
+    // （applyCanvasToolCall），2026-09-25 起程序不再替用户挪画布、那次适应已删；这里是用户点了「看 Nomi 怎么出片」
+    // 之后引导自己的一步，owner 就是引导（canvasViewportMovers.structure.test.ts 名单里登记）。
+    // 打开时的一次适应（useAutoFitOnLoad）盖不到这里：引导进项目那一刻画布是空的，示例是之后才落的，
+    // 按设计「打开后才长出来的节点」不触发适应——所以这一步仍要引导自己做（2026-09-26 协调裁定 B 复核）。
+    const firstDemoNodeId = Object.values(map)[0]
+    const demoCategoryId = canvas.nodes.find((node) => node.id === firstDemoNodeId)?.categoryId
+    ws().requestCanvasFit(demoCategoryId)
     const nodeSel = (clientId: string, suffix = ''): string[] => {
       const id = map[clientId]
       return id ? [`[data-node-id="${id}"]${suffix}`, '.generation-canvas-v2-node'] : ['.generation-canvas-v2-node']
@@ -180,4 +190,13 @@ export const useJourneyTourStore = create<JourneyTourState>((set) => {
       set({ active: false, phase: 'idle', beat: null, selectors: null })
     },
   }
+})
+
+/**
+ * C1 寿命声明：新手引导是**这个窗口**这一次的一段流程（它自己按 localStorage 记「看过了」）。
+ * 切项目把它清掉，正在走的引导会从中间断掉——那不是隔离，是打断。
+ */
+export const journeyTourStoreLifetime = declareStoreLifetime({
+  store: 'useJourneyTourStore',
+  fields: { active: 'window', phase: 'window', beat: 'window', teachIndex: 'window', selectors: 'window' },
 })

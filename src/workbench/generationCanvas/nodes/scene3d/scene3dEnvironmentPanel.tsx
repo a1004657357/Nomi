@@ -1,3 +1,5 @@
+import { withProjectAction } from '../../../project/projectCanvasReadSurface'
+import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconPhoto, IconTrash, IconUpload } from '@tabler/icons-react'
@@ -126,6 +128,7 @@ export function Scene3DEnvironmentPanel({
     }
 
     const previewUrl = URL.createObjectURL(file)
+    const project = withProjectAction(project => project, () => { throw new Error('project_identity_unavailable') })
     const importRunId = panoramaImportRunRef.current + 1
     panoramaImportRunRef.current = importRunId
 
@@ -152,7 +155,7 @@ export function Scene3DEnvironmentPanel({
           environmentMode: 'panorama',
         })
 
-        const asset = await importWorkbenchLocalAssetFile(file, file.name || 'panorama')
+        const asset = await importWorkbenchLocalAssetFile(file, file.name || 'panorama', { projectBinding: project.binding, assertCurrent: project.assertCurrent })
         const hostedUrl = hostedAssetUrl(asset)
         if (!hostedUrl) throw new Error('panorama asset missing url')
         if (panoramaImportRunRef.current !== importRunId) return

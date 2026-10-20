@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { finishExportTempInput, getExportJobStatus, startExportJob } from '../export/exportJobs'
 import { projectDirById, readProject, saveProject } from '../projects/repository'
+import { ensureWorkspaceProjectIdentity } from '../workspace/workspaceProjectIdentity'
 
 type Gate8Result = {
   id?: string
@@ -256,8 +257,9 @@ async function run(): Promise<void> {
   if (job.backend !== 'filtergraph') {
     throw new Error(`expected filtergraph export backend, received ${job.backend}`)
   }
-  const result = requireRecord(await finishExportTempInput({ jobId: job.jobId }), 'export result')
-  const snapshot = getExportJobStatus(job.jobId)
+  const identity = await ensureWorkspaceProjectIdentity(projectDir)
+  const result = requireRecord(await finishExportTempInput(identity, { jobId: job.jobId }), 'export result')
+  const snapshot = getExportJobStatus(identity, job.jobId)
   const outputPath = String(result.absolutePath || '')
   if (!outputPath || !fs.existsSync(outputPath)) throw new Error('exported MP4 is missing')
 

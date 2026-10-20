@@ -4,61 +4,17 @@
 // 模型构造,不再各写一份「vendor → baseURL/headers → buildAiSdkModel」的拼装。
 import type { LanguageModelV1 } from "ai";
 import { buildAiSdkModel } from "./buildAiSdkModel";
-import { endpoint } from "../vendorEndpoint";
-import { extractVendorExtraHeaders, normalizeProviderKind, readCatalog } from "../catalog/catalogStore";
+import { vendorModelConnection } from './vendorModelConnection';
 import type { CatalogState, Model, Vendor } from "../catalog/types";
+import { readCatalog } from "../catalog/catalogStore";
 import { apiKeyDecryptStatus, decryptApiKeyRecord } from "../catalog/secrets";
 import { trim } from "../jsonUtils";
 import { modelSupportsImageInput } from "./agentUserContent";
 import { modelSupportsToolCalls } from "../shared/textModelCapabilities";
-
-function readOpenAiCompatibleBasePath(vendor: Vendor): string | null {
-  const meta = vendor.meta;
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;
-  const raw = (meta as Record<string, unknown>).openAiCompatibleBasePath;
-  if (typeof raw !== "string") return null;
-  return raw.trim();
-}
-
-export function resolveLanguageModelBaseURL(vendor: Vendor): string {
-  const providerKind = normalizeProviderKind(vendor.providerKind);
-  if (providerKind === "anthropic") return (vendor.baseUrlHint || "").trim();
-  const basePath = readOpenAiCompatibleBasePath(vendor);
-  const rawBaseUrl = (vendor.baseUrlHint || "").trim().replace(/\/+$/, "");
-  if (!rawBaseUrl) throw new Error(`Base URL missing: ${vendor.key}`);
-  // Explicit custom metadata wins; otherwise only a bare host gets the SDK's default /v1.
-  if (basePath === "") return rawBaseUrl;
-  if (basePath !== null) return endpoint(vendor, basePath.startsWith("/") ? basePath : `/${basePath}`);
-  return resolveSdkBaseUrl(vendor);
-}
+export { resolveLanguageModelBaseURL } from './vendorModelConnection';
 
 export function buildLanguageModelForVendor(vendor: Vendor, model: Model, apiKey: string): LanguageModelV1 {
-  const providerKind = normalizeProviderKind(vendor.providerKind);
-  const baseURL = resolveLanguageModelBaseURL(vendor);
-  const headers = extractVendorExtraHeaders(vendor);
-  return buildAiSdkModel({
-    kind: providerKind,
-    baseURL,
-    apiKey,
-    authType: vendor.authType,
-    modelId: model.modelAlias || model.modelKey,
-    ...(headers ? { headers } : {}),
-  });
-}
-
-function resolveSdkBaseUrl(vendor: Vendor): string {
-  const base = (vendor.baseUrlHint || "").trim().replace(/\/+$/, "");
-  if (!base) throw new Error(`Base URL missing: ${vendor.key}`);
-  try {
-    const url = new URL(base);
-    if (!url.pathname || url.pathname === "/") {
-      url.pathname = "/v1";
-      return url.toString();
-    }
-  } catch {
-    // 无效地址仍交给既有 SDK / 配置验证报告，不能臆造一个新地址。
-  }
-  return base;
+  return buildAiSdkModel(vendorModelConnection(vendor, model, apiKey));
 }
 
 // vision/preview/audio 等常不可靠发 tool_use → 无偏好时降权（仍作回退），让通用对话模型优先做 Agent 主控（2026-06-07 真机走查 P0）。

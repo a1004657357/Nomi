@@ -2,6 +2,8 @@ import type { ComposerAttachment } from './composer/composerAttachmentTypes'
 
 export type WorkbenchAiMessage = {
   id: string
+  /** Canonical Host turn identity used only for non-owning UI annotations/cards. */
+  turnId?: string
   role: 'user' | 'assistant' | 'tool'
   content: string
   /** assistant 消息生命周期状态。undefined 兼容旧 session 消息，视为 done。
@@ -25,6 +27,9 @@ export type WorkbenchAiMessage = {
    * 于是结构上被钉死在列表末尾——用户每说一句话它就被顶到新消息下面，像在「跟着对话跑」。
    * 方案是某一轮的产出，就该锚在那一轮上（对齐同文件 action 卡的做法）。
    * 改方案会产出新的一条带标消息，卡片随之移到最新那条（取最后一条带标的）。
-   */
-  storyboardPlan?: true
+  */
+  storyboardArtifact?: true
+  /** Exact creation resource produced by this turn. Older persisted messages omit both fields. */
+  storyboardDocumentId?: string
+  storyboardDesignId?: string
 }

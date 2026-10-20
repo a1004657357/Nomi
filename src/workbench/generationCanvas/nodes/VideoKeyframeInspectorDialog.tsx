@@ -1,9 +1,10 @@
+import type { JSX } from 'react'
 import React from 'react'
 import { createPortal } from 'react-dom'
 import { IconCheck, IconPhotoScan, IconRefresh, IconX } from '@tabler/icons-react'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { toast } from '../../../ui/toast'
-import { getActiveWorkbenchProjectId } from '../../project/workbenchProjectSession'
+import { isProjectExecutionContextCurrent, withProjectAction, type ProjectExecutionContext } from '../../project/projectCanvasReadSurface'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { createVideoKeyframeNodes } from './createVideoKeyframeNodes'
 import {
@@ -25,37 +26,40 @@ export default function VideoKeyframeInspectorDialog({ node, onClose }: Props): 
   const [frames, setFrames] = React.useState<ExtractedVideoKeyframe[]>([])
   const [selected, setSelected] = React.useState<Set<number>>(new Set())
   const [busy, setBusy] = React.useState(false)
+  const framesProject = React.useRef<ProjectExecutionContext | null>(null)
   const duration = resolveVideoDurationSeconds(node)
   const videoUrl = node.result?.type === 'video' ? node.result.url : undefined
 
-  const extract = React.useCallback(async (count: number) => {
+  const extract = React.useCallback((count: number) => withProjectAction(async project => {
+    project.assertCurrent()
     if (!videoUrl || !duration) return
-    const projectId = getActiveWorkbenchProjectId()
+    const projectId = project.binding.projectId
     const extractFrames = getDesktopBridge()?.video?.extractFrames
-    if (!projectId) {
-      toast('关键帧检查失败：请先保存当前项目', 'error')
-      return
-    }
     if (!extractFrames) {
       toast('关键帧检查器需要 Nomi 桌面端', 'error')
       return
     }
     setBusy(true)
     try {
-      const result = await extractFrames({
+      const payload = {
         videoUrl,
         projectId,
+        projectBinding: project.binding,
         times: buildEvenlySpacedFrameTimes(duration, count),
-      })
+      }
+      const result = await extractFrames(payload)
+      project.assertCurrent()
       const next = (result.frames || []).filter((frame) => frame.url)
+      framesProject.current = project
       setFrames(next)
       setSelected(new Set(next.map((frame) => frame.timeSeconds)))
     } catch (error) {
+      if (!isProjectExecutionContextCurrent(project)) return
       toast(`关键帧抽取失败：${error instanceof Error ? error.message : String(error)}`, 'error')
     } finally {
-      setBusy(false)
+      if (isProjectExecutionContextCurrent(project)) setBusy(false)
     }
-  }, [duration, videoUrl])
+  }, () => { toast('关键帧检查失败：请先打开当前项目', 'error') }), [duration, videoUrl])
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -77,7 +81,12 @@ export default function VideoKeyframeInspectorDialog({ node, onClose }: Props): 
     })
   }
 
-  const createSelected = () => {
+  const createSelected = () => withProjectAction(project => {
+    if (!isProjectExecutionContextCurrent(framesProject.current ?? undefined)) {
+      toast('项目已变化，请重新抽取关键帧', 'warning')
+      return
+    }
+    project.assertCurrent()
     const chosen = frames.filter((frame) => selected.has(frame.timeSeconds))
     if (!chosen.length) {
       toast('请先选择至少一个关键帧', 'warning')
@@ -86,7 +95,7 @@ export default function VideoKeyframeInspectorDialog({ node, onClose }: Props): 
     const ids = createVideoKeyframeNodes(node, chosen)
     toast(`已创建 ${ids.length} 个关键帧节点`, 'success')
     onClose()
-  }
+  })
 
   const dialog = (
     <div
