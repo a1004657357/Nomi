@@ -78,7 +78,7 @@ function readFailureMessageFromRaw(raw: unknown): string {
     const text = asTrimmedString(value)
     if (text) return text
   }
-  const nested = [record.raw, record.response, record.data, record.result, record.jimengWeb]
+  const nested = [record.raw, record.response, record.data, record.result, record.jimengWeb, record.pavoWeb]
   for (const value of nested) {
     const text = readFailureMessageFromRaw(value)
     if (text) return text

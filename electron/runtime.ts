@@ -22,8 +22,7 @@ import { prepareAntigravityCreateOperation } from "./catalog/processOperation";
 import { executeTextTask } from "./textTaskRunner";
 import { runAudioTask } from "./audioTaskRunner";
 import { runCodexImageGeneration } from "./ai/codexImagegenRunner";
-import { submitJimengWebTask } from "./jimengWeb/seedanceBridge";
-import { jimengWebStartRunner } from "./jimengWeb/runner";
+import { dispatchWebBridgeTask } from "./webBridge/taskDispatch";
 import { firstString, trim, type JsonRecord } from "./jsonUtils";
 import { extractAssetUrl } from "./tasks/assetUrlExtract";
 import type { GlbValidationReport } from "./assets/glbValidation";
@@ -52,7 +51,6 @@ import type { BillingModelKind, Mapping, Model, ProfileKind, Vendor } from "./ca
 import { billingKindForTaskKind } from "./catalog/types";
 import { applyHeadlessParamDefaults, imageEditGuardError } from "./catalog/taskParams";
 import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
-import { JIMENG_WEB_VENDOR_SEED } from "./catalog/jimengWeb";
 import { activeTaskProjectFallback } from "./tasks/activeProjectFallback";
 import { modelModeBodies } from "./catalog/modelCatalogListing";
 import { runCustomCallTask } from "./catalog/customCallDispatch";
@@ -303,50 +301,16 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       }
     }
   }
-  if (vendor.key === JIMENG_WEB_VENDOR_SEED.key) {
-    if (wantedKind !== "video" && wantedKind !== "image") {
-      throw new Error("即梦 Web 目前只支持图片和视频生成");
-    }
-    if (!projectId) throw new Error("即梦 Web 需要先打开并保存到本地项目后再生成");
-    const recipe = buildNormalizedRecipe({ vendor, model, request });
-    const fingerprint = recipeFingerprint(recipe);
-    const cachedHit = readCachedTaskResult({ projectId, fingerprint, nodeId, extras: request.extras });
-    if (cachedHit) return cachedHit as TaskResult;
-    const runner = await jimengWebStartRunner(vendor.baseUrlHint);
-    if (!runner.clientOnline) {
-      throw new Error(`即梦 Web 扩展运行器启动失败：${runner.error || "扩展客户端没有建立任务连接"}`);
-    }
-    assertAndConsumeSpendGrant(grantId, nodeId);
-    const submitted = await submitJimengWebTask({ request, vendorBaseUrl: vendor.baseUrlHint });
-    const queued: TaskResult = {
-      id: submitted.taskCode,
-      kind,
-      status: "queued",
-      assets: [],
-      raw: {
-        jimengWeb: {
-          taskCode: submitted.taskCode,
-          serverUrl: submitted.serverUrl,
-          payload: submitted.payload,
-          submit: submitted.raw,
-        },
-      },
-    };
-    traceVendorRequested(projectId, { runId: submitted.taskCode, nodeId, recipe });
-    admitTask(submitted.taskCode, {
-      vendor: vendorKey,
-      request,
-      raw: queued.raw,
-      mapping: null,
-      model,
-      providerMeta: { task_id: submitted.taskCode, taskCode: submitted.taskCode, serverUrl: submitted.serverUrl },
-      projectId,
-      nodeId,
-      wantedKind,
-      fingerprint,
-    });
-    return queued;
-  }
+  const webBridgeResult = await dispatchWebBridgeTask({
+    vendor, model, request, wantedKind, projectId, nodeId, grantId, admitTask,
+    errors: {
+      unsupported: (label) => new Error(`${label} 当前不支持该生成类型`),
+      projectRequired: (label) => new Error(`${label} 需要先打开并保存到本地项目后再生成`),
+      idempotencyRequired: () => new Error("Pavo Web 真实任务缺少本轮确认标识，已拒绝提交以避免重复扣费"),
+      runnerUnavailable: (label, reason) => new Error(`${label} 扩展运行器启动失败：${reason || "扩展客户端没有建立任务连接"}`),
+    },
+  });
+  if (webBridgeResult) return webBridgeResult;
   const mapping = findTaskMapping(vendorKey, kind, modelKey);
   // headless/MCP extras 预备：缺参兜底 + W1d 参考键形态投影（末参 createBody，逻辑/文档住 taskParams.applyHeadlessParamDefaults）；自定义调用脚本存在即接管图/视频/3D（对 L3 护栏算「有 mapping」，参考缺失拒发仍生效，派发抽到 catalog/customCallDispatch，R12）。
   request.extras = applyHeadlessParamDefaults(request.extras, (model?.meta as { archetypeId?: string } | undefined)?.archetypeId, kind, vendorKey, mapping?.create?.defaultParams, mapping?.create?.body, model.modelKey);

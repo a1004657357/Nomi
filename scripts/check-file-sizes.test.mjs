@@ -32,6 +32,9 @@ describe("file-size gate source discovery", () => {
     write(root, "electron/main.ts");
     write(root, "docs/outside.ts");
     execFileSync("git", ["add", ".gitignore", "src/tracked.ts", "electron/main.ts"], { cwd: root });
+    write(root, "src/deleted.ts");
+    execFileSync("git", ["add", "src/deleted.ts"], { cwd: root });
+    fs.unlinkSync(path.join(root, "src/deleted.ts"));
 
     expect(listSourceFiles({ root, scanDirs: ["src", "electron"] })).toEqual([
       "electron/main.ts",

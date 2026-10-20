@@ -38,5 +38,12 @@ export const AGNES_VIDEO_25_ARCHETYPE: ModelArchetype = {
 export const AGNES_VIDEO_25_FLASH_ARCHETYPE: ModelArchetype = {
   id: "agnes-video-2.5-flash", family: "agnes-video-2.5", label: "Agnes Video 2.5 Flash", kind: "video",
   sources: [{ url: "https://agnes-ai.com/en/docs/agnes-video-25-flash", checkedAt: "2026-09-12", vendorKey: "agnes", covers: "Shared 2.5 modes and seconds; 720P only, at most 5 images and 3 audio files; audio-only references allowed; no video references; n=1" }],
-  defaultModeId: "text", transportTaskKind: "text_to_video", identifierPatterns: ["agnes-video-2.5-flash"], modes: modes(true),
+  defaultModeId: "text", transportTaskKind: "text_to_video", identifierPatterns: ["agnes-video-2.5-flash"], modes: modes(true).map(mode => ({
+    ...mode,
+    vendorParams: { "pavo-web": [
+      { key: "duration", label: "时长(秒)", type: "select", options: options(["5", "10"]), defaultValue: "5" },
+      { key: "size", label: "清晰度", type: "select", options: options(["720P"]), defaultValue: "720P" },
+      { key: "aspect_ratio", label: "比例", type: "select", options: options(["16:9", "9:16", "1:1"]), defaultValue: "16:9" },
+    ] },
+  })),
 };

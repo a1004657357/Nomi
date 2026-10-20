@@ -601,10 +601,20 @@ export const ARCHETYPE_WIRE_DEFAULTS_VIDEO: Record<string, Record<string, Record
         "duration": "5",
         "size": "720P",
         "aspect_ratio": "16:9"
+      },
+      "pavo-web": {
+        "duration": "5",
+        "size": "720P",
+        "aspect_ratio": "16:9"
       }
     },
     "image_to_video": {
       "*": {
+        "duration": "5",
+        "size": "720P",
+        "aspect_ratio": "16:9"
+      },
+      "pavo-web": {
         "duration": "5",
         "size": "720P",
         "aspect_ratio": "16:9"

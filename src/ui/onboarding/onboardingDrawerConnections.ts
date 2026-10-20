@@ -12,11 +12,13 @@ import { CODEX_LOCAL_VENDOR_KEY } from './codexLocalProvider'
 import { DREAMINA_CONNECTION_KEY } from './onboardingDrawerConstants'
 import { groupOtherVendorModels } from './onboardingDrawerDerivations'
 
+const WEB_BRIDGE_VENDOR_KEYS = new Set(['jimeng-web', 'pavo-web'])
+
 export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatus, localNames, openPage }: {
   models: ChipModel[]
   vendorMeta: ReadonlyMap<string, OnboardingVendorMeta>
   dreaminaStatus: DreaminaStatus | null
-  localNames: { dreamina: string; codex: string; antigravity: string }
+  localNames: { dreamina: string; codex: string; antigravity: string; jimengWeb: string; pavoWeb: string }
   openPage: (page: Exclude<ModelSettingsPage, { type: 'home' }>) => void
 }) {
   const knownCards = KNOWN_VENDORS
@@ -35,7 +37,8 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
     m.vendorKey !== 'dreamina' &&
     m.vendorKey !== COMFYUI_VENDOR_KEY &&
     m.vendorKey !== CODEX_LOCAL_VENDOR_KEY &&
-    m.vendorKey !== ANTIGRAVITY_VENDOR_KEY,
+    m.vendorKey !== ANTIGRAVITY_VENDOR_KEY &&
+    !WEB_BRIDGE_VENDOR_KEYS.has(m.vendorKey),
   )
   const otherVendorKeys = [...vendorMeta.keys()].filter((vendorKey) => (
     !isKnownVendor(vendorKey) &&
@@ -43,7 +46,8 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
     vendorKey !== DREAMINA_CONNECTION_KEY &&
     !isComfyuiVendorKey(vendorKey) &&
     vendorKey !== CODEX_LOCAL_VENDOR_KEY &&
-    vendorKey !== ANTIGRAVITY_VENDOR_KEY
+    vendorKey !== ANTIGRAVITY_VENDOR_KEY &&
+    !WEB_BRIDGE_VENDOR_KEYS.has(vendorKey)
   ))
 
   const comfyuiInstances = [...vendorMeta.entries()]
@@ -62,6 +66,11 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
   const otherVendorGroups = groupOtherVendorModels(otherModels, vendorMeta, otherVendorKeys)
   const antigravityEnabled = vendorMeta.get(ANTIGRAVITY_VENDOR_KEY)?.enabled === true
   const antigravityModels = models.filter((model) => model.vendorKey === ANTIGRAVITY_VENDOR_KEY)
+  const webBridgeEntries = ['jimeng-web', 'pavo-web'].flatMap((vendorKey) => {
+    const meta = vendorMeta.get(vendorKey)
+    if (!meta) return []
+    return [{ vendorKey, meta, models: models.filter((model) => model.vendorKey === vendorKey) }]
+  })
 
   const connectionTitle = (vendorKey: string): string => {
     const known = knownCards.find((card) => card.directory.vendorKey === vendorKey)
@@ -73,6 +82,8 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
     if (vendorKey === DREAMINA_CONNECTION_KEY) return localNames.dreamina
     if (vendorKey === CODEX_LOCAL_VENDOR_KEY) return localNames.codex
     if (vendorKey === ANTIGRAVITY_VENDOR_KEY) return localNames.antigravity
+    if (vendorKey === 'jimeng-web') return localNames.jimengWeb
+    if (vendorKey === 'pavo-web') return localNames.pavoWeb
     return vendorKey
   }
 
@@ -109,6 +120,14 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
           && group.models.every((model) => model.hasCustomCall || model.customCallDraft),
       })
     }),
+    ...webBridgeEntries.filter((entry) => entry.meta.enabled).map((entry) => homeConnection({
+      vendorKey: entry.vendorKey,
+      name: connectionTitle(entry.vendorKey),
+      kind: 'account',
+      models: entry.models,
+      glyph: entry.vendorKey === 'pavo-web' ? 'P' : 'J',
+      skipHealthProbe: true,
+    })),
     ...comfyuiConnected.map((instance) => homeConnection({
       vendorKey: instance.key,
       name: instance.meta.name,
@@ -180,6 +199,14 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
       models: [],
       glyph: 'AG',
     })] : []),
+    ...webBridgeEntries.filter((entry) => !entry.meta.enabled).map((entry) => homeConnection({
+      vendorKey: entry.vendorKey,
+      name: connectionTitle(entry.vendorKey),
+      kind: 'account',
+      models: [],
+      glyph: entry.vendorKey === 'pavo-web' ? 'P' : 'J',
+      skipHealthProbe: true,
+    })),
   ]
   return { knownCards, otherVendorGroups, comfyuiInstances, comfyuiConnected, codexImageEnabled,
     antigravityEnabled, connectionTitle, homeConnections, availableHomeConnections }

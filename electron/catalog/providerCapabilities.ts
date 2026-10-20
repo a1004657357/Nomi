@@ -80,7 +80,7 @@ export type ProviderCapabilities = {
 // 源派生：vendor key → ProviderSource
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BROWSER_BRIDGE_VENDORS = new Set(['jimeng-web'])
+const BROWSER_BRIDGE_VENDORS = new Set(['jimeng-web', 'pavo-web'])
 const LOCAL_RUNTIME_VENDORS = new Set(['comfyui-local', 'codex', 'codex-local', 'dreamina-cli'])
 
 function sourceFromVendorKey(vendorKey: string): ProviderSource {

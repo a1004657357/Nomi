@@ -344,6 +344,13 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
     startRunner: () => ipcRenderer.invoke("nomi:jimeng-web:start-runner"),
     stopRunner: () => ipcRenderer.invoke("nomi:jimeng-web:stop-runner"),
   },
+  pavoWeb: {
+    status: () => ipcRenderer.invoke("nomi:pavo-web:status"),
+    openLogin: () => ipcRenderer.invoke("nomi:pavo-web:open-login"),
+    openAdmin: (baseUrl?: string) => ipcRenderer.invoke("nomi:pavo-web:open-admin", baseUrl),
+    startRunner: () => ipcRenderer.invoke("nomi:pavo-web:start-runner"),
+    stopRunner: () => ipcRenderer.invoke("nomi:pavo-web:stop-runner"),
+  },
   vibingDirector: {
     applyBlenderPlan: (payload: unknown) => ipcRenderer.invoke("nomi:vibing-director:apply-blender-plan", payload),
     cancelBlenderPlan: (jobId: string) => ipcRenderer.invoke("nomi:vibing-director:cancel-blender-plan", jobId),

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pavo Adapter</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #111318; color: #eef1f6; font-size: 13px; }
+    header { height: 54px; padding: 0 14px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #2b2f37; }
+    h1 { margin: 0; font-size: 14px; font-weight: 650; flex: 1; }
+    main { padding: 12px; display: grid; gap: 12px; }
+    section { border: 1px solid #2b2f37; border-radius: 7px; background: #171a20; padding: 12px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .between { justify-content: space-between; }
+    .stack { display: grid; gap: 8px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; color: #aeb5c0; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #6c7480; }
+    .dot.ok { background: #39c67a; }
+    .dot.busy { background: #f2b84b; }
+    label { display: grid; gap: 5px; color: #aeb5c0; font-size: 11px; }
+    input, textarea, select, button { font: inherit; }
+    input, textarea, select { width: 100%; color: #eef1f6; background: #0e1014; border: 1px solid #343946; border-radius: 5px; padding: 8px; }
+    textarea { min-height: 92px; resize: vertical; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button { min-height: 34px; border: 1px solid #3b4250; border-radius: 5px; background: #222731; color: #eef1f6; cursor: pointer; }
+    button:hover { border-color: #5797ff; }
+    button.primary { background: #1f78ff; border-color: #1f78ff; }
+    button.danger { color: #ffb3b3; }
+    button:disabled { opacity: .45; cursor: default; }
+    .small { font-size: 11px; color: #8f98a6; line-height: 1.5; }
+    .task { padding: 8px 0; border-top: 1px solid #2b2f37; display: grid; gap: 4px; }
+    .task:first-child { border-top: 0; }
+    .task strong { font-size: 12px; }
+    .log { max-height: 140px; overflow: auto; white-space: pre-wrap; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #aeb5c0; }
+    #close { min-height: 28px; width: 28px; padding: 0; border: 0; background: transparent; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Pavo Web Adapter</h1>
+    <span id="hostMode" class="small">检测中</span>
+    <button id="close" title="关闭">×</button>
+  </header>
+  <main>
+    <section class="stack">
+      <div class="row between">
+        <span class="status"><i id="pageDot" class="dot"></i><span id="pageStatus">Pavo 页面未连接</span></span>
+        <button id="refresh">刷新</button>
+      </div>
+      <div class="row between">
+        <span class="status"><i id="bridgeDot" class="dot"></i><span id="bridgeStatus">独立模式</span></span>
+        <span id="queueSummary" class="small">0 个任务</span>
+      </div>
+    </section>
+
+    <section class="stack">
+      <strong>独立生成</strong>
+      <label>提示词<textarea id="prompt" placeholder="描述主体、动作、镜头和声音"></textarea></label>
+      <label>参考素材<input id="references" type="file" accept="image/*,video/*" multiple></label>
+      <div class="grid">
+        <label>模型<select id="model"><option>Agnes Video 2.5 Flash</option></select></label>
+        <label>模式<select id="referenceMode"><option>全能模式</option><option>首尾帧</option></select></label>
+        <label>比例<select id="aspectRatio"><option>16:9</option><option>9:16</option><option>1:1</option></select></label>
+        <label>时长<select id="duration"><option>5s</option><option>10s</option></select></label>
+      </div>
+      <button id="prepare">应用参数并填写</button>
+      <button id="submit" class="primary">确认并提交一次</button>
+      <div id="manualStatus" class="small">提交前会建立输出快照；同一任务号不会重复点击。</div>
+    </section>
+
+    <section class="stack">
+      <div class="row between"><strong>Nomi 队列</strong><span class="row"><button id="harvestNow" class="primary">收片一次</button><button id="pull">立即拉取</button></span></div>
+      <div id="tasks" class="small">暂无任务</div>
+      <label>待确认任务<select id="bindingTask"></select></label>
+      <label>会话 ID<input id="bindingConversation" type="text" autocomplete="off"></label>
+      <button id="bindResult" title="仅绑定已核对的原任务结果，不会生成">确认绑定原会话</button>
+    </section>
+
+    <section class="stack">
+      <div class="row between"><strong>运行日志</strong><button id="clearLog">清空</button></div>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+  <script src="pavo-media.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

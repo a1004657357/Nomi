@@ -89,6 +89,15 @@ export const ADAPTER_CAPABILITY_DECLARATIONS: Record<string, AdapterCapabilityDe
     supportsDownloadRetry: false,
     evidence: 'Gate 0 §1.4：browser bridge 无 cancel（页面自动化不可靠回滚）',
   },
+  'pavo-web': {
+    providerId: 'pavo-web',
+    source: 'browser-bridge',
+    supportsCancel: false,
+    cancelPath: 'none',
+    supportsDownloadRetry: true,
+    downloadRetry: { maxAttempts: 3, backoffMs: 1500 },
+    evidence: 'Pavo browser bridge separates result download retries from the single protected generation submission',
+  },
   agnes: {
     providerId: 'agnes',
     source: 'official-api',

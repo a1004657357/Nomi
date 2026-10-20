@@ -28,4 +28,14 @@ describe('catalog task polling policy', () => {
       })
     },
   )
+
+  it.each(['text_to_video', 'image_to_video'] as const)(
+    'keeps Pavo Web %s tasks query-only for up to one hour',
+    (kind) => {
+      expect(resolveCatalogTaskPollingPolicy(kind, 'pavo-web')).toEqual({
+        softTimeoutMs: 600_000,
+        hardTimeoutMs: 3_600_000,
+      })
+    },
+  )
 })

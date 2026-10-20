@@ -15,7 +15,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-import { deriveModelListing, referenceModeForIntent } from "./modelCatalogListing";
+import { deriveModelListing, referenceModeForIntent, videoBodyKeysForModel } from "./modelCatalogListing";
 import { apiKeyDecryptStatus } from "./secrets";
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
@@ -30,6 +30,27 @@ function state(over: Partial<CatalogState>): CatalogState {
 // locked 路会 console.error（解密失败日志）——静音，避免污染测试输出。
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+
+describe("Pavo browser bridge reference contract", () => {
+  const catalog = state({
+    vendors: [vendor({ key: "pavo-web", authType: "none" })],
+    models: [model({ vendorKey: "pavo-web", modelKey: "pavo-agnes-video-2.5-flash", kind: "video" })],
+  });
+  it("declares image and audio references without inventing HTTP mappings", () => {
+    expect(deriveModelListing(catalog)[0].references).toEqual({
+      image: true, audio: true, video: false, multiImage: true, referenceModes: ["image_to_video"],
+    });
+    expect(referenceModeForIntent(catalog, "pavo-web", "pavo-agnes-video-2.5-flash", "video")).toBe("image_to_video");
+    expect(referenceModeForIntent(catalog, "pavo-web", "pavo-agnes-video-2.5-flash", "image")).toBeNull();
+    expect(videoBodyKeysForModel(catalog, "pavo-web", "pavo-agnes-video-2.5-flash")).toContain("first_frame");
+    expect(catalog.mappings).toEqual([]);
+  });
+  it("does not grant these channels to unrecognized Pavo models", () => {
+    const unknown = state({ ...catalog, models: [model({ vendorKey: "pavo-web", modelKey: "unknown", kind: "video" })] });
+    expect(deriveModelListing(unknown)[0].references.image).toBe(false);
+    expect(referenceModeForIntent(unknown, "pavo-web", "unknown", "video")).toBeNull();
+  });
 });
 
 describe("deriveModelListing — keyStatus 三态（ok / missing / locked）", () => {

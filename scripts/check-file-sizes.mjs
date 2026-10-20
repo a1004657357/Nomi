@@ -35,7 +35,7 @@ const ALLOWLIST = {
   // v0.21 integration split the affected modules; lock in the reduced sizes.
   'electron/ai/agentChatV2.ts': 745,
   'electron/catalog/archetypeWireDefaults.generated.ts': 76,
-  'src/desktop/bridge.ts': 957,
+  'src/desktop/bridge.ts': 888,
   // 官方 PR #82 增加剪辑节点连续预览与分段导出文案，精确吸收 18 行后重新锁定。
   'src/i18n/locales/generationCommon.ts': 2216,
   'src/i18n/locales/onboardingProviders.ts': 1379,
@@ -48,7 +48,7 @@ const ALLOWLIST = {
   'src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx': 848,
   'src/workbench/generationCanvas/runner/generationRunController.ts': 827,
   'src/workbench/workbenchStore.ts': 813,
-  "electron/runtime.ts": 525, // Official request dispatch integrated into the existing task module.
+  "electron/runtime.ts": 489, // Web bridge dispatch moved into its provider-neutral task module.
   "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx": 671, // Preview rendering is delegated to GenerationNodePreviewBody.
   // PR#21 白板节点引入（2026-06-25）：WhiteboardDrawingTool（1032）与 WhiteboardLeaferCanvas（3406）两巨壳
   // 已按 Rule 9 全部拆完、双双出白名单。LeaferCanvas → whiteboardCanvasTypes/Export/NodeOps/Geometry 四纯模块
@@ -75,6 +75,7 @@ export function listSourceFiles({ root = ROOT, scanDirs = SCAN_DIRS } = {}) {
     .filter((f) => /\.tsx?$/.test(f))
     .filter((f) => !/\.test\.tsx?$/.test(f))
     .filter((f) => !/\.d\.ts$/.test(f))
+    .filter((f) => fs.existsSync(path.join(root, f)))
     .sort()
 }
 

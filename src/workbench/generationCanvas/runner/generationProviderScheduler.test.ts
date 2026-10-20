@@ -121,7 +121,8 @@ describe('generationProviderScheduler', () => {
 
   it('uses conservative limits for Codex and Jimeng', () => {
     expect(generationProviderLimit('codex')).toBe(1)
-    expect(generationProviderLimit('jimeng-web')).toBe(2)
+    expect(generationProviderLimit('jimeng-web')).toBe(1)
+    expect(generationProviderLimit('pavo-web')).toBe(1)
     expect(generationProviderLimit('agnes')).toBe(4)
   })
 

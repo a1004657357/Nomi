@@ -1,6 +1,6 @@
 import { zhOnboardingProviderWorkspaceWorkspace, zhOnboardingProviderWorkspaceDrawer, enOnboardingProviderWorkspaceWorkspace, enOnboardingProviderWorkspaceDrawer } from './onboardingProviderWorkspace'
 import { zhOnboardingProviderCustomCall, enOnboardingProviderCustomCall } from './onboardingProviderCustomCall'
-
+import { enOnboardingWebBridge, zhOnboardingWebBridge } from './onboardingWebBridge'
 export const zhOnboardingProviders = {
   splash: {
     aria: 'Nomi 开屏介绍',
@@ -279,6 +279,7 @@ export const zhOnboardingProviders = {
     enabledToast: '已开启 Codex 本地生图',
     disabledToast: '已关闭 Codex 本地生图',
   },
+  ...zhOnboardingWebBridge,
   customVendor: {
     newKeyPlaceholder: '粘贴新的 API Key（sk-…）',
     notSet: '（未设置）',
@@ -671,11 +672,9 @@ export const zhOnboardingProviders = {
   },
   customCall: zhOnboardingProviderCustomCall,
 } as const
-
 type TranslationShape<T> = {
   [K in keyof T]: T[K] extends string ? string : TranslationShape<T[K]>
 }
-
 export const enOnboardingProviders = {
   splash: {
     aria: 'Nomi introduction',
@@ -965,6 +964,7 @@ export const enOnboardingProviders = {
     enabledToast: 'Codex image generation is on',
     disabledToast: 'Codex image generation is off',
   },
+  ...enOnboardingWebBridge,
   customVendor: {
     newKeyPlaceholder: 'Paste a new API key (sk-…)',
     notSet: '(Not set)',

@@ -11,6 +11,7 @@ import { bodyReferenceSupport, type BodyReferenceSupport } from "./referenceReac
 import { bodyReferencedParamKeys } from "./paramTranslate";
 import type { ModelModeBody } from "./taskParams";
 import { billingKindForTaskKind, type BillingModelKind, type CatalogState, type Mapping, type ProfileKind } from "./types";
+import { PAVO_WEB_VENDOR_SEED, PAVO_WEB_AGNES_FLASH_MODEL_SEED } from "./pavoWeb";
 
 /** 一个模型跨其所有 mapping 汇总出的参考承载力 + 是哪些模式（taskKind）带得动。 */
 export type ModelReferenceSupport = BodyReferenceSupport & {
@@ -79,7 +80,15 @@ export function modelModeBodies(mappings: Mapping[], vendorKey: string, modelKey
 }
 
 /** 跨该模型所有 mapping 汇总参考承载力（任一 mapping 能发 = 能发；记下携带参考的 taskKind）。 */
-function referenceSupportForModel(modelMappings: Mapping[]): ModelReferenceSupport {
+function isPavoFlashBridge(vendorKey: string, modelKey: string): boolean {
+  return vendorKey === PAVO_WEB_VENDOR_SEED.key && modelKey === PAVO_WEB_AGNES_FLASH_MODEL_SEED.modelKey;
+}
+
+function referenceSupportForModel(modelMappings: Mapping[], vendorKey: string, modelKey: string): ModelReferenceSupport {
+  // This bridge dispatches before HTTP mappings; these are its actual payload channels.
+  if (isPavoFlashBridge(vendorKey, modelKey)) {
+    return { image: true, video: false, audio: true, multiImage: true, referenceModes: ["image_to_video"] };
+  }
   const out: ModelReferenceSupport = { image: false, video: false, audio: false, multiImage: false, referenceModes: [] };
   const modes = new Set<ProfileKind>();
   for (const mapping of modelMappings) {
@@ -109,6 +118,7 @@ export function videoBodyKeysForModel(
   vendorKey: string,
   modelKey: string,
 ): string[] {
+  if (isPavoFlashBridge(vendorKey, modelKey)) return ["first_frame", "last_frame", "mm_audios", "mm_images"];
   const model = state.models.find((m) => m.vendorKey === vendorKey && m.modelKey === modelKey && m.enabled);
   const modelMappings = mappingsForModel(state.mappings, vendorKey, modelKey, model?.modelAlias);
   const keys = new Set<string>();
@@ -141,7 +151,7 @@ export function referenceModeForIntent(
 ): ProfileKind | null {
   const model = state.models.find((m) => m.vendorKey === vendorKey && m.modelKey === modelKey && m.enabled);
   const modelMappings = mappingsForModel(state.mappings, vendorKey, modelKey, model?.modelAlias);
-  const referenceModes = referenceSupportForModel(modelMappings).referenceModes;
+  const referenceModes = referenceSupportForModel(modelMappings, vendorKey, modelKey).referenceModes;
   const matching = referenceModes.filter((taskKind) => billingKindForTaskKind(taskKind) === intent);
   // referenceModes 已字典序稳定，取首个匹配即可（护栏 reachableModeSuggestion 仍会在拒发时点名更优模式）。
   return matching[0] ?? null;
@@ -185,7 +195,7 @@ export function deriveModelListing(
         label: model.labelZh || model.modelKey,
         keyStatus,
         statusReason: statusReasonFor(keyStatus, vendorName),
-        references: referenceSupportForModel(modelMappings),
+        references: referenceSupportForModel(modelMappings, model.vendorKey, model.modelKey),
       };
     });
 }

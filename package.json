@@ -207,6 +207,11 @@
     ],
     "extraResources": [
       {
+        "from": "integrations/pavo-web-adapter",
+        "to": "pavo-web-adapter",
+        "filter": ["**/*", "!data/**", "!uploads/**", "!node_modules/**"]
+      },
+      {
         "from": "skills",
         "to": "skills",
         "filter": [
