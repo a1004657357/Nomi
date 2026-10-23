@@ -11,6 +11,7 @@ import { vendorFieldLossNoticeAt } from '../../../electron/shared/vendorFieldLos
 export type OnboardingVendorMeta = {
   name: string
   hasApiKey: boolean
+  hasStoredApiKey?: boolean
   credentialVerificationPending?: boolean
   baseUrl: string
   enabled: boolean
@@ -86,6 +87,7 @@ export function useOnboardingDrawerCatalog(): {
         metaMap.set(String(vendor.key), {
           name: String(vendor.name || vendor.key),
           hasApiKey: Boolean(vendor.hasApiKey),
+          hasStoredApiKey: typeof vendor.hasStoredApiKey === 'boolean' ? vendor.hasStoredApiKey : undefined,
           credentialVerificationPending: vendor.credentialVerificationPending === true,
           baseUrl: String(vendor.baseUrlHint || ''),
           enabled: vendor.enabled !== false,

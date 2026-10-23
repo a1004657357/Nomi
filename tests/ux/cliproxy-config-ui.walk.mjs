@@ -22,8 +22,8 @@ const server = http.createServer((req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const baseUrl = `http://127.0.0.1:${server.address().port}/v1`
 const specs = [
-  { locale: 'zh-CN', edit: '编辑 URL / API Key', add: '添加模型', replace: '更换 API Key', fetch: '获取可用模型', cancel: '取消' },
-  { locale: 'en', edit: 'Edit URL / API Key', add: 'Add Models', replace: 'Replace API Key', fetch: 'Get available models', cancel: 'Cancel' },
+  { locale: 'zh-CN', edit: '编辑 URL / API Key', add: '添加模型', replace: '更换 API Key', fetch: '获取可用模型', cancel: '取消', pending: 'API Key 已保存，待验证' },
+  { locale: 'en', edit: 'Edit URL / API Key', add: 'Add Models', replace: 'Replace API Key', fetch: 'Get available models', cancel: 'Cancel', pending: 'API Key saved, verification pending' },
 ]
 
 async function visibleLayout(win, locator) {
@@ -45,6 +45,15 @@ async function visibleLayout(win, locator) {
   expect(result.buttons.every(button => button.fits)).toBe(true)
   return result
 }
+
+const fixtureMetadata = win => win.evaluate(() => {
+  const catalog = window.nomiDesktop.modelCatalog
+  const vendor = catalog.listVendors().find(value => value.key === 'cliproxy-local')
+  return { vendorKey: vendor.key, baseUrl: vendor.baseUrlHint, hasApiKey: vendor.hasApiKey,
+    hasStoredApiKey: vendor.hasStoredApiKey, authType: vendor.authType,
+    credentialVerificationPending: vendor.credentialVerificationPending,
+    modelIds: catalog.listModels().filter(value => value.vendorKey === vendor.key).map(value => value.modelKey) }
+})
 
 try {
   for (const spec of specs) {
@@ -72,6 +81,7 @@ try {
         }
       }, { baseUrl })
       await win.reload()
+      entry.initialMetadata = await fixtureMetadata(win)
       const snap = async name => {
         const file = path.join(evidence, `${spec.locale}-${name}.png`)
         await screenshotSettled(win, { path: file })
@@ -83,10 +93,11 @@ try {
       }
       await openHome()
       const actions = win.locator('[data-model-home-api-actions="cliproxy-local"]')
+      if (await actions.count()) await actions.scrollIntoViewIfNeeded()
+      await snap('home')
       await expect(actions.getByRole('button', { name: spec.edit, exact: true })).toBeVisible()
       await expect(actions.getByRole('button', { name: spec.add, exact: true })).toBeVisible()
       entry.layouts.push(await visibleLayout(win, actions))
-      await snap('home')
 
       await clickOrFail(actions.getByRole('button', { name: spec.edit, exact: true }), 'Edit existing connection')
       const detail = win.locator('[data-model-settings-page="connection"][data-model-settings-vendor="cliproxy-local"]')
@@ -106,6 +117,7 @@ try {
       await keyInput.fill('synthetic-ui-only-replacement')
       await keyInput.press('Enter')
       await expect(keyInput).toBeHidden()
+      await expect(detail.getByText(spec.pending, { exact: true })).toBeVisible()
       await snap('connection')
 
       // Close and reopen the real settings surface to verify the isolated persisted edits.
@@ -113,19 +125,16 @@ try {
       await win.keyboard.press('Escape')
       await openHome()
       await clickOrFail(actions.getByRole('button', { name: spec.edit, exact: true }), 'Reopen saved connection')
+      await expect(detail.getByText(spec.pending, { exact: true })).toBeVisible()
       await clickOrFail(urlEdit, 'Reopen saved URL editor')
       await expect(urlInput).toHaveValue(configuredUrl)
       await urlInput.press('Escape')
       await clickOrFail(detail.getByRole('button', { name: spec.replace, exact: true }), 'Reopen empty key replacement')
       await expect(keyInput).toHaveValue('')
       await clickOrFail(detail.getByRole('button', { name: spec.cancel, exact: true }), 'Cancel key editing')
-      entry.metadata = await win.evaluate(() => {
-        const catalog = window.nomiDesktop.modelCatalog
-        const vendor = catalog.listVendors().find(value => value.key === 'cliproxy-local')
-        return { vendorKey: vendor.key, baseUrl: vendor.baseUrlHint, hasApiKey: vendor.hasApiKey, authType: vendor.authType,
-          modelIds: catalog.listModels().filter(value => value.vendorKey === vendor.key).map(value => value.modelKey) }
-      })
-      expect(entry.metadata.hasApiKey).toBe(true)
+      entry.metadata = await fixtureMetadata(win)
+      expect(entry.metadata.hasStoredApiKey).toBe(true)
+      expect(entry.metadata.hasApiKey).toBe(false)
       expect(entry.metadata.modelIds.sort()).toEqual(['gpt-6-sol', 'gpt-image-2'])
       await clickOrFail(detail.locator('[data-model-settings-back]'), 'Return to connection list')
       await clickOrFail(actions.getByRole('button', { name: spec.add, exact: true }), 'Open existing model picker')
@@ -149,6 +158,16 @@ try {
       expect(netLog.some(value => value.kind === 'guard-error')).toBe(false)
       entry.blockedNetworkAttempts = netLog.filter(value => value.kind === 'blocked').length
       entry.status = 'passed'
+    } catch (error) {
+      if (instance) {
+        const file = path.join(evidence, `${spec.locale}-failure.png`)
+        try {
+          await instance.win.screenshot({ path: file })
+          entry.shots.push(file)
+          entry.failureMetadata = await fixtureMetadata(instance.win)
+        } catch (captureError) { entry.failureCaptureError = String(captureError?.message || captureError) }
+      }
+      throw error
     } finally {
       if (instance) await instance.close()
       fs.rmSync(tempRoot, { recursive: true, force: true })

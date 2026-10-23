@@ -100,7 +100,7 @@ export function canAddModelsToConnection(
 ): boolean {
   const meta = vendorMeta.get(vendorKey)
   return Boolean(
-    (meta?.hasApiKey || meta?.authType === 'none') &&
+    (meta?.hasStoredApiKey || meta?.hasApiKey || meta?.authType === 'none') &&
     !isComfyuiVendorKey(vendorKey) &&
     vendorKey !== CODEX_LOCAL_VENDOR_KEY &&
     vendorKey !== ANTIGRAVITY_VENDOR_KEY &&

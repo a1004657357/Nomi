@@ -15,7 +15,7 @@ import { apiKeyDecryptStatus, decryptApiKeyRecord, makeApiKeyRecordFromPlain } f
 import { humanizeModelKey } from "./modelLabel";
 import { applyBuiltinSeeds } from "./seedBuiltins";
 import { migrateCatalogForward } from "./catalogMigrations";
-import type { AiSdkProviderKind, BillingModelKind, CatalogState, HttpOperation, Mapping, Model, ProfileKind, Vendor } from "./types";
+import type { AiSdkProviderKind, ApiKeyRecord, BillingModelKind, CatalogState, HttpOperation, Mapping, Model, ProfileKind, Vendor } from "./types";
 import { CURRENT_CATALOG_VERSION } from "./types";
 import { normalizeCustomCall } from "./customCallMode";
 import { sealUpsertDraft } from "./upsertDraft";
@@ -203,7 +203,16 @@ function filterByParams<
   });
 }
 export function listModelCatalogVendors(): Vendor[] {
-  return readCatalog().vendors.map(publicVendor);
+  const state = readCatalog();
+  return state.vendors.map(vendor => configuredPublicVendor(vendor, state));
+}
+
+function configuredPublicVendor(vendor: Vendor, state: CatalogState): Vendor {
+  return publicVendor({ ...vendor, hasStoredApiKey: storedCredentialPresent(state.apiKeysByVendor[vendor.key]) });
+}
+
+function storedCredentialPresent(record: ApiKeyRecord | undefined): boolean {
+  return record?.enc === "safeStorage" && Boolean(record.apiKey);
 }
 /** 目录模型的对外投影。`availability` 见 shared/modelAvailability.ts：那是「能不能用」的唯一答案，
  * 在这里随行下发，渲染层一律读它、谁都不许再拼一份（P0-10 根因）。 */
@@ -367,7 +376,7 @@ export function upsertModelCatalogVendor(payload: unknown): Vendor {
   if (existing && normalizedConnectionScope(existing) !== normalizedConnectionScope(vendor)) {
     invalidateProviderAdapterRunsForVendors(new Set([vendor.key]));
   }
-  return publicVendor({ ...vendor, hasApiKey: apiKeyDecryptStatus(state.apiKeysByVendor[vendor.key]) === "ok" });
+  return configuredPublicVendor({ ...vendor, hasApiKey: apiKeyDecryptStatus(state.apiKeysByVendor[vendor.key]) === "ok" }, state);
 }
 export function deleteModelCatalogVendor(key: string): void {
   const state = readCatalog();
@@ -410,7 +419,7 @@ export function upsertModelCatalogVendorApiKey(vendorKey: string, payload: unkno
   const key = String(vendorKey || "").trim();
   const rec = state.apiKeysByVendor[key];
   if (rec?.enabled === false) invalidateProviderAdapterRunsForVendors(new Set([key]));
-  return { vendorKey: key, hasApiKey: true, verificationPending: rec.verificationPending === true, enabled: rec.enabled, createdAt: rec.createdAt, updatedAt: rec.updatedAt };
+  return { vendorKey: key, hasApiKey: true, hasStoredApiKey: storedCredentialPresent(rec), verificationPending: rec.verificationPending === true, enabled: rec.enabled, createdAt: rec.createdAt, updatedAt: rec.updatedAt };
 }
 export function clearModelCatalogVendorApiKey(vendorKey: string): unknown {
   const state = readCatalog();
@@ -425,7 +434,7 @@ export function clearModelCatalogVendorApiKey(vendorKey: string): unknown {
   invalidateVendorValidation(state, key);
   writeCatalog(state);
   invalidateProviderAdapterRunsForVendors(new Set([key]));
-  return { vendorKey: key, hasApiKey: false, enabled: false, createdAt: t, updatedAt: t };
+  return { vendorKey: key, hasApiKey: false, hasStoredApiKey: storedCredentialPresent(state.apiKeysByVendor[key]), enabled: false, createdAt: t, updatedAt: t };
 }
 /** Renderer projection: names are public, values and ciphertext never cross IPC. */
 export function listModelCatalogCustomCallConfig(vendorKey: string): CustomCallConfigPublicEntry[] {

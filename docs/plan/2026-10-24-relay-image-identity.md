@@ -22,3 +22,9 @@ The current user project recorded HTTP 400 for a selected `gpt-image-2` submitte
 ## Delivery preflight
 
 The isolated branch starts from customized daily HEAD `a730dacb5`. Delivery preflight attempted its one fetch and failed because configured Git transport proxy `127.0.0.1:7897` refused the connection. No automatic fetch retry or remote publication is part of this repair.
+
+## Native acceptance follow-up: stored is not certified
+
+The first native configuration walk failed before screenshots: its custom credential was saved through the real renderer API, which correctly leaves it unpublished until certification. `hasApiKey` is an execution-readiness projection and therefore false for that record. Using it for both configuration navigation and masked saved-key presentation prevents the user from reaching the existing model picker and certification workflow after editing a key. This is a real configuration-state invariant, not grounds to enable an uncertified key or seed a fake ready state.
+
+Add a separate read-only `hasStoredApiKey` presence boolean to public vendor DTOs, derived only from existing encrypted material. Use it for the existing editor and model-configuration navigation. Keep health, enabled state, model publication, spend and credential decryption rules unchanged. The real workflow is save URL/key, retain masked saved state, explicitly fetch/select models, then certify before execution. Missing/cleared material remains absent; locked encrypted material can be replaced but is never declared usable. No new schema authority or secret crosses to the renderer. Tests cover disabled, ready, locked, cleared and forged inputs. Re-run native zh/en acceptance on a fresh run after the fix; preserve the failed receipt. Reviewer must independently verify that configuration access did not become execution permission.

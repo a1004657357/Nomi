@@ -109,6 +109,7 @@ export function CustomVendorCard({
         vendorName={name}
         baseUrl={baseUrl}
         hasApiKey={hasApiKey}
+        hasStoredApiKey={vendorMeta?.hasStoredApiKey ?? hasApiKey}
         modelCount={models.length}
         connection={connection}
         fieldLossNoticeAt={vendorMeta?.fieldLossNoticeAt ?? null}

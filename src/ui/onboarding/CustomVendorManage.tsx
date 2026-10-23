@@ -32,6 +32,7 @@ type CustomVendorManageProps = {
   vendorName: string
   baseUrl: string
   hasApiKey: boolean
+  hasStoredApiKey?: boolean
   modelCount: number
   /** 连接健康（由 CustomVendorCard 持有，与卡片胶囊同一份，不各自探）。 */
   connection: VendorConnection | null
@@ -50,6 +51,7 @@ export function CustomVendorManage({
   vendorName,
   baseUrl,
   hasApiKey,
+  hasStoredApiKey = hasApiKey,
   modelCount,
   connection,
   fieldLossNoticeAt,
@@ -59,7 +61,7 @@ export function CustomVendorManage({
   focus,
 }: CustomVendorManageProps): JSX.Element {
   const { t } = useTranslation()
-  const [keyEditing, setKeyEditing] = React.useState(!hasApiKey)
+  const [keyEditing, setKeyEditing] = React.useState(!hasStoredApiKey)
   const [keyDraft, setKeyDraft] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
@@ -67,8 +69,8 @@ export function CustomVendorManage({
   const handledFocusRequestRef = React.useRef<number | null>(null)
 
   React.useEffect(() => {
-    setKeyEditing(!hasApiKey)
-  }, [hasApiKey])
+    setKeyEditing(!hasStoredApiKey)
+  }, [hasStoredApiKey])
 
   // 只管 apiKey 那一路；baseUrl 的聚焦请求由 VendorBaseUrlField 自己认（它持有那个 input）。
   React.useEffect(() => {
@@ -203,7 +205,7 @@ export function CustomVendorManage({
               {t('onboardingProviders.vendorCard.save')}
             </button>
           </div>
-          {hasApiKey ? (
+          {hasStoredApiKey ? (
             <button
               type="button"
               onClick={() => setKeyEditing(false)}
@@ -216,7 +218,7 @@ export function CustomVendorManage({
         </div>
       ) : (
         <div className="flex items-center justify-between gap-2">
-          <span className="text-caption text-nomi-ink-60">{t('onboardingProviders.vendorCard.credentialSaved')}</span>
+          <span className="text-caption text-nomi-ink-60">{t(hasApiKey ? 'onboardingProviders.vendorCard.credentialSaved' : 'onboardingProviders.workspace.credentialSavedPending')}</span>
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"

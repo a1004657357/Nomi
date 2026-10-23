@@ -261,6 +261,8 @@ export type Vendor = {
   name: string;
   enabled: boolean;
   hasApiKey?: boolean;
+  /** Public configuration presence only; never grants credential execution or publication. */
+  hasStoredApiKey?: boolean;
   credentialVerificationPending?: boolean;
   baseUrlHint?: string | null;
   authType?: VendorAuthType;
