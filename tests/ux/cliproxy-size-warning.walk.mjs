@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { launchNomiApp, repoRoot } from './_launchApp.mjs'
 import { expect } from './_assert.mjs'
 
@@ -23,6 +22,8 @@ try {
       initialLocalStorage: { 'nomi:locale:v1': locale, 'nomi:splash:v1': 'seen',
         'nomi:journey-tour:v1': 'seen', 'nomi:canvas-gesture-hint:v1': 'seen' } })
     try {
+      await expect(launched.win.getByRole('button', { name: /新建空白项目|New blank project/ }).first())
+        .toBeVisible({ timeout: 60_000 })
       const nodeId = source.cases[0].nodeId
       await launched.app.evaluate(({ BrowserWindow }, payload) => {
         BrowserWindow.getAllWindows()[0].webContents.send('nomi:production-deep-link', payload)
@@ -33,19 +34,21 @@ try {
         return win.locator(`[data-node-id="${nodeId}"]`).count()
       }, { timeout: 60_000 }).toBeGreaterThan(0)
       const node = win.locator(`[data-node-id="${nodeId}"]`).first()
+      const decline = win.getByRole('button', { name: locale === 'en' ? "Don't share" : '不分享', exact: true })
+      if (await decline.count()) await decline.click()
       await expect.poll(() => node.locator('img').evaluateAll(images => images.some(image => image.complete && image.naturalWidth > 0)),
         { timeout: 30_000 }).toBe(true)
       const assetFile = path.join(projectsDir, path.relative(path.join(sourceRoot, 'projects'), source.cases[0].asset.path))
-      const verdict = await launched.app.evaluate(async (_, input) => {
-        const review = await import(input.module)
-        const i18n = await import(input.i18n)
-        const setLocale = i18n.setDesktopLocale ?? i18n.default.setDesktopLocale
-        setLocale(input.locale)
-        return (review.scheduleTechnicalReview ?? review.default.scheduleTechnicalReview)({
+      const verdict = await launched.app.evaluate(async ({ app }, input) => {
+        const load = process.getBuiltinModule('node:module').createRequire(`${app.getAppPath()}/package.json`)
+        const review = load(input.module)
+        const i18n = load(input.i18n)
+        i18n.setDesktopLocale(input.locale)
+        return review.scheduleTechnicalReview({
           projectId: input.projectId, nodeId: input.nodeId, absolutePath: input.file,
           assetUrl: input.url, type: 'image', expectedImageSize: '1024x1024' })
-      }, { module: pathToFileURL(path.join(repoRoot, 'dist-electron/review/reviewTrace.js')).href,
-        i18n: pathToFileURL(path.join(repoRoot, 'dist-electron/i18n.js')).href,
+      }, { module: path.join(repoRoot, 'dist-electron/review/reviewTrace.js'),
+        i18n: path.join(repoRoot, 'dist-electron/i18n.js'),
         locale, projectId: source.projectId, nodeId, file: assetFile,
         url: `nomi-local://asset/${source.projectId}/${path.relative(projectsDir, assetFile).split(path.sep).slice(1).join('/')}` })
       assert.equal(verdict.imageSizeValidation.status, 'mismatch')
@@ -56,6 +59,11 @@ try {
       await win.screenshot({ path: path.join(root, `${locale}.png`) })
       report.locales.push({ locale, state: 'passed', imageDecoded: true, warningTitle: title,
         requested: verdict.imageSizeValidation.requested, actual: verdict.imageSizeValidation.actual })
+    } catch (error) {
+      for (const [index, win] of launched.app.windows().entries()) {
+        await win.screenshot({ path: path.join(root, `${locale}-failure-${index}.png`) }).catch(() => {})
+      }
+      throw error
     } finally { await launched.close() }
   }
   report.state = 'passed'
