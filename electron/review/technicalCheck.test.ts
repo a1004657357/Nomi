@@ -46,6 +46,45 @@ describe('parseVideoTechnicalMetrics', () => {
 })
 
 describe('runTechnicalCheck video inspection', () => {
+  it('reports unavailable original expectation without guessing requested pixels', async () => {
+    const verdict = await technicalCheck.runTechnicalCheck('/virtual/recovered.png', 'image', {
+      expectedImageSize: null,
+      probeMedia: async () => ({ kind: 'image', width: 1254, height: 1254, hasAudio: false }),
+    });
+    expect(verdict.imageSizeValidation).toMatchObject({ requested: null, actual: { width: 1254, height: 1254 }, status: 'unavailable', warning: 'image_size_unavailable' });
+    expect(verdict.checks.find(check => check.id === 'image-size')?.suspect).toBe(true);
+  });
+  it.each([[1254, 1254, true], [1536, 1024, true], [1024, 1024, false]])(
+    'compares exact original pixels %ix%i, not only square aspect ratio', async (width, height, mismatch) => {
+      const verdict = await technicalCheck.runTechnicalCheck('/virtual/original.png', 'image', {
+        expectedImageSize: '1024x1024',
+        probeMedia: async () => ({ kind: 'image', width, height, hasAudio: false }),
+      });
+      expect(verdict.imageSizeValidation).toEqual({
+        requested: { width: 1024, height: 1024 }, actual: { width, height },
+        status: mismatch ? 'mismatch' : 'matched',
+        ...(mismatch ? { warning: 'image_size_mismatch' } : {}),
+        originalPreserved: true, normalizationApplied: false,
+      });
+      expect(verdict.checks.find((check) => check.id === 'image-size')).toMatchObject({ suspect: mismatch });
+    },
+  );
+
+  it('never marks missing probe data as an exact-size pass', async () => {
+    const verdict = await technicalCheck.runTechnicalCheck('/virtual/original.png', 'image', {
+      expectedImageSize: '1024x1024', probeMedia: async () => { throw new Error('probe failed'); },
+    });
+    expect(verdict.imageSizeValidation).toMatchObject({ status: 'unavailable', actual: null, warning: 'image_size_unavailable' });
+    expect(verdict.suspect).toBe(true);
+  });
+
+  it('does not infer exact dimensions from auto or from a video request', async () => {
+    const probeMedia = async () => ({ kind: 'image' as const, width: 1254, height: 1254, hasAudio: false });
+    const image = await technicalCheck.runTechnicalCheck('/virtual/original.png', 'image', { expectedImageSize: 'auto', probeMedia });
+    const video = await technicalCheck.runTechnicalCheck('/virtual/video.mp4', 'video', { expectedImageSize: '1024x1024', probeMedia });
+    expect(image.imageSizeValidation).toBeUndefined();
+    expect(video.imageSizeValidation).toBeUndefined();
+  });
   it('returns media metadata plus black-frame and frozen-frame checks', async () => {
     const probeMedia = vi.fn(async () => ({
       kind: 'video' as const,

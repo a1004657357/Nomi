@@ -4,10 +4,11 @@
 import crypto from "node:crypto";
 import { webContents as electronWebContents } from "electron";
 import { appendEvents } from "../events/eventLogRepository";
-import { runTechnicalCheck } from "./technicalCheck";
+import { runTechnicalCheck, type TechnicalCheckVerdict } from "./technicalCheck";
 import { logError } from "../logging/logger";
+import { mergeAssetSidecarMeta } from "../assets/assetSidecar";
 
-const pendingTechnicalReviews = new Set<Promise<void>>();
+const pendingTechnicalReviews = new Set<Promise<TechnicalCheckVerdict | undefined>>();
 
 export function scheduleTechnicalReview(input: {
   projectId: string;
@@ -17,14 +18,18 @@ export function scheduleTechnicalReview(input: {
   type: "image" | "video";
   expectedAspectRatio?: string;
   expectedDurationSeconds?: number;
-}): void {
-  if (!input.projectId || !input.absolutePath) return;
+  expectedImageSize?: string | null;
+}): Promise<TechnicalCheckVerdict | undefined> {
+  if (!input.projectId || !input.absolutePath) return Promise.resolve(undefined);
   const review = (async () => {
+    let verdict: TechnicalCheckVerdict | undefined;
     try {
-      const verdict = await runTechnicalCheck(input.absolutePath, input.type, {
+      verdict = await runTechnicalCheck(input.absolutePath, input.type, {
         expectedAspectRatio: input.expectedAspectRatio,
         expectedDurationSeconds: input.expectedDurationSeconds,
+        ...(input.expectedImageSize !== undefined ? { expectedImageSize: input.expectedImageSize } : {}),
       });
+      if (verdict.imageSizeValidation) mergeAssetSidecarMeta(input.absolutePath, { imageSizeValidation: verdict.imageSizeValidation });
       appendEvents(input.projectId, [
         {
           id: `evt_${crypto.randomUUID().slice(0, 12)}`,
@@ -35,6 +40,7 @@ export function scheduleTechnicalReview(input: {
             assetUrl: input.assetUrl,
             verdict: verdict.suspect ? "suspect" : "ok",
             checks: verdict.checks,
+            ...(verdict.imageSizeValidation ? { imageSizeValidation: verdict.imageSizeValidation } : {}),
           },
         },
       ]);
@@ -47,9 +53,11 @@ export function scheduleTechnicalReview(input: {
     } catch (error) {
       logError("review", "self-check-bypass-failed", error);
     }
+    return verdict;
   })();
   pendingTechnicalReviews.add(review);
   void review.finally(() => pendingTechnicalReviews.delete(review));
+  return review;
 }
 
 /** 一次性 headless host 退出前等待免费技术验收落账；桌面运行时仍保持异步旁路。 */

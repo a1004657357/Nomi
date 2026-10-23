@@ -21,6 +21,8 @@ export type TaskRequest = {
   extras?: Record<string, unknown> & { executionBinding?: import("./productionRun/productionExecutionBinding").ProductionExecutionBinding };
 };
 export type CachedTask = {
+  /** Exact compiled create pixels; null = missing original evidence, undefined = no exact pixel intent. */
+  expectedImageSize?: string | null;
   vendor: string;
   request: TaskRequest;
   raw: unknown;

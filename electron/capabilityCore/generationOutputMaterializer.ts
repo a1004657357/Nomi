@@ -8,10 +8,12 @@ import type { ProviderNetworkConfig } from "../providerNetwork";
 import { readCatalog } from "../catalog/catalogStore";
 import { parseDataUrl } from "../assets/assetBytes";
 import type { GenerationProviderOutput } from "./generationRuntimeAdapter";
+import { scheduleTechnicalReview } from "../review/reviewTrace";
+import type { ImageSizeValidation } from "../review/imageSizeSpecification";
 
 type StoredAsset = {
   id?: unknown;
-  data?: { relativePath?: unknown; thumbnailRelativePath?: unknown; contentType?: unknown; width?: unknown; height?: unknown };
+  data?: { absolutePath?: unknown; url?: unknown; relativePath?: unknown; thumbnailRelativePath?: unknown; contentType?: unknown; width?: unknown; height?: unknown };
 };
 
 export type GenerationOutputMaterializerDependencies = {
@@ -40,6 +42,7 @@ export type GenerationOutputMaterializationReceipt = {
   thumbnailRelativePath?: string;
   width?: number;
   height?: number;
+  imageSizeValidation?: ImageSizeValidation;
 };
 
 function extensionFor(kind: GenerationProviderOutput["kind"]): string {
@@ -85,6 +88,8 @@ export function createGenerationOutputMaterializer(deps: GenerationOutputMateria
     output: GenerationProviderOutput;
     /** 产出这条 URL 的那家供应商。取回走它自己的线路（与普通生成的 localizeTaskAsset 同一条：谁产的 URL 就用谁的路）。 */
     providerId?: string;
+    expectedImageSize?: string;
+    nodeId?: string;
   }): Promise<GenerationOutputMaterializationReceipt> {
     const allowedContentTypes = allowedContentTypesFor(input.output.kind);
     const providerNetwork = input.providerId ? (deps.resolveProviderNetwork ?? catalogProviderNetwork)(input.providerId) : undefined;
@@ -133,6 +138,16 @@ export function createGenerationOutputMaterializer(deps: GenerationOutputMateria
       }, "image", `${materializationKey}:poster`) as StoredAsset;
       posterPath = typeof posterStored.data?.relativePath === "string" ? posterStored.data.relativePath.trim() : "";
     }
+    let imageSizeValidation: ImageSizeValidation | undefined;
+    if (input.output.kind === "image") {
+      const review = scheduleTechnicalReview({
+        projectId: input.projectId, nodeId: input.nodeId,
+        absolutePath: typeof stored.data?.absolutePath === "string" ? stored.data.absolutePath : "",
+        assetUrl: typeof stored.data?.url === "string" ? stored.data.url : projectRelativePath,
+        type: "image", expectedImageSize: input.expectedImageSize,
+      });
+      if (input.expectedImageSize) imageSizeValidation = (await review)?.imageSizeValidation;
+    }
     return {
       artifactId,
       kind: input.output.kind,
@@ -140,6 +155,7 @@ export function createGenerationOutputMaterializer(deps: GenerationOutputMateria
       projectRelativePath,
       ...(posterPath ? { thumbnailRelativePath: posterPath } : {}),
       ...(width && height ? { width, height } : {}),
+      ...(imageSizeValidation ? { imageSizeValidation } : {}),
     };
   }
 

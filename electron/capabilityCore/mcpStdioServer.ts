@@ -394,7 +394,7 @@ export async function startMcpStdioServer(authorities: McpStdioServerOptions = {
           projectGeneration: lease.projectGeneration,
           intentMacKey: ensureCapabilitySigningKey('generation-intent'),
           providers: providerBootstrap.providers,
-          materializeOutput: ({ projectId, providerTaskId, output, job }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider }),
+          materializeOutput: ({ projectId, providerTaskId, output, job, expectedImageSize }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider, nodeId: job.nodeId, expectedImageSize }),
         })
         // A semantic multi-shot operation must enter the durable batch
         // scheduler. Calling submission.start() without shotId would submit
@@ -452,7 +452,7 @@ export async function startMcpStdioServer(authorities: McpStdioServerOptions = {
           projectGeneration: lease.projectGeneration,
           intentMacKey: ensureCapabilitySigningKey('generation-intent'),
           providers: providerBootstrap.providers,
-          materializeOutput: ({ projectId, providerTaskId, output, job }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider }),
+          materializeOutput: ({ projectId, providerTaskId, output, job, expectedImageSize }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider, nodeId: job.nodeId, expectedImageSize }),
         })
         try {
           const polled = await submission.poll({ projectId: lease.projectId, operationId: operation.operationId })

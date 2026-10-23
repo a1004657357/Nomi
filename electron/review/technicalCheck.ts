@@ -7,9 +7,10 @@ import { spawn } from "node:child_process";
 import { resolveFfmpegPath } from "../export/ffmpegRunner";
 import { probeMediaMetadata, type MediaProbeMetadata } from "../export/mediaProbe";
 import { desktopT } from "../i18n";
+import { assessImageSize, type ImageSizeValidation } from "./imageSizeSpecification";
 
 export type TechnicalCheckItem = {
-  id: "black-frames" | "frozen-video" | "silent-audio" | "zero-duration" | "undecodable" | "aspect-ratio" | "duration";
+  id: "black-frames" | "frozen-video" | "silent-audio" | "zero-duration" | "undecodable" | "aspect-ratio" | "duration" | "image-size";
   suspect: boolean;
   detail: string;
   metrics?: Record<string, number>;
@@ -19,6 +20,7 @@ export type TechnicalCheckVerdict = {
   suspect: boolean;
   checks: TechnicalCheckItem[];
   metadata?: MediaProbeMetadata;
+  imageSizeValidation?: ImageSizeValidation;
 };
 
 export type TechnicalCheckOptions = {
@@ -26,6 +28,7 @@ export type TechnicalCheckOptions = {
   runFfmpegStderr?: (args: string[]) => Promise<string>;
   expectedAspectRatio?: string;
   expectedDurationSeconds?: number;
+  expectedImageSize?: string | null;
 };
 
 const FFMPEG_CHECK_TIMEOUT_MS = 30_000;
@@ -119,8 +122,23 @@ export async function runTechnicalCheck(
   options: TechnicalCheckOptions = {},
 ): Promise<TechnicalCheckVerdict> {
   const checks: TechnicalCheckItem[] = [];
+  let imageSizeValidation = type === "image" ? assessImageSize(options.expectedImageSize) : undefined;
+  const addImageSizeCheck = () => {
+    if (!imageSizeValidation) return;
+    const { requested, actual, status } = imageSizeValidation;
+    checks.push({
+      id: "image-size", suspect: status !== "matched",
+      detail: desktopT(!requested ? "review.imageSizeExpectationUnavailable" : status === "matched" ? "review.imageSizeMatch" : status === "mismatch" ? "review.imageSizeMismatch" : "review.imageSizeUnavailable", {
+        requestedWidth: requested?.width ?? 0, requestedHeight: requested?.height ?? 0,
+        width: actual?.width ?? 0, height: actual?.height ?? 0,
+      }),
+      metrics: { ...(requested ? { requestedWidth: requested.width, requestedHeight: requested.height } : {}), ...(actual ? { width: actual.width, height: actual.height } : {}) },
+    });
+  };
   try {
     const meta = await (options.probeMedia ?? probeMediaMetadata)(absolutePath);
+    if (type === "image") imageSizeValidation = assessImageSize(options.expectedImageSize, meta);
+    addImageSizeCheck();
     const runFfmpeg = options.runFfmpegStderr ?? runFfmpegStderr;
     const expectedRatio = parseExpectedAspectRatio(options.expectedAspectRatio);
     if (expectedRatio && (meta.width ?? 0) > 0 && (meta.height ?? 0) > 0) {
@@ -232,7 +250,7 @@ export async function runTechnicalCheck(
         }
       }
     }
-    return { suspect: checks.some((check) => check.suspect), checks, metadata: meta };
+    return { suspect: checks.some((check) => check.suspect), checks, metadata: meta, ...(imageSizeValidation ? { imageSizeValidation } : {}) };
   } catch (error) {
     // 探测本身失败 = 文件可疑(下载残缺/格式损坏)
     checks.push({
@@ -241,5 +259,6 @@ export async function runTechnicalCheck(
       detail: desktopT("review.probeFailed", { detail: error instanceof Error ? error.message.slice(0, 120) : String(error).slice(0, 120) }),
     });
   }
-  return { suspect: checks.some((check) => check.suspect), checks };
+  if (!checks.some((check) => check.id === "image-size")) addImageSizeCheck();
+  return { suspect: checks.some((check) => check.suspect), checks, ...(imageSizeValidation ? { imageSizeValidation } : {}) };
 }

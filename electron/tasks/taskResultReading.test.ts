@@ -6,6 +6,15 @@ import { classifyUpstreamTaskStatus } from "../shared/taskStatus";
 
 const MP4 = "https://cdn.example.test/out.mp4";
 
+// 结构有效的最小图片文件头（供 b64_json 夹具；≥12 字节才过 contentTypeFromMagicBytes 的
+// 通用嗅探门槛）：JPEG = SOI + APP0("JFIF\0")，PNG = 签名 + IHDR chunk 头。
+const JPEG_HEADER_B64 = Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01,
+]).toString("base64");
+const PNG_HEADER_B64 = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+]).toString("base64");
+
 describe("共享状态词表", () => {
   it("各家真实写法都认得（大小写不敏感）", () => {
     for (const word of ["SUCCESS", "succeeded", "completed", "done", "finished", "COMPLETED", "SUCCEEDED"]) expect(classifyUpstreamTaskStatus(word)).toBe("succeeded");
@@ -70,9 +79,56 @@ describe("通用规则的三道筛", () => {
     expect(findResultUrlByGenericRule({ data: { state: "success", resultJson: JSON.stringify({ resultUrls: [MP4] }) } }, "video")?.urls).toEqual([MP4]);
   });
 
-  it("已知形状：同步接口的 b64_json 解成 data: 地址", () => {
-    const found = findResultUrlByGenericRule({ data: [{ b64_json: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64") }] }, "image");
-    expect(found?.path).toBe("known-shape");
+  it("已知形状：同步接口的 b64_json 解成 data: 地址（深扫就地转，路径可追溯）", () => {
+    const found = findResultUrlByGenericRule({ data: [{ b64_json: PNG_HEADER_B64 }] }, "image");
+    expect(found?.path).toBe("data.*.url");
     expect(found?.urls[0]).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("多张 b64_json 结果一起收（gpt-image 系代理按 n>1 回 b64 数组），类型按魔数说真话", () => {
+    // 夹具是结构有效的最小文件头（≥12 字节才过通用魔数嗅探门槛：JPEG=SOI+APP0+JFIF，
+    // PNG=签名+IHDR chunk 头）——真实小图，不是 6 字节片段（片段会按 image/png 兜底，
+    // 那是嗅探的既定行为，不是 bug）。
+    const found = findResultUrlByGenericRule({ created: 1, data: [{ b64_json: JPEG_HEADER_B64 }, { b64_json: PNG_HEADER_B64 }, { revised_prompt: "x" }] }, "image");
+    expect(found?.urls).toHaveLength(2);
+    expect(found?.urls[0]).toMatch(/^data:image\/jpeg;base64,/);
+    expect(found?.urls[1]).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("要视频时 b64 图片不冒充产物", () => {
+    expect(findResultUrlByGenericRule({ data: [{ b64_json: PNG_HEADER_B64 }] }, "video")).toBeNull();
+  });
+
+  it("base64 input and reference images are not returned as generated outputs", () => {
+    const found = findResultUrlByGenericRule({
+      input: { b64_json: JPEG_HEADER_B64 },
+      references: [{ b64_json: JPEG_HEADER_B64 }],
+      data: [{ b64_json: PNG_HEADER_B64 }],
+    }, "image");
+    expect(found?.urls).toEqual([`data:image/png;base64,${PNG_HEADER_B64}`]);
+  });
+
+  for (const url of ["https://cdn.example.test/a.png", "https://cdn.example.test/download?id=1"]) {
+    for (const serialized of [false, true]) {
+      it.each([null, { image_url: "data[*].url" }])(`collects mixed siblings (${url}, serialized=${serialized}) with mapping %j`, (responseMapping) => {
+        const items = [{ url }, { b64_json: PNG_HEADER_B64 }];
+        const response = { data: serialized ? JSON.stringify(items) : items };
+        const result = readTaskResponse({ response, responseMapping, statusMapping: undefined, wantedKind: "image" });
+        expect(result.assetUrls).toEqual([url, `data:image/png;base64,${PNG_HEADER_B64}`]);
+        if (responseMapping) expect(result.rule).toBe("contract");
+      });
+    }
+  }
+
+  it("does not duplicate a result represented by both url and base64", () => {
+    expect(findResultUrlByGenericRule({ data: [{ url: "https://cdn.example.test/a.png", b64_json: PNG_HEADER_B64 }] }, "image")?.urls)
+      .toEqual(["https://cdn.example.test/a.png"]);
+  });
+
+  it.each(["processing", "failed"])("does not materialize mapped inline outputs while status is %s", (status) => {
+    const result = readTaskResponse({ response: { status, data: [{ b64_json: PNG_HEADER_B64 }] },
+      responseMapping: { image_url: "data[*].url", status: "status" }, statusMapping: undefined, wantedKind: "image" });
+    expect(result.status).not.toBe("succeeded");
+    expect(result.assetUrls).toEqual([]);
   });
 });

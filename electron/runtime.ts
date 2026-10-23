@@ -65,6 +65,7 @@ import { desktopT } from "./i18n";
 import { CODEX_VENDOR_SEED } from "./catalog/codexImagegen";
 import { runCodexImageTask } from "./tasks/codexImageTask";
 import { dispatchWebBridgeTask } from "./webBridge/taskDispatch";
+import { isWebBridgeVendor } from "./webBridge/registry";
 import { isTerminalTaskStatus } from './shared/taskStatus';
 import { tagNomiError } from './shared/nomiErrorCodes';
 export type {
@@ -135,6 +136,7 @@ export type TaskResult = {
     /** 落盘边界 ffprobe 出来的源像素尺寸；画布拿到它就不必解码原图才知道有多大。 */
     width?: number;
     height?: number;
+    imageSizeValidation?: import("./review/imageSizeSpecification").ImageSizeValidation;
   }>;
   raw: unknown;
   /**
@@ -164,6 +166,11 @@ export type TaskResult = {
 
 /** 受理一个异步任务：写工作缓存 + 记账本（单一入口，所有 admit 点同源，防漏记）。 */
 export function admitTask(id: string, entry: CachedTask): void {
+  if (!isWebBridgeVendor(entry.vendor) && (entry.wantedKind ?? billingKindForTaskKind(entry.request.kind)) === "image" && entry.expectedImageSize !== null) {
+    taskImageSizeSnapshots.write({ projectId: entry.projectId || "", vendor: entry.vendor,
+      modelKey: firstString(entry.model?.modelKey, entry.request.extras?.modelKey, entry.request.extras?.modelAlias),
+      taskKind: entry.request.kind, taskId: id }, entry.expectedImageSize);
+  }
   taskCache.set(id, entry);
   markTaskAdmitted(id);
 }
@@ -189,6 +196,8 @@ export { buildProfileHttpRequest };
 export { executeProfileOperation } from "./tasks/profileTaskExecution";
 import { executeProfileOperation } from "./tasks/profileTaskExecution";
 import { attachProfileOperationTimingsToRaw, type ProfileOperationTimings } from './tasks/profileTaskExecution';
+import { requestedImageSizeFromBody } from "./review/imageSizeSpecification";
+import { taskImageSizeSnapshots } from "./tasks/taskImageSizeSnapshot";
 /** Normalize an upstream response into the shared TaskResult contract. */
 export async function buildProfileTaskResult(input: {
   response: unknown;
@@ -203,6 +212,7 @@ export async function buildProfileTaskResult(input: {
   vendor?: Vendor;
   model?: Model;
   operationTimings?: ProfileOperationTimings;
+  expectedImageSize?: string | null;
 }): Promise<{ result: TaskResult; providerMeta: JsonRecord; unrecognizedStatus: string; actualCost?: ProviderCostActual }> {
   const response = applyResponseTransform(input.operation.response_transform, input.response, {
     baseUrl: String(input.vendor?.baseUrlHint || ""),
@@ -237,7 +247,7 @@ export async function buildProfileTaskResult(input: {
   const assetPersistenceStartedAt = Date.now();
   const assets = await materializeCertifiedComfyAssets({ certification, status, urls: assetUrls,
     materialize: (url, index) => input.projectId
-      ? localizeTaskAsset(input.projectId, url, type, input.nodeId, input.vendor, certification.evidence[index])
+      ? localizeTaskAsset(input.projectId, url, type, input.nodeId, input.vendor, certification.evidence[index], input.expectedImageSize)
       : Promise.resolve(unlocalizedTaskAsset(type, url)) });
   const actualCost = extractProviderCostActual(input.vendor?.key || "", input.response);
   const assetPersistenceMs = Date.now() - assetPersistenceStartedAt;
@@ -339,6 +349,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       mapping,
       operation: createOperation,
       operationTimings: executed.timings,
+      expectedImageSize: executed.expectedImageSize,
       request,
       taskIdFallback: taskId,
       wantedKind,
@@ -368,6 +379,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
         nodeId,
         wantedKind,
         fingerprint,
+        expectedImageSize: executed.expectedImageSize,
       });
     }
     return normalized.result;
@@ -395,6 +407,7 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
     ...buildAuthHeaders(vendorAuthSpec(vendor), apiKey),
     ...(fallbackExtraHeaders || {}),
   };
+  const expectedImageSize = requestedImageSizeFromBody({ size: request.width && request.height ? `${request.width}x${request.height}` : undefined });
   const providerResponse = await requestJson(
     vendor,
     apiKey,
@@ -425,13 +438,14 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       nodeId,
       wantedKind,
       fingerprint: fallbackFingerprint,
+      expectedImageSize,
     });
     return { id: upstreamTaskId, kind, status: "queued", assets: [], raw: providerResponse };
   }
   const type: "image" | "video" | "audio" | "model3d" =
     wantedKind === "video" ? "video" : wantedKind === "audio" ? "audio" : wantedKind === "model3d" ? "model3d" : "image";
   const asset: TaskResult["assets"][number] = projectId
-    ? await localizeTaskAsset(projectId, assetUrl, type, nodeId, vendor) : unlocalizedTaskAsset(type, assetUrl);
+    ? await localizeTaskAsset(projectId, assetUrl, type, nodeId, vendor, undefined, expectedImageSize) : unlocalizedTaskAsset(type, assetUrl);
   const actualCost = extractProviderCostActual(vendor.key, providerResponse);
   const provenance = buildTaskProvenance({ vendor, model, request, vendorRequestId: upstreamTaskId, actualCost });
   traceVendorCompleted(projectId, { runId: upstreamTaskId, nodeId, status: "succeeded", assetCount: 1, ...(actualCost ? { cost: actualCost } : {}) });

@@ -16,6 +16,7 @@ import { billingKindForTaskKind } from '../catalog/types';
 import { firstReferenceImage } from '../catalog/taskParams';
 import { assertAgnesPublicImageReachable, isAgnesImageToVideoRequest } from '../catalog/agnesPublicAssetProbe';
 import type { JsonRecord } from '../jsonUtils';
+import { requestedImageSizeFromBody } from "../review/imageSizeSpecification";
 export { localizeTaskAsset } from "../assets/localizeTaskAsset";
 export { buildProfileTaskResult, findTaskMapping } from "../runtime";
 export { buildProfileHttpRequest };
@@ -37,10 +38,10 @@ export async function executeProfileOperation(input: {
   providerMeta?: JsonRecord;
   enforceSubmissionRateLimit?: boolean;
   localAssetReader?: import("../catalog/assetLocalization").LocalAssetReader; signal?: AbortSignal; stage?: ProfileOperationStage; antigravityPreflight?: import("../ai/antigravityTask").PreparedAntigravityTask;
-}): Promise<{ response: unknown; request: unknown; timings: ProfileOperationTimings }> {
+}): Promise<{ response: unknown; request: unknown; timings: ProfileOperationTimings; expectedImageSize?: string }> {
   const startedAt = Date.now();
   const timings: ProfileOperationTimings = { assetLocalizationMs: 0, localizedAssetCount: 0, publicAssetProbeMs: 0, submissionRateLimitMs: 0, providerRequestMs: 0, totalMs: 0 };
-  const execute = async (run: () => Promise<{ response: unknown; request: unknown }>) => {
+  const execute = async (run: () => Promise<{ response: unknown; request: unknown; expectedImageSize?: string }>) => {
     const waitStartedAt = Date.now();
     if (input.stage === 'create' || input.enforceSubmissionRateLimit) {
       await waitForVendorSubmissionWindow(input.vendor.key, billingKindForTaskKind(input.request.kind));
@@ -74,7 +75,10 @@ export async function executeProfileOperation(input: {
       writeAsset, writeDeterministicAsset, signal: input.signal, stage, identity: { vendorKey: input.vendor.key, modelKey: input.model.modelKey, taskKind: input.request.kind }, antigravityPreflight: input.antigravityPreflight,
     }));
   }
-  if (input.operation.multipart) return execute(() => runMultipartProfileOperation(input, (u, h, q, f) => requestMultipart(input.vendor, input.apiKey, u, h, q, f, input.signal, { maxResponseBytes: vendorResponseLimitForKind(input.model.kind) })));
+  if (input.operation.multipart) return execute(async () => {
+    const result = await runMultipartProfileOperation(input, (u, h, q, f) => requestMultipart(input.vendor, input.apiKey, u, h, q, f, input.signal, { maxResponseBytes: vendorResponseLimitForKind(input.model.kind) }));
+    return { ...result, expectedImageSize: requestedImageSizeFromBody(isJsonRecord(result.request) ? result.request.fields : undefined) };
+  });
   const localizationStartedAt = Date.now();
   const uploadCatalog = readCatalog();
   const localized = await localizeAssetsForVendor(
@@ -100,5 +104,5 @@ export async function executeProfileOperation(input: {
   const built = buildProfileHttpRequest(effectiveInput);
   const body = await applyRequestTransform(input.operation.request_transform, built.body, { baseUrl: String(input.vendor.baseUrlHint || ""), promptId: trim(input.request.extras?.comfyPromptId), request: input.request });
   const { vendor, apiKey } = effectiveInput;
-  return execute(async () => ({ response: await requestJson(vendor, apiKey, built.method, built.url, built.headers, built.query, body, input.signal, { maxResponseBytes: vendorResponseLimitForKind(input.model.kind) }), request: built.preview }));
+  return execute(async () => ({ response: await requestJson(vendor, apiKey, built.method, built.url, built.headers, built.query, body, input.signal, { maxResponseBytes: vendorResponseLimitForKind(input.model.kind) }), request: built.preview, expectedImageSize: requestedImageSizeFromBody(body) }));
 }

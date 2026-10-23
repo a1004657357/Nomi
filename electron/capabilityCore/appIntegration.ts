@@ -249,7 +249,7 @@ export async function startCapabilityCore(
       intentMacKey: ensureCapabilitySigningKey('generation-intent'),
       providers: input.providers,
       beforeDispatch: assertProductionShotCanDispatch,
-      materializeOutput: ({ projectId, providerTaskId, output, job }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider }),
+      materializeOutput: ({ projectId, providerTaskId, output, job, expectedImageSize }) => outputMaterializer.materialize({ projectId, providerTaskId, output, providerId: job.provider, nodeId: job.nodeId, expectedImageSize }),
     })
     type SubmittableRun = {
       projectId: string

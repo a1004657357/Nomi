@@ -17,7 +17,7 @@ import { isJsonRecord } from "../jsonUtils";
 import { collectAssetUrls, firstMappedString, maybeParseJsonString, resolveTaskStatus, valuesFromMapping, type TaskStatus } from "./responseParsing";
 import { classifyUpstreamTaskStatus } from "../shared/taskStatus";
 import { firstString } from "../jsonUtils";
-import { extractAssetUrl } from "./assetUrlExtract";
+import { extractAssetUrl, base64JsonToDataUrl } from "./assetUrlExtract";
 import { logInfo } from "../logging/logger";
 
 export type ExpectedMediaKind = "image" | "video" | "audio" | "model3d";
@@ -87,10 +87,31 @@ function keyRank(key: string): number {
   return index >= 0 ? index : RESULT_KEY_RANK.length;
 }
 
+/** Normalize result representations before either contract mapping or generic ranking. */
+function normalizeInlineResults(value: unknown, depth = 0): unknown {
+  if (depth > MAX_DEPTH) return value;
+  const parsed = maybeParseJsonString(value);
+  if (parsed !== value) return normalizeInlineResults(parsed, depth + 1);
+  if (Array.isArray(value)) return value.map(item => normalizeInlineResults(item, depth + 1));
+  if (!isJsonRecord(value)) return value;
+  const result = Object.fromEntries(Object.entries(value).map(([key, child]) =>
+    [key, EXCLUDED_KEY.test(key) ? child : normalizeInlineResults(child, depth + 1)]));
+  const inline = Object.entries(result).find(([key]) => key.toLowerCase() === "b64_json");
+  if (inline) {
+    const url = base64JsonToDataUrl(inline[1]);
+    if (url) {
+      if (typeof result.url !== "string" || !isAssetUrl(result.url)) result.url = url;
+      delete result[inline[0]];
+    }
+  }
+  return result;
+}
+
 /** 深度扫响应里的地址，记下路径与它所在字段的可信度。数组里的字符串归属最近的字段名。 */
 function scanCandidates(value: unknown, path: string, key: string, depth: number, out: Candidate[], excluded: boolean): void {
   if (depth > MAX_DEPTH) return;
-  const node = maybeParseJsonString(value);
+  const parsed = maybeParseJsonString(value);
+  const node = parsed === value ? parsed : normalizeInlineResults(parsed);
   if (typeof node === "string") {
     if (!excluded && isAssetUrl(node)) out.push({ url: node.trim(), path, rank: keyRank(key), typed: false });
     return;
@@ -147,7 +168,7 @@ export function findResultUrlByGenericRule(
   echoUrls: ReadonlySet<string> = new Set(),
 ): { urls: string[]; path: string } | null {
   const found: Candidate[] = [];
-  scanCandidates(response, "", "", 0, found, false);
+  scanCandidates(normalizeInlineResults(response), "", "", 0, found, false);
   const usable = found
     .filter((candidate) => candidate.rank < RESULT_KEY_RANK.length && admissible(candidate.url, wantedKind, echoUrls))
     .map((candidate, order) => ({ ...candidate, score: typeScore(candidate.url, wantedKind), order }));
@@ -158,7 +179,8 @@ export function findResultUrlByGenericRule(
     const best = usable[0];
     const pattern = listPattern(best.path);
     const urls = Array.from(new Set(usable
-      .filter((candidate) => candidate.score === best.score && candidate.rank === best.rank && listPattern(candidate.path) === pattern)
+      .filter((candidate) => candidate.rank === best.rank && listPattern(candidate.path) === pattern)
+      .sort((a, b) => a.order - b.order)
       .map((candidate) => candidate.url)));
     return { urls, path: pattern };
   }
@@ -195,15 +217,16 @@ export function readTaskResponse(input: {
   /** 有就在走了通用规则时记一条日志（哪家、哪个模型、哪条路径），排查与补合同用。 */
   trace?: { vendor?: string; model?: string };
 }): TaskResponseReading {
+  const response = normalizeInlineResults(input.response);
   const echoUrls = input.echoUrls ?? new Set<string>();
   // 合同读到的地址过同一道筛（V-1213 复验）：回显的参考地址不要、和期望类型对不上的不要（音频装视频容器除外）。
   // 下载那一步只核「字节是不是它自称的那种媒体」，不知道这笔任务要什么——类型在这里就得核。
   const contractUrls = Array.from(new Set(
-    CONTRACT_ASSET_KEYS.flatMap((key) => valuesFromMapping(input.response, input.responseMapping, key)).flatMap(collectAssetUrls),
+    CONTRACT_ASSET_KEYS.flatMap((key) => valuesFromMapping(response, input.responseMapping, key)).flatMap(collectAssetUrls),
   )).filter((url) => admissible(url, input.wantedKind, echoUrls));
   if (contractUrls.length > 0) {
     const resolved = resolveTaskStatus(input.response, input.responseMapping, input.statusMapping, contractUrls);
-    return { ...resolved, assetUrls: contractUrls, rule: "contract" };
+    return { ...resolved, assetUrls: resolved.status === "succeeded" ? contractUrls : [], rule: "contract" };
   }
   const generic = findResultUrlByGenericRule(input.response, input.wantedKind, echoUrls);
   const assetUrls = generic ? generic.urls : [];

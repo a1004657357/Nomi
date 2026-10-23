@@ -31,6 +31,7 @@ import { matchNomiErrorCode, tagNomiError } from "../shared/nomiErrorCodes";
 import { VendorRequestError } from "../vendor/vendorHttp";
 import { noteRelayQueryOutcome } from "../catalog/relayNativeWireUpgrade";
 import { expectedMediaKind, readTaskResponse } from "./taskResultReading";
+import { taskImageSizeSnapshots } from "./taskImageSizeSnapshot";
 
 // ── 未登记状态动词的有界容忍（根因修复，见 docs/plan/2026-08-11-unrecognized-task-status-root-fix.md）──
 //
@@ -176,8 +177,10 @@ function rebuildCachedTaskFromPayload(taskId: string, raw: JsonRecord): CachedTa
   const mapping = stagedCandidate?.mapping || findTaskMapping(vendorKey, taskKind, modelKey, modeId || undefined);
   if (!mapping?.query) return null; // 同步模型无 query op，没法续查
   const projectId = trim(raw.projectId);
+  const sizeSnapshot = wantedKind === "image" ? taskImageSizeSnapshots.read({ projectId, vendor: vendorKey, modelKey: model.modelKey, taskKind, taskId }) : null;
   return {
     vendor: vendorKey,
+    ...(wantedKind === "image" ? { expectedImageSize: sizeSnapshot ? sizeSnapshot.expectedImageSize : null } : {}),
     request: {
       kind: taskKind,
       prompt: trim(raw.prompt),
@@ -291,6 +294,7 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
           mapping,
           operation,
           operationTimings: executed.timings,
+          expectedImageSize: cached.expectedImageSize,
           request: cached.request,
           taskIdFallback: taskId,
           wantedKind: cached.wantedKind || model.kind,
@@ -384,7 +388,7 @@ async function executeTaskQuery(taskId: string, cached: CachedTask): Promise<{ v
     // vendor 提示必须带上：本地 ComfyUI 的产物 URL 是私网 /view，缺它 hardenedFetch 会按 SSRF 拒下载。
     const vendorHint = readCatalog().vendors.find((item) => item.key === cached.vendor);
     const asset = cached.projectId
-      ? await localizeTaskAsset(cached.projectId, assetUrl, type, cached.nodeId, vendorHint)
+      ? await localizeTaskAsset(cached.projectId, assetUrl, type, cached.nodeId, vendorHint, undefined, cached.expectedImageSize)
       : unlocalizedTaskAsset(type, assetUrl);
     taskCache.delete(taskId);
     const lateResult: TaskResult = { id: taskId, kind: cached.request.kind, status: "succeeded", assets: [asset], raw: cached.raw };

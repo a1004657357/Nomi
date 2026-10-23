@@ -49,7 +49,7 @@ function candidate(): PlanCandidate {
   };
 }
 
-function setup() {
+function setup(buildRequest: GenerationProvider["buildRequest"] = (input) => input) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nomi-generation-submit-"));
   roots.push(root);
   const repository = createProductionRunRepository({
@@ -84,7 +84,7 @@ function setup() {
     providers: [{
       providerId: "fixture-provider",
       capabilities: { submitIdempotency: true, query: true, reconcile: true, cancel: true },
-      buildRequest: (input) => input,
+      buildRequest,
       submit: async () => ({ providerTaskId: "unused" }),
     }],
     now: "2026-08-23T00:00:00.000Z",
@@ -374,6 +374,26 @@ describe("Run-owned semantic generation submission", () => {
     });
     const jobId = repository.read("project-1", "op-1")!.jobs[0]!.jobId;
     expect(JSON.parse(fs.readFileSync(path.join(root, ".nomi", "runs", "op-1", "jobs", jobId, "runtime-envelope.json"), "utf8"))).toMatchObject({ state: "materialized" });
+  });
+
+  it("seals approved wire pixels and forwards them after restart without changing ready status or resubmitting", async () => {
+    const buildRequest: GenerationProvider["buildRequest"] = () => ({ size: "1024x1024", prompt: "a boat" });
+    const { root, repository } = setup(buildRequest);
+    const submit = vi.fn(async () => ({ providerTaskId: "sized-task" }));
+    const materializeOutput = vi.fn(async () => ({ artifactId: "original", kind: "image" as const, contentHash: "f".repeat(64), projectRelativePath: "original.png", width: 1254, height: 1254 }));
+    const deps = {
+      repository, beforeDispatch: () => undefined, projectRoot: root, immutableProjectUuid: "project-uuid-1", projectGeneration: 1, intentMacKey: "test-intent-key", materializeOutput, now: () => "2026-08-23T00:04:00.000Z",
+      provider: { providerId: "fixture-provider", capabilities: { submitIdempotency: false, query: true, reconcile: false, cancel: false, materialize: true }, buildRequest, submit,
+        query: async () => ({ status: "completed" }), materialize: async () => ({ outputs: [{ kind: "image" as const, url: "https://cdn.example/original.png" }] }) },
+    };
+    const runner = createProductionGenerationSubmission(deps);
+    await runner.start({ projectId: "project-1", operationId: "op-1" });
+    await runner.poll({ projectId: "project-1", operationId: "op-1" });
+    const restarted = createProductionGenerationSubmission({ ...deps, provider: { ...deps.provider, buildRequest: () => ({ size: "2048x2048" }) } });
+    await expect(restarted.materialize({ projectId: "project-1", operationId: "op-1" })).resolves.toMatchObject({ nextAction: "completed" });
+    expect(materializeOutput).toHaveBeenCalledWith(expect.objectContaining({ expectedImageSize: "1024x1024" }));
+    expect(repository.read("project-1", "op-1")?.jobs[0].status).toBe("ready");
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a provider without materialization support usable but does not invent a local Artifact", async () => {

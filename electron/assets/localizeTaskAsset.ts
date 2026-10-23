@@ -45,6 +45,7 @@ export async function localizeTaskAsset(
   type: LocalizedTaskAssetType,
   nodeId?: string, vendor?: Pick<Vendor, "key" | "baseUrlHint" | "network">,
   certificationEvidence?: import("../providerAdapter/certificationMedia").CertificationMediaEvidence,
+  expectedImageSize?: string | null,
 ) {
   if (nodeId) await broadcastAssetLocalizationStarted({ projectId, nodeId });
   const startedAt = Date.now();
@@ -67,14 +68,19 @@ export async function localizeTaskAsset(
     throw error;
   }
   const durationSeconds = imported.data?.durationSeconds ?? await probeLocalizedDurationSeconds(type, imported.data?.absolutePath);
-  if (type === "image" || type === "video")
-    scheduleTechnicalReview({
+  let imageSizeValidation: import("../review/imageSizeSpecification").ImageSizeValidation | undefined;
+  if (type === "image" || type === "video") {
+    const review = scheduleTechnicalReview({
       projectId,
       nodeId,
       absolutePath: String(imported.data?.absolutePath || ""),
       assetUrl: String(imported.data?.url || assetUrl),
       type,
-    }); // S4-2b:落地技术自检,仅图像/视频（3D 模型不送 VLM）
+      ...(type === "image" && expectedImageSize !== undefined ? { expectedImageSize } : {}),
+    });
+    // Explicit specifications are receipted before return; other checks remain asynchronous.
+    if (type === "image" && expectedImageSize !== undefined) imageSizeValidation = (await review)?.imageSizeValidation;
+  }
   const url = String(imported.data?.url || assetUrl);
   return {
     type,
@@ -86,6 +92,7 @@ export async function localizeTaskAsset(
     assetName: imported.name || null,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
     ...(imported.data?.width && imported.data?.height ? { width: imported.data.width, height: imported.data.height } : {}),
+    ...(imageSizeValidation ? { imageSizeValidation } : {}),
     // 原始 CDN URL 留存：任何 vendor 都能直接使用，不需要再上传或转 base64。
     providerUrl: /^https?:\/\//i.test(assetUrl) ? assetUrl : null,
   };

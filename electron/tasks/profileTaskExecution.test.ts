@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HttpOperation, Mapping, Model, Vendor } from "../catalog/types";
+import { NEWAPI_IMAGE_CREATE_OP, OPENAI_MULTIPART_IMAGE_EDIT_OP } from "../catalog/newapiTransport";
 import {
   attachProfileOperationTimingsToRaw,
   buildProfileTaskResult,
@@ -58,6 +59,32 @@ afterEach(() => {
 });
 
 describe("executeProfileOperation AGNES preflight", () => {
+  it("snapshots the actual multipart edit size with one upload", async () => {
+    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response(JSON.stringify({ data: [{ url: "https://cdn.example/original.png" }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const executed = await executeProfileOperation({
+      vendor: { ...vendor, key: "fixture-images" }, model: { ...model, kind: "image", vendorKey: "fixture-images" }, apiKey: "offline-test-key",
+      request: { kind: "image_edit", prompt: "edit a boat", extras: { aspect_ratio: "1:1", resolution: "1K", referenceImages: ["data:image/png;base64,b3JpZ2luYWw="] } },
+      operation: OPENAI_MULTIPART_IMAGE_EDIT_OP,
+    });
+    const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("size")).toBe("1024x1024");
+    expect(form.getAll("image[]")).toHaveLength(1);
+    expect(executed.expectedImageSize).toBe("1024x1024");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("snapshots compiled outgoing pixels rather than the 1K UI label", async () => {
+    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response(JSON.stringify({ data: [{ url: "https://cdn.example/original.png" }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const executed = await executeProfileOperation({
+      vendor: { ...vendor, key: "fixture-images" }, model: { ...model, kind: "image", vendorKey: "fixture-images" }, apiKey: "offline-test-key",
+      request: { kind: "text_to_image", prompt: "a boat", extras: { aspect_ratio: "1:1", resolution: "1K" } },
+      operation: NEWAPI_IMAGE_CREATE_OP,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ size: "1024x1024" });
+    expect(executed.expectedImageSize).toBe("1024x1024");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it("stores phase timings beside provider raw data without replacing provider fields", () => {
     const raw = attachProfileOperationTimingsToRaw(
       { video_id: "video-1", status: "queued" },

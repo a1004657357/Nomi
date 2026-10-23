@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { requestedImageSizeFromBody } from "../review/imageSizeSpecification";
 import { findGenerationExecutionJob, readGenerationExecution } from "./productionGenerationHistory";
 import { classifyUpstreamTaskStatus } from "../shared/taskStatus";
 import path from "node:path";
@@ -126,6 +127,7 @@ export type ProductionGenerationSubmissionDependencies = {
     contract: ExecutionContractV1;
     providerTaskId: string;
     output: GenerationProviderOutput;
+    expectedImageSize?: string;
   }) => Promise<Pick<ProductionArtifact, "artifactId" | "kind" | "contentHash" | "projectRelativePath" | "thumbnailRelativePath" | "width" | "height">>;
 };
 
@@ -410,6 +412,7 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
       providerIdempotencyKey: binding.providerIdempotencyKey,
       requestFingerprint: binding.requestFingerprint,
       request: resolved,
+      expectedImageSize: requestedImageSizeFromBody(providerPreparation.providerRequest),
     });
     return {
       run: current,
@@ -598,7 +601,7 @@ export function createProductionGenerationSubmission(deps: ProductionGenerationS
     }
     if (extracted.outputs.length !== 1) throw new GenerationMaterializationError(extracted.outputs.length === 0 ? "Provider did not expose a materializable output" : "Single-shot generation returned more than one output");
     if (!deps.materializeOutput) throw new GenerationMaterializationUnsupportedError();
-    const receipt = await deps.materializeOutput({ projectId: input.projectId, operationId: run.runId, run, job, contract, providerTaskId: job.providerTaskId, output: extracted.outputs[0] });
+    const receipt = await deps.materializeOutput({ projectId: input.projectId, operationId: run.runId, run, job, contract, providerTaskId: job.providerTaskId, output: extracted.outputs[0], expectedImageSize: currentEnvelope.expectedImageSize });
     const artifactId = typeof receipt.artifactId === "string" ? receipt.artifactId.trim() : "";
     const contentHash = typeof receipt.contentHash === "string" ? receipt.contentHash.trim() : "";
     const projectRelativePath = typeof receipt.projectRelativePath === "string" ? receipt.projectRelativePath.trim() : "";
