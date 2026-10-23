@@ -18,8 +18,8 @@ const evidenceDir = process.env.EVIDENCE_DIR || path.join(repoRoot, 'tests/ux/sh
 fs.mkdirSync(evidenceDir, { recursive: true })
 
 const LOCALES = [
-  { locale: 'zh-CN', panel: /^模型$/, vendor: /api-apimart-ai/, edit: /^修改$/, addOther: /添加其他/, fetch: '获取可用模型', save: '保存', test: '测试连接', expect: /服务商地址发生了跳转.*为保护你的密钥已停止请求/ },
-  { locale: 'en', panel: /^Models$/, vendor: /api-apimart-ai/, edit: /^Edit$/, addOther: /Add More/i, fetch: 'Get available models', save: 'Save', test: 'Test connection', expect: /The provider address redirected.*stopped to protect your key/ },
+  { locale: 'zh-CN', panel: /^模型$/, vendor: /api-apimart-ai/, edit: /^修改$/, addOther: /^添加模型$/, fetch: '获取可用模型', save: '保存', test: '测试连接', expect: /服务商地址发生了跳转.*为保护你的密钥已停止请求/ },
+  { locale: 'en', panel: /^Models$/, vendor: /api-apimart-ai/, edit: /^Edit$/, addOther: /^Add Models$/, fetch: 'Get available models', save: 'Save', test: 'Test connection', expect: /The provider address redirected.*stopped to protect your key/ },
 ]
 
 const before = realProfileFingerprint()

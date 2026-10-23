@@ -84,7 +84,9 @@ export const zhOnboardingProviders = {
   },
   workspace: {
     connectionSubtitle: '管理连接、模型和调用方式。',
-    addOtherModels: '添加其他',
+    addOtherModels: '添加模型',
+    editConnection: '编辑 URL / API Key',
+    replaceApiKey: '更换 API Key',
     handoff: {
       saved: '已保存 {{count}} 个模型',
       summary: '{{ready}} 个可直接使用 · {{pending}} 个还需设置',
@@ -1343,7 +1345,9 @@ export const enOnboardingProviders = {
   },
   workspace: {
     connectionSubtitle: 'Manage the connection, models, and call behavior.',
-    addOtherModels: 'Add More',
+    addOtherModels: 'Add Models',
+    editConnection: 'Edit URL / API Key',
+    replaceApiKey: 'Replace API Key',
     handoff: {
       saved: '{{count}} models saved',
       summary: '{{ready}} ready to use · {{pending}} still need setup',

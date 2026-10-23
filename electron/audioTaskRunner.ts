@@ -185,7 +185,7 @@ async function runTranscribe(input: AudioTaskInput): Promise<TaskResult> {
     filename: "audio",
   };
   const built = buildProfileHttpRequest({ vendor, model, apiKey, request, operation: op });
-  const context = templateContext(request, model, apiKey, {}, op.paramMap);
+  const context = templateContext(request, model, apiKey, {}, op);
   const executed = await executeMultipartOperation({
     multipart,
     context,

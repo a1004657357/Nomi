@@ -4,12 +4,35 @@
 import { buildTemplateContext, buildHttpRequest, type AuthType, type JsonRecord } from "../ai/requestPipeline";
 import { extractVendorExtraHeaders } from "./catalogStore";
 import { taskTemplateParams } from "./taskParams";
-import { applyParamMap, type ParamMap } from "./paramTranslate";
+import { applyParamMap } from "./paramTranslate";
 import { isComfyuiVendor, type HttpOperation, type Model, type Vendor } from "./types";
 import { normalizeComfyuiBaseUrl } from "../comfyui/endpointResolver";
-import { trim } from "../jsonUtils";
+import { isJsonRecord, trim } from "../jsonUtils";
+import { resolveArchetypeForModel, resolveArchetypeVariant } from "../shared/modelArchetypes";
+import { parseCustomCapabilityContract } from "../shared/customCapabilityContract";
 import { validateRequestTransform } from "../tasks/requestTransforms";
 import type { TaskRequest } from "../runtime";
+
+function nativeImageModelParams(params: JsonRecord, model: Model, request: TaskRequest, operation?: HttpOperation): JsonRecord {
+  if (!operation || (trim(operation.method) || "POST").toUpperCase() !== "POST") return params;
+  const pathname = new URL(operation.path, "http://operation.invalid/").pathname;
+  if (!/\/(?:v\d+\/)?images\/(?:generations|edits)\/?$/.test(pathname)) return params;
+  const fields = operation.multipart?.fields || (isJsonRecord(operation.body) ? operation.body : {});
+  if (typeof fields.model !== "string" || !/^\{\{\s*request\.params\.model\s*\}\}$/.test(fields.model)) return params;
+  const candidate = trim(params.model);
+  const wireModelKey = model.modelAlias || model.modelKey;
+  if (!candidate || candidate === wireModelKey) return params;
+  // Inspect only curated identity here: a new custom contract must not hide an old
+  // stored mode alias. Explicit user-authored model fields remain authoritative.
+  const custom = parseCustomCapabilityContract(model.meta);
+  if (custom?.modes.some(mode => mode.fixedParams?.model === candidate)) return params;
+  const archetype = resolveArchetypeForModel({ modelKey: model.modelKey, modelAlias: model.modelAlias, vendorKey: model.vendorKey });
+  if (!archetype?.modes.some(mode => mode.modelEnum === candidate)) return params;
+  const requestedMode = isJsonRecord(request.extras?.archetype) ? request.extras.archetype : {};
+  const variant = resolveArchetypeVariant(archetype, { variantId: requestedMode.variantId, modelId: wireModelKey });
+  if (variant?.modelKey === candidate) return params;
+  return { ...params, model: wireModelKey };
+}
 
 /** 共享 requestPipeline context 构造。铁律翻译层：渲染 body 前按 codec 的 paramMap 把档案中性参数译成该站 wire 字段。 */
 export function templateContext(
@@ -17,15 +40,15 @@ export function templateContext(
   model: Model,
   apiKey: string,
   providerMeta: JsonRecord = {},
-  paramMap?: ParamMap,
+  operation?: HttpOperation,
 ): JsonRecord {
   // 「发哪个 model 串」的单一表达式：`{{model.modelKey}}` 与 `{{request.params.model}}` 的回落值
   // 必须**逐字节同源**，否则把 body 换成参数化 model 就会悄悄改掉裸模型发出去的串（P1：不留第二份）。
   const wireModelKey = model.modelAlias || model.modelKey;
   return buildTemplateContext({
     request: request as unknown as JsonRecord,
-    params: applyParamMap(paramMap, taskTemplateParams(request,
-      { vendorKey: model.vendorKey, modelKey: model.modelKey, wireModelKey })),
+    params: nativeImageModelParams(applyParamMap(operation?.paramMap, taskTemplateParams(request,
+      { vendorKey: model.vendorKey, modelKey: model.modelKey, wireModelKey })), model, request, operation),
     model: model as unknown as JsonRecord,
     modelKey: wireModelKey,
     apiKey,
@@ -60,7 +83,7 @@ export function buildProfileHttpRequest(input: {
     authScheme: input.vendor.authScheme ?? undefined,
     authQueryParam: input.vendor.authQueryParam ?? undefined,
     apiKey: input.apiKey,
-    context: templateContext(input.request, input.model, input.apiKey, input.providerMeta || {}, input.operation.paramMap),
+    context: templateContext(input.request, input.model, input.apiKey, input.providerMeta || {}, input.operation),
     operation: input.operation,
     ...(extraHeaders ? { extraHeaders } : {}),
   });

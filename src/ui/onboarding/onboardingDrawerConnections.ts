@@ -12,7 +12,7 @@ import { COMFYUI_VENDOR_KEY } from './ComfyuiLocalCard'
 import { CODEX_LOCAL_VENDOR_KEY } from './codexLocalProvider'
 import { LOCAL_TEXT_VENDOR_KEY } from './LocalModelCard'
 import { DREAMINA_CONNECTION_KEY } from './onboardingDrawerConstants'
-import { groupOtherVendorModels } from './onboardingDrawerDerivations'
+import { canAddModelsToConnection, groupOtherVendorModels } from './onboardingDrawerDerivations'
 
 const WEB_BRIDGE_VENDOR_KEYS = new Set(['jimeng-web', 'pavo-web'])
 
@@ -107,6 +107,9 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
   ): ModelSettingsHomeConnection => ({
     ...value,
     onOpen: onOpen ?? (() => openPage({ type: 'connection', vendorKey: value.vendorKey })),
+    ...(value.kind === 'api' && canAddModelsToConnection(value.vendorKey, vendorMeta)
+      ? { onAddModels: () => openPage({ type: 'add', existingVendorKey: value.vendorKey }) }
+      : {}),
   })
 
   const homeConnections: ModelSettingsHomeConnection[] = [

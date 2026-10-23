@@ -173,6 +173,8 @@ app.whenReady().then(async () => {
   const project = runtime.createProject({ name: `真实渠道验收-${channel}-${report.runId}`, version: 1, payload: {} });
   report.projectId = project.id;
   const templates = JSON.parse(fs.readFileSync(path.join(repoRoot, 'tests/ux/fixtures/perf-heavy.project.json'), 'utf8')).payload.generationCanvas.nodes;
+  const { buildCatalogTaskRequest } = require(path.join(repoRoot, 'src/workbench/generationCanvas/runner/catalogTaskActions.ts'));
+  const { resolveArchetypeForModel } = require(path.join(repoRoot, 'electron/shared/modelArchetypes/index.ts'));
   const nodes = [];
   const edges = [];
   async function generate(name, modelKey, kind, prompt, parameters) {
@@ -186,14 +188,27 @@ app.whenReady().then(async () => {
     const entry = { name, nodeId, vendorKey, modelKey, kind, startedAt: new Date().toISOString(), state: 'submitting',
       requested: publicParameters, hasReference: Boolean(parameters.referenceImages?.length || parameters.firstFrameUrl),
       httpPosts: 0, actualCost: 'unavailable' };
+    const archetype = channel === 'cliproxy' ? resolveArchetypeForModel({ modelKey, vendorKey }) : null;
+    const submissionNode = archetype ? {
+      ...templates.find(node => node.kind === 'image'), id: nodeId, kind: 'image', prompt,
+      meta: { ...parameters, modelKey, modelVendor: vendorKey, vendor: vendorKey,
+        archetype: { id: archetype.id, modeId: kind === 'image_edit' ? 'i2i' : 't2i' } },
+    } : null;
+    const request = submissionNode ? buildCatalogTaskRequest(submissionNode, {
+      grantId, idempotencyKey: `${report.runId}-${name}`,
+      references: { referenceImages: parameters.referenceImages || [] },
+    }).request : { kind, prompt, extras: { ...parameters, modelKey, nodeId, grantId } };
+    if (request.kind !== kind) throw new Error('Canvas task mode differs from the authorized intent');
+    request.extras = { ...request.extras, projectId: project.id,
+      idempotencyKey: `${report.runId}-${name}`, maxNetworkAttempts: 1 };
+    entry.canvasAssembly = Boolean(submissionNode);
+    entry.projectedModeModel = request.extras.archetypeInput?.model || null;
     report.cases.push(entry);
     report.createIntents += 1;
     status(`submitting-${name}`);
     const start = Date.now();
     return intentContext.run(entry, async () => { try {
-      let result = await runtime.runTask({ vendor: vendorKey, request: { kind, prompt,
-        extras: { ...parameters, modelKey, projectId: project.id, nodeId, grantId,
-          idempotencyKey: `${report.runId}-${name}`, maxNetworkAttempts: 1 } } });
+      let result = await runtime.runTask({ vendor: vendorKey, request });
       entry.taskId = result.id;
       entry.state = result.status;
       persist();
@@ -251,7 +266,8 @@ app.whenReady().then(async () => {
       const node = { ...template, id: nodeId, title: name, kind: asset.type, prompt,
         position: { x: 80 + nodes.length * 420, y: 80 }, references: [], history: [], runs: [], status: 'success',
         result: { id: asset.assetId, assetId: asset.assetId, type: asset.type, url: asset.url, createdAt: Date.now() },
-        meta: { modelKey, modelVendor: vendorKey, vendor: vendorKey, ...publicParameters } };
+        meta: { modelKey, modelVendor: vendorKey, vendor: vendorKey, ...publicParameters,
+          ...(submissionNode ? { archetype: submissionNode.meta.archetype } : {}) } };
       if (nodes.length && entry.hasReference) edges.push({ id: `edge-${nodes[0].id}-${nodeId}`, source: nodes[0].id,
         target: nodeId, mode: asset.type === 'video' ? 'first_frame' : 'style_ref', order: 0 });
       nodes.push(node);

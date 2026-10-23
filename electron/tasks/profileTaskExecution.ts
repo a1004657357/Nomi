@@ -66,7 +66,7 @@ export async function executeProfileOperation(input: {
       input.model,
       input.apiKey,
       input.providerMeta || {},
-      input.operation.paramMap,
+      input.operation,
     );
     return execute(() => executeProcessOperation({
       process,

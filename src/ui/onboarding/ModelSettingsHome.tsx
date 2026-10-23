@@ -6,6 +6,8 @@ import {
   IconCloud,
   IconCode,
   IconPlugConnected,
+  IconPlus,
+  IconSettings,
   IconServerBolt,
 } from '@tabler/icons-react'
 import { useTranslation } from 'react-i18next'
@@ -55,6 +57,7 @@ export type ModelSettingsHomeConnection = {
   /** direct-script 那类家没有可预检的通用接口，别白探（与卡片侧同一套策略）。 */
   skipHealthProbe?: boolean
   onOpen: () => void
+  onAddModels?: () => void
 }
 
 // 品牌标：有 logo 显图，无 logo 显首字母徽标。两者共用同一个「白底描边框」——
@@ -249,6 +252,7 @@ function ConnectedRow({
           : t('onboardingProviders.drawer.home.readyCount', { count: summary.ready })
 
   return (
+    <div>
     <button
       type="button"
       onClick={connection.onOpen}
@@ -277,6 +281,19 @@ function ConnectedRow({
       </span>
       <IconChevronRight size={15} stroke={1.7} className="shrink-0 text-nomi-ink-30 group-hover:text-nomi-accent" aria-hidden="true" />
     </button>
+    {connection.kind === 'api' ? (
+      <div data-model-home-api-actions={connection.vendorKey} className="flex flex-wrap gap-2 px-3 pb-3">
+        <DesignButton variant="subtle" className="min-h-11 sm:min-h-8" onClick={connection.onOpen} leftSection={<IconSettings size={15} stroke={1.7} aria-hidden="true" />}>
+          {t('onboardingProviders.workspace.editConnection')}
+        </DesignButton>
+        {connection.onAddModels ? (
+          <DesignButton variant="light" className="min-h-11 sm:min-h-8" onClick={connection.onAddModels} leftSection={<IconPlus size={15} stroke={1.7} aria-hidden="true" />}>
+            {t('onboardingProviders.workspace.addOtherModels')}
+          </DesignButton>
+        ) : null}
+      </div>
+    ) : null}
+    </div>
   )
 }
 

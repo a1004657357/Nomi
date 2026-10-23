@@ -225,7 +225,7 @@ export function CustomVendorManage({
               disabled={busy}
               className="text-caption text-nomi-ink-60 border border-nomi-line rounded-full px-2.5 py-[3px] hover:border-nomi-ink-20"
             >
-              {t('onboardingProviders.vendorCard.replace')}
+              {t('onboardingProviders.workspace.replaceApiKey')}
             </button>
             <button
               type="button"

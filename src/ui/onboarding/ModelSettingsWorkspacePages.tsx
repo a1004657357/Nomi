@@ -98,7 +98,7 @@ export function ConnectionWorkspacePage({
             size="md"
             leftSection={<IconPlus size={16} stroke={1.8} aria-hidden="true" />}
           >
-            <span className="hidden sm:inline">{t('onboardingProviders.workspace.addOtherModels')}</span>
+            {t('onboardingProviders.workspace.addOtherModels')}
           </DesignButton>
         ) : null}
       />

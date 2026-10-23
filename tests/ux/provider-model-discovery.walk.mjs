@@ -77,7 +77,7 @@ async function home() {
 async function openPicker(vendorKey) {
   await clickOrFail(win.locator(`[data-model-home-connection="${vendorKey}"]`), `连接 ${vendorKey}`)
   await expect(win.locator(`[data-model-settings-vendor="${vendorKey}"]`)).toBeVisible()
-  await clickOrFail(win.getByRole('button', { name: /添加其他|Add More/, exact: true }), '添加其他')
+  await clickOrFail(win.getByRole('button', { name: /^(添加模型|Add Models)$/ }), '添加模型')
   await expect(picker()).toContainText(/选择要添加的模型|Choose models to add/)
 }
 async function backHome() {
