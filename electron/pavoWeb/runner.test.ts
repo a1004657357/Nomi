@@ -2,11 +2,32 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
-import { describe, expect, it } from "vitest";
-import { pavoExtensionCandidates, resolvePavoExtensionDir, pavoWebServerProcessEnv } from "./runner";
+import { describe, expect, it, vi } from "vitest";
+import { pavoExtensionCandidates, resolvePavoExtensionDir, pavoWebServerProcessEnv, pavoWebRunnerStatus } from "./runner";
+import { pavoWebStatus } from "./ipc";
 import { resolveArchetypeForModel } from "../shared/modelArchetypes";
 
 describe("Nomi bundled Pavo runtime", () => {
+  it("keeps explicit acceptance gateway storage separate from a reused login profile", () => {
+    vi.stubEnv("NOMI_PAVO_WEB_DATA_DIR", "/private/tmp/pavo-isolated/data");
+    vi.stubEnv("NOMI_PAVO_WEB_UPLOADS_DIR", "/private/tmp/pavo-isolated/uploads");
+    try {
+      const env=pavoWebServerProcessEnv("http://127.0.0.1:45678");
+      expect(env.NOMI_PAVO_WEB_DATA_DIR).toBe("/private/tmp/pavo-isolated/data");
+      expect(env.NOMI_PAVO_WEB_UPLOADS_DIR).toBe("/private/tmp/pavo-isolated/uploads");
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it.each([pavoWebRunnerStatus, pavoWebStatus])("uses the isolated configured gateway for status without probing the daily port", async (readStatus) => {
+    vi.stubEnv("NOMI_PAVO_WEB_API_BASE_URL", "http://127.0.0.1:45678");
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({
+      name: "Pavo Web Task Bridge", instanceId: "nomi-pavo-web-v1", safetyContractVersion: 1, sseClients: 0,
+    }));
+    try {
+      await readStatus();
+      expect(fetch).toHaveBeenCalled();
+      expect(fetch.mock.calls.every(([url]) => String(url).startsWith("http://127.0.0.1:45678/"))).toBe(true);
+    } finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); }
+  });
   it("does not overwrite host connection settings when installation initialization finishes late", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "integrations/pavo-web-adapter/background.js"), "utf8");
     let installed: () => void = () => {};

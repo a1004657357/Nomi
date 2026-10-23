@@ -24,6 +24,7 @@
   let drawer = null;
   let drawerButton = null;
   let lastOptionDebug = '';
+  let preparedSnapshot = null;
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const textOf = element => String(element?.innerText || element?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -61,16 +62,21 @@
   }
 
   function findSubmitButton() {
-    const elements = candidates('button, [role="button"]')
-      .filter(element => !element.closest('#pavo-adapter-drawer'));
-    const matches = elements.filter(element => {
-      const label = `${textOf(element)} ${element.getAttribute('aria-label') || ''} ${element.title || ''}`;
-      return /^(发送|生成|创作|提交)$|send|generate/i.test(label.trim())
-        && !/登录|上传|下载|发布作品|重新/i.test(label);
-    });
-    const enabled = matches.find(element => !(element.disabled || element.getAttribute('aria-disabled') === 'true'));
-    if (enabled) return enabled;
-    return matches[0] || null;
+    const exact = value => /^(发送|生成|创作|提交|send|generate|create|submit)$/i.test(String(value || '').trim());
+    const buttons = candidates('button, [role="button"]').filter(element => !element.closest('#pavo-adapter-drawer'));
+    let root = findPromptEditor();
+    // The upload row and submit row are siblings inside the composer shell.
+    for (let depth = 0; root && root !== document.body && depth < 8; depth += 1, root = root.parentElement) {
+      if (!root.querySelector('input[type="file"]')) continue;
+      const elements = buttons.filter(element => root.contains(element));
+      // Accessible identity is independent of button content, which may only show a credit price.
+      const named = elements.filter(element => exact(element.getAttribute('aria-label')) || exact(element.title));
+      const matches = named.length ? named : elements.filter(element => exact(textOf(element)));
+      if (!matches.length) continue;
+      const enabled = matches.filter(element => !(element.disabled || element.getAttribute('aria-disabled') === 'true'));
+      return enabled.length === 1 ? enabled[0] : matches.length === 1 ? matches[0] : null;
+    }
+    return null;
   }
 
   function currentMediaType() {
@@ -127,11 +133,6 @@
     return actual;
   }
 
-  function optionElements() {
-    return candidates('[role="option"], [role="menuitem"], [data-radix-collection-item], [class*="option"], [class*="menuItem"], [class*="menu-item"], li, button')
-      .filter(element => !element.closest('#pavo-adapter-drawer'));
-  }
-
   function selectControls() {
     const seen = new Set();
     return candidates('[role="combobox"], select, button[aria-haspopup="listbox"], button[aria-haspopup="menu"]')
@@ -157,9 +158,10 @@
       .filter(element => textOf(element).length <= 60)
       .filter(element => !element.closest('#pavo-adapter-drawer'))
       .map(element => {
-        const root = element.closest('button, [role="button"], [class*="select"], [class*="Select"]') || element;
+        const root = element.closest('.ant-select, button, [role="button"], [role="combobox"]');
         return { root, trigger: root };
-      });
+      })
+      .filter(control => control.root && !control.root.closest('.ant-select-dropdown, [role="listbox"], [role="menu"]'));
   }
 
   async function dismissTransientOverlays() {
@@ -172,24 +174,24 @@
     await sleep(200);
   }
 
-  async function waitForDropdownOption(wanted, timeoutMs) {
+  async function waitForDropdownOption(wanted, timeoutMs, control, labels = [wanted]) {
     const deadline = Date.now() + timeoutMs;
     const isMatch = element => {
       const label = textOf(element);
-      return Boolean(label) && (norm(label) === norm(wanted) || norm(label).includes(norm(wanted)));
+      return Boolean(label) && labels.some(value => norm(label) === norm(value));
     };
     while (Date.now() < deadline) {
-      const popup = candidates('.ant-select-dropdown, [role="listbox"], [role="menu"], .ant-popover, [class*="dropdown"], [class*="popover"], [class*="popup"], [class*="menu"], [class*="option"], [class*="list"]')
-        .find(container => container.querySelector('[role="option"], [role="menuitem"], li, button, span, div'));
+      const owner = control?.root.querySelector('[aria-controls]') || control?.trigger;
+      const ids = String(owner?.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
+      const owned = ids.map(id => document.getElementById(id)).filter(Boolean)
+        .map(element => element.closest('.ant-select-dropdown, [role="listbox"], [role="menu"]') || element)
+        .find(visible);
+      const popup = owned;
       if (popup) {
-        const leaves = Array.from(popup.querySelectorAll('[role="option"], [role="menuitem"], li, button, span, div'))
-          .filter(element => !element.children.length && isMatch(element));
-        if (leaves.length) {
-          return leaves[0].closest('[role="option"], [role="menuitem"], li, button') || leaves[0];
-        }
+        const option = Array.from(popup.querySelectorAll('[role="option"], [role="menuitem"], li, button'))
+          .find(element => visible(element) && isMatch(element));
+        if (option) return option;
       }
-      const any = optionElements().find(isMatch);
-      if (any) return any;
       await sleep(150);
     }
     return null;
@@ -208,37 +210,51 @@
     return `<${tag} class="${className}">`;
   }
 
-  async function chooseOption(target, hints, fallbackIndex) {
+  function controlLabel(control) {
+    if (control?.root.tagName === 'SELECT') return textOf(control.root.selectedOptions[0]);
+    return textOf(control?.root.querySelector('.ant-select-selection-item') || control?.root);
+  }
+
+  function semanticControl(wanted, hints) {
+    const seen = new Set();
+    const controls = [...selectControls(), ...modelTextControls()]
+      .filter(control => !/(?:^|\s)ant-select-(?:loading|disabled)(?:\s|$)/.test(String(control.root.className))
+        && control.root.getAttribute('aria-disabled') !== 'true')
+      .filter(control => {
+        if (seen.has(control.root)) return false;
+        seen.add(control.root);
+        const label = control.root.getAttribute('aria-label') || control.root.getAttribute('title');
+        return hints.some(hint => hint.test(label || controlLabel(control)));
+      });
+    return controls.length === 1 ? controls[0] : null;
+  }
+
+  async function chooseOption(target, hints, labels = [target]) {
     const wanted = String(target || '').trim();
     if (!wanted) return true;
+    const matches = value => labels.some(label => norm(value) === norm(label));
 
-    for (const select of candidates('select')) {
-      const option = Array.from(select.options).find(item => norm(item.textContent).includes(norm(wanted)));
-      if (!option) continue;
-      select.value = option.value;
-      select.dispatchEvent(new Event('input', { bubbles: true }));
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-      return norm(select.selectedOptions[0]?.textContent).includes(norm(wanted));
-    }
-
-    const controls = selectControls();
-    const hinted = controls.find(control => {
-      const label = `${textOf(control.root)} ${control.root.getAttribute('aria-label') || ''}`;
-      return hints.some(hint => hint.test(label));
-    });
-    let control = hinted || controls[fallbackIndex] || null;
-    if (!control) {
-      const textControls = modelTextControls();
-      control = textControls.find(c => norm(textOf(c.root)).includes(norm(wanted)))
-        || textControls.find(c => hints.some(hint => hint.test(textOf(c.root))))
-        || null;
+    const readyDeadline = Date.now() + 8_000;
+    let control = semanticControl(wanted, hints);
+    while (!control && Date.now() < readyDeadline) {
+      await sleep(150);
+      control = semanticControl(wanted, hints);
     }
     if (!control) {
       lastOptionDebug = `目标[${wanted}]未找到匹配控件；页面文本控件[${modelTextControls().slice(0, 6)
         .map(c => `${textOf(c.root).slice(0, 30)}${controlDebugText(c)}`).join('|') || '无'}]`;
       return false;
     }
-    if (norm(textOf(control.root)).includes(norm(wanted))) return true;
+    if (matches(controlLabel(control))) return true;
+    if (control.root.tagName === 'SELECT') {
+      const option = Array.from(control.root.options).find(item => matches(item.textContent));
+      if (!option) return false;
+      control.root.value = option.value;
+      control.root.dispatchEvent(new Event('input', { bubbles: true }));
+      control.root.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(200);
+      return matches(controlLabel(semanticControl(wanted, hints)));
+    }
 
     const openStrategies = [
       () => control.trigger.click(),
@@ -254,9 +270,11 @@
     ];
 
     for (let attempt = 0; attempt < openStrategies.length; attempt += 1) {
-      if (norm(textOf(control.root)).includes(norm(wanted))) return true;
+      control = semanticControl(wanted, hints);
+      if (!control) return false;
+      if (matches(controlLabel(control))) return true;
       openStrategies[attempt]();
-      const option = await waitForDropdownOption(wanted, 2_000);
+      const option = await waitForDropdownOption(wanted, 2_000, control, labels);
       if (!option) {
         lastOptionDebug = `目标[${wanted}]控件[${textOf(control.root).slice(0, 30)}]${controlDebugText(control)}未开出选项；${popupDebugText()}；页面模式字样[${modeTextLeaves().join('|')}]`;
         document.body.click();
@@ -269,9 +287,7 @@
       clickable.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       clickable.click();
       await sleep(400);
-      const applied = norm(textOf(control.root)).includes(norm(wanted))
-        || candidates('[aria-selected="true"], [data-state="checked"]')
-          .some(element => norm(textOf(element)).includes(norm(wanted)));
+      const applied = matches(controlLabel(semanticControl(wanted, hints)));
       if (applied) {
         lastOptionDebug = '';
         return true;
@@ -289,49 +305,84 @@
   }
 
   function outputSettingsContainer() {
-    return candidates('[role="tooltip"], .ant-popover')
-      .find(element => /设置/.test(textOf(element)) && !element.closest('#pavo-adapter-drawer')) || null;
+    const trigger = document.querySelector('.intelli-input-settings, #dle_setting');
+    if (!trigger || !visible(trigger)) return null;
+    const ids = ['aria-describedby', 'aria-controls'].flatMap(attribute =>
+      String(trigger.getAttribute(attribute) || '').split(/\s+/).filter(Boolean));
+    const owned = [...new Set(ids.map(id => document.getElementById(id)).filter(Boolean))]
+      .filter(element => visible(element) && !element.closest('#pavo-adapter-drawer'));
+    return owned.length === 1 ? owned[0] : null;
+  }
+
+  function outputSummaryMatches(wanted) {
+    const trigger = document.querySelector('.intelli-input-settings, #dle_setting');
+    if (!trigger || !visible(trigger)) return false;
+    const normalize = value => norm(value).replace(/秒$/, 's');
+    const values = Array.from(trigger.querySelectorAll('span')).filter(element => !element.children.length).map(textOf);
+    return [...values, ...textOf(trigger).split(/\s+/)].some(value => normalize(value) === normalize(wanted));
   }
 
   async function openOutputSettings() {
     let container = outputSettingsContainer();
     if (container) return container;
-    const trigger = document.querySelector('#dle_setting') || candidates('button, [role="button"]')
-      .find(element => /设置|分辨率|清晰度|比例|时长/i.test(
-        `${textOf(element)} ${element.getAttribute('aria-label') || ''} ${element.title || ''}`,
-      ));
+    const deadline = Date.now() + 8_000;
+    let trigger;
+    while (Date.now() < deadline) {
+      trigger = document.querySelector('.intelli-input-settings, #dle_setting');
+      if (trigger && visible(trigger)) break;
+      await sleep(150);
+    }
     if (!trigger || !visible(trigger)) return null;
     trigger.click();
-    await sleep(250);
-    container = outputSettingsContainer();
+    const popupDeadline = Date.now() + 3_000;
+    while (!container && Date.now() < popupDeadline) {
+      await sleep(150);
+      container = outputSettingsContainer();
+    }
     return container;
   }
 
   async function chooseOutputSetting(target) {
     const wanted = String(target || '').trim();
     if (!wanted) return true;
-    const container = await openOutputSettings();
-    if (!container) return false;
-    if (/^设置$/.test(textOf(container))) {
-      throw new Error('Pavo 登录后才能读取视频比例、清晰度和时长设置');
+    if (outputSummaryMatches(wanted)) return true;
+    if (!await openOutputSettings()) return false;
+    const duration = wanted.match(/^(\d+)\s*(?:s|秒)$/i);
+    // A popup shell can mount before its controls; bind and re-read the live owner on every probe.
+    const deadline = Date.now() + 3_000;
+    let choice = null;
+    while (!choice && Date.now() < deadline) {
+      if (outputSummaryMatches(wanted)) return true;
+      const container = outputSettingsContainer();
+      if (container) {
+        choice = duration && Array.from(container.querySelectorAll('input'))
+          .filter(element => visible(element) && /时长|\bduration\b/i.test(element.getAttribute('aria-label') || ''))
+          .sort((a, b) => Number(a.getAttribute('type') === 'range') - Number(b.getAttribute('type') === 'range'))[0];
+        choice = choice || Array.from(container.querySelectorAll(
+          'button, [role="button"], [role="radio"], [role="option"], label, input',
+        )).filter(element => visible(element) && !element.disabled && element.getAttribute('aria-disabled') !== 'true')
+          .find(element => [textOf(element), element.getAttribute('aria-label'), element.getAttribute('value')]
+            .some(value => norm(value) === norm(wanted)));
+      }
+      if (!choice) await sleep(150);
     }
-    const elements = Array.from(container.querySelectorAll(
-      'button, [role="button"], [role="radio"], [role="option"], label, input',
-    )).filter(visible);
-    const option = elements.find(element => {
-      const label = `${textOf(element)} ${element.getAttribute('aria-label') || ''} ${element.getAttribute('value') || ''}`;
-      return norm(label) === norm(wanted) || norm(label).includes(norm(wanted));
-    });
-    if (!option) return false;
-    const clickable = option.closest('button, [role="button"], [role="radio"], [role="option"], label') || option;
-    clickable.click();
+    if (!choice) return false;
+    if (duration && choice.tagName === 'INPUT') {
+      const value = Number(duration[1]);
+      const min = choice.getAttribute('min');
+      const max = choice.getAttribute('max');
+      if ((min !== null && value < Number(min)) || (max !== null && value > Number(max))) return false;
+      choice.focus();
+      setNativeValue(choice, String(value));
+      choice.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      choice.blur?.();
+    } else {
+      const clickable = choice.closest('button, [role="button"], [role="radio"], [role="option"], label') || choice;
+      clickable.click();
+    }
     for (let check = 0; check < 10; check += 1) {
       await sleep(200);
-      const currentContainer = outputSettingsContainer() || container;
-      const selected = Array.from(currentContainer.querySelectorAll(
-        '[aria-checked="true"], [aria-selected="true"], [data-state="checked"], .active, .selected, [class*="selected"]',
-      ));
-      if (selected.some(element => norm(textOf(element)) === norm(wanted))) return true;
+      if (outputSummaryMatches(wanted)) return true;
     }
     return false;
   }
@@ -350,12 +401,11 @@
     if (location.hostname !== 'app.pavo-ai.cn') throw new Error('当前不是 Pavo 页面');
     await dismissTransientOverlays();
     const result = {};
-    if (preset.model) result.model = await chooseOption(preset.model, [/模型|model|agnes|seedance/i], 0);
+    if (preset.model) result.model = await chooseOption(preset.model, [/模型|model|agnes|seedance/i]);
     if (preset.referenceMode) {
-      result.referenceMode = await chooseOption(preset.referenceMode, [/模式|mode|全能|首帧|尾帧/i], 1);
-      if (result.referenceMode !== true) {
-        result.referenceMode = await chooseOutputSetting(preset.referenceMode);
-      }
+      const modeLabels = ['全能模式', 'Omni Mode'];
+      const labels = modeLabels.some(label => norm(label) === norm(preset.referenceMode)) ? modeLabels : [preset.referenceMode];
+      result.referenceMode = await chooseOption(preset.referenceMode, [/模式|mode|全能|首帧|尾帧/i], labels);
     }
     if (preset.aspectRatio) result.aspectRatio = await chooseOutputSetting(preset.aspectRatio);
     if (preset.resolution) result.resolution = await chooseOutputSetting(preset.resolution);
@@ -376,40 +426,85 @@
     });
   }
 
-  async function ensureFileInput() {
-    let inputs = Array.from(document.querySelectorAll('input[type="file"]'));
-    if (inputs.length) return inputs[0];
-    const trigger = candidates('button, [role="button"]')
-      .find(element => /@资产|上传|添加素材|参考图|首帧|尾帧/i.test(textOf(element)));
-    trigger?.click();
-    await sleep(300);
-    inputs = Array.from(document.querySelectorAll('input[type="file"]'));
-    return inputs[0] || null;
+  function composerRoot() {
+    let root = findPromptEditor();
+    for (let depth = 0; root && depth < 7; depth += 1, root = root.parentElement) {
+      if (root.querySelector('input[type="file"]')) return root;
+    }
+    throw new Error('Pavo 当前输入区的素材入口归属不明确，未提交');
+  }
+
+  function composerReferences() {
+    const root = composerRoot();
+    return {
+      images: Array.from(root.querySelectorAll('.group img[alt]')).filter(img => img.getAttribute('alt')),
+      busy: root.querySelectorAll('.anticon-loading, [aria-busy="true"], [role="progressbar"], .ant-upload-list-item-uploading').length > 0,
+    };
   }
 
   async function uploadReferences(references) {
-    if (!Array.isArray(references) || references.length === 0) return { uploaded: 0 };
-    const input = await ensureFileInput();
-    if (!input) throw new Error('Pavo 页面找不到素材上传入口');
+    const expected = Array.isArray(references) ? references : [];
+    const initial = composerReferences();
+    if (initial.images.length || initial.busy) throw new Error('Pavo 当前控制台残留参考素材，请先创建新对话');
+    if (!expected.length) return { uploaded: 0, referencesVerified: true };
+    if (expected.some(ref => !String(ref.fileType || ref.type || '').startsWith('image/'))) {
+      throw new Error('当前网页附件验收仅支持图片，音频附件需单独验证后开放');
+    }
+    const inputs = Array.from(composerRoot().querySelectorAll('input[type="file"]'));
+    if (inputs.length !== 1) throw new Error('Pavo 当前输入区的素材上传入口不唯一');
+    const input = inputs[0];
     const transfer = new DataTransfer();
-    references.forEach((reference, index) => transfer.items.add(dataUrlFile(reference, index)));
+    const files = expected.map(dataUrlFile);
+    files.forEach(file => transfer.items.add(file));
     input.files = transfer.files;
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    await sleep(1200);
-    return { uploaded: transfer.files.length };
+    const deadline = Date.now() + 90_000;
+    let stableSince = 0;
+    while (Date.now() < deadline) {
+      const current = composerReferences();
+      const verified = !current.busy && current.images.length === files.length
+        && current.images.every((img, index) => img.getAttribute('alt') === files[index].name
+          && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+      if (verified) {
+        stableSince ||= Date.now();
+        if (Date.now() - stableSince >= 1_000) return { uploaded: files.length, referencesVerified: true,
+          referenceNames: files.map(file => file.name) };
+      } else stableSince = 0;
+      await sleep(250);
+    }
+    throw new Error('Pavo 参考素材未完成上传或网页附件身份/顺序不符，未点击生成');
   }
 
   async function doGenerate(message) {
     if (processing) throw new Error('正在处理其他任务');
     processing = true;
+    preparedSnapshot = null;
     try {
       const uploaded = await uploadReferences(message.fileReferences || []);
       const currentText = await setPrompt(message.prompt || '');
-      return { uploaded: uploaded.uploaded, currentText };
+      preparedSnapshot = { prompt: String(message.prompt || ''), referenceNames: uploaded.referenceNames || [] };
+      return { ...uploaded, currentText };
     } finally {
       processing = false;
     }
+  }
+
+  function verifyPreparedTask(message) {
+    const editor = findPromptEditor();
+    const actual = editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement
+      ? editor.value : String(editor?.textContent || '');
+    const expectedNames = message.referenceNames;
+    const current = composerReferences();
+    if (!Array.isArray(expectedNames) || actual !== String(message.prompt || '') || current.busy
+      || current.images.length !== expectedNames.length
+      || current.images.some((img, index) => img.getAttribute('alt') !== expectedNames[index]
+        || !img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0)) {
+      throw new Error('Pavo 提交前提示词或参考素材已改变，未点击生成');
+    }
+    return { promptVerified: true, referencesVerified: true, uploaded: expectedNames.length, referenceNames: expectedNames,
+      preparedSnapshotVerified: Boolean(preparedSnapshot && preparedSnapshot.prompt === message.prompt
+        && JSON.stringify(preparedSnapshot.referenceNames) === JSON.stringify(expectedNames)) };
   }
 
   function collectOutputMediaUrls(mediaTypeValue) {
@@ -435,16 +530,39 @@
     return urls;
   }
 
+  function currentConversationId() {
+    const id = new URL(location.href).searchParams.get('conversationId') || '';
+    return /^[A-Za-z0-9_-]{1,160}$/.test(id) ? id : '';
+  }
+
+  function emptyComposer() {
+    const editor = findPromptEditor();
+    if (!editor) return false;
+    const input = editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement ? editor.value : textOf(editor);
+    const refs = composerReferences();
+    return !String(input || '').trim() && !refs.images.length && !refs.busy;
+  }
+
   async function recoverComposer() {
-    const nav = candidates('button, [role="button"], a, [role="tab"], div').find(element =>
-      /^(新作品|新建|新对话|创建|再来一个|继续创作|返回首页|首页|回到首页|回到工作台)$/.test(textOf(element).trim()));
-    if (nav) {
-      nav.click();
-      await sleep(1_800);
-      if (selectControls().length >= 2 && findSubmitButton()) return { recovered: 'nav' };
+    const exactLabel = element => /^(新作品|新对话|新建对话|New (?:Work|Chat|Conversation|Project))$/i.test(textOf(element));
+    const named = candidates('[class~="group/newwork"]').filter(exactLabel);
+    const targets = named.length ? named : candidates('button, [role="button"], a').filter(exactLabel);
+    if (targets.length !== 1) throw new Error('Pavo 新对话入口不唯一或尚未加载，未刷新或继续提交');
+    const before = currentConversationId();
+    realClick(targets[0]);
+    const deadline = Date.now() + 12_000;
+    let stableSince = 0;
+    while (Date.now() < deadline) {
+      if (!currentConversationId() && new URL(location.href).pathname === '/chat' && emptyComposer()) {
+        stableSince ||= Date.now();
+        if (Date.now() - stableSince >= 750) {
+          preparedSnapshot = null;
+          return { recovered: 'new-conversation', freshConsoleConfirmed: true, previousConversationId: before };
+        }
+      } else stableSince = 0;
+      await sleep(250);
     }
-    location.reload();
-    return { recovered: 'reload' };
+    throw new Error('Pavo 新对话未确认清空，保留原任务并暂停后续提交');
   }
 
   async function submittedCodes() {
@@ -490,8 +608,11 @@
       if (!button) {
         throw new Error(`页面没有可用生成按钮｜按钮候选: ${submitButtonCandidates().join(' ／ ') || '无'}`);
       }
+      if (!preparedSnapshot) throw new Error('Pavo 当前页没有本次任务的已验证输入，未点击生成');
+      verifyPreparedTask(preparedSnapshot);
       // Persist before clicking. Unknown feedback must never authorize a second click.
       await chrome.storage.local.set({ [SUBMITTED_KEY]: [...codes, taskCode] });
+      verifyPreparedTask(preparedSnapshot);
       realClick(button);
       await sleep(2_000);
       const current = findSubmitButton();
@@ -522,11 +643,12 @@
     if (/^(failed|failure|error)$/i.test(hit.status)) {
       return { found: true, status: 'failed', message: '绑定的原会话生成失败', taskCode };
     }
-    const complete = /^(completed|success|succeeded)$/i.test(hit.status) && hit.videos.length > 0;
+    const resultUrls = media.normalizeMediaType(mediaTypeValue) === 'image' ? hit.images : hit.videos;
+    const complete = /^(completed|success|succeeded)$/i.test(hit.status) && resultUrls.length > 0;
     return {
       found: complete, status: complete ? 'completed' : 'generating', taskCode,
-      videoUrl: complete ? hit.videos[0] : null,
-      mediaUrls: complete ? hit.videos : [], conversationId: hit.cid,
+      videoUrl: complete ? resultUrls[0] : null,
+      mediaUrls: complete ? resultUrls : [], conversationId: hit.cid,
     };
   }
 
@@ -565,19 +687,64 @@
     return { success: true, uploaded: 1, fileId: result.fileId, filename };
   }
 
-  const composerActions = new Set(['applyPreset', 'doGenerate', 'setPrompt', 'clickGenerate']);
+  const composerActions = new Set(['applyPreset', 'doGenerate', 'setPrompt', 'clickGenerate', 'verifyPreparedTask']);
+  async function readPavoJson(response) {
+    if (!response.ok) throw new Error(`Pavo 会话接口 HTTP ${response.status}`);
+    const data = JSON.parse(await response.text(), (_key, value, context) => {
+      if (typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)) {
+        if (!context?.source || !/^-?\d+$/.test(context.source)) throw new Error('浏览器无法无损读取会话编号，已暂停收片');
+        return context.source;
+      }
+      return value;
+    });
+    if (data?.code !== undefined && !['000000', 0, '0'].includes(data.code)) throw new Error('Pavo 会话接口拒绝请求，保留原任务等待查询');
+    return data;
+  }
   async function fetchConversationVideos(message) {
     const token = localStorage.getItem('token');
     if (!token) throw new Error('页面未登录（localStorage 无 token），无法收片');
     const cid = String(message.conversationId || '').trim();
     if (!cid) throw new Error('缺少 conversationId');
-    const response = await fetch(`https://api.pavo-ai.cn/api/v1/chat/conversation/history?conversation_id=${cid}`, {
+    if (!/^[A-Za-z0-9_-]{1,160}$/.test(cid)) throw new Error('会话编号无效');
+    const response = await fetch(`https://api.pavo-ai.cn/api/v1/chat/conversation/history?conversation_id=${encodeURIComponent(cid)}`, {
       headers: { Authorization: 'Bearer ' + token, 'X-Platform': 'web' },
     });
-    if (!response.ok) throw new Error(`会话历史接口 HTTP ${response.status}`);
-    const text = await response.text();
-    const videos = [...new Set((text.match(/https?:\/\/[^"'\s\\]+\.mp4[^"'\s\\]*/g) || []))];
-    return { videos, count: videos.length };
+    const body = await readPavoJson(response);
+    const turns = body?.data?.turns;
+    if (!Array.isArray(turns)) throw new Error('Pavo 会话历史结构不匹配，禁止猜测结果');
+    const latest = turns.at(-1);
+    const prompts = (latest?.user || []).filter(entry => entry.type === 'Message' && typeof entry.data?.content === 'string').map(entry => entry.data.content);
+    const events = Array.isArray(latest?.assistant) ? latest.assistant : [];
+    const lastStart = events.findLastIndex(entry => entry.type === 'GenerationStart');
+    const generationEvents = events.slice(lastStart + 1);
+    const candidate = generationEvents.filter(entry => ['GenerationSuccess', 'GenerationFailed'].includes(entry.type)).at(-1);
+    const startedId = events[lastStart]?.data?.task_id;
+    const terminal = typeof startedId === 'string' && startedId && candidate?.data?.task_id === startedId ? candidate : null;
+    const running = body.data.is_running === true;
+    const status = running ? 'processing' : terminal?.type === 'GenerationFailed' ? 'failed'
+      : terminal?.type === 'GenerationSuccess' ? 'completed' : 'unknown';
+    const error = terminal?.type === 'GenerationFailed' ? String(terminal.data?.error || '') : '';
+    const failureCategory = /login|unauthori[sz]ed|authentication|登录/i.test(error) ? 'auth'
+      : /quota|credits?|balance|rate.?limit|积分|额度|余额|限流/i.test(error) ? 'quota'
+      : body.data.pending_review === true || /moderation|policy|safety|审核|违规/i.test(error) ? 'moderation'
+      : /cancel|取消/i.test(error) ? 'cancelled'
+      : status === 'failed' && generationEvents.slice(generationEvents.indexOf(terminal) + 1)
+        .some(entry => entry.type === 'GenerationRetryAvailable') ? 'generation' : 'unknown';
+    // Only the current turn's explicit success payload owns outputs. Earlier turns may contain unrelated media.
+    const results = status === 'completed' && Array.isArray(terminal?.data?.data?.results) ? terminal.data.data.results : [];
+    const urls = results.filter(result => result?.success !== false && typeof result?.url === 'string' && /^https:\/\//.test(result.url)).map(result => result.url);
+    const videos = [...new Set(urls.filter(url => /\.mp4(?:[?#]|$)/i.test(url)))];
+    const images = [...new Set(urls.filter(url => /\.(png|jpe?g|webp)(?:[?#]|$)/i.test(url)))];
+    return { conversationId: cid, prompt: prompts.length === 1 ? prompts[0] : '', status,
+      failureCategory, videos, images, count: videos.length, turnCount: turns.length };
+  }
+
+  async function getCurrentConversation() {
+    const conversationId = currentConversationId();
+    if (!conversationId) return { conversationId: '', prompt: '', status: 'unknown' };
+    const result = await fetchConversationVideos({conversationId});
+    if (currentConversationId() !== conversationId) throw new Error('查询期间当前会话已改变，暂停绑定');
+    return result;
   }
 
   async function harvestAllConversations() {
@@ -588,8 +755,7 @@
     const seen = new Set();
     for (let page = 1; page <= 100; page += 1) {
       const listRes = await fetch(`https://api.pavo-ai.cn/api/v1/chat/projects?page_size=100&page=${page}`, { headers: auth });
-      if (!listRes.ok) throw new Error(`会话列表接口 HTTP ${listRes.status}`);
-      const data = await listRes.json();
+      const data = await readPavoJson(listRes);
       if (!Array.isArray(data?.data?.list)) throw new Error('会话列表结构不匹配，禁止猜测收片');
       const items = data.data.list;
       let added = 0;
@@ -600,12 +766,15 @@
         seen.add(cid);
         added += 1;
         const visuals = Array.isArray(d.visuals) ? d.visuals : [];
-        const videos = [...new Set(visuals.map(visual => visual?.url)
-          .filter(url => typeof url === 'string' && /^https:\/\//.test(url) && /\.mp4(?:[?#]|$)/i.test(url)))];
+        // 会话收割按媒体面分桶：视频=mp4、图片=png/jpg/webp。图片任务（mediaType=image）的结果
+        // 只落在 images 桶，视频任务仍只看 videos 桶——两个桶互不串门，绑定判据（prompt 唯一）不变。
+        const mediaUrlOf = visual => (typeof visual?.url === 'string' && /^https:\/\//.test(visual.url) ? visual.url : '');
+        const videos = [...new Set(visuals.map(mediaUrlOf).filter(url => /\.mp4(?:[?#]|$)/i.test(url)))];
+        const images = [...new Set(visuals.map(mediaUrlOf).filter(url => /\.(png|jpe?g|webp)(?:[?#]|$)/i.test(url)))];
         const prompts = [...new Set(visuals.map(visual => String(visual?.prompt || '')).filter(Boolean))];
         out.push({
           cid, createdAt: String(item?.created_at || ''), status: String(d.status || ''),
-          videos, prompt: prompts.length === 1 ? prompts[0] : '',
+          videos, images, prompt: prompts.length === 1 ? prompts[0] : '',
         });
       }
       if (!items.length || (items.length < 100 && data.data.has_more !== true)) {
@@ -625,11 +794,11 @@
     if (message.action === 'clickGenerate' && !findSubmitButton()) {
       return false;
     }
-    if (composerActions.has(message.action) && !findPromptEditor()) {
+    if (composerActions.has(message.action) && (window.top !== window || !findPromptEditor())) {
       return false;
     }
     // 收片动作只由顶层框架应答：iframe 里也有同源 localStorage，会重复拉取 60 个会话并抢答
-    if ((message.action === 'harvestAllConversations' || message.action === 'fetchConversationVideos')
+    if ((message.action === 'harvestAllConversations' || message.action === 'fetchConversationVideos' || message.action === 'getCurrentConversation')
       && window.top !== window) {
       return false;
     }
@@ -647,7 +816,11 @@
       return respond(Promise.resolve().then(() => ({ controls: dumpSelectControls() })));
     }
     if (message.action === 'doGenerate') return respond(doGenerate(message));
-    if (message.action === 'recoverComposer') return respond(recoverComposer());
+    if (message.action === 'verifyPreparedTask') return respond(Promise.resolve().then(() => verifyPreparedTask(message)));
+    if (message.action === 'recoverComposer') {
+      if (window.top !== window) return false;
+      return respond(recoverComposer());
+    }
     if (message.action === 'setPrompt') return respond(setPrompt(message.prompt || '').then(currentText => ({ currentText })));
     if (message.action === 'snapshotMediaOutputs') {
       sendResponse({ success: true, urls: collectOutputMediaUrls(message.mediaType) });
@@ -664,6 +837,7 @@
       ));
     }
     if (message.action === 'fetchConversationVideos') return respond(fetchConversationVideos(message));
+    if (message.action === 'getCurrentConversation') return respond(getCurrentConversation());
     if (message.action === 'harvestAllConversations') return respond(harvestAllConversations());
     if (message.action === 'captureAndUploadMedia' || message.action === 'captureAndUpload') {
       return respond(uploadMedia({ ...message, mediaType: message.mediaType || 'video' }));

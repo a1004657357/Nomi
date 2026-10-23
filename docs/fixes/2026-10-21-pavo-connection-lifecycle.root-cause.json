@@ -1,0 +1,71 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-21-pavo-connection-lifecycle",
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-20",
+  "problem_type": "扩展任务面板的连接配置与异步请求没有共同生命周期",
+  "symptom": "宿主更新凭据后面板继续使用旧 SSE；错误网关实例被视为在线；慢网页检查阻塞任务拉取。",
+  "direct_cause": "连接配置只在启动时读取，probeBridge 只检查 instanceId 非空，错误分支不关闭 SSE，轮询依次等待网页和网关。",
+  "class_root": "配置更新、状态探针、任务恢复、手动提交各自读取全局连接状态，缺少版本隔离、更新互斥和实例边界。",
+  "affected_population": ["Nomi 内置 Pavo 扩展的后台面板和网页抽屉面板"],
+  "scope_paths": ["integrations/pavo-web-adapter/panel.js"],
+  "entry_points": ["面板启动和定时探针", "storage.onChanged 配置更新", "SSE 重连与任务恢复", "手动提交"],
+  "external_sources": [],
+  "internal_only_reason": "本仓 Electron 宿主负责注入本地凭据，内置桥与独立 MCP 使用不同实例标识；这是仓库内部连接和任务归属不变量，不依赖官网模型参数。",
+  "invariants": [
+    "本地请求仅发往配置的 loopback HTTP 根地址，且桥实例和安全合同必须与 Nomi 内置桥一致。",
+    "配置读取串行化，仅最新 revision 可应用；旧 epoch 的恢复响应和 SSE 事件不得改变当前任务状态。",
+    "活动面板不能跨网关地址热迁移；同地址凭据轮换等待当前操作结束，读文件期间配置变化取消手动提交。",
+    "网页检查不能阻塞网关轮询；恢复连接不能重发已锁定任务。"
+  ],
+  "doors": [
+    { "kind": "write", "path": "integrations/pavo-web-adapter/panel.js", "symbol": "probeBridge" },
+    { "kind": "write", "path": "integrations/pavo-web-adapter/panel.js", "symbol": "applyConnectionUpdates" }
+  ],
+  "door_reduction": {
+    "before": 2,
+    "after": 2,
+    "why_not": "door-map --roots=integrations/pavo-web-adapter 实测两扇调用门。探测当前连接与应用新配置职责不同，共同使用 epoch、revision 和关闭 SSE 的唯一边界，不另建第二套连接器。"
+  },
+  "generality_proof": "后台面板和抽屉都执行同一 panel.js，启动、手动刷新、定时检查、存储变化均归 probeBridge/applyConnectionUpdates。回归实际执行面板脚本，覆盖错误实例、旧协议、401、旧流事件、迟到任务恢复、并发存储读取与手动读图时配置变化。",
+  "shared_boundaries": [
+    { "path": "integrations/pavo-web-adapter/panel.js", "symbol": "probeBridge", "responsibility": "合并同 epoch 探针，并验证固定实例和安全版本；断线关闭 SSE 和旧重连定时器。" },
+    { "path": "integrations/pavo-web-adapter/panel.js", "symbol": "applyConnectionUpdates", "responsibility": "串行应用最新配置，在执行临界区结束前不切换凭据，并禁止活动面板跨地址迁移。" }
+  ],
+  "same_class_entry_points": [
+    { "path": "integrations/pavo-web-adapter/panel.js", "entry_point": "syncSubmitFieldsFromGateway", "disposition": "enforced", "evidence": "响应合并前校验 epoch 和 pendingConnectionUpdate，迟到旧恢复响应被丢弃。" },
+    { "path": "integrations/pavo-web-adapter/panel.js", "entry_point": "submitManual", "disposition": "enforced", "evidence": "占用执行临界区，读取参考文件后复验 revision、epoch 和在线状态，变化则取消，不自动改投。" },
+    { "path": "integrations/pavo-web-adapter/panel.js", "entry_point": "startEventSource", "disposition": "enforced", "evidence": "事件和错误回调同时校验 source 身份与 epoch，关闭流的迟到事件不拉取任务。" },
+    { "path": "electron/pavoWeb/bridge.ts", "entry_point": "probePavoWebServer", "disposition": "not-affected", "evidence": "Electron 侧原本已严格检查实例和安全版本，没有面板 SSE 生命周期，沿用已有校验而非放宽桥合同。" }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "宿主重新配置、凭据轮换、断线和异步响应乱序都可再次触发。",
+    "same_class_scan": ["rg probeBridge、storage.onChanged、eventSource、apiBaseUrl 于内置扩展和 Electron runner", "node scripts/door-map.mjs probeBridge applyConnectionUpdates --roots=integrations/pavo-web-adapter", "独立审查追加三种交错时序并由 VM 用例验证"]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "integrations/pavo-web-adapter/panel.js",
+    "invariant": "连接变更由单一 revision 循环执行，任务响应与 SSE 事件按 epoch 隔离，不能跨地址自动迁移。",
+    "failure_mode": "鉴权或合同失败即关闭旧流并停止队列；配置变化期间拒绝新的手动提交，保留原任务，不自动重新生成。",
+    "exception_policy": "none",
+    "strategy": "修共享连接生命周期，不增加重试生成、自动换服务商或另一路端口发现。",
+    "artifacts": ["integrations/pavo-web-adapter/panel.js"]
+  },
+  "regression_tests": ["electron/pavoWeb/panelConnection.test.ts"],
+  "class_regression_tests": ["electron/pavoWeb/panelConnection.test.ts"],
+  "invariant_owner_layer": { "layer": "integrations/pavo-web-adapter/panel.js", "tests": ["electron/pavoWeb/panelConnection.test.ts"] },
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": ["integrations/pavo-web-adapter/panel.js"],
+    "rationale": "移除无凭据时扫描 3460 并自动配对的备用路径，避免 Nomi 内置面板误连独立 MCP；内置凭据仍由既有 Electron runner 注入。独立扩展源码未改。"
+  },
+  "dependency_lifecycle": { "decision": "not-applicable", "rationale": "使用现有 Chrome 存储事件、Web Locks 和 SSE，不引入依赖。", "exit_criteria": [] },
+  "migration": "同 URL 的既有配置与任务保持原状；凭据热更新无需重装。跨 URL 变更暂停活动面板，需要恢复原地址或显式从宿主重开，禁止把原任务历史自动搬到其他实例。",
+  "residual_risks": [
+    "VM 网络均为夹具，不证明官网登录、图片模型或真实生成和结果回收已经通过。",
+    "当前 Pavo 独立 MCP 网关在线但扩展未连接，浏览器运行时无可用会话。",
+    "CLIProxy 健康检查超时；未提交 CLIProxy、火山 Plan 或 Pavo 的真实生成。",
+    "全量类型检查、构建和日常版合并不在本修复的通过声明内。"
+  ]
+}

@@ -14,7 +14,10 @@
   const manualStatus = $('manualStatus');
   const TASK_LOCK = 'nomi-pavo-web-task-consumer';
   const PANEL_VERSION = '0.2.1-safety-0927';
+  const BRIDGE_INSTANCE_ID = 'nomi-pavo-web-v1';
+  const SAFETY_CONTRACT_VERSION = 1;
   const ACTIVE_STATUSES = new Set(['configuring', 'submitting', 'generating', 'awaiting_result', 'uploading']);
+  const FAILURE_CATEGORIES = new Set(['generation', 'auth', 'quota', 'moderation', 'cancelled', 'unknown']);
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   let apiBaseUrl = 'http://127.0.0.1:3458';
@@ -24,6 +27,15 @@
   let bridgeOnline = false;
   let consumer = false;
   let executing = false;
+  let polling = false;
+  let connectionEpoch = 0;
+  let configurationRevision = 0;
+  let connectionProbe = null;
+  let connectionUpdate = null;
+  let pendingConnectionUpdate = false;
+  let connectionBlocked = false;
+  let reconnectTimer = null;
+  let pageProbe = null;
   let lastPageLog = '';
   let harvestForce = false;
   let lastGateLog = { text: '', at: 0 };
@@ -39,12 +51,16 @@
     return tasks.filter(task => (task.submittedAt || task.submitClaimedAt)
       && !task.syncedFileCount
       && !task.harvestDone
+      && !task.confirmedFailure
       && (force || (task.harvestAttempts || 0) < 288));
   }
 
   async function syncSubmitFieldsFromGateway() {
+    if (!bridgeOnline || pendingConnectionUpdate) return;
+    const epoch = connectionEpoch;
     try {
       const result = await apiFetch('/api/tasks');
+      if (epoch !== connectionEpoch || pendingConnectionUpdate) return;
       const incoming = Array.isArray(result?.tasks) ? result.tasks : [];
       let merged = 0;
       for (const remote of incoming) {
@@ -57,8 +73,9 @@
           Object.assign(local, remote);
         }
         // Old completed-without-files tasks are not really complete.
-        if (!local.syncedFileCount && (local.status === 'completed'
-          || (local.status === 'failed' && !local.harvestDone))) local.status = 'awaiting_result';
+        if (local.status === 'failed' && local.failureEvidence) local.confirmedFailure = true;
+        if (!local.syncedFileCount && !local.harvestDone && !local.confirmedFailure
+          && (local.status === 'completed' || local.status === 'failed')) local.status = 'awaiting_result';
         merged += 1;
       }
       if (merged) {
@@ -135,8 +152,8 @@
     return tab;
   }
 
-  async function send(message, timeoutMs = 30_000) {
-    const tab = await findPavoTab(true);
+  async function send(message, timeoutMs = 30_000, createIfMissing = true) {
+    const tab = await findPavoTab(createIfMissing);
     if (!tab?.id) throw new Error('Pavo 页面未打开');
     let timer;
     try {
@@ -151,12 +168,18 @@
     }
   }
 
-  async function refreshPageStatus() {
+  function refreshPageStatus() {
+    if (!pageProbe) pageProbe = inspectPageStatus().finally(() => { pageProbe = null; });
+    return pageProbe;
+  }
+
+  async function inspectPageStatus() {
     try {
-      const response = await send({ action: 'getPageInfo' }, 8_000);
-      const ready = response?.success && media.pageInfoReadyForMediaType('video', response.info);
+      const response = await send({ action: 'getPageInfo' }, 8_000, false);
+      const mediaType = media.normalizeMediaType(response?.info?.mediaType);
+      const ready = response?.success && media.pageInfoReadyForMediaType(mediaType, response.info);
       setDot(pageDot, ready ? 'ok' : 'busy');
-      pageStatus.textContent = ready ? 'Pavo 视频工作台已就绪' : 'Pavo 页面已打开，工作台未就绪';
+      pageStatus.textContent = ready ? `Pavo ${media.mediaLabel(mediaType)}工作台已就绪（提交前仍会校验参数）` : 'Pavo 页面已打开，请检查登录和工作台';
       lastPageLog = '';
       return ready;
     } catch (error) {
@@ -180,13 +203,13 @@
       try {
         const response = await send({ action: 'getPageInfo' }, 8_000);
         if (response?.success && media.pageInfoReadyForMediaType(mediaType, response.info)) return response.info;
-        lastError = new Error('Pavo 页面已打开，但视频工作台仍在加载');
+        lastError = new Error(`Pavo 页面已打开，请登录并切换到${media.mediaLabel(mediaType)}工作台`);
       } catch (error) {
         lastError = error;
       }
       await sleep(1_000);
     }
-    throw lastError || new Error('Pavo 视频工作台等待超时');
+    throw lastError || new Error(`Pavo ${media.mediaLabel(mediaType)}工作台等待超时`);
   }
 
   async function applyPresetWithReadback(mediaType, modelConfig) {
@@ -211,8 +234,9 @@
   }
 
   async function apiFetch(path, options = {}) {
-    const response = await fetch(`${apiBaseUrl}${path}`, {
+    const response = await fetch(`${localBridgeUrl(apiBaseUrl)}${path}`, {
       method: options.method || 'GET',
+      ...(!options.method || options.method === 'GET' ? { signal: AbortSignal.timeout(8_000) } : {}),
       headers: {
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
         ...(apiToken ? { 'X-Nomi-Token': apiToken } : {}),
@@ -232,40 +256,97 @@
     return data;
   }
 
-  async function probeBridge() {
-    try {
-      if (!apiToken) {
-        const candidates = [...new Set([apiBaseUrl, 'http://127.0.0.1:3460'])];
-        for (const candidate of candidates) {
-          try {
-            const bootstrapUrl = new URL('/api/bootstrap', candidate);
-            bootstrapUrl.searchParams.set('extensionId', chrome.runtime.id);
-            const paired = await fetch(bootstrapUrl, { cache: 'no-store' });
-            if (!paired.ok) continue;
-            const pairing = await paired.json();
-            const pairedToken = String(pairing.token || '');
-            if (!pairedToken) continue;
-            apiBaseUrl = candidate;
-            apiToken = pairedToken;
-            await chrome.storage.local.set({ apiBaseUrl, apiToken });
-            break;
-          } catch {
-            // Try the next local gateway candidate.
-          }
-        }
+  function localBridgeUrl(value) {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+      || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+      throw new Error('只允许连接本机 Pavo 网关');
+    }
+    return url.origin;
+  }
+
+  function closeEventSource() {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    eventSource?.close();
+    eventSource = null;
+  }
+
+  function disconnectBridge(message) {
+    bridgeOnline = false;
+    closeEventSource();
+    setDot(bridgeDot, '');
+    bridgeStatus.textContent = message;
+    hostMode.textContent = '未连接';
+  }
+
+  function applyConnectionUpdates() {
+    if (!pendingConnectionUpdate || executing) return;
+    if (!connectionUpdate) connectionUpdate = drainConnectionUpdates().catch(() => {
+      pendingConnectionUpdate = false;
+      disconnectBridge('连接配置读取失败，请从 Nomi 重新启动网页桥');
+    }).finally(() => {
+      connectionUpdate = null;
+      if (pendingConnectionUpdate && !executing) void applyConnectionUpdates();
+    });
+    return connectionUpdate;
+  }
+
+  async function drainConnectionUpdates() {
+    while (pendingConnectionUpdate && !executing) {
+      const revision = configurationRevision;
+      const stored = await chrome.storage.local.get(['apiBaseUrl', 'apiToken']);
+      if (revision !== configurationRevision) continue;
+      if (executing) return;
+      const nextBase = String(stored.apiBaseUrl || 'http://127.0.0.1:3458').replace(/\/$/, '');
+      const nextToken = String(stored.apiToken || '');
+      pendingConnectionUpdate = false;
+      if (nextBase === apiBaseUrl && nextToken === apiToken && !connectionBlocked) continue;
+      connectionEpoch += 1;
+      disconnectBridge('正在更新本地连接…');
+      // Never rebind a live panel to another gateway, including intents still in flight.
+      connectionBlocked = nextBase !== apiBaseUrl;
+      if (connectionBlocked) {
+        disconnectBridge('网关地址已改变，任务已暂停；请恢复原地址或从 Nomi 重新启动面板');
+        continue;
       }
+      apiToken = nextToken;
+      if (await probeBridge()) await syncSubmitFieldsFromGateway();
+    }
+  }
+
+  function probeBridge() {
+    if (connectionProbe?.epoch === connectionEpoch) return connectionProbe.promise;
+    const epoch = connectionEpoch;
+    const promise = inspectBridge(epoch).finally(() => {
+      if (connectionProbe?.epoch === epoch) connectionProbe = null;
+    });
+    connectionProbe = { epoch, promise };
+    return promise;
+  }
+
+  async function inspectBridge(epoch) {
+    if (connectionBlocked || pendingConnectionUpdate) return false;
+    try {
+      localBridgeUrl(apiBaseUrl);
+      if (!apiToken) throw new Error('缺少本地连接凭据，请从 Nomi 启动网页桥');
       const info = await apiFetch('/');
-      bridgeOnline = info?.name === 'Pavo Web Task Bridge' && info?.instanceId;
-      setDot(bridgeDot, bridgeOnline ? 'ok' : '');
-      bridgeStatus.textContent = bridgeOnline ? 'Agent Gateway 已连接' : '独立模式';
-      hostMode.textContent = bridgeOnline ? 'Agent' : '独立 Chrome';
-      if (bridgeOnline && consumer) startEventSource();
-      return bridgeOnline;
-    } catch {
-      bridgeOnline = false;
-      setDot(bridgeDot, '');
-      bridgeStatus.textContent = '独立模式';
-      hostMode.textContent = '独立 Chrome';
+      if (epoch !== connectionEpoch) return false;
+      if (info?.name !== 'Pavo Web Task Bridge' || info?.instanceId !== BRIDGE_INSTANCE_ID) {
+        throw new Error('网关实例不匹配，请使用 Nomi 内置网页桥');
+      }
+      if (info.safetyContractVersion !== SAFETY_CONTRACT_VERSION) throw new Error('网关安全协议不兼容，请更新网页桥');
+      bridgeOnline = true;
+      setDot(bridgeDot, 'ok');
+      bridgeStatus.textContent = '本地网关已连接（网页状态单独检查）';
+      hostMode.textContent = 'Nomi';
+      if (consumer) startEventSource();
+      return true;
+    } catch (error) {
+      if (epoch !== connectionEpoch) return false;
+      disconnectBridge(error.status === 401 || error.status === 403
+        ? '本地连接鉴权失效，请从 Nomi 重新启动网页桥'
+        : `本地连接未就绪：${safeError(error)}`);
       return false;
     }
   }
@@ -274,15 +355,25 @@
     if (eventSource || !bridgeOnline) return;
     const query = new URLSearchParams({ clientId });
     if (apiToken) query.set('token', apiToken);
-    eventSource = new EventSource(`${apiBaseUrl}/api/events?${query}`);
-    eventSource.addEventListener('new-tasks', () => void pullTasks());
-    eventSource.addEventListener('task-created', () => void pullTasks());
-    eventSource.addEventListener('task-released', () => void pullTasks());
-    eventSource.onopen = () => log('Agent Gateway 实时通道已连接');
-    eventSource.onerror = () => {
-      eventSource?.close();
-      eventSource = null;
-      setTimeout(() => { if (bridgeOnline && consumer) startEventSource(); }, 5_000);
+    const epoch = connectionEpoch;
+    const source = new EventSource(`${apiBaseUrl}/api/events?${query}`);
+    eventSource = source;
+    const pullCurrent = () => { if (source === eventSource && epoch === connectionEpoch) void pullTasks(); };
+    source.addEventListener('new-tasks', pullCurrent);
+    source.addEventListener('task-created', pullCurrent);
+    source.addEventListener('task-released', pullCurrent);
+    source.onopen = () => {
+      if (source !== eventSource || epoch !== connectionEpoch) return;
+      log('Agent Gateway 实时通道已连接');
+      pullCurrent();
+    };
+    source.onerror = () => {
+      if (source !== eventSource || epoch !== connectionEpoch) return;
+      closeEventSource();
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (epoch === connectionEpoch && bridgeOnline && consumer) void probeBridge();
+      }, 5_000);
     };
   }
 
@@ -308,9 +399,11 @@
   }
 
   async function pullTasks() {
-    if (!bridgeOnline || !consumer) return;
+    if (!bridgeOnline || !consumer || pendingConnectionUpdate) return;
+    const epoch = connectionEpoch;
     try {
       const result = await apiFetch(`/api/tasks/pending?clientId=${encodeURIComponent(clientId)}`);
+      if (epoch !== connectionEpoch || pendingConnectionUpdate) return;
       const incoming = Array.isArray(result?.tasks) ? result.tasks : [];
       const added = [];
       for (const task of incoming) {
@@ -337,17 +430,23 @@
     }
   }
 
-  async function report(task, status, error = null) {
+  async function report(task, status, error = null, failureEvidence = null) {
+    let result;
+    if (failureEvidence && !bridgeOnline) throw new Error('网关未连接，无法保存失败证据');
+    if (bridgeOnline) {
+      result = await apiFetch('/api/tasks/status', {
+        method: 'POST',
+        body: { taskCode: task.taskCode, status, error, updatedAt: new Date().toISOString(),
+          ...(failureEvidence ? { failureEvidence, confirmedFailure: true, harvestDone: true } : {}) },
+      });
+      if (result?.success !== true) throw new Error(result?.error || '任务状态未被网关确认');
+    }
     task.status = status;
     task.error = error;
+    if (failureEvidence) Object.assign(task, { failureEvidence, confirmedFailure: true, harvestDone: true });
     await saveState();
     renderTasks();
-    if (bridgeOnline) {
-      await apiFetch('/api/tasks/status', {
-        method: 'POST',
-        body: { taskCode: task.taskCode, status, error, updatedAt: new Date().toISOString() },
-      });
-    }
+    return result;
   }
 
   async function dataUrlFromResponse(response, contentType) {
@@ -382,6 +481,36 @@
     return hydrated;
   }
 
+  function referenceNamesOf(references) {
+    return references.map((reference, index) => reference.fileName || reference.name || `reference-${index + 1}`);
+  }
+
+  function preparedInputSignature(task) {
+    return JSON.stringify({ prompt: task.prompt || '', mediaType: task.mediaType || 'video',
+      modelConfig: task.modelConfig || {}, references: (task.referenceFiles || []).map((reference, index) => ({
+        fileName: reference.fileName || reference.name || `reference-${index + 1}`,
+        fileType: reference.fileType || reference.type || '', downloadPath: reference.downloadPath || '',
+      })) });
+  }
+
+  async function verifyPreparedTask(task, referenceNames, { allowMissingSnapshot = false } = {}) {
+    const verified = await send({ action: 'verifyPreparedTask', prompt: task.prompt || '', referenceNames }, 120_000);
+    if (verified?.success !== true || verified.promptVerified !== true || verified.referencesVerified !== true
+      || verified.uploaded !== referenceNames.length
+      || JSON.stringify(verified.referenceNames) !== JSON.stringify(referenceNames)
+      || (!allowMissingSnapshot && verified.preparedSnapshotVerified !== true)) {
+      throw new Error(verified?.error || '当前输入的完整提示词、参考素材或内容脚本准备快照未通过最终验证，未点击生成');
+    }
+    return verified;
+  }
+
+  async function recoverFreshComposer() {
+    const recovered = await send({ action: 'recoverComposer' }, 15_000);
+    if (recovered?.success !== true || recovered.freshConsoleConfirmed !== true) {
+      throw new Error(recovered?.error || '未验证全新空控制台，禁止继续提交');
+    }
+  }
+
   async function applyAndFill(task) {
     const mediaType = task.mediaType || 'video';
     for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -412,19 +541,84 @@
         prompt: task.prompt || '',
       }, 120_000);
       if (!setup?.success) throw new Error(setup?.error || 'Pavo 素材或提示词填写失败');
+      if (setup.uploaded !== references.length || setup.referencesVerified !== true) {
+        throw new Error('Pavo 参考素材尚未完成上传验证，未点击生成');
+      }
       if (referenceMode) await applyPresetWithReadback(mediaType, { referenceMode });
-      return setup;
+      const referenceNames = setup.referenceNames || referenceNamesOf(references);
+      await verifyPreparedTask(task, referenceNames);
+      return { ...setup, referenceNames };
     }
   }
 
+  async function releaseTaskComposer(task) {
+    if (task.composerReleasedAt) return;
+    if (!task.pavoConversationId) {
+      if (task.conversationSnapshotComplete !== true || !Array.isArray(task.conversationBaselineIds)) {
+        throw new Error('缺少完整会话基线，无法确认当前提交身份');
+      }
+      const before = new Set(task.conversationBaselineIds);
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        if (pendingConnectionUpdate || !bridgeOnline) throw new Error('连接配置正在更新，暂停释放控制台');
+        const current = await send({ action: 'getCurrentConversation' }, 8_000);
+        const cid = current?.conversationId;
+        if (current?.success === true && typeof cid === 'string' && cid
+          && current.prompt === task.prompt && !before.has(cid)
+          && !tasks.some(other => other !== task && other.pavoConversationId === cid)) {
+          const binding = await apiFetch('/api/tasks/result-binding', {
+            method: 'POST', body: { taskCode: task.taskCode, conversationId: cid },
+          });
+          if (binding?.success !== true) throw new Error(binding?.error || '当前会话绑定未被确认');
+          task.pavoConversationId = cid;
+          task.bindingSource = 'unique_new_full_prompt';
+          await saveState();
+          break;
+        }
+        await sleep(1_000);
+      }
+      if (!task.pavoConversationId) throw new Error('当前新会话及完整提示词尚未确认，禁止释放或重提');
+    }
+    if (pendingConnectionUpdate || !bridgeOnline) throw new Error('连接配置正在更新，暂停释放控制台');
+    await recoverFreshComposer();
+    const released = await apiFetch('/api/tasks/composer-release', {
+      method: 'POST', body: { taskCode: task.taskCode, clientId, submitClaimId: task.submitClaimId,
+        conversationId: task.pavoConversationId, freshConsoleConfirmed: true },
+    });
+    if (released?.success !== true || !released.composerReleasedAt) throw new Error(released?.error || '控制台释放未被网关确认');
+    task.composerReleasedAt = released.composerReleasedAt;
+    delete task.preparedInput;
+    await saveState();
+    log(`${task.taskCode} 已确认会话并释放控制台，后台继续收片`);
+  }
+
   async function executeBridgeTask(task) {
-    const alreadyClaimed = Boolean(task.submitClaimId || task.submitClaimedAt || task.submittedAt);
+    const alreadyClaimed = hasSubmission(task);
     try {
+      if (alreadyClaimed && isTerminal(task)) {
+        await releaseTaskComposer(task);
+        return;
+      }
       if (!alreadyClaimed) {
+        if (task.realSubmit !== false && releasedInflightCount() >= 2) return;
         await report(task, 'configuring');
-        await applyAndFill(task);
+        let reusePrepared = false;
+        if (task.preparedInput) {
+          if (task.preparedInput.signature !== preparedInputSignature(task)) {
+            throw new Error('已准备输入不属于当前任务参数，暂停排队；禁止重复上传或套用其他输入');
+          }
+          const verified = await verifyPreparedTask(task, task.preparedInput.referenceNames, { allowMissingSnapshot: true });
+          reusePrepared = verified.preparedSnapshotVerified === true;
+        }
+        if (!reusePrepared) {
+          await recoverFreshComposer();
+          const setup = await applyAndFill(task);
+          task.preparedInput = { signature: preparedInputSignature(task), referenceNames: setup.referenceNames };
+          await saveState();
+        }
       }
       if (task.realSubmit === false) {
+        delete task.preparedInput;
         await report(task, 'completed');
         log(`${task.taskCode} dry-run 完成，未点击生成`);
         return;
@@ -439,6 +633,7 @@
         const snapshot = await send({ action: 'snapshotMediaOutputs', mediaType: task.mediaType || 'video' });
         if (!snapshot?.success || !Array.isArray(snapshot.urls)) throw new Error('无法建立提交前输出快照');
         task.outputBaselineUrls = snapshot.urls;
+        await verifyPreparedTask(task, task.preparedInput.referenceNames);
         const claim = await apiFetch('/api/tasks/submit-claim', {
           method: 'POST', body: {
             taskCode: task.taskCode, clientId,
@@ -450,6 +645,7 @@
         task.submitClaimId = claim.submitClaimId;
         task.submitClaimedAt = claim.submitClaimedAt;
         await saveState();
+        await verifyPreparedTask(task, task.preparedInput.referenceNames);
         const clicked = await send({ action: 'clickGenerate', taskCode: task.taskCode, submitClaimId: task.submitClaimId });
         if (!clicked?.success) throw new Error(clicked?.error || 'Pavo 生成按钮没有响应');
         const confirmed = await apiFetch('/api/tasks/submit-confirm', {
@@ -459,13 +655,18 @@
         task.submittedAt = confirmed.submittedAt;
       }
       try {
-        task.nextHarvestAt = Date.now() + 30_000;
+        if (!alreadyClaimed || !task.nextHarvestAt) task.nextHarvestAt = Date.now() + 30_000;
         await saveState();
       } catch { /* 状态保存失败不影响发送 */ }
       await report(task, 'awaiting_result');
-      log(`${task.taskCode} 已点击一次，正在等待原任务结果；不会自动重提`);
+      await releaseTaskComposer(task);
+      log(`${task.taskCode} 已点击一次，正在等待原任务结果；不会重复提交本次尝试`);
     } catch (error) {
       const message = safeError(error);
+      if (alreadyClaimed && isTerminal(task)) {
+        gateLog(`${task.taskCode} 终态保留，控制台尚未释放：${message}`);
+        return;
+      }
       if (error.queued && !task.submitClaimId) {
         await report(task, 'pending', '其他任务尚未结束，正在排队；未点击生成');
         return;
@@ -477,6 +678,8 @@
       if (task.submitClaimId || task.submitClaimedAt || task.submittedAt) {
         await report(task, 'awaiting_result', `提交状态已锁定：${message}`);
         log(`${task.taskCode} 提交回执异常，已禁止重提`);
+      } else if (task.preparedInput) {
+        await report(task, 'pending', `已准备输入保留，等待校验恢复；禁止重复上传：${message}`);
       } else {
         await report(task, 'failed', message);
         log(`${task.taskCode} 提交前失败：${message}`);
@@ -506,13 +709,27 @@
       complete = response.complete === true;
     } catch (error) {
       gateLog(`收片查询失败，仅重查，不重新生成：${safeError(error)}`);
-      return;
+      conversations = [];
+      complete = false;
     }
     const claimed = new Set(tasks.map(task => task.pavoConversationId).filter(Boolean));
+    const history = new Map();
+    async function withHistory(conv) {
+      if (!history.has(conv.cid)) {
+        history.set(conv.cid, send({ action: 'fetchConversationVideos', conversationId: conv.cid }, 30_000)
+          .catch(() => null));
+      }
+      const detail = await history.get(conv.cid);
+      if (detail?.success !== true || detail.conversationId !== conv.cid
+        || typeof detail.prompt !== 'string' || !detail.prompt) return null;
+      // List entries only discover ids; the latest verified turn owns all result evidence.
+      return { cid: conv.cid, prompt: detail.prompt, status: detail.status || '',
+        failureCategory: detail.failureCategory,
+        videos: Array.isArray(detail.videos) ? detail.videos : [],
+        images: Array.isArray(detail.images) ? detail.images : [] };
+    }
     for (const task of eligible) {
-      let hit = task.pavoConversationId
-        ? conversations.find(conv => conv.cid === task.pavoConversationId)
-        : null;
+      let hit = null;
       if (!task.pavoConversationId) {
         if (!complete || task.conversationSnapshotComplete !== true
           || !Array.isArray(task.conversationBaselineIds)) {
@@ -520,8 +737,20 @@
           continue;
         }
         const before = new Set(task.conversationBaselineIds);
-        const matches = conversations.filter(conv => conv.cid && !before.has(conv.cid)
-          && !claimed.has(conv.cid) && conv.prompt === task.prompt);
+        const candidates = [];
+        let historyIncomplete = false;
+        for (const conv of conversations) {
+          if (conv.cid && !before.has(conv.cid) && !claimed.has(conv.cid)) {
+            const verified = await withHistory(conv);
+            if (verified) candidates.push(verified);
+            else historyIncomplete = true;
+          }
+        }
+        if (historyIncomplete) {
+          await report(task, 'awaiting_result', '候选会话历史尚未完整确认，继续等待；禁止使用列表猜测结果');
+          continue;
+        }
+        const matches = candidates.filter(conv => conv.prompt === task.prompt);
         if (matches.length !== 1) {
           await report(task, 'awaiting_result', matches.length > 1
             ? '存在多个同提示词会话，需人工确认会话；不会自动收错视频'
@@ -530,10 +759,11 @@
         }
         hit = matches[0];
         try {
-          await apiFetch('/api/tasks/result-binding', {
+          const binding = await apiFetch('/api/tasks/result-binding', {
             method: 'POST',
             body: { taskCode: task.taskCode, conversationId: hit.cid },
           });
+          if (binding?.success !== true) throw new Error(binding?.error || '会话绑定未被确认');
           task.pavoConversationId = hit.cid;
           claimed.add(hit.cid);
           await saveState();
@@ -542,30 +772,46 @@
           continue;
         }
       }
-      if (!hit) continue;
-      if (task.bindingSource !== 'user_confirmed' && hit.prompt && hit.prompt !== task.prompt) {
+      hit = await withHistory({ cid: task.pavoConversationId });
+      if (!hit) {
+        await report(task, 'awaiting_result', '绑定会话历史尚未确认，继续查询；不会收片或判定失败');
+        continue;
+      }
+      if (hit.prompt !== task.prompt) {
         await report(task, 'awaiting_result', '绑定会话的完整提示词发生变化，已暂停收片');
         continue;
       }
-      if (/^(failed|failure|error)$/i.test(hit.status || '')) {
-        task.harvestDone = true;
-        await report(task, 'failed', '原会话生成失败；未自动重发，如需再生成请另行确认');
+      if (/^(failed|error)$/i.test(hit.status || '')) {
+        const failureEvidence = { conversationId: task.pavoConversationId, status: hit.status.toLowerCase(),
+          category: FAILURE_CATEGORIES.has(hit.failureCategory) ? hit.failureCategory : 'unknown' };
+        try {
+          const result = await report(task, 'failed', '原会话已确认失败；仅由网关决定是否创建重试子任务', failureEvidence);
+          if (result?.retryTaskCode) {
+            task.retryTaskCode = result.retryTaskCode;
+            await saveState();
+            await pullTasks();
+          }
+        } catch (error) {
+          gateLog(`${task.taskCode} 失败证据尚未保存，仅重查：${safeError(error)}`);
+        }
         continue;
       }
       // Outputs can appear before the provider has finalized the generation.
-      if (!/^(completed|success|succeeded)$/i.test(hit.status || '') || !hit.videos?.length) continue;
+      // 结果桶按任务媒体面选：image 任务读 images（png/jpg/webp），video 任务读 videos（mp4）。
+      const resultUrls = task.mediaType === 'image' ? hit.images : hit.videos;
+      if (!/^(completed|success|succeeded)$/i.test(hit.status || '') || !resultUrls?.length) continue;
       try {
         await report(task, 'uploading');
         let uploaded = 0;
-        for (let index = 0; index < hit.videos.length; index += 1) {
+        for (let index = 0; index < resultUrls.length; index += 1) {
           const response = await send({
             action: 'captureAndUploadMedia',
             taskCode: task.taskCode, mediaType: task.mediaType || 'video',
             serverUrl: apiBaseUrl, apiToken,
-            quality: `original-${index + 1}`, mediaUrl: hit.videos[index],
+            quality: `original-${index + 1}`, mediaUrl: resultUrls[index],
           }, 120_000);
           if (!response?.success || Number(response.uploaded || 0) < 1) {
-            throw new Error(response?.error || `第 ${index + 1} 个成片未保存`);
+            throw new Error(response?.error || `第 ${index + 1} 个结果未保存`);
           }
           uploaded += Number(response.uploaded);
         }
@@ -581,25 +827,57 @@
     }
   }
 
+  function hasSubmission(task) {
+    return Boolean(task.submitClaimId || task.submitClaimedAt || task.submittedAt);
+  }
+
+  function isTerminal(task) {
+    return Boolean(task.harvestDone || task.confirmedFailure || task.status === 'failed' || task.status === 'completed');
+  }
+
+  function releasedInflightCount() {
+    return tasks.filter(task => hasSubmission(task) && task.composerReleasedAt && !isTerminal(task)).length;
+  }
+
+  function ownsComposer(task) {
+    return !task.composerReleasedAt && (hasSubmission(task)
+      || (!isTerminal(task) && (task.preparedInput || ACTIVE_STATUSES.has(task.status))));
+  }
+
   async function runQueue() {
-    if (!consumer || executing) return;
+    if (!consumer || executing || !bridgeOnline || pendingConnectionUpdate) return;
     executing = true;
     try {
-      await harvestPendingTasks();
-      const active = tasks.find(task => ACTIVE_STATUSES.has(task.status)
-        || ((task.submitClaimedAt || task.submittedAt) && !task.syncedFileCount && !task.harvestDone));
+      const active = tasks.find(task => hasSubmission(task) && ownsComposer(task));
       if (active) {
-        if (active.status === 'configuring' && !active.submitClaimedAt && !active.submitClaimId && !active.submittedAt) {
-          await executeBridgeTask(active);
+        // Legacy claims without their original claim id remain query-only.
+        if (active.submitClaimId || (!active.submitClaimedAt && !active.submittedAt)) await executeBridgeTask(active);
+        if (ownsComposer(active)) {
+          gateLog(`${active.taskCode} 控制台尚未确认释放，后续任务排队；不会重新提交`);
+        }
+      }
+      await harvestPendingTasks();
+      if (pendingConnectionUpdate) return;
+      if (tasks.some(task => hasSubmission(task) && ownsComposer(task))) return;
+      if (releasedInflightCount() >= 2) {
+        await syncSubmitFieldsFromGateway();
+        if (releasedInflightCount() >= 2) {
+          gateLog('已有两条已释放任务等待结果，暂不配置或上传下一任务');
           return;
         }
-        gateLog(`${active.taskCode} 正在等待或收取原任务结果，后续任务排队；不会强制失败或重提`);
-        return;
+        if (tasks.some(task => hasSubmission(task) && ownsComposer(task))) return;
       }
-      const pending = tasks.find(task => task.status === 'pending' || task.status === 'acked');
+      const candidates = tasks.filter(task => !hasSubmission(task)
+        && ['pending', 'acked', 'configuring'].includes(task.status));
+      const prepared = candidates.find(task => task.preparedInput);
+      const due = task => !task.retryAfter || Date.parse(task.retryAfter) <= Date.now();
+      const pending = prepared ? (due(prepared) ? prepared : null) : candidates.find(due);
       if (pending) await executeBridgeTask(pending);
+    } catch (error) {
+      gateLog(`任务编排暂停，仅恢复原任务：${safeError(error)}`);
     } finally {
       executing = false;
+      await applyConnectionUpdates();
     }
   }
 
@@ -613,7 +891,7 @@
   }
 
   async function prepareManual() {
-    if (!consumer || executing || tasks.some(task => ACTIVE_STATUSES.has(task.status))) {
+    if (!consumer || executing || tasks.some(ownsComposer)) {
       throw new Error('工作台正在处理其他任务或由其他面板占用，请等待');
     }
     executing = true;
@@ -621,33 +899,51 @@
       const prompt = $('prompt').value.trim();
       if (!prompt) throw new Error('请先填写提示词');
       const { referenceMode, ...preset } = manualPreset();
+      await recoverFreshComposer();
       await waitForWorkbench('video');
       await applyPresetWithReadback('video', preset);
       const references = await filesAsReferences($('references').files);
       const setup = await send({ action: 'doGenerate', mediaType: 'video', fileReferences: references, prompt }, 120_000);
       if (!setup?.success) throw new Error(setup?.error || 'Pavo 页面填写失败');
+      if (setup.uploaded !== references.length || setup.referencesVerified !== true) {
+        throw new Error('Pavo 参考素材尚未完成上传验证');
+      }
       if (referenceMode) await applyPresetWithReadback('video', { referenceMode });
+      await verifyPreparedTask({ prompt }, setup.referenceNames || referenceNamesOf(references));
       await saveState();
       manualStatus.textContent = `已填写：${references.length} 个参考素材；尚未点击生成。`;
     } finally {
       executing = false;
+      await applyConnectionUpdates();
     }
   }
 
   async function submitManual() {
-    if (!bridgeOnline || !consumer) throw new Error('请先连接本地 Gateway；付费提交必须记录到持久任务队列');
-    const prompt = $('prompt').value.trim();
-    if (!prompt) throw new Error('请先填写提示词');
-    const referenceFiles = await filesAsReferences($('references').files);
-    const result = await apiFetch('/api/tasks/push', {
-      method: 'POST',
-      body: {
-        idempotencyKey: `manual-${crypto.randomUUID()}`, mediaType: 'video',
-        prompt, referenceFiles, modelConfig: manualPreset(), realSubmit: true,
-      },
-    });
-    manualStatus.textContent = `已加入队列：${result.taskCodes[0]}。每个任务只点击一次。`;
-    await pullTasks();
+    if (!bridgeOnline || !consumer || executing || pendingConnectionUpdate) throw new Error('请先连接本地 Gateway 并等待当前操作完成；付费提交必须记录到持久任务队列');
+    const epoch = connectionEpoch;
+    const revision = configurationRevision;
+    executing = true;
+    try {
+      const prompt = $('prompt').value.trim();
+      if (!prompt) throw new Error('请先填写提示词');
+      const referenceFiles = await filesAsReferences($('references').files);
+      if (epoch !== connectionEpoch || revision !== configurationRevision || pendingConnectionUpdate || !bridgeOnline) {
+        throw new Error('连接配置已更改，本次提交已取消；请检查连接后重新确认');
+      }
+      const result = await apiFetch('/api/tasks/push', {
+        method: 'POST',
+        body: {
+          idempotencyKey: `manual-${crypto.randomUUID()}`, mediaType: 'video',
+          prompt, referenceFiles, modelConfig: manualPreset(), realSubmit: true,
+        },
+      });
+      manualStatus.textContent = `已加入原网关队列：${result.taskCodes[0]}。每个任务只点击一次。`;
+      await pullTasks();
+    } finally {
+      executing = false;
+      await applyConnectionUpdates();
+    }
+    void runQueue();
   }
 
   async function bindManualResult() {
@@ -676,8 +972,7 @@
     if (navigator.locks?.request) {
       navigator.locks.request(TASK_LOCK, {}, activate).catch(error => {
         consumer = false;
-        eventSource?.close();
-        eventSource = null;
+        closeEventSource();
         log(`消费者锁失败：${safeError(error)}`);
       });
     } else {
@@ -686,7 +981,7 @@
   }
 
   $('close').addEventListener('click', () => window.parent.postMessage({ type: 'PAVO_DRAWER_CLOSE' }, '*'));
-  $('refresh').addEventListener('click', async () => { await refreshPageStatus(); await probeBridge(); });
+  $('refresh').addEventListener('click', () => { void refreshPageStatus(); void probeBridge(); });
   $('pull').addEventListener('click', () => void pullTasks());
   $('harvestNow').addEventListener('click', () => {
     harvestForce = true;
@@ -711,7 +1006,14 @@
     finally { event.currentTarget.disabled = false; }
   });
 
-  window.addEventListener('beforeunload', () => eventSource?.close());
+  window.addEventListener('beforeunload', closeEventSource);
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || (!changes.apiBaseUrl && !changes.apiToken)) return;
+    configurationRevision += 1;
+    pendingConnectionUpdate = true;
+    void applyConnectionUpdates();
+  });
 
   void (async () => {
     await loadState();
@@ -736,11 +1038,15 @@
         await sleep(2_000);
       }
     })();
-    setInterval(() => void (async () => {
-      await refreshPageStatus();
-      await pullTasks();
-      await runQueue();
-    })(), 8_000);
+    setInterval(() => {
+      void refreshPageStatus();
+      if (polling) return;
+      polling = true;
+      void (async () => {
+        try { await pullTasks(); await runQueue(); }
+        finally { polling = false; }
+      })();
+    }, 8_000);
     setInterval(() => void probeBridge(), 20_000);
   })();
 })();

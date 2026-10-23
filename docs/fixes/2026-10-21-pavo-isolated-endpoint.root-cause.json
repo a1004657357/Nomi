@@ -1,0 +1,44 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-21-pavo-isolated-endpoint",
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-20",
+  "problem_type": "调用方强塞默认地址覆盖环境配置，导致隔离状态与启动指向日常桥",
+  "symptom": "设置 NOMI_PAVO_WEB_API_BASE_URL 后，runner/status 与设置页仍探测 3458，无法安全验收隔离实例。",
+  "direct_cause": "IPC 和 runner 把内置种子地址作为显式参数传入已有 resolver，抢占环境变量优先级。",
+  "class_root": "默认值在调用方重复装配，绕过唯一默认地址解析边界。",
+  "affected_population": ["使用隔离或自定义本机 Pavo 桥地址的 Nomi 实例"],
+  "scope_paths": ["electron/pavoWeb/ipc.ts", "electron/pavoWeb/runner.ts"],
+  "entry_points": ["Pavo 状态 IPC", "Pavo 运行器状态和启动", "Pavo 管理页打开"],
+  "external_sources": [],
+  "internal_only_reason": "本机桥地址优先级由仓库 resolvePavoWebBaseUrl 定义，与外部官网无关。",
+  "invariants": ["无显式输入时由 resolvePavoWebBaseUrl 统一选择环境地址或种子默认值", "显式任务地址保持最高优先级并继续接受回环地址校验"],
+  "doors": [
+    {"kind":"read","path":"electron/pavoWeb/bridge.ts","symbol":"resolvePavoWebBaseUrl"},
+    {"kind":"read","path":"electron/pavoWeb/ipc.ts","symbol":"resolvePavoWebBaseUrl"},
+    {"kind":"read","path":"electron/pavoWeb/runner.ts","symbol":"resolvePavoWebBaseUrl"},
+    {"kind":"read","path":"electron/webBridge/taskDispatch.ts","symbol":"pavoWebStartRunner"},
+    {"kind":"write","path":"electron/pavoWeb/ipc.ts","symbol":"pavoWebRunnerStatus"},
+    {"kind":"write","path":"electron/pavoWeb/ipc.ts","symbol":"pavoWebStartRunner"}
+  ],
+  "door_reduction": {"before":6,"after":6,"why_not":"门表由 node scripts/door-map.mjs pavoWebRunnerStatus pavoWebStartRunner resolvePavoWebBaseUrl --roots=electron/pavoWeb,electron/webBridge 生成。各入口职责不变，只移除调用方重复默认值，让六扇门统一经过现有 resolver。"},
+  "generality_proof": "状态、启动与管理页不再手动装配种子默认值；自定义 taskDispatch 显式地址保持不变，两项行为测试分别覆盖 runner 状态和设置 IPC。",
+  "shared_boundaries": [
+    {"path":"electron/pavoWeb/runner.ts","symbol":"pavoWebRunnerStatus","responsibility":"缺省输入留给共享地址 resolver，不覆盖环境配置"},
+    {"path":"electron/pavoWeb/ipc.ts","symbol":"pavoWebStatus","responsibility":"所有设置页缺省入口沿用 resolver，不直接填写3458"}
+  ],
+  "same_class_entry_points": [
+    {"path":"electron/pavoWeb/runner.ts","entry_point":"pavoWebRunnerStatus/start","disposition":"enforced","evidence":"移除显式种子默认参数，状态真实调用测试验证只探测隔离端口"},
+    {"path":"electron/pavoWeb/ipc.ts","entry_point":"pavoWebStatus/pavoWebStartExtensionRunner/pavoWebOpenAdmin","disposition":"enforced","evidence":"缺省参数透传空值，状态行为测试同时验证两次探测地址"},
+    {"path":"electron/webBridge/taskDispatch.ts","entry_point":"Pavo 显式供应商地址","disposition":"not-affected","evidence":"任务已有明确 vendorBaseUrl，必须保持其优先级，不能强行改投环境地址"}
+  ],
+  "recurrence": {"classification":"recurring","reason":"任意非默认端口、测试或多实例环境都会触发。","same_class_scan":["door-map 覆盖 electron/pavoWeb 与 electron/webBridge","rg PAVO_WEB_VENDOR_SEED.baseUrl 于 IPC/runner/bridge"]},
+  "prevention": {"kind":"centralized-boundary","enforcement_path":"electron/pavoWeb/runner.ts","invariant":"缺省参数只由共享 resolver 决定","failure_mode":"非法非本机地址由已有 resolver 拒绝，不回退日常端口","exception_policy":"none","strategy":"删除调用方重复默认值，不增加新 resolver 或端口扫描。","artifacts":["electron/pavoWeb/runner.ts","electron/pavoWeb/ipc.ts"]},
+  "regression_tests": ["electron/pavoWeb/runner.test.ts"],
+  "class_regression_tests": ["electron/pavoWeb/runner.test.ts"],
+  "invariant_owner_layer": {"layer":"electron/pavoWeb/bridge.ts","tests":["electron/pavoWeb/runner.test.ts","electron/pavoWeb/bridge.test.ts"]},
+  "legacy_paths": {"status":"removed","removed_paths":["electron/pavoWeb/runner.ts","electron/pavoWeb/ipc.ts"],"rationale":"移除上游强塞默认种子地址的装配路径，默认数据仍归既有 resolver。"},
+  "dependency_lifecycle": {"decision":"not-applicable","rationale":"纯内部参数传递，无依赖升级。","exit_criteria":[]},
+  "migration": "未设置环境地址和显式参数的用户继续使用3458；不迁移已有任务或凭据。",
+  "residual_risks": ["隔离真实官网登录与生成仍须独立验收，状态请求成功不能代替媒体闭环。"]
+}

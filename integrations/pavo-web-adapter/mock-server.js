@@ -285,6 +285,96 @@ function taskForIdempotencyKey(value) {
   return Array.from(taskStore.values()).find((task) => task.idempotencyKey === key) || null;
 }
 
+const RETRY_COOLDOWN_MS = 30_000;
+const FAILURE_CATEGORIES = new Set(['generation', 'auth', 'quota', 'moderation', 'cancelled', 'unknown']);
+
+function normalizedOwner(value) {
+  if (value == null) return null;
+  if (typeof value.projectId !== 'string' || !value.projectId.trim()
+    || typeof value.nodeId !== 'string' || !value.nodeId.trim()) {
+    throw new Error('owner must contain nonempty projectId and nodeId');
+  }
+  return { projectId: value.projectId.trim(), nodeId: value.nodeId.trim() };
+}
+
+function isFlashVideo(task) {
+  const model = task.modelConfig ? task.modelConfig.model : 'Agnes Video 2.5 Flash';
+  return taskMediaType(task) === 'video'
+    && String(model || '').replace(/\s+/g, '').toLowerCase() === 'agnesvideo2.5flash';
+}
+
+function normalizedRetryPolicy(task, owner) {
+  const maxAttempts = task.retryPolicy == null ? 1 : task.retryPolicy.maxAttempts;
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 3) {
+    throw new Error('retryPolicy.maxAttempts must be an integer from 1 to 3');
+  }
+  if (maxAttempts > 1 && (!owner || !isFlashVideo(task) || !normalizedIdempotencyKey(task.idempotencyKey))) {
+    throw new Error('Automatic retry requires an explicit owner and the exact Flash video model');
+  }
+  return { maxAttempts };
+}
+
+function attemptFinished(task) {
+  return task.harvestDone === true || task.status === 'completed' || task.status === 'failed';
+}
+
+function retryDue(task) {
+  return !task.retryAfter || Date.now() >= Date.parse(task.retryAfter);
+}
+
+function latestAttempt(task) {
+  if (task.rootTaskCode && task.rootTaskCode !== task.taskCode) return task;
+  return Array.from(taskStore.values()).filter(other => other.rootTaskCode === task.taskCode)
+    .reduce((latest, other) => (other.attemptNumber || 1) > (latest.attemptNumber || 1) ? other : latest, task);
+}
+
+function projectedTask(task) {
+  const latest = latestAttempt(task);
+  return { ...latest, taskCode: task.taskCode, attemptTaskCode: latest.taskCode, idempotencyKey: task.idempotencyKey };
+}
+
+function attemptIdentity(task) {
+  return {
+    owner: task.owner || null,
+    rootTaskCode: task.rootTaskCode || task.taskCode,
+    parentTaskCode: task.parentTaskCode || null,
+    attemptNumber: task.attemptNumber || 1,
+    retryPolicy: task.retryPolicy || { maxAttempts: 1 },
+    retryAfter: task.retryAfter || null,
+  };
+}
+
+function validatedFailure(task, evidence) {
+  if (!task.submitClaimedAt || !task.pavoConversationId || !evidence
+    || evidence.conversationId !== task.pavoConversationId
+    || !['failed', 'error'].includes(evidence.status)
+    || !FAILURE_CATEGORIES.has(evidence.category)) return null;
+  return { conversationId: evidence.conversationId, status: evidence.status, category: evidence.category };
+}
+
+function childFor(task) {
+  return Array.from(taskStore.values()).find(other => other.parentTaskCode === task.taskCode) || null;
+}
+
+function createRetry(task) {
+  const existing = childFor(task);
+  if (existing) return existing;
+  const attemptNumber = (task.attemptNumber || 1) + 1;
+  if (task.failureEvidence?.category !== 'generation' || !task.owner || !isFlashVideo(task)
+    || attemptNumber > (task.retryPolicy?.maxAttempts || 1)) return null;
+  // Persist the failed parent and its new child together; never reopen a historical claim.
+  const rootTaskCode = task.rootTaskCode || task.taskCode;
+  const rootTask = taskStore.get(rootTaskCode);
+  const keyHash = crypto.createHash('sha256').update(rootTask.idempotencyKey).digest('hex');
+  return addTask({
+    idempotencyKey: `pavo-attempt:${keyHash}:${attemptNumber}`,
+    mediaType: task.mediaType, expectedResultCount: task.expectedResultCount,
+    priority: task.priority, tags: task.tags, description: task.description,
+    modelConfig: task.modelConfig, prompt: task.prompt, realSubmit: task.realSubmit,
+    owner: task.owner, retryPolicy: task.retryPolicy, referenceFiles: task.referenceFiles,
+  }, { rootTaskCode, parentTaskCode: task.taskCode, attemptNumber, retryAfter: new Date(Date.now() + RETRY_COOLDOWN_MS).toISOString() });
+}
+
 /**
  * 检查任务是否被占用（未过期）
  * @param {string} taskCode
@@ -326,7 +416,7 @@ function broadcastSSE(event, data, excludeClientId) {
 /**
  * 添加任务到任务池
  */
-function addTask(taskData) {
+function addTask(taskData, lineage = null) {
   const taskCode = generateTaskCode();
   const mediaType = taskMediaType(taskData);
   const expectedResultCount = mediaType === 'image'
@@ -334,6 +424,12 @@ function addTask(taskData) {
     : 1;
   const task = {
     taskCode,
+    owner: normalizedOwner(taskData.owner),
+    rootTaskCode: lineage?.rootTaskCode || taskCode,
+    parentTaskCode: lineage?.parentTaskCode || null,
+    attemptNumber: lineage?.attemptNumber || 1,
+    retryAfter: lineage?.retryAfter || null,
+    retryPolicy: normalizedRetryPolicy(taskData, normalizedOwner(taskData.owner)),
     idempotencyKey: normalizedIdempotencyKey(taskData.idempotencyKey) || null,
     mediaType,
     expectedResultCount,
@@ -347,7 +443,9 @@ function addTask(taskData) {
       aspectRatio: '16:9',
       duration: '5s',
     },
-    referenceFiles: taskData.referenceFiles || [],
+    referenceFiles: (taskData.referenceFiles || []).map((file, index) => file.filePath
+      ? { ...file, downloadPath: `/api/task-references/${encodeURIComponent(taskCode)}/${index}` }
+      : file),
     prompt: taskData.prompt || '',
     realSubmit: taskData.realSubmit === true,
     // 服务端状态
@@ -371,6 +469,7 @@ function getPendingTasks(clientId) {
   for (const [code, task] of taskStore) {
     if (task.status !== 'pending' && task.status !== 'occupied') continue;
     if (task.submitClaimedAt || task.submittedAt) continue;
+    if (!retryDue(task)) continue;
     if (isOccupied(code, clientId)) continue;
     result.push(task);
   }
@@ -672,6 +771,7 @@ const server = http.createServer(async (req, res) => {
       // 返回客户端数据
       const clientTasks = pendingTasks.map(t => ({
         taskCode: t.taskCode,
+        ...attemptIdentity(t),
         mediaType: taskMediaType(t),
         expectedResultCount: t.expectedResultCount || 1,
         createdAt: t.createdAt,
@@ -697,7 +797,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && pathname === '/api/tasks/ack') {
       const body = await parseBody(req);
       const { taskCodes } = body;
-      if (Array.isArray(taskCodes) && taskCodes.some(code => taskStore.get(code)?.submitClaimedAt)) {
+      if (Array.isArray(taskCodes) && taskCodes.some(code => {
+        const task = taskStore.get(code);
+        return task && (task.submitClaimedAt || attemptFinished(task) || !retryDue(task));
+      })) {
         sendJSON(res, { success: false, error: '已领取提交权的任务不能重新确认入队' }, 409);
         return;
       }
@@ -746,6 +849,21 @@ const server = http.createServer(async (req, res) => {
         sendJSON(res, { success: false, error: '任务不存在' }, 404);
         return;
       }
+      const failureEvidence = status === 'failed' ? validatedFailure(task, body.failureEvidence) : null;
+      if (status === 'failed' && task.submitClaimedAt && !failureEvidence) {
+        sendJSON(res, { success: false, error: 'A bound terminal website failure is required; keep querying an unknown attempt' }, 409);
+        return;
+      }
+      if (attemptFinished(task)) {
+        if (status !== task.status || (task.failureEvidence && status === 'failed'
+          && JSON.stringify(task.failureEvidence) !== JSON.stringify(failureEvidence))) {
+          sendJSON(res, { success: false, error: 'Historical terminal attempts cannot be reopened or have their evidence replaced' }, 409);
+          return;
+        }
+        const retry = childFor(task);
+        sendJSON(res, { success: true, taskCode, status, retryTaskCode: retry?.taskCode || null, retryAfter: retry?.retryAfter || null });
+        return;
+      }
       if (task) {
         const forbiddenAfterClaim = new Set(['pending', 'occupied', 'acked', 'configuring', 'submitting']);
         if ((task.submitClaimedAt || task.submittedAt) && forbiddenAfterClaim.has(status)) {
@@ -755,10 +873,6 @@ const server = http.createServer(async (req, res) => {
             taskCode,
             status: task.status,
           }, 409);
-          return;
-        }
-        if (status === 'failed' && task.submitClaimedAt && !task.pavoConversationId) {
-          sendJSON(res, { success: false, error: '提交状态未知，不能强制失败释放队列；请继续查询原会话' }, 409);
           return;
         }
         if (status === 'completed' && task.realSubmit) {
@@ -773,6 +887,7 @@ const server = http.createServer(async (req, res) => {
           task.completedAt = new Date().toISOString();
         }
         if (status === 'failed' && task.submitClaimedAt) task.harvestDone = true;
+        if (failureEvidence) task.failureEvidence = failureEvidence;
         task.status = status;
         task.error = error || null;
         if (completedAt) task.completedAt = completedAt;
@@ -781,7 +896,8 @@ const server = http.createServer(async (req, res) => {
       if (status === 'completed' || status === 'failed') {
         occupiedTasks.delete(taskCode);
       }
-      saveTaskStore();
+      const retry = status === 'failed' && failureEvidence ? createRetry(task) : null;
+      if (!retry) saveTaskStore();
 
       // 广播状态更新给所有 SSE 客户端
       broadcastSSE('task-status', {
@@ -791,7 +907,8 @@ const server = http.createServer(async (req, res) => {
         time: new Date().toISOString(),
       });
 
-      sendJSON(res, { success: true, taskCode, status });
+      if (retry) broadcastSSE('new-tasks', { count: 1, taskCodes: [retry.taskCode], retryAfter: retry.retryAfter });
+      sendJSON(res, { success: true, taskCode, status, retryTaskCode: retry?.taskCode || null, retryAfter: retry?.retryAfter || null });
       return;
     }
 
@@ -813,6 +930,10 @@ const server = http.createServer(async (req, res) => {
         }, 409);
         return;
       }
+      if (attemptFinished(task) || !retryDue(task)) {
+        sendJSON(res, { success: false, error: 'Attempt is terminal or still cooling down', retryAfter: task.retryAfter || null, queued: !attemptFinished(task) }, 409);
+        return;
+      }
       if (task.realSubmit && !task.idempotencyKey) {
         sendJSON(res, {
           success: false,
@@ -821,10 +942,11 @@ const server = http.createServer(async (req, res) => {
         }, 409);
         return;
       }
-      const active = Array.from(taskStore.values()).find(other => other.taskCode !== taskCode
-        && other.submitClaimedAt && !other.harvestDone);
-      if (active) {
-        sendJSON(res, { success: false, error: `任务 ${active.taskCode} 尚未结束，当前任务排队等待`, queued: true }, 409);
+      const inflight = Array.from(taskStore.values()).filter(other => other.taskCode !== taskCode
+        && other.submitClaimedAt && !attemptFinished(other));
+      const active = inflight.find(other => !other.composerReleasedAt);
+      if (active || inflight.length >= 2) {
+        sendJSON(res, { success: false, error: active ? `任务 ${active.taskCode} 尚未释放控制台` : 'At most two attempts may be inflight', queued: true }, 409);
         return;
       }
       if (task.realSubmit && (body.conversationSnapshotComplete !== true || !Array.isArray(body.conversationBaselineIds))) {
@@ -849,6 +971,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && pathname === '/api/tasks/composer-release') {
+      const body = await parseBody(req);
+      const task = taskStore.get(String(body.taskCode || '').trim());
+      if (!task?.submitClaimedAt || !task.submitClaimId || !task.submittedBy || !task.pavoConversationId
+        || body.submitClaimId !== task.submitClaimId || body.clientId !== task.submittedBy
+        || body.conversationId !== task.pavoConversationId || body.freshConsoleConfirmed !== true) {
+        sendJSON(res, { success: false, error: 'Composer release requires the original claim, client, bound conversation and a fresh console' }, 409);
+        return;
+      }
+      if (!task.composerReleasedAt) {
+        task.composerReleasedAt = new Date().toISOString();
+        saveTaskStore();
+      }
+      sendJSON(res, { success: true, taskCode: task.taskCode, composerReleasedAt: task.composerReleasedAt });
+      return;
+    }
+
     if (req.method === 'POST' && pathname === '/api/tasks/result-binding') {
       const body = await parseBody(req);
       const task = taskStore.get(String(body.taskCode || ''));
@@ -865,6 +1004,14 @@ const server = http.createServer(async (req, res) => {
           || !Array.isArray(task.conversationBaselineIds)
           || task.conversationBaselineIds.includes(conversationId)))) {
         sendJSON(res, { success: false, error: '会话已被绑定、属于旧基线或基线缺失，禁止错配' }, 409);
+        return;
+      }
+      if (attemptFinished(task)) {
+        if (task.pavoConversationId !== conversationId) {
+          sendJSON(res, { success: false, error: 'Cannot bind a new conversation to a terminal attempt' }, 409);
+          return;
+        }
+        sendJSON(res, { success: true, conversationId });
         return;
       }
       task.pavoConversationId = conversationId;
@@ -892,6 +1039,10 @@ const server = http.createServer(async (req, res) => {
         sendJSON(res, { success: false, error: '官网提交确认标识不匹配' }, 409);
         return;
       }
+      if (attemptFinished(task)) {
+        sendJSON(res, { success: false, error: 'Cannot confirm or reopen a terminal attempt' }, 409);
+        return;
+      }
       if (!task.submittedAt) task.submittedAt = new Date().toISOString();
       task.status = 'generating';
       task.updatedAt = task.submittedAt;
@@ -910,6 +1061,8 @@ const server = http.createServer(async (req, res) => {
         success: true,
         config: {
           maxConcurrent: 1,
+          maxInflight: 2,
+          retryCooldownMs: RETRY_COOLDOWN_MS,
           taskDelay: 3,
           autoExecute: false,
           apiBaseUrl: `http://localhost:${PORT}`,
@@ -924,18 +1077,37 @@ const server = http.createServer(async (req, res) => {
       const tasks = body.tasks || [body];
       const pushed = [];
 
+      if (!Array.isArray(tasks) || tasks.some(t => !t || typeof t !== 'object' || Array.isArray(t))) {
+        sendJSON(res, { success: false, error: 'tasks must be an array of task objects' }, 400);
+        return;
+      }
+      // Validate the whole batch before storing any root or externalizing references.
+      const batchOwners = new Map();
       for (const t of tasks) {
-        if (
-          t.realSubmit === true
-          && taskMediaType(t) === 'video'
-          && !normalizedIdempotencyKey(t.idempotencyKey)
-        ) {
-          sendJSON(res, {
-            success: false,
-            error: '真实视频任务必须携带幂等标识，已拒绝提交以避免重复扣费',
-          }, 400);
+        let owner;
+        try {
+          owner = normalizedOwner(t.owner);
+          normalizedRetryPolicy(t, owner);
+        } catch (error) {
+          sendJSON(res, { success: false, error: error.message }, 400);
           return;
         }
+        if (t.realSubmit === true && taskMediaType(t) === 'video' && !normalizedIdempotencyKey(t.idempotencyKey)) {
+          sendJSON(res, { success: false, error: '真实视频任务必须携带幂等标识，已拒绝提交以避免重复扣费' }, 400);
+          return;
+        }
+        const key = normalizedIdempotencyKey(t.idempotencyKey);
+        const existing = taskForIdempotencyKey(key);
+        const identity = JSON.stringify(owner);
+        if ((existing && JSON.stringify(existing.owner || null) !== identity)
+          || (key && batchOwners.has(key) && batchOwners.get(key) !== identity)) {
+          sendJSON(res, { success: false, error: 'Idempotency key belongs to a different project/node owner' }, 409);
+          return;
+        }
+        if (key) batchOwners.set(key, identity);
+      }
+
+      for (const t of tasks) {
         const existing = taskForIdempotencyKey(t.idempotencyKey);
         if (existing) {
           pushed.push(existing.taskCode);
@@ -944,6 +1116,8 @@ const server = http.createServer(async (req, res) => {
         }
         const task = addTask({
           idempotencyKey: t.idempotencyKey,
+          owner: t.owner,
+          retryPolicy: t.retryPolicy,
           mediaType: taskMediaType(t),
           expectedResultCount: t.expectedResultCount,
           description: t.description || '',
@@ -1078,6 +1252,8 @@ const server = http.createServer(async (req, res) => {
     // ===== 文件列表 (按任务号查询, 支持 tags 过滤) =====
     if (req.method === 'GET' && pathname === '/api/files') {
       const filterTaskCode = url.searchParams.get('taskCode');
+      const filterTask = filterTaskCode ? taskStore.get(filterTaskCode) : null;
+      const attemptTaskCode = filterTask ? latestAttempt(filterTask).taskCode : filterTaskCode;
       const filterTags = url.searchParams.get('tags'); // 逗号分隔多标签
       const filterTagSet = filterTags ? new Set(filterTags.split(',').map(t => t.trim()).filter(Boolean)) : null;
 
@@ -1086,7 +1262,7 @@ const server = http.createServer(async (req, res) => {
 
       const files = [];
       for (const [, meta] of fileStore) {
-        if (filterTaskCode && meta.taskCode !== filterTaskCode) continue;
+        if (filterTaskCode && meta.taskCode !== attemptTaskCode) continue;
 
         // 动态从 taskStore 补全缺失的任务元数据 (兼容旧数据)
         let taskDescription = meta.taskDescription || '';
@@ -1133,7 +1309,8 @@ const server = http.createServer(async (req, res) => {
 
         files.push({
           fileId: meta.fileId,
-          taskCode: meta.taskCode,
+          taskCode: filterTaskCode || meta.taskCode,
+          attemptTaskCode: meta.taskCode,
           quality: meta.quality,
           filename: meta.filename,
           mimeType: meta.mimeType,
@@ -1207,7 +1384,7 @@ const server = http.createServer(async (req, res) => {
         sendJSON(res, { success: false, error: '任务不存在' }, 404);
         return;
       }
-      sendJSON(res, { success: true, task });
+      sendJSON(res, { success: true, task: projectedTask(task) });
       return;
     }
     if (req.method === 'GET' && pathname === '/api/tasks') {
@@ -1215,6 +1392,7 @@ const server = http.createServer(async (req, res) => {
       for (const [code, task] of taskStore) {
         allTasks.push({
           taskCode: task.taskCode,
+          ...attemptIdentity(task),
           mediaType: taskMediaType(task),
           description: task.description,
           prompt: task.prompt || '',
@@ -1226,6 +1404,9 @@ const server = http.createServer(async (req, res) => {
           submitClaimedAt: task.submitClaimedAt || null,
           submitClaimId: task.submitClaimId || null,
           submittedAt: task.submittedAt || null,
+          submittedBy: task.submittedBy || null,
+          composerReleasedAt: task.composerReleasedAt || null,
+          failureEvidence: task.failureEvidence || null,
           pavoConversationId: task.pavoConversationId || null,
           bindingSource: task.bindingSource || null,
           conversationBaselineIds: task.conversationBaselineIds,
@@ -1274,6 +1455,7 @@ const server = http.createServer(async (req, res) => {
           'POST /api/tasks/status            - 更新任务状态',
           'POST /api/tasks/submit-claim      - 领取唯一官网提交权',
           'POST /api/tasks/submit-confirm    - 确认唯一官网点击',
+          'POST /api/tasks/composer-release  - Release the bound attempt console',
           'GET  /api/tasks/release?taskCode=  - 释放占用',
           'POST /api/tasks/push              - 推送新任务',
           'GET  /api/task-references/:task/:index - 按需读取任务参考素材',

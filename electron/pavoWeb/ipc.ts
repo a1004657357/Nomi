@@ -1,6 +1,5 @@
 import { BrowserWindow, session, shell } from "electron";
 import { registerAppWindow } from '../appWindowRegistry';
-import { PAVO_WEB_VENDOR_SEED } from "../catalog/pavoWeb";
 import { probePavoWebServer, resolvePavoWebBaseUrl } from "./bridge";
 import {
   PAVO_WEB_RUNNER_PARTITION,
@@ -26,8 +25,8 @@ export async function pavoWebStatus(): Promise<{
   likelyLoggedIn: boolean;
   loginUrl: string;
 }> {
-  const server = await probePavoWebServer(PAVO_WEB_VENDOR_SEED.baseUrl);
-  const runner = await pavoWebRunnerStatus(PAVO_WEB_VENDOR_SEED.baseUrl);
+  const server = await probePavoWebServer();
+  const runner = await pavoWebRunnerStatus();
   const count = await cookieCount();
   return {
     server,
@@ -64,14 +63,14 @@ export async function pavoWebOpenLogin(): Promise<{ ok: boolean; url: string }> 
 }
 
 export async function pavoWebOpenAdmin(baseUrlInput?: unknown): Promise<{ ok: boolean; url: string }> {
-  const baseUrl = resolvePavoWebBaseUrl(baseUrlInput || PAVO_WEB_VENDOR_SEED.baseUrl);
+  const baseUrl = resolvePavoWebBaseUrl(baseUrlInput);
   const url = `${baseUrl}/admin`;
   await shell.openExternal(url);
   return { ok: true, url };
 }
 
 export async function pavoWebStartExtensionRunner(): Promise<PavoWebRunnerStatus> {
-  return pavoWebStartRunner(PAVO_WEB_VENDOR_SEED.baseUrl);
+  return pavoWebStartRunner();
 }
 
 export async function pavoWebStopExtensionRunner(): Promise<PavoWebRunnerStatus> {

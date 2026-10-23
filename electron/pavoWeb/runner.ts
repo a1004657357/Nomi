@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { app, BrowserWindow, session, type Extension, type Session } from "electron";
 import { configureBrowserSession } from "../browser/core/browserViewSession";
-import { PAVO_WEB_BRIDGE_INSTANCE_ID, PAVO_WEB_SAFETY_CONTRACT_VERSION, PAVO_WEB_VENDOR_SEED } from "../catalog/pavoWeb";
+import { PAVO_WEB_BRIDGE_INSTANCE_ID, PAVO_WEB_SAFETY_CONTRACT_VERSION } from "../catalog/pavoWeb";
 import { probePavoWebServer, resolvePavoWebBaseUrl } from "./bridge";
 import { pavoWebAuthToken } from "./auth";
 
@@ -101,8 +101,10 @@ export function pavoWebServerProcessEnv(serverUrl: string): NodeJS.ProcessEnv {
     NOMI_PAVO_WEB_PARENT_PID: String(process.pid),
     NOMI_PAVO_WEB_PORT: parsed.port || "3458",
     NOMI_PAVO_WEB_INSTANCE_ID: PAVO_WEB_BRIDGE_INSTANCE_ID,
-    NOMI_PAVO_WEB_DATA_DIR: path.join(runtimeDir, "data"),
-    NOMI_PAVO_WEB_UPLOADS_DIR: path.join(runtimeDir, "uploads"),
+    NOMI_PAVO_WEB_DATA_DIR: process.env.NOMI_PAVO_WEB_DATA_DIR?.trim()
+      ? path.resolve(process.env.NOMI_PAVO_WEB_DATA_DIR.trim()) : path.join(runtimeDir, "data"),
+    NOMI_PAVO_WEB_UPLOADS_DIR: process.env.NOMI_PAVO_WEB_UPLOADS_DIR?.trim()
+      ? path.resolve(process.env.NOMI_PAVO_WEB_UPLOADS_DIR.trim()) : path.join(runtimeDir, "uploads"),
     ELECTRON_RUN_AS_NODE: "1",
   };
 }
@@ -243,14 +245,14 @@ function status(extensionDir: string | null, clientOnline: boolean): PavoWebRunn
 }
 
 export async function pavoWebRunnerStatus(baseUrlInput?: unknown): Promise<PavoWebRunnerStatus> {
-  const serverUrl = resolvePavoWebBaseUrl(baseUrlInput || PAVO_WEB_VENDOR_SEED.baseUrl);
+  const serverUrl = resolvePavoWebBaseUrl(baseUrlInput);
   const extensionDir = resolvePavoExtensionDir();
   const bridge = await probePavoWebServer(serverUrl);
   return status(extensionDir, bridge.ok && (bridge.sseClients || 0) > 0);
 }
 
 async function start(baseUrlInput?: unknown): Promise<PavoWebRunnerStatus> {
-  const serverUrl = resolvePavoWebBaseUrl(baseUrlInput || PAVO_WEB_VENDOR_SEED.baseUrl);
+  const serverUrl = resolvePavoWebBaseUrl(baseUrlInput);
   const extensionDir = resolvePavoExtensionDir();
   if (!extensionDir) {
     lastError = `找不到 Pavo 扩展目录。可设置 NOMI_PAVO_EXTENSION_DIR，当前候选：${pavoExtensionCandidates().join(" | ")}`;
