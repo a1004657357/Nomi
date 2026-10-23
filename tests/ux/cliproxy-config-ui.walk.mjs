@@ -102,7 +102,7 @@ try {
       await clickOrFail(actions.getByRole('button', { name: spec.edit, exact: true }), 'Edit existing connection')
       const detail = win.locator('[data-model-settings-page="connection"][data-model-settings-vendor="cliproxy-local"]')
       await expect(detail).toBeVisible()
-      const urlEdit = detail.getByRole('button', { name: /修改.*接入地址|Edit.*address/i })
+      const urlEdit = detail.getByRole('button', { name: spec.locale === 'zh-CN' ? '编辑 CLIProxy 接入地址' : 'Edit CLIProxy connection address', exact: true })
       await clickOrFail(urlEdit, 'Open URL editor')
       const urlInput = detail.locator('[data-model-connection-field="baseUrl"]')
       await expect(urlInput).toHaveValue(baseUrl)
