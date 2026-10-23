@@ -11,11 +11,11 @@ import {
   snapshotBeforeMigration,
 } from "./catalogFileAccess";
 export { modelCatalogReadOnlyStatus, type ModelCatalogReadOnlyStatus } from "./catalogFileAccess";
-import { apiKeyDecryptStatus, decryptApiKeyRecord, makeApiKeyRecordFromPlain } from "./secrets";
+import { apiKeyDecryptStatus, decryptApiKeyRecord, makeApiKeyRecordFromPlain, type ApiKeyRecord } from "./secrets";
 import { humanizeModelKey } from "./modelLabel";
 import { applyBuiltinSeeds } from "./seedBuiltins";
 import { migrateCatalogForward } from "./catalogMigrations";
-import type { AiSdkProviderKind, ApiKeyRecord, BillingModelKind, CatalogState, HttpOperation, Mapping, Model, ProfileKind, Vendor } from "./types";
+import type { AiSdkProviderKind, BillingModelKind, CatalogState, HttpOperation, Mapping, Model, ProfileKind, Vendor } from "./types";
 import { CURRENT_CATALOG_VERSION } from "./types";
 import { normalizeCustomCall } from "./customCallMode";
 import { sealUpsertDraft } from "./upsertDraft";
