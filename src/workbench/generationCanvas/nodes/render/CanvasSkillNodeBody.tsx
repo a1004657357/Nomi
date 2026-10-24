@@ -224,7 +224,7 @@ export default function CanvasSkillNodeBody({
                 <span className="inline-grid size-5 shrink-0 place-items-center rounded-full bg-nomi-paper text-micro text-nomi-ink-60">
                   {index < state.currentStageIndex || state.runStatus === 'done' ? <IconCheck size={12} stroke={2} /> : index + 1}
                 </span>
-                <span className="line-clamp-2 leading-relaxed text-nomi-ink-70">{stage.goal}</span>
+                <span className="line-clamp-2 leading-relaxed text-nomi-ink-80">{stage.goal}</span>
               </div>
             ))}
           </div>

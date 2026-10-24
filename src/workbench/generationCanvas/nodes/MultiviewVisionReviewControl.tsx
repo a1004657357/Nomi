@@ -103,7 +103,7 @@ export function MultiviewVisionReviewControl({
 
   if (loading) {
     return (
-      <div className="flex items-center gap-1.5 text-micro text-nomi-ink-50">
+      <div className="flex items-center gap-1.5 text-micro text-nomi-ink-60">
         <IconRefresh size={12} stroke={1.8} className="animate-spin" aria-hidden />
         正在读取视觉模型
       </div>
@@ -130,7 +130,7 @@ export function MultiviewVisionReviewControl({
 
   return (
     <div className="space-y-2">
-      <label className="block text-micro font-semibold text-nomi-ink-70" htmlFor={`vision-review-model-${nodeId}`}>
+      <label className="block text-micro font-semibold text-nomi-ink-80" htmlFor={`vision-review-model-${nodeId}`}>
         语义视觉复核
       </label>
       <select

@@ -17,7 +17,7 @@ function qualityTone(status: GenerationQualityStatus): string {
   if (status === 'pass') return 'text-workbench-success'
   if (status === 'warning') return 'text-nomi-accent'
   if (status === 'fail') return 'text-workbench-danger'
-  return 'text-nomi-ink-50'
+  return 'text-nomi-ink-60'
 }
 
 function qualityKindLabel(kind: GenerationQualityReport['kind']): string {
@@ -69,8 +69,8 @@ export function CapabilityQualityReportPopover({
         aria-expanded={open}
         title={`${kindLabel}质量报告：${qualityLabel(report.status)}`}
         className={cn(
-          'grid size-7 place-items-center rounded-nomi-sm border border-white/70 bg-nomi-paper shadow-nomi-float',
-          'hover:bg-nomi-paper-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
+          'grid size-7 place-items-center rounded-nomi-sm border border-white/70 bg-nomi-paper shadow-nomi-md',
+          'hover:bg-nomi-ink-05 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
         )}
         onClick={() => setOpen((current) => !current)}
       >
@@ -79,7 +79,7 @@ export function CapabilityQualityReportPopover({
       {open ? (
         <section
           data-capability-quality-report={report.kind}
-          className="mt-1.5 max-h-[360px] w-[300px] overflow-auto rounded-nomi border border-nomi-line bg-nomi-paper p-2.5 shadow-nomi-float"
+          className="mt-1.5 max-h-[360px] w-[300px] overflow-auto rounded-nomi border border-nomi-line bg-nomi-paper p-2.5 shadow-nomi-md"
           aria-label={`${kindLabel}质量报告`}
         >
           <header className="mb-2 flex items-center gap-1.5 border-b border-nomi-line pb-2">

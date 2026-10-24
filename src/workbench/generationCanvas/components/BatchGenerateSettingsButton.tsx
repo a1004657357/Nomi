@@ -251,7 +251,7 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
           className={cn(
             'inline-flex items-center gap-2 h-9 px-4 rounded-full border-0 cursor-pointer',
             'bg-nomi-ink text-nomi-paper text-body font-medium hover:bg-nomi-accent',
-            'transition-colors duration-[var(--nomi-transition-fast)] disabled:opacity-50 disabled:cursor-not-allowed',
+            'transition-colors duration-nomi-fast ease-nomi-fast disabled:opacity-50 disabled:cursor-not-allowed',
           )}
           title="批量设置模型和参数"
           disabled={selectedImageNodes.length === 0 && selectedVideoNodes.length === 0}
@@ -277,9 +277,9 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
           <div className={cn('flex items-center justify-between gap-3')}>
             <div className={cn('min-w-0')}>
               <div className={cn('text-body-sm font-medium text-nomi-ink')}>批量生成设置</div>
-              <div className={cn('text-caption text-nomi-ink-50')}>{selectedTargetNodes.length} 个{targetLabel}节点</div>
+              <div className={cn('text-caption text-nomi-ink-60')}>{selectedTargetNodes.length} 个{targetLabel}节点</div>
             </div>
-            <label className={cn('inline-flex items-center gap-1.5 text-caption text-nomi-ink-70 select-none')}>
+            <label className={cn('inline-flex items-center gap-1.5 text-caption text-nomi-ink-80 select-none')}>
               <input
                 type="checkbox"
                 checked={skipExisting}

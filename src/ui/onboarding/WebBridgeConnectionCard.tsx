@@ -152,7 +152,7 @@ export function WebBridgeConnectionCard({ bridgeKey, name, subtitle, description
       </div>
 
       <button type="button" onClick={() => { onChanged(); toast(t('onboardingProviders.webBridge.refreshed'), 'success') }}
-        className="inline-flex h-8 items-center gap-1 self-start px-2 text-caption text-nomi-ink-50 hover:text-nomi-accent">
+        className="inline-flex h-8 items-center gap-1 self-start px-2 text-caption text-nomi-ink-60 hover:text-nomi-accent">
         <IconRefresh size={13} stroke={1.7} />
         {t('onboardingProviders.webBridge.refresh')}
       </button>

@@ -1053,13 +1053,14 @@ showUndoToast({ message, onUndo, isUndoable, watchUndoable })
 > 说不出 → 配文字标签，或换图标。（现状：素材库 toolbar 上 `IconLink`/`IconFilter`/`IconFolderPlus`
 > 三个纯图标按钮无文字，全靠 `title` 悬停解释。）
 >
-> **待清的存量 3 条**（都是同一动作两个入口配了不同图标，改法要先看真实 3D 工具栏再定）：
-> `scene3d.character.exitCameraControl` → IconVideo/IconX ·
-> `scene3d.character.exitControl` → IconManFilled/IconX ·
-> `scene3d.fullscreen.openEditor` → IconCube/IconMaximize
+> **2026-10-25 最小语义修复**：退出操控沿用否定动作的 `IconX`；打开全屏编辑器沿用全屏入口的
+> `IconMaximize`。仅统一同动作异图标，不改入口、文字、事件或布局；真实界面视觉验收仍未完成。
 
 | 语义 | 图标 | 用在哪 |
 |---|---|---|
+| 退出相机操控（`scene3d.character.exitCameraControl`）| `IconX` | `CharacterPossessButton` / `CameraPossessActionBar`，沿用退出动作，不再使用相机身份图标 |
+| 退出角色操控（`scene3d.character.exitControl`）| `IconX` | `CharacterPossessButton` / `CharacterActionBar`，沿用退出动作，不再使用角色身份图标 |
+| 打开全屏编辑器（`scene3d.fullscreen.openEditor`）| `IconMaximize` | `Scene3DEditor` 的缩略图居中入口与右上角全屏入口 |
 | 付费 / 消耗额度（用户直发或 agent 受理）| `IconCoin` | `SpendConfirmDialog`（§3.5）|
 | 外部 AI 助手 / MCP 驱动（agent 身份）| `IconRobot` | `SpendConfirmDialog` 的 `source: 'agent'` 头部（§3.5）|
 | 主角形象确认（锚定妆照检查点·免费质量门）| `IconUser` | `SpendConfirmDialog` 的 `kind: 'anchorCheckpoint'` 头部（§3.5，与 cast 分类同图标）|

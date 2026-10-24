@@ -66,7 +66,7 @@ export function CapabilityResultCollection({
         data-mood-matrix={isMoodMatrix ? '5x5' : undefined}
       >
         {isMoodCollection ? (
-          <div className="flex h-7 shrink-0 items-center justify-between border-b border-nomi-line bg-nomi-paper px-2 text-micro text-nomi-ink-50">
+          <div className="flex h-7 shrink-0 items-center justify-between border-b border-nomi-line bg-nomi-paper px-2 text-micro text-nomi-ink-60">
             <span>能量 0 → 4</span>
             <span>亲和 0 → 4</span>
           </div>
@@ -163,7 +163,7 @@ export function CapabilityResultCollection({
                   ) : null}
                   {qualityStatus ? (
                     <span
-                      className="absolute left-1 top-1 grid size-5 place-items-center rounded-nomi-sm border border-white/70 bg-nomi-paper shadow-nomi-float"
+                      className="absolute left-1 top-1 grid size-5 place-items-center rounded-nomi-sm border border-white/70 bg-nomi-paper shadow-nomi-md"
                       title={`质量检查：${qualityLabel(qualityStatus)}`}
                     >
                       <CapabilityQualityStatusIcon status={qualityStatus} size={13} />
@@ -178,8 +178,8 @@ export function CapabilityResultCollection({
                     title={`选择 ${candidates.length} 个候选`}
                     className={cn(
                       'absolute right-1 top-1 z-[4] flex h-6 items-center gap-1 rounded-nomi-sm px-1.5',
-                      'border border-white/70 bg-nomi-paper text-micro font-semibold text-nomi-ink-70 shadow-nomi-float',
-                      'hover:bg-nomi-paper-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
+                      'border border-white/70 bg-nomi-paper text-micro font-semibold text-nomi-ink-80 shadow-nomi-md',
+                      'hover:bg-nomi-ink-05 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
                     )}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
@@ -201,8 +201,8 @@ export function CapabilityResultCollection({
             data-capability-retry-failed="true"
             className={cn(
               'absolute right-10 top-1.5 z-[12] grid size-7 place-items-center rounded-nomi-sm',
-              'border border-white/70 bg-nomi-paper text-nomi-ink-70 shadow-nomi-float',
-              'hover:bg-nomi-paper-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
+              'border border-white/70 bg-nomi-paper text-nomi-ink-80 shadow-nomi-md',
+              'hover:bg-nomi-ink-05 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
               'disabled:cursor-wait disabled:opacity-60',
             )}
             aria-label={`重试 ${failedCount} 个失败结果`}

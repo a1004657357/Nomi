@@ -81,10 +81,10 @@ export function CapabilityAutoVisionReviewControl({
             options={models.map((model) => ({ value: model.id, label: model.label }))}
             onChange={setModelId}
           />
-          <p className="mt-2 text-micro text-nomi-ink-50">整批增加 1 次多图请求，复核失败不会重新生成。</p>
+          <p className="mt-2 text-micro text-nomi-ink-60">整批增加 1 次多图请求，复核失败不会重新生成。</p>
         </div>
       ) : loading ? (
-        <p className="mt-2 text-micro text-nomi-ink-50">正在读取视觉模型</p>
+        <p className="mt-2 text-micro text-nomi-ink-60">正在读取视觉模型</p>
       ) : models.length === 0 ? (
         <button
           type="button"

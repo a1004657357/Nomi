@@ -82,7 +82,7 @@ export function CapabilityHumanReviewControl({
             rows={2}
             value={note}
             placeholder="记录身份、构图、风格或时序问题"
-            className="w-full resize-y rounded-nomi-sm border border-nomi-line bg-nomi-paper-strong px-2 py-1.5 text-micro leading-[1.4] text-nomi-ink outline-none focus:border-nomi-accent"
+            className="w-full resize-y rounded-nomi-sm border border-nomi-line bg-nomi-ink-05 px-2 py-1.5 text-micro leading-[1.4] text-nomi-ink outline-none focus:border-nomi-accent"
             onChange={(event) => setNote(event.target.value)}
           />
           <div className="grid grid-cols-2 gap-1.5">
@@ -93,7 +93,7 @@ export function CapabilityHumanReviewControl({
                 'inline-flex h-7 items-center justify-center gap-1 rounded-nomi-sm border text-micro font-medium',
                 review?.verdict === 'accepted'
                   ? 'border-workbench-success bg-workbench-success-soft text-workbench-success'
-                  : 'border-nomi-line bg-nomi-paper text-nomi-ink-60 hover:bg-nomi-paper-strong',
+                  : 'border-nomi-line bg-nomi-paper text-nomi-ink-60 hover:bg-nomi-ink-05',
               )}
               onClick={() => decide('accepted')}
             >
@@ -107,7 +107,7 @@ export function CapabilityHumanReviewControl({
                 'inline-flex h-7 items-center justify-center gap-1 rounded-nomi-sm border text-micro font-medium',
                 review?.verdict === 'rejected'
                   ? 'border-workbench-danger bg-workbench-danger-soft text-workbench-danger'
-                  : 'border-nomi-line bg-nomi-paper text-nomi-ink-60 hover:bg-nomi-paper-strong',
+                  : 'border-nomi-line bg-nomi-paper text-nomi-ink-60 hover:bg-nomi-ink-05',
               )}
               onClick={() => decide('rejected')}
             >

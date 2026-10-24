@@ -40,7 +40,7 @@ export function CreativeResourceNodeBody({ node }: { node: GenerationCanvasNode 
           </span>
           <div className="min-w-0">
             <div className="truncate text-body-sm font-medium text-nomi-ink">{resource.label}</div>
-            <div className="text-micro text-nomi-ink-50">{KIND_LABEL[resource.kind]}</div>
+            <div className="text-micro text-nomi-ink-60">{KIND_LABEL[resource.kind]}</div>
           </div>
         </div>
         {resource.description ? <p className="m-0 line-clamp-2 text-caption leading-relaxed text-nomi-ink-60">{resource.description}</p> : null}

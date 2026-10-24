@@ -420,12 +420,12 @@ export function CapabilityRecipeInspector({
       >
         <div data-capability-recipe-inspector="true" className="flex min-h-[calc(100vh-70px)] flex-col bg-nomi-paper">
           <div className="flex items-center gap-3 border-b border-nomi-line px-4 py-3">
-            <span className="inline-grid h-10 w-10 shrink-0 place-items-center rounded-nomi-sm bg-nomi-ink-05 text-nomi-ink-50">
+            <span className="inline-grid h-10 w-10 shrink-0 place-items-center rounded-nomi-sm bg-nomi-ink-05 text-nomi-ink-60">
               <IconPhoto size={19} stroke={1.6} aria-hidden />
             </span>
             <div className="min-w-0">
               <div className="truncate text-body-sm font-medium text-nomi-ink">{source?.title ?? '未选择节点'}</div>
-              <div className="truncate text-caption text-nomi-ink-50">
+              <div className="truncate text-caption text-nomi-ink-60">
                 {source?.result ? '已有生成结果' : '尚无生成结果'}
               </div>
             </div>
@@ -445,7 +445,7 @@ export function CapabilityRecipeInspector({
                   'rounded-nomi-sm border-0 text-caption cursor-pointer',
                   view === key
                     ? 'bg-nomi-paper font-medium text-nomi-ink shadow-nomi-sm'
-                    : 'bg-transparent text-nomi-ink-50',
+                    : 'bg-transparent text-nomi-ink-60',
                 )}
                 onClick={() => setView(key)}
               >
@@ -592,9 +592,9 @@ export function CapabilityRecipeInspector({
                     />
                   </div>
                   {isMoodRecipe ? (
-                    <div className="mt-3 rounded-nomi-sm border border-nomi-line bg-nomi-paper-strong p-3">
+                    <div className="mt-3 rounded-nomi-sm border border-nomi-line bg-nomi-ink-05 p-3">
                       <div className="flex items-center justify-between gap-3 text-caption">
-                        <span className="text-nomi-ink-50">行：能量 · 列：亲和</span>
+                        <span className="text-nomi-ink-60">行：能量 · 列：亲和</span>
                         <span
                           data-mood-request-summary="true"
                           className="font-medium text-nomi-ink"

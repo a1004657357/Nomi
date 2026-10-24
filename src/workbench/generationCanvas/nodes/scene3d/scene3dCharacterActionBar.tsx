@@ -41,7 +41,7 @@ export function CharacterPossessButton({ drive }: { drive: CharacterDriveApi }):
     return (
       <div className="flex items-center gap-1 rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-0.5">
         <PanelButton title={t('scene3d.character.exitCameraControl')} active onClick={drive.exitCameraPossess}>
-          <IconVideo size={15} />
+          <IconX size={15} />
           <span>{t('scene3d.character.control')}</span>
         </PanelButton>
       </div>
@@ -51,7 +51,7 @@ export function CharacterPossessButton({ drive }: { drive: CharacterDriveApi }):
     return (
       <div className="flex items-center gap-1 rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-0.5">
         <PanelButton title={t('scene3d.character.exitControl')} active onClick={drive.exitPossess}>
-          <IconManFilled size={15} />
+          <IconX size={15} />
           <span>{t('scene3d.character.control')}</span>
         </PanelButton>
       </div>

@@ -67,7 +67,7 @@ function ComparisonSurface({
 }): JSX.Element {
   if (inputs.length < 2) {
     return (
-      <div className="grid h-full w-full place-items-center bg-nomi-ink-05 px-6 text-center text-small text-nomi-ink-50">
+      <div className="grid h-full w-full place-items-center bg-nomi-ink-05 px-6 text-center text-small text-nomi-ink-60">
         {inputs.length === 0 ? '连接两张图片进行对比' : '再连接一张图片'}
       </div>
     )

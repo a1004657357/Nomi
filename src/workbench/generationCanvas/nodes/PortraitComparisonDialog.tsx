@@ -156,8 +156,8 @@ export function PortraitComparisonControl({
         type="button"
         className={cn(
           'absolute right-10 top-1.5 z-[12] grid size-7 place-items-center rounded-nomi-sm',
-          'border border-white/70 bg-nomi-paper text-nomi-ink-60 shadow-nomi-float',
-          'hover:bg-nomi-paper-strong hover:text-nomi-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
+          'border border-white/70 bg-nomi-paper text-nomi-ink-60 shadow-nomi-md',
+          'hover:bg-nomi-ink-05 hover:text-nomi-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
           className,
         )}
         aria-label="与原图对比"
