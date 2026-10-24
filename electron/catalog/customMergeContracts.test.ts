@@ -8,6 +8,7 @@ import { DREAMINA_SEEDANCE_25_ARCHETYPE } from "../shared/modelArchetypes/dreami
 import { JIMENG_WEB_SEEDANCE_ARCHETYPE } from "../shared/modelArchetypes/jimengWebSeedance";
 import { MINIMAX_H3_PIXSTAG_ARCHETYPE } from "../shared/modelArchetypes/minimaxH3Pixstag";
 import { builtinVendorSeed } from "./builtinVendorSeeds";
+import { ARCHETYPE_WIRE_DEFAULTS_VIDEO } from "./archetypeWireDefaults.video.generated";
 import { deriveModelListing, videoBodyKeysForModel } from "./modelCatalogListing";
 import { applyBuiltinSeeds, builtinCatalogModelKeys } from "./seedBuiltins";
 import type { CatalogState } from "./types";
@@ -55,7 +56,11 @@ describe("v0.23.2 customized catalog integration", () => {
     const pavo = resolveArchetypeForModel({
       vendorKey: "pavo-web", modelKey: "pavo-agnes-video-2.5-flash", meta: { archetypeId: "agnes-video-2.5-flash" },
     });
-    expect(pavo?.modes.every((mode) => mode.params.find((param) => param.key === "duration")?.options.map((option) => option.value).join() === "5,10")).toBe(true);
+    expect(pavo?.modes.every((mode) => {
+      const duration = mode.params.find((param) => param.key === "duration");
+      return duration?.options.map((option) => option.value).join() === "4,5,6,7,8,9,10,11,12"
+        && duration.defaultValue === "4";
+    })).toBe(true);
     const reference = pavo?.modes.find((mode) => mode.id === "reference");
     expect(reference?.slots.map((slot) => [slot.kind, slot.max])).toEqual([["image_ref", 5], ["audio_ref", 3]]);
   });
@@ -70,6 +75,16 @@ describe("v0.23.2 customized catalog integration", () => {
     expect(deriveModelListing(state).find((model) => model.vendor === "pavo-web")?.references).toEqual({
       image: true, multiImage: true, audio: true, video: false, referenceModes: ["image_to_video"],
     });
+  });
+
+  it("keeps generated Pavo duration defaults aligned without changing the Agnes API default", () => {
+    const defaults = buildWireDefaultsFor([AGNES_VIDEO_25_FLASH_ARCHETYPE]);
+    for (const taskKind of ["text_to_video", "image_to_video"]) {
+      const generated = ARCHETYPE_WIRE_DEFAULTS_VIDEO[AGNES_VIDEO_25_FLASH_ARCHETYPE.id][taskKind];
+      expect(generated).toEqual(defaults[AGNES_VIDEO_25_FLASH_ARCHETYPE.id][taskKind]);
+      expect(generated["pavo-web"].duration).toBe("4");
+      expect(generated["*"].duration).toBe("5");
+    }
   });
 
   it("keeps default-variant overrides after vendor parameters and transport bucketing", () => {
