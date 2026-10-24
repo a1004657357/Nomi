@@ -142,9 +142,6 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
       toast(i18n.t("canvasComponents.allSelectedNodesAlreadyHaveResults", { v0: label }), 'warning')
       return
     }
-    const regenerationTargetIds = new Set(
-      run ? generationTargets.filter(hasResult).map((node) => node.id) : [],
-    )
     const expandedIds = expandNodeIdsWithUngeneratedReferenceAncestors(generationTargets.map((node) => node.id), { nodes: state.nodes, edges: state.edges })
     const applySet = new Set(run
       ? [...selectedTargets.map((node) => node.id), ...expandedIds]

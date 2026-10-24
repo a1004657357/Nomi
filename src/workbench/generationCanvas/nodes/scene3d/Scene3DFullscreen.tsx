@@ -125,7 +125,7 @@ export default function Scene3DFullscreen({
   const suppressCanvasMissedReleaseRef = React.useRef<number | null>(null)
   const canvasCamera = React.useMemo(
     () => ({ fov: 55, near: 0.1, far: 500, position: initialEditorCameraRef.current.position }),
-    [],
+    [initialEditorCameraRef],
   )
   const selectedCamera = selection?.type === 'camera'
     ? state.cameras.find((camera) => camera.id === selection.id)

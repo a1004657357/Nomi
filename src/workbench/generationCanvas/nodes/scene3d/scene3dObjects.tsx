@@ -4,6 +4,7 @@ import { Text, useGLTF } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import * as THREE from 'three'
+import { logRendererError } from '../../../../desktop/rendererLog'
 import type {
   Scene3DGeometry,
   Scene3DObject,
@@ -97,7 +98,7 @@ export class MannequinAssetBoundary extends React.Component<MannequinAssetBounda
   }
 
   componentDidCatch(error: unknown): void {
-    console.error('Failed to load mannequin GLB asset.', error)
+    logRendererError('scene3d-mannequin-asset-load-failed', error)
   }
 
   render(): React.ReactNode {
@@ -425,7 +426,7 @@ class GeneratedModelBoundary extends React.Component<
   }
 
   componentDidCatch(error: unknown): void {
-    console.error('Failed to load a generated Scene3D model.', error)
+    logRendererError('scene3d-generated-model-load-failed', error)
   }
 
   render(): React.ReactNode {

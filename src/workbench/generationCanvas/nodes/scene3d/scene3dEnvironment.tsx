@@ -4,6 +4,7 @@ import { Environment, Sky } from '@react-three/drei'
 import { useLoader, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { Scene3DState } from './scene3dTypes'
+import { logRendererWarn } from '../../../../desktop/rendererLog'
 
 const PANORAMA_STANDARD_FRONT_OFFSET = Math.PI
 const PANORAMA_SPHERE_WIDTH_SEGMENTS = 128
@@ -36,7 +37,7 @@ class EnvironmentResourceBoundary extends React.Component<
   }
 
   componentDidCatch(error: unknown): void {
-    console.warn('[nomi] 3D scene environment failed to load; using fallback lighting.', error)
+    logRendererWarn('scene3d-environment-load-failed', { fallback: 'local-lighting' }, error)
   }
 
   render(): React.ReactNode {

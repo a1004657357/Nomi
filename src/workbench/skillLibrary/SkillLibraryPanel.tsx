@@ -68,7 +68,6 @@ export function SkillLibraryContent({
 
   const { items, remove, importPackage, exportPackage } = useWorkbenchSkills(active)
   const setWorkspaceMode = useWorkbenchStore((s) => s.setWorkspaceMode)
-  const setActiveCategoryId = useWorkbenchStore((s) => s.setActiveCategoryId)
   const setCreationActiveSkill = useWorkbenchStore((s) => s.setCreationActiveSkill)
 
   const sortedItems = React.useMemo(
