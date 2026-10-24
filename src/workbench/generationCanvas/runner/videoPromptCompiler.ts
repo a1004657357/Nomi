@@ -1,4 +1,4 @@
-import { SCREEN_VISIBILITY_PROMPT_RULE } from '../agent/storyboardPlan'
+import { screenVisibilityRuleForPrompt } from '../../../../electron/shared/storyboard/storyboardShotPrompts'
 
 export const VIDEO_PROMPT_COMPILER_MARKER = '【Nomi 视频编译约束】'
 
@@ -13,10 +13,6 @@ export type CompileVideoPromptInput = {
   strategy: VideoPromptReferenceStrategy
   referenceImageRoles?: readonly string[]
   referenceImageCount?: number
-}
-
-function hasDeviceReference(prompt: string): boolean {
-  return /手机|屏幕|电脑|显示器|笔记本|平板|界面|UI|phone|screen|computer|monitor|laptop|tablet/i.test(prompt)
 }
 
 /**
@@ -57,9 +53,8 @@ export function compileVideoPromptForReferences(input: CompileVideoPromptInput):
   if (!/不凭空增减|数量守恒|不得复制/.test(prompt)) {
     lines.push('连续性下限：人物和关键道具数量守恒，不复制、不瞬移、不变形、不凭空增减；接触、受力、遮挡和落点必须连续。')
   }
-  if (hasDeviceReference(prompt) && !prompt.includes('屏幕可见性硬规则')) {
-    lines.push(SCREEN_VISIBILITY_PROMPT_RULE)
-  }
+  const screenRule = screenVisibilityRuleForPrompt(prompt)
+  if (screenRule) lines.push(screenRule)
 
   return [prompt, lines.join('\n')].join('\n\n')
 }

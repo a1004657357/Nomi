@@ -153,8 +153,9 @@ function truncateLine(value: string): string {
 const STRUCTURED_KINDS: readonly GenerationErrorKind[] = ['auth', 'balance', 'quota', 'network', 'server', 'input']
 
 function detectMissingImageReference(raw: string): 'image_edit' | 'image_to_video' | null {
-  if (raw.includes('图生图缺少参考图')) return 'image_edit'
-  if (raw.includes('图生视频缺少参考图')) return 'image_to_video'
+  const code = matchNomiErrorCode(raw)
+  if (code === 'image-edit-missing-reference') return 'image_edit'
+  if (code === 'image-video-missing-reference') return 'image_to_video'
   return null
 }
 
@@ -173,7 +174,7 @@ function reportForMissingImageReference(
     hint: '',
     // 本机在发请求前的护栏：请求没出门，说不上是哪家供应商拒了什么。
     vendorSide: false,
-    raw,
+    raw: stripNomiErrorCode(raw),
     ...narrateGenerationErrorActions('input'),
   }
 }
@@ -209,19 +210,13 @@ function legacyEvidence(upstream: string | undefined, raw: string): string {
 /** legacy 字符串 → 类别(老项目持久化的 node.error / 非 vendor 错误的兜底识别;文案不在这里)。`raw` 是 legacyEvidence 挑出的那段字。 */
 function detectLegacyErrorKind(raw: string): GenerationErrorKind | null {
   const lower = raw.toLowerCase()
-  // 输出截断（agentError.describeEmptyAgentReply 的 length 签名）最先判——它是确定性失败，
-  // 落进 unknown 会给出「稍等重试」的误导（重试必再撞）。短语来自我们自己的文案，单一来源。
-  if (raw.includes('输出长度上限') || raw.includes('内容被截断')) return 'output-truncated'
-  if (raw.includes('Codex Img2 网络请求失败')) return 'codex-network'
-  if (raw.includes('Codex Img2 长时间无进展') || raw.includes('Codex Img2 生成超时')) return 'codex-timeout'
+  // Local source outcomes are decoded before this provider-text fallback.
   if (lower.includes('api key') || lower.includes('apikey') || lower.includes('unauthorized') || hasStatusCode(lower, '401'))
     return 'auth'
   // 余额不足要和限流分开——用户动作不同(充值 vs 等待)。只匹配明确指向余额/欠费的词,
   // 避免把 OpenAI 的 insufficient_quota(配额)误判成余额。
   if (
-    raw.includes('余额') ||
     lower.includes('balance') ||
-    raw.includes('欠费') ||
     lower.includes('arrears') ||
     hasStatusCode(lower, '402')
   )
@@ -560,6 +555,9 @@ export function classifyGenerationError(message: string): GenerationErrorReport 
   // 参与（请求从未发出），把它归成 network 会配上「稍等重试」，而重试是确定性再撞同一堵墙，
   // 且在生成语境下重试 = 再付一次钱。upstream 显式给 ''：抑制「服务商说：」框，别栽赃上游。
   const outboundCode = matchNomiErrorCode(cleanRaw)
+  if (outboundCode === 'output-truncated' || outboundCode === 'codex-network' || outboundCode === 'codex-timeout') {
+    return reportFor(outboundCode, cleanRaw, upstream)
+  }
   if (outboundCode === 'model-config') return reportFor('model-config', cleanRaw, '')
   if (outboundCode === 'outbound-blocked') return reportFor('outbound-blocked', cleanRaw, '')
   // 提交侧的同族码：请求从未发出、没有计费。必须与上面一条分开，否则用户读到的是「钱已经付过、

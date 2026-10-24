@@ -146,7 +146,8 @@ export function buildDetailedStoryboardShotVideoPrompt(shot: PlanShot): string {
     `连续性约束：锁定参考图中的脸型、服装、道具造型、场景参照物、光线方向和色彩；${fullReference ? '构图可以随动作与运镜重新组织，不把分镜图锁成首帧。' : '保持首帧空间轴线和主体尺度。'}避免身份漂移、手部畸形、肢体穿插、动作重复、背景呼吸、画面闪烁、无关文字和水印；${plannedCuts ? '只允许按既定运镜描述中的切点切换，不增加额外镜头。' : '全段保持单镜连续，不突然切镜。'}`,
   ].filter(Boolean)
   const prompt = lines.join('\n')
-  return needsScreenVisibilityRule(prompt) ? [prompt, SCREEN_VISIBILITY_PROMPT_RULE].join('\n') : prompt
+  const screenRule = needsScreenVisibilityRule(prompt) ? screenVisibilityRuleForPrompt(prompt) : ''
+  return screenRule ? [prompt, screenRule].join('\n') : prompt
 }
 
 function buildStoryboardShotImagePrompt(shot: PlanShot): string {
@@ -180,11 +181,21 @@ function buildStoryboardShotVideoPrompt(shot: PlanShot): string {
     .join('\n')
 }
 
+function hasScreenDeviceReference(prompt: string): boolean {
+  return /手机|屏幕|电脑|显示器|笔记本|平板|界面|UI|phone|screen|computer|monitor|laptop|tablet/i.test(prompt)
+}
+
+/** The authored rule and its presence marker have one actual source owner. */
+export function screenVisibilityRuleForPrompt(prompt: string): string {
+  const heading = SCREEN_VISIBILITY_PROMPT_RULE.slice(0, SCREEN_VISIBILITY_PROMPT_RULE.indexOf('：'))
+  return hasScreenDeviceReference(prompt) && !prompt.includes(heading) ? SCREEN_VISIBILITY_PROMPT_RULE : ''
+}
+
 export function needsScreenVisibilityRule(prompt: string): boolean {
   const normalized = prompt
     .replace(/没有带?手机/g, '')
     .replace(/没有(?:任何)?(?:手机|屏幕|电脑|显示器|笔记本|平板|界面|UI)/g, '')
     .replace(/无(?:手机|屏幕|电脑|显示器|笔记本|平板|界面|UI)/g, '')
     .replace(/\bno\s+(?:phone|screen|computer|monitor|laptop|tablet|ui)\b/gi, '')
-  return /手机|屏幕|电脑|显示器|笔记本|平板|界面|UI|phone|screen|computer|monitor|laptop|tablet/i.test(normalized)
+  return hasScreenDeviceReference(normalized)
 }

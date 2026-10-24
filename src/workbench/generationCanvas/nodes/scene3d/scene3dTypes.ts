@@ -1,4 +1,4 @@
-import type { Model3dValidationSummary } from '../../model/generationCanvasTypes'
+import type { GenerationCanvasEdgeMode, Model3dValidationSummary } from '../../model/generationCanvasTypes'
 
 export type Scene3DVector3 = [number, number, number]
 
@@ -187,6 +187,7 @@ export type Scene3DCaptureResult = {
   height: number
   title: string
   source: 'scene3d-viewport' | 'scene3d-camera'
+  referenceSlot?: Extract<GenerationCanvasEdgeMode, 'first_frame' | 'last_frame'>
 }
 
 export type CaptureApi = {

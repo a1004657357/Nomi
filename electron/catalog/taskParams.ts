@@ -5,6 +5,7 @@
 // 为什么单独成文件还配测试：duration 这种"数字被 firstString 吞成空串"的坑、omni 参考数组该不该进
 // params 的坑，都只在"真实参数构建"里暴露，埋在 2500 行 runtime 里既测不到也容易回归。
 import { firstString, isJsonRecord, type JsonRecord } from "../jsonUtils";
+import { tagNomiError } from "../shared/nomiErrorCodes";
 import { referenceInputParams } from "./archetypeInput";
 import { ARCHETYPE_WIRE_DEFAULTS, ARCHETYPE_SIZE_RATIO_SEMANTIC } from "./archetypeWireDefaults.generated";
 import { bodyReferencedParamKeys } from "./paramTranslate";
@@ -730,7 +731,8 @@ export function imageEditGuardError(
   if (kind !== "image_edit" && kind !== "image_to_video") return null;
   const what = kind === "image_edit" ? "图生图" : "图生视频";
   if (!hasImageEditReferences(request, selected)) {
-    return `${what}缺少参考图：这次请求里没有任何图片可以发给模型。请连接一张图片节点（或在参考槽添加图片）后再生成${kind === "image_edit" ? "，或切回「文生图」" : ""}。`;
+    return tagNomiError(kind === "image_edit" ? "image-edit-missing-reference" : "image-video-missing-reference",
+      `${what}缺少参考图：这次请求里没有任何图片可以发给模型。请连接一张图片节点（或在参考槽添加图片）后再生成${kind === "image_edit" ? "，或切回「文生图」" : ""}。`);
   }
   if (!hasMapping) {
     // 别再让用户「删除后重新接入一次」——中转视频模型缺这条通道的根因在接入路径本身（它从来不建

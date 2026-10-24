@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { buildStepDetailLabels, countCreatedNodesByCategory, summarizeToolCall, describeToolCallDetail } from './toolCallSummary'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import i18n, { DEFAULT_LOCALE } from '../../../i18n'
+import { CAPABILITY_ALIAS_ENTRIES } from '../../../../electron/shared/agentCapabilities/registry'
 
 // id→标题翻译读 store 节点(A6:杀掉漏给用户的 n1/shot-1 这类机器 id)。测试注入几个有标题的节点。
 function seedNodes(nodes: Array<{ id: string; title: string }>): void {
@@ -48,6 +49,33 @@ describe('summarizeToolCall — 时间线步骤标题(人话,无 toolName 原文
 
   it('未知工具退回工具名(不崩)', () => {
     expect(summarizeToolCall('mystery', {})).toBe('mystery')
+  })
+
+  it.each(['zh-CN', 'en-US'])('covers all six live creative Pi aliases without changing authored labels: %s', async locale => {
+    await i18n.changeLanguage(locale)
+    seedNodes([{ id: 'source', title: '用户原文标题' }])
+    const aliases = CAPABILITY_ALIAS_ENTRIES.filter(entry => entry.surface === 'pi'
+      && (entry.contract.id === 'creative.component.read' || entry.contract.id === 'creative.component.write'))
+    expect(aliases).toHaveLength(6)
+    for (const { alias } of aliases) {
+      expect(summarizeToolCall(alias, { sourceNodeId: 'source', recipeId: 'portrait.refine', kind: 'style', label: '用户自定资源' })).not.toBe(alias)
+    }
+    const summary = summarizeToolCall('apply_capability_recipe', { sourceNodeId: 'source', recipeId: 'portrait.refine', visionReview: { modelKey: 'vision' } })
+    expect(summary).toContain('用户原文标题')
+    expect(summary).toContain(locale === 'zh-CN' ? '将产生费用' : '(paid)')
+    expect(summary).toContain(locale === 'zh-CN' ? '视觉复核' : 'visual review')
+    if (locale === 'en-US') expect(summary).not.toContain('人像真实化')
+    expect(summarizeToolCall('save_creative_resource', { sourceNodeId: 'source', kind: 'style', label: '用户自定资源' })).toContain('用户自定资源')
+    for (const [kind, zh, en] of [
+      ['character', '角色', 'Character'], ['scene', '场景', 'Scene'],
+      ['prop', '道具', 'Prop'], ['style', '风格', 'Style'],
+    ] as const) {
+      const saved = summarizeToolCall('save_creative_resource', { sourceNodeId: 'source', kind, label: '用户自定资源' })
+      expect(saved).toContain(locale === 'zh-CN' ? zh : en)
+      expect(saved).not.toContain('storyboardEditor.')
+    }
+    expect(summarizeToolCall('future_creative_tool', {})).toBe('future_creative_tool')
+    await i18n.changeLanguage(DEFAULT_LOCALE)
   })
 })
 

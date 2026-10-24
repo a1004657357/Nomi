@@ -13,6 +13,12 @@
 
 /** 目前纳入码化的自有错误类别。新增一类时在这里加一个稳定字符串常量，别在别处硬编码字面量。 */
 export type NomiErrorCode =
+  | 'image-edit-missing-reference'
+  | 'image-video-missing-reference'
+  | 'output-truncated'
+  | 'codex-network'
+  | 'codex-timeout'
+  | 'operation-cancelled'
   | 'model-config' // 本地目录无可执行模型；恢复动作不依赖可翻译文案
   | 'asset-too-large' // 素材超过所有上传通道的体积上限（HTTP 413 全挂）——确定性失败，得压缩不能重试
   | 'asset-upload-failed' // 所有上传通道都没成功（非 413）——失败在我们这侧，服务商没被请求到
@@ -74,7 +80,21 @@ export function matchNomiErrorCode(message: string): NomiErrorCode | null {
   // whole historical records here; new producers must tag their translated prose.
   // This is a bounded old-data migration, not substring classification.
   const legacyCatalogRecord = /^(?:当前没有已连接的供应商提供「[^」]+」模型。请重新连接原供应商，或在该节点上改选一个已连接供应商的模型。|供应商「[^」]+」已断开，且该节点未记录模型。请重新连接，或在该节点上改选已连接供应商的模型。)$/
-  return legacyCatalogRecord.test(message) ? 'model-config' : null
+  if (legacyCatalogRecord.test(message)) return 'model-config'
+  // Frozen pre-code source records. Unwrap only the known Electron envelope;
+  // quoted phrases in authored text are not workflow state.
+  const legacyRecord = String(message || '')
+    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
+    .replace(/^Error:\s*/, '')
+  const firstLine = legacyRecord.split(/\r?\n/, 1)[0]
+  if (/^图生图缺少参考图：这次请求里没有任何图片可以发给模型。(?:请连接一张图片节点（或在参考槽添加图片）后再生成，或切回「文生图」。)?$/.test(firstLine)) return 'image-edit-missing-reference'
+  if (/^图生视频缺少参考图：这次请求里没有任何图片可以发给模型。(?:请连接一张图片节点（或在参考槽添加图片）后再生成。)?$/.test(firstLine)) return 'image-video-missing-reference'
+  if (/^模型「[^」\r\n]+」这一轮达到了输出长度上限，内容被截断，没能完整返回。$/.test(firstLine)) return 'output-truncated'
+  if (/^Codex Img2 网络请求失败：[^\r\n]+$/.test(firstLine)) return 'codex-network'
+  if (/^Codex Img2 (?:生成超时（\d+ 秒）|长时间无进展（\d+ 秒没有输出）)$/.test(firstLine)) return 'codex-timeout'
+  if (/^Codex Img2 (?:generation timed out \(\d+ seconds\)|has made no progress \(no output for \d+ seconds\))$/.test(firstLine)) return 'codex-timeout'
+  if (legacyRecord === 'Blender 渲染已取消' || legacyRecord === 'Blender rendering was cancelled') return 'operation-cancelled'
+  return null
 }
 
 /** 展示端：剥掉码标记，只留人话（技术详情里的 raw 若要保留原样则不调它）。 */

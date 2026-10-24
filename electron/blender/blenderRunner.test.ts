@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setDesktopLocale } from "../desktopLocale";
+import { matchNomiErrorCode } from "../shared/nomiErrorCodes";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
@@ -36,6 +38,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setDesktopLocale("zh-CN");
   expect(activeBlenderSceneRenderCount()).toBe(0);
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -165,7 +168,8 @@ describe("blender scene runner", () => {
     });
   });
 
-  it("kills the active Blender process when the job is cancelled", async () => {
+  it.each(["zh-CN", "en"] as const)("kills the active Blender process with stable cancellation identity: %s", async (locale) => {
+    setDesktopLocale(locale);
     const childRef: { current?: EventEmitter & { kill: ReturnType<typeof vi.fn> } } = {};
     mocks.spawn.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
@@ -192,7 +196,8 @@ describe("blender scene runner", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(cancelBlenderSceneRender("job-cancel")).toBe(true);
-    await expect(rendering).rejects.toThrow(/已取消/);
+    await expect(rendering).rejects.toThrow(locale === "zh-CN" ? /已取消/ : /cancelled/);
+    await expect(rendering.catch(error => matchNomiErrorCode(error.message))).resolves.toBe("operation-cancelled");
     expect(childRef.current?.kill).toHaveBeenCalledWith("SIGTERM");
   });
 

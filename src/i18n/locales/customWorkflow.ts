@@ -1,4 +1,14 @@
 export const zhCustomWorkflow = {
+  toolRecipeList: '查看创作能力配方',
+  toolRecipeApply: '为{{source}}生成「{{recipe}}」新结果（将产生费用）{{review}}',
+  toolRecipeReview: '，并执行一次视觉复核',
+  toolRecipeFallback: '创作配方',
+  toolNodeFallback: '节点',
+  toolResourceSave: '把{{source}}保存为{{kind}}资源「{{label}}」',
+  toolModelHandoffDirector: '把{{source}}送入 Blender Director',
+  toolModelHandoffStaging: '把{{source}}送入 3D 导演台',
+  toolDirectorRead: '查看 Blender 导演状态',
+  toolDirectorApply: '应用 Blender 导演计划（不自动生成）',
   unnamedStoryboardGroup: '分镜组：未命名分镜',
   "applyPlan": "应用计划",
   "confirmChanges": "确认应用",
@@ -214,6 +224,16 @@ export const zhCustomWorkflow = {
 } as const
 
 export const enCustomWorkflow = {
+  toolRecipeList: 'Inspect creative capability recipes',
+  toolRecipeApply: 'Generate new “{{recipe}}” results for {{source}} (paid){{review}}',
+  toolRecipeReview: ', with one visual review',
+  toolRecipeFallback: 'creative recipe',
+  toolNodeFallback: 'the node',
+  toolResourceSave: 'Save {{source}} as a {{kind}} resource “{{label}}”',
+  toolModelHandoffDirector: 'Send {{source}} to Blender Director',
+  toolModelHandoffStaging: 'Send {{source}} to the 3D director desk',
+  toolDirectorRead: 'Inspect Blender Director state',
+  toolDirectorApply: 'Apply the Blender director plan (no automatic generation)',
   unnamedStoryboardGroup: 'Storyboard group: Untitled storyboard',
   "applyPlan": "Apply plan",
   "confirmChanges": "Confirm changes",

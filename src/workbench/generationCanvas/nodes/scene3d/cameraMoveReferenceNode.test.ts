@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // availableModels 链路走 window.nomiDesktop IPC，node 测试环境不存在——mock 掉
 // （本测试不带 modelKey，真实代码路径也不会调它，与 applyCanvasToolCall.test.ts 同例）。
@@ -6,12 +6,16 @@ vi.mock('../../agent/availableModels', () => ({ listAvailableModelsForAgent: vi.
 
 import { applyCanvasToolCall, resetClientIdRegistry } from '../../agent/applyCanvasToolCall'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
-import { buildCameraMoveScene, type CameraMoveSpec } from './cameraMoveBuilder'
+import { buildCameraMoveScene, type CameraMoveSpec } from '../director/agent/cameraMoveBuilder'
 import {
   createCameraMoveReferenceNode,
   cameraMoveFrameCount,
   CAMERA_MOVE_CAPTURE_FPS,
-} from './cameraMoveReferenceNode'
+  readCameraMoveAutoCapture,
+} from '../director/agent/createCameraMoveReferenceNode'
+import { createCameraMoveReferenceNode as createLegacyCameraMoveReferenceNode } from './cameraMoveReferenceNode'
+import { migrateScene3DState } from '../director/migration/migrateScene3d'
+import { migrateScene3DNode } from '../director/migration/migrateScene3dNode'
 import { CAMERA_SPEED_DURATION } from './cameraMoveVocab'
 
 function resetCanvas() {
@@ -20,16 +24,21 @@ function resetCanvas() {
 }
 
 // B1 单一真相源不变量（P1/P4）：手动运镜控件走的 createCameraMoveReferenceNode，和 AI 工具
-// create_camera_move 精确分支，对等价输入必须产出**同一个** scene3d + cameraMoveAutoCapture 契约。
+// create_camera_move 精确分支，对等价输入必须产出同一个 director + cameraMoveAutoCapture 契约。
 // 若某天有人在其中一条路上偷改 fps/frameCount/meta 形状（像 handleRecordTake 漏 move 那样漂移），
 // 这条测试立刻红。
 describe('createCameraMoveReferenceNode — 与 AI create_camera_move 同源', () => {
+  let idSequence = 0
   beforeEach(() => {
     resetCanvas()
     resetClientIdRegistry()
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+    vi.spyOn(Math, 'random').mockImplementation(() => ++idSequence / 100_000)
+    idSequence = 0
   })
+  afterEach(() => { vi.restoreAllMocks() })
 
-  it('等价输入下：手动路建的 scene3d 节点 meta 与 AI 工具逐字段一致', async () => {
+  it('等价输入下：canonical Director 手动路与 AI 工具的完整工程逐字段一致', async () => {
     const spec: CameraMoveSpec = { move: 'push_in', speed: 'fast', shot: 'close' }
 
     // —— AI 路：先建目标视频节点，再 create_camera_move 指向它。
@@ -37,6 +46,7 @@ describe('createCameraMoveReferenceNode — 与 AI create_camera_move 同源', (
       nodes: [{ clientId: 'v1', kind: 'video', title: '镜头 1', prompt: 'p' }],
     })) as { clientIdToNodeId: Record<string, string> }
     const aiTargetId = created.clientIdToNodeId.v1
+    idSequence = 0
     const aiRes = (await applyCanvasToolCall('create_camera_move', {
       shotClientId: 'v1',
       move: spec.move,
@@ -49,13 +59,15 @@ describe('createCameraMoveReferenceNode — 与 AI create_camera_move 同源', (
     // —— 手动路：清场后自建一个视频节点当目标，直接调共享核心。
     resetCanvas()
     const manualTarget = useGenerationCanvasStore.getState().addNode({ kind: 'video', title: '镜头 M', prompt: 'p' })
+    idSequence = 0
     const manualRes = createCameraMoveReferenceNode({ spec, targetNodeId: manualTarget.id })
     const manualNode = useGenerationCanvasStore.getState().nodes.find((n) => n.id === manualRes.cameraMoveNodeId)!
     const manualFlag = manualNode.meta?.cameraMoveAutoCapture as Record<string, unknown>
 
-    // 两路都建 scene3d 节点。
-    expect(aiNode.kind).toBe('scene3d')
-    expect(manualNode.kind).toBe('scene3d')
+    expect(aiNode.kind).toBe('director')
+    expect(manualNode.kind).toBe('director')
+    expect(aiNode.meta).not.toHaveProperty('scene3dState')
+    expect(manualNode.meta).not.toHaveProperty('scene3dState')
 
     // fps / frameCount / move 不变量逐字段一致（targetNodeId 各指各的目标，单独比是否都带上）。
     expect(manualFlag.fps).toBe(aiFlag.fps)
@@ -67,12 +79,29 @@ describe('createCameraMoveReferenceNode — 与 AI create_camera_move 同源', (
     expect(manualFlag.targetNodeId).toBe(manualTarget.id)
     expect(aiFlag.targetNodeId).toBe(aiTargetId)
 
-    // scene3dState 与纯 builder 逐字段等价（同源 buildCameraMoveScene，排除随机 id + 内部交叉引用）。
-    const pure = buildCameraMoveScene(spec)
-    const stripIds = (s: unknown) =>
-      JSON.parse(JSON.stringify(s).replace(/"(id|objectId|trajectoryId)":"[^"]*"/g, '"$1":"_"'))
-    expect(stripIds(manualNode.meta?.scene3dState)).toEqual(stripIds(pure))
-    expect(stripIds(aiNode.meta?.scene3dState)).toEqual(stripIds(pure))
+    // Deterministic unique ID sequence lets this compare geometry and all references,
+    // rather than deleting arbitrary fields from the assertion.
+    idSequence = 0
+    const pure = migrateScene3DState(buildCameraMoveScene(spec), { sceneName: manualNode.title }).project
+    expect(manualNode.meta?.directorProject).toEqual(pure)
+    expect(aiNode.meta?.directorProject).toEqual(pure)
+  })
+
+  it.each(['push_in', 'orbit_left'] as const)('legacy constructor and persisted input remain readable: %s', move => {
+    const result = createLegacyCameraMoveReferenceNode({ spec: { move, speed: 'fast' }, targetNodeId: 'old-target' })
+    const legacyNode = useGenerationCanvasStore.getState().nodes.find(node => node.id === result.cameraMoveNodeId)!
+    expect(legacyNode.kind).toBe('scene3d')
+    const before = JSON.stringify(legacyNode)
+    const migrated = migrateScene3DNode(JSON.parse(before), legacyNode.title)
+    expect(migrated.kind).toBe('director')
+    expect(readCameraMoveAutoCapture(migrated)).toEqual({
+      targetNodeId: 'old-target', fps: CAMERA_MOVE_CAPTURE_FPS,
+      frameCount: CAMERA_SPEED_DURATION.fast * CAMERA_MOVE_CAPTURE_FPS, move,
+    })
+    expect(migrated.meta).not.toHaveProperty('scene3dState')
+    expect(migrated.meta.directorProject).toBeDefined()
+    expect(migrateScene3DNode(migrated, legacyNode.title).meta).toEqual(migrated.meta)
+    expect(JSON.stringify(legacyNode)).toBe(before)
   })
 
   it('无 targetNodeId：标志不含 targetNodeId 键（不设 undefined，与 Host 契约一致）', () => {

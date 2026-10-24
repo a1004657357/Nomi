@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { GenerationCanvasEdge, GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import {
   referenceSlotForScene3DCaptureTitle,
+  referenceSlotForScene3DCapture,
   scene3DReferenceTargetLabel,
   shouldAttachScene3DFrameReference,
   summarizeScene3DReferenceTarget,
@@ -30,6 +31,12 @@ const edge = (source: string, target: string): GenerationCanvasEdge => ({
 })
 
 describe('scene3dReferenceDirector', () => {
+  it('uses explicit frame roles before titles, retains legacy titles, and rejects unknown roles', () => {
+    expect(referenceSlotForScene3DCapture({ title: 'Editable translated title', referenceSlot: 'first_frame' })).toBe('first_frame')
+    expect(referenceSlotForScene3DCapture({ title: '运镜首帧', referenceSlot: 'last_frame' })).toBe('last_frame')
+    expect(referenceSlotForScene3DCapture({ title: '用户说明 · 运镜尾帧' })).toBe('last_frame')
+    expect(referenceSlotForScene3DCapture({ title: '运镜首帧', referenceSlot: 'reference' as never })).toBeNull()
+  })
   it('finds the downstream video target and marks Seedance omni as video_ref capable', () => {
     const scene = node('s3d', 'scene3d')
     const video = node('shot', 'video', {

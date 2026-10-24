@@ -1,4 +1,5 @@
 import { canvasSourceDefaults, scene3dCaptureSource } from '../../../../electron/shared/canvas/sourceDefaults'
+import { matchNomiErrorCode } from '../../../../electron/shared/nomiErrorCodes'
 import i18n from '../../../i18n'
 import type { BlenderDirectorStagePreset } from '../../../../electron/shared/blenderDirectorContract'
 import type { JSX } from 'react'
@@ -25,7 +26,7 @@ import { buildVideoPlaybackUrl } from '../../../media/videoPlaybackUrl'
 import { diagnoseVideoPlaybackFailure, logVideoPlaybackFailure } from '../../../media/videoPlaybackDiagnostics'
 import { readScene3DCardPreview } from './scene3d/scene3dCardPreview'
 import {
-  referenceSlotForScene3DCaptureTitle,
+  referenceSlotForScene3DCapture,
   shouldAttachScene3DFrameReference,
   summarizeScene3DReferenceTarget,
 } from './scene3d/scene3dReferenceDirector'
@@ -319,7 +320,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
         },
       })
       connectNodes(node.id, screenshotNode.id, 'reference')
-      const targetSlot = referenceSlotForScene3DCaptureTitle(capture.title)
+      const targetSlot = referenceSlotForScene3DCapture(capture)
       if (
         targetSlot &&
         referenceTarget.state !== 'not-connected' &&
@@ -442,7 +443,8 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     } catch (error) {
       if (!isProjectExecutionContextCurrent(project)) return
       const message = error instanceof Error ? error.message : String(error)
-      toast(message.includes('已取消') ? i18n.t("canvasComponents.blenderRenderingCancelled") : message, message.includes('已取消') ? 'info' : 'error')
+      const cancelled = matchNomiErrorCode(message) === 'operation-cancelled'
+      toast(cancelled ? i18n.t("canvasComponents.blenderRenderingCancelled") : message, cancelled ? 'info' : 'error')
     } finally {
       if (blenderJobIdRef.current === jobId) blenderJobIdRef.current = null
       if (isProjectExecutionContextCurrent(project)) setBlenderJobId(null)

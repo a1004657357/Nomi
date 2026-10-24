@@ -3,12 +3,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setDesktopLocale } from "../desktopLocale";
+import { matchNomiErrorCode } from "../shared/nomiErrorCodes";
 
 const spawnMock = vi.hoisted(() => vi.fn());
+const execFileMock = vi.hoisted(() => vi.fn(() => { throw new Error("Unexpected external execFile in offline Codex fixture"); }));
 const probeMediaMetadataMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({
   spawn: spawnMock,
+  execFile: execFileMock,
 }));
 vi.mock("../export/mediaProbe", () => ({
   probeMediaMetadata: probeMediaMetadataMock,
@@ -70,6 +74,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  expect(execFileMock).not.toHaveBeenCalled();
+  setDesktopLocale("zh-CN");
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   resetProxyStateForTests();
@@ -525,6 +531,7 @@ describe("codexImagegenRunner", () => {
     } catch (error) {
       const normalized = rememberDiagnosticDir(error);
       expect(normalized.message).toContain("网络请求失败");
+      expect(matchNomiErrorCode(normalized.message)).toBe("codex-network");
       expect(normalized.message).toContain("没有自动重试");
       expect(normalized.message).not.toContain("100×100");
     }
@@ -752,6 +759,7 @@ describe("codexImagegenRunner", () => {
     }));
 
     expect(error.message).toContain("codex exec 退出码 1");
+    expect(matchNomiErrorCode(error.message)).toBe("codex-network");
     expect(spawnMock).toHaveBeenCalledOnce();
   });
 
@@ -851,7 +859,8 @@ describe("codexImagegenRunner", () => {
     expect(fs.readFileSync(path.join(result.tempDir, "codex-stdout.jsonl"), "utf8")).toContain("attempt 2");
   });
 
-  it("terminates a child that produces no output before the hard timeout", async () => {
+  it.each(["zh-CN", "en"] as const)("terminates an idle child with stable timeout identity: %s", async (locale) => {
+    setDesktopLocale(locale);
     const childRef: { current?: EventEmitter & { kill: ReturnType<typeof vi.fn> } } = {};
     spawnMock.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
@@ -879,7 +888,8 @@ describe("codexImagegenRunner", () => {
       maxNetworkAttempts: 1,
     }));
 
-    expect(error.message).toMatch(/长时间无进展/);
+    expect(error.message).toMatch(locale === "zh-CN" ? /长时间无进展/ : /no progress/);
+    expect(matchNomiErrorCode(error.message)).toBe("codex-timeout");
     expect(childRef.current?.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
@@ -990,6 +1000,7 @@ describe("codexImagegenRunner", () => {
     }));
 
     expect(error.message).toMatch(/生成超时/);
+    expect(matchNomiErrorCode(error.message)).toBe("codex-timeout");
     expect(childRef.current?.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(childRef.current?.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
   });

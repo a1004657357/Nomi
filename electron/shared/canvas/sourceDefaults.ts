@@ -40,6 +40,10 @@ export function actorSourceName(code: string): string {
 }
 
 /** Capture labels also enter nodes, prompt inputs and historical frame-slot matching. */
+export function cameraMoveFrameLabel(frame: string): string {
+  return `运镜${frame}`
+}
+
 export const scene3dCaptureSource = {
   stagingReference: () => '站位参考',
   stagingPrompt: () => '3D 站位参考（站位 + 动作 + 机位）',
@@ -50,7 +54,7 @@ export const scene3dCaptureSource = {
   screenshotPrompt: () => '3D 场景截图',
   firstFrame: () => '首帧',
   lastFrame: () => '尾帧',
-  cameraMoveFrameTitle: (camera: string, frame: string) => `${camera} · 运镜${frame}`,
+  cameraMoveFrameTitle: (camera: string, frame: string) => `${camera} · ${cameraMoveFrameLabel(frame)}`,
   cameraMoveFramesTitle: (camera: string) => `${camera} · 运镜首尾帧`,
   panoramaName: () => '全景图',
 }

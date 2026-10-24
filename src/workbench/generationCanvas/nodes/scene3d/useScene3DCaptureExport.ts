@@ -111,16 +111,17 @@ export function useScene3DMoveFrameExport({
       toast(i18n.t('scene3d.fullscreen.frameExportFailed'), 'error')
       return
     }
-    const labeled: Array<[string, string]> = [
-      [result.frames[0], scene3dCaptureSource.firstFrame()],
-      [result.frames[result.frames.length - 1], scene3dCaptureSource.lastFrame()],
+    const labeled: Array<[string, string, NonNullable<Scene3DCaptureResult['referenceSlot']>]> = [
+      [result.frames[0], scene3dCaptureSource.firstFrame(), 'first_frame'],
+      [result.frames[result.frames.length - 1], scene3dCaptureSource.lastFrame(), 'last_frame'],
     ]
-    labeled.forEach(([dataUrl, label]) => onScreenshot({
+    labeled.forEach(([dataUrl, label, referenceSlot]) => onScreenshot({
       dataUrl,
       width: result.width,
       height: result.height,
       title: scene3dCaptureSource.cameraMoveFrameTitle(cameraName, label),
       source: 'scene3d-camera',
+      referenceSlot,
     }))
     // F2：两张节点已建 → 弹持久结果卡（替代瞬时 toast，用户能回看/回画布）。无宿主回调时退回 toast。
     if (onKeyframesExported) onKeyframesExported(labeled.length)

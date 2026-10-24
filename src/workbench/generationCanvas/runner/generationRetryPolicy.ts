@@ -20,14 +20,15 @@ export function isRetryableGenerationError(error: unknown, kind?: string): boole
   // - 阶段到期：我们自己决定不再等了（提交那一格到期时，钱可能已经花了）。
   if (isRecoverableTimeoutError(error) || isGenerationPhaseStalledError(error)) return false
   if (!(error instanceof Error)) return false
+  const localCode = matchNomiErrorCode(error.message)
+  if (localCode === 'codex-timeout' || localCode === 'codex-network' || localCode === 'operation-cancelled') return false
   const structured = parseVendorErrorFromMessage(error.message)
     ?? (error as Error & { structured?: { retryable?: boolean; category?: string } }).structured
   if (structured?.retryable === false || structured?.category === 'submission-unknown'
-    || matchNomiErrorCode(error.message) === 'submission-unknown') return false
+    || localCode === 'submission-unknown') return false
   // Text-only transport failures cannot prove that a paid submission is safe to repeat.
   if (structured) return structured.retryable === true && structured.category !== 'timeout'
   if (error instanceof TypeError) return kind === 'text'
-  if (error.message.includes('Codex Img2 长时间无进展') || error.message.includes('Codex Img2 生成超时')) return false
   const candidate = error as RetryableGenerationError
   if (typeof candidate.status === 'number') {
     return (

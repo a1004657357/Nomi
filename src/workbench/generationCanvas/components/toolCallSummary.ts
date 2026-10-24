@@ -7,6 +7,9 @@ import { getGenerationNodeDefaultTitle, isGenerationNodeKind } from '../model/ge
 import { BUILTIN_CATEGORY_IDS } from '../../project/projectCategories'
 import { CAMERA_SPEED_DURATION, type CameraMove, type CameraSpeed } from '../nodes/director/agent/cameraMoveVocab'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
+import { BUILTIN_CAPABILITY_RECIPES } from '../../../config/capabilityRecipes'
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import { resolveCapabilityAlias } from '../../../../electron/shared/agentCapabilities/registry'
 
 const T = 'generationCommon.assistant.toolCall'
 const tt = (key: string, values?: Record<string, unknown>): string =>
@@ -59,6 +62,35 @@ function plannedNodeKind(raw: unknown): GenerationNodeKind {
 
 export function summarizeToolCall(toolName: string, args: unknown): string {
   const record = args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+  const creative = resolveCapabilityAlias(toolName)
+  if (creative?.contract.id === 'creative.component.read') {
+    if (creative.alias === creative.contract.aliases.pi) return i18n.t('customWorkflow.toolRecipeList')
+    if (creative.alias === 'read_vibing_director') return i18n.t('customWorkflow.toolDirectorRead')
+  }
+  if (creative?.contract.id === 'creative.component.write') {
+    const sourceTitle = typeof record.sourceNodeId === 'string' ? nodeTitleById(record.sourceNodeId) : null
+    const source = sourceTitle ? quoted(sourceTitle) : i18n.t('customWorkflow.toolNodeFallback')
+    if (creative.alias === creative.contract.aliases.pi) {
+      const recipe = BUILTIN_CAPABILITY_RECIPES.find(candidate => candidate.id === record.recipeId)
+      const recipeLabel = recipe
+        ? translateCapabilityWorkflowText(recipe.label)
+        : typeof record.recipeId === 'string' ? record.recipeId : i18n.t('customWorkflow.toolRecipeFallback')
+      return i18n.t('customWorkflow.toolRecipeApply', {
+        source, recipe: recipeLabel,
+        review: record.visionReview ? i18n.t('customWorkflow.toolRecipeReview') : '',
+      })
+    }
+    if (creative.alias === 'save_creative_resource') {
+      const kind = record.kind === 'character' ? i18n.t('storyboardEditor.anchor.kind.character')
+        : record.kind === 'scene' ? i18n.t('storyboardEditor.anchor.kind.scene')
+          : record.kind === 'prop' ? i18n.t('storyboardEditor.anchor.kind.prop') : i18n.t('storyboardEditor.anchor.kind.style')
+      return i18n.t('customWorkflow.toolResourceSave', { source, kind, label: String(record.label ?? '') })
+    }
+    if (creative.alias === 'handoff_model3d') {
+      return i18n.t(record.target === 'staging' ? 'customWorkflow.toolModelHandoffStaging' : 'customWorkflow.toolModelHandoffDirector', { source })
+    }
+    if (creative.alias === 'apply_vibing_director_plan') return i18n.t('customWorkflow.toolDirectorApply')
+  }
   if (toolName === 'create_canvas_nodes') {
     const nodes = Array.isArray(record.nodes) ? record.nodes : []
     const summary = typeof record.summary === 'string' ? record.summary : ''

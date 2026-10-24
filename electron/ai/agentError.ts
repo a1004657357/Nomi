@@ -16,6 +16,7 @@
  * Electron-free so it can be unit-tested offline (agentError.test.ts).
  */
 import { encodeVendorErrorMessage } from "../vendor/vendorHttp";
+import { tagNomiError } from "../shared/nomiErrorCodes";
 import { vendorErrorFromAiSdkError, type AiSdkErrorContext } from "./aiSdkVendorError";
 
 /**
@@ -59,7 +60,7 @@ export function describeEmptyAgentReply(finishReason: string, info: EmptyReplyMo
     else if (info.agentSuitability === "poor") parts.push("该模型做 Agent 工具调用本就不可靠。");
     // 截断是确定性的——原样重试必再撞。给真动作：缩短这轮任务，或换单轮输出上限更大的模型。
     parts.push("原样重试会再次截断。请缩短这一轮的任务量（如剧本分段拆镜头、减少镜头数），或换用单轮输出上限更大的模型（如 GPT-4o / Claude / Gemini）。");
-    return parts.join("\n");
+    return tagNomiError("output-truncated", parts.join("\n"));
   }
   if (reason === "content-filter") {
     return `模型「${info.modelLabel}」因内容安全策略拦截，没有返回结果。换个说法或换模型再试。`;

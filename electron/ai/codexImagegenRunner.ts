@@ -1,4 +1,5 @@
 import { desktopT } from "../desktopStrings";
+import { tagNomiError } from "../shared/nomiErrorCodes";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -410,8 +411,8 @@ function runCodexExec(
     let forceKillTimer: NodeJS.Timeout | undefined;
     let forceSettleTimer: NodeJS.Timeout | undefined;
     let idleTimer: NodeJS.Timeout | undefined;
-    const timeoutError = new Error(desktopT("custom.ai.codexImagegenRunner.text2", { value0: `${Math.round(timeoutMs / 1000)}` }));
-    const idleError = new Error(desktopT("custom.ai.codexImagegenRunner.text3", { value0: `${Math.round(idleTimeoutMs / 1000)}` }));
+    const timeoutError = new Error(tagNomiError("codex-timeout", desktopT("custom.ai.codexImagegenRunner.text2", { value0: `${Math.round(timeoutMs / 1000)}` })));
+    const idleError = new Error(tagNomiError("codex-timeout", desktopT("custom.ai.codexImagegenRunner.text3", { value0: `${Math.round(idleTimeoutMs / 1000)}` })));
     const clearTimers = () => {
       clearTimeout(timer);
       if (idleTimer) clearTimeout(idleTimer);
@@ -616,7 +617,7 @@ export async function runCodexImageGeneration(input: {
           for (let attempt = 1; attempt <= maxNetworkAttempts; attempt += 1) {
             attemptCount = attempt;
             const remainingTimeoutMs = timeoutMs - (Date.now() - execStartedAt);
-            if (remainingTimeoutMs <= 0) throw new Error(desktopT("custom.ai.codexImagegenRunner.text6", { value0: `${Math.round(timeoutMs / 1000)}` }));
+            if (remainingTimeoutMs <= 0) throw new Error(tagNomiError("codex-timeout", desktopT("custom.ai.codexImagegenRunner.text6", { value0: `${Math.round(timeoutMs / 1000)}` })));
             if (attempt > 1) {
               try {
                 fs.rmSync(outputPath, { force: true });
@@ -659,27 +660,26 @@ export async function runCodexImageGeneration(input: {
         const verifyStartedAt = Date.now();
         const lastMessage = fs.existsSync(lastMessagePath) ? fs.readFileSync(lastMessagePath, "utf8").trim() : "";
         if (result.code !== 0) {
-          throw new Error(
-            [
-              `Codex Img2 生成失败：codex exec 退出码 ${result.code}`,
-              `诊断目录：${tempDir}`,
-              `stderr：${stderrPath}`,
-              `stdout：${stdoutPath}`,
-              (result.stderr || result.stdout).slice(-2000),
-            ]
-              .filter(Boolean)
-              .join("\n"),
-          );
+          const failureMessage = [
+            `Codex Img2 生成失败：codex exec 退出码 ${result.code}`,
+            `诊断目录：${tempDir}`,
+            `stderr：${stderrPath}`,
+            `stdout：${stdoutPath}`,
+            (result.stderr || result.stdout).slice(-2000),
+          ]
+            .filter(Boolean)
+            .join("\n");
+          throw new Error(isRetryableCodexNetworkFailure(result) ? tagNomiError("codex-network", failureMessage) : failureMessage);
         }
         const hasRequestedOutput = fs.existsSync(outputPath) && fs.statSync(outputPath).isFile();
         if (!hasRequestedOutput && isRetryableCodexNetworkFailure(result)) {
           throw new Error(
-            [
+            tagNomiError("codex-network", [
               "Codex Img2 网络请求失败：ChatGPT 图片服务没有返回图片。本次没有自动重试，避免重复提交或重复计费。",
               `诊断目录：${tempDir}`,
               `stderr：${stderrPath}`,
               `stdout：${stdoutPath}`,
-            ].join("\n"),
+            ].join("\n")),
           );
         }
         const reportedError = reportedCodexImagegenError(lastMessage);

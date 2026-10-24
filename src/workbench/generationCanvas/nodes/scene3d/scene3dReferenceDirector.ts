@@ -1,4 +1,6 @@
 import i18n from "../../../../i18n"
+import { cameraMoveFrameLabel, scene3dCaptureSource } from '../../../../../electron/shared/canvas/sourceDefaults'
+import type { Scene3DCaptureResult } from './scene3dTypes'
 import type {
   GenerationCanvasEdge,
   GenerationCanvasEdgeMode,
@@ -108,9 +110,16 @@ export function summarizeScene3DReferenceTarget(
 }
 
 export function referenceSlotForScene3DCaptureTitle(title: string): Extract<GenerationCanvasEdgeMode, 'first_frame' | 'last_frame'> | null {
-  if (title.includes('运镜首帧')) return 'first_frame'
-  if (title.includes('运镜尾帧')) return 'last_frame'
+  if (title.includes(cameraMoveFrameLabel(scene3dCaptureSource.firstFrame()))) return 'first_frame'
+  if (title.includes(cameraMoveFrameLabel(scene3dCaptureSource.lastFrame()))) return 'last_frame'
   return null
+}
+
+export function referenceSlotForScene3DCapture(capture: Pick<Scene3DCaptureResult, 'title' | 'referenceSlot'>): Scene3DCaptureResult['referenceSlot'] | null {
+  if (capture.referenceSlot !== undefined) {
+    return capture.referenceSlot === 'first_frame' || capture.referenceSlot === 'last_frame' ? capture.referenceSlot : null
+  }
+  return referenceSlotForScene3DCaptureTitle(capture.title)
 }
 
 export function shouldAttachScene3DFrameReference(

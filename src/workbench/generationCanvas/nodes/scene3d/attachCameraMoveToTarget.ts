@@ -13,7 +13,7 @@ import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { archetypeForNode, findVideoRefMode } from '../../agent/referenceEdgeCapability'
 import { applyArchetypeModeSwitch, readArchetypeArray } from '../controls/archetypeMeta'
 import type { CameraMove } from './cameraMoveVocab'
-import { cameraMoveDirective } from '../director/agent/attachCameraMoveToTarget'
+import { appendCameraMoveDirective, cameraMoveDirective } from '../director/agent/attachCameraMoveToTarget'
 import { isVideoLikeGenerationNodeKind } from '../../model/generationNodeKinds'
 import i18n from '../../../../i18n'
 
@@ -97,6 +97,6 @@ export function computeAttachCameraMove(
   const directive = cameraMoveDirective(move)
   if (!directive) return { kind: 'noop' }
   const basePrompt = typeof target.prompt === 'string' ? target.prompt : ''
-  const prompt = basePrompt.includes('镜头运动：') ? basePrompt : `${basePrompt}${directive}`
+  const prompt = appendCameraMoveDirective(basePrompt, move)
   return { kind: 'patch', patch: { meta: { ...meta, [CAMERA_MOVE_ATTACHED_URL_KEY]: trimmedNew }, prompt } }
 }
