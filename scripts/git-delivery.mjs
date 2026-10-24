@@ -301,6 +301,85 @@ export function parseGitHubRepository(remoteUrl) {
   return match[1]
 }
 
+function deliveryRepository(value, source) {
+  let repository
+  try {
+    repository = parseGitHubRepository(value)
+  } catch {
+    throw new DeliveryError('invalid_delivery_repository', `Cannot resolve a GitHub repository for ${source}; use OWNER/REPO or github.com/OWNER/REPO.`)
+  }
+  if (!/^[a-z0-9-]+\/[a-z0-9_.-]+$/i.test(repository) || ['.', '..'].includes(repository.split('/')[1])) {
+    throw new DeliveryError('invalid_delivery_repository', `Invalid GitHub repository identity for ${source}.`)
+  }
+  return repository
+}
+
+export function resolveDeliveryTarget({ cwd = process.cwd(), env = process.env, repository, remote, base = 'main' } = {}) {
+  const contexts = [['repository', repository], ['GH_REPO', env.GH_REPO], ['GITHUB_REPOSITORY', env.GITHUB_REPOSITORY]]
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([source, value]) => {
+      const raw = String(value).trim()
+      const remoteUrl = /^[^/:]+\/[^/]+$/.test(raw)
+        ? `https://github.com/${raw}`
+        : /^github\.com\//i.test(raw) ? `https://${raw}` : raw
+      return { source, repository: deliveryRepository(remoteUrl, source) }
+    })
+  if (new Set(contexts.map(context => context.repository.toLowerCase())).size > 1) {
+    throw new DeliveryError('conflicting_delivery_repository', `Conflicting delivery repository contexts: ${contexts.map(context => context.source).join(', ')}.`)
+  }
+  if (typeof base !== 'string' || gitStatus(cwd, ['check-ref-format', `refs/heads/${base}`]).exitCode !== 0) {
+    throw new DeliveryError('invalid_delivery_base', 'Delivery base must be a valid branch name.')
+  }
+  const targetRepository = contexts[0]?.repository
+  const names = gitOutput(cwd, ['remote']).split(/\r?\n/).filter(Boolean)
+  if (remote !== undefined && (typeof remote !== 'string' || !names.includes(remote))) {
+    throw new DeliveryError('missing_delivery_remote', 'The explicit delivery remote is not configured in this repository.')
+  }
+  if (!targetRepository && remote === undefined && names.length > 1) {
+    throw new DeliveryError('ambiguous_delivery_repository', 'Ambiguous delivery repository: declare GH_REPO or an explicit --remote; origin is not assumed to own the PR target.')
+  }
+  // Fetch identity owns the tracking ref. A push URL cannot establish that identity.
+  const candidates = (remote === undefined ? names : [remote]).map(name => {
+    const urls = gitOutput(cwd, ['remote', 'get-url', '--all', name]).split(/\r?\n/).filter(Boolean)
+    const identities = new Map()
+    let unsupported = false
+    for (const remoteUrl of urls) {
+      try {
+        const identity = deliveryRepository(remoteUrl, `fetch remote ${name}`)
+        identities.set(identity.toLowerCase(), identity)
+      } catch (error) {
+        if (!(error instanceof DeliveryError)) throw error
+        unsupported = true
+      }
+    }
+    return { name, identities, unsupported }
+  })
+  const matches = targetRepository && remote === undefined
+    ? candidates.filter(candidate => candidate.identities.has(targetRepository.toLowerCase()))
+    : candidates
+  if (matches.length === 0) {
+    throw new DeliveryError('missing_delivery_remote', 'No configured fetch remote matches the delivery repository; check GH_REPO and fetch remote ownership.')
+  }
+  if (matches.length > 1) {
+    throw new DeliveryError('ambiguous_delivery_remote', 'Ambiguous delivery remote: multiple fetch remotes match the repository; select one explicitly with --remote.')
+  }
+  const selected = matches[0]
+  if (selected.unsupported || selected.identities.size !== 1) {
+    throw new DeliveryError('ambiguous_remote_repository', `Ambiguous or unsupported fetch repository for remote ${selected.name}; one GitHub repository identity is required.`)
+  }
+  const selectedRepository = [...selected.identities.values()][0]
+  if (targetRepository && selectedRepository.toLowerCase() !== targetRepository.toLowerCase()) {
+    throw new DeliveryError('delivery_repository_mismatch', `The explicit remote ${selected.name} does not match the delivery repository.`)
+  }
+  const remoteRef = `${selected.name}/${base}`
+  const qualifiedRef = `refs/remotes/${remoteRef}`
+  const resolved = gitStatus(cwd, ['rev-parse', '--verify', `${qualifiedRef}^{commit}`])
+  if (resolved.exitCode !== 0) {
+    throw new DeliveryError('missing_delivery_base', `Missing target ${qualifiedRef}; refresh the selected remote with git fetch --no-tags ${selected.name} refs/heads/${base}:${qualifiedRef}, then retry.`)
+  }
+  return { repository: targetRepository || selectedRepository, remote: selected.name, base, remoteRef, qualifiedRef, remoteCommit: resolved.stdout.trim() }
+}
+
 function checkValue(check, snakeName, camelName) {
   return check?.[snakeName] ?? check?.[camelName] ?? null
 }
