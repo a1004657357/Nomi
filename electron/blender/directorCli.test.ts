@@ -21,7 +21,11 @@ import {
   buildDirectorBridgeArgs,
   parseDirectorBridgeOutput,
   runDirectorBlenderRender,
+  cancelDirectorBlenderRender,
 } from "./directorCli";
+import { setDesktopLocale } from "../desktopLocale";
+import { desktopT } from "../desktopStrings";
+import { matchNomiErrorCode } from "../shared/nomiErrorCodes";
 
 const tempDirs: string[] = [];
 
@@ -45,6 +49,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setDesktopLocale('zh-CN');
   expect(activeDirectorBlenderRenderCount()).toBe(0);
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -90,6 +95,63 @@ function minimalGlb(): Buffer {
 }
 
 describe("director Blender CLI bridge", () => {
+  it.each(['zh-CN', 'en'])('keeps historical Director cancellation identity in %s', locale => {
+    setDesktopLocale(locale);
+    const message = desktopT('custom.blender.directorCli.text12');
+    expect(matchNomiErrorCode(message)).toBe('operation-cancelled');
+    expect(matchNomiErrorCode(`Error invoking remote method 'scene:render': Error: ${message}`)).toBe('operation-cancelled');
+    expect(matchNomiErrorCode(`User authored note: ${message}`)).toBeNull();
+    expect(matchNomiErrorCode(`${message} unexpectedly timed out`)).toBeNull();
+  });
+
+  it.each(['zh-CN', 'en'].flatMap(locale => ['pending', 'error', 'close', 'persist'].map(route => [locale, route])))('codes the actual %s Director cancellation route %s without resubmission', async (locale, route) => {
+    setDesktopLocale(locale);
+    const root = tempDir('nomi-director-cancel-');
+    const harnessRoot = path.join(root, 'harness');
+    const bridge = path.join(harnessRoot, 'cli_anything', 'blender', 'bridge.py');
+    fs.mkdirSync(path.dirname(bridge), { recursive: true });
+    fs.writeFileSync(bridge, '# isolated test harness');
+    mocks.projectDirById.mockReturnValue(root);
+    const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(() => true) });
+    mocks.spawn.mockReturnValue(child);
+    let release: (() => void) | undefined;
+    if (route === 'pending') mocks.captureAssetWriteContext.mockImplementationOnce(() => new Promise(resolve => {
+      release = () => resolve({ root, assertCurrent: vi.fn() });
+    }));
+    const request = { jobId: 'cancel-job', projectId: 'project', ownerNodeId: 'scene-node', scene: { objects: [], cameras: [] }, harnessRoot };
+    const outcome = runDirectorBlenderRender(request).catch(error => error as Error);
+    if (route === 'pending') {
+      expect(cancelDirectorBlenderRender(request.jobId)).toBe(true);
+      release!();
+    } else {
+      await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());
+      if (route === 'persist') {
+        const output = path.join(root, '.nomi-director', 'exports', 'cancel');
+        fs.mkdirSync(output, { recursive: true });
+        const artifacts = { preview: path.join(output, 'preview.png'), blend: path.join(output, 'scene.blend'), model: path.join(output, 'scene.glb') };
+        fs.writeFileSync(artifacts.preview, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+        fs.writeFileSync(artifacts.blend, 'BLENDER');
+        fs.writeFileSync(artifacts.model, minimalGlb());
+        mocks.writeAsset.mockImplementationOnce(async () => {
+          expect(cancelDirectorBlenderRender(request.jobId)).toBe(true);
+          return { id: 'partial-preview', data: { url: 'nomi-local://asset/project/partial.png' } };
+        });
+        child.stdout.emit('data', JSON.stringify({ ok: true, jobId: request.jobId, artifacts }));
+        child.emit('close', 0, null);
+      } else {
+        expect(cancelDirectorBlenderRender(request.jobId)).toBe(true);
+        if (route === 'error') child.emit('error', new Error('Transport closed after cancellation'));
+        else child.emit('close', 0, null);
+      }
+    }
+    const error = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect(matchNomiErrorCode((error as Error).message)).toBe('operation-cancelled');
+    expect(mocks.spawn).toHaveBeenCalledTimes(route === 'pending' ? 0 : 1);
+    expect(mocks.writeAsset).toHaveBeenCalledTimes(route === 'persist' ? 1 : 0);
+    expect(activeDirectorBlenderRenderCount()).toBe(0);
+  });
+
   it("builds fixed module arguments rather than a shell or arbitrary bpy input", () => {
     expect(buildDirectorBridgeArgs({
       projectDir: "/project-dir",

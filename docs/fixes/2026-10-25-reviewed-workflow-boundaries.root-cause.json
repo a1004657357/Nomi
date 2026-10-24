@@ -1,0 +1,281 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-reviewed-workflow-boundaries",
+  "detected_by": "review",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "展示、用户选择与取消身份的端到端接线缺口",
+  "symptom": "英文机位输入展示翻译值；配方请求遗失用户选择的供应商；Director 四条取消生产者未向结构化消费者传递身份。",
+  "direct_cause": "界面翻译作用于可编辑源字段；selector 新增消歧而 UI 请求未带 vendorKey；仅普通 Blender runner 码化，Director runner 仍抛自然语言。",
+  "class_root": "只验证展示或单个消费者，未验证真实编辑事件、生产参数和所有取消出口。",
+  "affected_population": [
+    "机位名称编辑",
+    "同名多供应商的创作配方",
+    "Director pending/error/close/persist 取消"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+    "electron/blender/directorCli.ts",
+    "electron/shared/nomiErrorCodes.ts",
+    "src/i18n/reviewedWorkflowIntegration.test.ts",
+    "electron/blender/directorCli.test.ts",
+    "src/i18n/workflowSourceBoundary.test.ts",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "entry_points": [
+    "electron/productionRun/submissionOutbox.ts::matchNomiErrorCode",
+    "electron/tasks/taskResultQuery.ts::matchNomiErrorCode",
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx::CapabilityCameraOutputsEditor",
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx::CapabilityRecipeInspector",
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx::matchNomiErrorCode",
+    "src/workbench/generationCanvas/runner/generationRetryPolicy.ts::matchNomiErrorCode",
+    "src/workbench/generationCanvas/runner/outboundBlockedRecovery.ts::matchNomiErrorCode",
+    "src/workbench/generationCanvas/runner/recoverTaskActions.ts::matchNomiErrorCode",
+    "src/workbench/observability/classifyError.ts::matchNomiErrorCode",
+    "electron/customGenerationLifecycle.ts::runDirectorBlenderRender",
+    "electron/desktopIntegrationIpc.ts::runDirectorBlenderRender",
+    "electron/gate8/liveBlenderAcceptanceRunner.ts::runDirectorBlenderRender"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用现有 React 输入、配方 schema/selector 和 NomiErrorCode；无新依赖或外部 API 假设。",
+  "invariants": [
+    "可编辑名称显示并提交原始值；用户明确输入的英文原样保留，不反向翻译；渲染不得修改原数组或几何。",
+    "用户所选 vendorKey/modelKey/modeId 原样交给既有严格 schema 和 selector；同名缺供应商仍拒绝，不默认第一家。",
+    "四条 Director 取消路径都带既有 operation-cancelled；历史解析只认中英文完整记录，引用和带额外故障的句子不冒充取消。",
+    "未授权 Provider 不调用；取消不自动重提，保留现有进程/素材清理逻辑、权限和付费确认。",
+    "Node 测试真实输入事件和通知 AST 断言保留；475 keys、37 class fixtures、111 bindings 不变；不改截图/冻结表或预算。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/shared/nomiErrorCodes.ts",
+    "tests": [
+      "src/i18n/reviewedWorkflowIntegration.test.ts",
+      "electron/blender/directorCli.test.ts",
+      "src/i18n/workflowSourceBoundary.test.ts",
+      "scripts/tsx-i18n-display.node-test.mjs"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/productionRun/submissionOutbox.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/taskResultQuery.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityCameraOutputsEditor"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityRecipeInspector"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/outboundBlockedRecovery.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/recoverTaskActions.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "matchNomiErrorCode"
+    },
+    {
+      "kind": "write",
+      "path": "electron/customGenerationLifecycle.ts",
+      "symbol": "runDirectorBlenderRender"
+    },
+    {
+      "kind": "write",
+      "path": "electron/desktopIntegrationIpc.ts",
+      "symbol": "runDirectorBlenderRender"
+    },
+    {
+      "kind": "write",
+      "path": "electron/gate8/liveBlenderAcceptanceRunner.ts",
+      "symbol": "runDirectorBlenderRender"
+    }
+  ],
+  "door_reduction": {
+    "before": 12,
+    "after": 12,
+    "why_not": "对 9e087893a 与当前树的 2971 个实际生产源执行同一 mapDoors，四个目标 owner 的引用均为 12 门。保留不同用户操作和边界消费者，不为减少数字而合并 UI、selector 与进程生命周期。"
+  },
+  "generality_proof": "新真实交互/Director 路径用例先复现 13 失败/4 通过；修复后连同 canonical/信号回归 115/115，原 Node 展示套件 43/43。机位测试执行真实 onChange；供应商测试执行实际请求对象表达式、严格 schema 和真实 selector；取消测试执行实际 runner 四出口、中英和历史负例。",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "symbol": "CapabilityCameraOutputsEditor",
+      "responsibility": "源值输入与用户明确编辑的边界"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityRecipeInspector",
+      "responsibility": "把已选模型完整身份传入已有工具"
+    },
+    {
+      "path": "electron/blender/directorCli.ts",
+      "symbol": "runDirectorBlenderRender",
+      "responsibility": "取消在生产者码化，原清理和一次执行保持"
+    },
+    {
+      "path": "electron/shared/nomiErrorCodes.ts",
+      "symbol": "matchNomiErrorCode",
+      "responsibility": "既有码身份和有限历史记录解码"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/productionRun/submissionOutbox.ts",
+      "entry_point": "matchNomiErrorCode",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "electron/tasks/taskResultQuery.ts",
+      "entry_point": "matchNomiErrorCode",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "entry_point": "CapabilityCameraOutputsEditor",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "entry_point": "CapabilityRecipeInspector",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "entry_point": "matchNomiErrorCode",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+      "entry_point": "matchNomiErrorCode",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/outboundBlockedRecovery.ts",
+      "entry_point": "matchNomiErrorCode",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/recoverTaskActions.ts",
+      "entry_point": "matchNomiErrorCode",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "src/workbench/observability/classifyError.ts",
+      "entry_point": "matchNomiErrorCode",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "electron/customGenerationLifecycle.ts",
+      "entry_point": "runDirectorBlenderRender",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "electron/desktopIntegrationIpc.ts",
+      "entry_point": "runDirectorBlenderRender",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    },
+    {
+      "path": "electron/gate8/liveBlenderAcceptanceRunner.ts",
+      "entry_point": "runDirectorBlenderRender",
+      "disposition": "enforced",
+      "evidence": "同一 AST 前后盘点；共享 classifier/原调用边界未绕过，真实输入、selector 与四取消生产路径有运行回归。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "翻译或 guard 迁移只改一端会使正常用户操作静默偏离。",
+    "same_class_scan": [
+      "2971 个生产源、四目标 owner 的实际 Git 前后 AST 12/12 门",
+      "实际 Inspector 请求表达式及同名两供应商的真实 selector",
+      "Director pending/error/close/persist 四出口 × 中英",
+      "Node 实际输入事件和同一取消 flag 的信息/错误通知分支"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/shared/nomiErrorCodes.ts",
+    "invariant": "源值不由展示翻译写回，选择身份不丢字段，取消消费者按稳定码而非文案。",
+    "failure_mode": "真实编辑、同名供应商消歧或任一 Director 取消出口退化时回归失败。",
+    "exception_policy": "none",
+    "strategy": "修实际生产数据边界并执行真实回调；不删除消歧，不恢复中文子串分支，不过滤既有测试。",
+    "artifacts": [
+      "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "electron/blender/directorCli.ts",
+      "electron/shared/nomiErrorCodes.ts",
+      "src/i18n/reviewedWorkflowIntegration.test.ts",
+      "electron/blender/directorCli.test.ts",
+      "src/i18n/workflowSourceBoundary.test.ts",
+      "scripts/tsx-i18n-display.node-test.mjs"
+    ]
+  },
+  "regression_tests": [
+    "src/i18n/reviewedWorkflowIntegration.test.ts",
+    "electron/blender/directorCli.test.ts",
+    "src/i18n/workflowSourceBoundary.test.ts",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "src/i18n/reviewedWorkflowIntegration.test.ts",
+    "electron/blender/directorCli.test.ts",
+    "src/i18n/workflowSourceBoundary.test.ts",
+    "scripts/tsx-i18n-display.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "源文件/功能保留；纠正旧断言，不宣称删除文件；历史取消记录有限兼容。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "复用已有依赖。",
+    "exit_criteria": []
+  },
+  "migration": "无项目/媒体/账号/Cookie/密钥迁移，无真实 Provider 提交；用户显式编辑只保存其原文。",
+  "residual_risks": [
+    "整合候选完整 Vitest 有 58 失败文件，尚未全部修复。",
+    "工具显示、型号回落由独立补丁修复后整合；模型面人工批准及截图基线仍未完成。",
+    "正式 CI、最终构建、浏览器与实际 main 合并后回执尚未完成。"
+  ],
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/i18n/reviewedWorkflowIntegration.test.ts"
+  }
+}

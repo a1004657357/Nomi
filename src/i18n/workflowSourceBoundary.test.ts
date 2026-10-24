@@ -180,7 +180,7 @@ describe.each(['zh-CN', 'en'] as const)('canonical workflow data in %s', locale 
         outputs, count: 2, onChange: () => { throw new Error('render must not save') },
       }),
     ))
-    expect(editor).toContain(locale === 'en' ? 'value="View 1"' : 'value="机位 1"')
+    expect(editor).toContain('value="机位 1"')
     const node: GenerationCanvasNode = {
       id: 'collection', kind: 'image', title: '用户标题', prompt: '', position: { x: 0, y: 0 }, size: { width: 100, height: 100 },
       resultCollections: [{

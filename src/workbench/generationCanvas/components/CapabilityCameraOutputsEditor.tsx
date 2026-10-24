@@ -31,7 +31,7 @@ export function CapabilityCameraOutputsEditor({
           <input
             className={inputClass()}
             aria-label={i18n.t("canvasComponents.cameraName", { v0: index + 1 })}
-            value={translateCanvasComponentText(output.label)}
+            value={output.label}
             onChange={(event) => onChange(index, { label: event.target.value })}
           />
           <input

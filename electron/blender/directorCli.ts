@@ -1,4 +1,5 @@
 import { desktopT } from "../desktopStrings";
+import { tagNomiError } from "../shared/nomiErrorCodes";
 import { BLENDER_DIRECTOR_STAGE_PRESETS, type BlenderDirectorStagePreset, type BlenderTerminationReason } from '../shared/blenderDirectorContract';
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
@@ -195,7 +196,7 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
   let context: AssetWriteContext;
   try {
     context = await captureAssetWriteContext(projectId);
-    if (pending.cancelled) throw new Error(desktopT("custom.blender.directorCli.text12"));
+    if (pending.cancelled) throw new Error(tagNomiError("operation-cancelled", desktopT("custom.blender.directorCli.text12")));
   } finally {
     pendingDirectorJobs.delete(jobId);
   }
@@ -258,7 +259,7 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
           return;
         }
         if (job.terminationReason === "cancelled") {
-          finish(new Error(desktopT("custom.blender.directorCli.text15")));
+          finish(new Error(tagNomiError("operation-cancelled", desktopT("custom.blender.directorCli.text15"))));
           return;
         }
         finish(new Error(desktopT("custom.blender.directorCli.text16", { value0: `${error.message}` })));
@@ -273,7 +274,7 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
           return;
         }
         if (job.terminationReason === "cancelled") {
-          finish(new Error(desktopT("custom.blender.directorCli.text18")));
+          finish(new Error(tagNomiError("operation-cancelled", desktopT("custom.blender.directorCli.text18"))));
           return;
         }
         if (code !== 0) {
@@ -283,7 +284,7 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
         }
         try {
           finish(undefined, await persistDirectorOutputs(request, projectDir, parseDirectorBridgeOutput(stdout), context, () => {
-            if (job.terminationReason === "cancelled") throw new Error(desktopT("custom.blender.directorCli.text20"));
+            if (job.terminationReason === "cancelled") throw new Error(tagNomiError("operation-cancelled", desktopT("custom.blender.directorCli.text20")));
           }));
         } catch (error) {
           finish(error instanceof Error ? error : new Error(String(error)));

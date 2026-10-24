@@ -192,11 +192,34 @@ test('mixed-use canonical defaults remain language-independent', async () => {
   assert.match(inspector, /setResourceLabel\(`\$\{sourceTitle\} 资源`\)/)
   assert.match(inspector, /source: '用户自有素材'/)
   const editor = fs.readFileSync(new URL('../src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx', import.meta.url), 'utf8')
-  assert.match(editor, /value=\{translateCanvasComponentText\(output.label\)\}/)
+  assert.match(editor, /value=\{output.label\}/)
   assert.match(editor, /\['特写', '近景', '中景', '全景'\]/)
   assert.match(editor, /shotSize: value/)
   const scene = fs.readFileSync(new URL('../src/workbench/generationCanvas/nodes/Scene3DEditor.tsx', import.meta.url), 'utf8')
-  assert.equal([...scene.matchAll(/message\.includes\('已取消'\)/g)].length, 2, 'protocol error classification must not depend on display language')
+  assert.equal([...scene.matchAll(/matchNomiErrorCode\(message\)\s*===\s*'operation-cancelled'/g)].length, 1, 'classify cancellation once using its structured identity')
+  const sceneTree = ts.createSourceFile('Scene3DEditor.tsx', scene, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let cancellationToast
+  const findToast = node => {
+    if (ts.isCallExpression(node) && node.expression.getText(sceneTree) === 'toast'
+      && ts.isConditionalExpression(node.arguments[0]) && node.arguments[0].condition.getText(sceneTree) === 'cancelled') cancellationToast = node
+    ts.forEachChild(node, findToast)
+  }
+  findToast(sceneTree)
+  assert.ok(cancellationToast, 'the actual notice must use the cancellation identity')
+  assert.equal(cancellationToast.arguments[0].whenFalse.getText(sceneTree), 'message')
+  assert.equal(cancellationToast.arguments[1].condition.getText(sceneTree), 'cancelled')
+  assert.equal(cancellationToast.arguments[1].whenTrue.text, 'info')
+  assert.equal(cancellationToast.arguments[1].whenFalse.text, 'error')
+  assert.ok(!scene.includes("message.includes('已取消')"), 'display prose must not determine workflow state')
+  const { matchNomiErrorCode, tagNomiError } = require('../electron/shared/nomiErrorCodes.ts')
+  for (const message of ['Blender 导演预演已取消', 'Blender Director preview was cancelled']) {
+    assert.equal(matchNomiErrorCode(message), 'operation-cancelled')
+    assert.equal(matchNomiErrorCode(`Error invoking remote method 'scene:render': Error: ${message}`), 'operation-cancelled')
+    assert.equal(matchNomiErrorCode(`User note: ${message}`), null)
+    assert.equal(matchNomiErrorCode(`${message} unexpectedly timed out`), null)
+  }
+  assert.equal(matchNomiErrorCode(tagNomiError('operation-cancelled', 'Unrelated translated detail')), 'operation-cancelled')
+  assert.equal(matchNomiErrorCode(tagNomiError('codex-timeout', 'Stopped waiting')), 'codex-timeout')
 })
 
 test('actual rendered display boundaries switch language without changing editable values', async () => {
@@ -223,7 +246,7 @@ test('actual rendered display boundaries switch language without changing editab
     )))
     assert.ok(html.includes(lng === 'en' ? 'Local Codex image channel' : '本机 Codex 图片通道'))
     assert.ok(html.includes(lng === 'en' ? 'Medium shot' : '中景'))
-    assert.ok(html.includes(lng === 'en' ? 'value="View 1"' : 'value="机位 1"'))
+    assert.ok(html.includes('value="机位 1"'))
     assert.ok(html.includes('value="用户的侧面机位"'))
     assert.ok(html.includes('value="-13"'))
     assert.ok(html.includes('value="7"'))
@@ -234,6 +257,26 @@ test('actual rendered display boundaries switch language without changing editab
     assert.equal(translateCanvasComponentText('我自己的未登记标题'), '我自己的未登记标题')
     assert.equal(JSON.stringify(outputs), before)
     assert.equal(changes, 0)
+    let input
+    const edits = []
+    function EditingProbe() {
+      const tree = CapabilityCameraOutputsEditor({ outputs, count: 2, onChange: (index, patch) => edits.push({ index, patch }) })
+      const visit = node => {
+        if (Array.isArray(node)) return node.forEach(visit)
+        if (!React.isValidElement(node)) return
+        if (node.type === 'input' && node.props.type !== 'number' && !input) input = node.props
+        visit(node.props.children)
+      }
+      visit(tree)
+      return tree
+    }
+    renderToStaticMarkup(React.createElement(I18nextProvider, { i18n: appI18n }, React.createElement(MantineProvider, null, React.createElement(EditingProbe))))
+    assert.equal(input.value, '机位 1')
+    input.onChange({ target: { value: input.value + 'A' } })
+    assert.deepEqual(edits, [{ index: 0, patch: { label: '机位 1A' } }])
+    input.onChange({ target: { value: 'View 1A' } })
+    assert.deepEqual(edits[1], { index: 0, patch: { label: 'View 1A' } })
+    assert.equal(JSON.stringify(outputs), before)
   }
 })
 

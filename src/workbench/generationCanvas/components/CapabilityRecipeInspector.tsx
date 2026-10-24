@@ -317,6 +317,7 @@ export function CapabilityRecipeInspector({
       const outcome = (await applyCanvasToolCall('apply_capability_recipe', {
         sourceNodeId: source.id,
         recipeId: selectedRecipe.id,
+        vendorKey: selectedTarget.vendorKey,
         modelKey: selectedTarget.modelKey,
         ...(selectedTarget.variantId ? { variantId: selectedTarget.variantId } : {}),
         modeId: selectedTarget.modeId,

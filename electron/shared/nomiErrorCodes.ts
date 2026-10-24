@@ -94,6 +94,7 @@ export function matchNomiErrorCode(message: string): NomiErrorCode | null {
   if (/^Codex Img2 (?:生成超时（\d+ 秒）|长时间无进展（\d+ 秒没有输出）)$/.test(firstLine)) return 'codex-timeout'
   if (/^Codex Img2 (?:generation timed out \(\d+ seconds\)|has made no progress \(no output for \d+ seconds\))$/.test(firstLine)) return 'codex-timeout'
   if (legacyRecord === 'Blender 渲染已取消' || legacyRecord === 'Blender rendering was cancelled') return 'operation-cancelled'
+  if (legacyRecord === 'Blender 导演预演已取消' || legacyRecord === 'Blender Director preview was cancelled') return 'operation-cancelled'
   return null
 }
 
