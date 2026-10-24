@@ -293,14 +293,11 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
 
   return (
     <>
-      <button
+      <div
         className={cn(
           'group relative flex h-full w-full flex-col overflow-hidden bg-[var(--workbench-surface-solid)] text-left',
           'border-0 p-0 text-[var(--workbench-ink)]',
         )}
-        type="button"
-        aria-label={i18n.t("canvasComponents.openVIBINGDirector")}
-        onClick={openDirector}
       >
         <div className="relative min-h-0 flex-1 overflow-hidden bg-[var(--nomi-ink-05)]">
           {thumbnailUrl ? (
@@ -311,7 +308,6 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
           <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-nomi-sm bg-[var(--nomi-ink)] px-2 py-1 text-micro font-medium text-[var(--nomi-paper)]">
             <IconBrandBlender size={13} />{i18n.t('canvasComponents.vibingDirector')}
           </span>
-          <span className="absolute right-2 top-2 grid size-7 place-items-center rounded-nomi-sm bg-[var(--nomi-paper)] text-[var(--workbench-ink)] opacity-0 shadow-nomi-sm transition-opacity group-hover:opacity-100"><IconMaximize size={15} /></span>
         </div>
         <div className="flex shrink-0 items-center gap-2 border-t border-[var(--workbench-border)] px-3 py-2">
           <div className="min-w-0 flex-1">
@@ -320,7 +316,15 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
           </div>
           <IconBrandBlender size={17} className={cn('shrink-0 text-[var(--workbench-muted)]', blenderJobId && 'text-[var(--nomi-accent)]')} />
         </div>
-      </button>
+        <button
+          type="button"
+          aria-label={i18n.t("canvasComponents.openVIBINGDirector")}
+          onClick={openDirector}
+          className="absolute inset-0 border-0 bg-transparent p-0 text-inherit outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-nomi-accent/70"
+        >
+          <span className="absolute right-2 top-2 grid size-7 place-items-center rounded-nomi-sm bg-[var(--nomi-paper)] text-[var(--workbench-ink)] opacity-0 shadow-nomi-sm transition-opacity group-hover:opacity-100"><IconMaximize size={15} /></span>
+        </button>
+      </div>
 
       {fullscreen ? (
         <React.Suspense fallback={null}>

@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
-import { IconPlayerPlayFilled, IconVideo } from '@tabler/icons-react'
+import { IconPlayerPlayFilled } from '@tabler/icons-react'
 import { localAssetThumbnailUrl } from '../../../../design/localAssetThumbnail'
 import { isProjectExecutionContextCurrent, withProjectAction, type ProjectExecutionContext } from '../../../project/projectCanvasReadSurface'
 import { useOpenProjectId } from '../../../project/useOpenProjectId'
@@ -279,11 +279,7 @@ export function StoryboardVideoPreview({
               if (width > 0 && height > 0) setAspectRatio(width / height)
             }}
           />
-        ) : (
-          <span className="absolute inset-0 flex items-center justify-center text-nomi-ink-40" aria-hidden="true">
-            <IconVideo size={18} stroke={1.6} />
-          </span>
-        )}
+        ) : null}
         {!playing ? (
           <span
             className="absolute inset-0 flex items-center justify-center bg-black/10 text-white transition-colors group-hover:bg-black/25"
