@@ -1,11 +1,31 @@
 # fork/main 新增源码登记查证
 
+## A Canonical Source 尾项
+
+取证提交 `33cd631ddccddee1c678838763e37aa7eea9fd9c`（A 已交付），不是对尚未落盘模块的预占。`git diff --name-status --diff-filter=A fork/main 33cd631dd -- <三个路径>` 实际均为新增；逐项完整读取 blob、计算 SHA256，再分别以本线和主线当前 registry 跑原判据，唯一 violations 为 `electron/shared/blenderDirectorProtocolText.ts`。原 183 行记录保留，下列另加 3 行，总计 186 个有来源/哈希的查证项。
+
+| 源文件 | A 源码定位 | 登记 owner | SHA256 | 实际分类与约束 |
+| --- | --- | --- | --- | --- |
+| `electron/shared/blenderDirectorProtocolText.ts` | [directorProtocolSource / directorActionSource](../../electron/shared/blenderDirectorProtocolText.ts#L2) | `domain:electron/shared/blenderDirectorProtocolText.ts` | `53efc84cb1dc795e62a94f80931901de6b05d23cb2163e78db223eaaf1273851` | Nomi Blender 导演计划校验/动作的固定协议原文和参数位置；仅补确切文件，不是协议 parser、transport 或通用模板引擎 |
+| `electron/shared/canvas/sourceDefaults.ts` | [canonical canvas defaults](../../electron/shared/canvas/sourceDefaults.ts#L1) | `domain:electron/shared/canvas/` | `b083ba57bb3836c8f7328e0b399c1e3a799b5c9971e1a8c3929ca6b99afc89ac` | 机位/对象/镜头/截图的作者默认字段与 Nomi 生成模式理由；已有 canvas 领域根覆盖，不新增登记 |
+| `electron/shared/generationPromptText.ts` | [generationPromptSource](../../electron/shared/generationPromptText.ts#L2) | `domain:electron/shared/generation*` | `a37b6aff50cfb2d8a0086b7b7d2dd0834746d27d09161dfa37294c5e2af60611` | 参考角色、首尾帧、身份锁定等模型请求原文；已有 generation* 领域根覆盖，不新造 adapter、不改变 prompt |
+
+实际消费者：同一 A 提交的 `src/i18n/CanvasComponentText.tsx:2-3,29-58` 读取 canonical 值后走已登记显示适配；`generationReferenceResolver.ts:139-167` 与 `capabilityRecipePrompt.ts:11-12` 将模型指令源值用于出站。显示 i18next 的 `Translator.translate` 实现在本地 `node_modules/i18next/dist/cjs/i18next.js:480,533`；它不是这些作者/协议/提示词内容的替代 owner。没有执行 A 的业务函数、修改其源码或声称业务回归已验收。
+
+`src/i18n/locales/customWorkflow.ts`、`scene3d.ts` 原有 locales 根已覆盖；genericZones、生效日、entries 与全部既有 domainRoots 不改。只追加 1 条确切文件；新增 V2、Cache 或不相关 protocol 邻居仍被原门岗拒绝。路径归属测试用标明的合成代码 fixture，真实源码语义证据是以上不可变 A blobs，不把 fixture 绿灯当生产验收。
+
+本尾项实际结果：新回归先红后绿；self-written/prior-art 原单元合计 27/28，closeout 7/8（总 34/36）。两项失败均为未改动的实体存在检查，指向隔离旧分支缺少的 5 个源文件：`electron/locales/customIntegrations.ts`、`electron/shared/blenderDirectorContract.ts`、`electron/shared/blenderDirectorProtocolText.ts`、`src/i18n/capabilityWorkflowText.ts`、`electron/pavoWeb/fixtures/preset-tasks.cjs`。其中 4 项是原有主线差异，另 1 项是 A 新 canonical 模块；均不复制到本线，不改测试或登记门槛去隐藏失败。
+
+另以真实 `fork/main..33cd631dd` 的 3 个新增 blob 调用 unchanged evaluateSelfWritten；存在性依据主线/本线实际文件和 A 的不可变 git-tree 路径并集，候选集成登记结果 errors/warnings/violations 均空。这是待集成来源集的只读验证，不冒充当前独立工作树或主线 CLI 已绿。登记 diff 断言只有 1 个 addedRoot、0 个 changedEntries；全部旧 roots/entries/genericZones/enforceFrom 逐值相同。实际设计卡正文缺引用红、引用真实路径绿，但未更新远端 PR 正文。
+
+本批父提交范围根因合同门岗通过；变化中的测试脚本独立 Node ESLint 为 0 errors/0 warnings。日志 `.tmp/ci-release-source-tail/registry-*.log` 与 `registry-real-diff.json` 均留在本独立工作树，不提交。协调线合入 A 与本 metadata 后仍需运行实体 self-written、prior-art/真实 PR 正文及最终 integration 门岗；未跑全仓、Provider 或日常 App。
+
 ## 取证边界
 
 - 比较目标：`fork/main = 3d94d96fe1f11a3079cfa9502efe322338b5084b`。该旧基准尚无 self-written.json；不能将缺失历史登记表误作本批门槛变化。原登记策略保留值来自本批父提交 `5b6b42333baa2acce27dbb78acbb965bdf33c6a7`。
 - 主线已提交取证 HEAD：`21c4de6ea589c78a6318f6f89d210a72d2e68604`。下表逐文件内容用 `git cat-file --batch` 从同一 HEAD 读取并计算 SHA256，不以目录名或旧日志代替源码。
 - 初始日志 179 项，加本线显示 helper、协调线 desktop locale、Pavo fixture，已提交快照合计 182 项。另按协调线明确请求补一条工作树中的 Blender 共享词汇合同，总计 183 项。逐项读真实 imports/声明/调用及领域分支；通用机制另读完整关键函数。表中定位点是查证入口，不声称每个文件完成了全面功能/安全审计。
-- 主线工作树只读，生产文件完全不改。Blender 词汇 owner 的 SHA 是明确标注的工作树补充，不冒充该 HEAD 的已提交 blob；A 下一批 canonical/locale/helper 尚未完成，不预占泛化路径。
+- 主线工作树只读，生产文件完全不改。Blender 词汇 owner 的 SHA 是明确标注的工作树补充，不冒充该 HEAD 的已提交 blob；首次取证时 A 下一批 canonical/locale/helper 尚未交付，现已交付的 33cd631dd 见上方尾项，不预占泛化路径。
 - 分类：53 个源文件归 28 个具体能力目录/确切文件前缀；130 个归真实机制/adapter owner。原 161 个领域根、genericZones、生效日 `2026-10-08` 均原样保留。
 - 登记扩展 14 个既有 owner，新增 18 个有界 entry。新增 entry 中 10 个是已接入库/标准的 adapter 或有限领域策略，5 个明确待替换，3 个限期复评。登记元数据通过不代表技术债已被替换。
 
@@ -43,7 +63,7 @@
 
 - 场景相机重试：取证 HEAD 的 Scene3D 文件仍是旧决策副本；协调线已告知将改为重导出 `nodes/director/agent/cameraMoveCaptureRetry.ts` 六项。登记明确兼容 adapter，不称新框架。原 API、默认 3 次/800ms/30s 与已有测试保持；协调变更完成后由原门岗的 wiring 判据自然识别，不加排除。
 - 各 React/R3F hook 持有 Nomi 对象/相机/轨迹/录制状态，调用已有 React、Three/R3F、task/store owner；它们没有成为新的动画/工作流框架。genericZones 继续覆盖 hooks/common/Retry/Cache 等入口。
-- renderer locale 数据由原有 `src/i18n/locales/` 领域根覆盖；两个显示 helper 精确归入 `locale-display-adapters`。A 未完成的新 canonical/locale/helper 不提前拿泛化前缀认领。
+- renderer locale 数据由原有 `src/i18n/locales/` 领域根覆盖；两个显示 helper 精确归入 `locale-display-adapters`。A 后交付 canonical 源码的实测认领见上方尾项，仍不拿泛化前缀预占后续能力。
 - 此次没有发现必须先更改生产逻辑才能诚实登记的已复现新缺陷。上述通用机制的替代/复评仍开放，不以纸面登记宣称完成。
 
 ## TSX 四条原始源字段交接

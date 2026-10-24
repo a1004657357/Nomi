@@ -24,3 +24,21 @@
 登记变化后 PR 正文必须真实引用本卡的仓库路径：`docs/plan/2026-10-25-self-written-prior-art-closeout.md`。注入这段真实待用正文可验证判据，但不等于远端 PR 正文已经更新。本批不 push / merge / 修改 PR。
 
 本批登记 183 个已读源文件：原主线提交的 182 项，以及协调线明确请求的 Blender 共享词汇工作树补充。只读集成真实 CLI 0 未认领，工作树代码 diff 1194 项 errors/warnings/violations 均空；登记相关测试 35/35，聚焦根因测试 50/50。原隔离分支的 4 个主线文件缺失与旧模型推断副本仍如实报红，不改源文件或补豁免消除分支差异。完整验证方法与未验收项在研究清单的“本批验证结果”。
+
+## A Canonical Source 尾项设计卡
+
+审看修正之后的独立批次，基点 `1326d260b0350c9b0faac3911948d4e2fba09a07`；只读 A 已提交 `33cd631ddccddee1c678838763e37aa7eea9fd9c` 的 3 个真实新增源文件，不复制或修改 A 源码，不修改主工作树。
+
+| 格 | 决定 |
+| --- | --- |
+| ★1 用户怎么用 | 集成 A 的 canonical 默认字段后，自写门岗仍只检查真实 fork/main 的新增文件；不因 i18n 拆文件而遗漏领域原文 owner。 |
+| ★2 谁说了算 | 仍由现有 self-written.json 与 unchanged evaluateSelfWritten/pathMatches 判据认领；3 项源码实测只有 Director 协议原文缺口。 |
+| ★3 一致与复用 | 只新增 electron/shared/blenderDirectorProtocolText.ts 精确领域项；sourceDefaults 沿用 canvas 根，generationPromptText 沿用 generation*，两个 locale 沿用 locales 根，不重复登记或抬宽根。 |
+| ★4 全状态 | 缺失精确 owner 先红；补后 3 项应全覆盖，V2/Cache/其他协议邻居仍红。canonical 原文是领域内容，不是新的翻译、模板解析或协议运输引擎；不改其中文、存储或 prompt。 |
+| ★9 验收与回滚 | 新增路径归属聚焦红绿测试，运行 self-written/prior-art 既有门岗单元；对 fork/main..A 的 3 个真实新增 blob 做分类和 SHA256 读回。隔离旧分支缺主线源文件时如实保留 stale，不用排除消绿；回滚独立 metadata commit。 |
+
+先查别人补充：实际读取 A 的 `electron/shared/blenderDirectorProtocolText.ts:2`、`electron/shared/canvas/sourceDefaults.ts:1`、`electron/shared/generationPromptText.ts:2`，及 `src/i18n/CanvasComponentText.tsx:2-3,29-58` 消费者。它们分别是 Nomi 导演计划固定消息、画布作者默认字段、模型参考角色指令；i18next 现有 `node_modules/i18next/dist/cjs/i18next.js:480,533` 只负责显示翻译，不能拿语言切换重写这些源值。故不新增库/adapter 或机制 entry，只补缺失领域原文的确切路径。
+
+可核对 blob SHA、现有 owner 与当前未验收项在研究清单的“A canonical source 尾项”。PR 正文继续真实引用本卡：`docs/plan/2026-10-25-self-written-prior-art-closeout.md`，并可附研究清单；本线不改远端正文。
+
+实际结果：新聚焦回归红后绿；两道登记门岗单元 27/28，closeout 7/8，两项失败都是旧隔离分支的 5 个源文件缺失，未删除测试或改 checker。真实 3 文件新增 diff 的候选集成来源集验证为 0 errors/warnings/violations，全部旧策略与 entries 逐值未变；缺 PR 正文引用红、真实设计卡引用绿。当前独立工作树不声称实体 CLI 通过，协调线合入 A 和 metadata 后验收；本批根因合同与独立 Node lint 通过。

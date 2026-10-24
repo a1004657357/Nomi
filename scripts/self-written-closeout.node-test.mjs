@@ -81,6 +81,24 @@ test('unreviewed generic neighbors still fail the unchanged gate', () => {
   assert.equal(result.errors.length, 1)
 })
 
+test('A canonical source tail uses two existing roots and one exact Director text claim', () => {
+  const claims = [
+    ['electron/shared/blenderDirectorProtocolText.ts', 'electron/shared/blenderDirectorProtocolText.ts'],
+    ['electron/shared/canvas/sourceDefaults.ts', 'electron/shared/canvas/'],
+    ['electron/shared/generationPromptText.ts', 'electron/shared/generation*'],
+  ]
+  for (const [file, owner] of claims) {
+    assert.ok(registry.domainRoots.some(item => item.path === owner && pathMatches(owner, file)), `${file}: ${owner}`)
+    assert.ok(!registry.genericZones.some(item => pathMatches(item.path, file)), file)
+  }
+  // These fixtures test path ownership only; the real source/hash review lives in the report.
+  const owned = evaluateSelfWritten({ registry, added: claims.map(([file]) => ({ path: file, content: 'export const value = 1\n' })), today: '2026-10-25', exists: () => true })
+  assert.deepEqual(owned.violations, [])
+  const neighbors = ['electron/shared/blenderDirectorProtocolTextV2.ts', 'electron/shared/blenderDirectorProtocolTextCache.ts', 'electron/shared/unrelatedProtocolText.ts']
+  const rejected = evaluateSelfWritten({ registry, added: neighbors.map(file => ({ path: file, content: 'export const value = 1\n' })), today: '2026-10-25', exists: () => true })
+  assert.deepEqual(rejected.violations, neighbors)
+})
+
 test('registry shape and every physical source/plan exist in the validated tree', () => {
   const result = validateRegistry(registry, {
     exists: file => fs.existsSync(path.join(root, staticPrefixOf(file))),

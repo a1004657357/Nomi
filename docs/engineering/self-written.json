@@ -198,7 +198,8 @@
     {"path":"src/workbench/generationCanvas/skills/","reason":"Nomi 画布技能拖放、资源槽、阶段进度与视频拆解消息胶合；不实现通用工作流引擎"},
     {"path":"src/workbench/workbenchStoreLifetime.ts","reason":"Nomi 工作台文档/会话/视图字段的生命周期声明；store 机制沿用既有 owner"},
     {"path":"electron/locales/customIntegrations.ts","reason":"Nomi 自定义桌面集成的中英 locale 数据；不包含插值、语言加载或翻译引擎"},
-    {"path":"electron/shared/blenderDirectorContract.ts","reason":"Nomi Blender 导演台跨 renderer/native/Agent 的五类舞台、三类空间检查状态与本地进程终止词汇；只是共享领域合同，不是新的状态机或进程生命周期引擎"}
+    {"path":"electron/shared/blenderDirectorContract.ts","reason":"Nomi Blender 导演台跨 renderer/native/Agent 的五类舞台、三类空间检查状态与本地进程终止词汇；只是共享领域合同，不是新的状态机或进程生命周期引擎"},
+    {"path":"electron/shared/blenderDirectorProtocolText.ts","reason":"Nomi Blender 导演计划校验和动作的固定协议原文，供生产端与显示适配同源引用；不是通用模板、翻译引擎或协议解析/运输机制"}
   ],
   "genericZones": [
     {"path":"**/hooks/","reason":"通用 hooks 子树：轮询、订阅、节流等不分领域，新文件要登记"},
