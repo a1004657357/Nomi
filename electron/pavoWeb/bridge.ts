@@ -202,10 +202,13 @@ async function materializeReference(source: ReferenceSource, index: number): Pro
 
 function durationText(value: unknown): string {
   const raw = firstString(value);
-  // 2026-10-24 官网设置弹层实测：时长为数字输入 min=4 max=12，页面档位 4/10/12 秒；旧 5 秒档已不存在。
-  // 未显式给时长时默认 4 秒（原 5 秒默认值在页面上无法应用）。
+  // 2026-10-24 官网设置弹层实测：时长为数字输入 min=4 max=12；任意整数（6/8/11/12 均验证）可应用并回读。
+  // 未显式给时长时默认 4 秒（官网当前默认档）。
   const duration = !raw ? "4s" : /s$/i.test(raw) ? raw.toLowerCase() : `${raw}s`;
-  if (!["4s", "10s", "12s"].includes(duration)) throw new Error("Pavo Web 当前只支持 4、10 或 12 秒时长");
+  const seconds = Number(duration.slice(0, -1));
+  if (!Number.isInteger(seconds) || seconds < 4 || seconds > 12) {
+    throw new Error("Pavo Web 只支持 4–12 秒（整数）时长");
+  }
   return duration;
 }
 

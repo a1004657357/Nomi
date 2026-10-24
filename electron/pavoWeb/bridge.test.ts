@@ -119,8 +119,13 @@ describe("Pavo Web bridge", () => {
     expect((await probePavoWebServer(undefined, fetchImpl)).ok).toBe(false);
   });
 
-  it.each(["6", "15"])("rejects unsupported Pavo duration %s before submission", async (duration) => {
+  it.each(["3", "13", "6.5", "0", "-4"])("rejects unsupported Pavo duration %s before submission", async (duration) => {
     await expect(buildPavoWebTaskPayload({ kind: "text_to_video", prompt: "test", extras: { idempotencyKey: "test", duration } })).rejects.toThrow(/时长/);
+  });
+
+  it.each(["4", "6", "10", "12"])("accepts any whole-second Pavo duration %s within the official 4–12s range", async (duration) => {
+    const payload = await buildPavoWebTaskPayload({ kind: "text_to_video", prompt: "test", extras: { idempotencyKey: "test", duration } });
+    expect(payload.modelConfig?.duration).toBe(`${duration}s`);
   });
 
   it("maps image tasks to the image media contract with clamped count", async () => {

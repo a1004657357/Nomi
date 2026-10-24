@@ -41,7 +41,8 @@ export const AGNES_VIDEO_25_FLASH_ARCHETYPE: ModelArchetype = {
   defaultModeId: "text", transportTaskKind: "text_to_video", identifierPatterns: ["agnes-video-2.5-flash"], modes: modes(true).map(mode => ({
     ...mode,
     vendorParams: { "pavo-web": [
-      { key: "duration", label: "时长(秒)", type: "select", options: options(["5", "10"]), defaultValue: "5" },
+      // 2026-10-24 官网实测：设置弹层时长为数字输入 min=4 max=12，任意整数（6/8/11/12 均验证）可应用并回读。
+      { key: "duration", label: "时长(秒)", type: "select", options: options(["4", "5", "6", "7", "8", "9", "10", "11", "12"]), defaultValue: "4" },
       { key: "size", label: "清晰度", type: "select", options: options(["720P"]), defaultValue: "720P" },
       { key: "aspect_ratio", label: "比例", type: "select", options: options(["16:9", "9:16", "1:1"]), defaultValue: "16:9" },
     ] },

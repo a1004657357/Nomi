@@ -80,7 +80,10 @@ describe("Nomi bundled Pavo runtime", () => {
     const pavo = resolveArchetypeForModel({ ...model, vendorKey: "pavo-web" })!;
     const direct = resolveArchetypeForModel({ ...model, vendorKey: "agnes" })!;
     for (const mode of pavo.modes) {
-      expect(mode.params.find(param => param.key === "duration")?.options.map(option => option.value)).toEqual(["5", "10"]);
+      // 2026-10-24 官网设置弹层实测：数字输入 min=4 max=12，任意整数可应用——档位与直连 AGNES 的 4–12 对齐。
+      expect(mode.params.find(param => param.key === "duration")?.options.map(option => option.value))
+        .toEqual(["4", "5", "6", "7", "8", "9", "10", "11", "12"]);
+      expect(mode.params.find(param => param.key === "duration")?.defaultValue).toBe("4");
       expect(mode.params.find(param => param.key === "aspect_ratio")?.options.map(option => option.value)).toEqual(["16:9", "9:16", "1:1"]);
       expect(mode.params.some(param => param.key === "seed")).toBe(false);
     }
