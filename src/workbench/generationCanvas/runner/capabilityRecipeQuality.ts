@@ -1,3 +1,5 @@
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import i18n from '../../../i18n/index'
 import type { RecipeRunPlan } from '../../../config/capabilityRecipes'
 import type {
   GenerationNodeResult,
@@ -78,19 +80,19 @@ function viewContractCheck(
   return exactOrder
     ? {
         id: 'view-contract',
-        label: '机位槽位',
+        label: i18n.t('capabilityWorkflow.cameraSlots'),
         status: 'pass',
-        summary: '9 个机位按约定顺序和角度元数据完整',
+        summary: i18n.t('capabilityWorkflow.all9ViewsHaveTheAgreedOrderAndAngle'),
         metrics: { expectedCount: 9, actualCount: actual.length },
       }
     : {
         id: 'view-contract',
-        label: '机位槽位',
+        label: i18n.t('capabilityWorkflow.cameraSlots'),
         status: 'fail',
-        summary: '九宫格机位数量、顺序或角度元数据不完整',
+        summary: i18n.t('capabilityWorkflow.theGridViewCountOrderOrAngleMetadataIs'),
         details: [
-          `计划 ${expected.length} 个槽位，集合 ${actual.length} 个槽位`,
-          '该检查验证结构契约，不宣称已从像素中识别真实拍摄角度。',
+          i18n.t('capabilityWorkflow.plannedSlotsCollectionHasSlots', { v0: expected.length, v1: actual.length }),
+          i18n.t('capabilityWorkflow.thisChecksTheStructuralContractNotActualCameraAngles'),
         ],
         metrics: { expectedCount: expected.length, actualCount: actual.length },
       }
@@ -106,18 +108,18 @@ function mediaAvailabilityCheck(collection: GenerationResultCollection): Generat
   return successfulImages.length === 9
     ? {
         id: 'image-availability',
-        label: '图片完整性',
+        label: i18n.t('capabilityWorkflow.imageCompleteness'),
         status: 'pass',
-        summary: '9 个机位均有可读取的图片结果',
+        summary: i18n.t('capabilityWorkflow.all9ViewsHaveReadableImageResults'),
         metrics: { successfulImageCount: successfulImages.length },
       }
     : {
         id: 'image-availability',
-        label: '图片完整性',
+        label: i18n.t('capabilityWorkflow.imageCompleteness'),
         status: 'fail',
-        summary: `仅 ${successfulImages.length}/9 个机位有可读取图片`,
+        summary: i18n.t('capabilityWorkflow.only9ViewsHaveReadableImages', { v0: successfulImages.length }),
         itemIds: missing.map((item) => item.id),
-        details: missing.map((item) => `${item.label}：${item.error || item.status}`),
+        details: missing.map((item) => `${translateCapabilityWorkflowText(item.label)}：${item.error || item.status}`),
         metrics: { successfulImageCount: successfulImages.length, missingImageCount: missing.length },
       }
 }
@@ -127,10 +129,10 @@ function dimensionsCheck(inspected: readonly InspectedItem[]): GenerationQuality
   if (available.length === 0) {
     return {
       id: 'dimensions',
-      label: '尺寸一致性',
+      label: i18n.t('capabilityWorkflow.dimensionConsistency'),
       status: 'unavailable',
-      summary: '未能读取图片尺寸',
-      details: inspected.flatMap((entry) => entry.error ? [`${entry.item.label}：${entry.error}`] : []),
+      summary: i18n.t('capabilityWorkflow.imageDimensionsCouldNotBeRead'),
+      details: inspected.flatMap((entry) => entry.error ? [`${translateCapabilityWorkflowText(entry.item.label)}：${entry.error}`] : []),
     }
   }
   const dimensions = new Map<string, string[]>()
@@ -142,18 +144,18 @@ function dimensionsCheck(inspected: readonly InspectedItem[]): GenerationQuality
   if (dimensions.size === 1) {
     return {
       id: 'dimensions',
-      label: '尺寸一致性',
+      label: i18n.t('capabilityWorkflow.dimensionConsistency'),
       status: inspected.some((entry) => entry.error) ? 'warning' : 'pass',
-      summary: `${available.length} 张已检测图片尺寸一致：${Array.from(dimensions.keys())[0]}`,
-      details: inspected.flatMap((entry) => entry.error ? [`${entry.item.label} 未检测：${entry.error}`] : []),
+      summary: i18n.t('capabilityWorkflow.allInspectedImagesHaveConsistentDimensions', { v0: available.length, v1: Array.from(dimensions.keys())[0] }),
+      details: inspected.flatMap((entry) => entry.error ? [i18n.t('capabilityWorkflow.wasNotInspected', { v0: translateCapabilityWorkflowText(entry.item.label), v1: entry.error })] : []),
       metrics: { inspectedImageCount: available.length, distinctDimensionCount: 1 },
     }
   }
   return {
     id: 'dimensions',
-    label: '尺寸一致性',
+    label: i18n.t('capabilityWorkflow.dimensionConsistency'),
     status: 'warning',
-    summary: `检测到 ${dimensions.size} 种输出尺寸`,
+    summary: i18n.t('capabilityWorkflow.foundOutputDimensions', { v0: dimensions.size }),
     details: Array.from(dimensions, ([size, labels]) => `${size}：${labels.join('、')}`),
     itemIds: available.map((entry) => entry.item.id),
     metrics: { inspectedImageCount: available.length, distinctDimensionCount: dimensions.size },
@@ -165,9 +167,9 @@ function contentCheck(inspected: readonly InspectedItem[]): GenerationQualityChe
   if (available.length === 0) {
     return {
       id: 'image-content',
-      label: '画面有效性',
+      label: i18n.t('capabilityWorkflow.imageValidity'),
       status: 'unavailable',
-      summary: '未能读取像素，无法检测空白或低信息画面',
+      summary: i18n.t('capabilityWorkflow.pixelsCouldNotBeReadBlankOrLowInformation'),
     }
   }
   const blank = available.filter((entry) => {
@@ -178,23 +180,23 @@ function contentCheck(inspected: readonly InspectedItem[]): GenerationQualityChe
   if (blank.length > 0) {
     return {
       id: 'image-content',
-      label: '画面有效性',
+      label: i18n.t('capabilityWorkflow.imageValidity'),
       status: 'fail',
-      summary: `发现 ${blank.length} 张空白、透明或低信息画面`,
+      summary: i18n.t('capabilityWorkflow.foundBlankTransparentOrLowInformationImages', { v0: blank.length }),
       itemIds: blank.map((entry) => entry.item.id),
       details: blank.map((entry) => {
         const inspection = entry.inspection!
-        return `${entry.item.label}：透明度 ${round(inspection.opaqueRatio)}，细节 ${round(inspection.edgeEnergy)}`
+        return i18n.t('capabilityWorkflow.opacityDetail', { v0: translateCapabilityWorkflowText(entry.item.label), v1: round(inspection.opaqueRatio), v2: round(inspection.edgeEnergy) })
       }),
       metrics: { blankImageCount: blank.length, inspectedImageCount: available.length },
     }
   }
   return {
     id: 'image-content',
-    label: '画面有效性',
+    label: i18n.t('capabilityWorkflow.imageValidity'),
     status: inspected.some((entry) => entry.error) ? 'warning' : 'pass',
-    summary: `${available.length} 张已检测图片均包含有效像素和可见细节`,
-    details: inspected.flatMap((entry) => entry.error ? [`${entry.item.label} 未检测：${entry.error}`] : []),
+    summary: i18n.t('capabilityWorkflow.allInspectedImagesContainValidPixelsAndVisibleDetail', { v0: available.length }),
+    details: inspected.flatMap((entry) => entry.error ? [i18n.t('capabilityWorkflow.wasNotInspected', { v0: translateCapabilityWorkflowText(entry.item.label), v1: entry.error })] : []),
     metrics: { blankImageCount: 0, inspectedImageCount: available.length },
   }
 }
@@ -206,9 +208,9 @@ function viewDiversityCheck(inspected: readonly InspectedItem[]): GenerationQual
   if (available.length < 2) {
     return {
       id: 'view-diversity',
-      label: '视角差异',
+      label: i18n.t('capabilityWorkflow.viewDiversity'),
       status: 'unavailable',
-      summary: '可比较图片不足，无法检测重复视角',
+      summary: i18n.t('capabilityWorkflow.tooFewComparableImagesToCheckDuplicateViewpoints'),
     }
   }
 
@@ -225,7 +227,7 @@ function viewDiversityCheck(inspected: readonly InspectedItem[]): GenerationQual
       )
       minimumDistance = Math.min(minimumDistance, distance)
       const pair = {
-        label: `${leftEntry.item.label} ↔ ${rightEntry.item.label}`,
+        label: `${translateCapabilityWorkflowText(leftEntry.item.label)} ↔ ${translateCapabilityWorkflowText(rightEntry.item.label)}`,
         itemIds: [leftEntry.item.id, rightEntry.item.id] as [string, string],
       }
       if (distance <= 0.01) exactPairs.push(pair)
@@ -236,9 +238,9 @@ function viewDiversityCheck(inspected: readonly InspectedItem[]): GenerationQual
   if (exactPairs.length > 0) {
     return {
       id: 'view-diversity',
-      label: '视角差异',
+      label: i18n.t('capabilityWorkflow.viewDiversity'),
       status: 'fail',
-      summary: `发现 ${exactPairs.length} 组几乎相同的画面`,
+      summary: i18n.t('capabilityWorkflow.foundPairsOfNearlyIdenticalImages', { v0: exactPairs.length }),
       details: [...exactPairs, ...nearPairs].slice(0, 8).map((pair) => pair.label),
       itemIds: Array.from(new Set([...exactPairs, ...nearPairs].flatMap((pair) => pair.itemIds))),
       metrics: {
@@ -251,9 +253,9 @@ function viewDiversityCheck(inspected: readonly InspectedItem[]): GenerationQual
   if (nearPairs.length > 0) {
     return {
       id: 'view-diversity',
-      label: '视角差异',
+      label: i18n.t('capabilityWorkflow.viewDiversity'),
       status: 'warning',
-      summary: `发现 ${nearPairs.length} 组高度相似画面，建议确认机位是否真的变化`,
+      summary: i18n.t('capabilityWorkflow.foundPairsOfHighlySimilarImagesConfirmThatThe', { v0: nearPairs.length }),
       details: nearPairs.slice(0, 8).map((pair) => pair.label),
       itemIds: Array.from(new Set(nearPairs.flatMap((pair) => pair.itemIds))),
       metrics: {
@@ -265,10 +267,10 @@ function viewDiversityCheck(inspected: readonly InspectedItem[]): GenerationQual
   }
   return {
     id: 'view-diversity',
-    label: '视角差异',
+    label: i18n.t('capabilityWorkflow.viewDiversity'),
     status: 'pass',
-    summary: '未发现重复或高度相似的机位画面',
-    details: ['这是像素相似度检查，不替代人工确认实际方位角。'],
+    summary: i18n.t('capabilityWorkflow.noDuplicateOrHighlySimilarViewsFound'),
+    details: [i18n.t('capabilityWorkflow.thisPixelSimilarityCheckDoesNotReplaceManualConfirmation2')],
     metrics: {
       exactDuplicatePairCount: 0,
       nearDuplicatePairCount: 0,
@@ -292,7 +294,7 @@ async function evaluateGrid9Collection(
   ))
   const [inspected, sourceInspection, semantic] = await Promise.all([
     Promise.all(imageItems.map(async (item): Promise<InspectedItem> => {
-      if (!inspectImage || !item.result) return { item, error: '当前运行环境未提供像素检测器' }
+      if (!inspectImage || !item.result) return { item, error: i18n.t('capabilityWorkflow.noPixelInspectorIsAvailableInThisEnvironment') }
       try {
         return { item, inspection: await inspectImage(item.result) }
       } catch (error) {
@@ -409,9 +411,9 @@ function panoramaAspectCheck(
   if (!inspection) {
     return {
       id: 'panorama-aspect',
-      label: '2:1 画幅',
+      label: i18n.t('capabilityWorkflow.label21AspectRatio'),
       status: 'unavailable',
-      summary: '未能读取全景图尺寸',
+      summary: i18n.t('capabilityWorkflow.panoramaDimensionsCouldNotBeRead'),
       itemIds: [item.id],
     }
   }
@@ -420,17 +422,17 @@ function panoramaAspectCheck(
   if (relativeError <= 0.005) {
     return {
       id: 'panorama-aspect',
-      label: '2:1 画幅',
+      label: i18n.t('capabilityWorkflow.label21AspectRatio'),
       status: 'pass',
-      summary: `输出尺寸 ${inspection.width}x${inspection.height}，符合 2:1`,
+      summary: i18n.t('capabilityWorkflow.outputDimensionsXMatch21', { v0: inspection.width, v1: inspection.height }),
       metrics: { aspectRatio: round(ratio), relativeError: round(relativeError) },
     }
   }
   return {
     id: 'panorama-aspect',
-    label: '2:1 画幅',
+    label: i18n.t('capabilityWorkflow.label21AspectRatio'),
     status: 'fail',
-    summary: `输出比例 ${round(ratio)}:1，不符合等距柱状 2:1 画幅`,
+    summary: i18n.t('capabilityWorkflow.outputRatio1DoesNotMatchTheEquirectangular2', { v0: round(ratio) }),
     itemIds: [item.id],
     metrics: { aspectRatio: round(ratio), relativeError: round(relativeError) },
   }
@@ -443,9 +445,9 @@ function panoramaNormalizationCheck(
   if (!result || !hasMediaLocator(result)) {
     return {
       id: 'panorama-normalization',
-      label: '原生全景来源',
+      label: i18n.t('capabilityWorkflow.nativePanoramaSource'),
       status: 'unavailable',
-      summary: '没有可读取的全景生成结果',
+      summary: i18n.t('capabilityWorkflow.noReadablePanoramaGenerationResult'),
       itemIds: [item.id],
     }
   }
@@ -453,9 +455,9 @@ function panoramaNormalizationCheck(
   if (!normalization) {
     return {
       id: 'panorama-normalization',
-      label: '原生全景来源',
+      label: i18n.t('capabilityWorkflow.nativePanoramaSource'),
       status: 'unavailable',
-      summary: '缺少归一化元数据，无法判断是否由普通图片裁切而来',
+      summary: i18n.t('capabilityWorkflow.noNormalizationMetadataCroppingFromARegularImageCannot'),
       itemIds: [item.id],
     }
   }
@@ -463,9 +465,9 @@ function panoramaNormalizationCheck(
   if (normalization.croppedFraction <= 0.005) {
     return {
       id: 'panorama-normalization',
-      label: '原生全景来源',
+      label: i18n.t('capabilityWorkflow.nativePanoramaSource'),
       status: 'pass',
-      summary: `供应商原图已是 2:1（${normalization.sourceWidth}x${normalization.sourceHeight}）`,
+      summary: i18n.t('capabilityWorkflow.theProviderOriginalIsAlready21X', { v0: normalization.sourceWidth, v1: normalization.sourceHeight }),
       metrics: {
         sourceAspectRatio: round(normalization.sourceAspectRatio),
         croppedPercent: round(percent, 1),
@@ -475,12 +477,12 @@ function panoramaNormalizationCheck(
   const status: GenerationQualityStatus = normalization.croppedFraction > 0.2 ? 'fail' : 'warning'
   return {
     id: 'panorama-normalization',
-    label: '原生全景来源',
+    label: i18n.t('capabilityWorkflow.nativePanoramaSource'),
     status,
-    summary: `输出通过中心裁切归一为 2:1，裁掉约 ${round(percent, 1)}% 原图面积`,
+    summary: i18n.t('capabilityWorkflow.theOutputWasCenterCroppedTo21Removing', { v0: round(percent, 1) }),
     details: [
-      `供应商原图比例 ${round(normalization.sourceAspectRatio)}:1`,
-      '中心裁切只能修正尺寸，不能把普通图片变成真实可环绕全景。',
+      i18n.t('capabilityWorkflow.providerOriginalRatio1', { v0: round(normalization.sourceAspectRatio) }),
+      i18n.t('capabilityWorkflow.centerCroppingCorrectsDimensionsOnlyItCannotTurnA'),
     ],
     itemIds: [item.id],
     metrics: {
@@ -497,9 +499,9 @@ function panoramaSeamCheck(
   if (!inspection) {
     return {
       id: 'panorama-seam',
-      label: '左右接缝',
+      label: i18n.t('capabilityWorkflow.leftRightSeam'),
       status: 'unavailable',
-      summary: '未能读取像素，无法比较左右边缘',
+      summary: i18n.t('capabilityWorkflow.pixelsCouldNotBeReadLeftAndRightEdges'),
       itemIds: [item.id],
     }
   }
@@ -507,22 +509,22 @@ function panoramaSeamCheck(
   if (distance === undefined) {
     return {
       id: 'panorama-seam',
-      label: '左右接缝',
+      label: i18n.t('capabilityWorkflow.leftRightSeam'),
       status: 'unavailable',
-      summary: '像素采样不包含左右边缘数据',
+      summary: i18n.t('capabilityWorkflow.pixelSamplesDoNotIncludeTheLeftAndRight'),
       itemIds: [item.id],
     }
   }
   const status: GenerationQualityStatus = distance <= 0.08 ? 'pass' : distance <= 0.18 ? 'warning' : 'fail'
   return {
     id: 'panorama-seam',
-    label: '左右接缝',
+    label: i18n.t('capabilityWorkflow.leftRightSeam'),
     status,
     summary: status === 'pass'
-      ? '左右边缘色彩连续，未发现明显接缝'
+      ? i18n.t('capabilityWorkflow.leftAndRightEdgeColorsAreContinuousNoObvious')
       : status === 'warning'
-        ? '左右边缘存在可见差异，建议进入全景预览检查接缝'
-        : '左右边缘差异过大，环绕时很可能出现明显断层',
+        ? i18n.t('capabilityWorkflow.visibleDifferencesExistBetweenLeftAndRightEdgesCheck')
+        : i18n.t('capabilityWorkflow.leftRightEdgeDifferencesAreExcessiveAVisibleDiscontinuity'),
     itemIds: status === 'pass' ? undefined : [item.id],
     metrics: { normalizedSeamDistance: round(distance) },
   }
@@ -538,9 +540,9 @@ function panoramaPoleCheck(
   if (!top || !bottom || !middle || top.length === 0 || bottom.length === 0) {
     return {
       id: 'panorama-poles',
-      label: '极点风险',
+      label: i18n.t('capabilityWorkflow.poleRisk'),
       status: 'unavailable',
-      summary: '像素采样不包含顶部和底部带状数据',
+      summary: i18n.t('capabilityWorkflow.pixelSamplesDoNotIncludeTopAndBottomStrips'),
       itemIds: [item.id],
     }
   }
@@ -555,14 +557,14 @@ function panoramaPoleCheck(
       : 'fail'
   return {
     id: 'panorama-poles',
-    label: '极点风险',
+    label: i18n.t('capabilityWorkflow.poleRisk'),
     status,
     summary: status === 'pass'
-      ? '顶部和底部未发现异常的横向纹理变化'
+      ? i18n.t('capabilityWorkflow.noAbnormalHorizontalTextureChangesAtTheTopOr')
       : status === 'warning'
-        ? '顶部或底部纹理变化偏大，建议检查天顶与地面扭曲'
-        : '极点区域横向变化过强，可能出现明显拉伸或拼接扭曲',
-    details: ['这是像素分布代理指标，不是完整球面投影求解。'],
+        ? i18n.t('capabilityWorkflow.topOrBottomTextureChangesAreLargeCheckZenith')
+        : i18n.t('capabilityWorkflow.excessiveHorizontalVariationNearThePolesMayCauseVisible'),
+    details: [i18n.t('capabilityWorkflow.thisPixelDistributionProxyIsNotACompleteSpherical')],
     itemIds: status === 'pass' ? undefined : [item.id],
     metrics: {
       topVariation: round(topVariation),
@@ -579,9 +581,9 @@ function panoramaProjectionCheck(
   if (!inspection) {
     return {
       id: 'panorama-projection-proxy',
-      label: '投影可用性',
+      label: i18n.t('capabilityWorkflow.projectionUsability'),
       status: 'unavailable',
-      summary: '未能读取像素，无法执行投影代理检查',
+      summary: i18n.t('capabilityWorkflow.pixelsCouldNotBeReadProjectionProxyChecksCannot'),
       itemIds: [item.id],
     }
   }
@@ -590,9 +592,9 @@ function panoramaProjectionCheck(
   if (blank) {
     return {
       id: 'panorama-projection-proxy',
-      label: '投影可用性',
+      label: i18n.t('capabilityWorkflow.projectionUsability'),
       status: 'fail',
-      summary: '画面透明、空白或信息量过低，无法作为可用全景',
+      summary: i18n.t('capabilityWorkflow.theImageIsTransparentBlankOrLowInformationAnd'),
       itemIds: [item.id],
       metrics: {
         opaqueRatio: round(inspection.opaqueRatio),
@@ -603,10 +605,10 @@ function panoramaProjectionCheck(
   }
   return {
     id: 'panorama-projection-proxy',
-    label: '投影可用性',
+    label: i18n.t('capabilityWorkflow.projectionUsability'),
     status: 'pass',
-    summary: '画面覆盖和细节满足本地等距柱状代理检查',
-    details: ['仍需在可拖动全景预览中人工确认建筑直线、人物和地平线是否扭曲。'],
+    summary: i18n.t('capabilityWorkflow.imageCoverageAndDetailMeetTheLocalEquirectangularProxy'),
+    details: [i18n.t('capabilityWorkflow.manuallyCheckBuildingsPeopleAndHorizonDistortionInThe')],
     metrics: {
       opaqueRatio: round(inspection.opaqueRatio),
       lumaStdDev: round(inspection.lumaStdDev),
@@ -622,9 +624,9 @@ async function evaluatePanoramaCollection(
 ): Promise<GenerationResultCollection> {
   const item = collection.items[0] ?? {
     id: 'panorama',
-    label: '360° 全景',
+    label: i18n.t('capabilityWorkflow.label360DegreePanorama'),
     status: 'error' as const,
-    error: '没有全景输出槽位',
+    error: i18n.t('capabilityWorkflow.noPanoramaOutputSlot'),
   }
   const result = item.status === 'success'
     && item.result?.type === 'image'
@@ -634,15 +636,15 @@ async function evaluatePanoramaCollection(
   const availability: GenerationQualityCheck = result
     ? {
         id: 'panorama-image',
-        label: '全景图片',
+        label: i18n.t('capabilityWorkflow.panoramaImage'),
         status: 'pass',
-        summary: '已获得一个可读取的全景图片结果',
+        summary: i18n.t('capabilityWorkflow.aReadablePanoramaImageResultWasObtained'),
       }
     : {
         id: 'panorama-image',
-        label: '全景图片',
+        label: i18n.t('capabilityWorkflow.panoramaImage'),
         status: 'fail',
-        summary: item.error || '没有可读取的全景图片结果',
+        summary: item.error || i18n.t('capabilityWorkflow.noReadablePanoramaImageResult'),
         itemIds: [item.id],
       }
 
@@ -655,7 +657,7 @@ async function evaluatePanoramaCollection(
       inspectionError = error instanceof Error && error.message ? error.message : String(error)
     }
   } else if (result) {
-    inspectionError = '当前运行环境未提供像素检测器'
+    inspectionError = i18n.t('capabilityWorkflow.noPixelInspectorIsAvailableInThisEnvironment')
   }
 
   const checks: GenerationQualityCheck[] = [
@@ -669,9 +671,9 @@ async function evaluatePanoramaCollection(
   if (inspectionError) {
     checks.push({
       id: 'panorama-inspection',
-      label: '像素读取',
+      label: i18n.t('capabilityWorkflow.pixelReading'),
       status: 'unavailable',
-      summary: '全景结果已保留，但部分本地质量检查未完成',
+      summary: i18n.t('capabilityWorkflow.thePanoramaResultIsRetainedButSomeLocalQuality'),
       details: [inspectionError],
       itemIds: [item.id],
     })

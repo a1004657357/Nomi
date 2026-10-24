@@ -1,3 +1,5 @@
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import i18n from '../../../i18n/index'
 import type { RecipeRunPlan } from '../../../config/capabilityRecipes'
 import type {
   GenerationNodeResult,
@@ -107,15 +109,15 @@ function sourceCheck(sourceResult: GenerationNodeResult | undefined): Generation
   return usableImage(sourceResult)
     ? {
         id: 'portrait-source',
-        label: '来源人像',
+        label: i18n.t('capabilityWorkflow.sourcePortrait'),
         status: 'pass',
-        summary: '已保留可比较的原始人像快照',
+        summary: i18n.t('capabilityWorkflow.aComparableOriginalPortraitSnapshotIsRetained'),
       }
     : {
         id: 'portrait-source',
-        label: '来源人像',
+        label: i18n.t('capabilityWorkflow.sourcePortrait'),
         status: 'fail',
-        summary: '缺少可读取的原始人像，无法执行身份与肤质对比',
+        summary: i18n.t('capabilityWorkflow.noReadableOriginalPortraitIdentityAndSkinDetailCannot'),
       }
 }
 
@@ -125,18 +127,18 @@ function outputCheck(collection: GenerationResultCollection): GenerationQualityC
   return missing.length === 0 && available.length > 0
     ? {
         id: 'portrait-output',
-        label: '结果完整性',
+        label: i18n.t('capabilityWorkflow.resultCompleteness'),
         status: 'pass',
-        summary: `${available.length} 个结果均可读取`,
+        summary: i18n.t('capabilityWorkflow.allResultsAreReadable', { v0: available.length }),
         metrics: { successfulImageCount: available.length },
       }
     : {
         id: 'portrait-output',
-        label: '结果完整性',
+        label: i18n.t('capabilityWorkflow.resultCompleteness'),
         status: 'fail',
-        summary: `仅 ${available.length}/${collection.items.length} 个结果可读取`,
+        summary: i18n.t('capabilityWorkflow.onlyResultsAreReadable', { v0: available.length, v1: collection.items.length }),
         itemIds: missing.map((item) => item.id),
-        details: missing.map((item) => `${item.label}：${item.error || item.status}`),
+        details: missing.map((item) => `${translateCapabilityWorkflowText(item.label)}：${item.error || item.status}`),
         metrics: { successfulImageCount: available.length, missingImageCount: missing.length },
       }
 }
@@ -147,8 +149,8 @@ async function inspectOutputs(
 ): Promise<InspectedOutput[]> {
   return Promise.all(collection.items.map(async (item) => {
     const result = usableImage(item.result) ? item.result : undefined
-    if (!result) return { item, error: item.error || '没有可读取的图片结果' }
-    if (!inspectImage) return { item, result, error: '当前运行环境未提供像素检测器' }
+    if (!result) return { item, error: item.error || i18n.t('capabilityWorkflow.noReadableImageResult') }
+    if (!inspectImage) return { item, result, error: i18n.t('capabilityWorkflow.noPixelInspectorIsAvailableInThisEnvironment') }
     try {
       return { item, result, inspection: await inspectImage(result) }
     } catch (error) {
@@ -169,18 +171,18 @@ async function identityCheck(
   if (!usableImage(sourceResult)) {
     return {
       id: 'portrait-identity',
-      label: '身份保护',
+      label: i18n.t('capabilityWorkflow.identityProtection'),
       status: 'unavailable',
-      summary: '缺少来源人像，无法验证身份',
+      summary: i18n.t('capabilityWorkflow.noSourcePortraitIdentityCannotBeVerified'),
     }
   }
   if (!compareFaces) {
     return {
       id: 'portrait-identity',
-      label: '身份保护',
+      label: i18n.t('capabilityWorkflow.identityProtection'),
       status: 'unavailable',
-      summary: '当前没有人脸身份比较器，像素代理不能证明人物身份一致',
-      details: ['结果已保留；需接入本地人脸嵌入或视觉评审后才能给出身份结论。'],
+      summary: i18n.t('capabilityWorkflow.noFaceIdentityComparatorIsAvailablePixelProxiesCannot'),
+      details: [i18n.t('capabilityWorkflow.resultsAreRetainedLocalFaceEmbeddingsOrVisualReview')],
     }
   }
 
@@ -212,12 +214,12 @@ async function identityCheck(
   if (failed.length > 0) {
     return {
       id: 'portrait-identity',
-      label: '身份保护',
+      label: i18n.t('capabilityWorkflow.identityProtection'),
       status: 'fail',
-      summary: `${failed.length} 个结果的人脸身份相似度低于安全阈值`,
+      summary: i18n.t('capabilityWorkflow.faceIdentitySimilarityIsBelowTheSafetyThresholdFor', { v0: failed.length }),
       itemIds: failed.map(({ entry }) => entry.item.id),
       details: failed.map(({ entry, comparison }) => (
-        `${entry.item.label}：身份相似度 ${round(comparison.identitySimilarity)}`
+        i18n.t('capabilityWorkflow.identitySimilarity', { v0: translateCapabilityWorkflowText(entry.item.label), v1: round(comparison.identitySimilarity) })
       )),
       metrics: { failedIdentityCount: failed.length },
     }
@@ -225,15 +227,15 @@ async function identityCheck(
   if (warnings.length > 0 || unavailable.length > 0) {
     return {
       id: 'portrait-identity',
-      label: '身份保护',
+      label: i18n.t('capabilityWorkflow.identityProtection'),
       status: 'warning',
       summary: warnings.length > 0
-        ? `${warnings.length} 个结果身份相似度偏低，建议人工复核`
-        : `${unavailable.length} 个结果未检测到可比较人脸`,
+        ? i18n.t('capabilityWorkflow.identitySimilarityIsLowForResultsManualReviewIs', { v0: warnings.length })
+        : i18n.t('capabilityWorkflow.noComparableFacesWereDetectedInResults', { v0: unavailable.length }),
       itemIds: [...warnings, ...unavailable].map(({ entry }) => entry.item.id),
       details: [
-        ...warnings.map(({ entry, comparison }) => `${entry.item.label}：${round(comparison.identitySimilarity)}`),
-        ...unavailable.map(({ entry, error }) => `${entry.item.label}：${error || '未检测到完整人脸'}`),
+        ...warnings.map(({ entry, comparison }) => `${translateCapabilityWorkflowText(entry.item.label)}：${round(comparison.identitySimilarity)}`),
+        ...unavailable.map(({ entry, error }) => `${translateCapabilityWorkflowText(entry.item.label)}：${error || i18n.t('capabilityWorkflow.noCompleteFaceDetected')}`),
       ],
       metrics: {
         warningIdentityCount: warnings.length,
@@ -244,16 +246,16 @@ async function identityCheck(
   if (comparable.length === 0) {
     return {
       id: 'portrait-identity',
-      label: '身份保护',
+      label: i18n.t('capabilityWorkflow.identityProtection'),
       status: 'unavailable',
-      summary: '没有可比较的人脸结果，无法验证身份',
+      summary: i18n.t('capabilityWorkflow.noComparableFaceResultsIdentityCannotBeVerified'),
     }
   }
   return {
     id: 'portrait-identity',
-    label: '身份保护',
+    label: i18n.t('capabilityWorkflow.identityProtection'),
     status: 'pass',
-    summary: `${comparable.length} 个结果通过人脸身份相似度检查`,
+    summary: i18n.t('capabilityWorkflow.resultsPassedTheFaceIdentitySimilarityCheck', { v0: comparable.length }),
     metrics: {
       comparedFaceCount: comparable.length,
       minimumIdentitySimilarity: round(Math.min(...comparable.map(({ comparison }) => comparison.identitySimilarity))),
@@ -270,10 +272,10 @@ function visualProxyCheck(
   if (!source || available.length === 0) {
     return {
       id: 'portrait-visual-proxy',
-      label: '中心人像变化代理',
+      label: i18n.t('capabilityWorkflow.centralPortraitChangeProxy'),
       status: 'unavailable',
-      summary: '中心区域像素不足，无法检测明显漂移',
-      details: ['该代理只发现大幅视觉变化，不等同于人脸身份验证。'],
+      summary: i18n.t('capabilityWorkflow.tooFewCenterRegionPixelsToCheckObviousDrift'),
+      details: [i18n.t('capabilityWorkflow.thisProxyDetectsLargeVisualChangesOnlyAndIs')],
     }
   }
   const drifted = available.flatMap((entry) => {
@@ -287,24 +289,24 @@ function visualProxyCheck(
   return drifted.length > 0
     ? {
         id: 'portrait-visual-proxy',
-        label: '中心人像变化代理',
+        label: i18n.t('capabilityWorkflow.centralPortraitChangeProxy'),
         status: 'warning',
-        summary: `${drifted.length} 个结果中心区域变化幅度过大`,
+        summary: i18n.t('capabilityWorkflow.resultsHaveExcessiveCenterRegionChanges', { v0: drifted.length }),
         itemIds: drifted.map(({ entry }) => entry.item.id),
         details: [
           ...drifted.map(({ entry, perceptualDistance, rgbDistance }) => (
-            `${entry.item.label}：像素差 ${round(perceptualDistance)}，色彩差 ${round(rgbDistance)}`
+            i18n.t('capabilityWorkflow.pixelDistanceColorDistance', { v0: translateCapabilityWorkflowText(entry.item.label), v1: round(perceptualDistance), v2: round(rgbDistance) })
           )),
-          '该代理只发现明显漂移，不能证明或否定人物身份。',
+          i18n.t('capabilityWorkflow.thisProxyDetectsObviousDriftOnlyAndCannotProve'),
         ],
         metrics: { visualDriftCount: drifted.length },
       }
     : {
         id: 'portrait-visual-proxy',
-        label: '中心人像变化代理',
+        label: i18n.t('capabilityWorkflow.centralPortraitChangeProxy'),
         status: 'pass',
-        summary: '未发现中心区域的大幅构图或色彩漂移',
-        details: ['该代理只发现明显漂移，不能证明人物身份。'],
+        summary: i18n.t('capabilityWorkflow.noLargeCenterRegionCompositionOrColorDriftFound'),
+        details: [i18n.t('capabilityWorkflow.thisProxyDetectsObviousDriftOnlyAndCannotProve2')],
         metrics: { visualDriftCount: 0 },
       }
 }
@@ -318,9 +320,9 @@ function skinTextureCheck(
   if (!source || source.edgeEnergy <= 0 || available.length === 0) {
     return {
       id: 'portrait-skin-texture',
-      label: '肤质与细节',
+      label: i18n.t('capabilityWorkflow.skinTextureAndDetail'),
       status: 'unavailable',
-      summary: '缺少中心区域纹理数据，无法检测磨皮或过锐风险',
+      summary: i18n.t('capabilityWorkflow.noCenterRegionTextureDataSmoothingOrOversharpeningRisks'),
     }
   }
   const severe: Array<{ entry: InspectedOutput; ratio: number }> = []
@@ -334,15 +336,15 @@ function skinTextureCheck(
   const status: GenerationQualityStatus = severe.length > 0 ? 'fail' : warnings.length > 0 ? 'warning' : 'pass'
   return {
     id: 'portrait-skin-texture',
-    label: '肤质与细节',
+    label: i18n.t('capabilityWorkflow.skinTextureAndDetail'),
     status,
     summary: status === 'pass'
-      ? '中心区域纹理变化处于合理范围'
+      ? i18n.t('capabilityWorkflow.centerRegionTextureChangesAreWithinAReasonableRange')
       : severe.length > 0
-        ? `${severe.length} 个结果存在严重磨平或过锐风险`
-        : `${warnings.length} 个结果纹理变化偏大，建议放大检查皮肤`,
+        ? i18n.t('capabilityWorkflow.resultsHaveSevereSmoothingOrOversharpeningRisks', { v0: severe.length })
+        : i18n.t('capabilityWorkflow.resultsHaveLargeTextureChangesZoomInToInspect', { v0: warnings.length }),
     itemIds: status === 'pass' ? undefined : flagged.map(({ entry }) => entry.item.id),
-    details: flagged.map(({ entry, ratio }) => `${entry.item.label}：细节比 ${round(ratio)}`),
+    details: flagged.map(({ entry, ratio }) => i18n.t('capabilityWorkflow.detailRatio', { v0: translateCapabilityWorkflowText(entry.item.label), v1: round(ratio) })),
     metrics: {
       severeTextureCount: severe.length,
       warningTextureCount: warnings.length,
@@ -378,27 +380,27 @@ function artifactCheck(
   if (failed.length > 0) {
     return {
       id: 'portrait-artifacts',
-      label: '伪影与有效性',
+      label: i18n.t('capabilityWorkflow.artifactsAndValidity'),
       status: 'fail',
-      summary: `${failed.length} 个结果为空白、透明或信息量过低`,
+      summary: i18n.t('capabilityWorkflow.resultsAreBlankTransparentOrLowInformation', { v0: failed.length }),
       itemIds: failed.map(({ item }) => item.id),
     }
   }
   if (warnings.length > 0) {
     return {
       id: 'portrait-artifacts',
-      label: '伪影与有效性',
+      label: i18n.t('capabilityWorkflow.artifactsAndValidity'),
       status: 'warning',
-      summary: `${warnings.length} 个结果像素未完整检测或画幅变化过大`,
+      summary: i18n.t('capabilityWorkflow.resultsHaveIncompletePixelInspectionOrExcessiveAspectRatio', { v0: warnings.length }),
       itemIds: warnings.map(({ item }) => item.id),
-      details: warnings.map(({ item, error }) => `${item.label}：${error || '画幅与原图差异较大'}`),
+      details: warnings.map(({ item, error }) => `${translateCapabilityWorkflowText(item.label)}：${error || i18n.t('capabilityWorkflow.theAspectRatioDiffersGreatlyFromTheOriginal')}`),
     }
   }
   return {
     id: 'portrait-artifacts',
-    label: '伪影与有效性',
+    label: i18n.t('capabilityWorkflow.artifactsAndValidity'),
     status: 'pass',
-    summary: '未发现空白、透明或明显画幅异常',
+    summary: i18n.t('capabilityWorkflow.noBlankTransparentOrObviouslyIncorrectAspectRatioOutputs'),
   }
 }
 
@@ -425,9 +427,9 @@ function moodCoordinateCheck(
   if (!exact || !unique || (collection.items.length === 25 && !fullMatrix)) {
     return {
       id: 'mood-coordinate-contract',
-      label: '情绪坐标',
+      label: i18n.t('capabilityWorkflow.moodCoordinates'),
       status: 'fail',
-      summary: '情绪结果数量、顺序或能量/亲和坐标不完整',
+      summary: i18n.t('capabilityWorkflow.moodResultCountOrderOrEnergyAffinityCoordinatesAre'),
       itemIds: collection.items.map((item) => item.id),
       metrics: {
         plannedCount: plan.outputs.length,
@@ -438,11 +440,11 @@ function moodCoordinateCheck(
   }
   return {
     id: 'mood-coordinate-contract',
-    label: '情绪坐标',
+    label: i18n.t('capabilityWorkflow.moodCoordinates'),
     status: 'pass',
     summary: fullMatrix
-      ? '25 个情绪坐标按 5×5 行列顺序完整'
-      : `${collection.items.length} 个试跑坐标标签完整且不重复`,
+      ? i18n.t('capabilityWorkflow.all25MoodCoordinatesFollowThe5x5RowColumn')
+      : i18n.t('capabilityWorkflow.allTrialCoordinateLabelsAreCompleteAndUnique', { v0: collection.items.length }),
     metrics: {
       coordinateCount: collection.items.length,
       fullMatrix,
@@ -458,10 +460,10 @@ function moodExpressionCheck(
   if (available.length === 0) {
     return {
       id: 'mood-expression-distinction',
-      label: '表情像素区分代理',
+      label: i18n.t('capabilityWorkflow.expressionPixelDistinctionProxy'),
       status: 'unavailable',
-      summary: '没有可比较的中心区域像素',
-      details: ['像素差异不能证明目标表情语义正确。'],
+      summary: i18n.t('capabilityWorkflow.noComparableCenterRegionPixels'),
+      details: [i18n.t('capabilityWorkflow.pixelDifferencesCannotProveTheTargetExpressionSMeaning')],
     }
   }
   if (available.length === 1) {
@@ -470,25 +472,25 @@ function moodExpressionCheck(
     if (!sourceHash) {
       return {
         id: 'mood-expression-distinction',
-        label: '表情像素区分代理',
+        label: i18n.t('capabilityWorkflow.expressionPixelDistinctionProxy'),
         status: 'unavailable',
-        summary: '缺少原图中心区域，无法判断单个情绪是否产生可见变化',
-        details: ['像素差异不能证明目标表情语义正确。'],
+        summary: i18n.t('capabilityWorkflow.noOriginalCenterRegionVisibleChangesInASingle'),
+        details: [i18n.t('capabilityWorkflow.pixelDifferencesCannotProveTheTargetExpressionSMeaning')],
       }
     }
     const distance = hashDistance(sourceHash, outputHash)
     return {
       id: 'mood-expression-distinction',
-      label: '表情像素区分代理',
+      label: i18n.t('capabilityWorkflow.expressionPixelDistinctionProxy'),
       status: distance <= 0.01 ? 'fail' : distance <= 0.04 ? 'warning' : 'pass',
       summary: distance <= 0.01
-        ? '情绪结果与原图几乎相同，未检测到可见表演变化'
+        ? i18n.t('capabilityWorkflow.theMoodResultIsNearlyIdenticalToTheOriginal')
         : distance <= 0.04
-          ? '情绪变化非常轻微，建议放大检查'
-          : '情绪结果相对原图具有可见差异',
+          ? i18n.t('capabilityWorkflow.theMoodChangeIsVerySubtleZoomInTo')
+          : i18n.t('capabilityWorkflow.theMoodResultVisiblyDiffersFromTheOriginal'),
       itemIds: distance <= 0.04 ? [available[0]!.item.id] : undefined,
       metrics: { sourceDifference: round(distance) },
-      details: ['该检查只发现画面是否变化，不能证明目标表情语义正确。'],
+      details: [i18n.t('capabilityWorkflow.thisCheckDetectsImageChangesOnlyAndCannotProve')],
     }
   }
 
@@ -510,19 +512,19 @@ function moodExpressionCheck(
   const status: GenerationQualityStatus = exact.length > 0 ? 'fail' : near.length > 0 ? 'warning' : 'pass'
   return {
     id: 'mood-expression-distinction',
-    label: '表情像素区分代理',
+    label: i18n.t('capabilityWorkflow.expressionPixelDistinctionProxy'),
     status,
     summary: status === 'pass'
-      ? `${available.length} 个情绪结果未发现重复中心画面`
+      ? i18n.t('capabilityWorkflow.noDuplicateCenterImagesFoundAmongMoodResults', { v0: available.length })
       : exact.length > 0
-        ? `发现 ${exact.length} 组几乎相同的情绪结果`
-        : `发现 ${near.length} 组高度相似的情绪结果`,
+        ? i18n.t('capabilityWorkflow.foundPairsOfNearlyIdenticalMoodResults', { v0: exact.length })
+        : i18n.t('capabilityWorkflow.foundPairsOfHighlySimilarMoodResults', { v0: near.length }),
     itemIds: status === 'pass'
       ? undefined
       : Array.from(new Set(pairs.flatMap(([left, right]) => [left.item.id, right.item.id]))),
     details: [
-      ...pairs.slice(0, 8).map(([left, right]) => `${left.item.label} ↔ ${right.item.label}`),
-      '该检查只发现重复画面，不能证明目标表情语义正确。',
+      ...pairs.slice(0, 8).map(([left, right]) => `${translateCapabilityWorkflowText(left.item.label)} ↔ ${translateCapabilityWorkflowText(right.item.label)}`),
+      i18n.t('capabilityWorkflow.thisCheckDetectsDuplicateImagesOnlyAndCannotProve'),
     ],
     metrics: { exactDuplicatePairCount: exact.length, nearDuplicatePairCount: near.length },
   }
@@ -537,9 +539,9 @@ export async function evaluateMoodExpressionSemanticQuality(
     return {
       check: {
         id: 'mood-expression-semantic',
-        label: '目标表情语义',
+        label: i18n.t('capabilityWorkflow.targetExpressionSemantics'),
         status: 'unavailable',
-        summary: '缺少来源人像，无法验证目标表情',
+        summary: i18n.t('capabilityWorkflow.noSourcePortraitTheTargetExpressionCannotBeVerified'),
       },
     }
   }
@@ -561,9 +563,9 @@ export async function evaluateMoodExpressionSemanticQuality(
     return {
       check: {
         id: 'mood-expression-semantic',
-        label: '目标表情语义',
+        label: i18n.t('capabilityWorkflow.targetExpressionSemantics'),
         status: 'unavailable',
-        summary: '没有可复核的情绪图片',
+        summary: i18n.t('capabilityWorkflow.noMoodImagesAreAvailableForReview'),
       },
     }
   }
@@ -571,10 +573,10 @@ export async function evaluateMoodExpressionSemanticQuality(
     return {
       check: {
         id: 'mood-expression-semantic',
-        label: '目标表情语义',
+        label: i18n.t('capabilityWorkflow.targetExpressionSemantics'),
         status: 'unavailable',
-        summary: '当前没有表情语义比较器，像素差异不能证明目标情绪正确',
-        details: ['请使用视觉模型复核，或人工逐格确认眉部、眼睑、脸颊、嘴部和下颌表演。'],
+        summary: i18n.t('capabilityWorkflow.noExpressionSemanticComparatorIsAvailablePixelDifferencesCannot'),
+        details: [i18n.t('capabilityWorkflow.useVisualModelReviewOrManuallyCheckBrowEyelid')],
         itemIds: outputs.map((output) => output.itemId),
       },
     }
@@ -587,9 +589,9 @@ export async function evaluateMoodExpressionSemanticQuality(
     return {
       check: {
         id: 'mood-expression-semantic',
-        label: '目标表情语义',
+        label: i18n.t('capabilityWorkflow.targetExpressionSemantics'),
         status: 'unavailable',
-        summary: '表情语义比较器执行失败，目标情绪未验证',
+        summary: i18n.t('capabilityWorkflow.theExpressionSemanticComparatorFailedTheTargetMoodRemains'),
         details: [error instanceof Error ? error.message : String(error)],
         itemIds: outputs.map((output) => output.itemId),
       },
@@ -607,15 +609,15 @@ export async function evaluateMoodExpressionSemanticQuality(
   for (const output of outputs) {
     const entry = byItemId.get(output.itemId)
     if (!entry) {
-      unavailable.push({ output, reason: '比较器未返回该情绪格' })
+      unavailable.push({ output, reason: i18n.t('capabilityWorkflow.theComparatorReturnedNoResultForThisMoodCell') })
       continue
     }
     if (!entry.faceDetected) {
-      unavailable.push({ output, reason: '未检测到可比较人脸' })
+      unavailable.push({ output, reason: i18n.t('capabilityWorkflow.noComparableFaceDetected') })
       continue
     }
     if (typeof entry.targetMatches !== 'boolean') {
-      unavailable.push({ output, reason: '比较器未返回目标表情结论' })
+      unavailable.push({ output, reason: i18n.t('capabilityWorkflow.theComparatorReturnedNoTargetExpressionVerdict') })
       continue
     }
     if (typeof entry.targetScore === 'number' && Number.isFinite(entry.targetScore)) {
@@ -640,15 +642,15 @@ export async function evaluateMoodExpressionSemanticQuality(
       evaluator: comparison.evaluator,
       check: {
         id: 'mood-expression-semantic',
-        label: '目标表情语义',
+        label: i18n.t('capabilityWorkflow.targetExpressionSemantics'),
         status: 'fail',
-        summary: `${failed.length} 个情绪格未达到目标表情或缺少多区域肌肉证据`,
+        summary: i18n.t('capabilityWorkflow.moodCellsMissedTheTargetExpressionOrLackEvidence', { v0: failed.length }),
         itemIds: failed.map(({ output }) => output.itemId),
         details: [
           ...failed.map(({ output, comparison: entry }) => (
-            `${output.label}：${entry.detail || '目标表情不匹配，或眉眼脸颊嘴部下颌证据少于 3 个区域'}`
+            `${translateCapabilityWorkflowText(output.label)}：${entry.detail || i18n.t('capabilityWorkflow.theExpressionDoesNotMatchOrFewerThan3')}`
           )),
-          ...unavailable.map(({ output, reason }) => `${output.label}：${reason}`),
+          ...unavailable.map(({ output, reason }) => `${translateCapabilityWorkflowText(output.label)}：${reason}`),
         ],
         metrics,
       },
@@ -659,11 +661,11 @@ export async function evaluateMoodExpressionSemanticQuality(
       evaluator: comparison.evaluator,
       check: {
         id: 'mood-expression-semantic',
-        label: '目标表情语义',
+        label: i18n.t('capabilityWorkflow.targetExpressionSemantics'),
         status: outputs.length === unavailable.length ? 'unavailable' : 'warning',
-        summary: `${outputs.length - unavailable.length}/${outputs.length} 个情绪格完成语义验证`,
+        summary: i18n.t('capabilityWorkflow.moodCellsCompletedSemanticVerification', { v0: outputs.length - unavailable.length, v1: outputs.length }),
         itemIds: unavailable.map(({ output }) => output.itemId),
-        details: unavailable.map(({ output, reason }) => `${output.label}：${reason}`),
+        details: unavailable.map(({ output, reason }) => `${translateCapabilityWorkflowText(output.label)}：${reason}`),
         metrics,
       },
     }
@@ -672,9 +674,9 @@ export async function evaluateMoodExpressionSemanticQuality(
     evaluator: comparison.evaluator,
     check: {
       id: 'mood-expression-semantic',
-      label: '目标表情语义',
+      label: i18n.t('capabilityWorkflow.targetExpressionSemantics'),
       status: 'pass',
-      summary: `${outputs.length} 个情绪格均通过目标表情和多区域面部表演检查`,
+      summary: i18n.t('capabilityWorkflow.allMoodCellsPassedTargetExpressionAndMultiRegion', { v0: outputs.length }),
       metrics,
     },
   }

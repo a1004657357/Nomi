@@ -1,3 +1,6 @@
+import i18n from '../../i18n'
+import { translateCapabilityWorkflowText } from '../../i18n/capabilityWorkflowText'
+import { zhCapabilityWorkflow } from '../../i18n/locales/capabilityWorkflow'
 import { z } from 'zod'
 import type { ModelParameterControl } from '../modelCatalogMeta'
 import type {
@@ -130,15 +133,15 @@ export type BuildRecipeRunPlanInput = {
 }
 
 const GRID9_CAMERA_OUTPUTS: readonly RecipeOutputDescriptor[] = [
-  { id: 'front', label: '正面', azimuth: 0, elevation: 0 },
-  { id: 'front-right', label: '右前侧', azimuth: 45, elevation: 0 },
-  { id: 'right', label: '右侧', azimuth: 90, elevation: 0 },
-  { id: 'rear-right', label: '右后侧', azimuth: 135, elevation: 0 },
-  { id: 'rear', label: '背面', azimuth: 180, elevation: 0 },
-  { id: 'rear-left', label: '左后侧', azimuth: -135, elevation: 0 },
-  { id: 'left', label: '左侧', azimuth: -90, elevation: 0 },
-  { id: 'front-left', label: '左前侧', azimuth: -45, elevation: 0 },
-  { id: 'top', label: '俯视', azimuth: 0, elevation: 75 },
+  { id: 'front', label: zhCapabilityWorkflow.front, azimuth: 0, elevation: 0 },
+  { id: 'front-right', label: zhCapabilityWorkflow.frontRight, azimuth: 45, elevation: 0 },
+  { id: 'right', label: zhCapabilityWorkflow.right, azimuth: 90, elevation: 0 },
+  { id: 'rear-right', label: zhCapabilityWorkflow.rearRight, azimuth: 135, elevation: 0 },
+  { id: 'rear', label: zhCapabilityWorkflow.rear, azimuth: 180, elevation: 0 },
+  { id: 'rear-left', label: zhCapabilityWorkflow.rearLeft, azimuth: -135, elevation: 0 },
+  { id: 'left', label: zhCapabilityWorkflow.left, azimuth: -90, elevation: 0 },
+  { id: 'front-left', label: zhCapabilityWorkflow.frontLeft, azimuth: -45, elevation: 0 },
+  { id: 'top', label: zhCapabilityWorkflow.topView, azimuth: 0, elevation: 75 },
 ]
 
 const MOOD_SAMPLE_COORDINATES = [
@@ -157,7 +160,7 @@ function moodScale(value: unknown, fallback = 2): number {
 function moodOutput(energy: number, affinity: number): RecipeOutputDescriptor {
   return {
     id: `mood-e${energy}-a${affinity}`,
-    label: `能量 ${energy} · 亲和 ${affinity}`,
+    label: i18n.t('capabilityWorkflow.energyAffinity', { lng: 'zh-CN', v0: energy, v1: affinity }),
     energy,
     affinity,
   }
@@ -180,9 +183,9 @@ const select = (
   defaultValue: string,
 ): ModelParameterControl => ({
   key,
-  label,
+  get label() { return translateCapabilityWorkflowText(label) },
   type: 'select',
-  options: values.map((value) => ({ value, label: value })),
+  options: values.map((value) => ({ value, get label() { return translateCapabilityWorkflowText(value) } })),
   defaultValue,
 })
 
@@ -193,9 +196,9 @@ const optionSelect = (
   defaultValue: string,
 ): ModelParameterControl => ({
   key,
-  label,
+  get label() { return translateCapabilityWorkflowText(label) },
   type: 'select',
-  options: options.map((option) => ({ ...option })),
+  options: options.map((option) => ({ value: option.value, get label() { return option.label } })),
   defaultValue,
 })
 
@@ -208,54 +211,54 @@ const imageEditRequirement = {
 
 export const BUILTIN_CAPABILITY_RECIPES: readonly CapabilityRecipe[] = [
   {
-    id: 'image.multiview.grid9', version: 2, label: '多机位九宫格', category: 'multiview',
-    description: '按九个标准机位生成结果集合；可选择逐机位精确生成或低成本接触表草稿。',
+    id: 'image.multiview.grid9', version: 2, get label() { return i18n.t('capabilityWorkflow.nineViewCameraGrid') }, category: 'multiview',
+    get description() { return i18n.t('capabilityWorkflow.generateNineStandardCameraViewsAsAResultCollection') },
     inputSlots: sourceImage, output: { kind: 'image_collection', maxItems: 9 },
     controls: [
       optionSelect('viewGenerationMode', '生成方式', [
-        { value: 'independent', label: '逐机位生成（9 次）' },
-        { value: 'contact_sheet', label: '接触表草稿（1 次）' },
+        { value: 'independent', get label() { return i18n.t('capabilityWorkflow.generateEachView9Tasks') } },
+        { value: 'contact_sheet', get label() { return i18n.t('capabilityWorkflow.contactSheetDraft1Task') } },
       ], 'independent'),
       optionSelect('backgroundPolicy', '背景策略', [
-        { value: 'preserve_scene', label: '保留原场景' },
-        { value: 'neutral_turntable', label: '中性转台背景' },
+        { value: 'preserve_scene', get label() { return i18n.t('capabilityWorkflow.preserveSourceScene') } },
+        { value: 'neutral_turntable', get label() { return i18n.t('capabilityWorkflow.neutralTurntableBackground') } },
       ], 'preserve_scene'),
     ],
     requirements: imageEditRequirement,
     execution: { kind: 'grid_split' },
   },
   {
-    id: 'image.multiview.custom', version: 1, label: '自定义机位', category: 'multiview',
-    description: '按方位角、仰俯角和景别生成一个或多个完整单帧机位。',
+    id: 'image.multiview.custom', version: 1, get label() { return i18n.t('capabilityWorkflow.customCameraView') }, category: 'multiview',
+    get description() { return i18n.t('capabilityWorkflow.generateOneOrMoreCompleteSingleFrameViewsUsing') },
     inputSlots: sourceImage, output: { kind: 'image_collection', maxItems: 6 },
     controls: [
-      { key: 'azimuth', label: '方位角', type: 'number', options: [], defaultValue: 0, min: -180, max: 180, step: 5 },
-      { key: 'elevation', label: '仰俯角', type: 'number', options: [], defaultValue: 0, min: -30, max: 30, step: 5 },
+      { key: 'azimuth', get label() { return i18n.t('capabilityWorkflow.azimuth') }, type: 'number', options: [], defaultValue: 0, min: -180, max: 180, step: 5 },
+      { key: 'elevation', get label() { return i18n.t('capabilityWorkflow.elevation') }, type: 'number', options: [], defaultValue: 0, min: -30, max: 30, step: 5 },
       select('shotSize', '景别', ['特写', '近景', '中景', '全景'], '中景'),
       optionSelect('backgroundPolicy', '背景策略', [
-        { value: 'preserve_scene', label: '保留原场景' },
-        { value: 'neutral_turntable', label: '中性转台背景' },
+        { value: 'preserve_scene', get label() { return i18n.t('capabilityWorkflow.preserveSourceScene') } },
+        { value: 'neutral_turntable', get label() { return i18n.t('capabilityWorkflow.neutralTurntableBackground') } },
       ], 'preserve_scene'),
     ],
     requirements: imageEditRequirement, execution: { kind: 'single_task' },
   },
   {
-    id: 'image.multiview.reconstruct3d', version: 1, label: '图片转 3D', category: 'multiview',
-    description: '从一张清晰主体图生成可环绕、可送入 Scene3D 或 Blender 的 GLB 模型。',
+    id: 'image.multiview.reconstruct3d', version: 1, get label() { return i18n.t('capabilityWorkflow.imageTo3D') }, category: 'multiview',
+    get description() { return i18n.t('capabilityWorkflow.generateARotatableGLBModelFromAClearSubject') },
     inputSlots: sourceImage, output: { kind: 'model3d' }, controls: [],
     requirements: { taskKinds: ['image_to_3d'], requiredAnyReferenceKinds: ['image_ref', 'first_frame'] },
     execution: { kind: 'pipeline' },
   },
   {
-    id: 'scene.panorama.2to1', version: 1, label: '360° 全景', category: 'panorama',
-    description: '生成严格 2:1 的等距柱状全景，并检查接缝、极点和投影可用性。',
+    id: 'scene.panorama.2to1', version: 1, get label() { return i18n.t('capabilityWorkflow.label360DegreePanorama') }, category: 'panorama',
+    get description() { return i18n.t('capabilityWorkflow.generateAStrict21EquirectangularPanoramaAndCheck') },
     inputSlots: [{ kind: 'text', min: 0, max: 1 }, { kind: 'source_image', min: 0, max: 1 }],
     output: { kind: 'panorama' }, controls: [select('aspectRatio', '画幅', ['2:1'], '2:1')],
     requirements: { taskKinds: ['text_to_image', 'image_edit'] }, execution: { kind: 'single_task' },
   },
   {
-    id: 'portrait.refine', version: 1, label: '人像真实化', category: 'portrait',
-    description: '锁定人物身份，改善皮肤、光影、材质、清晰度和场景融合。',
+    id: 'portrait.refine', version: 1, get label() { return i18n.t('capabilityWorkflow.portraitRefinement') }, category: 'portrait',
+    get description() { return i18n.t('capabilityWorkflow.preserveIdentityWhileImprovingSkinLightingMaterialsClarityAnd') },
     inputSlots: sourceImage, output: { kind: 'image' },
     controls: [
       select('sceneBlend', '人物融合', ['轻度对齐', '自然融合', '深度融合'], '自然融合'),
@@ -263,44 +266,44 @@ export const BUILTIN_CAPABILITY_RECIPES: readonly CapabilityRecipe[] = [
       select('skinTexture', '肤质', ['清透修饰', '自然肤质', '真实肌理'], '自然肤质'),
       select('surfaceTexture', '表面纹理', ['柔和纹理', '自然纹理', '颗粒质感'], '自然纹理'),
       select('sharpness', '清晰度', ['柔焦', '标准清晰', '高清锐化'], '标准清晰'),
-      { key: 'realismStrength', label: '真实化强度', type: 'number', options: [], defaultValue: 60, min: 0, max: 100, step: 5 },
-      { key: 'identityLock', label: '锁定身份', type: 'boolean', options: [], defaultValue: true },
+      { key: 'realismStrength', get label() { return i18n.t('capabilityWorkflow.realismStrength') }, type: 'number', options: [], defaultValue: 60, min: 0, max: 100, step: 5 },
+      { key: 'identityLock', get label() { return i18n.t('capabilityWorkflow.lockIdentity') }, type: 'boolean', options: [], defaultValue: true },
     ],
     requirements: imageEditRequirement, execution: { kind: 'single_task' },
   },
   {
-    id: 'portrait.mood', version: 2, label: '5×5 人物情绪', category: 'portrait',
-    description: '用能量、亲和度和表情强度生成身份一致的单点、五格或 5×5 情绪版本。',
+    id: 'portrait.mood', version: 2, get label() { return i18n.t('capabilityWorkflow.label5x5PortraitMoods') }, category: 'portrait',
+    get description() { return i18n.t('capabilityWorkflow.generateIdentityConsistentSinglePointFiveSampleOr5x5') },
     inputSlots: sourceImage, output: { kind: 'image_collection', maxItems: 25 },
     controls: [
       {
         key: 'generationMode',
-        label: '生成范围',
+        get label() { return i18n.t('capabilityWorkflow.generationScope') },
         type: 'select',
         options: [
-          { value: 'single', label: '单个坐标' },
-          { value: 'sample5', label: '五格试跑' },
-          { value: 'matrix5x5', label: '完整 5×5' },
+          { value: 'single', get label() { return i18n.t('capabilityWorkflow.singleCoordinate') } },
+          { value: 'sample5', get label() { return i18n.t('capabilityWorkflow.fiveSampleTrial') } },
+          { value: 'matrix5x5', get label() { return i18n.t('capabilityWorkflow.full5x5') } },
         ],
         defaultValue: 'single',
       },
-      { key: 'energy', label: '平静到激动', type: 'number', options: [], defaultValue: 2, min: 0, max: 4, step: 1 },
-      { key: 'affinity', label: '亲近到疏离', type: 'number', options: [], defaultValue: 2, min: 0, max: 4, step: 1 },
-      { key: 'expressionStrength', label: '表情强度', type: 'number', options: [], defaultValue: 50, min: 0, max: 100, step: 5 },
-      { key: 'identityLock', label: '锁定身份', type: 'boolean', options: [], defaultValue: true },
+      { key: 'energy', get label() { return i18n.t('capabilityWorkflow.calmToExcited') }, type: 'number', options: [], defaultValue: 2, min: 0, max: 4, step: 1 },
+      { key: 'affinity', get label() { return i18n.t('capabilityWorkflow.friendlyToDistant') }, type: 'number', options: [], defaultValue: 2, min: 0, max: 4, step: 1 },
+      { key: 'expressionStrength', get label() { return i18n.t('capabilityWorkflow.expressionStrength') }, type: 'number', options: [], defaultValue: 50, min: 0, max: 100, step: 5 },
+      { key: 'identityLock', get label() { return i18n.t('capabilityWorkflow.lockIdentity') }, type: 'boolean', options: [], defaultValue: true },
     ],
     requirements: imageEditRequirement, execution: { kind: 'fan_out' },
   },
   {
-    id: 'image.style.transfer', version: 1, label: '图像风格迁移', category: 'style',
-    description: '把已授权的风格或色板资源应用到图片，同时保护主体、构图和语义。',
+    id: 'image.style.transfer', version: 1, get label() { return i18n.t('capabilityWorkflow.imageStyleTransfer') }, category: 'style',
+    get description() { return i18n.t('capabilityWorkflow.applyLicensedStyleOrPaletteResourcesWhilePreservingThe') },
     inputSlots: [...sourceImage, { kind: 'style', min: 1, max: 3 }], output: { kind: 'image' },
-    controls: [{ key: 'styleStrength', label: '风格强度', type: 'number', options: [], defaultValue: 60, min: 0, max: 100, step: 5 }],
+    controls: [{ key: 'styleStrength', get label() { return i18n.t('capabilityWorkflow.styleStrength') }, type: 'number', options: [], defaultValue: 60, min: 0, max: 100, step: 5 }],
     requirements: imageEditRequirement, execution: { kind: 'single_task' },
   },
   {
-    id: 'video.look.apply', version: 2, label: '图生视频·视觉风格', category: 'video',
-    description: '以图片为首帧并引用风格资源，生成视觉质感一致的新视频。',
+    id: 'video.look.apply', version: 2, get label() { return i18n.t('capabilityWorkflow.imageToVideoVisualStyle') }, category: 'video',
+    get description() { return i18n.t('capabilityWorkflow.useAnImageAsTheFirstFrameWithStyle') },
     inputSlots: [...sourceImage, { kind: 'style', min: 1, max: 3 }],
     output: { kind: 'video' }, controls: [], requirements: {
       taskKinds: ['image_to_video', 'text_to_video'],
@@ -310,8 +313,8 @@ export const BUILTIN_CAPABILITY_RECIPES: readonly CapabilityRecipe[] = [
     execution: { kind: 'single_task' },
   },
   {
-    id: 'video.effect.reference', version: 2, label: '图生视频·效果参考', category: 'video',
-    description: '以图片为首帧并引用效果资源，生成有明确动作因果的效果视频。',
+    id: 'video.effect.reference', version: 2, get label() { return i18n.t('capabilityWorkflow.imageToVideoEffectReference') }, category: 'video',
+    get description() { return i18n.t('capabilityWorkflow.useAnImageAsTheFirstFrameWithEffect') },
     inputSlots: [...sourceImage, { kind: 'effect', min: 1, max: 6 }], output: { kind: 'video' }, controls: [],
     requirements: {
       taskKinds: ['image_to_video', 'text_to_video'],
@@ -321,8 +324,8 @@ export const BUILTIN_CAPABILITY_RECIPES: readonly CapabilityRecipe[] = [
     execution: { kind: 'single_task' },
   },
   {
-    id: 'video.edit.look', version: 1, label: '视频转视频·视觉风格', category: 'video',
-    description: '保留源视频动作和时序，只改变色彩、光线、颗粒与镜头质感。',
+    id: 'video.edit.look', version: 1, get label() { return i18n.t('capabilityWorkflow.videoToVideoVisualStyle') }, category: 'video',
+    get description() { return i18n.t('capabilityWorkflow.preserveSourceMotionAndTimingWhileChangingColorLighting') },
     inputSlots: [...sourceVideo, { kind: 'style', min: 1, max: 3 }],
     output: { kind: 'video' }, controls: [],
     requirements: {
@@ -333,8 +336,8 @@ export const BUILTIN_CAPABILITY_RECIPES: readonly CapabilityRecipe[] = [
     execution: { kind: 'single_task' },
   },
   {
-    id: 'video.edit.effect', version: 1, label: '视频转视频·时序效果', category: 'video',
-    description: '在源视频时序上应用出现、扩散、碰撞或消散等可追溯效果。',
+    id: 'video.edit.effect', version: 1, get label() { return i18n.t('capabilityWorkflow.videoToVideoTimingEffects') }, category: 'video',
+    get description() { return i18n.t('capabilityWorkflow.applyTraceableAppearanceDiffusionCollisionOrDissipationEffectsTo') },
     inputSlots: [...sourceVideo, { kind: 'effect', min: 1, max: 6 }],
     output: { kind: 'video' }, controls: [],
     requirements: {
@@ -353,12 +356,12 @@ export function resolveRecipeCompatibility(
 ): RecipeCompatibility {
   const mode = archetype.modes.find((candidate) => candidate.id === modeId)
   if (!mode) {
-    return { supported: false, tier: 'unsupported', reason: `模型不存在模式：${modeId}` }
+    return { supported: false, tier: 'unsupported', reason: i18n.t('capabilityWorkflow.theModelHasNoMode', { v0: modeId }) }
   }
 
   const taskKind = mode.transportTaskKind ?? archetype.transportTaskKind
   if (!recipe.requirements.taskKinds.includes(taskKind)) {
-    return { supported: false, tier: 'unsupported', reason: `模型任务类型不兼容：${taskKind}` }
+    return { supported: false, tier: 'unsupported', reason: i18n.t('capabilityWorkflow.incompatibleModelTaskType', { v0: taskKind }) }
   }
 
   const requiredIntents = recipe.requirements.requiredIntents ?? []
@@ -366,7 +369,7 @@ export function resolveRecipeCompatibility(
     return {
       supported: false,
       tier: 'unsupported',
-      reason: `模型模式意图不兼容：${mode.intent}`,
+      reason: i18n.t('capabilityWorkflow.incompatibleModelModeIntent', { v0: mode.intent }),
     }
   }
 
@@ -376,7 +379,7 @@ export function resolveRecipeCompatibility(
     return {
       supported: false,
       tier: 'unsupported',
-      reason: `模型模式缺少必要参考槽：${missingKinds.join('、')}`,
+      reason: i18n.t('capabilityWorkflow.theModelModeLacksRequiredReferenceSlots', { v0: missingKinds.join('、') }),
     }
   }
 
@@ -385,7 +388,7 @@ export function resolveRecipeCompatibility(
     return {
       supported: false,
       tier: 'unsupported',
-      reason: `模型模式至少需要一个参考槽：${requiredAnyKinds.join('、')}`,
+      reason: i18n.t('capabilityWorkflow.theModelModeRequiresAtLeastOneReferenceSlot', { v0: requiredAnyKinds.join('、') }),
     }
   }
 
@@ -439,7 +442,7 @@ export function buildRecipeRunPlan(input: BuildRecipeRunPlanInput): RecipeRunPla
   const outputs = Array.from({ length: outputCount }, (_, index) => {
     const supplied = prescribedOutputs?.[index]
     const gridCamera = input.recipe.id === 'image.multiview.grid9' ? GRID9_CAMERA_OUTPUTS[index] : undefined
-    return supplied ?? (gridCamera ? { ...gridCamera } : { id: `output-${index + 1}`, label: `结果 ${index + 1}` })
+    return supplied ?? (gridCamera ? { ...gridCamera } : { id: `output-${index + 1}`, label: i18n.t('capabilityWorkflow.result', { lng: 'zh-CN', v0: index + 1 }) })
   })
 
   return {

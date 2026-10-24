@@ -1,3 +1,4 @@
+import i18n from '../../../i18n/index'
 import type {
   GenerationQualityCheck,
   GenerationQualityReport,
@@ -25,31 +26,31 @@ export function evaluateModel3dCollection(
     label,
     status: 'unavailable',
     summary: result
-      ? '模型结果已保留，但这个历史结果没有 GLB 结构校验摘要'
-      : '缺少可定位的 GLB，无法执行结构校验',
+      ? i18n.t('capabilityWorkflow.theModelResultIsRetainedButThisHistoricalResult')
+      : i18n.t('capabilityWorkflow.noGLBCouldBeLocatedForStructuralValidation'),
     ...(item ? { itemIds: [item.id] } : {}),
   })
   const outputCheck: GenerationQualityCheck = result
     ? {
         id: 'model3d-output',
-        label: '3D 模型结果',
+        label: i18n.t('capabilityWorkflow.label3DModelResult'),
         status: 'pass',
-        summary: '已保留可读取的 GLB 模型结果',
+        summary: i18n.t('capabilityWorkflow.aReadableGLBModelResultIsRetained'),
       }
     : {
         id: 'model3d-output',
-        label: '3D 模型结果',
+        label: i18n.t('capabilityWorkflow.label3DModelResult'),
         status: 'fail',
-        summary: item?.error || '没有可读取的 3D 模型结果',
+        summary: item?.error || i18n.t('capabilityWorkflow.noReadable3DModelResult'),
         ...(item ? { itemIds: [item.id] } : {}),
       }
   const structuralChecks: GenerationQualityCheck[] = validation
     ? [
         {
           id: 'glb-container',
-          label: 'GLB 容器',
+          label: i18n.t('capabilityWorkflow.gLBContainer'),
           status: 'pass',
-          summary: `GLB ${validation.glbVersion} 可解析，文件 ${(validation.byteLength / 1024 / 1024).toFixed(2)} MB`,
+          summary: i18n.t('capabilityWorkflow.gLBIsParseableFileSizeMB', { v0: validation.glbVersion, v1: (validation.byteLength / 1024 / 1024).toFixed(2) }),
           metrics: {
             glbVersion: validation.glbVersion,
             byteLength: validation.byteLength,
@@ -59,9 +60,9 @@ export function evaluateModel3dCollection(
         validation.meshCount > 0 && validation.primitiveCount > 0 && validation.bounds.diagonal > 0
           ? {
               id: 'glb-geometry',
-              label: '网格与边界',
+              label: i18n.t('capabilityWorkflow.meshesAndBounds'),
               status: 'pass',
-              summary: `${validation.meshCount} 个网格、${validation.primitiveCount} 个 primitive，边界可用`,
+              summary: i18n.t('capabilityWorkflow.meshesAndPrimitivesWithUsableBounds', { v0: validation.meshCount, v1: validation.primitiveCount }),
               metrics: {
                 meshCount: validation.meshCount,
                 primitiveCount: validation.primitiveCount,
@@ -70,34 +71,34 @@ export function evaluateModel3dCollection(
             }
           : {
               id: 'glb-geometry',
-              label: '网格与边界',
+              label: i18n.t('capabilityWorkflow.meshesAndBounds'),
               status: 'fail',
-              summary: '模型没有可用网格、primitive 或几何边界',
+              summary: i18n.t('capabilityWorkflow.theModelHasNoUsableMeshesPrimitivesOrGeometry'),
               itemIds: item ? [item.id] : undefined,
             },
         validation.materialCount > 0
           ? {
               id: 'glb-materials',
-              label: '材质',
+              label: i18n.t('capabilityWorkflow.materials'),
               status: 'pass',
-              summary: `检测到 ${validation.materialCount} 个材质`,
+              summary: i18n.t('capabilityWorkflow.detectedMaterials', { v0: validation.materialCount }),
               metrics: { materialCount: validation.materialCount },
             }
           : {
               id: 'glb-materials',
-              label: '材质',
+              label: i18n.t('capabilityWorkflow.materials'),
               status: 'warning',
-              summary: '模型没有材质，进入 Blender 后可能只显示默认表面',
+              summary: i18n.t('capabilityWorkflow.theModelHasNoMaterialsAndMayDisplayOnly'),
               metrics: { materialCount: 0 },
             },
         validation.externalImageCount === 0 && validation.externalBufferCount === 0
           ? {
               id: 'glb-textures',
-              label: '纹理自包含',
+              label: i18n.t('capabilityWorkflow.selfContainedTextures'),
               status: 'pass',
               summary: validation.textureCount > 0
-                ? `${validation.textureCount} 个纹理均已内嵌`
-                : '没有外部纹理或二进制依赖',
+                ? i18n.t('capabilityWorkflow.allTexturesAreEmbedded', { v0: validation.textureCount })
+                : i18n.t('capabilityWorkflow.noExternalTextureOrBinaryDependencies'),
               metrics: {
                 textureCount: validation.textureCount,
                 embeddedImageCount: validation.embeddedImageCount,
@@ -107,12 +108,12 @@ export function evaluateModel3dCollection(
             }
           : {
               id: 'glb-textures',
-              label: '纹理自包含',
+              label: i18n.t('capabilityWorkflow.selfContainedTextures'),
               status: 'warning',
-              summary: '模型仍引用外部纹理或二进制文件，移动项目后可能丢失',
+              summary: i18n.t('capabilityWorkflow.theModelStillReferencesExternalTexturesOrBinaryFiles'),
               details: [
-                ...validation.externalImageUris.map((uri) => `纹理：${uri}`),
-                ...validation.externalBufferUris.map((uri) => `二进制：${uri}`),
+                ...validation.externalImageUris.map((uri) => i18n.t('capabilityWorkflow.texture', { v0: uri })),
+                ...validation.externalBufferUris.map((uri) => i18n.t('capabilityWorkflow.binary', { v0: uri })),
               ],
               metrics: {
                 textureCount: validation.textureCount,
@@ -123,10 +124,10 @@ export function evaluateModel3dCollection(
             },
       ]
     : [
-        unavailable('glb-container', 'GLB 容器'),
-        unavailable('glb-geometry', '网格与边界'),
-        unavailable('glb-materials', '材质'),
-        unavailable('glb-textures', '纹理自包含'),
+        unavailable('glb-container', i18n.t('capabilityWorkflow.gLBContainer')),
+        unavailable('glb-geometry', i18n.t('capabilityWorkflow.meshesAndBounds')),
+        unavailable('glb-materials', i18n.t('capabilityWorkflow.materials')),
+        unavailable('glb-textures', i18n.t('capabilityWorkflow.selfContainedTextures')),
       ]
   const checks = [outputCheck, ...structuralChecks]
 

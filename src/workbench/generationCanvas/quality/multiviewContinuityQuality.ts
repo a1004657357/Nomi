@@ -1,3 +1,5 @@
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import i18n from '../../../i18n/index'
 import type {
   GenerationQualityCheck,
   GenerationResultCollectionItem,
@@ -56,17 +58,17 @@ function wholeImageFallback(
       distance: normalizedColorDistance(entry.inspection.averageRgb, baseline),
     }))
     .filter(({ distance }) => distance > 0.38)
-  const caveat = '仅使用整图颜色降级检查；不能证明人物、物体身份或三维几何一致。'
+  const caveat = i18n.t('capabilityWorkflow.thisFallbackUsesWholeImageColorOnlyAndCannot')
   return {
     id: 'subject-continuity-proxy',
-    label: '主体连续性代理',
+    label: i18n.t('capabilityWorkflow.subjectContinuityProxy'),
     status: outliers.length > 0 ? 'warning' : 'pass',
     summary: outliers.length > 0
-      ? `发现 ${outliers.length} 张整图色彩分布明显偏离其余机位`
-      : '未发现整图色彩分布的极端漂移',
+      ? i18n.t('capabilityWorkflow.foundImagesWhoseColorDistributionsDifferSignificantlyFromThe', { v0: outliers.length })
+      : i18n.t('capabilityWorkflow.noExtremeDriftInWholeImageColorDistributionsFound'),
     itemIds: outliers.length > 0 ? outliers.map(({ entry }) => entry.item.id) : undefined,
     details: [
-      ...outliers.map(({ entry, distance }) => `${entry.item.label}：色彩偏离 ${roundQualityMetric(distance)}`),
+      ...outliers.map(({ entry, distance }) => i18n.t('capabilityWorkflow.colorDeviation', { v0: translateCapabilityWorkflowText(entry.item.label), v1: roundQualityMetric(distance) })),
       caveat,
     ],
     metrics: {
@@ -86,9 +88,9 @@ export function evaluateMultiviewContinuityProxy(
   if (available.length < 2) {
     return {
       id: 'subject-continuity-proxy',
-      label: '主体连续性代理',
+      label: i18n.t('capabilityWorkflow.subjectContinuityProxy'),
       status: 'unavailable',
-      summary: '可比较图片不足，无法计算连续性代理指标',
+      summary: i18n.t('capabilityWorkflow.tooFewComparableImagesToCalculateContinuityProxyMetrics'),
     }
   }
 
@@ -115,31 +117,33 @@ export function evaluateMultiviewContinuityProxy(
     const colorDistance = normalizedColorDistance(entry.center.averageRgb, colorBaseline)
     const edgeRatio = symmetricRatio(entry.center.edgeEnergy, edgeBaseline)
     const contrastRatio = symmetricRatio(entry.center.lumaStdDev, contrastBaseline)
-    const signals = [
-      hashDistance > 0.68 ? '结构' : null,
-      colorDistance > 0.36 ? '颜色' : null,
-      edgeRatio > 3 ? '纹理' : null,
-      contrastRatio > 3 ? '对比度' : null,
-    ].filter((signal): signal is string => signal !== null)
+    const signals: string[] = [
+      hashDistance > 0.68 ? i18n.t('capabilityWorkflow.structure') : null,
+      colorDistance > 0.36 ? i18n.t('capabilityWorkflow.color') : null,
+      edgeRatio > 3 ? i18n.t('capabilityWorkflow.texture2') : null,
+      contrastRatio > 3 ? i18n.t('capabilityWorkflow.contrast') : null,
+    ].filter((signal) => signal !== null)
     return { entry, hashDistance, colorDistance, edgeRatio, contrastRatio, signals }
   })
   const outliers = candidates.filter((candidate) => candidate.signals.length >= 2)
-  const caveat = '中心区域复合代理用于发现明显漂移；不能证明人物、物体身份或三维几何一致。'
+  const caveat = i18n.t('capabilityWorkflow.thisCenterRegionProxyDetectsObviousDriftButCannot')
   return {
     id: 'subject-continuity-proxy',
-    label: '主体连续性代理',
+    label: i18n.t('capabilityWorkflow.subjectContinuityProxy'),
     status: outliers.length > 0 || centered.length < available.length ? 'warning' : 'pass',
     summary: outliers.length > 0
-      ? `发现 ${outliers.length} 张中心主体在多项视觉信号上同时偏离`
+      ? i18n.t('capabilityWorkflow.foundCentralSubjectsThatDeviateOnMultipleVisualSignals', { v0: outliers.length })
       : centered.length < available.length
-        ? `仅 ${centered.length}/${available.length} 张具有可比较的中心区域`
-        : '中心主体复合代理未发现多信号同时异常的明显漂移',
+        ? i18n.t('capabilityWorkflow.onlyImagesHaveComparableCenterRegions', { v0: centered.length, v1: available.length })
+        : i18n.t('capabilityWorkflow.noObviousSimultaneousAnomaliesAcrossCenterSubjectSignals'),
     itemIds: outliers.length > 0 ? outliers.map(({ entry }) => entry.item.id) : undefined,
     details: [
       ...outliers.map(({ entry, signals, hashDistance, colorDistance, edgeRatio, contrastRatio }) => (
-        `${entry.item.label}：${signals.join('、')}异常（结构 ${roundQualityMetric(hashDistance)}，`
-        + `颜色 ${roundQualityMetric(colorDistance)}，纹理比 ${roundQualityMetric(edgeRatio)}，`
-        + `对比度比 ${roundQualityMetric(contrastRatio)}）`
+        [
+          i18n.t('capabilityWorkflow.abnormalStructure', { v0: translateCapabilityWorkflowText(entry.item.label), v1: signals.join('、'), v2: roundQualityMetric(hashDistance) }),
+          i18n.t('capabilityWorkflow.colorTextureRatio', { v0: roundQualityMetric(colorDistance), v1: roundQualityMetric(edgeRatio) }),
+          i18n.t('capabilityWorkflow.contrastRatio', { v0: roundQualityMetric(contrastRatio) }),
+        ].join('')
       )),
       caveat,
     ],

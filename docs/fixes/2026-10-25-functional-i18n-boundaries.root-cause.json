@@ -1,0 +1,535 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-functional-i18n-boundaries",
+  "problem_type": "Functional metadata and quality reports bypass language-aware display boundaries",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "symptom": "Assigned source modules contain unlocalized visible copy; curated model labels lack English display mappings.",
+  "direct_cause": "UI recipe metadata and quality checks embed source-language strings; the model display dictionary does not cover new labels.",
+  "class_root": "Display copy is mixed with stable recipe parameter values and Agent/prompt source data without an explicit translation boundary.",
+  "affected_population": [
+    "English recipe selectors and controls",
+    "Local image/video/3D/portrait/multiview quality reports",
+    "Curated model labels and Chinese browser-sign-in vendor display names"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/quality/customViewQuality.ts",
+    "src/workbench/generationCanvas/quality/model3dRecipeQuality.ts",
+    "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+    "src/workbench/generationCanvas/quality/multiviewBackgroundQuality.ts",
+    "src/workbench/generationCanvas/quality/multiviewContinuityQuality.ts",
+    "src/workbench/generationCanvas/quality/multiviewSubjectQuality.ts",
+    "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+    "src/workbench/generationCanvas/quality/portraitIdentityQuality.ts",
+    "src/workbench/generationCanvas/quality/styleTransferQuality.ts",
+    "src/workbench/generationCanvas/quality/videoRecipeQuality.ts",
+    "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+    "src/config/capabilityRecipes/index.ts",
+    "src/workbench/domain/semanticAgentTools.ts",
+    "src/workbench/generationCanvas/quality/moodExpressionVisionReview.ts",
+    "src/workbench/generationCanvas/quality/multiviewSubjectVisionReview.ts",
+    "src/i18n/locales/capabilityWorkflow.ts",
+    "src/i18n/capabilityWorkflowText.ts",
+    "src/i18n/locales/modelDisplayText.ts",
+    "src/i18n/resources.ts"
+  ],
+  "entry_points": [
+    "BUILTIN_CAPABILITY_RECIPES display metadata",
+    "evaluateCapabilityRecipeCollection and quality evaluators",
+    "resolveRecipeCompatibility",
+    "translateModelDisplayText"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "All affected copy, protocol bytes, algorithmic decisions and locale contracts are repository-owned; no provider capability or generated media is verified here.",
+  "invariants": [
+    "Chinese UI output remains unchanged.",
+    "English visible labels, summaries, reasons and details use existing i18next resources.",
+    "Recipe option values, generation prompts and semantic Agent metadata remain stable across locales.",
+    "All quality IDs, thresholds, statuses, metrics and unavailable behavior remain unchanged."
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/i18n",
+    "tests": [
+      "src/i18n/capabilityWorkflow.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/config/capabilityRecipes/index.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/config/capabilityRecipes/index.ts",
+      "symbol": "resolveRecipeCompatibility"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/capabilityWorkflowText.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/capabilityWorkflow.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/modelDisplayText.ts",
+      "symbol": "enModelDisplayText"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/semanticAgentTools.ts",
+      "symbol": "semanticToolProtocolDescriptions"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/semanticAgentTools.ts",
+      "symbol": "SEMANTIC_TOOL_MAP"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeAgent.ts",
+      "symbol": "resolveRecipeCompatibility"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeAgent.ts",
+      "symbol": "BUILTIN_CAPABILITY_RECIPES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/gate.ts",
+      "symbol": "SEMANTIC_TOOL_MAP"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "symbol": "validateMoodVisionReviewAssets"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "symbol": "BUILTIN_CAPABILITY_RECIPES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReview.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReview.ts",
+      "symbol": "zhCapabilityWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeController.ts",
+      "symbol": "BUILTIN_CAPABILITY_RECIPES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/skillLibrary/skillComponentPresentation.ts",
+      "symbol": "BUILTIN_CAPABILITY_RECIPES"
+    },
+    {
+      "kind": "write",
+      "path": "src/config/capabilityRecipes/index.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/config/capabilityRecipes/index.ts",
+      "symbol": "recipeTaskCount"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeToolHandlers.ts",
+      "symbol": "buildRecipeRunPlan"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/agent/capabilityRecipeToolHandlers.ts",
+      "symbol": "createWorkbenchMultiviewSubjectComparator"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/agent/gate.ts",
+      "symbol": "categorizeTool"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "recipeTaskCount"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "symbol": "validateMoodVisionReviewAssets"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "symbol": "reviewMoodCollectionWithVisionModel"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "symbol": "validateMultiviewVisionReviewAssets"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "symbol": "reviewMultiviewCollectionWithVisionModel"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "symbol": "roundQualityMetric"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "symbol": "evaluateMultiviewSubjectQuality"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "symbol": "evaluateMultiviewBackgroundQuality"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "symbol": "evaluateMultiviewContinuityProxy"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "symbol": "qualityStatusFromChecks"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/model3dRecipeQuality.ts",
+      "symbol": "roundQualityMetric"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/model3dRecipeQuality.ts",
+      "symbol": "qualityStatusFromChecks"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReview.ts",
+      "symbol": "qualityStatusFromChecks"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "symbol": "validateMoodVisionReviewAssets"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "symbol": "createMoodExpressionVisionComparator"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "symbol": "evaluateMoodExpressionSemanticQuality"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "symbol": "mergeMoodExpressionVisionReview"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewBackgroundQuality.ts",
+      "symbol": "roundQualityMetric"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewBackgroundQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewContinuityQuality.ts",
+      "symbol": "roundQualityMetric"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewContinuityQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectQuality.ts",
+      "symbol": "roundQualityMetric"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReview.ts",
+      "symbol": "qualityStatusFromChecks"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "symbol": "createMultiviewSubjectVisionComparator"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "symbol": "validateMultiviewVisionReviewAssets"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "symbol": "evaluateMultiviewSubjectQuality"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "symbol": "mergeMultiviewSubjectVisionReview"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/portraitIdentityQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/portraitIdentityQuality.ts",
+      "symbol": "evaluateMoodExpressionSemanticQuality"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/styleTransferQuality.ts",
+      "symbol": "roundQualityMetric"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/styleTransferQuality.ts",
+      "symbol": "qualityStatusFromChecks"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/videoRecipeQuality.ts",
+      "symbol": "roundQualityMetric"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/videoRecipeQuality.ts",
+      "symbol": "qualityStatusFromChecks"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeController.ts",
+      "symbol": "evaluateCapabilityRecipeCollection"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluateMultiviewSubjectQuality"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluateMultiviewBackgroundQuality"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluateMultiviewContinuityProxy"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluateCustomViewCollection"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluatePortraitIdentityQuality"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluateStyleTransferCollection"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluateModel3dCollection"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluateVideoCollection"
+    }
+  ],
+  "door_reduction": {
+    "before": 53,
+    "after": 70,
+    "why_not": "The generated map records separate UI, report and protocol consumers. Keep those roles separate while centralizing visible translations and retaining fixed protocol source; no call-site gate bypasses are introduced."
+  },
+  "generality_proof": "One registered bilingual locale owns functional display copy. Recipe display getters resolve on read, preserving already-imported definitions across locale switches; fixed source values keep prompts stable. Quality evaluators translate text without changing predicates or numeric results.",
+  "shared_boundaries": [
+    {
+      "path": "src/i18n/locales/capabilityWorkflow.ts",
+      "symbol": "zhCapabilityWorkflow",
+      "responsibility": "Own paired Chinese and English visible-copy resources and explicitly separate stable Agent source descriptions."
+    },
+    {
+      "path": "src/i18n/capabilityWorkflowText.ts",
+      "symbol": "translateCapabilityWorkflowText",
+      "responsibility": "Localize known recipe display labels while preserving stored values and custom user text."
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "evaluateCapabilityRecipeCollection",
+      "responsibility": "Dispatch unchanged quality logic whose output copy uses the registered translation boundary."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/i18n/locales/modelDisplayText.ts",
+      "entry_point": "enModelDisplayText",
+      "disposition": "enforced",
+      "evidence": "The existing display boundary resolves all 24 original missing model labels plus the two supplemental Chinese vendor names in English, and preserves every Chinese source label. Original read-only inventory no longer reports the two translated vendor names; Codex/Pixstag stay with the coordinator's locale-neutral seed owner."
+    },
+    {
+      "path": "src/config/capabilityRecipes/index.ts",
+      "entry_point": "BUILTIN_CAPABILITY_RECIPES",
+      "disposition": "enforced",
+      "evidence": "Bilingual test checks labels after language changes and keeps every option/default value unchanged."
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "entry_point": "evaluateCapabilityRecipeCollection",
+      "disposition": "enforced",
+      "evidence": "Cross-locale regressions cover every recipe and compare IDs, statuses, metrics and item bindings."
+    },
+    {
+      "path": "src/workbench/domain/semanticAgentTools.ts",
+      "entry_point": "SEMANTIC_TOOL_MAP",
+      "disposition": "not-affected",
+      "evidence": "Descriptions are protocol data, not UI copy. SHA-256 regression preserves every serialized metadata byte; only unknown-tool feedback is translated."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "New metadata and quality checks can reintroduce source-language copy or accidentally translate prompt parameters.",
+    "same_class_scan": [
+      "Read original check-i18n-visible-text.mjs and coordinator inventory; use --report to avoid automatic baseline writes.",
+      "Ran door-map on recipe registry, semantic tool metadata and quality dispatcher; followed references into prompt compiler and Agent recipe listing.",
+      "Inspected quality producers, report consumers and existing model-display translation boundary.",
+      "Generated runtime-symbol door map: 53 doors at parent, 70 after; includes existing quality utility consumers. Used scripts/door-map.mjs and exported mapDoors/doorsForTargets with original parent content for comparison."
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/i18n/locales/capabilityWorkflow.ts",
+    "invariant": "UI copy has registered Chinese/English resources while source protocol and actual parameter values remain locale-independent.",
+    "failure_mode": "Unknown/user-authored strings are retained; missing quality evidence remains unavailable and cannot become a pass through translation.",
+    "exception_policy": "none",
+    "strategy": "Centralize paired resources, translate actual display outputs, retain fixed protocol descriptions, and verify both language behavior and semantic byte/metric preservation.",
+    "artifacts": [
+      "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "src/workbench/generationCanvas/quality/model3dRecipeQuality.ts",
+      "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "src/workbench/generationCanvas/quality/multiviewBackgroundQuality.ts",
+      "src/workbench/generationCanvas/quality/multiviewContinuityQuality.ts",
+      "src/workbench/generationCanvas/quality/multiviewSubjectQuality.ts",
+      "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "src/workbench/generationCanvas/quality/portraitIdentityQuality.ts",
+      "src/workbench/generationCanvas/quality/styleTransferQuality.ts",
+      "src/workbench/generationCanvas/quality/videoRecipeQuality.ts",
+      "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "src/config/capabilityRecipes/index.ts",
+      "src/workbench/domain/semanticAgentTools.ts",
+      "src/workbench/generationCanvas/quality/moodExpressionVisionReview.ts",
+      "src/workbench/generationCanvas/quality/multiviewSubjectVisionReview.ts",
+      "src/i18n/locales/capabilityWorkflow.ts",
+      "src/i18n/capabilityWorkflowText.ts",
+      "src/i18n/locales/modelDisplayText.ts",
+      "src/i18n/resources.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/i18n/capabilityWorkflow.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/i18n/capabilityWorkflow.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "src/workbench/generationCanvas/quality/model3dRecipeQuality.ts",
+      "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "src/workbench/generationCanvas/quality/multiviewBackgroundQuality.ts",
+      "src/workbench/generationCanvas/quality/multiviewContinuityQuality.ts",
+      "src/workbench/generationCanvas/quality/multiviewSubjectQuality.ts",
+      "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "src/workbench/generationCanvas/quality/portraitIdentityQuality.ts",
+      "src/workbench/generationCanvas/quality/styleTransferQuality.ts",
+      "src/workbench/generationCanvas/quality/videoRecipeQuality.ts",
+      "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "src/config/capabilityRecipes/index.ts",
+      "src/workbench/domain/semanticAgentTools.ts",
+      "src/workbench/generationCanvas/quality/moodExpressionVisionReview.ts",
+      "src/workbench/generationCanvas/quality/multiviewSubjectVisionReview.ts"
+    ],
+    "rationale": "Remove direct display literals, not user-authored text, source prompts, quality checks or model capabilities."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Reuse installed i18next and existing display translation conventions; no dependency change.",
+    "exit_criteria": []
+  },
+  "migration": "No stored-project migration. Fixed parameter and protocol values stay Chinese; display metadata resolves current language on read. Existing persisted freeform reports are not silently rewritten.",
+  "residual_risks": [
+    "The v3 checker exits 0 with one truthful warning: the authored model-display dictionary declaration has no runtime door within its data-only file. Its actual consumer read door is recorded; no fabricated door, generated marker or checker change is used.",
+    "No UI/browser screenshots or generation runs by instruction; coordinator owns integration and complete CI.",
+    "Other owners' i18n violations remain outside this batch; report actual remaining inventory.",
+    "Historical persisted freeform quality text is not rewritten; user-authored and external comparator text is preserved, not guessed or machine-translated."
+  ]
+}

@@ -1,3 +1,5 @@
+import i18n from '../../../i18n'
+import { zhCapabilityWorkflow } from '../../../i18n/locales/capabilityWorkflow'
 import type {
   GenerationNodeResult,
   GenerationQualityCheck,
@@ -58,7 +60,7 @@ function parseStructuredJson(text: string): unknown {
       }
     }
   }
-  throw new Error('视觉复核没有返回有效 JSON')
+  throw new Error(i18n.t('capabilityWorkflow.theVisualReviewDidNotReturnValidJSON'))
 }
 
 function parseComparisonOutput(
@@ -70,7 +72,7 @@ function parseComparisonOutput(
 } {
   const root = asRecord(value)
   if (!root || typeof root.sourceSubjectDetected !== 'boolean' || !Array.isArray(root.items)) {
-    throw new Error('视觉复核 JSON 缺少 sourceSubjectDetected 或 items')
+    throw new Error(i18n.t('capabilityWorkflow.theVisualReviewJSONIsMissingSourceSubjectDetectedOrItems'))
   }
   const seen = new Set<string>()
   const items = root.items.flatMap((raw): MultiviewSubjectComparatorOutput[] => {
@@ -118,7 +120,9 @@ function outputDescription(
     typeof output.elevation === 'number' ? `俯仰角 ${output.elevation}°` : '',
     output.shotSize ? `景别 ${output.shotSize}` : '',
   ].filter(Boolean).join('，')
-  return `图 ${index + 2}：itemId="${output.itemId}"，${output.label}${camera ? `，${camera}` : ''}`
+  // Fixed judge-protocol text, not display copy; do not translate with the UI locale.
+  const promptLine = `图 ${index + 2}：itemId="${output.itemId}"，${output.label}${camera ? `，${camera}` : ''}`
+  return promptLine
 }
 
 function buildVisionReviewPrompt(input: MultiviewSubjectComparatorInput): string {
@@ -172,7 +176,7 @@ export function createMultiviewSubjectVisionComparator(input: {
       {
         role: 'source',
         itemId: 'source',
-        label: '来源主体',
+        label: zhCapabilityWorkflow.sourceSubject,
         result: comparisonInput.source,
       },
       ...comparisonInput.outputs.map((output) => ({
@@ -227,7 +231,7 @@ export function mergeMultiviewSubjectVisionReview(
 ): GenerationResultCollection {
   const quality = collection.quality
   if (!quality || (quality.kind !== 'grid9' && quality.kind !== 'multiview')) {
-    throw new Error('当前结果不是可复核的多视角质量报告')
+    throw new Error(i18n.t('capabilityWorkflow.theCurrentResultIsNotAReviewableMultiviewQuality'))
   }
   const checks = replaceSemanticChecks(quality.checks, semantic.checks)
   const evaluator = semantic.evaluator || options.requestedEvaluator

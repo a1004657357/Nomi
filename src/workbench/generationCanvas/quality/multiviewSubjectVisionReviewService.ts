@@ -1,3 +1,5 @@
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import i18n from '../../../i18n/index'
 import type {
   AgentAttachmentPayload,
   AgentsChatResponseDto,
@@ -78,20 +80,20 @@ export function validateMultiviewVisionReviewAssets(
   collection: GenerationResultCollection,
 ): MultiviewVisionReviewAssetCheck {
   if (!collection.quality || !['grid9', 'multiview'].includes(collection.quality.kind)) {
-    return { ok: false, error: '当前结果不是九宫格或自定义机位集合' }
+    return { ok: false, error: i18n.t('capabilityWorkflow.theCurrentResultIsNotAGridOrCustom') }
   }
-  if (!collection.source) return { ok: false, error: '结果集合没有保留来源图片快照' }
+  if (!collection.source) return { ok: false, error: i18n.t('capabilityWorkflow.theResultCollectionHasNoRetainedSourceImageSnapshot') }
   const sourceUrl = localImageUrl(collection.source)
   if (!sourceUrl) {
-    return { ok: false, error: '来源图片尚未落盘，无法安全发送给视觉模型复核' }
+    return { ok: false, error: i18n.t('capabilityWorkflow.theSourceImageIsNotSavedLocallyAndCannot') }
   }
   const successful = collection.items.filter((item) => item.status === 'success' && item.result?.type === 'image')
-  if (!successful.length) return { ok: false, error: '当前没有可复核的成功图片结果' }
+  if (!successful.length) return { ok: false, error: i18n.t('capabilityWorkflow.noSuccessfulImagesAreAvailableForReview') }
   const remoteOnly = successful.filter((item) => !localImageUrl(item.result))
   if (remoteOnly.length) {
     return {
       ok: false,
-      error: `${remoteOnly.map((item) => item.label).join('、')} 尚未落盘，无法安全发送给视觉模型复核`,
+      error: i18n.t('capabilityWorkflow.isNotSavedLocallyAndCannotBeSafelySent', { v0: remoteOnly.map((item) => translateCapabilityWorkflowText(item.label)).join('、') }),
     }
   }
   return {
@@ -112,7 +114,7 @@ function attachmentsForJudge(
 ): AgentAttachmentPayload[] {
   return request.images.map((image, index) => {
     const url = localImageUrl(image.result)
-    if (!url) throw new Error(`${image.label} 尚未落盘，视觉复核已停止`)
+    if (!url) throw new Error(i18n.t('capabilityWorkflow.isNotSavedLocallyVisualReviewStopped', { v0: translateCapabilityWorkflowText(image.label) }))
     const contentType = mimeTypeFromUrl(url)
     const extension = contentType === 'image/jpeg'
       ? 'jpg'
@@ -158,11 +160,11 @@ function createWorkbenchVisionReviewRunner(input: {
       await deps.clearSession(sessionKey).catch(() => {})
       lastResponse = await deps.send({
         prompt: request.prompt,
-        displayPrompt: `多视角主体复核（${request.images.length - 1} 个机位）`,
+        displayPrompt: i18n.t('capabilityWorkflow.multiviewSubjectReviewViews', { v0: request.images.length - 1 }),
         sessionKey,
         ...(input.projectId ? { projectId: input.projectId } : {}),
         skillKey: '',
-        skillName: '多视角视觉复核',
+        skillName: i18n.t('capabilityWorkflow.multiviewVisualReview'),
         mode: 'chat',
         disableTools: true,
         agentVendorKey: input.model.vendorKey,
@@ -170,7 +172,7 @@ function createWorkbenchVisionReviewRunner(input: {
         attachments: attachmentsForJudge(request),
       }, {})
       if (lastResponse.finishReason === 'length') {
-        throw new Error('视觉模型输出达到长度上限，结构化复核结果不完整')
+        throw new Error(i18n.t('capabilityWorkflow.theVisualModelReachedItsOutputLimitTheStructured2'))
       }
       return lastResponse.text
     },

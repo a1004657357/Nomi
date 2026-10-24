@@ -1,3 +1,4 @@
+import i18n from '../../../i18n/index'
 import type {
   GenerationNodeResult,
   GenerationQualityCheck,
@@ -25,9 +26,9 @@ async function inspectSafely(
   inspectImage: CapabilityRecipeImageInspector | undefined,
 ): Promise<InspectionOutcome> {
   if (!result || result.type !== 'image' || !hasMediaLocator(result)) {
-    return { error: '图片结果没有可读取的素材地址' }
+    return { error: i18n.t('capabilityWorkflow.theImageResultHasNoReadableAssetAddress') }
   }
-  if (!inspectImage) return { error: '当前运行环境未提供像素检测器' }
+  if (!inspectImage) return { error: i18n.t('capabilityWorkflow.noPixelInspectorIsAvailableInThisEnvironment') }
   try {
     return { inspection: await inspectImage(result) }
   } catch (error) {
@@ -52,9 +53,9 @@ function imageContentCheck(
   if (!output.inspection) {
     return {
       id: 'style-image-content',
-      label: '画面有效性',
+      label: i18n.t('capabilityWorkflow.imageValidity'),
       status: 'unavailable',
-      summary: '风格化结果已保留，但无法读取像素',
+      summary: i18n.t('capabilityWorkflow.theStylizedResultIsRetainedButItsPixelsCannot'),
       details: output.error ? [output.error] : undefined,
       ...(itemId ? { itemIds: [itemId] } : {}),
     }
@@ -64,11 +65,11 @@ function imageContentCheck(
     || (inspection.lumaStdDev < 0.012 && inspection.edgeEnergy < 0.008)
   return {
     id: 'style-image-content',
-    label: '画面有效性',
+    label: i18n.t('capabilityWorkflow.imageValidity'),
     status: blank ? 'fail' : 'pass',
     summary: blank
-      ? '输出透明、空白或信息量过低'
-      : '输出包含有效像素和可见细节',
+      ? i18n.t('capabilityWorkflow.theOutputIsTransparentBlankOrLowInformation')
+      : i18n.t('capabilityWorkflow.theOutputContainsValidPixelsAndVisibleDetail'),
     metrics: {
       opaqueRatio: roundQualityMetric(inspection.opaqueRatio),
       lumaStdDev: roundQualityMetric(inspection.lumaStdDev),
@@ -86,9 +87,9 @@ function aspectRetentionCheck(
   if (!source.inspection || !output.inspection) {
     return {
       id: 'style-aspect-retention',
-      label: '画幅保留',
+      label: i18n.t('capabilityWorkflow.aspectRatioRetention'),
       status: 'unavailable',
-      summary: '缺少源图或结果图尺寸，无法核对画幅',
+      summary: i18n.t('capabilityWorkflow.sourceOrOutputDimensionsAreMissingAspectRatiosCannot'),
       details: [source.error, output.error].filter((detail): detail is string => Boolean(detail)),
       ...(itemId ? { itemIds: [itemId] } : {}),
     }
@@ -103,11 +104,11 @@ function aspectRetentionCheck(
       : 'fail'
   return {
     id: 'style-aspect-retention',
-    label: '画幅保留',
+    label: i18n.t('capabilityWorkflow.aspectRatioRetention'),
     status,
     summary: status === 'pass'
-      ? '结果保持了源图画幅'
-      : `结果画幅相对源图偏差 ${Math.round(relativeError * 100)}%`,
+      ? i18n.t('capabilityWorkflow.theResultRetainsTheSourceAspectRatio')
+      : i18n.t('capabilityWorkflow.theResultAspectRatioDiffersFromTheSourceBy', { v0: Math.round(relativeError * 100) }),
     metrics: {
       sourceAspectRatio: roundQualityMetric(sourceRatio, 4),
       outputAspectRatio: roundQualityMetric(outputRatio, 4),
@@ -129,9 +130,9 @@ function contentRetentionCheck(
   if (!sourceHash || !outputHash) {
     return {
       id: 'style-content-retention',
-      label: '内容保留代理',
+      label: i18n.t('capabilityWorkflow.contentRetentionProxy'),
       status: 'unavailable',
-      summary: '缺少可比较的中心区域像素签名',
+      summary: i18n.t('capabilityWorkflow.noComparableCenterRegionPixelSignatures'),
       details: [source.error, output.error].filter((detail): detail is string => Boolean(detail)),
       ...(itemId ? { itemIds: [itemId] } : {}),
     }
@@ -144,14 +145,14 @@ function contentRetentionCheck(
       : 'fail'
   return {
     id: 'style-content-retention',
-    label: '内容保留代理',
+    label: i18n.t('capabilityWorkflow.contentRetentionProxy'),
     status,
     summary: status === 'pass'
-      ? '中心区域结构与源图保持接近'
+      ? i18n.t('capabilityWorkflow.theCenterRegionStructureRemainsCloseToTheSource')
       : status === 'warning'
-        ? '中心区域结构变化较大，建议确认主体和构图'
-        : '中心区域结构严重偏离源图，主体或构图可能已丢失',
-    details: ['这是像素结构代理指标，不等同于语义或人物身份验证。'],
+        ? i18n.t('capabilityWorkflow.theCenterRegionStructureChangedSubstantiallyCheckTheSubject')
+        : i18n.t('capabilityWorkflow.theCenterRegionStructureDivergedSeverelyTheSubjectOr'),
+    details: [i18n.t('capabilityWorkflow.thisPixelStructureProxyIsNotSemanticOrFace')],
     metrics: { normalizedHashDistance: roundQualityMetric(distance, 4) },
     ...(status !== 'pass' && itemId ? { itemIds: [itemId] } : {}),
   }
@@ -168,14 +169,14 @@ function styleMovementCheck(
   if (!source.inspection || !output.inspection || inspectedReferences.length === 0) {
     return {
       id: 'style-transfer-proxy',
-      label: '风格迁移代理',
+      label: i18n.t('capabilityWorkflow.styleTransferProxy'),
       status: 'unavailable',
-      summary: '缺少可读取的源图、结果图或风格参考图',
+      summary: i18n.t('capabilityWorkflow.noReadableSourceResultOrStyleReferenceImage'),
       details: [
         source.error,
         output.error,
         ...references.flatMap((entry) => entry.error ? [entry.error] : []),
-        '文字风格约束无法通过本地像素代理验证。',
+        i18n.t('capabilityWorkflow.textOnlyStyleConstraintsCannotBeVerifiedByA'),
       ].filter((detail): detail is string => Boolean(detail)),
       metrics: {
         referenceCount,
@@ -197,9 +198,9 @@ function styleMovementCheck(
   if (comparable.length === 0) {
     return {
       id: 'style-transfer-proxy',
-      label: '风格迁移代理',
+      label: i18n.t('capabilityWorkflow.styleTransferProxy'),
       status: 'unavailable',
-      summary: '风格参考与源图的本地视觉签名过于接近，无法测量迁移方向',
+      summary: i18n.t('capabilityWorkflow.theStyleReferenceAndSourceHaveNearlyIdenticalLocal'),
       metrics: {
         referenceCount,
         inspectedReferenceCount: inspectedReferences.length,
@@ -218,14 +219,14 @@ function styleMovementCheck(
     : 'warning'
   return {
     id: 'style-transfer-proxy',
-    label: '风格迁移代理',
+    label: i18n.t('capabilityWorkflow.styleTransferProxy'),
     status,
     summary: status === 'pass'
-      ? `结果视觉签名向风格参考靠近约 ${Math.round(best.progress * 100)}%`
+      ? i18n.t('capabilityWorkflow.theResultVisualSignatureMovedApproximatelyTowardTheStyle', { v0: Math.round(best.progress * 100) })
       : noVisibleChange
-        ? '结果与源图几乎没有可测的视觉变化'
-        : '结果没有明显向风格参考靠近，建议人工预览或重新生成',
-    details: ['该检查只比较色彩、亮度、局部对比和边缘能量，不能证明语义风格完全符合。'],
+        ? i18n.t('capabilityWorkflow.theResultHasAlmostNoMeasurableVisualChangeFrom')
+        : i18n.t('capabilityWorkflow.theResultDidNotClearlyMoveTowardTheStyle'),
+    details: [i18n.t('capabilityWorkflow.thisCheckComparesColorBrightnessLocalContrastAndEdge')],
     metrics: {
       referenceCount,
       inspectedReferenceCount: inspectedReferences.length,
@@ -269,15 +270,15 @@ export async function evaluateStyleTransferCollection({
     result
       ? {
           id: 'style-output',
-          label: '风格化结果',
+          label: i18n.t('capabilityWorkflow.stylizedResult'),
           status: 'pass',
-          summary: '已保留可读取的风格化图片结果',
+          summary: i18n.t('capabilityWorkflow.aReadableStylizedImageResultIsRetained'),
         }
       : {
           id: 'style-output',
-          label: '风格化结果',
+          label: i18n.t('capabilityWorkflow.stylizedResult'),
           status: 'fail',
-          summary: item?.error || '没有可读取的风格化图片结果',
+          summary: item?.error || i18n.t('capabilityWorkflow.noReadableStylizedImageResult'),
           ...(item ? { itemIds: [item.id] } : {}),
         },
     imageContentCheck(item?.id, output),

@@ -1,3 +1,5 @@
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import i18n from '../../../i18n/index'
 import type {
   GenerationNodeResult,
   GenerationQualityCheck,
@@ -65,28 +67,28 @@ function unavailableChecks(summary: string, details?: string[]): MultiviewSubjec
   return [
     {
       id: 'subject-semantic-identity',
-      label: '语义身份一致性',
+      label: i18n.t('capabilityWorkflow.semanticIdentityConsistency'),
       status: 'unavailable',
       summary,
       ...(details?.length ? { details } : {}),
     },
     {
       id: 'subject-geometry-consistency',
-      label: '主体几何一致性',
+      label: i18n.t('capabilityWorkflow.subjectGeometryConsistency'),
       status: 'unavailable',
       summary,
       ...(details?.length ? { details } : {}),
     },
     {
       id: 'requested-camera-adherence',
-      label: '实际机位遵循',
+      label: i18n.t('capabilityWorkflow.cameraAdherence'),
       status: 'unavailable',
       summary,
       ...(details?.length ? { details } : {}),
     },
     {
       id: 'background-policy-compliance',
-      label: '背景策略遵循',
+      label: i18n.t('capabilityWorkflow.backgroundStrategyAdherence'),
       status: 'unavailable',
       summary,
       ...(details?.length ? { details } : {}),
@@ -102,13 +104,13 @@ function unavailableReason(
   entry: ExpectedComparison,
   field: SemanticField,
 ): string {
-  if (!entry.item.result || !readableImage(entry.item.result)) return entry.item.error || '没有可读取的图片结果'
-  if (!entry.comparison) return '比较器未返回该机位'
-  if (!entry.comparison.outputSubjectDetected) return '未检测到可比较主体'
-  if (field === 'sameSubject') return '比较器未返回身份结论'
-  if (field === 'geometryConsistent') return '比较器未返回几何结论'
-  if (field === 'cameraMatches') return '比较器未返回机位结论'
-  return '比较器未返回背景策略结论'
+  if (!entry.item.result || !readableImage(entry.item.result)) return entry.item.error || i18n.t('capabilityWorkflow.noReadableImageResult')
+  if (!entry.comparison) return i18n.t('capabilityWorkflow.theComparatorReturnedNoResultForThisView')
+  if (!entry.comparison.outputSubjectDetected) return i18n.t('capabilityWorkflow.noComparableSubjectDetected')
+  if (field === 'sameSubject') return i18n.t('capabilityWorkflow.theComparatorReturnedNoIdentityVerdict')
+  if (field === 'geometryConsistent') return i18n.t('capabilityWorkflow.theComparatorReturnedNoGeometryVerdict')
+  if (field === 'cameraMatches') return i18n.t('capabilityWorkflow.theComparatorReturnedNoCameraVerdict')
+  return i18n.t('capabilityWorkflow.theComparatorReturnedNoBackgroundStrategyVerdict')
 }
 
 function semanticCheck(input: {
@@ -138,10 +140,10 @@ function semanticCheck(input: {
     ...(scores.length ? { [input.minimumMetric]: roundQualityMetric(Math.min(...scores)) } : {}),
   }
   const failedDetails = failed.map(({ item, comparison }) => (
-    `${item.label}：${comparison?.detail || `${input.label}未通过比较器阈值`}`
+    `${translateCapabilityWorkflowText(item.label)}：${comparison?.detail || i18n.t('capabilityWorkflow.didNotMeetTheComparatorThreshold', { v0: translateCapabilityWorkflowText(input.label) })}`
   ))
   const unavailableDetails = unavailable.map((entry) => (
-    `${entry.item.label}：${unavailableReason(entry, input.field)}`
+    `${translateCapabilityWorkflowText(entry.item.label)}：${unavailableReason(entry, input.field)}`
   ))
 
   if (failed.length > 0) {
@@ -149,7 +151,7 @@ function semanticCheck(input: {
       id: input.id,
       label: input.label,
       status: 'fail',
-      summary: `${failed.length} 个机位的${input.label}未通过`,
+      summary: i18n.t('capabilityWorkflow.viewsFailed', { v0: failed.length, v1: translateCapabilityWorkflowText(input.label) }),
       itemIds: failed.map(({ item }) => item.id),
       details: [...failedDetails, ...unavailableDetails],
       metrics,
@@ -160,7 +162,7 @@ function semanticCheck(input: {
       id: input.id,
       label: input.label,
       status: 'unavailable',
-      summary: `没有可比较机位，无法验证${input.label}`,
+      summary: i18n.t('capabilityWorkflow.noComparableViewsCannotVerify', { v0: translateCapabilityWorkflowText(input.label) }),
       itemIds: unavailable.map(({ item }) => item.id),
       details: unavailableDetails,
       metrics,
@@ -171,7 +173,7 @@ function semanticCheck(input: {
       id: input.id,
       label: input.label,
       status: 'warning',
-      summary: `${comparable.length}/${input.expected.length} 个机位完成${input.label}验证`,
+      summary: i18n.t('capabilityWorkflow.viewsCompletedVerification', { v0: comparable.length, v1: input.expected.length, v2: translateCapabilityWorkflowText(input.label) }),
       itemIds: unavailable.map(({ item }) => item.id),
       details: unavailableDetails,
       metrics,
@@ -181,7 +183,7 @@ function semanticCheck(input: {
     id: input.id,
     label: input.label,
     status: 'pass',
-    summary: `${comparable.length} 个机位通过${input.label}比较`,
+    summary: i18n.t('capabilityWorkflow.viewsPassedTheComparison', { v0: comparable.length, v1: translateCapabilityWorkflowText(input.label) }),
     metrics,
   }
 }
@@ -194,7 +196,7 @@ export async function evaluateMultiviewSubjectQuality(input: {
 }): Promise<MultiviewSubjectQualityResult> {
   if (!readableImage(input.sourceResult)) {
     return {
-      checks: unavailableChecks('缺少可读取的来源图片，无法验证主体身份或几何一致性'),
+      checks: unavailableChecks(i18n.t('capabilityWorkflow.noReadableSourceImageSubjectIdentityAndGeometryCannot')),
       comparatorAvailable: false,
     }
   }
@@ -213,15 +215,15 @@ export async function evaluateMultiviewSubjectQuality(input: {
   ))
   if (outputs.length === 0) {
     return {
-      checks: unavailableChecks('没有可读取的多视角输出，无法验证主体身份或几何一致性'),
+      checks: unavailableChecks(i18n.t('capabilityWorkflow.noReadableMultiviewOutputsSubjectIdentityAndGeometryCannot')),
       comparatorAvailable: false,
     }
   }
   if (!input.compareSubjects) {
     return {
       checks: unavailableChecks(
-        '当前没有多视角语义比较器，像素代理不能证明主体身份或三维几何一致',
-        ['结果已保留；需接入可审计的视觉语义比较器或人工评审后才能给出结论。'],
+        i18n.t('capabilityWorkflow.noMultiviewSemanticComparatorIsAvailablePixelProxiesCannot'),
+        [i18n.t('capabilityWorkflow.resultsAreRetainedAnAuditableVisualSemanticComparatorOr')],
       ),
       comparatorAvailable: false,
     }
@@ -237,7 +239,7 @@ export async function evaluateMultiviewSubjectQuality(input: {
   } catch (error) {
     const message = error instanceof Error && error.message ? error.message : String(error)
     return {
-      checks: unavailableChecks('多视角语义比较器执行失败，身份与几何均未验证', [message]),
+      checks: unavailableChecks(i18n.t('capabilityWorkflow.theMultiviewSemanticComparatorFailedIdentityAndGeometryRemain'), [message]),
       comparatorAvailable: false,
     }
   }
@@ -247,7 +249,7 @@ export async function evaluateMultiviewSubjectQuality(input: {
     : 'multiview-subject-comparator'
   if (!comparison.sourceSubjectDetected) {
     return {
-      checks: unavailableChecks('来源图片未检测到可比较主体，身份与几何均未验证'),
+      checks: unavailableChecks(i18n.t('capabilityWorkflow.noComparableSubjectWasDetectedInTheSourceImage')),
       comparatorAvailable: true,
       evaluator,
     }
@@ -268,7 +270,7 @@ export async function evaluateMultiviewSubjectQuality(input: {
     field: 'sameSubject',
     scoreField: 'identityScore',
     id: 'subject-semantic-identity',
-    label: '语义身份一致性',
+    label: i18n.t('capabilityWorkflow.semanticIdentityConsistency'),
     comparedMetric: 'comparedSubjectCount',
     failedMetric: 'failedSubjectCount',
     unavailableMetric: 'unavailableSubjectCount',
@@ -279,7 +281,7 @@ export async function evaluateMultiviewSubjectQuality(input: {
     field: 'geometryConsistent',
     scoreField: 'geometryScore',
     id: 'subject-geometry-consistency',
-    label: '主体几何一致性',
+    label: i18n.t('capabilityWorkflow.subjectGeometryConsistency'),
     comparedMetric: 'comparedGeometryCount',
     failedMetric: 'failedGeometryCount',
     unavailableMetric: 'unavailableGeometryCount',
@@ -290,7 +292,7 @@ export async function evaluateMultiviewSubjectQuality(input: {
     field: 'cameraMatches',
     scoreField: 'cameraScore',
     id: 'requested-camera-adherence',
-    label: '实际机位遵循',
+    label: i18n.t('capabilityWorkflow.cameraAdherence'),
     comparedMetric: 'comparedCameraCount',
     failedMetric: 'failedCameraCount',
     unavailableMetric: 'unavailableCameraCount',
@@ -301,7 +303,7 @@ export async function evaluateMultiviewSubjectQuality(input: {
     field: 'backgroundCompliant',
     scoreField: 'backgroundScore',
     id: 'background-policy-compliance',
-    label: '背景策略遵循',
+    label: i18n.t('capabilityWorkflow.backgroundStrategyAdherence'),
     comparedMetric: 'comparedBackgroundCount',
     failedMetric: 'failedBackgroundCount',
     unavailableMetric: 'unavailableBackgroundCount',

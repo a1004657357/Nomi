@@ -1,3 +1,5 @@
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import i18n from '../../../i18n/index'
 import type {
   AgentAttachmentPayload,
   AgentsChatResponseDto,
@@ -61,21 +63,21 @@ export function validateMoodVisionReviewAssets(
   collection: GenerationResultCollection,
 ): MoodVisionReviewAssets {
   if (collection.quality?.kind !== 'mood' || collection.recipeId !== 'portrait.mood') {
-    throw new Error('当前结果不是人物情绪集合')
+    throw new Error(i18n.t('capabilityWorkflow.theCurrentResultIsNotAPortraitMoodCollection'))
   }
-  if (!collection.source) throw new Error('情绪集合没有保留来源人像快照')
+  if (!collection.source) throw new Error(i18n.t('capabilityWorkflow.theMoodCollectionHasNoRetainedSourcePortraitSnapshot'))
   const sourceUrl = localImageUrl(collection.source)
-  if (!sourceUrl) throw new Error('来源图片尚未落盘，无法安全发送给视觉模型复核')
+  if (!sourceUrl) throw new Error(i18n.t('capabilityWorkflow.theSourceImageIsNotSavedLocallyAndCannot'))
   const successful = collection.items.filter((item) => (
     item.status === 'success'
     && item.result?.type === 'image'
     && typeof item.energy === 'number'
     && typeof item.affinity === 'number'
   ))
-  if (!successful.length) throw new Error('当前没有可复核的成功情绪图片')
+  if (!successful.length) throw new Error(i18n.t('capabilityWorkflow.noSuccessfulMoodImagesAreAvailableForReview'))
   const remoteOnly = successful.filter((item) => !localImageUrl(item.result))
   if (remoteOnly.length) {
-    throw new Error(`${remoteOnly.map((item) => item.label).join('、')} 尚未落盘，无法安全发送给视觉模型复核`)
+    throw new Error(i18n.t('capabilityWorkflow.isNotSavedLocallyAndCannotBeSafelySent', { v0: remoteOnly.map((item) => translateCapabilityWorkflowText(item.label)).join('、') }))
   }
   return {
     sourceResult: {
@@ -92,7 +94,7 @@ export function validateMoodVisionReviewAssets(
 function attachmentsForJudge(request: MoodExpressionVisionJudgeRequest): AgentAttachmentPayload[] {
   return request.images.map((image, index) => {
     const url = localImageUrl(image.result)
-    if (!url) throw new Error(`${image.label} 尚未落盘，视觉复核已停止`)
+    if (!url) throw new Error(i18n.t('capabilityWorkflow.isNotSavedLocallyVisualReviewStopped', { v0: translateCapabilityWorkflowText(image.label) }))
     const contentType = mimeTypeFromUrl(url)
     const extension = contentType === 'image/jpeg'
       ? 'jpg'
@@ -135,11 +137,11 @@ export async function reviewMoodCollectionWithVisionModel(input: {
       await deps.clearSession(sessionKey).catch(() => {})
       response = await deps.send({
         prompt: request.prompt,
-        displayPrompt: `情绪表演复核（${request.images.length - 1} 个结果）`,
+        displayPrompt: i18n.t('capabilityWorkflow.moodPerformanceReviewResults', { v0: request.images.length - 1 }),
         sessionKey,
         ...(input.projectId ? { projectId: input.projectId } : {}),
         skillKey: '',
-        skillName: '情绪表演视觉复核',
+        skillName: i18n.t('capabilityWorkflow.moodPerformanceVisualReview'),
         mode: 'chat',
         disableTools: true,
         agentVendorKey: input.model.vendorKey,
@@ -147,7 +149,7 @@ export async function reviewMoodCollectionWithVisionModel(input: {
         attachments: attachmentsForJudge(request),
       }, {})
       if (response.finishReason === 'length') {
-        throw new Error('视觉模型输出达到长度上限，结构化表情复核结果不完整')
+        throw new Error(i18n.t('capabilityWorkflow.theVisualModelReachedItsOutputLimitTheStructured'))
       }
       return response.text
     },

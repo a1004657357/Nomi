@@ -1,3 +1,6 @@
+import i18n from '../../i18n'
+import { semanticToolProtocolDescriptions } from '../../i18n/locales/capabilityWorkflow'
+
 /**
  * Gate 2 Slice 1 — §11.2 领域语义工具别名层。
  *
@@ -115,64 +118,60 @@ export const SEMANTIC_TOOL_MAP: Record<SemanticToolName, SemanticToolMapping> = 
     category: 'read',
     backedBy: 'read_canvas_state',
     status: 'implemented',
-    description: '读取项目级摘要（项目名、画布节点数、分镜数、资产数）。迁移期从 read_canvas_state 派生。',
+    description: semanticToolProtocolDescriptions.read_project_summary,
   },
   read_film_bible: {
     category: 'read',
     backedBy: null,
     status: 'implemented',
     description:
-      '读取项目 Film Bible（跨镜头事实：主题/画幅/角色身份/场景空间/服装/声音原则）。' +
-      '老项目可从分镜锚点派生；首次应用 patch 后作为项目字段持久化。',
+      semanticToolProtocolDescriptions.read_film_bible,
   },
   read_storyboard: {
     category: 'read',
     backedBy: 'read_canvas_state',
     status: 'implemented',
-    description: '读取分镜脚本（所有镜头的 PlanShot 列表）。迁移期从 read_canvas_state + storyboardPlan 派生。',
+    description: semanticToolProtocolDescriptions.read_storyboard,
   },
   read_shot_spec: {
     category: 'read',
     backedBy: 'read_canvas_state',
     status: 'implemented',
     description:
-      '读取单个镜头的 ShotSpec（镜头唯一真相源）。Gate 1 planShotToShotSpec 投影已就位；' +
-      '运行时按 shotId 或镜号从分镜方案与画布 revision 投影。',
+      semanticToolProtocolDescriptions.read_shot_spec,
   },
   read_asset_registry: {
     category: 'read',
     backedBy: 'read_canvas_state',
     status: 'implemented',
     description:
-      '读取资产注册表（角色/场景/道具/服装/风格的稳定 id + 来源 + 选中 revision）。' +
-      'Gate 1 AssetRevision 模型已就位；运行时从画布节点 + history 派生。',
+      semanticToolProtocolDescriptions.read_asset_registry,
   },
   read_provider_capabilities: {
     category: 'read',
     backedBy: 'list_capability_recipes',
     status: 'implemented',
     description:
-      '读取 Provider 能力声明（§9.4 ProviderCapabilities：modes/referenceRoles/maxOutputs/...）。' +
-      'Gate 1 projectCapabilities 投影已就位（electron/catalog/providerCapabilities.ts）。',
+      semanticToolProtocolDescriptions.read_provider_capabilities,
   },
   read_task_status: {
     category: 'read',
     backedBy: 'read_canvas_state',
     status: 'implemented',
-    description: '读取生成任务状态（§10.2 TaskStatus：queued/running/succeeded/failed/cancelled/unknown）。',
+    description: semanticToolProtocolDescriptions.read_task_status,
   },
   read_evaluation_report: {
     category: 'read',
     backedBy: null,
     status: 'deferred',
     deferredTo: 'Gate 5',
-    description: '读取自动验收报告（§18 EvaluationReport）。Gate 5 起实现（Gate A/B/C/D 四层门）。',
+    description: semanticToolProtocolDescriptions.read_evaluation_report,
   },
   read_vibing_director_state: {
     category: 'read',
     backedBy: null,
     status: 'implemented',
-    description: '读取 VIBING Director 节点状态（既有 read_vibing_director 工具，vibingDirectorTools.ts）。',
+    description: semanticToolProtocolDescriptions.read_vibing_director_state,
   },
 
   // ── 提案（§11.2——生成结构化草案，不改画布、不花费）──────────
@@ -181,37 +180,34 @@ export const SEMANTIC_TOOL_MAP: Record<SemanticToolName, SemanticToolMapping> = 
     backedBy: null,
     status: 'implemented',
     description:
-      '提案 Film Bible 修改（结构化 patch，用户确认后才 apply）。Gate 1 FilmBibleV1 类型已就位；' +
-      '提案只返回结构化 patch，不修改项目。',
+      semanticToolProtocolDescriptions.propose_film_bible_patch,
   },
   propose_storyboard_plan: {
     category: 'propose',
     backedBy: 'propose_storyboard_plan',
     status: 'implemented',
-    description: '提案分镜方案（既有工具，同名——产出结构化方案给用户审/改，不碰画布不花钱）。',
+    description: semanticToolProtocolDescriptions.propose_storyboard_plan,
   },
   propose_shot_patch: {
     category: 'propose',
     backedBy: null,
     status: 'implemented',
     description:
-      '提案单镜修改（shot patch：景别/机位/运镜/表演/对白等 ShotSpec 字段）。' +
-      '提案只返回结构化 patch；确认后由 apply_storyboard_patch 修改分镜。',
+      semanticToolProtocolDescriptions.propose_shot_patch,
   },
   propose_generation_plan: {
     category: 'propose',
     backedBy: null,
     status: 'implemented',
     description:
-      '提案生成计划（哪些镜用什么 mode/模型/参考，预计提交数与费用上限）。' +
-      'Gate 1 GenerationIntent/ProviderCapabilities 类型已就位；编译层留 Gate 3。',
+      semanticToolProtocolDescriptions.propose_generation_plan,
   },
   propose_timeline_assembly: {
     category: 'propose',
     backedBy: null,
     status: 'implemented',
     description:
-      '提案时间线组装，仅返回镜头集合与说明；确认后才 place_assets_on_timeline。',
+      semanticToolProtocolDescriptions.propose_timeline_assembly,
   },
 
   // ── 本地修改（§11.2——写但不花费，需确认）────────────────────
@@ -219,45 +215,44 @@ export const SEMANTIC_TOOL_MAP: Record<SemanticToolName, SemanticToolMapping> = 
     category: 'apply',
     backedBy: null,
     status: 'implemented',
-    description: '应用 Film Bible 修改（确认后的 patch 校验并持久化到项目）。',
+    description: semanticToolProtocolDescriptions.apply_film_bible_patch,
   },
   apply_storyboard_patch: {
     category: 'apply',
     backedBy: 'batch_update_storyboard_shots',
     status: 'implemented',
-    description: '应用分镜批量修改（既有 batch_update_storyboard_shots）。',
+    description: semanticToolProtocolDescriptions.apply_storyboard_patch,
   },
   create_asset_records: {
     category: 'apply',
     backedBy: 'create_canvas_nodes',
     status: 'implemented',
-    description: '创建资产记录（角色/场景/道具卡）。既有 create_canvas_nodes 实现该语义。',
+    description: semanticToolProtocolDescriptions.create_asset_records,
   },
   select_asset_revision: {
     category: 'apply',
     backedBy: null,
     status: 'implemented',
     description:
-      '选中某资产的某个 revision 作为当前版本（§17.1 不覆盖：旧 selected 降级 candidate）。' +
-      '复用 graphOps.selectRevision，旧版本保留为 candidate。',
+      semanticToolProtocolDescriptions.select_asset_revision,
   },
   archive_asset_revision: {
     category: 'apply',
     backedBy: null,
     status: 'implemented',
-    description: '归档某 revision（§17.3 默认归档不物理删），复用 graphOps.archiveRevision。',
+    description: semanticToolProtocolDescriptions.archive_asset_revision,
   },
   apply_vibing_director_plan: {
     category: 'apply',
     backedBy: null,
     status: 'implemented',
-    description: '应用 VIBING Director 声明式 plan（既有工具，vibingDirectorTools.ts）。',
+    description: semanticToolProtocolDescriptions.apply_vibing_director_plan,
   },
   place_assets_on_timeline: {
     category: 'apply',
     backedBy: 'arrange_storyboard_to_timeline',
     status: 'implemented',
-    description: '把资产/镜头放进时间线（既有 arrange_storyboard_to_timeline）。',
+    description: semanticToolProtocolDescriptions.place_assets_on_timeline,
   },
 
   // ── 付费/外部（§11.2——必须确认 + 审计费用）──────────────────
@@ -266,30 +261,28 @@ export const SEMANTIC_TOOL_MAP: Record<SemanticToolName, SemanticToolMapping> = 
     backedBy: 'run_generation_batch',
     status: 'implemented',
     description:
-      '提交生成意图（付费——用户必须确认）。既有 run_generation_batch 实现该语义' +
-      '（S6b 受理：确认前零网络调用，批准 = 受理并启动）。Gate 1 GenerationIntent 类型已就位。',
+      semanticToolProtocolDescriptions.submit_generation_intent,
   },
   cancel_provider_task: {
     category: 'paid',
     backedBy: null,
     status: 'implemented',
     description:
-      '取消 provider 任务（§12.2）。统一 IPC 已接 ProviderAdapter 合约；仅 codex/comfyui 真支持 cancel，' +
-      '其他 Provider 明确返回不支持，不伪造取消。',
+      semanticToolProtocolDescriptions.cancel_provider_task,
   },
   download_provider_result: {
     category: 'paid',
     backedBy: null,
     status: 'deferred',
     deferredTo: 'Gate 3',
-    description: '下载 provider 结果（只重试下载不重生成，§24）。Gate 0 §1.5：当前无重试；留 Gate 3。',
+    description: semanticToolProtocolDescriptions.download_provider_result,
   },
   run_optional_gpu_evaluation: {
     category: 'paid',
     backedBy: null,
     status: 'deferred',
     deferredTo: 'Gate 5',
-    description: '运行可选 GPU 验收（VLM 评分）。Gate 5 起实现。',
+    description: semanticToolProtocolDescriptions.run_optional_gpu_evaluation,
   },
 }
 
@@ -300,7 +293,7 @@ export const SEMANTIC_TOOL_NAMES = Object.keys(SEMANTIC_TOOL_MAP) as SemanticToo
 export function resolveSemanticTool(name: string): SemanticToolMapping {
   const mapping = SEMANTIC_TOOL_MAP[name as SemanticToolName]
   if (!mapping) {
-    throw new Error(`未知的 §11.2 语义工具: ${name}`)
+    throw new Error(i18n.t('capabilityWorkflow.unknownSection112SemanticTool', { v0: name }))
   }
   return mapping
 }

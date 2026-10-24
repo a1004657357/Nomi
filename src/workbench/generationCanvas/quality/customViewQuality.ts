@@ -1,3 +1,5 @@
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
+import i18n from '../../../i18n/index'
 import type { RecipeRunPlan } from '../../../config/capabilityRecipes'
 import type {
   GenerationNodeResult,
@@ -45,14 +47,14 @@ function cameraContractCheck(
     })
   return {
     id: 'custom-view-contract',
-    label: '机位槽位',
+    label: i18n.t('capabilityWorkflow.cameraSlots'),
     status: exact ? 'pass' : 'fail',
     summary: exact
-      ? `${plan.outputs.length} 个自定义机位的顺序和参数元数据完整`
-      : '输出数量、顺序或机位参数与生成计划不一致',
+      ? i18n.t('capabilityWorkflow.metadataOrderAndParametersAreCompleteForCustomViews', { v0: plan.outputs.length })
+      : i18n.t('capabilityWorkflow.outputCountOrderOrCameraParametersDoNotMatch'),
     details: [
-      `计划 ${plan.outputs.length} 个机位，集合 ${collection.items.length} 个机位`,
-      '该检查验证任务契约，不宣称已从像素中识别真实方位角。',
+      i18n.t('capabilityWorkflow.plannedViewsCollectionHasViews', { v0: plan.outputs.length, v1: collection.items.length }),
+      i18n.t('capabilityWorkflow.thisChecksTheTaskContractNotCameraAnglesInferred'),
     ],
     metrics: {
       expectedCount: plan.outputs.length,
@@ -74,12 +76,12 @@ function imageAvailabilityCheck(
   const complete = successful.length === plan.outputs.length
   return {
     id: 'custom-view-images',
-    label: '图片完整性',
+    label: i18n.t('capabilityWorkflow.imageCompleteness'),
     status: complete ? 'pass' : 'fail',
     summary: complete
-      ? `${successful.length} 个机位均有可读取图片`
-      : `仅 ${successful.length}/${plan.outputs.length} 个机位有可读取图片`,
-    details: missing.map((item) => `${item.label}：${item.error || item.status}`),
+      ? i18n.t('capabilityWorkflow.allViewsHaveReadableImages', { v0: successful.length })
+      : i18n.t('capabilityWorkflow.onlyViewsHaveReadableImages', { v0: successful.length, v1: plan.outputs.length }),
+    details: missing.map((item) => `${translateCapabilityWorkflowText(item.label)}：${item.error || item.status}`),
     itemIds: complete ? undefined : missing.map((item) => item.id),
     metrics: {
       expectedImageCount: plan.outputs.length,
@@ -93,10 +95,10 @@ function contentCheck(inspected: readonly InspectedItem[]): GenerationQualityChe
   if (available.length === 0) {
     return {
       id: 'custom-view-content',
-      label: '画面有效性',
+      label: i18n.t('capabilityWorkflow.imageValidity'),
       status: 'unavailable',
-      summary: '未能读取像素，无法检测空白或低信息画面',
-      details: inspected.flatMap((entry) => entry.error ? [`${entry.item.label}：${entry.error}`] : []),
+      summary: i18n.t('capabilityWorkflow.pixelsCouldNotBeReadBlankOrLowInformation'),
+      details: inspected.flatMap((entry) => entry.error ? [`${translateCapabilityWorkflowText(entry.item.label)}：${entry.error}`] : []),
     }
   }
   const blank = available.filter((entry) => {
@@ -106,14 +108,14 @@ function contentCheck(inspected: readonly InspectedItem[]): GenerationQualityChe
   })
   return {
     id: 'custom-view-content',
-    label: '画面有效性',
+    label: i18n.t('capabilityWorkflow.imageValidity'),
     status: blank.length > 0 ? 'fail' : available.length < inspected.length ? 'warning' : 'pass',
     summary: blank.length > 0
-      ? `发现 ${blank.length} 张空白、透明或低信息画面`
-      : `${available.length} 张已检测图片均包含有效像素和可见细节`,
+      ? i18n.t('capabilityWorkflow.foundBlankTransparentOrLowInformationImages', { v0: blank.length })
+      : i18n.t('capabilityWorkflow.allInspectedImagesContainValidPixelsAndVisibleDetail', { v0: available.length }),
     details: [
-      ...blank.map((entry) => `${entry.item.label}：画面信息量过低`),
-      ...inspected.flatMap((entry) => entry.error ? [`${entry.item.label} 未检测：${entry.error}`] : []),
+      ...blank.map((entry) => i18n.t('capabilityWorkflow.imageInformationIsTooLow', { v0: translateCapabilityWorkflowText(entry.item.label) })),
+      ...inspected.flatMap((entry) => entry.error ? [i18n.t('capabilityWorkflow.wasNotInspected', { v0: translateCapabilityWorkflowText(entry.item.label), v1: entry.error })] : []),
     ],
     itemIds: blank.length > 0 ? blank.map((entry) => entry.item.id) : undefined,
     metrics: {
@@ -128,9 +130,9 @@ function dimensionsCheck(inspected: readonly InspectedItem[]): GenerationQuality
   if (available.length === 0) {
     return {
       id: 'custom-view-dimensions',
-      label: '尺寸一致性',
+      label: i18n.t('capabilityWorkflow.dimensionConsistency'),
       status: 'unavailable',
-      summary: '未能读取图片尺寸',
+      summary: i18n.t('capabilityWorkflow.imageDimensionsCouldNotBeRead'),
     }
   }
   const dimensions = new Map<string, string[]>()
@@ -141,13 +143,13 @@ function dimensionsCheck(inspected: readonly InspectedItem[]): GenerationQuality
   }
   return {
     id: 'custom-view-dimensions',
-    label: '尺寸一致性',
+    label: i18n.t('capabilityWorkflow.dimensionConsistency'),
     status: dimensions.size === 1
       ? available.length < inspected.length ? 'warning' : 'pass'
       : 'warning',
     summary: dimensions.size === 1
-      ? `${available.length} 张已检测图片尺寸一致：${Array.from(dimensions.keys())[0]}`
-      : `检测到 ${dimensions.size} 种输出尺寸`,
+      ? i18n.t('capabilityWorkflow.allInspectedImagesHaveConsistentDimensions', { v0: available.length, v1: Array.from(dimensions.keys())[0] })
+      : i18n.t('capabilityWorkflow.foundOutputDimensions', { v0: dimensions.size }),
     details: dimensions.size > 1
       ? Array.from(dimensions, ([size, labels]) => `${size}：${labels.join('、')}`)
       : undefined,
@@ -165,9 +167,9 @@ function diversityCheck(inspected: readonly InspectedItem[]): GenerationQualityC
   if (available.length < 2) {
     return {
       id: 'custom-view-diversity',
-      label: '视角差异',
+      label: i18n.t('capabilityWorkflow.viewDiversity'),
       status: 'unavailable',
-      summary: '可比较图片不足，无法检测重复机位',
+      summary: i18n.t('capabilityWorkflow.tooFewComparableImagesToCheckDuplicateViews'),
     }
   }
   const exactPairs: string[] = []
@@ -182,7 +184,7 @@ function diversityCheck(inspected: readonly InspectedItem[]): GenerationQualityC
         second.inspection.perceptualHash,
       )
       minimumDistance = Math.min(minimumDistance, distance)
-      const label = `${first.item.label} ↔ ${second.item.label}`
+      const label = `${translateCapabilityWorkflowText(first.item.label)} ↔ ${translateCapabilityWorkflowText(second.item.label)}`
       if (distance <= 0.01) exactPairs.push(label)
       else if (distance <= 0.06) nearPairs.push(label)
     }
@@ -190,17 +192,17 @@ function diversityCheck(inspected: readonly InspectedItem[]): GenerationQualityC
   const status = exactPairs.length > 0 ? 'fail' : nearPairs.length > 0 ? 'warning' : 'pass'
   return {
     id: 'custom-view-diversity',
-    label: '视角差异',
+    label: i18n.t('capabilityWorkflow.viewDiversity'),
     status,
     summary: exactPairs.length > 0
-      ? `发现 ${exactPairs.length} 组几乎相同的机位画面`
+      ? i18n.t('capabilityWorkflow.foundPairsOfNearlyIdenticalViews', { v0: exactPairs.length })
       : nearPairs.length > 0
-        ? `发现 ${nearPairs.length} 组高度相似画面`
-        : '未发现重复或高度相似的机位画面',
+        ? i18n.t('capabilityWorkflow.foundPairsOfHighlySimilarImages', { v0: nearPairs.length })
+        : i18n.t('capabilityWorkflow.noDuplicateOrHighlySimilarViewsFound'),
     details: [
       ...exactPairs,
       ...nearPairs,
-      '这是像素相似度检查，不替代人工确认实际方位角、景别和机位高度。',
+      i18n.t('capabilityWorkflow.thisPixelSimilarityCheckDoesNotReplaceManualConfirmation'),
     ].slice(0, 8),
     metrics: {
       exactDuplicatePairCount: exactPairs.length,
@@ -218,12 +220,12 @@ function packagingCheck(
     && collection.items.every((item) => item.result?.type === 'image' && !item.result.alternatives?.length)
   return {
     id: 'custom-view-packaging',
-    label: '独立单帧封装',
+    label: i18n.t('capabilityWorkflow.independentSingleFramePackaging'),
     status: independentlyPackaged ? 'pass' : 'warning',
     summary: independentlyPackaged
-      ? '每个机位独立保存为一个图片结果'
-      : '部分机位没有独立保存为单帧结果',
-    details: ['该结构检查不能完全排除单张图片内部仍包含拼贴，需要人工预览确认。'],
+      ? i18n.t('capabilityWorkflow.eachViewIsSavedAsASeparateImageResult')
+      : i18n.t('capabilityWorkflow.someViewsWereNotSavedAsIndependentSingleFrame'),
+    details: [i18n.t('capabilityWorkflow.thisStructuralCheckCannotRuleOutCollagesWithinA')],
   }
 }
 
@@ -244,7 +246,7 @@ export async function evaluateCustomViewCollection(
   ))
   const [inspected, sourceInspection, semantic] = await Promise.all([
     Promise.all(imageItems.map(async (item): Promise<InspectedItem> => {
-      if (!inspectImage || !item.result) return { item, error: '当前运行环境未提供像素检测器' }
+      if (!inspectImage || !item.result) return { item, error: i18n.t('capabilityWorkflow.noPixelInspectorIsAvailableInThisEnvironment') }
       try {
         return { item, inspection: await inspectImage(item.result) }
       } catch (error) {

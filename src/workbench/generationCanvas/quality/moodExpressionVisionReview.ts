@@ -1,3 +1,5 @@
+import i18n from '../../../i18n'
+import { zhCapabilityWorkflow } from '../../../i18n/locales/capabilityWorkflow'
 import type {
   GenerationNodeResult,
   GenerationQualityCheck,
@@ -50,7 +52,7 @@ function parseStructuredJson(text: string): unknown {
       }
     }
   }
-  throw new Error('表情视觉复核没有返回有效 JSON')
+  throw new Error(i18n.t('capabilityWorkflow.theExpressionVisualReviewDidNotReturnValidJSON'))
 }
 
 function validScore(value: unknown): value is number {
@@ -59,7 +61,7 @@ function validScore(value: unknown): value is number {
 
 function parseItems(value: unknown, allowedIds: ReadonlySet<string>): MoodExpressionComparatorOutput[] {
   const root = asRecord(value)
-  if (!root || !Array.isArray(root.items)) throw new Error('表情视觉复核 JSON 缺少 items')
+  if (!root || !Array.isArray(root.items)) throw new Error(i18n.t('capabilityWorkflow.theExpressionVisualReviewJSONHasNoItems'))
   const seen = new Set<string>()
   return root.items.flatMap((raw): MoodExpressionComparatorOutput[] => {
     const item = asRecord(raw)
@@ -100,7 +102,9 @@ function targetDescription(input: {
   energy: number
   affinity: number
 }, index: number): string {
-  return `图 ${index + 2}：itemId="${input.itemId}"，${input.label}，能量 ${input.energy}/4，亲和 ${input.affinity}/4`
+  // Fixed judge-protocol text, not display copy; do not translate with the UI locale.
+  const promptLine = `图 ${index + 2}：itemId="${input.itemId}"，${input.label}，能量 ${input.energy}/4，亲和 ${input.affinity}/4`
+  return promptLine
 }
 
 function buildPrompt(input: Parameters<MoodExpressionComparator>[0]): string {
@@ -143,7 +147,7 @@ export function createMoodExpressionVisionComparator(input: {
       {
         role: 'source',
         itemId: 'source',
-        label: '来源人像',
+        label: zhCapabilityWorkflow.sourcePortrait,
         result: comparisonInput.source,
       },
       ...comparisonInput.outputs.map((output) => ({
@@ -180,7 +184,7 @@ export function mergeMoodExpressionVisionReview(
 ): GenerationResultCollection {
   const quality = collection.quality
   if (!quality || quality.kind !== 'mood') {
-    throw new Error('当前结果不是可复核的情绪质量报告')
+    throw new Error(i18n.t('capabilityWorkflow.theCurrentResultIsNotAReviewableMoodQuality'))
   }
   const hasSemantic = quality.checks.some((check) => check.id === 'mood-expression-semantic')
   const checks = hasSemantic
