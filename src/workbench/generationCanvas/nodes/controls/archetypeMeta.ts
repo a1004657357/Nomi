@@ -90,13 +90,17 @@ function readArchetypeNodeMeta(meta: Record<string, unknown> | undefined): Arche
   return { id, modeId, variantId }
 }
 
+function matchesArchetype(stored: ArchetypeNodeMeta | null, archetype: ModelArchetype): stored is ArchetypeNodeMeta {
+  return Boolean(stored && (stored.id === archetype.id || archetype.legacyIds?.includes(stored.id)))
+}
+
 /** 当前激活的模式（无命名空间 meta 或 modeId 失效时落到 defaultModeId）。 */
 export function currentArchetypeMode(
   archetype: ModelArchetype,
   meta: Record<string, unknown> | undefined,
 ): ArchetypeMode {
   const stored = readArchetypeNodeMeta(meta)
-  const storedModeId = stored && (stored.id === archetype.id || archetype.legacyIds?.includes(stored.id)) ? stored.modeId : ''
+  const storedModeId = matchesArchetype(stored, archetype) ? stored.modeId : ''
   // The customized Flash profile used these mode IDs before the shared 2.5 schema.
   const modeId = archetype.id === 'agnes-video-2.5-flash'
     ? ({ t2v: 'text', firstlast: 'keyframe' } as Record<string, string>)[storedModeId] || storedModeId
@@ -111,20 +115,20 @@ export function currentArchetypeMode(
 /** 这个节点存着的 variantId（只认同一档案的）与模型名——问唯一 owner 时的那组输入。 */
 function variantInputOf(archetype: ModelArchetype, meta: Record<string, unknown> | undefined): { variantId?: string; modelId?: unknown } {
   const stored = readArchetypeNodeMeta(meta)
-  return { ...(stored?.id === archetype.id ? { variantId: stored.variantId } : {}), modelId: meta?.modelKey }
+  return { ...(matchesArchetype(stored, archetype) ? { variantId: stored.variantId } : {}), modelId: meta?.modelKey }
 }
 
 /**
- * 当前激活的变体（对称 currentArchetypeMode）。判定只问唯一 owner `resolveArchetypeVariant`：
- * 存着的 variantId → 模型名是某个变体的专属 key → 默认变体 → 第一个。付费卡与宿主派发问的是同一个函数、
- * 同一组输入（2026-09-26：以前宿主自己拿模型名反推，卡上写 Fast、派出去是 standard）。
+ * 当前模式内的激活变体（对称 currentArchetypeMode）。判定只问唯一 owner `resolveArchetypeVariant`：
+ * 存着的 variantId → 模型名是某个变体的专属 key → 默认变体 → 第一个。切换/迁移显式写回合法选择，
+ * 付费卡与宿主再问同一 owner；不让宿主按模式偷偷升级用户指定的型号。
  * 无 variants 档案 → null（UI 不显示变体段，传输不带变体 model）。
  */
 export function currentArchetypeVariant(
   archetype: ModelArchetype,
   meta: Record<string, unknown> | undefined,
 ): ModelArchetypeVariant | null {
-  return resolveArchetypeVariant(archetype, variantInputOf(archetype, meta))
+  return resolveModeVariant(archetype, currentArchetypeMode(archetype, meta).id, variantInputOf(archetype, meta))
 }
 
 export type ArchetypeVariantChoice = { id: string; label: string }
@@ -135,6 +139,19 @@ function variantsForMode(archetype: ModelArchetype, modeId?: string): ModelArche
   return variants.filter((variant) =>
     !variant.supportedModeIds || variant.supportedModeIds.includes(modeId),
   )
+}
+
+function resolveModeVariant(
+  archetype: ModelArchetype,
+  modeId: string,
+  input: Parameters<typeof resolveArchetypeVariant>[1],
+): ModelArchetypeVariant | null {
+  // Filtering candidates must not redefine catalog identity or the shared owner's choice priorities.
+  return resolveArchetypeVariant({
+    ...archetype,
+    catalogModelKey: archetypeBaseModelKey(archetype),
+    variants: variantsForMode(archetype, modeId),
+  }, input)
 }
 
 /** 变体分段切换的选项（标签 = 变体自己的名字）。无 variants / 仅 1 个 → 空（UI 不显示该段）。 */
@@ -354,16 +371,11 @@ export function archetypeModeModelEnum(
   return currentArchetypeMode(archetype, meta).modelEnum ?? null
 }
 
-/** 切模式时跟着写回的 variantId = 此刻显示的那个变体（无 variants → 空串）。 */
-function preservedVariantId(meta: Record<string, unknown>, archetype: ModelArchetype): string {
-  return currentArchetypeVariant(archetype, meta)?.id ?? ''
-}
-
 /**
  * 切到 nextModeId：改 node.meta.archetype.modeId，并把**存量越界的 select 值夹回新模式的默认**
  * （参考值/照片全局保留，不搬不清）。返回**整份新 meta**。
  * 互斥不在这里发生——发生在 buildArchetypeInputParams（只发当前模式声明的槽键）。这样切回时照片还在。
- * variantId 跟随保留（切 mode 不动变体）；无变体档案则不写 variantId 键。
+ * 兼容的 variantId 跟随保留；不兼容时由唯一 owner 在目标模式的合法候选内回落。无变体档案不写 variantId。
  *
  * ⚠️ 这里必须和 applyArchetypeVariantSwitch 一样调 clampMetaToModeParams —— **模式和变体一样会收窄参数**。
  * 2026-08-26 走查实测：火山 Seedance 2.5 在「文生视频」选了 16:9，切到「首帧」（官方硬约束 ratio 只能
@@ -376,10 +388,12 @@ export function applyArchetypeModeSwitch(
   archetype: ModelArchetype,
   nextModeId: string,
 ): Record<string, unknown> {
-  const variantId = preservedVariantId(meta, archetype)
+  const targetMode = currentArchetypeMode(archetype, { archetype: { id: archetype.id, modeId: nextModeId } })
+  const variantId = resolveModeVariant(archetype, targetMode.id, variantInputOf(archetype, meta))?.id ?? ''
+  if (archetype.variants?.length && !variantId) return meta
   // 按当前变体特化后再取模式参数：变体与模式**都**可能收窄同一个 select，夹的必须是两层叠加后的选项集。
   const specialized = specializeArchetypeForVariant(archetype, variantId)
-  const nextMode = specialized.modes.find((m) => m.id === nextModeId) ?? specialized.modes[0]
+  const nextMode = specialized.modes.find((m) => m.id === targetMode.id) ?? specialized.modes[0]
   const clamped = nextMode ? clampMetaToModeParams(meta, nextMode.params) : meta
   return { ...clamped, archetype: { id: archetype.id, modeId: nextMode.id, ...(variantId ? { variantId } : {}) } }
 }
@@ -419,10 +433,10 @@ export function applyArchetypeVariantSwitch(
 ): Record<string, unknown> {
   const variants = archetype.variants
   if (!variants || variants.length === 0) return meta
-  const stored = readArchetypeNodeMeta(meta)
-  const modeId = stored?.id === archetype.id && stored.modeId ? stored.modeId : archetype.defaultModeId
+  const modeId = currentArchetypeMode(archetype, meta).id
   // 用户点的那一档；认不出的 id 与不传一样落默认变体（唯一 owner 的规则）。
-  const nextVariant = resolveArchetypeVariant(archetype, { variantId: nextVariantId })!
+  const nextVariant = resolveModeVariant(archetype, modeId, { variantId: nextVariantId })
+  if (!nextVariant) return meta
   // 按新变体特化出当前模式的参数声明，把存量越界的 select 值夹回默认（D1：4k→fast 变体不再漏发）。
   const specialized = specializeArchetypeForVariant(archetype, nextVariant.id)
   const mode =
@@ -440,12 +454,12 @@ export function applyArchetypeVariantSwitch(
  * 按 variant.identifierPatterns / variant.modelKey 匹配旧 modelKey。
  *
  * 幂等：modelKey 已是某变体的基础 modelKey 且 variantId 已对 → 返回 null（不循环写）。
- * 无 variants 档案 / 认不出旧串 → 返回 null。返回**待 patch 的字段**（含 modelKey + archetype），由调用方合并。
+ * 无 variants 档案 / 认不出旧串 → 返回 null。返回**待 patch 的字段**（身份及迁移时越界的 select），由调用方合并。
  */
 export function normalizeArchetypeVariantMeta(
   meta: Record<string, unknown>,
   archetype: ModelArchetype,
-): { modelKey: string; archetype: { id: string; modeId: string; variantId: string } } | null {
+): ({ modelKey: string; archetype: { id: string; modeId: string; variantId: string } } & Record<string, unknown>) | null {
   const variants = archetype.variants
   if (!variants || variants.length === 0) return null
   const currentKey = typeof meta.modelKey === 'string' ? meta.modelKey.trim() : ''
@@ -461,22 +475,24 @@ export function normalizeArchetypeVariantMeta(
   // modelKey 已是基础 → variantId 是权威（缺则 currentArchetypeVariant 回落默认），无需迁移、幂等 no-op。
   // **绝不能用基础串反推变体**——基础串映射到 standard 会把已选的 fast/face 冲掉（唯一 owner 同一条规则）。
   const stored = readArchetypeNodeMeta(meta)
+  const modeId = currentArchetypeMode(archetype, meta).id
+  const resolved = currentArchetypeVariant(archetype, meta)
+  if (!resolved) return null
   if (norm(currentKey) === norm(baseModelKey)) {
-    const canonicalStoredId = stored?.id === archetype.id ? canonicalArchetypeVariantId(archetype, stored.variantId) : ''
-    // 已下线 variantId（face/fast-face）即使 modelKey 已折叠，也要改写成当前有效 id，避免节点默默回默认。
-    if (canonicalStoredId && canonicalStoredId !== stored?.variantId) {
-      return {
-        modelKey: baseModelKey,
-        archetype: { id: archetype.id, modeId: stored!.modeId, variantId: canonicalStoredId },
-      }
-    }
-    return null
+    if (!matchesArchetype(stored, archetype) || !canonicalArchetypeVariantId(archetype, stored.variantId)) return null
+    // 已折叠的旧别名、旧档案/mode 或不兼容变体也要写回；缺省身份仍由 ensure 初始化。
+    if (resolved.id === stored.variantId && stored.id === archetype.id && stored.modeId === modeId) return null
+  } else {
+    // 只迁移认得出的专属旧串；已有兼容的显式 variantId 仍优先，不能被旧模型名冲掉。
+    if (!archetypeVariantForModelId(archetype, currentKey)) return null
   }
-  // modelKey 是变体全串（旧项目钉死的具体变体）→ 折叠成基础 modelKey + 从串 derive variantId。
-  const matched = archetypeVariantForModelId(archetype, currentKey)
-  if (!matched) return null
-  const modeId = stored?.id === archetype.id && stored.modeId ? stored.modeId : archetype.defaultModeId
-  return { modelKey: baseModelKey, archetype: { id: archetype.id, modeId, variantId: matched.id } }
+  const mode = currentArchetypeMode(specializeArchetypeForVariant(archetype, resolved.id), meta)
+  const clamped = clampMetaToModeParams(meta, mode.params)
+  // Patch only scalar changes; undefined clears a removed value when the existing caller merges the patch.
+  const scalarPatch = Object.fromEntries(mode.params
+    .filter(({ key }) => !Object.is(meta[key], clamped[key]))
+    .map(({ key }) => [key, clamped[key]]))
+  return { ...scalarPatch, modelKey: baseModelKey, archetype: { id: archetype.id, modeId, variantId: resolved.id } }
 }
 
 /**
@@ -488,18 +504,18 @@ export function ensureArchetypeNodeMeta(
   archetype: ModelArchetype,
 ): Record<string, unknown> | null {
   const stored = readArchetypeNodeMeta(meta)
-  if (stored && archetype.legacyIds?.includes(stored.id)) {
-    const mode = currentArchetypeMode(archetype, meta)
-    return applyArchetypeModeSwitch(preserveLegacyPixelRatio(meta, mode), archetype, mode.id)
+  const mode = currentArchetypeMode(archetype, meta)
+  if (!stored || stored.id !== archetype.id || stored.modeId !== mode.id) {
+    const migrated = stored && archetype.legacyIds?.includes(stored.id) ? preserveLegacyPixelRatio(meta, mode) : meta
+    const next = applyArchetypeModeSwitch(migrated, archetype, mode.id)
+    return next === meta ? null : next
   }
   // 已是该档案：若有变体但 variantId 缺/失效 → 补默认变体（旧 meta 升级）；否则幂等 null。
-  if (stored?.id === archetype.id) {
-    if (!(archetype.variants?.length ?? 0)) return null
-    const canonicalStoredId = canonicalArchetypeVariantId(archetype, stored.variantId)
-    if (stored.variantId && canonicalStoredId === stored.variantId) return null
-    return applyArchetypeVariantSwitch(meta, archetype, currentArchetypeVariant(archetype, meta)?.id ?? '')
-  }
-  return applyArchetypeModeSwitch(meta, archetype, archetype.defaultModeId)
+  if (!(archetype.variants?.length ?? 0)) return null
+  const variantId = currentArchetypeVariant(archetype, meta)?.id ?? ''
+  if (stored.variantId && variantId === stored.variantId) return null
+  const next = applyArchetypeVariantSwitch(meta, archetype, variantId)
+  return next === meta ? null : next
 }
 
 /** Split legacy pixel size into the new profile's ratio before its size is clamped.

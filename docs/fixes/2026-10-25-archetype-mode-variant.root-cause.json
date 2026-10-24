@@ -1,0 +1,250 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-archetype-mode-variant",
+  "problem_type": "Renderer mode and variant identity lose compatibility at the shared owner boundary",
+  "symptom": "The main Jimeng mode switch keeps v3_0 in edit instead of the declared 5.0 Pro; four compatibility cases fail for Flash mode persistence, supported variant clamping and aliases.",
+  "direct_cause": "Variant resolution receives the unfiltered profile and mode switching selects using the old mode; canonical-only identity checks and early returns skip legacy/canonical mode persistence.",
+  "class_root": "Canonical profile/mode identity and mode-compatible candidates must be established before delegating the one variant priority decision; UI selection, normalized meta and wire projection must refer to that result.",
+  "affected_population": [
+    "Existing canonical and legacy node meta",
+    "Mode/variant switching, auto-normalization, controls, spend confirmation and parameter projection"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+    "src/workbench/generationCanvas/nodes/controls/archetypeMeta.compatibility.test.ts"
+  ],
+  "entry_points": [
+    "currentArchetypeVariant / applyArchetypeModeSwitch / applyArchetypeVariantSwitch",
+    "normalizeArchetypeVariantMeta / ensureArchetypeNodeMeta / buildArchetypeInputParams"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This is repository-authored domain glue. Existing shared resolver, profile declarations, frontend callers and pure host admission/contract code determine the invariant; no third-party or provider behavior is assumed.",
+  "invariants": [
+    "Only archetypeMeta production code changes; no shared/admission/profile/default/price/gate/baseline changes",
+    "Existing shared resolveArchetypeVariant owns all choice priorities; renderer only filters its candidates with existing supportedModeIds semantics",
+    "Compatible explicit choices including aliases/legacy profile IDs win over conflicting model names; no implicit host upgrade",
+    "Switch target mode before variant resolution, specialize/clamp from that legal result, and write canonical IDs explicitly",
+    "Preserve uploaded/edge reference storage, order, custom meta and input immutability; normalization remains idempotent"
+  ],
+  "doors": [
+    {
+      "kind": "write",
+      "path": "src/workbench/ai/v4/spendCardReferences.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/model/canvasReferenceConnection.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/buildNodeModelChangePatch.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+      "symbol": "currentArchetypeVariant"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+      "symbol": "applyArchetypeVariantSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeGenerationComposer.tsx",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/nodeModelArchetype.ts",
+      "symbol": "currentArchetypeVariant"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeParameterControls.tsx",
+      "symbol": "currentArchetypeVariant"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeParameterControls.tsx",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeParameterControls.tsx",
+      "symbol": "applyArchetypeVariantSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeMentionSource.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeModelAutoSelect.ts",
+      "symbol": "normalizeArchetypeVariantMeta"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeModelAutoSelect.ts",
+      "symbol": "ensureArchetypeNodeMeta"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeModelAutoSelect.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/batchImageSettings.ts",
+      "symbol": "ensureArchetypeNodeMeta"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/batchImageSettings.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/referenceSlots.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/runProjectDelivery.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/runProjectDelivery.ts",
+      "symbol": "currentArchetypeVariant"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/store/canvasGraphActions.ts",
+      "symbol": "applyArchetypeModeSwitch"
+    }
+  ],
+  "door_reduction": {
+    "before": 24,
+    "after": 24,
+    "why_not": "These existing renderer/UI/runner readers and user actions remain separate. They already converge in archetypeMeta; the fix repairs that common interpretation rather than remove legitimate controls, reference attachment paths or spending confirmation inputs."
+  },
+  "generality_proof": "Retain all reported tests and execute real renderer functions, shared resolution and pure host admission/contract code across legal/illegal old variants, aliases, legacy IDs, canonical mode migration, control narrowing, raw references and user meta. Shared resolver/profile inputs remain unchanged and compatible inexpensive choices remain authoritative.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+      "symbol": "currentArchetypeVariant",
+      "responsibility": "Resolve the current canonical mode and project compatible candidates into the existing shared owner"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+      "symbol": "applyArchetypeModeSwitch",
+      "responsibility": "Resolve in the target mode, persist the explicit legal variant and clamp only declared select controls"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+      "symbol": "ensureArchetypeNodeMeta",
+      "responsibility": "Persist canonical legacy identity/mode/variant before idempotent/no-variant early exits"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/NodeParameterControls.tsx",
+      "entry_point": "current mode and variant controls",
+      "disposition": "enforced",
+      "evidence": "Both switch callbacks and displayed selection already delegate to the changed archetypeMeta boundary"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/useNodeModelAutoSelect.ts",
+      "entry_point": "normalizeArchetypeVariantMeta and ensureArchetypeNodeMeta",
+      "disposition": "enforced",
+      "evidence": "Keep existing catalog-row migration guard and merge returned patch; shared canonical/legacy identity is interpreted consistently"
+    },
+    {
+      "path": "electron/capabilityCore/modelAdmissionSchema.ts",
+      "entry_point": "archetypeCompileOptions",
+      "disposition": "not-affected",
+      "evidence": "Host uses the unchanged shared resolver and declared variant list, not a new mode fallback; explicit compatible low-cost choices remain unchanged"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any profile with supportedModeIds or legacy identities can reproduce old-mode resolution, premature idempotency and frontend/wire drift.",
+    "same_class_scan": [
+      "Generated all 24 existing renderer caller doors",
+      "Read renderer mode/variant controls, normalization guard, spend confirmation and parameter projection",
+      "Read shared variantResolution and real Jimeng/Flash definitions without editing them",
+      "Read host compile options, admission, module registry and profile request construction; no transport invoked"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts",
+    "invariant": "Canonical mode-compatible candidates are interpreted consistently at the renderer bridge before the single shared resolver decides.",
+    "failure_mode": "Target-mode illegal variants cannot remain selected or leak into the wire model; no legal candidate does not invent a model, and existing host explicit identity is never silently upgraded.",
+    "exception_policy": "none",
+    "strategy": "Repair the existing identity and filtering bridge and remove old-mode preservation; no parallel resolver, provider branch or gate exemption.",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/generationCanvas/nodes/controls/archetypeMeta.compatibility.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/generationCanvas/nodes/controls/archetypeMeta.compatibility.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/nodes/controls/archetypeMeta.ts"
+    ],
+    "rationale": "Replace unfiltered/old-mode choice and premature legacy-mode early exits in place; no alternate legacy resolver remains."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency/API upgrade. Existing shared Nomi domain resolver and declared profiles already own the choice rules.",
+    "exit_criteria": []
+  },
+  "migration": "Existing ensure/normalize canonicalize node metadata lazily through their existing callers; no persisted project file is edited in this task.",
+  "residual_risks": [
+    "No full suite, real App, Provider, paid task, screenshot or production typecheck is run; coordination owns final integration",
+    "Host variant admission remains profile-wide rather than adding mode-specific rejection; this task does not silently transform external explicit unsupported requests into expensive defaults"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/nodes/controls",
+    "tests": [
+      "src/workbench/generationCanvas/nodes/controls/archetypeMeta.compatibility.test.ts"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "src/workbench/generationCanvas/nodes/controls/archetypeMeta.compatibility.test.ts"
+  },
+  "detected_by": "user",
+  "recurrence_check_on": "2026-11-24"
+}
