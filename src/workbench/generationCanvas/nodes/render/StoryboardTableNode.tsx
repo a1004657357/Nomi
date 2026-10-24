@@ -500,7 +500,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
             </Menu>
           </div>
         ) : null}
-        <span className="text-micro text-nomi-ink-50">{rows.length} 镜</span>
+        <span className="text-micro text-nomi-ink-60">{rows.length} 镜</span>
       </header>
 
       <section
@@ -515,7 +515,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
         ) : (
           <div style={{ minWidth: STORYBOARD_TABLE_MIN_CONTENT_WIDTH }}>
             <div
-              className="sticky top-0 z-[1] grid border-b border-nomi-line bg-nomi-paper text-micro font-semibold text-nomi-ink-50"
+              className="sticky top-0 z-[1] grid border-b border-nomi-line bg-nomi-paper text-micro font-semibold text-nomi-ink-60"
               style={{ gridTemplateColumns: GRID_COLUMNS }}
             >
               {['镜头', ...STORYBOARD_FIELD_GROUPS.map((group) => group.label), '图片', '视频', '生成设置'].map(
@@ -544,7 +544,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                   data-expanded={isExpanded ? 'true' : 'false'}
                   className={cn(
                     'grid border-b border-nomi-line-soft text-small last:border-b-0',
-                    isExpanded ? 'min-h-[212px] bg-nomi-ink-02' : 'min-h-[92px]',
+                    isExpanded ? 'min-h-[212px] bg-nomi-ink-05' : 'min-h-[92px]',
                   )}
                   style={{ gridTemplateColumns: GRID_COLUMNS }}
                 >
@@ -565,7 +565,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                         />
                       </>
                     ) : (
-                      <span className="px-1 text-micro text-nomi-ink-50">{row.shot.durationSec || 0} 秒</span>
+                      <span className="px-1 text-micro text-nomi-ink-60">{row.shot.durationSec || 0} 秒</span>
                     )}
                     <span
                       className={cn(
@@ -573,7 +573,7 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
                         row.status === 'generated' && 'bg-workbench-success-soft text-workbench-success-ink',
                         row.status === 'running' && 'bg-nomi-accent-soft text-nomi-accent',
                         row.status === 'error' && 'bg-workbench-danger-soft text-workbench-danger',
-                        row.status === 'pending' && 'bg-nomi-ink-05 text-nomi-ink-50',
+                        row.status === 'pending' && 'bg-nomi-ink-05 text-nomi-ink-60',
                       )}
                     >
                       {STATUS_LABEL[row.status]}

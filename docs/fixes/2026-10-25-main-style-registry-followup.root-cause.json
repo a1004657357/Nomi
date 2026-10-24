@@ -1,0 +1,178 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-main-style-registry-followup",
+  "problem_type": "Unregistered application glyph meanings, invalid table color references and redundant row alignment",
+  "symptom": "After the first style commit, the unchanged icon gate exposes 39 unregistered icons, the Tailwind gate reports two table keys, and the token gate reports 18 edge rules in 13 files.",
+  "direct_cause": "Task-specific icons were imported without semantic-owner registration. Plane geometry uses an aircraft silhouette. The table references nonexistent ink levels. The fullscreen toolbar adds an auto margin after an already flexible title.",
+  "class_root": "Application presentation consumers and the semantic registry drifted from existing shared design owners; redundant alignment declarations also duplicate the flexible title's responsibility.",
+  "affected_population": [
+    "Existing table node styling and existing icon use across 3D props, pose/control/recording, result comparison, assets and Director UI"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx",
+    "scripts/main-style-reference-repair.node-test.mjs",
+    "docs/design/nomi-design-system.md",
+    "tailwind.config.ts",
+    "scripts/check-icon-semantics.mjs",
+    "scripts/check-dangling-tailwind.mjs"
+  ],
+  "entry_points": [
+    "Existing table headings and expanded rows",
+    "3D object/geometry/pose menus and task controls",
+    "Result comparison and asset/output actions",
+    "Fullscreen header title and action strip"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The invariant is determined by repository-owned design policy, real existing consumers and installed glyph source. No third-party API change or dependency upgrade is involved.",
+  "invariants": [
+    "Every existing imported glyph is either in the unchanged baseline or explicitly documented by real meaning and consumer in the existing semantic owner",
+    "Plane geometry uses the already-baselined square glyph, not the aircraft outline",
+    "All table color references resolve in the unchanged live Tailwind mapping",
+    "No metadata is repositioned, no controls are removed, and the toolbar's original geometry is retained when the redundant margin is removed"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/model/storyboardTableSizing.ts",
+      "symbol": "STORYBOARD_TABLE_MIN_CONTENT_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "symbol": "STORYBOARD_TABLE_MIN_CONTENT_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "symbol": "STORYBOARD_TABLE_MIN_CONTENT_WIDTH"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx",
+      "symbol": "Scene3DFullscreenToolbar"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "symbol": "Scene3DFullscreenToolbarProps"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx",
+      "symbol": "geometryItems"
+    }
+  ],
+  "door_reduction": {
+    "before": 6,
+    "after": 6,
+    "why_not": "All six existing read/render doors remain necessary for table sizing and 3D toolbar consumers. Protected storyboardRowOutputs is an enumerated read door only and is never modified. No state ownership changes."
+  },
+  "generality_proof": "The unchanged dictionary and Tailwind gates continue to inspect every production consumer. The extended focused regression runs both scanners against real source, checks the specific geometry glyph, and protects the existing flexible header title and callbacks. Registration names the concrete consumer and meaning rather than adding a baseline exception.",
+  "shared_boundaries": [
+    {
+      "path": "docs/design/nomi-design-system.md",
+      "symbol": "语义图标登记",
+      "responsibility": "Existing single semantic owner documents each retained task-specific glyph, exact consumer and distinction from generic icons"
+    },
+    {
+      "path": "scripts/main-style-reference-repair.node-test.mjs",
+      "symbol": "repairedFiles",
+      "responsibility": "Changed focused static boundary applies existing scanners to table references and all imported glyphs, and checks the planar glyph and redundant-margin removal"
+    },
+    {
+      "path": "tailwind.config.ts",
+      "symbol": "tokenColor",
+      "responsibility": "Unchanged live color mapping; no alias is introduced"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "entry_point": "table headings and expanded rows",
+      "disposition": "enforced",
+      "evidence": "Four literal ink-50 references and one ink-02 background are replaced by existing ink-60 and ink-05 tokens without changing column sizes or markup"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx",
+      "entry_point": "SceneAddToolbar geometryItems and PROP_MENU_ICONS",
+      "disposition": "enforced",
+      "evidence": "Geometry and prop menu glyphs were inspected by actual kind mapping; the aircraft-to-plane mismatch is corrected and concrete prop glyphs are documented"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx",
+      "entry_point": "wipe, side and overlay modes",
+      "disposition": "enforced",
+      "evidence": "Existing ArrowsDiff, Columns and LayersIntersect distinctly represent the three existing comparison modes; documentation registers meanings without touching controls"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "entry_point": "fullscreen title and right action strip",
+      "disposition": "enforced",
+      "evidence": "The existing preceding flex-1 title owns free space; the action strip's extra auto margin computes to zero and is removed without changing any other class"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "The same unregistered-reference pattern occurs across independent menus, task modes, comparison surfaces and asset actions.",
+    "same_class_scan": [
+      "Unchanged icon scanner at 399e30c: 39 unregistered symbols; every symbol inspected at its concrete JSX use or icon map",
+      "Unchanged Tailwind scanner: StoryboardTableNode text-nomi-ink-50 and bg-nomi-ink-02",
+      "rg of edge classes across all 13 reported consumers; only Scene3DFullscreenToolbar already has a preceding flex-1 owner",
+      "node scripts/door-map.mjs STORYBOARD_TABLE_MIN_CONTENT_WIDTH Scene3DFullscreenToolbar --read=Scene3DFullscreenToolbarProps,geometryItems --roots=src"
+    ]
+  },
+  "prevention": {
+    "kind": "static-gate",
+    "enforcement_path": "scripts/main-style-reference-repair.node-test.mjs",
+    "invariant": "All actual used icons remain in the existing semantic dictionary or unchanged baseline; table keys are live and the redundant toolbar margin does not return.",
+    "failure_mode": "The focused static test and unchanged repository checks fail on unregistered icons, invalid keys or restoration of the duplicate header margin.",
+    "exception_policy": "none",
+    "strategy": "Extend the already-existing focused scanner regression, register reviewed semantics at the existing owner, reuse a baseline glyph for plane geometry and remove duplicated alignment responsibility.",
+    "artifacts": [
+      "scripts/main-style-reference-repair.node-test.mjs",
+      "docs/design/nomi-design-system.md",
+      "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dToolbar.tsx"
+    ]
+  },
+  "regression_tests": [
+    "scripts/main-style-reference-repair.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/main-style-reference-repair.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "No old implementation, compatibility path or state format is added. Invalid visual references and the wrong aircraft glyph are replaced in place; only the redundant zero-effect margin is deleted."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Current Tabler and Tailwind dependencies already provide all needed glyphs and colors. A cached isolated Chromium is used only for optional geometry evidence.",
+    "exit_criteria": []
+  },
+  "migration": "No stored data migration; all existing labels, props, callbacks, conditions and dimensions remain. The two functionality-owned files are not modified.",
+  "residual_risks": [
+    "The other 17 row-edge occurrences across 12 files are nonredundant. Preserving their current positions conflicts with the content-flow policy; no equivalent CSS disguise, baseline exception or UI rearrangement is allowed",
+    "Final real-app screenshots, zh/en rendering, workflows, CI, packaged and Windows acceptance belong to the integration line",
+    "Prior preflight proxy failure remains environmental non-execution; no proxy or transport change and no remote freshness claim",
+    "Isolated geometry evidence is not user-project or app acceptance"
+  ],
+  "invariant_owner_layer": {
+    "layer": "scripts",
+    "tests": [
+      "scripts/main-style-reference-repair.node-test.mjs",
+      "scripts/check-icon-semantics.node-test.mjs",
+      "scripts/check-dangling-tailwind.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/main-style-reference-repair.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

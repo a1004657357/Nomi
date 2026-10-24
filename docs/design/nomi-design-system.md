@@ -1069,6 +1069,45 @@ showUndoToast({ message, onUndo, isUndoable, watchUndoable })
 | 展开 / 收起提示词（原地变高显示全文）| `IconArrowsDiagonal` / `IconArrowsDiagonalMinimize2` | 生成节点浮框提示词区右上角那一颗（2026-09-25 用户拍板，参考 LibTV）。选对角双箭头而不是 `IconMaximize`：后者在本仓已是「全屏打开编辑器」（`scene3d.fullscreen.openEditor`），这里是原地变高、不离开当前面；收起用同族的收拢形，一眼看出是同一颗钮的两态 |
 | 画布外那一侧有新东西（点了过去）| `IconArrowDown`（与 `IconArrowUp` / `IconArrowLeft` / `IconArrowRight` 同族按方向取）| 画布边缘提示胶囊 `CanvasArrivalHint` 尾部那一颗（2026-09-25 用户拍板，样张 v1）。箭头只指方向、不是按钮本身的动作；不用 `IconChevron*`：那族在本仓是「展开/折叠」示能 |
 | 中英互译提示词（选中段或整段，原地替换）| `IconLanguage` | 生成节点浮框 B 簇 `NodePromptTranslator`，在「优化」左边。词典里没有现成的：`IconWorld` 读成「联网/公开」、`IconAbc`/`IconLetterCase` 读成「大小写/字体」——「文/A」双字形是各家翻译按钮的通用图形，遮住文字也说得出是翻译 |
+| 将选中的输出归档到本地项目 | `IconArchive` | `OutputCollectorNodeBody.archive` / 归档按钮；不同于 `IconDownload` 的单项下载或 `IconFolderOpen` 的打开目录，保留本地归档动作语义 |
+| 3D 模型文件类型 | `IconFile3d` | `OutputCollectorNodeBody` 的 `result.type === 'model3d'` 媒体类型标识；`IconCube` 是场景/几何对象，不替代文件类型 |
+| 将表格行连接到画布 | `IconArrowUpRight` | `ShotTableGrid` 的 `shotTable.connectRow`；相邻 `IconBoxMultiple` 是展开该行产物，两个动作不混用 |
+| 素材许可信息标识 | `IconBadgeCc` | `VibingDirectorAssetLibrary` 的 Kenney Furniture Kit 许可文案旁；许可具体值以现有 `CC0` 文案为准，不用下载或成功图标代替许可信息 |
+| Blender 工程/集成身份 | `IconBrandBlender` | `NodeResultDownloadButton` 的送入 Blender、`Scene3DEditor` 的 Blender 渲染、`VibingDirectorEditor` / `VibingDirectorFullscreen` 的工程入口与预览占位；通用立方体不替代外部工具身份 |
+| 原图/结果滑杆对比 | `IconArrowsDiff` | `PortraitComparisonControl`、`ImageComparisonNodeBody` 的 `wipe` 模式、`renderRegistry` 的 `compare` 节点；不是交换输入或左右翻页 |
+| 图像并排对比 | `IconColumns` | `ImageComparisonNodeBody` 的 `side` 模式；两列是当前对比方式，不用表示全屏的 `IconMaximize` 代替 |
+| 图像叠加对比 | `IconLayersIntersect` | `ImageComparisonNodeBody` 的 `overlay` 模式；表达两幅图重合，区别于并排与滑杆模式 |
+| 3D 平移变换 | `IconArrowsMove` | `Scene3DFullscreenToolbar` / `scene3dToolbar` 的 `translate` 模式；不是旋转 `IconRotate` 或缩放 `IconZoomScan` |
+| 3D 场景节点树 | `IconListTree` | `Scene3DFullscreen` 的 `showSceneNodes` 面板还原按钮；不是通用设置或素材目录 |
+| 角色操控目标 | `IconManFilled` | `CharacterPossessButton` 的进入角色操控、`scene3dMoveHub` / `scene3dPossessPrompt` 的角色操控入口及角色身份；退出操控仍用 `IconX`，不能用目标身份冒充退出动作 |
+| 角色动作任务 | `IconRun` | `Scene3DFullscreenHeader.TASK_ICON.act`；与构图 `IconPhoto`、运镜 `IconVideo` 分别对应三个既有任务，不代替录制或播放 |
+| 录制 take 入口 | `IconPlayerRecord` | `scene3dMoveHub` 的 `take` 页签；圆形 REC 隐喻表示录制工序，区别于 `IconPlayerPlay` 的播放 |
+| 停止进行中的录制/运行 | `IconPlayerStopFilled` | `TakeRecordButton`、`Scene3DEditor` 的停止 Blender 渲染、`VibingDirectorAssistantPanel` 的停止运行、`WebBridgeConnectionCard` 的停止桥接；停止运行不等于关闭面板 `IconX` |
+| 站立姿势 | `IconArrowBarToUp` | `scene3dCharacterActionBar.ACTION_DEFS.standing`；与下蹲同族成对表示站起，不表示上传或镜头上移 |
+| 下蹲姿势 | `IconArrowBarToDown` | `scene3dCharacterActionBar.ACTION_DEFS.squat`；与站立同族成对表示蹲下，不表示下载 |
+| 挥手姿势 | `IconHandStop` | `scene3dCharacterActionBar.ACTION_DEFS.wave`；此处是手势姿势，旁边仍显示既有动作名；停止录制单独使用方形停止图标 |
+| 座椅/坐姿 | `IconArmchair` | `scene3dToolbar.PROP_MENU_ICONS.sofa` 及 `ACTION_DEFS.sit`；具体座具轮廓同时承载坐姿目标，不与通用包裹图标混用 |
+| 色板资源 | `IconPalette` | `CreativeResourceNodeBody.KIND_ICON.palette`；`IconBrush` 已用于 `style`、`IconSparkles` 用于 `effect`，色板不是这两类资源 |
+| 全景场景组件 | `IconPanoramaHorizontal` | `CanvasSkillNodeBody.COMPONENT_ICONS.scene`；与普通图片 `IconPhoto`、多机位 `IconBoxMultiple` 组件类型区分 |
+| 视频关键帧检查/创建 | `IconPhotoScan` | `NodeVideoFrameToolbar` 的关键帧检查器入口及 `VideoKeyframeInspectorDialog` 的创建关键帧节点；不代替下载当前帧 `IconDownload` |
+| 发送 Director Agent 指令 | `IconSend2` | `VibingDirectorAssistantPanel` 的发送控件；只表达发送，不用于生成、播放或运行结束 |
+| 添加场景模板 | `IconMap2` | `scene3dToolbar` 的场景模板子菜单及模板选择行；地图轮廓表示成套场景布局，不用几何立方体代替整套模板 |
+| 球体几何 | `IconSphere` | `SceneAddToolbar.geometryItems.sphere`；与立方体、圆柱、平面四个真实几何类型区分 |
+| 圆柱几何 | `IconCylinder` | `SceneAddToolbar.geometryItems.cylinder`；不以通用立方体合并已有的形状选择 |
+| 平面几何 | `IconSquare` | `SceneAddToolbar.geometryItems.plane`；复用词典已有平面轮廓，替换误用的飞机轮廓，不登记飞行器概念 |
+| 车辆道具 | `IconCar` | `scene3dToolbar.PROP_MENU_ICONS.car`；普通车辆轮廓，与 SUV、公交车三种既有道具独立对应 |
+| SUV 道具 | `IconCarSuv` | `scene3dToolbar.PROP_MENU_ICONS.suv`；用车型轮廓保持与普通车辆的既有区别 |
+| 公交车道具 | `IconBus` | `scene3dToolbar.PROP_MENU_ICONS.bus`；具体车型，不用普通车辆图标冒充公交车 |
+| 自行车道具 | `IconBike` | `scene3dToolbar.PROP_MENU_ICONS.bicycle`；不与滑板/踏板车或摩托车合并 |
+| 电动踏板车道具 | `IconScooter` | `scene3dToolbar.PROP_MENU_ICONS.scooter`；保持已有两轮交通工具类型的区别 |
+| 建筑道具 | `IconBuildingSkyscraper` | `scene3dToolbar.PROP_MENU_ICONS.building`；楼体轮廓区分场景中的建筑与通用几何立方体 |
+| 树木道具 | `IconTrees` | `scene3dToolbar.PROP_MENU_ICONS.tree`；是树木对象，不代表风景图片或整个场景 |
+| 路灯道具 | `IconLamp` | `scene3dToolbar.PROP_MENU_ICONS.streetlamp`；是具体路灯道具，`IconBulb` 已用于添加场景光源，二者不合并 |
+| 墙面道具 | `IconWall` | `scene3dToolbar.PROP_MENU_ICONS.wall`；墙体轮廓区分实体墙与无厚度的平面几何 |
+| 冰箱道具 | `IconFridge` | `scene3dToolbar.PROP_MENU_ICONS.fridge`；具体家居道具，不与通用包裹/柜体合并 |
+| 洗衣机道具 | `IconWashMachine` | `scene3dToolbar.PROP_MENU_ICONS.washingMachine`；保留门圈轮廓以区分冰箱与其他方形家具 |
+| ATM 道具 | `IconCreditCard` | `scene3dToolbar.PROP_MENU_ICONS.atm`；仅作为现有 ATM 道具的识别隐喻，不用于计费或额度确认，后者仍用 `IconCoin` |
+| 背包道具 | `IconBackpack` | `scene3dToolbar.PROP_MENU_ICONS.backpack`；具体背包轮廓，与通用包裹或文件夹不同 |
 
 ### 选图规则
 

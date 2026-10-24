@@ -49,7 +49,7 @@ export function Scene3DFullscreenToolbar({
         <IconCube size={18} className="shrink-0 text-[var(--workbench-muted)]" />
         <div className="min-w-0 truncate text-body-sm font-medium text-[var(--workbench-ink)]">{nodeTitle}</div>
       </div>
-      <div className="ml-auto flex min-w-0 max-w-[72vw] items-center gap-2 overflow-x-auto">
+      <div className="flex min-w-0 max-w-[72vw] items-center gap-2 overflow-x-auto">
         <div className="flex items-center gap-1 rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] p-0.5">
           <PanelButton title="移动" active={transformMode === 'translate'} onClick={() => onTransformModeChange('translate')}>
             <IconArrowsMove size={15} />

@@ -22,10 +22,10 @@ import {
   IconMaximize,
   IconMinimize,
   IconPackage,
-  IconPlane,
   IconPlus,
   IconScooter,
   IconSphere,
+  IconSquare,
   IconTable,
   IconTrash,
   IconTrees,
@@ -177,7 +177,7 @@ export function SceneAddToolbar({
     { kind: 'box' as const, label: t('scene3d.toolbar.geometryKind.box'), icon: IconBox },
     { kind: 'sphere' as const, label: t('scene3d.toolbar.geometryKind.sphere'), icon: IconSphere },
     { kind: 'cylinder' as const, label: t('scene3d.toolbar.geometryKind.cylinder'), icon: IconCylinder },
-    { kind: 'plane' as const, label: t('scene3d.toolbar.geometryKind.plane'), icon: IconPlane },
+    { kind: 'plane' as const, label: t('scene3d.toolbar.geometryKind.plane'), icon: IconSquare },
   ]
 
   const closeAddMenu = React.useCallback(() => {
