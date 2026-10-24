@@ -12,16 +12,16 @@
     "date": "2026-10-02"
   },
   "/en/models": {
-    "hash": "b2d277150a85a2db",
-    "date": "2026-10-02"
+    "hash": "c86af7099ae9b80d",
+    "date": "2026-10-24"
   },
   "/en/models/agnes-image-2-1": {
     "hash": "6243e91f9cf13dce",
     "date": "2026-10-02"
   },
   "/en/models/agnes-video-2-5": {
-    "hash": "302ed622633d8770",
-    "date": "2026-10-02"
+    "hash": "15e19c0870cf9b4f",
+    "date": "2026-10-24"
   },
   "/en/models/dop": {
     "hash": "7958f81dae770ed9",
@@ -92,8 +92,8 @@
     "date": "2026-10-02"
   },
   "/en/models/minimax-h3": {
-    "hash": "fe058a9e45e313d0",
-    "date": "2026-10-02"
+    "hash": "98439f535f43aed5",
+    "date": "2026-10-24"
   },
   "/en/models/minimax-h3-max": {
     "hash": "c8326f03473dd541",
@@ -372,12 +372,12 @@
     "date": "2026-10-02"
   },
   "/en/skills/workbench-fixation-planner": {
-    "hash": "98c9b6e346f298a9",
-    "date": "2026-10-02"
+    "hash": "971625e3f4dae134",
+    "date": "2026-10-24"
   },
   "/en/skills/workbench-generation": {
-    "hash": "34823eced33d1b44",
-    "date": "2026-10-02"
+    "hash": "c59a2d489666008d",
+    "date": "2026-10-24"
   },
   "/en/skills/workbench-storyboard-planner": {
     "hash": "c2e73bcfbb279689",
@@ -432,16 +432,16 @@
     "date": "2026-10-02"
   },
   "/models": {
-    "hash": "724c7ab062e1070e",
-    "date": "2026-10-02"
+    "hash": "beeffa01de37f2ac",
+    "date": "2026-10-24"
   },
   "/models/agnes-image-2-1": {
     "hash": "124beac592760cec",
     "date": "2026-10-02"
   },
   "/models/agnes-video-2-5": {
-    "hash": "256b2be0b44a8054",
-    "date": "2026-10-02"
+    "hash": "8b87f04e02f3f01e",
+    "date": "2026-10-24"
   },
   "/models/dop": {
     "hash": "be97eb2925e364cc",
@@ -512,8 +512,8 @@
     "date": "2026-10-02"
   },
   "/models/minimax-h3": {
-    "hash": "bcf8114b1ec343b7",
-    "date": "2026-10-02"
+    "hash": "bfa427e78cd8d78e",
+    "date": "2026-10-24"
   },
   "/models/minimax-h3-max": {
     "hash": "6b0731e5dc3abc99",
@@ -792,12 +792,12 @@
     "date": "2026-10-02"
   },
   "/skills/workbench-fixation-planner": {
-    "hash": "547261a7551e8acb",
-    "date": "2026-10-02"
+    "hash": "c9c4a070a798c432",
+    "date": "2026-10-24"
   },
   "/skills/workbench-generation": {
-    "hash": "9cef29cc425befa0",
-    "date": "2026-10-02"
+    "hash": "f7229aab2e067eb6",
+    "date": "2026-10-24"
   },
   "/skills/workbench-storyboard-planner": {
     "hash": "5e83d220cd17658c",

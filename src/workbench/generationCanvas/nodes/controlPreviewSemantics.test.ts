@@ -60,7 +60,7 @@ describe.each(['zh-CN', 'en'] as const)('preview semantics in %s', locale => {
     const node: GenerationCanvasNode = { id: 'preview-director', kind: 'vibingDirector', title: 'USER_TITLE', position: { x: 0, y: 0 }, meta: { vibingDirectorState: state } }
     const before = JSON.stringify(node)
     const markup = renderToStaticMarkup(React.createElement(MantineProvider, null,
-      React.createElement(VibingDirectorEditor, { node, readOnly: true }),
+      React.createElement(VibingDirectorEditor, { node, width: 420, height: 280, readOnly: true }),
     ))
     expect(markup).toContain('USER_AUTHORED_BRIEF')
     expect(markup).toContain(i18n.t('canvasComponents.openVIBINGDirector'))
@@ -76,11 +76,13 @@ describe.each(['zh-CN', 'en'] as const)('preview semantics in %s', locale => {
     expect(control.getText(file)).not.toContain('IconVideo')
     expect(control.openingElement.getText(file)).toContain('style={frameStyle}')
     const node: GenerationCanvasNode = { id: 'preview-video', kind: 'video', title: 'USER_VIDEO', position: { x: 0, y: 0 } }
+    const before = JSON.stringify(node)
     const markup = renderToStaticMarkup(React.createElement(MantineProvider, null,
       React.createElement(StoryboardVideoPreview, { node, videoUrl: 'nomi-local://asset/fixture/video.mp4', posterUrl: '', compact: true }),
     ))
     expect(markup).toContain('tabler-icon-player-play-filled')
     expect(markup).not.toContain('tabler-icon-video')
+    expect(JSON.stringify(node)).toBe(before)
   })
 })
 
