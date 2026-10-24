@@ -158,7 +158,7 @@
   "residual_risks": [
     "「技能规定的参数真的落进工具入参」这一半没被这次修动：选了技能那 11 句 skillParamOk 9/11 → 9/11，两格未命中里 S02/S09 整轮只做了读，那是『没发生』不是『没做到』。要真的保证它，需要工具面上的守卫（方案写在 docs/evidence/2026-09-15-skill-real-run/principles-hypothesis.md 的第 ② 层），本次未实施。",
     "composeAgentSystemPrompt 同为零生产调用者，只有测试引用它；本次未删（它不是本失败类的并行版，删它要连带处置几条只挂在它上面的语言规则回归断言）。记账在 PR 正文的「发现但没动」。",
-    "『一次只能选一个技能』（T-AG-05）未放开：creationActiveSkill 是单值（src/workbench/workbenchStore.ts:118），改成多值要连带 laneDesktopInput.ts:30 的 skillKey 单值 schema、laneContracts.ts:47 的转录字段、laneProjection.ts:235 的 chip 投影与 laneViewModel.ts:336 的渲染，且两条技能的方法互相冲突时谁优先没有产品裁决。记账，不在本次。",
+    "『一次只能选一个技能』（）未放开：creationActiveSkill 是单值（src/workbench/workbenchStore.ts:118），改成多值要连带 laneDesktopInput.ts:30 的 skillKey 单值 schema、laneContracts.ts:47 的转录字段、laneProjection.ts:235 的 chip 投影与 laneViewModel.ts:336 的渲染，且两条技能的方法互相冲突时谁优先没有产品裁决。记账，不在本次。",
     "真实模型腿只有一个模型（deepseek-chat）一个温度（0），n=11 的选中技能组；skillVisible 是下界（标记会漏报，实例见 prompts.md 的局限 1）。"
   ],
   "external_sources": [],

@@ -29,7 +29,7 @@ export const APIMART_VENDOR_SEED = {
   /**
    * 每周雷达的逐模型存活探针（`scripts/model-liveness.ts` 专用，一个模型一次、刻意付费）。
    * **不要**拿它验 key —— 那是下面的 `credentialProbe`；2026-09-22 之前两者共用这一个字段，
-   * 于是用户点一次「保存验证」就替他跑了一遍这条付费探针（T-MO-10、09-11 群反馈）。
+   * 于是用户点一次「保存验证」就替他跑了一遍这条付费探针（、09-11 群反馈）。
    */
   livenessProbe: {
     request: { method: "POST", path: "/api/v1/chat/completions", body: { model: "{{model}}", messages: [{ role: "user", content: "Hi" }], max_tokens: 1, stream: false } },

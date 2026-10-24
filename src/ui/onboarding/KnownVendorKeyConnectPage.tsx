@@ -70,7 +70,7 @@ export function KnownVendorKeyConnectPage({
   React.useEffect(() => setVerificationPending(credentialVerificationPending), [credentialVerificationPending])
   /**
    * 「点这个按钮会不会花钱」——**问主进程那份唯一的探测策略**，不在这里第二次判
-   * （T-MO-10，用户 2026-09-22 拍板）。此前这页只写「保存验证」，而 apimart 那一下是一次
+   * （，用户 2026-09-22 拍板）。此前这页只写「保存验证」，而 apimart 那一下是一次
    * 真实生成、扣用户积分（09-11 群反馈）。问不到（旧 preload / 后台没起来）就显示「说不准」，
    * **不许**默认显示「免费验证」——不知道就不许说免费。
    */
@@ -241,7 +241,7 @@ export function KnownVendorKeyConnectPage({
           ) : null}
           {!saved ? (
             <div className="mt-5">
-              {/* 按钮上方如实说这一下会发什么、花不花钱（T-MO-10）。文案的料源是主进程的探测策略，
+              {/* 按钮上方如实说这一下会发什么、花不花钱（）。文案的料源是主进程的探测策略，
                   不是这里按 vendor 名猜的——两份判断里会漂的那一份正好是钱。 */}
               <p className="text-caption leading-relaxed text-nomi-ink-40" data-credential-probe-cost={probePlan?.cost ?? 'unknown'}>
                 {probeCostHint}

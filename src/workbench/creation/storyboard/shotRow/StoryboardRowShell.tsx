@@ -24,7 +24,7 @@ import { useElementWidth } from './useElementWidth'
  * 2026-09-21 起这一层还多干一件事：**量自己有多宽，定这一行走宽档还是窄档**
  * （样张 v1，判据与到期条件都在 `storyboardRowDensity.ts`）。量在这里是因为网格的 owner 在这里——
  * 参考列宽和列模板必须同时换，换成两处就是又一份「同一语义两份定义」。
- * **T-DS-01 · A-2 落地时把窄档整个收回。**
+ * ** · A-2 落地时把窄档整个收回。**
  */
 
 type Props = {

@@ -54,7 +54,7 @@ const WATCHED = [
   'src/workbench/ai/v4/agentPanelSpendCard.ts',
   'src/workbench/ai/v4/useAgentPanelV4Data.ts',
   'src/workbench/ai/ProjectAgentResidentShell.tsx',
-  // 工具回执这一面（2026-09-18 · T-ED-02）。模型读到的 `User sees: …` 那一行也是一次 announce：
+  // 工具回执这一面（2026-09-18 · ）。模型读到的 `User sees: …` 那一行也是一次 announce：
   // 它说「一张卡在等你」，槽里就必须真有一张。`verbDeclaration.ts` 是那句承诺的出处
   // （`user_sees_review_card` 的后果句写着「全自动档它直接应用，而且**结果会这么说**」）。
   'electron/agentLane/laneExtendedTools.ts',

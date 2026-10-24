@@ -58,7 +58,7 @@ function startedGenerationAction(result: unknown): LaneToolNextAction {
 /**
  * 写动词成功时用户接下来看到什么（设计正本 §6.2）。
  *
- * ── 为什么它不能是一张静态表（2026-09-18 · T-ED-02）──
+ * ── 为什么它不能是一张静态表（2026-09-18 · ）──
  *
  * 这一句是**回执**：它在动作已经做完之后写，讲的是用户此刻看到什么。而这里原来对
  * `edit_timeline` **无条件**回「时间轴高亮着计划，一张复审卡在问用户要不要应用」——
@@ -96,7 +96,7 @@ function nextActionFor(
       return { kind: 'none', userSees: 'The timeline is back to before that change.' }
     case 'delete_from_canvas':
       // 不可逆动词在每一档都先出确认卡（`capabilityIsHardGated`），但 `kind` 仍从真实结论取：
-      // 写死的那一刻，下一个动词就会再来一次 T-ED-02。
+      // 写死的那一刻，下一个动词就会再来一次 。
       return { kind: confirmed ? 'user_sees_confirm_card' : 'none',
         userSees: confirmed ? 'The nodes are gone from the canvas after the user confirmed.' : 'The nodes are gone from the canvas.' }
     case 'export_video':

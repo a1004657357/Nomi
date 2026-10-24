@@ -100,7 +100,7 @@ export async function revalidatePendingCredential(vendorKey: string): Promise<vo
   // 鉴权真错时，上游 401 会经现有诚实报错路径回到用户面前。
   const plan = credentialProbePlan(vendorKey)
   if (plan.kind === 'first-use') return
-  // 会花钱的探测**只由用户显式点「保存验证」发起**（T-MO-10，2026-09-22）。首用前的这一下
+  // 会花钱的探测**只由用户显式点「保存验证」发起**（，2026-09-22）。首用前的这一下
   // 是我们自己挑的时机，不该在这里横插一张付费确认卡；判据本来就有——紧接着的那次真实调用。
   if (plan.cost === 'paid') return
   const vendor = state.vendors.find(item => item.key === vendorKey)

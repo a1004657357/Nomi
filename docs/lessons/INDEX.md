@@ -118,7 +118,7 @@
 - [技能里的指令会跨代累积，模型服从的是过期那条](stale-directives-outlive-tool-renames.md) — Agent「只回文字不调工具」先翻这条；工具**名**过期有门岗，「该不该调用它」的祈使句过期没有任何机器看得见；删过期禁令要只删过期那半（「不许写画布」作废时「不许花钱」仍成立）
 - [走查手写的模型面调用没有类型，动词一改名它就静默失配](walkthrough-tool-args-are-a-compiler-blind-spot.md) — 改完动词字段名说「引用方都同步了」前；或走查报「某某没有落成」而你没动那条生产代码
 
-- [CI 门岗拿两个时间点比较，别人刚合的改动会算到你头上](ci-gates-compare-two-points-in-time.md) — Contracts 红在你没碰过的文件上、刚 rerun 或刚批准 fork 运行时；合 main 重推即可，别抬基线（根治 T-QA-33）
+- [CI 门岗拿两个时间点比较，别人刚合的改动会算到你头上](ci-gates-compare-two-points-in-time.md) — Contracts 红在你没碰过的文件上、刚 rerun 或刚批准 fork 运行时；合 main 重推即可，别抬基线（根治 ）
 ## C. Git 交付、分支与文档改动
 
 - [三点 diff 会掩盖过期分支的大回滚](three-dot-diff-hides-stale-branch-reverts.md) — 判断能不能合必须用两点 diff
@@ -145,7 +145,7 @@
 - [只在 Mac 上测，就是让 82% 的用户替我们测](mac-only-testing-ships-windows-blind.md) — 发版前；Windows 用户报卡死/点了没反应/保存或导入失败而 Mac 复现不了；「只在 Windows 红」的测试想当噪音跳过时。附同日五个 Windows 专属问题的机制对照表与「用 Electron 自带 Node 判红绿」
 - [手拼 `file://` 判断「我是不是入口」，Windows 上门岗静默零输出、退出码 0](main-guard-hand-built-file-url-is-silent-on-windows.md) — ✅ 已由 `check:main-guard` 接管；Windows 上某个门岗/脚本一行不打印就退出 0 时先读；入口判断只写 `pathToFileURL(process.argv[1]).href`
 - [修之前先数门：这份状态到底有几个入口](count-the-doors-before-fixing.md) — 判为 recurring、或同一模块这周又来一份合同时：先跑 `scripts/door-map.mjs` 把全部写/读入口摆出来再决定修在哪层；附 2026-09-11 三簇同根 bug 的 file:line
-- [长寿命对象不许揣短寿命名词当身份证](holder-must-not-keep-a-shorter-lived-noun.md) — `surface_port_stale` / `unavailable`、或合同写了「现抓」真机仍红时先读；冻点从 open 滑到 prepare 再滑到 execute 是同一类，不是结构改完；产品债 T-AG-16
+- [长寿命对象不许揣短寿命名词当身份证](holder-must-not-keep-a-shorter-lived-noun.md) — `surface_port_stale` / `unavailable`、或合同写了「现抓」真机仍红时先读；冻点从 open 滑到 prepare 再滑到 execute 是同一类，不是结构改完；产品债 
 - [能力绑在组件挂载生命周期上，「不存在」就会被说成「过期」](capability-bound-to-component-lifecycle-reports-stale.md) — Agent/MCP 工具「时好时坏」、`*_stale` 一族错误码重试永远撞同一句、或你正要在 `.tsx` useEffect 里 `setXxxTools(api)` 发布能力时读；owner 上移到会话层、组件只做增强覆盖；门岗 `check:capability-lifecycle`
 - [读路径不许写盘：像读实为写的 clientInfo 把本机 5 个 MCP 客户端配置指向死 profile](mcp-read-path-must-not-write-host-configs.md) — 开设置页就改写真实宿主配置、写了不读回照样绿灯；守卫下沉到唯一写盘门，隔离判据用 os.userInfo().homedir；跑隔离实例前先备份 5 个文件
 - [Antigravity 图像验证两平台一起红：自己的 agent 定义关掉了自己的钩子](antigravity-hooks-need-inherit-customizations.md) — `inheritCustomizations:false` 在 agy ≥1.1.27 连 hooks 一起关；「加载了」≠「执行了」；同码双平台红先查共享层

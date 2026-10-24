@@ -81,7 +81,7 @@ export function findExecutableModelForTask(
 /**
  * 在**全部已启用供应商**里解出一行某类可执行模型。
  *
- * 为什么要有它（2026-09-17，T-RL-08）：视频拆解的转写腿原来写的是
+ * 为什么要有它（2026-09-17，）：视频拆解的转写腿原来写的是
  * `findExecutableModel(brain.vendor, "", "audio")`——只在**文本大脑那一家**里找 audio 模型。
  * 大脑是 Moonshot 时它当然找不到，于是用户拿到「没有可用的转写模型」，
  * 哪怕 APIMart / 火山语音的转写模型就在隔壁启用着。把「谁来做转写」和「谁来做文本」

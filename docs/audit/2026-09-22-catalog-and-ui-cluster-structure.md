@@ -1,7 +1,7 @@
 # 结构评审：`electron/catalog` 与 `src/ui` 的症状聚簇（2026-09-17 → 2026-09-22）
 
 > 状态：📎 结构评审（`check:symptom-cluster` 触发：模块 `electron/catalog` 7 天内 11 份根因合同，模块 `src/ui` 同期 7 份）
-> 触发合同：[`2026-09-22-credential-probe-paid-without-consent`](../fixes/2026-09-22-credential-probe-paid-without-consent.root-cause.json)（本 PR #845，T-MO-10）
+> 触发合同：[`2026-09-22-credential-probe-paid-without-consent`](../fixes/2026-09-22-credential-probe-paid-without-consent.root-cause.json)（本 PR #845，）
 > 姊妹评审（**不重写，交叉引用**）：[`2026-09-22-model-integration-layer-structure.md`](./2026-09-22-model-integration-layer-structure.md)（#847）、[`2026-09-22-src-ui-projection-cluster.md`](./2026-09-22-src-ui-projection-cluster.md)（#847）、[`2026-09-18-workbench-symptom-cluster-review.md`](./2026-09-18-workbench-symptom-cluster-review.md)、[`2026-09-21-capability-core-value-layer-structural-review.md`](./2026-09-21-capability-core-value-layer-structural-review.md)
 > 范围：只看这两个模块键在本窗口内圈住的合同。不提新架构方案，**不在本 PR 动任何一刀**。
 
@@ -117,9 +117,9 @@ done
 
 本 PR 立的 `electron/catalog/credentialProbePolicy.ts` 正是给第二行补上那个声明位，
 并且把缺省定成 fail-closed（种子不声明 `cost` 就判 `paid` = 先问），理由写在文件头：
-T-MO-20 真实烧掉过 $0.439，「我以为它免费」必须写成「有出处地声明它免费」才算数。
+ 真实烧掉过 $0.439，「我以为它免费」必须写成「有出处地声明它免费」才算数。
 
-这一簇还欠一扇门：**T-MO-27 / `onboardingIpc.probeOneProtocol`**——自定义中转的「测试连接」/
+这一簇还欠一扇门：** / `onboardingIpc.probeOneProtocol`**——自定义中转的「测试连接」/
 协议自动探测今天仍然静默发一次真实 `POST /chat/completions`。它没随本刀一起改是有理由的
 （协议判别这个问题模型列表答不了；而在发版前阻断 lane 里给每次「测试连接」加确认卡，
 那张卡在渲染层不可达时 fail-closed，会把自定义供应商向导变成死路）。本刀的合同把它
@@ -153,7 +153,7 @@ T-MO-20 真实烧掉过 $0.439，「我以为它免费」必须写成「有出�
 
 ## 5. 不做什么，为什么
 
-- **不在本 PR 动任何一刀。**本 PR（T-MO-10）只做「验这一下花不花钱」这一件事。子簇 A 的第四扇门、
+- **不在本 PR 动任何一刀。**本 PR（）只做「验这一下花不花钱」这一件事。子簇 A 的第四扇门、
   子簇 B 的两道门岗，都写成了下一刀，不夹带。
 - **不让 `symptom-cluster` 的模块键变聪明。**这已经是第三份评审记下同一个误报形状了，很诱人去修。
   但 `symptom-cluster-lib.mjs` 的注释已经把代价写在前头：门岗只判**做没做**，

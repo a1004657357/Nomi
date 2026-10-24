@@ -96,7 +96,7 @@ systemPrompt: [next.systemPrompt, skill?.body].filter(Boolean).join('\n\n')
 
 ### 池子 ③ 我们自己
 
-- **`research/skill-trigger-mechanism-20260912` 远端分支（41b9102）** —— T-AG-07 的调研结论，
+- **`research/skill-trigger-mechanism-20260912` 远端分支（41b9102）** ——  的调研结论，
   **独立地得出了同一个根因**，必须先读再动手：
   - 「触发机制本身与标准一致（description 驱动 + `read` 正文），没坏」；
   - `prior-art.md` §2.3 逐字点出 `laneDesktopRuntime.ts:170-173` 的
@@ -135,7 +135,7 @@ systemPrompt: [next.systemPrompt, skill?.body].filter(Boolean).join('\n\n')
   期待一份完整的 SKILL.md（R31），在那里裁掉才是错的。
 - `<available_skills>` 索引那条路一个字不改。
 - 不改 Agent 面板 UI；不做技能触发机制重设计。
-- 「一次只能选一个技能」（T-AG-05）不在本次放开，理由见 `docs/evidence/2026-09-15-skill-real-run/README.md`。
+- 「一次只能选一个技能」（）不在本次放开，理由见 `docs/evidence/2026-09-15-skill-real-run/README.md`。
 
 ## 验收门
 

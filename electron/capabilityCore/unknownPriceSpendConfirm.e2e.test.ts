@@ -4,7 +4,7 @@ import { spendAuthorizationGates } from "../shared/productionSpendAuthority";
 // 这台机器就是干净装机：目录一条价都没填（`unpriced: true` ⇒ 整条链的价格全是 `{ known:false }`），
 // 也就是今天 204 个内置生成模型里**每一个**的真实处境。两件事必须同时成立：
 //   ① 生成**跑得通**——供应商真的收到了请求（从前这里抛 `generation_pricing_unknown`，
-//      卡上「仍要生成」按下去必然失败，就是 TODO T-MO-25 登记的那条）；
+//      卡上「仍要生成」按下去必然失败，就是 TODO  登记的那条）；
 //   ② 屏上和账本上**没有一处 0**——未知有自己的位置，绝不被写成「这次免费」。
 //
 // 为什么走这个夹具而不是 mock：正在修的那条边界（封印 → 铸收据 → 决门 → 消费 → 提交 → 账本）
@@ -44,7 +44,7 @@ describe("未知价：Agent 面板 / 全自动 两条路都跑得通，且哪儿
       const confirmed = await withWindow.confirmPendingSpend({
         projectId: PROJECT_ID, operationId: OPERATION_ID, quoteId: pending[0].quoteId,
       });
-      // 这一行就是 T-MO-25：从前它必然 `{ ok:false }`（`generation_pricing_unknown` 只进 console）。
+      // 这一行就是 ：从前它必然 `{ ok:false }`（`generation_pricing_unknown` 只进 console）。
       expect(confirmed).toMatchObject({ ok: true, code: "spend_confirmed" });
       await base.canvasLanding.settleCanvasLanding(PROJECT_ID);
 

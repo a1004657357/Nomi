@@ -51,7 +51,7 @@ flowchart LR
 
 以下任一项未满足，Phase 1 只能做治理门和 red tests，不能切换生产 writer：
 
-- `check:concept-owners` 可对新增概念和第二写口 fail-closed；TODO T-QA-24 仍未实现。
+- `check:concept-owners` 可对新增概念和第二写口 fail-closed；TODO  仍未实现。
 - direct canvas remote/paid 路径有同一 `ExecutionContractV1 → authorization → outbox → observation → artifact` 的真实 Electron/provider 证据。
 - Run journal、intent log、approval/budget side-ledger 有 commit marker、崩溃点恢复矩阵和 crash-injection 测试。
 - 冷重启、重开项目、切换项目、跨宿主和 Windows storage evidence 能用稳定身份重建同一 Run。

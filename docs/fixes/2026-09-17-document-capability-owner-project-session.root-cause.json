@@ -221,7 +221,7 @@
   },
   "migration": "No persisted data changes. Document revision is now the document's updatedAt stamp instead of a per-mount counter; preconditions are captured and checked within one session, so no stored value depends on the old counter.",
   "residual_risks": [
-    "Model-facing advice strings (surfacePortFailureAdvice, the breaker block reason) are still English and reach the panel untranslated — the same family as TODO T-AG-16; not changed here.",
+    "Model-facing advice strings (surfacePortFailureAdvice, the breaker block reason) are still English and reach the panel untranslated — the same family as TODO ; not changed here.",
     "The error-code table exists in six copies (mcpToolErrorResults ×2 / rpcError / canvasReadPublicError / documentRead|WriteTransportAdapters / timelineTransportAdapters / surfacePortBinding); this change adds capability_unsupported where a real branch now throws it and removes document_target_stale, but does not merge the copies (R14.1 finding, reported to the coordinator)."
   ],
   "invariant_owner_layer": {

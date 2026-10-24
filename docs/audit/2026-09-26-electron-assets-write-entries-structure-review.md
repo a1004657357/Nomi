@@ -34,7 +34,7 @@
 
 ## 下一步（进 TODO，不在这个 PR 里做）
 
-把五扇写入口收成一条流水线：`名字 → 嗅类型 → 取字节 → 放置（唯一命名） → sidecar → 广播`，各写入口只提供「字节从哪来、落哪个桶」，其余步骤只有一份。配一条结构测试：`electron/assets/**` 里除流水线本身，不许直接 `fs.writeFileSync` / `renameSync` / `linkSync` 到 `assets/` 下。已登记为 TODO T-MD-13。
+把五扇写入口收成一条流水线：`名字 → 嗅类型 → 取字节 → 放置（唯一命名） → sidecar → 广播`，各写入口只提供「字节从哪来、落哪个桶」，其余步骤只有一份。配一条结构测试：`electron/assets/**` 里除流水线本身，不许直接 `fs.writeFileSync` / `renameSync` / `linkSync` 到 `assets/` 下。已登记为 TODO 。
 
 ## 以后在 electron/assets 加规矩时先答一句
 

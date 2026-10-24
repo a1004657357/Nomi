@@ -1,6 +1,8 @@
 {
   "schema_version": 3,
   "id": "2026-10-02-paid-submit-no-blind-resend",
+  "detected_by": "walkthrough",
+  "recurrence_check_on": "2026-11-24",
   "problem_type": "付费提交把「连接被重置」当成「没写出去」盲目重发，不支持幂等的供应商会收到同一镜两笔",
   "symptom": "真应用复现（breaker E9）：点了 3 张图，APIMart 夹具先后收到 1、1、2、3 笔；D9：连接被掐断后画布写「请求没发到服务商」，但供应商其实已经收下。已随 v0.22.0–0.22.5 发布。",
   "direct_cause": "electron/outboundDispatchEvidence.ts 的 provesNotWritten 把 UND_ERR_SOCKET 一律判成「没写出去」，经 productionGenerationSubmission.ts:498 变成 SubmissionNotDispatchedError，再由 submissionOutbox.ts 的 submitOnce 自动重发一次；而 APIMart 档案 submitIdempotency=false，submitWithContext 还把 idempotencyKey 丢了，重发就是第二张单。节点文案又按最后一次失败（ECONNREFUSED）选「没发到」。",

@@ -103,22 +103,22 @@ owner 层 = `electron/integrationCertification/`（会话层）。新增
 - 真机一次：隔离 profile，DeepSeek 官方端点走「接一个 OpenAI 兼容中转站」，
   会话能落终态、certifying 阶段能取消（截图见 PR 正文）
 
-## 七、本单之后怎么接（T-MO-07，不在本单）
+## 七、本单之后怎么接（，不在本单）
 
-T-MO-07 = 并行验证 + 每模型 30s 超时 + 部分成功 + 只重测失败。它**依赖**本单：
+ = 并行验证 + 每模型 30s 超时 + 部分成功 + 只重测失败。它**依赖**本单：
 
-1. **per-model 超时先要有归属**。本单只保证「批次一定落终态」；T-MO-07 要的是
+1. **per-model 超时先要有归属**。本单只保证「批次一定落终态」； 要的是
    「每个模型各自落终态」，那是 `ProviderAdapterService.process()` 里把串行循环换成
    `Promise.allSettled` + per-model `awaitStep(timeoutMs: 30_000)`。
    现有 `awaitAdapterStep` 已经支持 per-step timeout，不用新造等待原语。
-2. **批次 deadline 会从「压线」变成「几乎用不上」**。6 个模型串行压 5 分钟是 T-MO-07
+2. **批次 deadline 会从「压线」变成「几乎用不上」**。6 个模型串行压 5 分钟是 
    要解决的 P1；并行之后批次时间 ≈ 最慢的那个模型。此时
    `PROVIDER_ADAPTER_BATCH_TIMEOUT_MS` 应当下调，而**会话 deadline 会自动跟着降**——
    因为本单已经把它做成派生量，`assertSessionDeadlineOutlastsRunSettlement` 会替我们
    检查新的大小关系。这就是本单不拍数字的回报。
 3. **部分成功的终态词表要先定**。`promoteFinal(..., deadlineReached)` 已经会晋升已通过的
    模型，会话侧 `partial` 这个 stage 也已经存在（`integrationStageFromAdapterRun`），
-   所以 T-MO-07 不需要新 stage；要做的是让 `partial` 带上逐模型 ✅/❌，
+   所以  不需要新 stage；要做的是让 `partial` 带上逐模型 ✅/❌，
    而逐模型原文在本单之前就已经投影到会话面上了（`modelResultsFromRun`）。
 4. **「只重测失败模型」** = 复用同会话再 propose 一次，`selections` 填上轮失败者。
    本单把「卡住的会话能被取消/收尸」修好之后，这个重试循环才有意义——
@@ -151,7 +151,7 @@ T-MO-07 = 并行验证 + 每模型 30s 超时 + 部分成功 + 只重测失败�
 | `assertTerminalWriteOutlastsLease`（派生关系机检） | `electron/providerAdapter/terminalGuarantee.ts:44` | **照抄手法**：`assertSessionDeadlineOutlastsRunSettlement` 是它的同族，让「会话 deadline > run 收敛上限」变成构造期就炸的断言。 |
 | `adapterTerminalReasonCode`（run 终态 → 封闭原因码） | `electron/integrationCertification/integrationSessionRecord.ts:40` | 复用它产出 `certification_timed_out`，不在看门狗里另写字面量。 |
 | `isTerminalAdapterStage` | `electron/providerAdapter/store.ts` | run 层那把尺子；会话层的 `isTerminalIntegrationStage` 是另一个状态机的词表，两把尺子各管一层，但只各有一份（原来 `integrationSession.ts` 里那个 `TERMINAL` const 已被收进新模块）。 |
-| `awaitAdapterStep` | `electron/providerAdapter/serviceLifecycle.ts:26` | per-step 超时/取消的唯一实现；T-MO-07 的 per-model 30s 就用它，不新造。 |
+| `awaitAdapterStep` | `electron/providerAdapter/serviceLifecycle.ts:26` | per-step 超时/取消的唯一实现； 的 per-model 30s 就用它，不新造。 |
 
 ## 回滚
 

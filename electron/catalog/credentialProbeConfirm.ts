@@ -1,4 +1,4 @@
-// 「这次验证会花钱，先问一句」——凭据探测的确认面（T-MO-10，用户 2026-09-22 拍板）。
+// 「这次验证会花钱，先问一句」——凭据探测的确认面（，用户 2026-09-22 拍板）。
 //
 // 为什么不是新造一张卡：全仓的付费确认只有一张（`useSpendConfirmStore`，见
 // `src/workbench/capability/capabilityApplyHandler.ts` 的 `confirmSpendFromMainProcess`），
@@ -11,7 +11,7 @@
 // 问同一张卡，不碰 grant。
 //
 // 金额如实：`quoteSpendLine` 算不出价时回 `amount: null`，卡上按「未知价」显示——**不许**
-// 在这一层把它兜底成 0 或者「免费」，那正是 T-MO-25 记着的那种不诚实。
+// 在这一层把它兜底成 0 或者「免费」，那正是  记着的那种不诚实。
 import { requestRendererDecision } from '../capabilityCore/rendererBridge'
 import { quoteSpendLine } from '../spendQuote'
 

@@ -621,7 +621,7 @@ export function OnboardingWizard({
                       <Text size="xs" c="var(--nomi-ink-40)" className="leading-relaxed">
                         {t('modelSetup.testAndSaveHint')}
                       </Text>
-                      {/* T-MO-27：这一下会真发一次上游请求，费用如实写在按钮旁边（未接 credentialProbePolicy） */}
+                      {/* ：这一下会真发一次上游请求，费用如实写在按钮旁边（未接 credentialProbePolicy） */}
                       <Text size="xs" c="var(--nomi-ink-60)" className="leading-relaxed">
                         {t('modelSetup.testConnectionSpendHint')}
                       </Text>

@@ -22,7 +22,7 @@
 | `allowed_consumers` | canvas/task/Agent/MCP read projections、reconcile service、artifact exporter |
 | `forbidden_derivations` | renderer 不推断收费状态；provider 请求返回不等于 accepted；unknown 不得自动变 failed 或重提 |
 | `legacy_paths` | `generationRunController → catalogTaskActions → runtime.runTask/submissionLedger` 直提交 provider |
-| `red_test` | duplicate charge、ECONNRESET 后 `submission_unknown`、multi-shot paid scope、grantable duplicate、Run task badge、failure lookup identity、generate-all Agent shot filter（T-AG-24 至 T-AG-30） |
+| `red_test` | duplicate charge、ECONNRESET 后 `submission_unknown`、multi-shot paid scope、grantable duplicate、Run task badge、failure lookup identity、generate-all Agent shot filter（ 至 ） |
 | `changed_tests` | `productionRun` reducer/repository/outbox/replay、authorization parity、artifact materializer、真实 provider contract |
 | `real_evidence` | 真实 Electron 付费旅程、真实 provider receipt、冷重启/重开、crash injection、Windows storage |
 | `rollback` | writer 切换前回到现有 journal/outbox 读取；已提交 provider 请求和已授予花费不回滚、不重放 |
@@ -48,7 +48,7 @@
 | `changed_tests` | shared predicate unit + parity + mutation tests；所有入口 canonical command 对等 |
 | `real_evidence` | 同一输入从 GUI/Agent/MCP/恢复路径得到同一 canonical facts 和出站参数 |
 | `rollback` | 保留只读 projection adapter；移除第二 decision function 后若失败回滚 adapter，不恢复旧 writer |
-| `due` / `blockers` | Phase 1 governance gate；`check:concept-owners`（T-QA-24）未实现 |
+| `due` / `blockers` | Phase 1 governance gate；`check:concept-owners`（）未实现 |
 
 ## P0-3：分镜/计划/画布双账本
 
@@ -136,7 +136,7 @@
 | `changed_tests` | registry projection, tools/list, before_tool, receipt/replay, MCP handshake and negative tests |
 | `real_evidence` | 真实 stdio MCP、真实 Agent lane、审批拒绝/断连/重试/收据回放；无凭据时明确 blocked |
 | `rollback` | retain transport adapter only; rollback to command/receipt version, never add a parallel domain write path |
-| `due` / `blockers` | Phase 1 governance gate；T-QA-24、外部五工具 registry 和真实 MCP receipts 未闭合 |
+| `due` / `blockers` | Phase 1 governance gate；、外部五工具 registry 和真实 MCP receipts 未闭合 |
 
 ## P1-7：交付/测试/治理反馈回路
 
@@ -154,7 +154,7 @@
 | `allowed_consumers` | PR review, merge train, release acceptance, architecture ledger |
 | `forbidden_derivations` | local green = merged proof; skipped = pass; deferred review = completed review; docs baseline warnings = new fix |
 | `legacy_paths` | duplicated terminal guarantee tests, coarse symptom-cluster module, stale CI base SHA, Windows tooling and paid E2E default skip debts |
-| `red_test` | T-QA-15/17/18/19/20/24/25/33/34/35; contract/door-map/concept-owner/merged-SHA gates |
+| `red_test` | /17/18/19/20/24/25/33/34/35; contract/door-map/concept-owner/merged-SHA gates |
 | `changed_tests` | validation policy tests, delivery ledger tests, real media checks, platform harness and CI workflow checks |
 | `real_evidence` | exact merged SHA receipt, real Electron/provider, real media, cold restart, Windows and cross-project journey evidence |
 | `rollback` | revert documentation/gate change to previous policy while preserving evidence; never erase failed receipts or raise baselines |

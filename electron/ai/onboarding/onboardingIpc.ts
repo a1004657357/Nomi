@@ -92,7 +92,7 @@ export function registerOnboardingIpc(): void {
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
   });
 
-  // 「这家验一次 key 要不要花钱」——接入页的按钮文案读它（T-MO-10，用户 2026-09-22 拍板）。
+  // 「这家验一次 key 要不要花钱」——接入页的按钮文案读它（，用户 2026-09-22 拍板）。
   // 判据不在渲染层第二次成立：这里只是把主进程那份唯一策略（credentialProbePolicy）投影出去，
   // 于是「界面说免费、实际扣了钱」在结构上讲不出来。金额走同一个报价 owner quoteSpendLine。
   ipcMain.handle("nomi:model-catalog:credential-probe-plan", async (event, vendorKey: string) => {

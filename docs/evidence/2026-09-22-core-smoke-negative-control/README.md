@@ -57,13 +57,13 @@ src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx
 
 `empty` 两种语言都稳。**不稳的是 `used`**，而且三种失败各有出处，都是方案「实测发现」里已经记下、但**本 PR 没有修**的那几条小窗布局问题：
 
-1. **T-CV-19（批量生成栏压住缩放条）** — `canvas-drag-pan-gestures` 点左下角「适应视图」时超时，Playwright 报的拦截者逐字是
+1. **（批量生成栏压住缩放条）** — `canvas-drag-pan-gestures` 点左下角「适应视图」时超时，Playwright 报的拦截者逐字是
    `<div role="toolbar" data-batch-dock="true" aria-label="Canvas batch generation" …> subtree intercepts pointer events`。
    **英文界面更容易撞上**：芯片文案 `Images ×9` 比 `图片 ×9` 宽，居中的栏铺得更开，于是 en 两次都撞、zh 间歇撞。
-2. **T-CV-20（浮层贴边被 clamp）** — `node-params` 的 `P4 在托盘里切到第 1 版` 点不到：
+2. **（浮层贴边被 clamp）** — `node-params` 的 `P4 在托盘里切到第 1 版` 点不到：
    `它的中心点 {"x":85,"y":179,"width":11,"height":11} 上画的是 button.grid.size-8.min-h-8，不是它自己`。
    截图（`tests/ux/shots/node-params-and-version-pill/run-used-zh-CN/02-version-tray.png`）里看得很清楚：两版卡被「适应视图」挤到画布左缘，结果托盘被 clamp 回视口，和卡**自己的浮动工具条**叠在一起。
-3. **T-QA-21（警告 toast 盖住弹窗控件）** — `canvas-drag-pan-gestures` 关设置弹窗时超时，等的是
+3. **（警告 toast 盖住弹窗控件）** — `canvas-drag-pan-gestures` 关设置弹窗时超时，等的是
    `getByRole('dialog', { name: '设置' }).locator('[data-settings-close]')`。走查里有 `clickPastToasts` 兜底，但它本身是时序相关的，不保证每次都躲开。
 
 三条走查侧的绕法（先收起批量栏、先点掉 toast、先收起小窗与地图）都已经写在走查里，但都是**时序相关**的绕法：控件什么时候出现、栏铺多宽、toast 什么时候挂上来，每一轮都不完全一样，所以绕法本身会间歇失手。
@@ -81,7 +81,7 @@ src/workbench/generationCanvas/reactFlow/GenerationCanvasReactFlowViewport.tsx
 
 - 「5 次里 1 次全绿」是 `used` / zh-CN 的观察，不是失败率估计——样本只有 5。`used` / en 只跑了 2 次，两次都不全绿，同样不足以给出比率。
 - 阳性对照的 `0/2` 是确定的：两种夹具各跑一次，都在同一族断言上红；没有跑第二次，因为回退掉的是根因本身，不存在「这次恰好不红」的余地。
-- 上面所有「T-CV-19 / T-CV-20 / T-QA-21」的归因，依据是 Playwright 报出的**拦截者 DOM 原文**与截图，不是从现象推测的。
+- 上面所有「 /  / 」的归因，依据是 Playwright 报出的**拦截者 DOM 原文**与截图，不是从现象推测的。
 - `empty` 的 2/2 各只跑了一次。它没表现出不稳，但一次不足以称之为稳定。
 
 ## 这对方案意味着什么

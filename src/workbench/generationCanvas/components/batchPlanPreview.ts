@@ -332,7 +332,7 @@ export async function runPlanWithToasts(
         },
       })
     }
-    // 用户点「生成全部」只花生成的钱：跑完不再自动调文本模型审片（2026-09-26 用户拍板，TODO T-QA-36）。
+    // 用户点「生成全部」只花生成的钱：跑完不再自动调文本模型审片（2026-09-26 用户拍板，TODO ）。
     // 审片仍是 Agent 做片流程里写明的一步（capabilityApplyHandler.verifyShotsForProduction）；
     // 这里要自动审片，得等设置开关做出来（下一版），开关归 shotVerifyStore。
   } catch (error: unknown) {

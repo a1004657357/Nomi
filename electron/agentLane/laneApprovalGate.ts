@@ -86,7 +86,7 @@ export interface LaneApprovalGate {
   answer(toolCallId: string, action: LaneApprovalAction, reason?: string): boolean;
   pending(): LanePendingApproval | undefined;
   /**
-   * 这一次调用**真的**是怎么过闸的（2026-09-18 · T-ED-02）。工具回执据此说人话：
+   * 这一次调用**真的**是怎么过闸的（2026-09-18 · ）。工具回执据此说人话：
    * `auto-granted` = 用户这一档下压根没出过卡，`granted-once` / `granted-session` = 他点过。
    *
    * 为什么回执不能查一张静态表：`laneExtendedTools.ts` 原来对 `edit_timeline` **无条件**回
@@ -255,7 +255,7 @@ export function createLaneApprovalGate(options: LaneApprovalGateOptions): LaneAp
 
   /**
    * 预检那一趟本身。外面那层 `preflight` 只多做一件事：**把结论记下来**，
-   * 好让工具回执从真实的这一条派生，而不是从一张静态表上抄（T-ED-02）。
+   * 好让工具回执从真实的这一条派生，而不是从一张静态表上抄（）。
    */
   async function runPreflight(
     request: LaneApprovalRequest, signal: AbortSignal | undefined,

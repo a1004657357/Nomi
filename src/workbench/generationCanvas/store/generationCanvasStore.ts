@@ -272,7 +272,7 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
     const state = get()
     const projection = replayCanvasEvents(events, { nodes: state.nodes, edges: state.edges, groups: state.groups })
     // 拆解进度的每一下写都走 canvas.node.updated 进了事件日志，重放会把 `status: 'running'`
-    // 原样写回来——快照那一步的收敛因此等于没发生（T-ED-06 的重启卡死正是这一下）。
+    // 原样写回来——快照那一步的收敛因此等于没发生（ 的重启卡死正是这一下）。
     // 终态判定的 owner 只有一份，重放完再问它一次；已终态的表它原样返回，幂等。
     set({ nodes: convergeDeconstructionNodes(projection.nodes), edges: projection.edges, groups: projection.groups })
   },

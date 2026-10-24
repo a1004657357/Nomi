@@ -154,6 +154,6 @@
   "migration": "No data migration: nodes were already persisted as running; they now simply keep that state across loads until the production projection changes it.",
   "residual_risks": [
     "If a Run ends while the window is closed or reloading and no later Run change follows, the node keeps showing generating until the project is next opened (startup reconcile re-projects everything). This errs toward \"still generating\" rather than \"looks idle\", which is the safer direction for spend.",
-    "The disabled-↑ reason text on production-owned nodes is still the generic first-frame hint (T-CV-22, separate card)."
+    "The disabled-↑ reason text on production-owned nodes is still the generic first-frame hint (, separate card)."
   ]
 }

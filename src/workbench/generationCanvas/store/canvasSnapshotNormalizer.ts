@@ -105,7 +105,7 @@ export function normalizeStoreSnapshot(input: unknown): GenerationCanvasSnapshot
         // 拆解的终态判定不在这里自己算一遍：`deconstructionLifecycle` 是唯一 owner，
         // 这里只是它的三条读路径之一（另两条是事件尾巴重放与外部图应用），
         // 且必须在**重放之后**再收敛一次——2026-09-10 那句只在这里收敛的 `running → idle`
-        // 会被事件尾巴原样盖回去，等于没收敛（T-ED-06）。
+        // 会被事件尾巴原样盖回去，等于没收敛（）。
         const convergedNode = convergeStuckMidFlightNode(migrateProductionPreviewResults(normalizedNode))
         return [categoryId ? { ...convergedNode, categoryId } : convergedNode]
       })

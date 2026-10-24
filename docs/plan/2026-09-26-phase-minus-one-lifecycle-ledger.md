@@ -32,7 +32,7 @@
   → canvas / task center / Agent / MCP projection
 ```
 
-选择这条链路是因为它同时覆盖作者意图、执行合同、花费授权、异步供应商、持久化恢复和多界面投影，也是当前“一个事两个口”最容易造成重复生成和重复扣费的路径。TODO 中的 `T-AG-24` 是本阶段的产品风险锚点，但本阶段先做事实审计，不直接修该条行为。
+选择这条链路是因为它同时覆盖作者意图、执行合同、花费授权、异步供应商、持久化恢复和多界面投影，也是当前“一个事两个口”最容易造成重复生成和重复扣费的路径。TODO 中的 `` 是本阶段的产品风险锚点，但本阶段先做事实审计，不直接修该条行为。
 
 ## 第一轮实扫已经确认的结构分裂
 
@@ -229,6 +229,6 @@ pilot 通过后，才把同一条 seam 扩到 Agent、MCP、批量和其他模�
 ## 参考
 
 - [`2026-09-26-architecture-single-owner-governance.md`](2026-09-26-architecture-single-owner-governance.md)
-- [`docs/roadmap/TODO.md`](../roadmap/TODO.md) 中的 `T-AG-24` 制作流程 × 画布重复扣费
+- [`docs/roadmap/TODO.md`](../roadmap/TODO.md) 中的 `` 制作流程 × 画布重复扣费
 - [`docs/audit/2026-09-25-agent-run-canvas-projection-structure-review.md`](../audit/2026-09-25-agent-run-canvas-projection-structure-review.md)
 - [`docs/audit/2026-09-26-generation-derived-facts-two-engines-structure-review.md`](../audit/2026-09-26-generation-derived-facts-two-engines-structure-review.md)

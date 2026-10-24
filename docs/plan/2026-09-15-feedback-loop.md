@@ -3,7 +3,7 @@
 日期：2026-09-15 · 分支 `feat/feedback-loop-20260915` · 状态：🚧 实施中
 样张（用户 09-15 已拍板）：`scratchpad/feedback-loop/feedback-loop-proposal-v2.svg`（v1 同目录，仅作参考）
 调研：[docs/research/2026-09-15-feedback-loop/prior-art.md](../research/2026-09-15-feedback-loop/prior-art.md)
-清单条目：`docs/roadmap/TODO.md` 的 T-AG-11（轨迹 + 隐私边界）· T-AG-12（就近的快速反馈）· T-EC-05（轨迹导出没有产品入口）
+清单条目：`docs/roadmap/TODO.md` 的 （轨迹 + 隐私边界）· （就近的快速反馈）· （轨迹导出没有产品入口）
 
 ---
 

@@ -1,6 +1,8 @@
 {
   "schema_version": 3,
   "id": "2026-10-02-ci-job-timeouts",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
   "problem_type": "CI job 没有超时上限，卡住的 job 会占满 6 小时默认值",
   "symptom": "Quality Gate 的 Unit job 先后在 09-24（64 分钟）和 10-02（122 分钟）卡住，日志静默，直到人工取消；其间合并队列被堵，job 不报红。",
   "direct_cause": "两次都是 scripts/check-source-nul-bytes.test.ts 一个测试文件没出结果：它用 execFileSync 同步起子进程跑整仓扫描门岗且没有 timeout，同步调用阻塞事件循环，vitest 的 testTimeout 触发不了；同时 8 个 workflow 里大多数 job 没有 timeout-minutes，GitHub 要跑满 6 小时才会杀。",

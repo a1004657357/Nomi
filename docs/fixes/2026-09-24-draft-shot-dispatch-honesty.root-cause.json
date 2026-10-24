@@ -148,8 +148,8 @@
   },
   "migration": "No stored data changes; the phase is derived on every read.",
   "residual_risks": [
-    "The canvas batch bar (生成全部 N 个) reads raw node.status (TODO T-AG-24).",
-    "A finished single agent image keeps the task button lit because the run waits for rough-cut review (TODO T-AG-25).",
+    "The canvas batch bar (生成全部 N 个) reads raw node.status (TODO ).",
+    "A finished single agent image keeps the task button lit because the run waits for rough-cut review (TODO ).",
     "confirm_all (per-shot confirmation) is NOT covered: while a shot waits on its own shot gate its job stays authorized (productionRunDriverOps), so the node still says queued. Fixing it here would flip canvas ownership through the borrowed phase (#875); the coordinating session schedules it together with the next item.",
     "After submission productionShotOwnsGeneration borrows this phase, so a rework / continuation job back at the authorization step is no longer owned by the run on the canvas. Decision (coordinating session, 2026-09-26): right after the 0.22.x cut, productionShotOwnsGeneration judges the submitted branch from job and run state directly (awaiting-human jobs and confirm_all shot gates owned; terminal or stopped not owned), with class tests over every ProductionJobStatus; this PR merges only after that lands."
   ]

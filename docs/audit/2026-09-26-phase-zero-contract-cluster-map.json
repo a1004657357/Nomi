@@ -32690,7 +32690,7 @@
       "contract_id": "2026-09-25-canvas-video-players-always-mounted",
       "file": "2026-09-25-canvas-video-players-always-mounted.root-cause.json",
       "schema_version": 3,
-      "class_root": "Two owners of one fact drifted apart: the asset boundary decided \"the canvas draws a poster and creates <video> only on interaction\", the node card kept \"always mount a buffering player\". Nothing structural asserted the boundary's promise, so bundling it into a reverted commit removed it silently; bookkeeping (PR #787 merged, TODO T-CV-01 \"poster half landed\") kept saying it was there. Separately, three surfaces derived video covers three ways (asset preview, timeline filmstrip first cell, raw original).",
+      "class_root": "Two owners of one fact drifted apart: the asset boundary decided \"the canvas draws a poster and creates <video> only on interaction\", the node card kept \"always mount a buffering player\". Nothing structural asserted the boundary's promise, so bundling it into a reverted commit removed it silently; bookkeeping (PR #787 merged, TODO  \"poster half landed\") kept saying it was there. Separately, three surfaces derived video covers three ways (asset preview, timeline filmstrip first cell, raw original).",
       "recurrence": "recurring",
       "cluster_id": "P0-4",
       "cluster_reason": "class_root + shared boundary/entry/door evidence + deterministic macro signal",

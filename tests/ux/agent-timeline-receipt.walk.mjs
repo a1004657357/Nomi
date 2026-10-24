@@ -2,7 +2,7 @@
 // 真实用户任务（R13）：**「让 Nomi 把这段素材劈成两半」——它说的和我看到的是不是同一件事？**
 //
 // 2026-09-12 用户实录：模型回「已生成剪辑预览，请在确认卡中批准后写入时间线」，
-// 而介入槽里一张卡都没有。用户先以为在加载，再以为 Nomi 坏了（T-ED-02 的那张截图）。
+// 而介入槽里一张卡都没有。用户先以为在加载，再以为 Nomi 坏了（ 的那张截图）。
 //
 // 挖到底不是「卡没渲染」，是**回执照着一张静态表说话**：`laneExtendedTools.ts` 的 `nextActionFor`
 // 对 `edit_timeline` 无条件回 `user_sees_review_card`。而审批闸跑在 `before_tool`——
@@ -198,7 +198,7 @@ try {
     { message: '确认之后这一刀必须真的落盘', timeout: DEFAULT_TIMEOUT_MS }).toBe(2)
   await screenshotSettled(win, { path: path.join(shotsDir, '02-split-applied.png') })
 
-  // ③ 回执与卡一致（T-ED-02 的整条不变量）。
+  // ③ 回执与卡一致（ 的整条不变量）。
   const receipt = toolResultText(settledWire.body, EDIT_ID)
   expect(receipt, '批准后的 edit_timeline 必须真的应用，而不是报错被模型的措辞盖过去').toContain('"applied":true')
   expect(receipt, '回执要说清「用户批了、已经应用」——这才是他此刻看到的').toContain('User sees:')

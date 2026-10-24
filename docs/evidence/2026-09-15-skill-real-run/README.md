@@ -55,7 +55,7 @@ DeepSeek 官方端点，7 轮（含 2 轮被仪器修正作废的早期轮）。
 | `shots/05-skill-chip-attached.png` | 选中后 composer 上出现技能 chip |
 | `shots/06-agent-answered-with-skill.png` | **用户气泡上挂着技能 chip、回复头上写着「已使用技能：walk-hermes-zip」**——同一轮的出站报文里，交代文案在、SKILL.md 的 frontmatter 不在 |
 
-## T-AG-05「一次只能选一个技能」：**记账，不在本次放开**
+## 「一次只能选一个技能」：**记账，不在本次放开**
 
 不是一行开关。`creationActiveSkill` 是单值，改成多值要连带动五处，而且缺一条产品裁决：
 
@@ -71,7 +71,7 @@ DeepSeek 官方端点，7 轮（含 2 轮被仪器修正作废的早期轮）。
 `curated-film-storyboard` 写「使用宽屏面板」——同时挂上，模型该听谁）。
 这不是实现细节，是产品取舍，得用户拍。在那之前放开多选，等于把冲突丢给模型每次随机裁决一遍。
 
-## T-AG-07 技能触发机制：调研结论已捞回
+##  技能触发机制：调研结论已捞回
 
 远端分支 `research/skill-trigger-mechanism-20260912`（41b9102）的一句话结论：
 **触发机制本身与标准一致（description 驱动 + `read` 正文），没坏。**问题是三件事叠在一起——

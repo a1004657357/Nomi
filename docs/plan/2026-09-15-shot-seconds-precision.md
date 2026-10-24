@@ -1,4 +1,4 @@
-# 拆解出来的秒数只有一个精度 owner（T-RL-08）
+# 拆解出来的秒数只有一个精度 owner（）
 
 > 状态：✅ 已交付（纯数据层，无用户可见 UI 改动）· 2026-09-15
 > 根因合同：[`../fixes/2026-09-15-shot-seconds-precision.root-cause.json`](../fixes/2026-09-15-shot-seconds-precision.root-cause.json)

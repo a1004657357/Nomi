@@ -72,7 +72,7 @@ export type VendorSeed = {
    */
   livenessProbe?: ProbeDeclaration;
   /**
-   * 「这把 key 现在能不能用」的代码拥有的探测端点（2026-09-22 T-MO-10 新增）。
+   * 「这把 key 现在能不能用」的代码拥有的探测端点（2026-09-22  新增）。
    *
    * `cost` 是这条声明的一部分，由 `credentialProbePolicy.ts` **单点**消费（为什么、以及缺省
    * 为什么是 `paid`，见那个文件的文件头）：
@@ -177,7 +177,7 @@ export function isBuiltinDirectKeyVendor(vendorKey: string): boolean {
 /**
  * 这家的凭据判据是不是**代码拥有**的（= 有内置种子）。
  *
- * 2026-09-22（T-MO-10）：原来这里叫 `credentialValidationStrategy`，既回答「怎么验」也被
+ * 2026-09-22（）：原来这里叫 `credentialValidationStrategy`，既回答「怎么验」也被
  * 当成「有没有内置判据」用。「怎么验、验它花不花钱」已经收进唯一 owner
  * `credentialProbePolicy.ts`——判据只该在那一处成立，这里如果再派发一次就是第二份判断，
  * 而两份判断里会漂的那一份正好是**钱**。所以这里只剩下发布侧真正要问的那个是非题。

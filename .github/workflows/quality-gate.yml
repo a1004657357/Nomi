@@ -366,7 +366,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # used 这一格**照跑、照传证据，但不阻断**（2026-09-22 用户拍板）：实测同一份代码连跑 5 次
-    # 只有 1 次全绿，三种失败都出自还没修的小窗布局问题（T-CV-19 / T-CV-20 / T-QA-21），
+    # 只有 1 次全绿，三种失败都出自还没修的小窗布局问题（ /  / ），
     # 证据在 docs/evidence/2026-09-22-core-smoke-negative-control/。continue-on-error 只改 conclusion、
     # 不改 outcome，所以 used 红了这格仍然亮红给人看，只是不拉垮 needs.core-smoke.result。
     # 阻断名单的唯一 owner 是 scripts/validation-policy.mjs 的 CORE_SMOKE_BLOCKING_FIXTURES，

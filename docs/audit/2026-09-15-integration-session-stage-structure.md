@@ -108,7 +108,7 @@
 ## 七、复核线索
 
 - 本轮合同：`docs/fixes/2026-09-15-integration-session-terminal-guarantee.root-cause.json`
-- 本轮方案（含门表、先查别人三池子、T-MO-07 接续路径）：
+- 本轮方案（含门表、先查别人三池子、 接续路径）：
   `docs/plan/2026-09-15-integration-session-terminal-guarantee.md`
 - 上一份结构评审（本文核的就是它的处方）：
   `docs/audit/2026-09-12-integration-layer-structural-review.md`

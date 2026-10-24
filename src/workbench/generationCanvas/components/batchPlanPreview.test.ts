@@ -87,7 +87,7 @@ describe('runPlanWithToasts concurrency', () => {
     mocks.confirmAndMintGrant.mockResolvedValue('retry-grant')
   })
 
-  // 2026-09-26 用户拍板（T-QA-36）：点「生成全部」只花生成的钱，跑完不再自动调文本模型审片。
+  // 2026-09-26 用户拍板（）：点「生成全部」只花生成的钱，跑完不再自动调文本模型审片。
   // 以前这条钉的是「批量后按镜头身份审片」；现在钉反面：有成功的镜头也不审。
   it('does not run the paid shot review after a user batch, even when shots succeed', async () => {
     mocks.nodes = [

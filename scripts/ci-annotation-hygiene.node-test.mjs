@@ -187,7 +187,7 @@ const advisoryFailure = (jobName) => ({
   level: 'failure',
 })
 
-test('advisory 冒烟格的失败注解委派给 T-QA-23，阻断档同一条注解仍然是 unexpected', () => {
+test('advisory 冒烟格的失败注解委派给 ，阻断档同一条注解仍然是 unexpected', () => {
   const advisoryNames = [...CORE_SMOKE_ADVISORY_CHECK_NAMES]
   const blockingNames = [...CORE_SMOKE_BLOCKING_CHECK_NAMES]
   assert.ok(advisoryNames.length > 0 && blockingNames.length > 0)
@@ -216,14 +216,14 @@ test('advisory 冒烟格的失败注解委派给 T-QA-23，阻断档同一条注
 })
 
 test('advisory 委派派生自 CORE_SMOKE_ADVISORY_CHECK_NAMES：把 used 挪出名单，同一条注解立刻翻红', async () => {
-  // 规则若写死了 'Core Flow Smoke (used)'，名单和判据就会各走各的，升阻断（T-QA-23）当天
+  // 规则若写死了 'Core Flow Smoke (used)'，名单和判据就会各走各的，升阻断（）当天
   // 这条委派会继续放行一个已经该阻断的格子。这里把**真实源文件**里的名单改掉再跑一遍来证伪：
   // validation-policy.mjs 没有任何 import，整份复制到临时目录即可独立求值。
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'advisory-smoke-derivation-'))
   try {
     const scriptsDir = path.dirname(fileURLToPath(import.meta.url))
     const policySource = fs.readFileSync(path.join(scriptsDir, 'validation-policy.mjs'), 'utf8')
-    // 模拟 T-QA-23 升阻断：used 进阻断名单，advisory 名单随之变空。
+    // 模拟  升阻断：used 进阻断名单，advisory 名单随之变空。
     const promoted = policySource.replace(
       "export const CORE_SMOKE_BLOCKING_FIXTURES = Object.freeze(['empty'])",
       "export const CORE_SMOKE_BLOCKING_FIXTURES = Object.freeze(['empty', 'used'])",

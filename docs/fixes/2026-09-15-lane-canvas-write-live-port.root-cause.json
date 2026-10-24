@@ -215,7 +215,7 @@
     "rationale": "No dependency upgrade is needed to separate application session and transport identity; Electron lifecycle events remain unchanged.",
     "exit_criteria": []
   },
-  "migration": "Supersedes the 2026-09-15 liveShared/currentEvent/global-recapture and same-path navigation workarounds. T-AG-16 is implemented by the 2026-09-17 project-session change; no persistent data migration.",
+  "migration": "Supersedes the 2026-09-15 liveShared/currentEvent/global-recapture and same-path navigation workarounds.  is implemented by the 2026-09-17 project-session change; no persistent data migration.",
   "residual_risks": [
     "Full Electron and Linux/macOS journey verification runs in parent integration after A+B."
   ],

@@ -7,10 +7,10 @@ import { CORE_SMOKE_ADVISORY_CHECK_NAMES } from './validation-policy.mjs'
 const API_ROOT = 'https://api.github.com'
 const REJECTED_LEVELS = new Set(['warning', 'failure'])
 
-// 非阻断（advisory）核心冒烟格的 owner：TODO 的 T-QA-23（`used` 升阻断）。
-export const ADVISORY_CORE_SMOKE_OWNER = 'T-QA-23 core smoke advisory fixture'
+// 非阻断（advisory）核心冒烟格的 owner：TODO 的 （`used` 升阻断）。
+export const ADVISORY_CORE_SMOKE_OWNER = ' core smoke advisory fixture'
 // 名单**派生自 scripts/validation-policy.mjs 的单一 owner**，不写死格子名：
-// 那里把 'used' 移进 CORE_SMOKE_BLOCKING_FIXTURES（T-QA-23 升阻断）的当天，
+// 那里把 'used' 移进 CORE_SMOKE_BLOCKING_FIXTURES（ 升阻断）的当天，
 // 这条委派规则自动失效，used 的失败注解立刻变回 unexpected，不必也不许再改这里。
 const ADVISORY_CORE_SMOKE_JOB_NAMES = new Set(CORE_SMOKE_ADVISORY_CHECK_NAMES)
 
@@ -56,7 +56,7 @@ function delegatedOwner(annotation) {
   // `##[error]Process completed with exit code 1.` 会以 failure 注解进到本环，
   // 于是 Quality Gate 汇总的第一行 `test ci-hygiene.outcome = success` 把它重新变回阻断门
   // （2026-09-22 main ffffadc7d 实测：1 unexpected → 汇总红 → 收据出不来）。
-  // 这一格有主体、且主体是登记在案的 TODO（T-QA-23：三条布局 bug 修完 + used 连跑 5 次全绿后升阻断），
+  // 这一格有主体、且主体是登记在案的 TODO（：三条布局 bug 修完 + used 连跑 5 次全绿后升阻断），
   // 所以是「委派」而不是「豁免」，同 docs-autosync 那条的理由——不进要写过期日的 allowlist。
   // 只认非阻断名单里的格子：阻断档 Core Flow Smoke (empty) 不在 ADVISORY 名单里，它的注解照旧是 unexpected。
   if (annotation.level === 'failure' && ADVISORY_CORE_SMOKE_JOB_NAMES.has(annotation.jobName)) {
@@ -182,7 +182,7 @@ export function evaluateAnnotations(annotations, allowlist, now = new Date()) {
   }
 
   // advisory 冒烟格单列出来：它不判，但必须**看得见它红了**——否则「不阻断」就滑成「没发生过」，
-  // T-QA-23 也就永远等不到「连跑 5 次全绿」的观测面。
+  //  也就永远等不到「连跑 5 次全绿」的观测面。
   const advisorySmoke = delegated.filter((entry) => entry.owner === ADVISORY_CORE_SMOKE_OWNER)
 
   return { delegated, allowed, unexpected, advisorySmoke, expiredAllowlistEntries }
@@ -257,7 +257,7 @@ async function main() {
   console.log(
     `CI annotation hygiene: ${report.annotations.length} annotations, ${report.delegated.length} delegated, ${report.allowed.length} allowed, ${report.unexpected.length} unexpected`,
   )
-  // 单列一行：advisory 冒烟格红了不判，但要在日志里看得见（owner 是 T-QA-23）。
+  // 单列一行：advisory 冒烟格红了不判，但要在日志里看得见（owner 是 ）。
   const advisoryJobs = [...new Set(report.advisorySmoke.map((entry) => entry.annotation.jobName))]
   console.log(
     `advisory-smoke: ${report.advisorySmoke.length}${advisoryJobs.length > 0 ? ` (${advisoryJobs.join(', ')} -> ${ADVISORY_CORE_SMOKE_OWNER})` : ''}`,

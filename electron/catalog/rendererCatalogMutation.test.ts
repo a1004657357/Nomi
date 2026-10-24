@@ -210,7 +210,7 @@ describe("B4 candidate credentials", () => {
     expect(store.upsertModelCatalogVendorApiKey).toHaveBeenCalledWith("relay", { apiKey: "candidate-test", enabled: false, verificationPending: true });
   });
   /**
-   * T-QA-13 的门岗（2026-09-18）。走查夹具「注入 key → hasApiKey」这条路整条死掉过，
+   *  的门岗（2026-09-18）。走查夹具「注入 key → hasApiKey」这条路整条死掉过，
    * 而且是**静默**死的：所有靠它的走查照样跑、照样绿，只是模型那一档从来没真通过。
    *
    * 根因不是夹具写错，是 `ApiKeyRecord.enabled` 一个布尔背了两个意思——「用户停用了这把钥匙」

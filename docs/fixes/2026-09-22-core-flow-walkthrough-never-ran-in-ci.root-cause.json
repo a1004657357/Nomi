@@ -68,8 +68,8 @@
     "tests/ux/core-smoke/core-smoke.test.mjs"
   ],
   "residual_risks": [
-    "used 夹具当前是非阻断档：它照跑、红了照样亮红，但不拦合入。实测同一份代码连跑 5 次只有 1 次全绿，三种失败全部出自还没修的小窗布局问题（T-CV-19 / T-CV-20 / T-QA-21），证据在 docs/evidence/2026-09-22-core-smoke-negative-control/。在那三条修完、used 连跑 5 次全绿之前（T-QA-23），「用过的项目」这一档只提供线索、不提供保证。",
-    "核心冒烟清单目前只有两条场景，花钱路最小一条尚未登记（T-QA-22）。清单之外的核心流程仍然只由既有套件覆盖。",
+    "used 夹具当前是非阻断档：它照跑、红了照样亮红，但不拦合入。实测同一份代码连跑 5 次只有 1 次全绿，三种失败全部出自还没修的小窗布局问题（ /  / ），证据在 docs/evidence/2026-09-22-core-smoke-negative-control/。在那三条修完、used 连跑 5 次全绿之前（），「用过的项目」这一档只提供线索、不提供保证。",
+    "核心冒烟清单目前只有两条场景，花钱路最小一条尚未登记（）。清单之外的核心流程仍然只由既有套件覆盖。",
     "CI 上用的是仓库内的真实镜头（repoPath 素材），不是用户本机那份 4K HEVC。冒烟因此测不到 4K 解码成本那一族问题，那条仍由 canvas-performance 腿负责。"
   ],
   "internal_only_reason": "缺口完全在本仓的验证面装配上——走查文件、package.json 脚本、GitHub Actions 工作流、分类器四者之间没有判据。没有任何外部依赖的行为需要查证：GitHub Actions 的 matrix 与 continue-on-error 语义是既有用法（同一份工作流里已有先例），不是本次判断的依据。",

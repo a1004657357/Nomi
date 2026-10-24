@@ -1,6 +1,6 @@
 # 草稿镜不说「排队中」（2026-09-24，09-25 并入 #869 / #870 后收窄）
 
-> 状态：🚧 进行中 — 已拍板，实现与走查完成，待合入（下一版）。TODO：T-AG-23。
+> 状态：🚧 进行中 — 已拍板，实现与走查完成，待合入（下一版）。TODO：。
 > 合入顺序（2026-09-26 协调会话定）：等 `productionShotOwnsGeneration` 的「已提交」分支改成直接看 job / Run 状态之后再合——
 > 它现在借本方案改过的显示相位判画布归属；逐镜确认档（confirm_all）等镜头门的那一刻本方案不覆盖，一并排在那次改动里。
 > 样张（已拍板）：[2026-09-24-draft-shot-honest-status-mockup.html](../design/2026-09-24-draft-shot-honest-status-mockup.html)
@@ -37,7 +37,7 @@ Agent 调 `look_at_canvas` → `list_models` → `draft_shots`，回「已建好
 
 - 动：`electron/shared/productionShotPhase.ts`、`electron/productionRun/batchScheduleDerivation.ts`、`GeneratingOverlay` 死档、走查与夹具（apimart 图片任务可停在 `processing`）。
 - 不动：花钱链路一行没改；任务面板分组（#869）；落地投影与画法（#870）。
-- 另开（TODO）：T-AG-25 一张图出完仍亮任务 1（Run 在等粗剪）；T-QA-33 `p4-s6` 走查在 main 上早已失效。T-AG-24（「生成全部」把在跑 / 排队的 Agent 镜算闲置）已由 #875 修，本 PR 的走查是它的真机证据。
+- 另开（TODO）： 一张图出完仍亮任务 1（Run 在等粗剪）； `p4-s6` 走查在 main 上早已失效。（「生成全部」把在跑 / 排队的 Agent 镜算闲置）已由 #875 修，本 PR 的走查是它的真机证据。
 
 ## 回滚
 

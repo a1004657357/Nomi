@@ -31,7 +31,7 @@
 
 反例也在仓里，正是本题的价值：`electron/vendor/vendorBaseFallback.ts:11-12` 实测注释说
 apimart 对无鉴权 `GET /v1/models` 恒 401，所以**不能**拿模型列表当它的 key 判据——
-这条正是 TODO T-MO-10 的 09-17 裁决要求「实测证伪一次」的那条。
+这条正是 TODO  的 09-17 裁决要求「实测证伪一次」的那条。
 
 `git grep -n "grantId" electron/ | head` 显示付费闸只长在 `runtime.ts` / `spendGrant.ts` 那条链上，
 而凭据探测走 `electron/appFetch.ts` 直接出门——**结构上**够不到那道闸。这不是漏挂，是两条路。
@@ -74,7 +74,7 @@ GET https://api.apimart.ai/v1/balance   （不带 Authorization）
 - **确认面、报价、问人通道：用已有**（仓里三处，逐条见 §②）。这一刀一张新卡都没造。
 - **「这个探测花不花钱」的声明位与它的唯一读者：自研**。依赖里没有这个概念（§①），
   生态里最接近的 LiteLLM 也只做到「分两个端点 + 在文档里提醒」（§③），没有把价格变成
-  机器可判的声明。而本仓真正付过学费的恰恰是「没写下来的免费」：T-MO-20 把 Higgsfield 的
+  机器可判的声明。而本仓真正付过学费的恰恰是「没写下来的免费」： 把 Higgsfield 的
   `POST /marketing-studio/image` 当余额探针，当场烧掉 $0.439。所以声明位 + 缺省 `paid` +
   装配期不变量（声明成 free 的端点不许长成生成提交）这三样是本刀的自研部分，也是它的全部。
 - **端点选择：用已有的官方免费端点**（APIMart `GET /v1/balance`、Higgsfield `/estimate`），

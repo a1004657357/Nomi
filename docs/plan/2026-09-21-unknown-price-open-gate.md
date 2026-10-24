@@ -6,7 +6,7 @@
 - 用户拍板：`scratchpad/user-decisions.md`「未知价不能挡生成」「未知价 × 全自动 = 直接跑」「开闸范围 = 全部路径」
 - 数门正本：`scratchpad/doormap-unknown-price.md`（18 扇）｜根因合同：`docs/fixes/2026-09-21-unknown-price-blocks-generation.root-cause.json`
 - 已拍板样张：`docs/design/2026-09-10-spend-card-node-params-and-full-auto.md`（§4 第 9 张图、§7 卡点④）
-- 关单：`docs/roadmap/TODO.md` T-MO-25
+- 关单：`docs/roadmap/TODO.md` 
 
 ## 1. 底层逻辑（为什么这么改）
 
@@ -27,7 +27,7 @@
 
 | 路径 | 改前 | 改后 |
 |---|---|---|
-| Agent 面板付费卡 | 卡上写「暂时算不出价格」、主钮「仍要生成」，**按下去必然失败**（T-MO-25） | 同一张卡，按下去**真的出图** |
+| Agent 面板付费卡 | 卡上写「暂时算不出价格」、主钮「仍要生成」，**按下去必然失败**（） | 同一张卡，按下去**真的出图** |
 | 分镜「提交执行计划」 | `generation_pricing_unknown` | 同上 |
 | 外部 MCP（`nomi_request_generation_gate`）| 抛错；全批未知时 `surface:'none'` 静默不弹 | 逐镜写「价格未知」的确认文案，用户答了就跑 |
 | 全自动档 | 拒 | **不弹卡、直接跑**（用户 09-21：「直接跑就行」） |

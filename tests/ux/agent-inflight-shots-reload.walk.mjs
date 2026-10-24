@@ -118,7 +118,7 @@ async function reloadTimeline(win, { runId, shot1 }) {
  * 这一时刻两镜都在跑、各自的 ↑ 渲染出来且置灰（发不出第二次）。
  * 底栏「生成全部」这里不判：这个场景里两镜都归制作 Run，画布上没有别的可生成节点，底栏本来就不出现——
  * 「不在」判不出它算不算这两镜（原先那条断言永远过）。它的归属判据由 #875 的单测守；真机上要一个用户自己的闲置节点
- * 作阳性对照，记 TODO T-QA-38。
+ * 作阳性对照，记 TODO 。
  */
 function expectBothInFlight(observed, label) {
   for (const shot of ['shot1', 'shot2']) {

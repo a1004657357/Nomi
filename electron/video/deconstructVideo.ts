@@ -300,7 +300,7 @@ async function transcribeShots(
 /**
  * 转写语言。**随输入派生**，不写死（2026-09-17）：原来是 `language: "zh"`，
  * 于是英文界面的用户把一段英文视频拆出来，转写请求仍然按中文发。
- * 这里只修默认派生（取界面语言）；把它做成用户可选那一步归 TODO 的 T-DS-15。
+ * 这里只修默认派生（取界面语言）；把它做成用户可选那一步归 TODO 的 。
  */
 function transcribeLanguage(): string {
   return getDesktopLocale() === "en" ? "en" : "zh";

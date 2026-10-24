@@ -126,7 +126,7 @@ export async function deconstructToShotTable(
     unsubscribe?.()
     releaseDeconstructionRun(id, requestId)
     // 终态兜底：上面每一条 `return id` 都是「这次调用不许把结果写进这张表」，
-    // 但**表不能因此停在 running**——那正是 T-ED-06 那一格。
+    // 但**表不能因此停在 running**——那正是  那一格。
     settleInterruptedDeconstructions()
   }
   return id
@@ -160,7 +160,7 @@ export function settleInterruptedDeconstructions(): void {
 export function cancelDeconstruction(tableNodeId: string): void {
   // 没有在飞的调用却停在 running = 这次拆解**早就已经死了**（进程重启前留下的影子）。
   // 那一下点击仍然必须有反应：按 owner 的判据落中断态，而不是一颗点不动的按钮——
-  // 「看着能点、点了没事」正是 T-ED-06 那一格的另一种形态。
+  // 「看着能点、点了没事」正是  那一格的另一种形态。
   if (!markDeconstructionCancelled(tableNodeId)) { settleInterruptedDeconstructions(); return }
   const store = useGenerationCanvasStore.getState()
   const node = store.nodes.find((entry) => entry.id === tableNodeId)

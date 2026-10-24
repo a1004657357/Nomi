@@ -125,7 +125,7 @@ it('saves declared model controls that were absent from the original candidate',
 
 // 2026-09-21：× 之后**没有**第二本账本（`nomi:dismissed-spend-draft:` 那本连同它的键已删）。
 // 2026-09-22 裁决 B/D 之后这条更强了：× 收回的只是这一次出价，账本锚 `operationId`，
-// 所以**换一份报价指纹草稿还在**——重新出价、价格刷新、改参数推版都带得过去（T-QA-30 的那一半）。
+// 所以**换一份报价指纹草稿还在**——重新出价、价格刷新、改参数推版都带得过去（ 的那一半）。
 it('a fresh quote on the same operation still reads the user edits it never approved', () => {
   const entries = new Map<string, string>()
   vi.stubGlobal('localStorage', { getItem: (key: string) => entries.get(key) ?? null, setItem: (key: string, value: string) => entries.set(key, value), removeItem: (key: string) => entries.delete(key) })

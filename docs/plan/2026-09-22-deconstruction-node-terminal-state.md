@@ -2,7 +2,7 @@
 
 > 状态：🚧 进行中（分支 `fix/deconstruction-node-terminal-state-20260922`）· 2026-09-22
 > 根因合同：`docs/fixes/2026-09-22-deconstruction-node-terminal-state.root-cause.json`
-> TODO：T-ED-06（发版前阻断，用户 2026-09-22 拍板）
+> TODO：（发版前阻断，用户 2026-09-22 拍板）
 
 ## 0. 一句话
 
@@ -186,4 +186,4 @@ footer 的重试钮只认 `failed` / `idle`（不会出现）。三者合起来 
   的情形，所以登记留在渲染进程即可。若将来拆解改成主进程常驻任务，这份登记要跟着上移。
 - **取消不打断主进程那次调用**（IPC invoke 没有取消口）：本地切点那几秒可能仍在跑完，
   只是结果不再写回。真正的中断需要给 `deconstructVideo` 加一条取消通道，本次未做。
-- **T-DS-17（画面六格失败不给原因）不在本刀范围**，它是 `visionFailed` 的渲染问题，另案。
+- **（画面六格失败不给原因）不在本刀范围**，它是 `visionFailed` 的渲染问题，另案。

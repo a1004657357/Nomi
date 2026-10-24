@@ -13,7 +13,7 @@
 
 ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
 
- FAIL  electron/catalog/credentialProbeFree.test.ts > T-MO-10 ① 有免费端点的供应商：保存验证不发生成请求 > apimart 保存验证只打免费的余额端点，一次 chat/completions 都没有
+ FAIL  electron/catalog/credentialProbeFree.test.ts >  ① 有免费端点的供应商：保存验证不发生成请求 > apimart 保存验证只打免费的余额端点，一次 chat/completions 都没有
 AssertionError: expected true to be false // Object.is equality
 
 - Expected
@@ -32,7 +32,7 @@ AssertionError: expected true to be false // Object.is equality
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
 
- FAIL  electron/catalog/credentialProbeFree.test.ts > T-MO-10 ① 有免费端点的供应商：保存验证不发生成请求 > 免费端点回 401 仍然判 key 无效（免费不等于不判）
+ FAIL  electron/catalog/credentialProbeFree.test.ts >  ① 有免费端点的供应商：保存验证不发生成请求 > 免费端点回 401 仍然判 key 无效（免费不等于不判）
 AssertionError: expected true to be false // Object.is equality
 
 - Expected
@@ -51,7 +51,7 @@ AssertionError: expected true to be false // Object.is equality
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
 
- FAIL  electron/catalog/credentialProbeFree.test.ts > T-MO-10 ② 没有免费端点：不经确认一个计费请求都不发 > 用户没确认 → 出站零次，凭据落成「已保存·未验证」而不是失败
+ FAIL  electron/catalog/credentialProbeFree.test.ts >  ② 没有免费端点：不经确认一个计费请求都不发 > 用户没确认 → 出站零次，凭据落成「已保存·未验证」而不是失败
 AssertionError: expected 'pending' to be 'declined' // Object.is equality
 
 Expected: "declined"
@@ -67,7 +67,7 @@ Received: "pending"
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
 
- FAIL  electron/catalog/credentialProbeFree.test.ts > T-MO-10 ② 没有免费端点：不经确认一个计费请求都不发 > 根本没给确认函数（无人可问）→ 同样零出站，不静默替用户花钱
+ FAIL  electron/catalog/credentialProbeFree.test.ts >  ② 没有免费端点：不经确认一个计费请求都不发 > 根本没给确认函数（无人可问）→ 同样零出站，不静默替用户花钱
 AssertionError: expected 'pending' to be 'declined' // Object.is equality
 
 Expected: "declined"
@@ -83,7 +83,7 @@ Received: "pending"
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
 
- FAIL  electron/catalog/credentialProbeFree.test.ts > T-MO-10 ② 没有免费端点：不经确认一个计费请求都不发 > 首用前的复验绝不为付费探测弹卡、也绝不偷发（付费探测只由显式的保存验证发起）
+ FAIL  electron/catalog/credentialProbeFree.test.ts >  ② 没有免费端点：不经确认一个计费请求都不发 > 首用前的复验绝不为付费探测弹卡、也绝不偷发（付费探测只由显式的保存验证发起）
 AssertionError: promise rejected "Error: 暂时无法验证密钥，请检查接口地址和网络后重试。原密钥和连接已保留。" instead of resolving
  ❯ electron/catalog/credentialProbeFree.test.ts:207:67
     205|     writeCatalog(state);
@@ -102,7 +102,7 @@ Caused by: Error: 暂时无法验证密钥，请检查接口地址和网络后�
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
 
- FAIL  electron/catalog/credentialProbeFree.test.ts > T-MO-10 ③ 用户同意之后才发，且只发一次 > 确认 → 恰好一次出站，且金额如实来自同一份报价
+ FAIL  electron/catalog/credentialProbeFree.test.ts >  ③ 用户同意之后才发，且只发一次 > 确认 → 恰好一次出站，且金额如实来自同一份报价
 AssertionError: expected 'pending' to be 'verified' // Object.is equality
 
 Expected: "verified"

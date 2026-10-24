@@ -5,7 +5,7 @@
 // 「用户批准之后有人改了目录，还能不能照旧发出去」，它散在 provider 那个大壳里时没人看得见它守的是什么。
 //
 // 命名沿用 `apimartGeneration*` 前缀：这一族改名成 `catalogGeneration*` 是登记过的一条
-// （`docs/roadmap/TODO.md` T-QA-25，卡在「纯改名缺门岗豁免」上），改名时这一份跟着一起走。
+// （`docs/roadmap/TODO.md` ，卡在「纯改名缺门岗豁免」上），改名时这一份跟着一起走。
 import { ApimartGenerationProviderError as CatalogGenerationProviderError } from "./apimartGenerationErrors";
 import { productionGenerationPayloadHash } from "../productionRun/productionGenerationAuthorization";
 import type { Mapping, Model, Vendor } from "../catalog/types";

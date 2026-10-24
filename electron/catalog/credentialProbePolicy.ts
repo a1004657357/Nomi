@@ -1,4 +1,4 @@
-// 「这把 key 该怎么验、验它要不要花钱」——**唯一那份判据**（T-MO-10，用户 2026-09-22 拍板）。
+// 「这把 key 该怎么验、验它要不要花钱」——**唯一那份判据**（，用户 2026-09-22 拍板）。
 //
 // ── 它在解决哪个真实摩擦 ──
 //
@@ -27,7 +27,7 @@
 //
 // ── 缺省是 fail-closed ──
 //
-// 种子的 `credentialProbe` 不声明 `cost` 就判 `paid`（= 先问）。理由是 T-MO-20 的真实教训：
+// 种子的 `credentialProbe` 不声明 `cost` 就判 `paid`（= 先问）。理由是  的真实教训：
 // 把 Higgsfield 的 `POST /marketing-studio/image` 当余额探针，它只要 prompt 就真排任务，
 // 当场烧掉 $0.439。「我以为它免费」必须写成「有出处地声明它免费」才算数。
 import { builtinVendorSeed, type VendorSeed } from './builtinVendorSeeds'

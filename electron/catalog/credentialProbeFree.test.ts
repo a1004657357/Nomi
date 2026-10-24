@@ -1,5 +1,5 @@
 /**
- * 凭据验证/自检的**付费边界**（T-MO-10，用户 2026-09-22 拍板）。
+ * 凭据验证/自检的**付费边界**（，用户 2026-09-22 拍板）。
  *
  * 这条边界为什么存在、09-11 群反馈撞上的是什么，写在 owner 那里
  * （`electron/catalog/credentialProbePolicy.ts` 文件头）。本文件钉住拍板后的三条：
@@ -152,7 +152,7 @@ function jsonResponse(status: number, body: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) } as Response;
 }
 
-describe("T-MO-10 ① 有免费端点的供应商：保存验证不发生成请求", () => {
+describe(" ① 有免费端点的供应商：保存验证不发生成请求", () => {
   it("apimart 保存验证只打免费的余额端点，一次 chat/completions 都没有", async () => {
     const state = seedApimartCatalog();
     mockAppFetch.mockResolvedValue(jsonResponse(200, { success: true, remain_balance: 10.5, remain_credits: 105 }));
@@ -174,7 +174,7 @@ describe("T-MO-10 ① 有免费端点的供应商：保存验证不发生成请�
   });
 });
 
-describe("T-MO-10 ② 没有免费端点：不经确认一个计费请求都不发", () => {
+describe(" ② 没有免费端点：不经确认一个计费请求都不发", () => {
   it("用户没确认 → 出站零次，凭据落成「已保存·未验证」而不是失败", async () => {
     const state = seedLoopbackFixtureCatalog();
     const { probeDirectKeyCredential } = await import("./directKeyCredential");
@@ -211,7 +211,7 @@ describe("T-MO-10 ② 没有免费端点：不经确认一个计费请求都不�
   });
 });
 
-describe("T-MO-10 ③ 用户同意之后才发，且只发一次", () => {
+describe(" ③ 用户同意之后才发，且只发一次", () => {
   it("确认 → 恰好一次出站，且金额如实来自同一份报价", async () => {
     const state = seedLoopbackFixtureCatalog();
     mockAppFetch.mockResolvedValue(jsonResponse(200, { choices: [{ message: { role: "assistant", content: "Hi" } }] }));

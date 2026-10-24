@@ -1,4 +1,4 @@
-// T-ED-06 终态保证 · 真机冷重启走查（R13/R16，零成本：不调任何模型、不花一分钱）。
+//  终态保证 · 真机冷重启走查（R13/R16，零成本：不调任何模型、不花一分钱）。
 //
 // 复的是 docs/audit/2026-09-17-post-804-walkthrough.md §6.5 那一屏：
 // 「拆解跑到一半把 app 关掉再打开：分镜表节点**永久停在「本地找切点 / 0 镜」**——
@@ -132,7 +132,7 @@ try {
   await reopenProjectCanvas(win)
 
   // 收起助手面板 + 适应视图：否则表节点被右侧面板压掉半张，截图看不出那句话完没完整
-  // （节点被压这件事本身是 T-DS-14，不在本刀范围，但截图必须是能用人眼判的）。
+  // （节点被压这件事本身是 ，不在本刀范围，但截图必须是能用人眼判的）。
   await clickOrFail(win.getByRole('button', { name: '收起面板', exact: true }), '收起助手面板')
   await clickOrFail(win.getByRole('button', { name: '适应视图', exact: true }), '适应全部节点')
   // 适应视图会缩到看不清字；截图要的是人眼能读的那一档，所以回到 100%。
@@ -191,4 +191,4 @@ if (failures.length) {
   console.error(`\n✗ ${failures.length} 条没过：\n  ${failures.join('\n  ')}`)
   process.exit(1)
 }
-console.log('\n✓ T-ED-06 终态保证：中断后落「中断，可重试」，有话说、点得动。')
+console.log('\n✓  终态保证：中断后落「中断，可重试」，有话说、点得动。')

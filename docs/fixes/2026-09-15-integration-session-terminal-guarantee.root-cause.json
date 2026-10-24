@@ -172,9 +172,9 @@
   },
   "migration": "新增一个可选持久化字段 `certifyingDeadlineAt`，同时把它加进 integrationSessionRecord.ts 的 allowedKeys（不加会让写过新字段的盘被判 corrupt —— 这也是回滚必须连 allowlist 一起回的原因）。迁移只补值不改结构：validateState 读盘时给非终态且缺 deadline 的 certifying/committing 会话按其 updatedAt 补一个，与既有 migrateRetiredSpendGate 同一手法。老会话因此当场获得保护，不需要用户删文件、不需要重开项目。会话投影多一个可选字段，老客户端忽略即可",
   "residual_risks": [
-    "会话 deadline 是 10 分钟量级：最坏情况用户要等到 10 分钟才看到看门狗给的终态（在此之前他随时可以 cancel —— 出口是即时的，看门狗只管「没人按取消」那条路）。这个数字是从子 run 的收敛上限派生的下限之上取的最近整数，T-MO-07 把验证并行化之后批次超时会下调，会话 deadline 会自动跟着降",
+    "会话 deadline 是 10 分钟量级：最坏情况用户要等到 10 分钟才看到看门狗给的终态（在此之前他随时可以 cancel —— 出口是即时的，看门狗只管「没人按取消」那条路）。这个数字是从子 run 的收敛上限派生的下限之上取的最近整数， 把验证并行化之后批次超时会下调，会话 deadline 会自动跟着降",
     "「会话 deadline > run 收敛上限」目前靠首次进 certifying 时的运行期断言，不是 AST 门岗。如果有人新写一条不经过 integrationCertifyingDeadlineAt 的路去写 certifyingDeadlineAt，这条派生关系管不到它 —— 但那要先绕开唯一的 deadline 来源",
-    "T-MO-07（并行验证 + per-model 30s 超时 + 部分成功 + 只重测失败）按任务书不在本轮，方案文档第七节写清了怎么接。也就是说「6 个模型串行压 5 分钟必然超时」这个**效率**问题本轮没修；本轮修的是「超时/吊死之后会话一定有结论、一定能取消」",
+    "（并行验证 + per-model 30s 超时 + 部分成功 + 只重测失败）按任务书不在本轮，方案文档第七节写清了怎么接。也就是说「6 个模型串行压 5 分钟必然超时」这个**效率**问题本轮没修；本轮修的是「超时/吊死之后会话一定有结论、一定能取消」",
     "ComfyUI 那条路的 cancel 现在放人走了，但它**不会真的掐掉**还在跑的本地工作流（那需要把 AbortController 从会话层穿到 certifyComfy 再穿到 runComfyCandidateTest）。本轮如实标注 certification_abandoned_locally 而不假装撤销了；真正的远端/本地中止穿线是独立一单，形状与 run 层 controllers.get(id)?.abort() 相同"
   ],
   "internal_only_reason": "这条不变量是本仓自有的状态机语义（接入会话的阶段集合、什么算终态、认证 deadline 多长），不对齐任何外部规范或第三方 API 契约。integration-sessions.json 是本仓自己定义的本地格式，没有可查的官方文档能对「会话中间态该怎么收尾」给出判据。借来的外部先例（BullMQ 的 stalled-job reaper 语义）写在方案文档的「先查别人」里，是思路来源不是格式约束",

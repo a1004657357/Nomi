@@ -223,7 +223,7 @@ draftShotFromPlan((call!.call.args as any).shots[0], 0, {
 - **保留场景**：仅用户手写方案（分镜页编辑器 / 侧栏「新建方案」/ 拆解表「复制成方案」/ 外部 MCP `nomi_canvas_edit` 的 `propose_storyboard_plan`/`patch_shots`）。Agent lane **不写**它（09-14 起）。
 - **退役日期：2026-10-16。**
 - **退役条件（全部满足才删）**：① B.3 落地（分镜页/侧栏能渲染 `shot_table(production)`，样张拍板）；② 外部 MCP 的分镜 operation 收编到 `draft_shots`（与 #754 同刀，`docs/plan/2026-09-14-agent-tool-face-v2.md` §6 那张表的到期项）；③ `projectRepository.ts` 的 `starter-*` 起手架删除（空项目由 Agent 起草进入分镜，不再靠两行空白方案）；④ golden-path 与四条分镜走查在单一账本上全绿。
-- **到期未满足**：按 R17 算红——但**仓库今天没有通用的「带到期日的欠账」门岗**（只有 `check:framework-boundary` 对框架债到期即红），本条登记在 `docs/roadmap/TODO.md` T-DS-19，到期由人核。这是一条结构性发现（见 §8.4）。
+- **到期未满足**：按 R17 算红——但**仓库今天没有通用的「带到期日的欠账」门岗**（只有 `check:framework-boundary` 对框架债到期即红），本条登记在 `docs/roadmap/TODO.md` ，到期由人核。这是一条结构性发现（见 §8.4）。
 - 到期前每一处新读分镜的面（表/页/栏/走查）**只许读账本 A**；往 B 加 Agent 写门 = 复活双 owner，`check:tool-face mutual-tiebreak` 会红。
 
 ### 8.4 结构性发现

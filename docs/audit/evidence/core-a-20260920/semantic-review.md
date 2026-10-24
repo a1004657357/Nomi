@@ -23,7 +23,7 @@ Each hunk below compares current integrated task delta against the refreshed ups
 Base blob: `be55c6b3f100e4b57c00bc9b5a0a32b6a922f8ed`; current blob: `0adf2f54c2b8a686b4bbbc2d02dfb4d051cc95ac`; patch SHA-256: `b0f1790115bad53033319ab29141cfee1e7ca526b69f6a28746d954706aeeafd`.
 
 - **49.1: correct / not-a-defect**
-  - Prior: T-DS-01 lists remaining sidebar work alongside completed T-CV-06/T-CV-15 upstream work.
+  - Prior:  lists remaining sidebar work alongside completed / upstream work.
   - Current: Records the user-deferred sidebar redesign, retaining the existing #808 behavior and upstream completed work.
   - Reason: Deferral accurately limits scope and does not authorize a new width, horizontal scroll or replacement page.
   - Evidence: Compared integrated patches/0049.patch and merge-parent delta 436982196..15195e2f9; completed media-geometry and numbering items remain. | Final drift reconciliation: baseBlob/currentBlob/patchSha256 all unchanged from the integrated frozen review.

@@ -13,7 +13,7 @@
 
 先获取真实 PR base/head SHA 并计算 merge-base，审完整分支 diff，检查所有新增文件；不要把主线前进造成的两点差异当成回滚。若缺少任务书或证据，明确缺失项，不猜范围。
 
-本次只做简化 A＋完整 T7。必须保留原 StoryboardPlanEditor → storyboardRowActions → canvas runner，接好新建、Agent 交互、目标、保存恢复与节点绑定；不得以适配为名新增替代页面、第二份可编辑正本、第二条执行或付款链，不自动展开 T3。原界面不要被 Agent 顶部新增信息挤压。PR #808 左栏收起让位及手动偏好是当前保留行为；左右栏同时展开的整体空间设计已由用户明确延后，见唯一 TODO T-DS-01/A-2。不要擅自要求本 PR 重画布局。
+本次只做简化 A＋完整 T7。必须保留原 StoryboardPlanEditor → storyboardRowActions → canvas runner，接好新建、Agent 交互、目标、保存恢复与节点绑定；不得以适配为名新增替代页面、第二份可编辑正本、第二条执行或付款链，不自动展开 T3。原界面不要被 Agent 顶部新增信息挤压。PR #808 左栏收起让位及手动偏好是当前保留行为；左右栏同时展开的整体空间设计已由用户明确延后，见唯一 TODO /A-2。不要擅自要求本 PR 重画布局。
 
 逐项检查：
 

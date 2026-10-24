@@ -2,7 +2,7 @@
 
 > 📋 方案待拍板 · 状态由 docs-autosync 自动登记，作者请按实修改
 
-状态：已合入 main（PR #825，b5cf48bc0）；对应 TODO T-CV-06。逐项审计与验证边界见 [总报告](../audit/2026-09-20-change-by-change-review.md)。
+状态：已合入 main（PR #825，b5cf48bc0）；对应 TODO 。逐项审计与验证边界见 [总报告](../audit/2026-09-20-change-by-change-review.md)。
 
 ## 问题与范围
 

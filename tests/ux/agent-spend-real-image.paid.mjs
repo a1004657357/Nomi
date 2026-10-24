@@ -137,7 +137,7 @@ try {
     'full-auto spent only on the authorised image model').toBe(true)
   // 图已经落盘 = 这一轮的活干完了，不再去等 composer 的「运行中」相：那一相在图出来之前就退了。
   await walk.snap('paid-03-en-full-auto-no-card-image-arrived')
-  // 回执必须说「档位替你答了、已经在跑」，不能说「有张卡在等你」（T-ED-02 修的正是这一句）。
+  // 回执必须说「档位替你答了、已经在跑」，不能说「有张卡在等你」（ 修的正是这一句）。
   // 真相源是宿主回给模型的那段工具结果（转录落盘），不是面板上的哪一块字。
   const autoResults = generateResults(projectRoot).slice(generatesBefore)
   expect(autoResults.length, 'full-auto leg: the agent called generate').toBeGreaterThan(0)

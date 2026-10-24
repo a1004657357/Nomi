@@ -111,7 +111,7 @@ export const deconstructionShotTableSchema = z.object({
     title: z.string(),
     durationSeconds: z.number().finite().nonnegative().transform(quantizeShotSeconds).optional(),
     /**
-     * 拆解这条参考片的生命周期。**终态保证（T-ED-06）**：`running` 之外每一格都是终态，
+     * 拆解这条参考片的生命周期。**终态保证（）**：`running` 之外每一格都是终态，
      * 而 `running` 只在**这个渲染进程真有一次在飞调用**时才成立——判据是
      * `src/workbench/generationCanvas/nodes/shotTable/deconstructionLifecycle.ts` 的在飞登记，
      * 不是磁盘上这个字段本身。五格为什么不能合并见

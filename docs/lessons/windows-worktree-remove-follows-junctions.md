@@ -15,7 +15,7 @@
 
 - 删目录前：`cmd /c rmdir <junction>`（只删链接）→ `Get-ChildItem -Recurse -Attributes ReparsePoint` 确认一个都不剩 → 再删目录。
 - 工作树里还有 junction 时，不要执行 `git worktree remove`；协调会话归档会话之前也要先查一遍（归档会清理工作树）。
-- 根治方向：每个工作树自己装依赖，不再共用、不再链接（D 盘上用 pnpm store 硬链接，装得很快）。已排进 TODO T-QA-34（Windows 工具链块）。
+- 根治方向：每个工作树自己装依赖，不再共用、不再链接（D 盘上用 pnpm store 硬链接，装得很快）。已排进 TODO （Windows 工具链块）。
 - 测试突然成片报 `Cannot find package` 时，先看那个包目录是不是空的，再去怪平台；修复用 `pnpm install --frozen-lockfile --force`。
 
 **出处**：2026-09-24 本机事故；2026-09-25 主仓 node_modules 损坏的现场。

@@ -117,7 +117,7 @@
 | P05 | lazy占位→资源失败→原位retry保草稿；零尺寸再显示、四边与缩放恢复 | E10 两宿主真实失败；E09/E11 原恢复旁证；受控 geometry/retry | `failed`。原位retry不能恢复，不接受重启/随机key/入口 URL 实验当交付；依赖失败同样须覆盖 |
 | P06 | 保留原定位控件，只有框架对照证明兼容才替换 | `composerLifecycle.test.mjs:189/:235/:245`；历史 T7 表记 NodeToolbar缺clamp/flip，原owner保留 | `historical` 原几何边界受控依据；没有换框架，不要求虚构新 UI 旅程。实际宿主边缘/零尺寸完整组合仍挂 P05/P08 |
 | P07 | 画布参数条与付款卡分别输入，卡未批准时画布/方案/媒体不变 | E03/E09；`spend-panel-write-ownership.test.mjs:52/:70/:79/:136` | `historical` 正常双宿主编辑/上传晚回负控；E10 付款retry `failed`。双宿主不能只测共享组件一次 |
-| P08 | zh/en实际点击命中/键盘/文字与参数编辑，磁盘保存、重开后内容一致 | E03/E07/E09/E11/E16/E17 | `historical` 各构建局部真输入/磁盘/双语；`unverified` 最终相同构建组合、Windows。EN分镜底条碰撞为明确延期 T-DS-01/A-2，不得当整页视觉通过 |
+| P08 | zh/en实际点击命中/键盘/文字与参数编辑，磁盘保存、重开后内容一致 | E03/E07/E09/E11/E16/E17 | `historical` 各构建局部真输入/磁盘/双语；`unverified` 最终相同构建组合、Windows。EN分镜底条碰撞为明确延期 /A-2，不得当整页视觉通过 |
 
 ## 分镜：逐项映射
 

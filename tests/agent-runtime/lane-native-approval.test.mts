@@ -57,7 +57,7 @@ test('hard-list publication remains disallowed in edit-selection mode', async ()
   assert.equal((await instance.preflight({ toolCallId: 'publish', toolName: 'bash', args: { command: 'git push origin main' } }, undefined)).decision, 'denied-by-policy');
 });
 
-// T-ED-02：工具回执要说真话，就得问得到「这一次到底是怎么过闸的」。
+// ：工具回执要说真话，就得问得到「这一次到底是怎么过闸的」。
 // 闸是这件事的唯一 owner；此前它根本不对外说，于是回执只能查一张静态表。
 test('the gate remembers how each call actually passed, and forgets it when the host says so', async () => {
   const instance = gate('safe-auto');

@@ -297,7 +297,7 @@ function draftedOperationId(drafted: unknown, args: Record<string, unknown>): st
 /**
  * 同 `draftedOperationId`，但读不出来就回 `undefined`。
  *
- * 它只用在一个地方：占「这一笔由档位代答」那个位（T-AG-04）。那里读不出 id **不能抛**——
+ * 它只用在一个地方：占「这一笔由档位代答」那个位（）。那里读不出 id **不能抛**——
  * 抛了就会把一次本来能成的建草稿变成失败。读不出的后果只是这一笔少了一层占位，
  * 决门那一步照旧用会抛的那一份（`draftedOperationId`），不许拿猜的 id 去开付费门。
  */
@@ -512,7 +512,7 @@ export function createPiGenerationTransportAdapter(
         // operationId is required by every non-create descriptor. Parsing it
         // here keeps malformed model calls out of the durable operation store.
         if (capability !== "context" && capability !== "create") operationId(args);
-        // ── 「这一笔由档位代答，别把它投影成卡」（T-AG-04）──
+        // ── 「这一笔由档位代答，别把它投影成卡」（）──
         //
         // 面板每 1.5s 读一次投影，而 `plan()` 一落盘，报价卡就可见了——代答跑在它之后。
         // 所以占位必须**早于草稿落盘**，晚一步用户就会看见那张他刚授权过「不用再问」的卡闪出来。
