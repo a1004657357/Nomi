@@ -136,9 +136,9 @@ describe("resolveArchetypeForModel — 供应商无关的识别桥", () => {
     expect(resOf("mini")).toEqual(["480p", "720p"]);
   });
 
-  // ── 即梦官方 CLI 矩阵锁（SOURCE：docs/research/2026-09-01-dreamina-cli-v1417-matrix.md，CLI v1.4.17）──
-  // 目的：非法组合在请求构造前就不可达（select 选项即合法集）。真实生成 smoke 需即梦高级会员登录态，本机无 → 契约级兜底。
-  describe("即梦 dreamina CLI v1.4.17 矩阵", () => {
+  // 历史依据：2026-09-01 CLI v1.4.17 help 矩阵；产品划分以当前档案和 dreaminaSeed.test.ts 为准。
+  // 这里只锁仓库声明，不代替当前外部 CLI 的真实生成验证。
+  describe("即梦 dreamina 档案声明（v1.4.17 历史矩阵）", () => {
     const seedance = getArchetypeById("dreamina-seedance-2")!;
     const modeIds = seedance.modes.map((mm) => mm.id); // t2v/i2v/firstlast/multimodal
     const resOf = (variantId: string, modeId: string) => {
@@ -153,13 +153,20 @@ describe("resolveArchetypeForModel — 供应商无关的识别桥", () => {
       return { min: d.min, max: d.max };
     };
 
-    it("seedance2.5 变体：全模式清晰度 480/720/1080 + 时长 4-30（v1.4.15/1.4.17）", () => {
-      for (const modeId of modeIds) {
-        expect(resOf("v2_5", modeId)).toEqual(["480p", "720p", "1080p"]);
-        expect(durOf("v2_5", modeId)).toEqual({ min: 4, max: 30 });
+    it("seedance2.5 独立无变体档案：四模式清晰度 480/720/1080 + 时长 4-30", () => {
+      const seedance25 = getArchetypeById("dreamina-seedance-2.5")!;
+      expect(seedance25).toBeTruthy();
+      expect(seedance25.variants).toBeUndefined();
+      expect(seedance.variants?.map((variant) => variant.id)).not.toContain("v2_5");
+      expect(seedance25.modes.map((mode) => mode.id)).toEqual(["t2v", "i2v", "firstlast", "multimodal"]);
+      expect(resolveArchetypeForModel(m({ modelKey: "dreamina-seedance-2.5" }))?.id).toBe(seedance25.id);
+      expect(resolveArchetypeForModel(m({ modelKey: "dreamina/seedance2.5" }))?.id).toBe(seedance25.id);
+      for (const mode of seedance25.modes) {
+        expect(mode.params.find((param) => param.key === "video_resolution")?.options.map((option) => option.value))
+          .toEqual(["480p", "720p", "1080p"]);
+        expect(mode.params.find((param) => param.key === "duration")).toMatchObject({ min: 4, max: 30 });
+        expect(mode.modelEnum).toBe("seedance2.5");
       }
-      // 命名裁决（matrix §5）：现役 -h 原文是 `seedance2.5`（小数点、无「3」）。
-      expect(seedance.variants?.find((v) => v.id === "v2_5")?.modelKey).toBe("seedance2.5");
     });
 
     it("非 vip 2.0 档（fast/standard/mini）清晰度锁 720p、时长 4-15（官方 -h：其余所有→720p）", () => {
@@ -171,9 +178,12 @@ describe("resolveArchetypeForModel — 供应商无关的识别桥", () => {
       }
     });
 
-    it("vip / fast_vip 档：清晰度 720/1080（不含 480，2.0_vip 的 4k 本档未开放）", () => {
-      for (const variantId of ["vip", "fast_vip"]) {
-        expect(resOf(variantId, "t2v")).toEqual(["720p", "1080p"]);
+    it("2.0 标准 VIP 四模式允许 720/1080/4k，fast_vip 四模式仅 720p", () => {
+      for (const modeId of modeIds) {
+        expect(resOf("vip", modeId)).toEqual(["720p", "1080p", "4k"]);
+        expect(resOf("fast_vip", modeId)).toEqual(["720p"]);
+        expect(durOf("vip", modeId)).toEqual({ min: 4, max: 15 });
+        expect(durOf("fast_vip", modeId)).toEqual({ min: 4, max: 15 });
       }
     });
 

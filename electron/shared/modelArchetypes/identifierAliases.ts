@@ -11,6 +11,8 @@ export function canonicalArchetypeIdentifier(identifier: string): string {
   const slash = identifier.lastIndexOf('/')
   const name = identifier.slice(slash + 1)
   const key = name.toLowerCase()
-  const canonical = Object.hasOwn(PRODUCT_IDENTIFIER_ALIASES, key) ? PRODUCT_IDENTIFIER_ALIASES[key] : undefined
+  const canonical = Object.prototype.hasOwnProperty.call(PRODUCT_IDENTIFIER_ALIASES, key)
+    ? PRODUCT_IDENTIFIER_ALIASES[key]
+    : undefined
   return canonical ? identifier.slice(0, slash + 1) + canonical : identifier
 }

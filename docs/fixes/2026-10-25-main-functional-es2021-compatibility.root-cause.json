@@ -1,0 +1,39 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-main-functional-es2021-compatibility",
+  "problem_type": "Shared identity helpers exceed consumer standard-library floor",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "symptom": "Design-lab typechecking reports TS2550 for Object.hasOwn in identifierAliases.ts.",
+  "direct_cause": "The helper uses an ES2022 library API while an existing consumer supports the ES2021 library surface.",
+  "class_root": "Runtime-only alias tests did not verify the shared helper against its lowest supported compilation library.",
+  "affected_population": ["Renderer/design-lab and other pre-ES2022 library consumers of the shared alias owner"],
+  "scope_paths": ["electron/shared/modelArchetypes/identifierAliases.ts"],
+  "entry_points": ["Renderer rawIdentifier", "Catalog rawIdentifier", "Platform productStem"],
+  "external_sources": [],
+  "internal_only_reason": "The installed TypeScript compiler deterministically reproduces the internal consumer-library mismatch; no external model capability is involved.",
+  "invariants": ["Exact alias membership uses an own-property primitive available within ES2021.", "Prototype-like and unknown identifiers remain unchanged.", "No consumer tsconfig library or production model capability is raised or changed."],
+  "invariant_owner_layer": {"layer":"electron/shared/modelArchetypes","tests":["electron/shared/modelArchetypes/identifierAliases.test.ts"]},
+  "doors": [
+    {"kind":"read","path":"electron/shared/modelArchetypes/identifierAliases.ts","symbol":"PRODUCT_IDENTIFIER_ALIASES"},
+    {"kind":"write","path":"electron/catalog/archetypeIdentity.ts","symbol":"canonicalArchetypeIdentifier"},
+    {"kind":"write","path":"electron/shared/modelArchetypes/index.ts","symbol":"canonicalArchetypeIdentifier"},
+    {"kind":"write","path":"scripts/check-platform-archetypes.mjs","symbol":"canonicalArchetypeIdentifier"}
+  ],
+  "door_reduction": {"before":4,"after":4,"why_not":"Generated door map preserves the three separate renderer, catalog and gate consumers and one shared data read. One shared implementation change repairs all three; call-site duplication is not introduced. Function calls are pure despite the tool's write-name heuristic."},
+  "generality_proof": "All consumers use the same exact alias owner. Compile it with only the ES2021 standard library and no ambient package types, while retaining all runtime alias and prototype-name regressions.",
+  "shared_boundaries": [{"path":"electron/shared/modelArchetypes/identifierAliases.ts","symbol":"canonicalArchetypeIdentifier","responsibility":"Own exact alias membership with an API compatible with the existing consumer-library floor."}],
+  "same_class_entry_points": [
+    {"path":"electron/shared/modelArchetypes/index.ts","entry_point":"rawIdentifier","disposition":"enforced","evidence":"Imports the shared helper; renderer consumers no longer require Object.hasOwn declarations."},
+    {"path":"electron/catalog/archetypeIdentity.ts","entry_point":"rawIdentifier","disposition":"enforced","evidence":"Uses the same helper; existing catalog/renderer parity tests cover aliases and unknown names."},
+    {"path":"scripts/check-platform-archetypes.mjs","entry_point":"productStem","disposition":"enforced","evidence":"Imports the same helper; no gate or alias semantics changed."}
+  ],
+  "recurrence": {"classification":"recurring","reason":"A shared helper can silently use newer standard-library APIs whenever runtime tests execute under a newer Node version.","same_class_scan":["node scripts/door-map.mjs canonicalArchetypeIdentifier PRODUCT_IDENTIFIER_ALIASES --roots=electron/shared/modelArchetypes,electron/catalog,scripts: 584 production files, four doors.","Inspected tsconfig.devlab.json inheritance, the three helper consumers and the installed compiler's ES2021 diagnostic."]},
+  "prevention": {"kind":"centralized-boundary","enforcement_path":"electron/shared/modelArchetypes/identifierAliases.ts","invariant":"The only shared membership implementation does not require post-ES2021 library APIs.","failure_mode":"Unknown/prototype keys remain unchanged; an incompatible future API causes the focused compiler regression to fail.","exception_policy":"none","strategy":"Replace Object.hasOwn with Object.prototype.hasOwnProperty.call at the shared owner and add a real TypeScript compile regression.","artifacts":["electron/shared/modelArchetypes/identifierAliases.ts"]},
+  "regression_tests": ["electron/shared/modelArchetypes/identifierAliases.test.ts"],
+  "class_regression_tests": ["electron/shared/modelArchetypes/identifierAliases.test.ts"],
+  "legacy_paths": {"status":"removed","removed_paths":["electron/shared/modelArchetypes/identifierAliases.ts"],"rationale":"Remove the ES2022-only membership primitive, preserving the alias table and all supported identifiers."},
+  "dependency_lifecycle": {"decision":"not-applicable","rationale":"No dependency upgrade is required; the standard own-property API already meets the existing compilation contract.","exit_criteria":[]},
+  "migration": "No saved data or capability migration. The separate test-only Seedance repair follows already-existing profile separation; see the follow-up plan for historical-source conflicts.",
+  "residual_risks": ["Complete design-lab/browser and CI validation belong to the coordinator; this line runs focused compilation and tests only.","Historical CLI help and repository declarations are not evidence of current external model execution success."]
+}
