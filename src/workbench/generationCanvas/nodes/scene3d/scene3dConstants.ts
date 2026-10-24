@@ -1,3 +1,4 @@
+import i18n from "../../../../i18n"
 import * as THREE from 'three'
 import type { Scene3DVector3 } from './scene3dTypes'
 
@@ -171,134 +172,134 @@ export const MANNEQUIN_DEFAULT_POSE: Record<string, Scene3DVector3> = {
 
 export const MANNEQUIN_POSE_SECTIONS: MannequinPoseSection[] = [
   {
-    title: '身体',
+    get title() { return i18n.t("customWorkflow.body") },
     controls: [
-      { bone: 'mixamorigHips', axisIndex: 0, label: '前倾', standingValue: 0 },
-      { bone: 'mixamorigHips', axisIndex: 1, label: '转身', standingValue: 0 },
-      { bone: 'mixamorigHips', axisIndex: 2, label: '侧倾', standingValue: 0 },
+      { bone: 'mixamorigHips', axisIndex: 0, get label() { return i18n.t("customWorkflow.forwardLean") }, standingValue: 0 },
+      { bone: 'mixamorigHips', axisIndex: 1, get label() { return i18n.t("customWorkflow.bodyTurn") }, standingValue: 0 },
+      { bone: 'mixamorigHips', axisIndex: 2, get label() { return i18n.t("customWorkflow.sideTilt") }, standingValue: 0 },
     ],
   },
   {
-    title: '躯干',
+    get title() { return i18n.t("customWorkflow.torso") },
     controls: [
-      { bone: 'mixamorigSpine', axisIndex: 0, label: '前倾', standingValue: 2, baseOffsetDeg: 2 },
-      { bone: 'mixamorigSpine', axisIndex: 1, label: '扭转', standingValue: 0 },
-      { bone: 'mixamorigSpine', axisIndex: 2, label: '侧倾', standingValue: 0 },
+      { bone: 'mixamorigSpine', axisIndex: 0, get label() { return i18n.t("customWorkflow.forwardLean") }, standingValue: 2, baseOffsetDeg: 2 },
+      { bone: 'mixamorigSpine', axisIndex: 1, get label() { return i18n.t("customWorkflow.twist") }, standingValue: 0 },
+      { bone: 'mixamorigSpine', axisIndex: 2, get label() { return i18n.t("customWorkflow.sideTilt") }, standingValue: 0 },
     ],
   },
   {
-    title: '头部',
+    get title() { return i18n.t("customWorkflow.head") },
     controls: [
-      { bone: 'mixamorigHead', axisIndex: 0, label: '点头', standingValue: -10, baseOffsetDeg: -10 },
-      { bone: 'mixamorigHead', axisIndex: 1, label: '转头', standingValue: 0 },
-      { bone: 'mixamorigHead', axisIndex: 2, label: '歪头', standingValue: 0 },
+      { bone: 'mixamorigHead', axisIndex: 0, get label() { return i18n.t("customWorkflow.nod") }, standingValue: -10, baseOffsetDeg: -10 },
+      { bone: 'mixamorigHead', axisIndex: 1, get label() { return i18n.t("customWorkflow.headTurn") }, standingValue: 0 },
+      { bone: 'mixamorigHead', axisIndex: 2, get label() { return i18n.t("customWorkflow.headTilt") }, standingValue: 0 },
     ],
   },
   {
-    title: '手臂—肩',
+    get title() { return i18n.t("customWorkflow.armShoulder") },
     groups: [
       {
-        title: '左',
+        get title() { return i18n.t("customWorkflow.left") },
         controls: [
-          { bone: 'mixamorigLeftArm', axisIndex: 0, label: '前举', standingValue: -5, baseOffsetDeg: 74 },
-          { bone: 'mixamorigLeftArm', axisIndex: 1, label: '外展', standingValue: 7, baseOffsetDeg: 2 },
-          { bone: 'mixamorigLeftArm', axisIndex: 2, label: '扭转', standingValue: 0, baseOffsetDeg: -4 },
+          { bone: 'mixamorigLeftArm', axisIndex: 0, get label() { return i18n.t("customWorkflow.forwardRaise") }, standingValue: -5, baseOffsetDeg: 74 },
+          { bone: 'mixamorigLeftArm', axisIndex: 1, get label() { return i18n.t("customWorkflow.abduction") }, standingValue: 7, baseOffsetDeg: 2 },
+          { bone: 'mixamorigLeftArm', axisIndex: 2, get label() { return i18n.t("customWorkflow.twist") }, standingValue: 0, baseOffsetDeg: -4 },
         ],
       },
       {
-        title: '右',
+        get title() { return i18n.t("customWorkflow.right") },
         controls: [
-          { bone: 'mixamorigRightArm', axisIndex: 0, label: '前举', standingValue: -5, baseOffsetDeg: 74 },
-          { bone: 'mixamorigRightArm', axisIndex: 1, label: '外展', standingValue: 7, baseOffsetDeg: -2, valueScale: -1 },
-          { bone: 'mixamorigRightArm', axisIndex: 2, label: '扭转', standingValue: 0, baseOffsetDeg: 4 },
-        ],
-      },
-    ],
-  },
-  {
-    title: '肘部',
-    groups: [
-      {
-        title: '左',
-        controls: [
-          { bone: 'mixamorigLeftForeArm', axisIndex: 0, label: '弯曲', standingValue: 10, baseOffsetDeg: 10 },
-          { bone: 'mixamorigLeftForeArm', axisIndex: 1, label: '内收', standingValue: -8, baseOffsetDeg: -8 },
-          { bone: 'mixamorigLeftForeArm', axisIndex: 2, label: '扭转', standingValue: 0 },
-        ],
-      },
-      {
-        title: '右',
-        controls: [
-          { bone: 'mixamorigRightForeArm', axisIndex: 0, label: '弯曲', standingValue: 10, baseOffsetDeg: 10 },
-          { bone: 'mixamorigRightForeArm', axisIndex: 1, label: '内收', standingValue: -8, baseOffsetDeg: 8, valueScale: -1 },
-          { bone: 'mixamorigRightForeArm', axisIndex: 2, label: '扭转', standingValue: 0 },
+          { bone: 'mixamorigRightArm', axisIndex: 0, get label() { return i18n.t("customWorkflow.forwardRaise") }, standingValue: -5, baseOffsetDeg: 74 },
+          { bone: 'mixamorigRightArm', axisIndex: 1, get label() { return i18n.t("customWorkflow.abduction") }, standingValue: 7, baseOffsetDeg: -2, valueScale: -1 },
+          { bone: 'mixamorigRightArm', axisIndex: 2, get label() { return i18n.t("customWorkflow.twist") }, standingValue: 0, baseOffsetDeg: 4 },
         ],
       },
     ],
   },
   {
-    title: '手腕',
+    get title() { return i18n.t("customWorkflow.elbow") },
     groups: [
       {
-        title: '左',
+        get title() { return i18n.t("customWorkflow.left") },
         controls: [
-          { bone: 'mixamorigLeftHand', axisIndex: 0, label: '下压', standingValue: 6, baseOffsetDeg: 6 },
-          { bone: 'mixamorigLeftHand', axisIndex: 1, label: '侧摆', standingValue: 0 },
-          { bone: 'mixamorigLeftHand', axisIndex: 2, label: '放松', standingValue: -8, baseOffsetDeg: -8 },
+          { bone: 'mixamorigLeftForeArm', axisIndex: 0, get label() { return i18n.t("customWorkflow.bend") }, standingValue: 10, baseOffsetDeg: 10 },
+          { bone: 'mixamorigLeftForeArm', axisIndex: 1, get label() { return i18n.t("customWorkflow.adduction") }, standingValue: -8, baseOffsetDeg: -8 },
+          { bone: 'mixamorigLeftForeArm', axisIndex: 2, get label() { return i18n.t("customWorkflow.twist") }, standingValue: 0 },
         ],
       },
       {
-        title: '右',
+        get title() { return i18n.t("customWorkflow.right") },
         controls: [
-          { bone: 'mixamorigRightHand', axisIndex: 0, label: '下压', standingValue: 6, baseOffsetDeg: 6 },
-          { bone: 'mixamorigRightHand', axisIndex: 1, label: '侧摆', standingValue: 0 },
-          { bone: 'mixamorigRightHand', axisIndex: 2, label: '放松', standingValue: -8, baseOffsetDeg: 8, valueScale: -1 },
-        ],
-      },
-    ],
-  },
-  {
-    title: '大腿',
-    groups: [
-      {
-        title: '左',
-        controls: [
-          { bone: 'mixamorigLeftUpLeg', axisIndex: 0, label: '前摆', standingValue: 0, min: -90, max: 120 },
-          { bone: 'mixamorigLeftUpLeg', axisIndex: 1, label: '外展', standingValue: 0, min: -60, max: 60 },
-        ],
-      },
-      {
-        title: '右',
-        controls: [
-          { bone: 'mixamorigRightUpLeg', axisIndex: 0, label: '前摆', standingValue: 0, min: -90, max: 120 },
-          { bone: 'mixamorigRightUpLeg', axisIndex: 1, label: '外展', standingValue: 0, valueScale: -1, min: -60, max: 60 },
+          { bone: 'mixamorigRightForeArm', axisIndex: 0, get label() { return i18n.t("customWorkflow.bend") }, standingValue: 10, baseOffsetDeg: 10 },
+          { bone: 'mixamorigRightForeArm', axisIndex: 1, get label() { return i18n.t("customWorkflow.adduction") }, standingValue: -8, baseOffsetDeg: 8, valueScale: -1 },
+          { bone: 'mixamorigRightForeArm', axisIndex: 2, get label() { return i18n.t("customWorkflow.twist") }, standingValue: 0 },
         ],
       },
     ],
   },
   {
-    title: '膝盖',
+    get title() { return i18n.t("customWorkflow.wrist") },
     groups: [
       {
-        title: '左',
-        controls: [{ bone: 'mixamorigLeftLeg', axisIndex: 0, label: '弯曲', standingValue: 0, min: -10, max: 150 }],
+        get title() { return i18n.t("customWorkflow.left") },
+        controls: [
+          { bone: 'mixamorigLeftHand', axisIndex: 0, get label() { return i18n.t("customWorkflow.pressDown") }, standingValue: 6, baseOffsetDeg: 6 },
+          { bone: 'mixamorigLeftHand', axisIndex: 1, get label() { return i18n.t("customWorkflow.sideSwing") }, standingValue: 0 },
+          { bone: 'mixamorigLeftHand', axisIndex: 2, get label() { return i18n.t("customWorkflow.relax") }, standingValue: -8, baseOffsetDeg: -8 },
+        ],
       },
       {
-        title: '右',
-        controls: [{ bone: 'mixamorigRightLeg', axisIndex: 0, label: '弯曲', standingValue: 0, min: -10, max: 150 }],
+        get title() { return i18n.t("customWorkflow.right") },
+        controls: [
+          { bone: 'mixamorigRightHand', axisIndex: 0, get label() { return i18n.t("customWorkflow.pressDown") }, standingValue: 6, baseOffsetDeg: 6 },
+          { bone: 'mixamorigRightHand', axisIndex: 1, get label() { return i18n.t("customWorkflow.sideSwing") }, standingValue: 0 },
+          { bone: 'mixamorigRightHand', axisIndex: 2, get label() { return i18n.t("customWorkflow.relax") }, standingValue: -8, baseOffsetDeg: 8, valueScale: -1 },
+        ],
       },
     ],
   },
   {
-    title: '脚踝',
+    get title() { return i18n.t("customWorkflow.thigh") },
     groups: [
       {
-        title: '左',
-        controls: [{ bone: 'mixamorigLeftFoot', axisIndex: 0, label: '勾绷', standingValue: 0, min: -60, max: 70 }],
+        get title() { return i18n.t("customWorkflow.left") },
+        controls: [
+          { bone: 'mixamorigLeftUpLeg', axisIndex: 0, get label() { return i18n.t("customWorkflow.forwardSwing") }, standingValue: 0, min: -90, max: 120 },
+          { bone: 'mixamorigLeftUpLeg', axisIndex: 1, get label() { return i18n.t("customWorkflow.abduction") }, standingValue: 0, min: -60, max: 60 },
+        ],
       },
       {
-        title: '右',
-        controls: [{ bone: 'mixamorigRightFoot', axisIndex: 0, label: '勾绷', standingValue: 0, min: -60, max: 70 }],
+        get title() { return i18n.t("customWorkflow.right") },
+        controls: [
+          { bone: 'mixamorigRightUpLeg', axisIndex: 0, get label() { return i18n.t("customWorkflow.forwardSwing") }, standingValue: 0, min: -90, max: 120 },
+          { bone: 'mixamorigRightUpLeg', axisIndex: 1, get label() { return i18n.t("customWorkflow.abduction") }, standingValue: 0, valueScale: -1, min: -60, max: 60 },
+        ],
+      },
+    ],
+  },
+  {
+    get title() { return i18n.t("customWorkflow.knee") },
+    groups: [
+      {
+        get title() { return i18n.t("customWorkflow.left") },
+        controls: [{ bone: 'mixamorigLeftLeg', axisIndex: 0, get label() { return i18n.t("customWorkflow.bend") }, standingValue: 0, min: -10, max: 150 }],
+      },
+      {
+        get title() { return i18n.t("customWorkflow.right") },
+        controls: [{ bone: 'mixamorigRightLeg', axisIndex: 0, get label() { return i18n.t("customWorkflow.bend") }, standingValue: 0, min: -10, max: 150 }],
+      },
+    ],
+  },
+  {
+    get title() { return i18n.t("customWorkflow.ankle") },
+    groups: [
+      {
+        get title() { return i18n.t("customWorkflow.left") },
+        controls: [{ bone: 'mixamorigLeftFoot', axisIndex: 0, get label() { return i18n.t("customWorkflow.flexPoint") }, standingValue: 0, min: -60, max: 70 }],
+      },
+      {
+        get title() { return i18n.t("customWorkflow.right") },
+        controls: [{ bone: 'mixamorigRightFoot', axisIndex: 0, get label() { return i18n.t("customWorkflow.flexPoint") }, standingValue: 0, min: -60, max: 70 }],
       },
     ],
   },
@@ -310,11 +311,11 @@ export const MANNEQUIN_POSE_MAX_DEG = 90
 export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   {
     id: 'standing',
-    label: '站立',
+    get label() { return i18n.t("customWorkflow.standing") },
   },
   {
     id: 't-pose',
-    label: 'T型',
+    get label() { return i18n.t("customWorkflow.tPose") },
     pose: makePoseOffset({
       mixamorigSpine: [-2, 0, 0],
       mixamorigHead: [2, 0, 0],
@@ -328,7 +329,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'walk',
-    label: '行走',
+    get label() { return i18n.t("customWorkflow.walking") },
     pose: makePoseOffset({
       mixamorigHips: [0, -6, 0],
       mixamorigSpine: [2, 4, 0],
@@ -344,7 +345,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'run',
-    label: '跑步',
+    get label() { return i18n.t("customWorkflow.running") },
     pose: makePoseOffset({
       mixamorigHips: [8, -8, 0],
       mixamorigSpine: [10, 5, 0],
@@ -363,7 +364,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'sit',
-    label: '坐姿',
+    get label() { return i18n.t("customWorkflow.sitting") },
     // 椅面坐姿：大腿近水平、小腿垂直、脚掌踩平；双臂微屈落在大腿两侧。
     // 2026-07-05 用 pose-lab 多视角复核，避免坐姿看起来像深蹲或手臂空垂穿腿。
     pose: makePoseOffset({
@@ -385,7 +386,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'squat',
-    label: '蹲下',
+    get label() { return i18n.t("customWorkflow.squat") },
     // 深蹲：髋/膝深屈、躯干前倾、脚掌踩平。
     // ⚠️ 脚轴向（poseMetrics 实测锚定）：mixamorigFoot +x = 背屈（脚尖上翘）/ −x = 跖屈（绷脚）。
     // 旧值 Foot −42 实为绷脚 42° → 脚跟离地 2.6% 身高、重心前出支撑面 10.5%（度量核抓出）；
@@ -417,7 +418,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
     //     ⚠️ 脚轴向（poseMetrics 实测锚定）：+x = 背屈（脚尖上翘）/ −x = 跖屈。旧值 −34 写反了方向。
     //  ④ Hips 不动（它是骨架根，动了整体歪身，蹲会变成坐/后仰）。蒙皮最低点自动落地(scene3dMath)。
     id: 'crouch',
-    label: '半蹲',
+    get label() { return i18n.t("customWorkflow.crouch") },
     pose: makePoseOffset({
       mixamorigHips: [-4, 0, 0],
       mixamorigSpine: [16, 0, 0],
@@ -434,7 +435,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'single-knee',
-    label: '单膝跪',
+    get label() { return i18n.t("customWorkflow.oneKneeKneel") },
     // 前腿(左)：大腿近水平、小腿近垂直、脚掌踩平。后腿(右)：大腿近垂直略后、膝着地、小腿向后**平贴地面**、
     // 后脚自然延伸。连续鞋楦不能再靠独立脚趾块充当地面支点；约束求解同时保证前脚、后小腿和重心成立。
     pose: makePoseOffset({
@@ -450,7 +451,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'double-knee',
-    label: '双膝跪',
+    get label() { return i18n.t("customWorkflow.twoKneeKneel") },
     // 直身双膝跪（非跪坐/趴伏）：大腿近垂直略后，小腿向后平贴地、脚背贴地。
     // 连续鞋楦下采用接近中立位的脚踝，避免长鞋头成为最低点而把双膝整体抬离地面。
     pose: makePoseOffset({
@@ -466,7 +467,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'hands-on-hips',
-    label: '叉腰',
+    get label() { return i18n.t("customWorkflow.handsOnHips") },
     pose: makePoseOffset({
       mixamorigLeftArm: [-28, 0, 0],
       mixamorigRightArm: [-28, 0, 0],
@@ -476,7 +477,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'point',
-    label: '指向',
+    get label() { return i18n.t("customWorkflow.point") },
     pose: makePoseOffset({
       mixamorigRightArm: [-76, 30, -8],
       mixamorigRightForeArm: [8, 0, 0],
@@ -485,7 +486,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'wave',
-    label: '举手',
+    get label() { return i18n.t("customWorkflow.raiseHand") },
     pose: makePoseOffset({
       mixamorigRightArm: [-148, 10, -4],
       mixamorigRightForeArm: [28, 0, 8],
@@ -494,7 +495,7 @@ export const MANNEQUIN_POSE_PRESETS: MannequinPosePreset[] = [
   },
   {
     id: 'cheer',
-    label: '举双手',
+    get label() { return i18n.t("customWorkflow.raiseBothHands") },
     pose: makePoseOffset({
       mixamorigLeftArm: [-138, -18, 8],
       mixamorigRightArm: [-138, 18, -8],

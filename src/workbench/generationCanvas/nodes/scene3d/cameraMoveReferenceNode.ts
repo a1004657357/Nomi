@@ -1,3 +1,4 @@
+import { scene3dCaptureSource } from '../../../../../electron/shared/canvas/sourceDefaults'
 // 运镜参考节点的「建节点 + 打 cameraMoveAutoCapture 标志」单一真相源（P1/P4）。
 //
 // 从 applyCanvasToolCall.ts 的 create_camera_move 精确分支抽出——AI 工具执行器和手动运镜控件
@@ -14,7 +15,6 @@ import { layoutPlannedNodes } from '../../agent/trajectoryLayout'
 import { getDefaultCategoryForNodeKind } from '../../model/generationNodeKinds'
 import { buildCameraMoveScene, type CameraMoveSpec } from './cameraMoveBuilder'
 import { CAMERA_SPEED_DURATION } from './cameraMoveVocab'
-import i18n from '../../../../i18n'
 
 // Seedance 参考视频要求帧率 23.8–60 FPS（实测 12fps 被 InvalidParameter.FpsTooLow 拒）。
 export const CAMERA_MOVE_CAPTURE_FPS = 24
@@ -58,7 +58,7 @@ export function createCameraMoveReferenceNode(
       {
         kind: 'scene3d',
         categoryId: getDefaultCategoryForNodeKind('scene3d'),
-        title: i18n.t('scene3d.capture.cameraMoveReference'),
+        title: scene3dCaptureSource.cameraMoveReference(),
         prompt: '',
         position,
         meta: {

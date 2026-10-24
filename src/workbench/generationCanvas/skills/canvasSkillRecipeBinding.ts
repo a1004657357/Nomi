@@ -1,3 +1,4 @@
+import i18n from "../../../i18n"
 import type {
   CapabilityRecipe,
   CapabilityRecipeInputKind,
@@ -21,16 +22,16 @@ export type CanvasSkillRecipeBinding = {
 
 const SOURCE_LABELS: Record<SourceInputKind, string> = {
   text: '文字',
-  source_image: '图片',
+  get source_image() { return i18n.t("customWorkflow.image") },
   source_video: '视频',
   source_model3d: '3D',
   mask: '蒙版',
 }
 
 const RESOURCE_LABELS: Record<ResourceInputKind, string> = {
-  style: '风格或色板',
-  identity: '身份',
-  effect: '效果',
+  get style() { return i18n.t("customWorkflow.styleOrPalette") },
+  get identity() { return i18n.t("customWorkflow.identity") },
+  get effect() { return i18n.t("customWorkflow.effect") },
 }
 
 function isSourceInputKind(kind: CapabilityRecipeInputKind): kind is SourceInputKind {
@@ -108,9 +109,9 @@ export function resolveCanvasSkillRecipeBinding(
     resources,
     ready,
     statusLabel: ready
-      ? '已就绪'
+      ? i18n.t("customWorkflow.ready")
       : invalid.length
         ? invalid.join(' / ')
-        : `缺${missing.join(' / ')}`,
+        : i18n.t("customWorkflow.missing", { v0: missing.join(' / ') }),
   }
 }

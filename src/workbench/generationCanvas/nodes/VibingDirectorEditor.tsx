@@ -1,3 +1,4 @@
+import { directorProtocolSource } from '../../../../electron/shared/blenderDirectorProtocolText'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../i18n'
 import type { JSX } from 'react'
@@ -163,7 +164,7 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     updateNode(node.id, {
       status: 'running',
       error: undefined,
-      progress: { phase: 'blender', message: 'Blender 正在执行导演计划', updatedAt: Date.now() },
+      progress: { phase: 'blender', message: directorProtocolSource.running(), updatedAt: Date.now() },
     })
     try {
       const payload = {

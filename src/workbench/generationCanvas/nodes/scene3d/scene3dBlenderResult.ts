@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../../../electron/shared/canvas/sourceDefaults'
 import type { GenerationCanvasNode, GenerationNodeResult } from '../../model/generationCanvasTypes'
 
 export type BlenderSceneAssetRef = { url: string; assetId?: string }
@@ -59,7 +60,7 @@ export function buildBlenderOutputNodeSpecs(input: {
   return [
     {
       kind: 'image',
-      title: isDirectorPreview ? 'Blender 导演预演' : 'Blender 场景预览',
+      title: canvasSourceDefaults.blenderPreviewTitle(isDirectorPreview),
       prompt: isDirectorPreview ? 'Blender 导演 manifest 预演' : 'Blender 后台渲染场景预览',
       position: { x, y: Math.round(input.sourcePosition.y) },
       size: { width: 360, height: 240 },
@@ -70,7 +71,7 @@ export function buildBlenderOutputNodeSpecs(input: {
     },
     {
       kind: 'model3d',
-      title: isDirectorPreview ? 'Blender 导演场景' : 'Blender 场景模型',
+      title: canvasSourceDefaults.blenderModelTitle(isDirectorPreview),
       prompt: isDirectorPreview ? 'Blender 导演 manifest GLB 场景' : 'Blender GLB 场景模型',
       position: { x, y: Math.round(input.sourcePosition.y + 320) },
       size: { width: 360, height: 300 },

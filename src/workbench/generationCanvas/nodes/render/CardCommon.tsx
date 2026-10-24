@@ -1,3 +1,4 @@
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 /**
  * 卡片渲染共用 helpers + 子组件。
  *
@@ -217,7 +218,7 @@ function RemoveBackgroundPendingStatus({
 }): JSX.Element {
   const { t } = useTranslation()
   const percent = clampProgressPercent(progress)
-  const statusMessage = message || t('generationCommon.card.removingBackground')
+  const statusMessage = (message ? translateCanvasComponentText(message) : '') || t('generationCommon.card.removingBackground')
   const statusTitle = title || t('generationCommon.card.removeBackgroundNode')
   return (
     <div
@@ -259,7 +260,7 @@ export function LocalImageOpPendingStatus({
 }): JSX.Element {
   const { t } = useTranslation()
   const percent = clampProgressPercent(progress)
-  const statusMessage = message || t('generationCommon.card.removingBackground')
+  const statusMessage = (message ? translateCanvasComponentText(message) : '') || t('generationCommon.card.removingBackground')
   return (
     <span className="sr-only" role="status" aria-label={statusMessage} aria-busy="true">
       {percent !== null && percent > 0 ? `${statusMessage} ${percent}%` : statusMessage}
@@ -342,7 +343,7 @@ export function GeneratingOverlay({
       >
         <RemoveBackgroundProgressMark progress={percent} compact />
         <span className="min-w-0 flex-1 truncate text-micro font-medium text-nomi-ink-80">
-          {message || t('generationCommon.card.generating')}
+          {message ? translateCanvasComponentText(message) : t('generationCommon.card.generating')}
         </span>
         {onCancel ? <GeneratingCancelButton onCancel={onCancel} compact /> : null}
       </div>

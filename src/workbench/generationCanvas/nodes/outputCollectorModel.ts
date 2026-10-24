@@ -1,3 +1,4 @@
+import i18n from "../../../i18n"
 import type {
   GenerationCanvasEdge,
   GenerationCanvasNode,
@@ -27,7 +28,7 @@ export function resolveOutputCollectorItems(
       return [{
         id: `${source.id}:${result.id}`,
         sourceNodeId: source.id,
-        title: source.title || '输出',
+        title: source.title || i18n.t("customWorkflow.output"),
         result: result as GenerationNodeResult & { url: string },
       }]
     })

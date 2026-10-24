@@ -1,0 +1,1269 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-workflow-i18n-canonical-sources",
+  "problem_type": "UI labels and durable protocol/prompt/default source values are conflated at workflow display boundaries",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "symptom": "The integrated base reports 275 src hard-zero occurrences across 47 files, while preserved Scene3D UI references also lack their deleted locale namespace.",
+  "direct_cause": "Visible workflow labels bypassed existing locale owners; several labels also served persisted/default/protocol/prompt consumers. The V1 Scene3D locale was deleted upstream but current integration retained its consumers.",
+  "class_root": "Source/display conflation across workflow producers and readers: translating producer values would rewrite authored/prompt/protocol bytes, while leaving UI callers raw is not bilingual. Preserve one canonical formatter/default owner and translate only at actual UI readers.",
+  "affected_population": [
+    "All 275 original hard-zero occurrences in 47 classified files; no unclassified source candidate remains.",
+    "Four persisted camera/Scene3D/Director defaults, historical Scene3D capture/title/prompt defaults, prop/capture metadata and original model instructions.",
+    "382 initial unresolved key-reference findings (369 Scene3D occurrences, 11 other missing-key occurrences and two other unregistered dynamic prefixes), resolved without a new prefix exception.",
+    "Existing Electron debt remains exactly 77 occurrences in 27 files; model-display and vendor-name classifications remain zero."
+  ],
+  "scope_paths": [
+    "electron/ai/canvasTools.ts",
+    "electron/blender/shotBlenderBridge.ts",
+    "electron/browser/core/browserAllowlist.ts",
+    "electron/gate8/isolatedProductionAcceptanceHarness.ts",
+    "electron/gate8/liveTimelineExportRunner.ts",
+    "electron/locales/customIntegrations.ts",
+    "src/i18n/CanvasComponentText.tsx",
+    "src/i18n/capabilityWorkflowText.ts",
+    "src/i18n/locales/creationAi.ts",
+    "src/i18n/locales/generationCommon.ts",
+    "src/i18n/locales/onboardingProviders.ts",
+    "src/i18n/locales/runtime.ts",
+    "src/i18n/resources.ts",
+    "src/workbench/capability/creativeToolExecute.ts",
+    "src/workbench/creation/scriptImportModel.ts",
+    "src/workbench/creation/storyboard/storyboardScriptViewModel.ts",
+    "src/workbench/domain/shotSpecMigration.ts",
+    "src/workbench/generationCanvas/agent/gate.ts",
+    "src/workbench/generationCanvas/agent/model3dHandoff.ts",
+    "src/workbench/generationCanvas/agent/storyboardPlan.ts",
+    "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+    "src/workbench/generationCanvas/components/capabilityRecipeInspectorModel.ts",
+    "src/workbench/generationCanvas/components/capabilityRecipeReadiness.ts",
+    "src/workbench/generationCanvas/components/toolCallSummary.ts",
+    "src/workbench/generationCanvas/components/useCanvasAssistantSkillEvents.ts",
+    "src/workbench/generationCanvas/components/useCanvasSelectionActions.ts",
+    "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+    "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+    "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+    "src/workbench/generationCanvas/nodes/capabilityQualityPresentation.ts",
+    "src/workbench/generationCanvas/nodes/capabilityResultCollectionModel.ts",
+    "src/workbench/generationCanvas/nodes/completeNodeConnection.ts",
+    "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+    "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+    "src/workbench/generationCanvas/nodes/model3d/model3dCamera.ts",
+    "src/workbench/generationCanvas/nodes/outputCollectorModel.ts",
+    "src/workbench/generationCanvas/nodes/render/CardCommon.tsx",
+    "src/workbench/generationCanvas/nodes/render/EditableNodeTitle.tsx",
+    "src/workbench/generationCanvas/nodes/render/imageComparisonModel.ts",
+    "src/workbench/generationCanvas/nodes/render/storyboardRowKeyframes.ts",
+    "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+    "src/workbench/generationCanvas/nodes/render/storyboardTableFieldConfig.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/CameraMoveCaptureHost.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DAutoCapture.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/StagingCaptureHost.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/cameraMoveReferenceNode.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/poseMetrics.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dBlenderResult.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dConstants.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dMath.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dPropSpecs.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dTaskMode.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/scene3dViewControllers.tsx",
+    "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorPresentation.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts",
+    "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts",
+    "src/workbench/generationCanvas/runner/capabilityRecipeController.ts",
+    "src/workbench/generationCanvas/runner/capabilityRecipePrompt.ts",
+    "src/workbench/generationCanvas/runner/capabilityRecipeRetryAction.ts",
+    "src/workbench/generationCanvas/runner/generationReferenceResolver.ts",
+    "src/workbench/generationCanvas/skills/canvasSkillRecipeBinding.ts",
+    "src/workbench/skillLibrary/skillComponentPresentation.ts",
+    "electron/shared/blenderDirectorProtocolText.ts",
+    "electron/shared/canvas/sourceDefaults.ts",
+    "electron/shared/generationPromptText.ts",
+    "src/i18n/locales/customWorkflow.ts",
+    "src/i18n/locales/scene3d.ts"
+  ],
+  "entry_points": [
+    "createRecipeCameraOutputs",
+    "canvasSourceDefaults",
+    "scene3dCaptureSource",
+    "directorProtocolSource",
+    "directorActionSource",
+    "generationPromptSource",
+    "translateCanvasComponentText",
+    "translateCapabilityWorkflowText",
+    "CapabilityCameraOutputsEditor",
+    "CapabilityResultCollection",
+    "EditableNodeTitle",
+    "MannequinRoleLabel",
+    "useCanvasSelectionActions",
+    "useCanvasAssistantSkillEvents",
+    "resolveGenerationReferences",
+    "compileCapabilityRecipePrompt",
+    "desktopT"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "Repository DTOs, consumers and Blender harness determine source bytes and geometry; no external service behavior is changed.",
+  "invariants": [
+    "Current-language text only changes presentation; user values and canonical saved/protocol/prompt defaults remain byte-stable.",
+    "No schema, scopes, approvals, retries, timezones, geometry or generation behavior changes.",
+    "No new exclusion, baseline, frozen count, vocabulary or self-written registry changes.",
+    "Unknown user text remains untouched at display adapters."
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/i18n",
+    "tests": [
+      "src/i18n/workflowI18n.test.ts",
+      "src/i18n/workflowSourceBoundary.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "directorActionSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "directorProtocolSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "MODEL3D_VIEW_SOURCE_NAMES"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "PROP_SOURCE_NAMES"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/capabilityWorkflowText.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/creationAi.ts",
+      "symbol": "zhCreationAi"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/generationCommon.ts",
+      "symbol": "zhGenerationCommon"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/onboardingProviders.ts",
+      "symbol": "zhOnboardingProviders"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/runtime.ts",
+      "symbol": "zhRuntime"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/scene3d.ts",
+      "symbol": "zhScene3d"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhCN"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhCreationAi"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhCustomWorkflow"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhGenerationCommon"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhOnboardingProviders"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhRuntime"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhScene3d"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/capability/creativeToolExecute.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/creation/scriptImportModel.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/creation/storyboard/storyboardScriptViewModel.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/domain/shotSpecMigration.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/adapters/modelOptionsAdapter.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/gate.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/gate.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/model3dHandoff.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/storyboardPlan.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/storyboardPlan.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/batchPlanPreview.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "CapabilityCameraOutputsEditor"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/capabilityRecipeInspectorModel.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/capabilityRecipeReadiness.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/toolCallSummary.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/useCanvasAssistantSkillEvents.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/components/useCanvasSelectionActions.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/capabilityQualityPresentation.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/capabilityResultCollectionModel.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/completeNodeConnection.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/cameraMoveBuilder.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/stagingBuilder.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/stagingVocab.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/director/model/posePresets.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "CapabilityResultCollection"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/model3dCamera.ts",
+      "symbol": "MODEL3D_GRID9_CAMERA_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/model3dCamera.ts",
+      "symbol": "MODEL3D_VIEW_SOURCE_NAMES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/model3dCameraCapture.ts",
+      "symbol": "MODEL3D_GRID9_CAMERA_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/NodeImagePreviewActions.tsx",
+      "symbol": "EditableNodeTitle"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/outputCollectorModel.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CardCommon.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx",
+      "symbol": "EditableNodeTitle"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/imageComparisonModel.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx",
+      "symbol": "EditableNodeTitle"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx",
+      "symbol": "EditableNodeTitle"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/storyboardRowKeyframes.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/render/storyboardTableFieldConfig.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/cameraMoveBuilder.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/CameraMoveCaptureHost.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/cameraMoveReferenceNode.ts",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/poseMetrics.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DAutoCapture.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dBlenderResult.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterActionBar.tsx",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dCharacterDriveController.tsx",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dConstants.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+      "symbol": "MANNEQUIN_POSE_SECTIONS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dMath.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dProps.tsx",
+      "symbol": "PROP_SPECS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dPropSpecs.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dPropSpecs.ts",
+      "symbol": "PROP_SOURCE_NAMES"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dPropSpecs.ts",
+      "symbol": "PROP_SPECS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dSceneView.tsx",
+      "symbol": "MannequinRoleLabel"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dTaskMode.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dViewControllers.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/stagingBuilder.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/StagingCaptureHost.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/stagingVocab.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DCharacterDrive.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DSemanticPose.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DTakeRecorder.ts",
+      "symbol": "MANNEQUIN_POSE_PRESETS"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "scene3dCaptureSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts",
+      "symbol": "directorProtocolSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "symbol": "directorProtocolSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorPresentation.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts",
+      "symbol": "directorActionSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts",
+      "symbol": "directorProtocolSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts",
+      "symbol": "normalizeLegacyPatch"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "directorProtocolSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeController.ts",
+      "symbol": "canvasSourceDefaults"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipePrompt.ts",
+      "symbol": "generationPromptSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeRetryAction.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/catalogTaskActions.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/generationNodeEligibility.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/generationNodeExecutor.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/generationReferenceResolver.ts",
+      "symbol": "generationPromptSource"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/generationRunConsent.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/recoverTaskActions.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/runProjectDelivery.ts",
+      "symbol": "resolveGenerationReferences"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/skills/canvasSkillRecipeBinding.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/skillLibrary/skillComponentPresentation.ts",
+      "symbol": "i18n"
+    },
+    {
+      "kind": "write",
+      "path": "electron/agentLane/laneCreativeTools.ts",
+      "symbol": "parseVibingDirectorPlanRequest"
+    },
+    {
+      "kind": "write",
+      "path": "electron/blender/shotBlenderBridge.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "write",
+      "path": "electron/browser/core/browserAllowlist.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "write",
+      "path": "electron/gate8/isolatedProductionAcceptanceHarness.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "write",
+      "path": "electron/gate8/liveTimelineExportRunner.ts",
+      "symbol": "desktopT"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/canvas/sourceDefaults.ts",
+      "symbol": "actorSourceName"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/canvas/sourceDefaults.ts",
+      "symbol": "recipeCameraOutputLabel"
+    },
+    {
+      "kind": "write",
+      "path": "src/config/capabilityRecipes/index.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "actorSourceName"
+    },
+    {
+      "kind": "write",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "generationModeRationale"
+    },
+    {
+      "kind": "write",
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "recipeCameraOutputLabel"
+    },
+    {
+      "kind": "write",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/capability/creativeToolExecute.ts",
+      "symbol": "evaluateVibingDirectorToolCall"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/creation/scriptImportModel.ts",
+      "symbol": "scriptFileTitle"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/creation/WorkbenchEditor.tsx",
+      "symbol": "buildImportedWorkbenchDocument"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/domain/shotSpecMigration.ts",
+      "symbol": "generationModeRationale"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/domain/shotSpecMigration.ts",
+      "symbol": "planShotToShotSpec"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/domain/shotSpecReaders.ts",
+      "symbol": "planShotToShotSpec"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/agent/canvasWriteTarget.ts",
+      "symbol": "summarizeToolCall"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "capabilityRecipeConnectionGuidance"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "capabilityRecipeInputReadiness"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "createRecipeCameraOutputs"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "symbol": "moodRequestSummary"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/toolCallSummary.ts",
+      "symbol": "summarizeToolCall"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "qualityLabel"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "qualityLabel"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+      "symbol": "cameraMoveDirective"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/director/agent/CameraMoveCaptureHost.tsx",
+      "symbol": "computeAttachCameraMove"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/CardCommon.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/EditableNodeTitle.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+      "symbol": "cameraMoveDirective"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/CameraMoveCaptureHost.tsx",
+      "symbol": "computeAttachCameraMove"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenHeader.tsx",
+      "symbol": "scene3dTaskLabel"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenHeader.tsx",
+      "symbol": "scene3dTaskShortLabel"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dPropSpecs.ts",
+      "symbol": "makePropObject"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dSceneTemplates.ts",
+      "symbol": "makePropObject"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DFullscreenActions.ts",
+      "symbol": "makePropObject"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "symbol": "buildBlenderOutputNodeSpecs"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts",
+      "symbol": "parseVibingDirectorPlanRequest"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "symbol": "evaluateVibingDirectorToolCall"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "symbol": "translateCanvasComponentText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "symbol": "summarizeVibingDirectorSpatialReport"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "symbol": "formatVibingDirectorNodeStats"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/customViewQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/moodExpressionVisionReviewService.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewBackgroundQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewContinuityQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/multiviewSubjectVisionReviewService.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/quality/portraitIdentityQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeController.ts",
+      "symbol": "compileCapabilityRecipePrompt"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipeQuality.ts",
+      "symbol": "translateCapabilityWorkflowText"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationReferenceResolver.ts",
+      "symbol": "referenceImageRole"
+    }
+  ],
+  "door_reduction": {
+    "before": 114,
+    "after": 181,
+    "why_not": "Measured with the unchanged AST door-map over the same named domain/display symbols, plus locale-owner reads within changed production consumers. New real display and canonical-source readers increase the count; existing public producers/readers must remain for compatibility. Inline camera-output, rationale and duplicate camera-directive implementations were actually removed; no fabricated door reduction."
+  },
+  "generality_proof": "UI readers use existing i18next/desktopT; saved defaults and source instructions use shared locale-neutral formatters. Display patterns are constructed from those actual source formatters, not copied locale text. Typed whole translation keys remain statically visible. Regression covers actual camera editor/result/title markup, source serialization, all 16 prop geometries and grid9 metadata, original prompt hashes, protocol admission and historical frame-slot matching in both locales.",
+  "shared_boundaries": [
+    {
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "symbol": "translateCanvasComponentText",
+      "responsibility": "Display only documented canonical source formats, preserve unknown/custom strings, never write back translated text."
+    },
+    {
+      "path": "src/i18n/capabilityWorkflowText.ts",
+      "symbol": "translateCapabilityWorkflowText",
+      "responsibility": "Existing recipe display dictionary, typed full keys rather than unchecked dynamic prefix."
+    },
+    {
+      "path": "src/i18n/resources.ts",
+      "symbol": "resources",
+      "responsibility": "Register customWorkflow and restored historical Scene3D locale; no alternate translation engine."
+    },
+    {
+      "path": "electron/shared/canvas/sourceDefaults.ts",
+      "symbol": "createRecipeCameraOutputs",
+      "responsibility": "One typed source/default owner reused by persisted producers and actual display adapters; all camera/prop/capture defaults remain locale-neutral."
+    },
+    {
+      "path": "electron/shared/blenderDirectorProtocolText.ts",
+      "symbol": "directorProtocolSource",
+      "responsibility": "Stable validation/progress/denial/action messages, independent of locale and approval behavior."
+    },
+    {
+      "path": "electron/shared/generationPromptText.ts",
+      "symbol": "generationPromptSource",
+      "responsibility": "Canonical generation instructions/reference roles; preserve original Chinese prompt bytes."
+    },
+    {
+      "path": "electron/locales/customIntegrations.ts",
+      "symbol": "zhCustomIntegrations",
+      "responsibility": "Extend the existing desktopT resource owner only; no new main-process locale routing."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "entry_point": "createRecipeCameraOutputs / editable label",
+      "disposition": "enforced",
+      "evidence": "Count 0..9, original angles/defaults, reuse of edited records, actual editor/result SSR, no render-triggered write."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/scene3dPropSpecs.ts",
+      "entry_point": "makePropObject / PROP_SPECS",
+      "disposition": "enforced",
+      "evidence": "Baseline-derived hash of all 16 geometries/colors/source names in both locales."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "entry_point": "pending.confirm denial",
+      "disposition": "enforced",
+      "evidence": "Canonical refusal/progress bytes and unchanged reject/read-before-edit behavior; translate display copy only."
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+      "entry_point": "first/last-frame capture metadata",
+      "disposition": "enforced",
+      "evidence": "Historical Chinese title/prompt source remains canonical after restoring resources; original frame-slot matching works in both locales. Capture actions/fps/dimensions unchanged."
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/capabilityRecipePrompt.ts",
+      "entry_point": "compileCapabilityRecipePrompt",
+      "disposition": "enforced",
+      "evidence": "48 actual prompt hash checks across 12 recipe IDs, two identity policies and both locales, characterized from requested base; no real generation."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "UI labels, cached/default names, protocol messages and instructions can repeatedly share raw strings without sharing display/storage responsibilities.",
+    "same_class_scan": [
+      "Official read-only full inventory: 275 hard-zero occurrences in 47 files, all classified in the independent design card.",
+      "Initial two functional bilingual tests failed on pose display and source-node readiness before production edits.",
+      "Final official read-only report: src 0, model labels 0, vendor unclassified/stale 0, unchanged Electron 77/27.",
+      "Original fragile scanner reused read-only against base/current: all affected counts unchanged, zero new fragile matches.",
+      "Real AST door-map: 114 before, 181 after; pure-definition gaps explicitly reported rather than fabricated."
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/i18n/CanvasComponentText.tsx",
+    "invariant": "Localization does not rewrite canonical workflow/source data.",
+    "failure_mode": "Unknown user strings pass through; missing translations and untranslated UI still fail the existing hard-zero/key gates.",
+    "exception_policy": "none",
+    "strategy": "Reuse existing translation/display boundaries and centralize actual source constructors shared by writers/readers; do not change scanners, exclusions, baselines, thresholds or frozen model owners.",
+    "artifacts": [
+      "electron/ai/canvasTools.ts",
+      "electron/blender/shotBlenderBridge.ts",
+      "electron/browser/core/browserAllowlist.ts",
+      "electron/gate8/isolatedProductionAcceptanceHarness.ts",
+      "electron/gate8/liveTimelineExportRunner.ts",
+      "electron/locales/customIntegrations.ts",
+      "src/i18n/CanvasComponentText.tsx",
+      "src/i18n/capabilityWorkflowText.ts",
+      "src/i18n/locales/creationAi.ts",
+      "src/i18n/locales/generationCommon.ts",
+      "src/i18n/locales/onboardingProviders.ts",
+      "src/i18n/locales/runtime.ts",
+      "src/i18n/resources.ts",
+      "src/workbench/capability/creativeToolExecute.ts",
+      "src/workbench/creation/scriptImportModel.ts",
+      "src/workbench/creation/storyboard/storyboardScriptViewModel.ts",
+      "src/workbench/domain/shotSpecMigration.ts",
+      "src/workbench/generationCanvas/agent/gate.ts",
+      "src/workbench/generationCanvas/agent/model3dHandoff.ts",
+      "src/workbench/generationCanvas/agent/storyboardPlan.ts",
+      "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "src/workbench/generationCanvas/components/capabilityRecipeInspectorModel.ts",
+      "src/workbench/generationCanvas/components/capabilityRecipeReadiness.ts",
+      "src/workbench/generationCanvas/components/toolCallSummary.ts",
+      "src/workbench/generationCanvas/components/useCanvasAssistantSkillEvents.ts",
+      "src/workbench/generationCanvas/components/useCanvasSelectionActions.ts",
+      "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx",
+      "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+      "src/workbench/generationCanvas/nodes/capabilityQualityPresentation.ts",
+      "src/workbench/generationCanvas/nodes/capabilityResultCollectionModel.ts",
+      "src/workbench/generationCanvas/nodes/completeNodeConnection.ts",
+      "src/workbench/generationCanvas/nodes/director/agent/attachCameraMoveToTarget.ts",
+      "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "src/workbench/generationCanvas/nodes/model3d/model3dCamera.ts",
+      "src/workbench/generationCanvas/nodes/outputCollectorModel.ts",
+      "src/workbench/generationCanvas/nodes/render/CardCommon.tsx",
+      "src/workbench/generationCanvas/nodes/render/EditableNodeTitle.tsx",
+      "src/workbench/generationCanvas/nodes/render/imageComparisonModel.ts",
+      "src/workbench/generationCanvas/nodes/render/storyboardRowKeyframes.ts",
+      "src/workbench/generationCanvas/nodes/render/storyboardRowOutputs.ts",
+      "src/workbench/generationCanvas/nodes/render/storyboardTableFieldConfig.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/CameraMoveCaptureHost.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/Scene3DAutoCapture.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/StagingCaptureHost.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/cameraMoveReferenceNode.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/poseMetrics.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dBlenderResult.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dConstants.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dEnvironmentPanel.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dInspector.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dMath.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dObjects.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dPropSpecs.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dReferenceDirector.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dTaskMode.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/scene3dViewControllers.tsx",
+      "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+      "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts",
+      "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorPresentation.ts",
+      "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorState.ts",
+      "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts",
+      "src/workbench/generationCanvas/runner/capabilityRecipeController.ts",
+      "src/workbench/generationCanvas/runner/capabilityRecipePrompt.ts",
+      "src/workbench/generationCanvas/runner/capabilityRecipeRetryAction.ts",
+      "src/workbench/generationCanvas/runner/generationReferenceResolver.ts",
+      "src/workbench/generationCanvas/skills/canvasSkillRecipeBinding.ts",
+      "src/workbench/skillLibrary/skillComponentPresentation.ts",
+      "electron/shared/blenderDirectorProtocolText.ts",
+      "electron/shared/canvas/sourceDefaults.ts",
+      "electron/shared/generationPromptText.ts",
+      "src/i18n/locales/customWorkflow.ts",
+      "src/i18n/locales/scene3d.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/i18n/workflowI18n.test.ts",
+    "src/i18n/workflowSourceBoundary.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/i18n/workflowI18n.test.ts",
+    "src/i18n/workflowSourceBoundary.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "src/workbench/domain/shotSpecMigration.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/attachCameraMoveToTarget.ts"
+    ],
+    "rationale": "Superseded private makeCameraOutputs/modeRationale and duplicated cameraMoveDirective implementations removed from these retained public modules. Reuse shared constructors/existing Director directive; no parallel implementation or deleted public feature."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Reuse installed i18next, desktopT and TypeScript AST scanner; no dependency/runtime changes.",
+    "exit_criteria": []
+  },
+  "migration": "No project or protocol migration; preserve canonical source bytes, existing names/IDs and all current defaults. Display follows current locale.",
+  "residual_risks": [
+    "Full pnpm check:i18n command was not executed after auto-review rejected its automatic Electron-baseline writeback. Use official --report and the other read-only subchecks; do not bypass rejection.",
+    "Fragile-match remains red at the requested base's 13 over-baseline occurrences in six files. No new occurrence; machine-code/legacy compatibility/prompt-idempotency work is separate from visible-text translation.",
+    "Expanded 29-file regression: 289 pass / 2 fail. One is an existing legacy recipe-summary display gap (base module independently returns raw list_capability_recipes), the other an AI/manual node-kind migration-contract mismatch (unchanged AI dispatcher creates director; old test expects scene3d). These are reported, not declared obsolete or hidden by changing assertions. No canonical behavior rollback.",
+    "Five pure static-definition/formatter files have no local AST call/read doors. V3 keeps full scope and explicitly reports their checker warnings; no fake doors or generated markers.",
+    "Scoped lint leaves original warnings; coordinator's onboardingProviders/toolCallSummary unused-import removals are not duplicated.",
+    "No App launch, screenshot/video rendering or real generation; pixel/layout/platform/paid journeys and full CI remain for coordinator.",
+    "Preflight failed once on unchanged localhost proxy; remote freshness unverified. No account/proxy/memory/push/merge/frozen snapshot or count changes."
+  ],
+  "door_map_definition_notes": [
+    {
+      "path": "electron/ai/canvasTools.ts",
+      "reason": "Real AST map finds no local read/call door: this file defines static descriptions/translation data or parameter-only pure source formatters, rather than mutable state. Keep the file in honest scope and report the existing checker warning; do not fabricate a door or mark handwritten data generated."
+    },
+    {
+      "path": "electron/locales/customIntegrations.ts",
+      "reason": "Real AST map finds no local read/call door: this file defines static descriptions/translation data or parameter-only pure source formatters, rather than mutable state. Keep the file in honest scope and report the existing checker warning; do not fabricate a door or mark handwritten data generated."
+    },
+    {
+      "path": "electron/shared/blenderDirectorProtocolText.ts",
+      "reason": "Real AST map finds no local read/call door: this file defines static descriptions/translation data or parameter-only pure source formatters, rather than mutable state. Keep the file in honest scope and report the existing checker warning; do not fabricate a door or mark handwritten data generated."
+    },
+    {
+      "path": "electron/shared/generationPromptText.ts",
+      "reason": "Real AST map finds no local read/call door: this file defines static descriptions/translation data or parameter-only pure source formatters, rather than mutable state. Keep the file in honest scope and report the existing checker warning; do not fabricate a door or mark handwritten data generated."
+    },
+    {
+      "path": "src/i18n/locales/customWorkflow.ts",
+      "reason": "Real AST map finds no local read/call door: this file defines static descriptions/translation data or parameter-only pure source formatters, rather than mutable state. Keep the file in honest scope and report the existing checker warning; do not fabricate a door or mark handwritten data generated."
+    }
+  ],
+  "protected_owner_audit": {
+    "protectedFiles": 89,
+    "mismatches": [],
+    "forbidden": [],
+    "aiDispatcherUnchanged": true
+  }
+}

@@ -698,6 +698,8 @@ export const zhGenerationCommon = {
     narrowedModeSwitchAction: '换到 {{targetVendor}}',
     narrowedModeGuidanceDismiss: '关闭模式提示',
     narrowedModeNone: '你接入的这条中转发不出{{modes}}—— 已接入的模型里也没有能做的',
+
+    selectTextModel: "配置文本模型",
   },
   resultDownload: {
     actions: '结果操作',
@@ -778,6 +780,9 @@ export const zhGenerationCommon = {
     uploading: '上传中',
     uploadingEllipsis: '上传中…',
     dropToAddReference: '松手添加为参考',
+
+    promptLibrary: "提示词库",
+    emptyPromptLibrary: "暂无提示词",
   },
   whiteboard: {
     imageReadFailed: '图片读取失败',
@@ -2248,6 +2253,8 @@ export const enGenerationCommon = {
     narrowedModeSwitchAction: 'Switch to {{targetVendor}}',
     narrowedModeGuidanceDismiss: 'Dismiss mode availability hint',
     narrowedModeNone: 'The relay you connected cannot send {{modes}} — none of your connected models can either',
+
+    selectTextModel: "Configure a text model",
   },
   resultDownload: {
     actions: 'Result actions',
@@ -2326,6 +2333,9 @@ export const enGenerationCommon = {
     uploading: 'Uploading',
     uploadingEllipsis: 'Uploading…',
     dropToAddReference: 'Drop to add as a reference',
+
+    promptLibrary: "Prompt library",
+    emptyPromptLibrary: "No prompts yet",
   },
   whiteboard: {
     imageReadFailed: 'Failed to read the image',

@@ -1,3 +1,4 @@
+import { directorProtocolSource } from '../../../../../electron/shared/blenderDirectorProtocolText'
 import {
   applyVibingDirectorPlan,
   type VibingDirectorState,
@@ -55,7 +56,7 @@ function preflightRequest(
     return {
       ok: false,
       code: 'preflight_rejected',
-      message: `计划与当前 Blender 状态不一致：${preflight.rejected.join('；')}`,
+      message: directorProtocolSource.preflightRejected(preflight.rejected.join('；')),
     }
   }
   return { ok: true, request }
@@ -71,7 +72,7 @@ export function resolveVibingDirectorStructuredPlan(
     return {
       ok: false,
       code: 'no_json',
-      message: '兼容协议没有返回可解析的 JSON 对象。',
+      message: directorProtocolSource.noJson(),
     }
   }
   const record = asRecord(raw)
@@ -79,7 +80,7 @@ export function resolveVibingDirectorStructuredPlan(
     return {
       ok: false,
       code: 'invalid_plan',
-      message: '兼容协议返回了 JSON，但顶层不是 Blender 导演计划对象。',
+      message: directorProtocolSource.invalidRoot(),
     }
   }
   if (
@@ -89,21 +90,21 @@ export function resolveVibingDirectorStructuredPlan(
     return {
       ok: false,
       code: 'explanation_only',
-      message: '当前模型只返回了解释文本，没有返回可执行的 Blender 导演 JSON 计划。',
+      message: directorProtocolSource.explanationOnly(),
     }
   }
   if (typeof record.directorNodeId !== 'string' || !record.directorNodeId.trim()) {
     return {
       ok: false,
       code: 'missing_node_id',
-      message: 'Blender 导演计划缺少当前 Director 节点 id。',
+      message: directorProtocolSource.missingNodeId(),
     }
   }
   if (record.directorNodeId !== directorNodeId) {
     return {
       ok: false,
       code: 'wrong_node_id',
-      message: `Blender 导演计划目标是「${record.directorNodeId}」，当前节点是「${directorNodeId}」。`,
+      message: directorProtocolSource.wrongPlanNode(record.directorNodeId, directorNodeId),
     }
   }
   const request = parseVibingDirectorPlanRequest(record)
@@ -111,7 +112,7 @@ export function resolveVibingDirectorStructuredPlan(
     return {
       ok: false,
       code: 'invalid_plan',
-      message: 'JSON 已返回，但包含不支持的操作、缺少必填字段或字段类型不正确。',
+      message: directorProtocolSource.invalidJsonPlan(),
     }
   }
   return preflightRequest(request, state)
@@ -159,8 +160,8 @@ export function evaluateVibingDirectorToolCall(input: {
         kind: 'reject',
         inspected: input.inspected,
         message: requestedNodeId
-          ? `读取目标「${requestedNodeId}」不是当前 Director 节点「${input.directorNodeId}」。`
-          : '读取当前 Director 前必须提供 directorNodeId。',
+          ? directorProtocolSource.wrongReadNode(requestedNodeId, input.directorNodeId)
+          : directorProtocolSource.readNodeRequired(),
       }
     }
     return { kind: 'read', inspected: true }
@@ -170,7 +171,7 @@ export function evaluateVibingDirectorToolCall(input: {
     return {
       kind: 'reject',
       inspected: input.inspected,
-      message: `VIBING Director 不支持操作「${input.toolName}」。`,
+      message: directorProtocolSource.unsupportedOperation(input.toolName),
     }
   }
 
@@ -178,7 +179,7 @@ export function evaluateVibingDirectorToolCall(input: {
     return {
       kind: 'reject',
       inspected: false,
-      message: '修改 Blender 场景前必须先读取当前 Director 状态，请先调用 read_vibing_director。',
+      message: directorProtocolSource.readBeforeEdit(),
     }
   }
 
@@ -187,14 +188,14 @@ export function evaluateVibingDirectorToolCall(input: {
     return {
       kind: 'reject',
       inspected: true,
-      message: 'Blender 导演计划包含不支持的操作、缺少必填字段或字段类型不正确。',
+      message: directorProtocolSource.invalidPlan(),
     }
   }
   if (request.directorNodeId !== input.directorNodeId) {
     return {
       kind: 'reject',
       inspected: true,
-      message: `Blender 导演计划目标是「${request.directorNodeId}」，当前节点是「${input.directorNodeId}」。`,
+      message: directorProtocolSource.wrongPlanNode(request.directorNodeId, input.directorNodeId),
     }
   }
   const preflight = preflightRequest(request, input.state)

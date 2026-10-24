@@ -1,4 +1,5 @@
 import type { JSX } from 'react'
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 // Scene3D 检视面板：左侧场景节点列表 + 右侧属性/姿势编辑。
 // 从 Scene3DFullscreen.tsx 抽出，纯展示组件；计算依赖 scene3dMath.ts，常量依赖 scene3dConstants.ts。
 import React from 'react'
@@ -291,7 +292,7 @@ export function SceneObjectList({
                     type="button"
                     onClick={() => onSelect({ type: row.type, id: row.id })}
                   >
-                    {row.name}
+                    {translateCanvasComponentText(row.name)}
                   </button>
                 )}
                 <button
@@ -341,7 +342,7 @@ export function SceneObjectList({
                             className="size-2 shrink-0 rounded-full ring-1 ring-black/10"
                             style={{ backgroundColor: roleColor }}
                           />
-                          <span className="min-w-0 truncate text-caption">{mannequinRoleLabel(roleIndex)}</span>
+                          <span className="min-w-0 truncate text-caption">{translateCanvasComponentText(mannequinRoleLabel(roleIndex))}</span>
                         </span>
                         <span className="justify-self-end rounded-nomi-sm bg-[var(--nomi-ink-05)] px-1.5 py-0.5 text-micro text-[var(--nomi-ink-40)]">
                           {t('scene3d.inspector.readonly')}

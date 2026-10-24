@@ -1,3 +1,4 @@
+import i18n from "../../../i18n"
 import React from 'react'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { toast } from '../../../ui/toast'
@@ -75,9 +76,9 @@ export function useCanvasAssistantSkillEvents(input: {
       }
       withProjectAction(project => {
         void prepareVideoDeconstruction({ project, detail, nodes, submitAgentMessage }).catch(error => {
-          if (isProjectExecutionContextCurrent(project)) toast(`视频拆解准备失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+          if (isProjectExecutionContextCurrent(project)) toast(i18n.t("customWorkflow.videoBreakdownPreparationFailed", { v0: error instanceof Error ? error.message : String(error) }), 'error')
         })
-      }, () => { toast('视频拆解需要已打开的桌面端项目', 'error') })
+      }, () => { toast(i18n.t("customWorkflow.videoBreakdownRequiresAnOpenDesktopProject"), 'error') })
     }
     window.addEventListener(RUN_CANVAS_SKILL_AGENT_EVENT, handler)
     return () => window.removeEventListener(RUN_CANVAS_SKILL_AGENT_EVENT, handler)
@@ -96,13 +97,13 @@ async function prepareVideoDeconstruction(input: {
     .map((id) => nodes.find((node) => node.id === id))
     .find((node) => node?.result?.type === 'video' && node.result.url)
   if (!source || source.result?.type !== 'video' || !source.result.url) {
-    toast('视频拆解需要先连接一个已有结果的视频节点', 'warning')
+    toast(i18n.t("customWorkflow.connectAVideoNodeWithAnExistingResult"), 'warning')
     return
   }
   const projectId = project.binding.projectId
   const desktop = getDesktopBridge()
   if (!projectId || !desktop?.video?.extractFrames) {
-    toast('视频拆解需要已保存的桌面端项目', 'error')
+    toast(i18n.t("customWorkflow.videoBreakdownRequiresASavedDesktopProject"), 'error')
     return
   }
   let duration = resolveVideoDurationSeconds(source)
@@ -112,10 +113,10 @@ async function prepareVideoDeconstruction(input: {
     duration = inspection.metadata?.durationSeconds ?? null
   }
   if (!duration) {
-    toast('无法读取视频时长，请先播放一次视频后重试', 'error')
+    toast(i18n.t("customWorkflow.couldNotReadVideoDurationPlayTheVideo"), 'error')
     return
   }
-  toast('正在为 Agent 抽取 8 张时序关键帧', 'info')
+  toast(i18n.t("customWorkflow.extracting8SequentialKeyframesForTheAgent"), 'info')
   try {
     const payload = {
       videoUrl: source.result.url,
@@ -134,6 +135,6 @@ async function prepareVideoDeconstruction(input: {
     })
   } catch (error) {
     if (!isProjectExecutionContextCurrent(project)) return
-    toast(`视频拆解准备失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    toast(i18n.t("customWorkflow.videoBreakdownPreparationFailed", { v0: error instanceof Error ? error.message : String(error) }), 'error')
   }
 }

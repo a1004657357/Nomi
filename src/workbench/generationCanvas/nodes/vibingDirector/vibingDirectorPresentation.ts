@@ -1,4 +1,5 @@
 import type { BlenderSpatialCheckStatus } from '../../../../../electron/shared/blenderDirectorContract'
+import i18n from "../../../../i18n"
 import type {
   BlenderDirectorSpatialReport,
   VibingDirectorState,
@@ -15,7 +16,7 @@ export type VibingDirectorSpatialSummary = {
 }
 
 export function formatVibingDirectorNodeStats(state: VibingDirectorState): string {
-  return `${state.assets.length} 资产 · ${state.objects.length} 对象 · ${state.relations.length} 关系 · ${state.beats.length} 节拍`
+  return i18n.t("customWorkflow.assetsObjectsRelationsBeats", { v0: state.assets.length, v1: state.objects.length, v2: state.relations.length, v3: state.beats.length })
 }
 
 export function summarizeVibingDirectorSpatialReport(
@@ -28,7 +29,7 @@ export function summarizeVibingDirectorSpatialReport(
       passed: 0,
       warning: 0,
       failed: 0,
-      label: '尚无空间检测',
+      label: i18n.t("customWorkflow.noSpatialCheckYet"),
       issues: [],
     }
   }
@@ -47,10 +48,10 @@ export function summarizeVibingDirectorSpatialReport(
     warning,
     failed,
     label: status === 'failed'
-      ? '空间关系未通过'
+      ? i18n.t("customWorkflow.spatialRelationsFailed")
       : status === 'warning'
-        ? '空间关系有警告'
-        : '空间关系已通过',
+        ? i18n.t("customWorkflow.spatialRelationsHaveWarnings")
+        : i18n.t("customWorkflow.spatialRelationsPassed"),
     issues: report.checks
       .filter((check) => check.status !== 'passed')
       .map((check) => check.message),

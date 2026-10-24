@@ -1,3 +1,4 @@
+import i18n from "../../../i18n"
 import { toast } from '../../../ui/toast'
 import { mintSpendGrant } from '../../api/taskApi'
 import { describeGenerationCost, useSpendConfirmStore } from '../spend/spendConfirm'
@@ -11,19 +12,19 @@ export async function confirmAndRetryCapabilityRecipeNode(nodeId: string): Promi
   const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId)
   const info = node ? capabilityRecipeRetryInfo(node) : undefined
   if (!node || !info) {
-    toast('当前节点没有可重试的配方失败结果', 'warning')
+    toast(i18n.t("customWorkflow.thisNodeHasNoFailedRecipeResultsTo"), 'warning')
     return
   }
 
   const confirmed = await useSpendConfirmStore.getState().requestConfirm({
-    title: '重试配方失败结果',
+    title: i18n.t("customWorkflow.retryFailedRecipeResults"),
     message: describeGenerationCost(info.taskCount, info.recipeId.startsWith('video.') ? 'video' : 'image'),
-    confirmLabel: '重试失败结果',
+    confirmLabel: i18n.t("customWorkflow.retryFailedResults"),
     source: 'user',
     details: [
-      { label: '配方', value: info.recipeId },
-      { label: '失败结果', value: `${info.failedCount} 个` },
-      { label: '生成请求', value: `${info.taskCount} 次` },
+      { label: i18n.t("customWorkflow.recipe"), value: info.recipeId },
+      { label: i18n.t("customWorkflow.failedResults"), value: `${info.failedCount} 个` },
+      { label: i18n.t("customWorkflow.generationRequests"), value: `${info.taskCount} 次` },
     ],
   })
   if (!confirmed) return
@@ -32,9 +33,9 @@ export async function confirmAndRetryCapabilityRecipeNode(nodeId: string): Promi
     const grantId = await mintSpendGrant([nodeId], info.taskCount)
     const outcome = await retryCapabilityRecipeOnNode(nodeId, { grantId })
     if (outcome.failureCount > 0) {
-      toast(`仍有 ${outcome.failureCount} 个结果生成失败，可稍后再次重试`, 'warning')
+      toast(i18n.t("customWorkflow.resultsStillFailedTryAgainLater", { v0: outcome.failureCount }), 'warning')
     }
   } catch (error) {
-    toast(error instanceof Error && error.message ? error.message : '配方重试失败', 'error')
+    toast(error instanceof Error && error.message ? error.message : i18n.t("customWorkflow.recipeRetryFailed"), 'error')
   }
 }

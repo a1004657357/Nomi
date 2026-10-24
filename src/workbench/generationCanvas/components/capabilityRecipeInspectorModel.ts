@@ -1,3 +1,4 @@
+import i18n from "../../../i18n"
 export type MoodGenerationMode = 'single' | 'sample5' | 'matrix5x5'
 
 export type MoodCoordinate = {
@@ -37,7 +38,9 @@ export function moodOutputCountForMode(mode: MoodGenerationMode): number {
 
 export function moodRequestSummary(mode: MoodGenerationMode): string {
   const count = moodOutputCountForMode(mode)
-  return `${count} 次独立请求${count > 1 ? ' · 最多 2 路并发' : ''}`
+  return count === 1
+    ? i18n.t('customWorkflow.singleRequest')
+    : i18n.t('customWorkflow.separateRequestsUpTo2Concurrent', { v0: count })
 }
 
 export function moodCoordinatesForMode(
@@ -60,21 +63,21 @@ export function capabilityRecipeConnectionGuidance(
 ): CapabilityRecipeConnectionGuidance {
   if (recipeId === 'video.edit.look' || recipeId === 'video.edit.effect') {
     return {
-      title: '需要视频转视频模型',
-      description: '连接 KIE 并启用 HappyHorse；它的 video-edit 模式支持源视频和参考图。',
+      title: i18n.t("customWorkflow.videoToVideoModelRequired"),
+      description: i18n.t("customWorkflow.connectKieAndEnableHappyhorseItsVideoEdit"),
       vendorLabel: 'KIE · HappyHorse',
     }
   }
   if (recipeId === 'image.multiview.reconstruct3d') {
     return {
-      title: '需要图生 3D 模型',
-      description: '连接 RunningHub Enterprise-Shared API Key，可使用混元3D、HiTem3D 或 Meshy 6。',
+      title: i18n.t("customWorkflow.imageTo3dModelRequired"),
+      description: i18n.t("customWorkflow.connectARunninghubEnterpriseSharedApiKeyTo"),
       vendorLabel: 'RunningHub · 3D',
     }
   }
   return {
-    title: '需要兼容模型',
-    description: '请在模型接入中连接并启用一个支持该配方输入和输出的模型。',
-    vendorLabel: '模型接入',
+    title: i18n.t("customWorkflow.compatibleModelRequired"),
+    description: i18n.t("customWorkflow.connectAndEnableAModelSupportingThisRecipe"),
+    vendorLabel: i18n.t("customWorkflow.modelConnections"),
   }
 }

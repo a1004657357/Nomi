@@ -946,6 +946,9 @@ export const zhOnboardingProviders = {
     loginAfterRequirement: '这一档。',
     starting: '发起中…',
     login: '扫码登录',
+
+    update: "更新命令行工具",
+    updating: "更新中…",
   },
   comfyWorkflow: {
     jsonPlaceholder: '{ "nodes": [...] } 或 { "3": { "class_type": "KSampler", ... } }',
@@ -2213,6 +2216,9 @@ export const enOnboardingProviders = {
     loginAfterRequirement: '.',
     starting: 'Starting…',
     login: 'Scan Login',
+
+    update: "Update command-line tool",
+    updating: "Updating…",
   },
   comfyWorkflow: {
     jsonPlaceholder: '{ "nodes": [...] } or { "3": { "class_type": "KSampler", ... } }',

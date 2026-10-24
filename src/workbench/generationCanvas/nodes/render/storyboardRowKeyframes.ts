@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../../../electron/shared/canvas/sourceDefaults'
 import { storyboardShotVideoPrompt, type PlanShot } from '../../agent/storyboardPlan'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
@@ -146,7 +147,7 @@ function ensureKeyframeNode(
   const timeSec = role === 'boundary' ? FIRST_SEGMENT_SECONDS : TOTAL_SECONDS
   const created = store.addNode({
     kind: 'keyframe',
-    title: `镜头 ${input.shot.index} · ${timeSec}秒${role === 'boundary' ? '动作' : '结尾'}帧`,
+    title: canvasSourceDefaults.keyframeTitle(input.shot.index, timeSec, role === 'boundary' ? '动作' : '结尾'),
     prompt,
     position: keyframePosition(input.tableNode, input.shot.index, role),
     categoryId: input.tableNode.categoryId || source.categoryId || 'shots',

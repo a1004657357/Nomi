@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../../electron/shared/canvas/sourceDefaults'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import {
   persistActiveWorkbenchProjectNow,
@@ -160,7 +161,7 @@ export async function handoffModel3dNode(options: HandoffModel3dNodeOptions): Pr
     target = mutate(() => initialStore.addNode({
       kind: options.target,
       title: options.target === 'scene3d'
-        ? `${source.title} · 3D 导演台`
+        ? canvasSourceDefaults.scene3dHandoffTitle(source.title)
         : `${source.title} · Blender Director`,
       categoryId: 'scene',
       position: { x: source.position.x + 420, y: source.position.y },

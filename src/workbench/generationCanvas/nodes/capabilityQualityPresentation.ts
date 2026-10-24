@@ -1,13 +1,14 @@
+import i18n from "../../../i18n"
 import type {
   GenerationQualityCheck,
   GenerationQualityStatus,
 } from '../model/generationCanvasTypes'
 
 export function qualityLabel(status: GenerationQualityStatus): string {
-  if (status === 'pass') return '通过'
-  if (status === 'warning') return '需检查'
-  if (status === 'fail') return '未通过'
-  return '未完成'
+  if (status === 'pass') return i18n.t("customWorkflow.passed")
+  if (status === 'warning') return i18n.t("customWorkflow.needsReview")
+  if (status === 'fail') return i18n.t("customWorkflow.failed")
+  return i18n.t("customWorkflow.incomplete")
 }
 
 export function qualityStatusForItem(

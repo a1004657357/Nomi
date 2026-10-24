@@ -1,3 +1,4 @@
+import { scene3dCaptureSource } from '../../../../../electron/shared/canvas/sourceDefaults'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -538,7 +539,7 @@ export function CaptureBinder({
           camera,
           width,
           height,
-          t('scene3d.capture.viewportTitle'),
+          scene3dCaptureSource.viewportTitle(),
           'scene3d-viewport',
         )
       },
@@ -557,7 +558,7 @@ export function CaptureBinder({
           captureCamera,
           dimensions.width,
           dimensions.height,
-          t('scene3d.capture.cameraTitle', { name: sceneCamera.name }),
+          scene3dCaptureSource.cameraTitle(sceneCamera.name),
           'scene3d-camera',
           true,
         )

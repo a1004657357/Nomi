@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../../../electron/shared/canvas/sourceDefaults'
 import { convertImageShotToVideo, findImageShotVideoOutput } from '../../agent/convertShotToVideo'
 import { resolveStoryboardVideoDefault } from '../../agent/availableModels'
 import {
@@ -343,7 +344,7 @@ function syncStoryboardReferenceEdges(imageNodeId: string, videoNodeId: string):
 
 function syncVideoOutput(target: GenerationCanvasNode, shot: PlanShot, params: Record<string, unknown>): GenerationCanvasNode {
   useGenerationCanvasStore.getState().updateNode(target.id, {
-    title: `镜头 ${shot.index} · 视频`,
+    title: canvasSourceDefaults.shotVideoTitle(shot.index),
     shotIndex: shot.index,
     meta: videoMetaForShot(target, shot, params),
   })
@@ -370,7 +371,7 @@ export function ensureStoryboardRowImageOutput(input: EnsureRowOutputInput): Sto
 
   const created = store.addNode({
     kind: 'image',
-    title: `镜头 ${input.shot.index} · 图片`,
+    title: canvasSourceDefaults.shotImageTitle(input.shot.index),
     prompt,
     position: storyboardRowOutputPosition(input.tableNode, input.shot.index, 'image'),
     categoryId: input.tableNode.categoryId || 'shots',

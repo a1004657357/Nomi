@@ -162,6 +162,8 @@ export const zhRuntime = {
     noProjectOpen: '（没有打开任何项目）',
     unknownOperation: '未知 capability 操作：{{operation}}',
     storyboardPlanMissing: '分镜规划没有返回可审阅的方案',
+
+    projectChanged: "项目已切换，请重新发起操作。",
   },
   export: {
     jobRequiresDesktop: '导出任务需要 Electron 桌面运行时',
@@ -355,6 +357,8 @@ export const enRuntime = {
     noProjectOpen: '(no project open)',
     unknownOperation: 'Unknown capability operation: {{operation}}',
     storyboardPlanMissing: 'The storyboard planner did not return a reviewable plan.',
+
+    projectChanged: "The project changed. Start the action again.",
   },
   export: {
     jobRequiresDesktop: 'Export jobs require the Electron desktop runtime',

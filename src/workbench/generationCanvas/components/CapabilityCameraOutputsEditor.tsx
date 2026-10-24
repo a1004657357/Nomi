@@ -4,13 +4,8 @@ import type { JSX } from 'react'
 import { translateCanvasComponentText } from '../../../i18n/CanvasComponentText'
 import { NomiSelect } from '../../../design'
 
-export type CameraOutput = {
-  id: string
-  label: string
-  azimuth: number
-  elevation: number
-  shotSize: string
-}
+export type { RecipeCameraOutput as CameraOutput } from '../../../../electron/shared/canvas/sourceDefaults'
+import type { RecipeCameraOutput as CameraOutput } from '../../../../electron/shared/canvas/sourceDefaults'
 
 function inputClass(): string {
   return 'h-8 min-w-0 rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2 text-caption text-nomi-ink outline-none focus:border-nomi-accent'
@@ -36,7 +31,7 @@ export function CapabilityCameraOutputsEditor({
           <input
             className={inputClass()}
             aria-label={i18n.t("canvasComponents.cameraName", { v0: index + 1 })}
-            value={output.label}
+            value={translateCanvasComponentText(output.label)}
             onChange={(event) => onChange(index, { label: event.target.value })}
           />
           <input

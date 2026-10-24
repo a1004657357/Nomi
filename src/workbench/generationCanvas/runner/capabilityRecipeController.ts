@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../../electron/shared/canvas/sourceDefaults'
 import { isProjectExecutionContextCurrent, withProjectAction } from '../../project/projectCanvasReadSurface'
 import {
   BUILTIN_CAPABILITY_RECIPES,
@@ -386,7 +387,7 @@ async function evaluateCollectionSafely(
         evaluatedAt: Date.now(),
         checks: [{
           id: 'quality-evaluator',
-          label: '本地质量检测',
+          label: canvasSourceDefaults.localQuality(),
           status: 'unavailable',
           summary: '生成结果已保留，但本地质量检测未完成',
           details: [message],

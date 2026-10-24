@@ -1,3 +1,4 @@
+import { createRecipeCameraOutputs } from '../../../../electron/shared/canvas/sourceDefaults'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../i18n'
 import { Drawer } from '@mantine/core'
@@ -52,7 +53,6 @@ import {
 
 type InspectorView = 'recipes' | 'resource'
 
-const CAMERA_ANGLES = [0, 45, 90, 135, 180, -90]
 const RESOURCE_KIND_OPTIONS = [
   { value: 'style', get label() { return i18n.t("canvasComponents.style") } },
   { value: 'effect', get label() { return i18n.t("canvasComponents.effect") } },
@@ -79,19 +79,6 @@ function mergeControls(...groups: ReadonlyArray<readonly ModelParameterControl[]
   return Array.from(byKey.values())
 }
 
-function makeCameraOutputs(count: number, current: readonly CameraOutput[]): CameraOutput[] {
-  return Array.from(
-    { length: count },
-    (_, index) =>
-      current[index] ?? {
-        id: `view-${index + 1}`,
-        label: `机位 ${index + 1}`,
-        azimuth: CAMERA_ANGLES[index] ?? Math.min(180, index * 30),
-        elevation: 0,
-        shotSize: '中景',
-      },
-  )
-}
 
 function inputClass(): string {
   return 'h-8 min-w-0 rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2 text-caption text-nomi-ink outline-none focus:border-nomi-accent'
@@ -115,7 +102,7 @@ export function CapabilityRecipeInspector({
   const [modelValue, setModelValue] = React.useState('')
   const [params, setParams] = React.useState<Record<string, string | number | boolean>>({})
   const [outputCount, setOutputCount] = React.useState(2)
-  const [cameraOutputs, setCameraOutputs] = React.useState<CameraOutput[]>(makeCameraOutputs(2, []))
+  const [cameraOutputs, setCameraOutputs] = React.useState<CameraOutput[]>(createRecipeCameraOutputs(2, []))
   const [resourceIds, setResourceIds] = React.useState<string[]>([])
   const [running, setRunning] = React.useState(false)
   const [resourceKind, setResourceKind] = React.useState('style')
@@ -237,7 +224,7 @@ export function CapabilityRecipeInspector({
         : Math.min(Math.max(1, outputCount), max)
     if (nextCount !== outputCount) setOutputCount(nextCount)
     if (selectedRecipe?.id === 'image.multiview.custom') {
-      setCameraOutputs((current) => makeCameraOutputs(nextCount, current))
+      setCameraOutputs((current) => createRecipeCameraOutputs(nextCount, current))
     }
   }, [isMoodRecipe, moodOutputCount, outputCount, selectedRecipe, selectedTarget?.maxOutputs])
   const resourceCandidates = selectedRecipe

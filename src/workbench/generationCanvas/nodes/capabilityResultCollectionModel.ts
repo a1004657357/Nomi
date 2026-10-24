@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../../electron/shared/canvas/sourceDefaults'
 import type {
   GenerationCanvasNode,
   GenerationNodeResult,
@@ -83,7 +84,7 @@ export function patchForCollectionCandidateSelection(
                 checks: [
                   {
                     id: 'candidate-selection-changed',
-                    label: '候选切换',
+                    label: canvasSourceDefaults.candidateChanged(),
                     status: 'unavailable' as const,
                     summary: '已切换供应商候选，需要重新执行当前结果的质量检查。',
                     itemIds: [itemId],

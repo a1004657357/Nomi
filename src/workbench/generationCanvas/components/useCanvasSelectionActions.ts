@@ -88,12 +88,12 @@ export function useCanvasSelectionActions(options: UseCanvasSelectionActionsOpti
     const selectedImages = state.nodes.filter((node) => selectedSet.has(node.id) && isConvertibleImageShotNode(node))
     const result = convertImageShotsToVideos(selectedImages)
     if (!result.nodeIds.length) {
-      toast('选中内容里没有可转视频的图片镜头', 'warning')
+      toast(i18n.t("customWorkflow.theSelectionContainsNoImageShotsThatCan"), 'warning')
     } else if (result.created > 0) {
-      const reused = result.existing > 0 ? `，复用 ${result.existing} 个已有视频` : ''
-      toast(`已转出 ${result.created} 个视频镜头${reused}`, 'success')
+      const reused = result.existing > 0 ? i18n.t("customWorkflow.reusedExistingVideos", { v0: result.existing }) : ''
+      toast(i18n.t("customWorkflow.createdVideoShots", { v0: result.created, v1: reused }), 'success')
     } else {
-      toast(`选中镜头已转过视频，已选中 ${result.existing} 个视频节点`, 'info')
+      toast(i18n.t("customWorkflow.theseShotsAlreadyHaveVideosSelectedVideoNodes", { v0: result.existing }), 'info')
     }
   }, [selectedSet])
 
@@ -101,14 +101,14 @@ export function useCanvasSelectionActions(options: UseCanvasSelectionActionsOpti
     try {
       const result = await sendStoryboardToTimeline([...selectedNodeIds])
       if (result.sent.length > 0) {
-        toast(`已按镜序送入时间轴 ${result.sent.length} 段`, 'success')
+        toast(i18n.t("customWorkflow.addedSegmentsToTheTimelineInShotOrder", { v0: result.sent.length }), 'success')
         return
       }
       if (result.outcome.status !== 'nothing_to_adopt') {
         reportAdoptionOutcome(result.outcome)
         return
       }
-      toast(result.skipped.length > 0 ? '选中节点还没有可发送到时间轴的图片或视频结果' : '没有可发送到时间轴的节点', 'warning')
+      toast(result.skipped.length > 0 ? i18n.t("customWorkflow.selectedNodesHaveNoImageOrVideoResults") : i18n.t("customWorkflow.noNodesCanBeSentToTheTimeline"), 'warning')
     } catch (error) {
       toast(error instanceof Error ? error.message : i18n.t('timelineEditor.adoption.failedRecovered'), 'error')
     }
@@ -120,22 +120,22 @@ export function useCanvasSelectionActions(options: UseCanvasSelectionActionsOpti
   ) => {
     const ids = [...(explicitNodeIds ?? selectedNodeIds)]
     if (!ids.length) {
-      toast('请先选中要放入新项目的节点。', 'warning')
+      toast(i18n.t("customWorkflow.selectNodesToPutInANewProject"), 'warning')
       return
     }
     const requestedName = await promptDialog({
-      title: mode === 'move' ? '移动到新项目' : '复制到新项目',
-      message: `将 ${ids.length} 个选中节点放入一个新的项目。`,
-      placeholder: '新项目名称',
+      title: mode === 'move' ? i18n.t("customWorkflow.moveToNewProject") : i18n.t("customWorkflow.copyToNewProject"),
+      message: i18n.t("customWorkflow.putSelectedNodesIntoANewProject", { v0: ids.length }),
+      placeholder: i18n.t("customWorkflow.newProjectName"),
       initialValue: defaultSelectedNodeProjectName(projectName, mode),
-      confirmLabel: mode === 'move' ? '继续移动' : '创建副本',
+      confirmLabel: mode === 'move' ? i18n.t("customWorkflow.continueMoving") : i18n.t("customWorkflow.createCopy"),
     })
     const targetProjectName = requestedName?.trim()
     if (!targetProjectName) return
     if (mode === 'move' && !await confirmDialog({
-      title: '确认移动节点',
-      message: `会先创建「${targetProjectName}」，成功后从当前项目删除这 ${ids.length} 个节点。`,
-      confirmLabel: '移动',
+      title: i18n.t("customWorkflow.confirmMovingNodes"),
+      message: i18n.t("customWorkflow.createFirstThenDeleteTheseNodesFromThe", { v0: targetProjectName, v1: ids.length }),
+      confirmLabel: i18n.t("customWorkflow.move"),
       danger: true,
     })) return
 
@@ -151,7 +151,7 @@ export function useCanvasSelectionActions(options: UseCanvasSelectionActionsOpti
         ids.forEach((nodeId) => useGenerationCanvasStore.getState().deleteNode(nodeId))
         await persistActiveWorkbenchProjectNow()
       }
-      toast(`${mode === 'move' ? '已移动' : '已复制'} ${result.nodeCount} 个节点到「${result.project.name}」`, 'success')
+      toast(i18n.t("customWorkflow.nodesTo", { v0: mode === 'move' ? i18n.t("customWorkflow.moved") : i18n.t("customWorkflow.copied"), v1: result.nodeCount, v2: result.project.name }), 'success')
       navigate(buildStudioUrl(result.project.id), { replace: false })
     } catch (error) {
       toast(error instanceof Error ? error.message : String(error), 'error')

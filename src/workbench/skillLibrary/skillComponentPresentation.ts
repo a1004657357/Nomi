@@ -1,3 +1,4 @@
+import i18n from "../../i18n"
 import {
   BUILTIN_CAPABILITY_RECIPES,
   type CapabilityRecipe,
@@ -48,12 +49,12 @@ export function skillLibrarySourceOptions(input: {
 }): Array<{ value: SkillLibrarySource; label: string }> {
   return input.componentFirst
     ? [
-        { value: 'builtin', label: '内置组件' },
-        { value: 'mine', label: '我的技能' },
+        { value: 'builtin', label: i18n.t("customWorkflow.builtInComponent") },
+        { value: 'mine', label: i18n.t("customWorkflow.mySkills") },
       ]
     : [
-        { value: 'mine', label: '我的技能' },
-        { value: 'builtin', label: 'Nomi 内置' },
+        { value: 'mine', label: i18n.t("customWorkflow.mySkills") },
+        { value: 'builtin', label: i18n.t("customWorkflow.builtIntoNomi") },
       ]
 }
 

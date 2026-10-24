@@ -200,7 +200,26 @@ export const zhCustomIntegrations = {
   "custom.tasks.codexImageTask.text2": "Codex Img2 需要先打开并保存到本地项目后再生成",
   "custom.tasks.codexImageTask.text3": "Codex Img2 生成成功但资产落盘失败",
   "custom.tasks.generationBudget.text1": "GenerationBudget: maxSubmissions 必须 ≥ 1",
-  "custom.webBridge.registry.text1": "未注册的网页桥供应商：{{value0}}"
+  "custom.webBridge.registry.text1": "未注册的网页桥供应商：{{value0}}",
+  "custom.workflow.blockingUrl": "blocking 字段含 URL: {{value0}}",
+  "custom.workflow.blockingCall": "blocking 字段含可疑调用: {{value0}}",
+  "custom.workflow.blockingAbsolutePath": "blocking 字段含绝对路径: {{value0}}",
+  "custom.workflow.browserHostDenied": "host {{value0}}:{{value1}} 不在 allowlist（§22.3）",
+  "custom.workflow.browserMatched": "匹配 {{value0}}",
+  "custom.workflow.browserProtocol": "非 http(s) 协议：{{value0}}",
+  "custom.workflow.browserInvalidUrl": "非法 URL",
+  "custom.workflow.gate8PlanReview": "propose_storyboard_plan 产出 6 镜方案，用户审阅",
+  "custom.workflow.gate8Fullscreen": "双击全屏、比较、select revision",
+  "custom.workflow.gate8BlenderPreview": "发送 1 镜到 Blender，回传 preview/.blend",
+  "custom.workflow.gate8Export": "导出可播放 MP4（正确画幅 + 预期音频）",
+  "custom.workflow.gate8Import": "把 ISOLATED_TEST_SCREENPLAY 导入为项目",
+  "custom.workflow.gate8Image": "至少 1 个 image 镜真实生成成功",
+  "custom.workflow.gate8Video": "至少 1 个 video 镜真实生成成功",
+  "custom.workflow.gate8Assets": "角色/场景/道具资产卡就位",
+  "custom.workflow.timelineImageTrack": "图片轨",
+  "custom.workflow.timelineVideoTrack": "视频轨",
+  "custom.workflow.timelineShot": "镜头 {{value0}}",
+  "custom.workflow.timelineAudioTrack": "音频轨"
 } as const
 
 export const enCustomIntegrations = {
@@ -405,5 +424,24 @@ export const enCustomIntegrations = {
   "custom.tasks.codexImageTask.text2": "Codex Img2 requires an open, locally saved project before generation",
   "custom.tasks.codexImageTask.text3": "Codex Img2 generated an image, but the asset could not be saved",
   "custom.tasks.generationBudget.text1": "GenerationBudget: maxSubmissions must be at least 1",
-  "custom.webBridge.registry.text1": "Unregistered web bridge provider: {{value0}}"
+  "custom.webBridge.registry.text1": "Unregistered web bridge provider: {{value0}}",
+  "custom.workflow.blockingUrl": "Blocking field contains a URL: {{value0}}",
+  "custom.workflow.blockingCall": "Blocking field contains a suspicious call: {{value0}}",
+  "custom.workflow.blockingAbsolutePath": "Blocking field contains an absolute path: {{value0}}",
+  "custom.workflow.browserHostDenied": "Host {{value0}}:{{value1}} is not in the allowlist (section 22.3)",
+  "custom.workflow.browserMatched": "Matched {{value0}}",
+  "custom.workflow.browserProtocol": "Non-HTTP(S) protocol: {{value0}}",
+  "custom.workflow.browserInvalidUrl": "Invalid URL",
+  "custom.workflow.gate8PlanReview": "propose_storyboard_plan produces a six-shot plan for user review",
+  "custom.workflow.gate8Fullscreen": "Double-click fullscreen, compare and select revision",
+  "custom.workflow.gate8BlenderPreview": "Send one shot to Blender and receive preview/.blend",
+  "custom.workflow.gate8Export": "Export a playable MP4 with the correct aspect ratio and expected audio",
+  "custom.workflow.gate8Import": "Import ISOLATED_TEST_SCREENPLAY as a project",
+  "custom.workflow.gate8Image": "At least one image shot is successfully generated",
+  "custom.workflow.gate8Video": "At least one video shot is successfully generated",
+  "custom.workflow.gate8Assets": "Character, scene and prop asset cards are ready",
+  "custom.workflow.timelineImageTrack": "Image track",
+  "custom.workflow.timelineVideoTrack": "Video track",
+  "custom.workflow.timelineShot": "Shot {{value0}}",
+  "custom.workflow.timelineAudioTrack": "Audio track"
 } as const

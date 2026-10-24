@@ -23,7 +23,7 @@ export type AttachCameraMoveOutcome =
   | { kind: 'patch'; patch: { meta: Record<string, unknown>; prompt?: string }; toast?: { message: string; level: 'warning' } }
 
 /** 运镜 prompt 地板（通用，全供应商可用）：人话点出该镜的运镜，作为不吃视频参考时的降级 */
-function cameraMoveDirective(move: CameraMove | undefined): string {
+export function cameraMoveDirective(move: CameraMove | undefined): string {
   if (!move) return ''
   return `\n镜头运动：${CAMERA_MOVE_LABEL[move]}（${CAMERA_MOVE_DESC[move]}）`
 }

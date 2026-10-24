@@ -1,3 +1,4 @@
+import { directorProtocolSource } from '../../../../../electron/shared/blenderDirectorProtocolText'
 import { z } from 'zod'
 import { BLENDER_DIRECTOR_STAGE_PRESETS } from '../../../../../electron/shared/blenderDirectorContract'
 import type { VibingDirectorPlan } from './vibingDirectorState'
@@ -99,19 +100,19 @@ const planSchema = z.object({
 }).superRefine((plan, context) => {
   plan.actions.forEach((action, index) => {
     if (action.op === 'move_object' && action.position === undefined && action.rotation === undefined && action.scale === undefined && action.name === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'move_object 至少需要一个要修改的字段', path: ['actions', index] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.moveRequiresField(), path: ['actions', index] })
     }
     if (action.op === 'set_camera' && action.cameraRef === undefined && action.name === undefined && action.position === undefined && action.lookAt === undefined && action.fov === undefined && action.aspectRatio === undefined && action.framing === undefined && action.targetRef === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'set_camera 至少需要一个要修改的字段', path: ['actions', index] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.cameraRequiresField(), path: ['actions', index] })
     }
     if (action.op === 'set_camera' && action.framing === 'target' && action.targetRef === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'target 取景必须指定 targetRef', path: ['actions', index, 'targetRef'] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.cameraTargetRequired(), path: ['actions', index, 'targetRef'] })
     }
     if (action.op === 'set_relation' && action.kind === 'distance' && action.distance === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'distance 空间关系必须指定 distance', path: ['actions', index, 'distance'] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.distanceRequired(), path: ['actions', index, 'distance'] })
     }
     if (action.op === 'set_relation' && action.subjectRef === action.targetRef) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: '空间关系不能引用同一个对象', path: ['actions', index, 'targetRef'] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.distinctObjectsRequired(), path: ['actions', index, 'targetRef'] })
     }
   })
 })
@@ -259,7 +260,7 @@ function normalizeLegacyPatch(value: unknown, index: number): unknown[] {
     return [{
       op: 'set_beat',
       id,
-      title: typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim() : `节拍 ${index + 1}`,
+      title: typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim() : directorProtocolSource.beatTitle(index + 1),
       ...(typeof raw.action === 'string' ? { action: raw.action } : {}),
       ...(typeof raw.cameraNote === 'string' ? { cameraNote: raw.cameraNote } : {}),
       ...(typeof raw.dialogue === 'string' ? { dialogue: raw.dialogue } : {}),
@@ -296,7 +297,7 @@ function normalizeLegacyPatch(value: unknown, index: number): unknown[] {
     return [{
       op: 'set_beat',
       id,
-      title: typeof raw.title === 'string' ? raw.title : `节拍 ${index + 1}`,
+      title: typeof raw.title === 'string' ? raw.title : directorProtocolSource.beatTitle(index + 1),
       ...(typeof raw.action === 'string' ? { action: raw.action } : {}),
       ...(typeof raw.cameraNote === 'string' ? { cameraNote: raw.cameraNote } : typeof raw.camera === 'string' ? { cameraNote: raw.camera } : {}),
       ...(typeof raw.dialogue === 'string' ? { dialogue: raw.dialogue } : {}),

@@ -3,6 +3,8 @@
 // 三步:① policy(只读→allow)② invariant(校验/锁→deny)③ ask(其余→等用户点头)。
 // SDK 的 hook registry / permission mode / 规则 DSL 一律不抄(单用户桌面无配置面)。
 import i18n from '../../../i18n'
+import type { TranslationKey } from '../../../i18n/translationKey'
+import { canvasSourceDefaults } from '../../../../electron/shared/canvas/sourceDefaults'
 import {
   categorizeTool,
   SEMANTIC_TOOL_MAP,
@@ -135,7 +137,7 @@ export function evaluateSemanticToolGate(toolName: string): GateDecision {
   if (!category) {
     return {
       outcome: 'deny',
-      reason: `未知的 Agent 工具: ${toolName}`,
+      reason: canvasSourceDefaults.unknownAgentTool(toolName),
     }
   }
   return gateDecisionForCategory(category)
@@ -149,6 +151,14 @@ const asRecord = (value: unknown): Record<string, unknown> =>
  * **出边**(锁节点作为参考被引用,正是定妆用途)→ 放行。deny 发生在提议构建时——
  * 注定失败的计划不让用户批准(§6.5);reason 人话点名节点+解锁路径,回喂 LLM 可自我修正。
  */
+const lockedActionLabels = {
+  editPrompt: 'generationCommon.agentRuntime.editPrompt',
+  deleteNode: 'generationCommon.agentRuntime.deleteNode',
+  regenerateNode: 'generationCommon.agentRuntime.regenerateNode',
+  replaceImageResult: 'generationCommon.agentRuntime.replaceImageResult',
+  addIncomingEdge: 'generationCommon.agentRuntime.addIncomingEdge',
+} as const satisfies Record<string, TranslationKey>
+
 function evaluateLock(toolName: string, args: unknown, ctx: GateContext): GateDecision | null {
   const locked = ctx.lockedNodes
   if (!locked || locked.size === 0) return null
@@ -162,7 +172,7 @@ function evaluateLock(toolName: string, args: unknown, ctx: GateContext): GateDe
     outcome: 'deny',
     reason: i18n.t('generationCommon.agentRuntime.lockedNode', {
       node: locked.get(nodeId) || nodeId,
-      action: i18n.t(`generationCommon.agentRuntime.${actionKey}`),
+      action: i18n.t(lockedActionLabels[actionKey]),
     }),
   })
 

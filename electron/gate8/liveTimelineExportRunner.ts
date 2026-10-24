@@ -1,3 +1,4 @@
+import { desktopT } from '../desktopStrings'
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -88,7 +89,7 @@ function makeClip(options: {
     id: `gate8-shot-${options.shotNumber}-${options.type}`,
     type: options.type,
     sourceNodeId: options.node.id,
-    label: options.node.title || `镜头 ${String(options.shotNumber).padStart(2, '0')}`,
+    label: options.node.title || desktopT("custom.workflow.timelineShot", { value0: String(options.shotNumber).padStart(2, '0') }),
     startFrame: options.startFrame,
     endFrame: options.startFrame + options.frameCount,
     frameCount: options.frameCount,
@@ -228,9 +229,9 @@ async function run(): Promise<void> {
     scale: 1,
     playheadFrame: 0,
     tracks: [
-      { id: 'imageTrack', type: 'image', label: '图片轨', clips: clips.filter((clip) => clip.type === 'image') },
-      { id: 'videoTrack', type: 'video', label: '视频轨', clips: clips.filter((clip) => clip.type === 'video') },
-      { id: 'audioTrack', type: 'audio', label: '音频轨', clips: [] },
+      { id: 'imageTrack', type: 'image', label: desktopT("custom.workflow.timelineImageTrack"), clips: clips.filter((clip) => clip.type === 'image') },
+      { id: 'videoTrack', type: 'video', label: desktopT("custom.workflow.timelineVideoTrack"), clips: clips.filter((clip) => clip.type === 'video') },
+      { id: 'audioTrack', type: 'audio', label: desktopT("custom.workflow.timelineAudioTrack"), clips: [] },
     ],
     textClips: [],
   }

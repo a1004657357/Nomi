@@ -1,3 +1,4 @@
+import { generationPromptSource } from '../../../../electron/shared/generationPromptText'
 import type { RecipeRunPlan } from '../../../config/capabilityRecipes'
 import type { CapabilityRecipeTask } from './capabilityRecipeRunner'
 
@@ -7,8 +8,8 @@ function param(plan: RecipeRunPlan, key: string, fallback: string | number | boo
 
 function identityLockInstruction(plan: RecipeRunPlan): string {
   return param(plan, 'identityLock', true) === false
-    ? '保留人物的基本可识别性。'
-    : '锁定人物身份，不改变五官几何、脸型、年龄和可识别特征。'
+    ? generationPromptSource.identitySoft()
+    : generationPromptSource.identityLocked()
 }
 
 function multiviewBackgroundInstructions(plan: RecipeRunPlan): string[] {

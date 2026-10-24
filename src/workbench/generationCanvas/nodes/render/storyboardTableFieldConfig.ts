@@ -1,3 +1,4 @@
+import i18n from "../../../../i18n"
 import type { PlanShot } from '../../agent/storyboardPlan'
 
 export type ShotTextField = Extract<
@@ -15,8 +16,8 @@ export type ShotTextField = Extract<
 >
 
 export const STORYBOARD_FIELD_GROUPS: Array<{ label: string; fields: ShotTextField[] }> = [
-  { label: '画面', fields: ['scene', 'props', 'notes'] },
-  { label: '摄影', fields: ['shotSize', 'cameraAngle', 'cameraMove'] },
-  { label: '角色/表演', fields: ['characters', 'performance'] },
-  { label: '对白/声音', fields: ['dialogue', 'sound'] },
+  { get label() { return i18n.t("customWorkflow.visuals") }, fields: ['scene', 'props', 'notes'] },
+  { get label() { return i18n.t("customWorkflow.cinematography") }, fields: ['shotSize', 'cameraAngle', 'cameraMove'] },
+  { get label() { return i18n.t("customWorkflow.characterPerformance") }, fields: ['characters', 'performance'] },
+  { get label() { return i18n.t("customWorkflow.dialogueSound") }, fields: ['dialogue', 'sound'] },
 ]

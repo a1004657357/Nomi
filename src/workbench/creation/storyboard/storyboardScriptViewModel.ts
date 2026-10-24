@@ -1,3 +1,4 @@
+import i18n from '../../../i18n'
 import {
   storyboardShotImagePrompt,
   storyboardShotVideoPrompt,
@@ -170,7 +171,7 @@ function collectReferences(
     seen.add(source.id)
     refs.push({
       nodeId: source.id,
-      title: source.title || '参考图',
+      title: source.title || i18n.t("customWorkflow.referenceImage"),
       url,
     })
   }
@@ -225,7 +226,7 @@ export function buildStoryboardScriptRows(
       const primaryUrl = generationResultUrl(primaryNode?.result)
       return {
         shot,
-        title: shotNodes[0]?.title || `镜头 ${shot.index}`,
+        title: shotNodes[0]?.title || i18n.t("customWorkflow.shot", { v0: shot.index }),
         anchors: shot.anchorIds.map((id) => anchorById.get(id)).filter((anchor): anchor is PlanAnchor => Boolean(anchor)),
         nodes: shotNodes,
         imageNode,

@@ -52,7 +52,7 @@ export function completeNodeConnection(connectedNodeId: string, present?: (messa
     return
   }
   if (!verdict.ok && verdict.reason === 'target_input_full') {
-    showInfoToast('图像对比已有两张输入，请先断开一条连线')
+    showInfoToast(i18n.t("customWorkflow.imageComparisonAlreadyHasTwoInputsDisconnectOne"))
     return
   }
   // D4：边建了，但目标参考槽已满 → placeAt 把它丢弃（显示/发送都不含它）= 连了等于没连。

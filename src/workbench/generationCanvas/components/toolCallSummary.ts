@@ -76,11 +76,11 @@ export function summarizeToolCall(toolName: string, args: unknown): string {
   }
   if (toolName === 'update_storyboard_shot') {
     const shotIndex = typeof record.shotIndex === 'number' ? record.shotIndex : null
-    return shotIndex ? `修改镜头 ${shotIndex} 的分镜提示词` : '修改分镜提示词'
+    return shotIndex ? i18n.t("customWorkflow.editStoryboardPromptForShot", { v0: shotIndex }) : i18n.t("customWorkflow.editStoryboardPrompt")
   }
   if (toolName === 'batch_update_storyboard_shots') {
     const shots = Array.isArray(record.shots) ? record.shots : []
-    return `批量填写 ${shots.length} 个分镜表镜头`
+    return i18n.t("customWorkflow.fillStoryboardShots", { v0: shots.length })
   }
   if (toolName === 'delete_canvas_nodes') {
     const ids = Array.isArray(record.nodeIds) ? record.nodeIds : []
@@ -92,7 +92,7 @@ export function summarizeToolCall(toolName: string, args: unknown): string {
   }
   if (toolName === 'attach_external_image_to_node') {
     const title = record.nodeId ? nodeTitleById(String(record.nodeId)) : null
-    return title ? `导入外部图片到「${title}」` : '导入外部图片到节点'
+    return title ? i18n.t("customWorkflow.importAnExternalImageInto", { v0: title }) : i18n.t("customWorkflow.importAnExternalImageIntoANode")
   }
   if (toolName === 'read_canvas_state') {
     return tt('readCanvasState')
@@ -240,8 +240,8 @@ export function describeToolCallDetail(toolName: string, args: unknown): string 
       .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
       .sort((a, b) => a - b)
     if (indices.length === 0) return ''
-    const head = indices.slice(0, 8).map((index) => `镜头 ${index}`).join('、')
-    return indices.length > 8 ? `${head} 等 ${indices.length} 镜` : head
+    const head = indices.slice(0, 8).map((index) => i18n.t("customWorkflow.shot", { v0: index })).join('、')
+    return indices.length > 8 ? i18n.t("customWorkflow.andShotsInTotal", { v0: head, v1: indices.length }) : head
   }
   if (toolName === 'delete_canvas_nodes' || toolName === 'run_generation_batch') {
     const ids = Array.isArray(record.nodeIds) ? record.nodeIds.map((id) => String(id)) : []
@@ -260,14 +260,14 @@ export function describeToolCallDetail(toolName: string, args: unknown): string 
     if (typeof record.modeId === 'string' && record.modeId) parts.push(record.modeId)
     const outputs = Array.isArray(record.outputs) ? record.outputs.length : 0
     const count = typeof record.requestedOutputs === 'number' ? record.requestedOutputs : outputs
-    if (count > 0) parts.push(`${count} 个结果`)
-    if (record.visionReview) parts.push('视觉复核 1 次')
+    if (count > 0) parts.push(i18n.t("customWorkflow.results", { v0: count }))
+    if (record.visionReview) parts.push(i18n.t("customWorkflow.1VisualReview"))
     return parts.join(' · ')
   }
   if (toolName === 'handoff_model3d') {
     const parts: string[] = []
-    if (typeof record.targetNodeId === 'string' && record.targetNodeId) parts.push(`追加到 ${record.targetNodeId}`)
-    if (typeof record.license === 'string' && record.license) parts.push(`许可 ${record.license}`)
+    if (typeof record.targetNodeId === 'string' && record.targetNodeId) parts.push(i18n.t("customWorkflow.appendTo", { v0: record.targetNodeId }))
+    if (typeof record.license === 'string' && record.license) parts.push(i18n.t("customWorkflow.license", { v0: record.license }))
     return parts.join(' · ')
   }
   return ''

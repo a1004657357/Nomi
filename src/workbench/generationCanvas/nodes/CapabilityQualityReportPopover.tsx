@@ -1,3 +1,4 @@
+import { translateCanvasComponentText } from '../../../i18n/CanvasComponentText'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../i18n'
 import type { JSX } from 'react'
@@ -97,7 +98,7 @@ export function CapabilityQualityReportPopover({
               <div key={check.id} data-quality-check={check.id} className="flex items-start gap-1.5">
                 <CapabilityQualityStatusIcon status={check.status} size={13} />
                 <div className="min-w-0">
-                  <div className="text-micro font-semibold text-nomi-ink-80">{check.label}</div>
+                  <div className="text-micro font-semibold text-nomi-ink-80">{translateCanvasComponentText(check.label)}</div>
                   <div className="mt-0.5 text-micro leading-[1.35] text-nomi-ink-60">{check.summary}</div>
                   {check.details?.slice(0, 3).map((detail) => (
                     <div key={detail} className="mt-0.5 text-micro leading-[1.35] text-nomi-ink-40">

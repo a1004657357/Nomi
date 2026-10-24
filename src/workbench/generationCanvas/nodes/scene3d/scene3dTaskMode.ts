@@ -2,14 +2,21 @@
 // 三个任务入口共用同一套编辑器状态（绝不另造并行导演台）；本文件是纯函数层——
 // 任务词汇、CTA 文案、全局状态句推导，配单测。
 import i18n from '../../../../i18n'
+import type { TranslationKey } from '../../../../i18n/translationKey'
 
 export type Scene3DTaskMode = 'compose' | 'act' | 'move'
 
 export const SCENE3D_TASK_ORDER: Scene3DTaskMode[] = ['compose', 'act', 'move']
 
 // 任务标签用函数取（不是模块级 const）——否则切换语言后旧值不更新。
-export const scene3dTaskLabel = (task: Scene3DTaskMode): string => i18n.t(`scene3d.taskFlow.taskLabel.${task}`)
-export const scene3dTaskShortLabel = (task: Scene3DTaskMode): string => i18n.t(`scene3d.taskFlow.taskShortLabel.${task}`)
+const taskLabels = {
+  compose: ['scene3d.taskFlow.taskLabel.compose', 'scene3d.taskFlow.taskShortLabel.compose'],
+  act: ['scene3d.taskFlow.taskLabel.act', 'scene3d.taskFlow.taskShortLabel.act'],
+  move: ['scene3d.taskFlow.taskLabel.move', 'scene3d.taskFlow.taskShortLabel.move'],
+} as const satisfies Record<Scene3DTaskMode, readonly [TranslationKey, TranslationKey]>
+
+export const scene3dTaskLabel = (task: Scene3DTaskMode): string => i18n.t(taskLabels[task][0])
+export const scene3dTaskShortLabel = (task: Scene3DTaskMode): string => i18n.t(taskLabels[task][1])
 
 // CTA 随任务与录制态变：act 任务在录制中变成「完成这段动作」。
 export function scene3dTaskCta(task: Scene3DTaskMode, recording: boolean): string {

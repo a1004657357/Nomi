@@ -1,3 +1,4 @@
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 /**
  * v0.8: 节点标题 inline 编辑组件。
  *
@@ -93,7 +94,7 @@ export function EditableNodeTitle({ nodeId, value, placeholder, className }: Pro
         className,
       )}
     >
-      {isEmpty ? resolvedPlaceholder : value}
+      {isEmpty ? resolvedPlaceholder : translateCanvasComponentText(value)}
     </span>
   )
 }

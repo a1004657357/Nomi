@@ -1,3 +1,4 @@
+import { canvasSourceDefaults, scene3dCaptureSource } from '../../../../electron/shared/canvas/sourceDefaults'
 import i18n from '../../../i18n'
 import type { BlenderDirectorStagePreset } from '../../../../electron/shared/blenderDirectorContract'
 import type { JSX } from 'react'
@@ -244,7 +245,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     const frameCount = frameCountForDuration(duration, fps)
     const takeNode = addNode({
       kind: 'scene3d',
-      title: t('scene3d.fullscreen.recordedTakeTitle'),
+      title: scene3dCaptureSource.recordedTakeTitle(),
       prompt: '',
       // #1 闭环可见性根因：scene3d 的默认分类是 'scene'，但用户正看着的子画布
       // （source 节点所在分类，常是 'shots'）未必是 'scene'。漏传 categoryId →
@@ -274,7 +275,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     // 全屏编辑器关闭后再 fit 并选中新节点，确保用户能立即看到录制结果。
     pendingFitNodeIdRef.current = takeNode.id
     return takeNode.id
-  }, [addNode, height, node.categoryId, node.id, node.position.x, node.position.y, t, updateNode])
+  }, [addNode, height, node.categoryId, node.id, node.position.x, node.position.y, updateNode])
 
   const handleScreenshot = React.useCallback(async (capture: Scene3DCaptureResult) => {
     const project = withProjectAction(project => project)
@@ -286,7 +287,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
       const screenshotNode = addNode({
         kind: 'image',
         title: capture.title,
-        prompt: t('scene3d.fullscreen.screenshotPrompt'),
+        prompt: scene3dCaptureSource.screenshotPrompt(),
         position: {
           x: Math.round(node.position.x + width + 80),
           y: Math.round(node.position.y),
@@ -480,7 +481,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
       projectId: project.binding.projectId,
       projectBinding: project.binding,
       ownerNodeId: node.id,
-      title: node.title || '3D 导演台',
+      title: node.title || canvasSourceDefaults.scene3dTitle(),
       stagePreset: directorStagePreset(sceneState),
       scene: persistableScene3DState(sceneState),
       }

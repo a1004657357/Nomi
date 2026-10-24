@@ -1,3 +1,5 @@
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
+import { directorProtocolSource } from '../../../../../electron/shared/blenderDirectorProtocolText'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import type { JSX } from 'react'
@@ -163,7 +165,7 @@ export default function VibingDirectorAssistantPanel({
         const { resolution } = outcome
         if (!resolution.ok) {
           updateMessage(assistantId, {
-            content: i18n.t("canvasComponents.directorAgentFailed", { v0: failurePrefix, v1: resolution.message }),
+            content: i18n.t("canvasComponents.directorAgentFailed", { v0: failurePrefix, v1: translateCanvasComponentText(resolution.message) }),
             pending: false,
             error: true,
           })
@@ -330,7 +332,7 @@ export default function VibingDirectorAssistantPanel({
     const pending = pendingPlan
     if (!pending || applying) return
     setPendingPlan(null)
-    if (pending.confirm) void pending.confirm({ ok: false, message: '用户没有确认这次 Blender 导演计划' })
+    if (pending.confirm) void pending.confirm({ ok: false, message: directorProtocolSource.declined() })
   }, [applying, pendingPlan])
 
   return (

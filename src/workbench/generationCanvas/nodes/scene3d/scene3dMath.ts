@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../../../electron/shared/canvas/sourceDefaults'
 import * as THREE from 'three'
 import { createScene3DCameraId, createScene3DObjectId } from './scene3dBindingIds'
 import {
@@ -541,8 +542,7 @@ export function roleColorForIndex(index: number): string {
 }
 
 export function mannequinRoleLabel(index: number): string {
-  if (index < 26) return `角色${String.fromCharCode(65 + index)}`
-  return `角色A${index - 25}`
+  return canvasSourceDefaults.actorName(index)
 }
 
 export function clampCrowdOptions(options: CrowdAddOptions): CrowdAddOptions {

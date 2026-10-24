@@ -1,3 +1,4 @@
+import { scene3dCaptureSource } from '../../../../../electron/shared/canvas/sourceDefaults'
 import type { JSX } from 'react'
 // 站位参考的全局出图 Host：常驻挂载（不随画布节点剔除），扫描带 meta.stagingAutoCapture 的
 // scene3d 节点 → 离屏渲染出图 → 落 image 节点 + 连 scene3d→image(reference) + image→镜头(composition_ref)
@@ -57,8 +58,8 @@ export function StagingCaptureHost(): JSX.Element | null {
         const createdAt = Date.now()
         const imageNode = store.addNode({
           kind: 'image',
-          title: t('scene3d.capture.stagingReference'),
-          prompt: t('scene3d.capture.stagingPrompt'),
+          title: scene3dCaptureSource.stagingReference(),
+          prompt: scene3dCaptureSource.stagingPrompt(),
           position: { x: Math.round(node.position.x + 380), y: Math.round(node.position.y) },
         })
         const size = imageNodeSize(capture.width, capture.height)
@@ -105,7 +106,7 @@ export function StagingCaptureHost(): JSX.Element | null {
         processingRef.current = null
       }
     },
-    [t],
+    [],
   )
 
   if (!pendingNode) return null

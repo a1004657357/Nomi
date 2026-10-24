@@ -12,7 +12,8 @@
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { archetypeForNode, findVideoRefMode } from '../../agent/referenceEdgeCapability'
 import { applyArchetypeModeSwitch, readArchetypeArray } from '../controls/archetypeMeta'
-import { CAMERA_MOVE_LABEL, CAMERA_MOVE_DESC, type CameraMove } from './cameraMoveVocab'
+import type { CameraMove } from './cameraMoveVocab'
+import { cameraMoveDirective } from '../director/agent/attachCameraMoveToTarget'
 import { isVideoLikeGenerationNodeKind } from '../../model/generationNodeKinds'
 import i18n from '../../../../i18n'
 
@@ -30,10 +31,6 @@ export type AttachCameraMoveOutcome =
     }
 
 /** 运镜 prompt 地板（通用，全供应商可用）：人话点出该镜的运镜，作为不吃视频参考时的降级。 */
-function cameraMoveDirective(move: CameraMove | undefined): string {
-  if (!move) return ''
-  return `\n镜头运动：${CAMERA_MOVE_LABEL[move]}（${CAMERA_MOVE_DESC[move]}）`
-}
 
 /** 读目标 meta 里「当前已附的运镜 mp4」（无 / 非串 → ''）。 */
 function readAttachedUrl(meta: Record<string, unknown>): string {

@@ -1,3 +1,4 @@
+import i18n from "../../../../i18n"
 // 姿势确定性度量核 —— 把「人眼一看就不对」翻成可计算的数字（纯 three 数学，零渲染，node/浏览器皆可跑）。
 // 判据来源：research/2026-07-11-pose-correction-scaffolding.md
 //   重心 = Winter/Dempster 肢段质量系数加权；平衡 = COM 垂直投影 vs 接触点凸包（带符号边距）；
@@ -654,7 +655,7 @@ export function evaluatePoseAgainstSpec(report: PoseMetricsReport, spec: PoseInt
 
 /** posecode 式人话报告：给 VLM prompt 与循环日志用。 */
 export function describePoseFindings(findings: PoseFinding[]): string {
-  if (findings.length === 0) return '未检出确定性缺陷'
+  if (findings.length === 0) return i18n.t("customWorkflow.noDeterministicDefectsDetected")
   return findings
     .map((f) => `[${f.severity}] ${f.human}`)
     .join('\n')

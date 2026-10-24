@@ -1,3 +1,4 @@
+import { scene3dCaptureSource } from '../../../../../electron/shared/canvas/sourceDefaults'
 import type { JSX } from 'react'
 // 运镜小片的全局出图 Host：常驻挂载（不随画布节点剔除），扫描带 meta.cameraMoveAutoCapture 的
 // scene3d 节点 → 离屏沿相机轨迹采 N 帧 → ffmpeg 拼成 mp4 → 落项目素材 → 写回 scene3d 节点
@@ -7,7 +8,6 @@ import type { JSX } from 'react'
 // S2 范围 = 「scene3dState + 标志 → mp4 素材 url」，到此为止；把 mp4 喂进目标镜头
 // referenceVideoUrls / 切 Seedance omni 是 S3，故这里只把结果写进 meta.cameraMoveVideo 留干净接缝。
 import React from 'react'
-import { useTranslation } from 'react-i18next'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import { normalizeScene3DState } from './scene3dSerializer'
 import { persistCameraMoveVideo } from './cameraMoveVideo'
@@ -142,7 +142,6 @@ async function persistAndAttach(nodeId: string, fps: number, capture: CameraMove
 }
 
 export function CameraMoveCaptureHost(): JSX.Element | null {
-  const { t } = useTranslation()
   // E2E 专用桥：仅当 renderer localStorage['__nomiE2E']==='1' 时把画布 store 挂到 window，
   // 供隔离走查在页面上下文里读写画布（如把相机轨迹改成假人走位再触发离屏渲染）。生产从不置该标志 → 永不暴露。
   React.useEffect(() => {
@@ -277,7 +276,7 @@ export function CameraMoveCaptureHost(): JSX.Element | null {
       state={state}
       frameCount={frameCount}
       fps={fps}
-      title={t('scene3d.capture.cameraMoveReference')}
+      title={scene3dCaptureSource.cameraMoveReference()}
       onResult={(result) => settleAttempt(nodeId, processing.attempt, fps, result ? 'ok' : 'null', result, processing.project)}
     />
   )

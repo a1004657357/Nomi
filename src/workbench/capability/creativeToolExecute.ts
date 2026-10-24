@@ -1,3 +1,4 @@
+import i18n from "../../i18n"
 import { creativeComponentArgumentSchemas, creativeComponentResultSchema, type CreativeComponentResult } from '../../../electron/shared/agentCapabilities/creativeComponent'
 import { assertProjectAgentBinding, sameProjectAgentBinding, type ProjectBinding } from '../../../electron/shared/projectBinding'
 import { SurfacePortWireError } from '../../../electron/shared/surfacePortBinding'
@@ -53,7 +54,7 @@ async function executeVibing(
     inspectedDirectors.set(nodeId, { binding: project.binding, state: node.meta?.vibingDirectorState })
     return result('read', '已读取 Blender 导演台状态。', { directorNodeId: nodeId, state })
   }
-  if (!await confirmDialog({ title: '应用 Blender 导演计划', message: evaluation.request.summary, confirmLabel: '应用计划' })) {
+  if (!await confirmDialog({ title: i18n.t("customWorkflow.applyBlenderDirectorPlan"), message: evaluation.request.summary, confirmLabel: i18n.t("customWorkflow.applyPlan") })) {
     return result('cancelled', '用户取消了本次修改。', { applied: false, declined: true })
   }
   project.assertCurrent()
@@ -97,7 +98,7 @@ export async function executeCreativeTool(payload: unknown): Promise<unknown> {
     return executeVibing(toolName, args, project, mutate)
   }
   if (LOCAL_WRITES.has(toolName)) {
-    const confirmed = await confirmDialog({ title: '确认创作修改', message: toolName, confirmLabel: '确认应用' })
+    const confirmed = await confirmDialog({ title: i18n.t("customWorkflow.confirmCreativeChanges"), message: toolName, confirmLabel: i18n.t("customWorkflow.confirmChanges") })
     project.assertCurrent()
     if (!confirmed) return result('cancelled', '用户取消了本次修改。', { applied: false, declined: true })
   } else if (!DIRECT_READS.has(toolName) && toolName !== 'list_capability_recipes' && toolName !== 'apply_capability_recipe') {

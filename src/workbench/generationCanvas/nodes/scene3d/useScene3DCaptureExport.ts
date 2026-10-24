@@ -1,3 +1,4 @@
+import { scene3dCaptureSource } from '../../../../../electron/shared/canvas/sourceDefaults'
 // 出片捕获动作（从 Scene3DFullscreen / useScene3DFullscreenActions 抽出，防巨壳 R9）：
 // 视口截图、相机截图、运镜首尾帧离屏导出——「把画面变成产物」的动作集中一处。
 import React from 'react'
@@ -111,14 +112,14 @@ export function useScene3DMoveFrameExport({
       return
     }
     const labeled: Array<[string, string]> = [
-      [result.frames[0], i18n.t('scene3d.fullscreen.firstFrame')],
-      [result.frames[result.frames.length - 1], i18n.t('scene3d.fullscreen.lastFrame')],
+      [result.frames[0], scene3dCaptureSource.firstFrame()],
+      [result.frames[result.frames.length - 1], scene3dCaptureSource.lastFrame()],
     ]
     labeled.forEach(([dataUrl, label]) => onScreenshot({
       dataUrl,
       width: result.width,
       height: result.height,
-      title: i18n.t('scene3d.fullscreen.cameraMoveFrameTitle', { camera: cameraName, frame: label }),
+      title: scene3dCaptureSource.cameraMoveFrameTitle(cameraName, label),
       source: 'scene3d-camera',
     }))
     // F2：两张节点已建 → 弹持久结果卡（替代瞬时 toast，用户能回看/回画布）。无宿主回调时退回 toast。
@@ -142,7 +143,7 @@ export function useScene3DMoveFrameExport({
       state: request.state,
       frameCount: 2,
       fps: 24,
-      title: i18n.t('scene3d.fullscreen.cameraMoveFramesTitle', { camera: request.cameraName }),
+      title: scene3dCaptureSource.cameraMoveFramesTitle(request.cameraName),
       sizeMode: 'still-frame',
       onResult: (result) => handleResult(result, request.cameraName),
     })

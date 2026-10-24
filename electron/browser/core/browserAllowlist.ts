@@ -91,10 +91,10 @@ export function isAllowedBrowserTarget(url: unknown): { allowed: boolean; reason
   try {
     parsed = new URL(value)
   } catch {
-    return { allowed: false, reason: '非法 URL' }
+    return { allowed: false, reason: desktopT("custom.workflow.browserInvalidUrl") }
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { allowed: false, reason: `非 http(s) 协议：${parsed.protocol}` }
+    return { allowed: false, reason: desktopT("custom.workflow.browserProtocol", { value0: parsed.protocol }) }
   }
   const host = parsed.hostname.toLowerCase()
   const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80
@@ -102,9 +102,9 @@ export function isAllowedBrowserTarget(url: unknown): { allowed: boolean; reason
     if (entry.host !== host) continue
     if (entry.port != null && entry.port !== port) continue
     if (entry.pathPrefix && !parsed.pathname.startsWith(entry.pathPrefix)) continue
-    return { allowed: true, reason: `匹配 ${entry.purpose}`, matchedEntry: entry }
+    return { allowed: true, reason: desktopT("custom.workflow.browserMatched", { value0: entry.purpose }), matchedEntry: entry }
   }
-  return { allowed: false, reason: `host ${host}:${port} 不在 allowlist（§22.3）` }
+  return { allowed: false, reason: desktopT("custom.workflow.browserHostDenied", { value0: host, value1: port }) }
 }
 
 /**

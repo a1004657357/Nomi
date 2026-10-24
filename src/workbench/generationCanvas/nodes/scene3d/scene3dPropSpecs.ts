@@ -1,3 +1,5 @@
+import i18n from '../../../../i18n'
+import { PROP_SOURCE_NAMES } from '../../../../../electron/shared/canvas/sourceDefaults'
 // 语义道具的 spec 数据与纯函数（与渲染组件 scene3dProps.tsx 分文件：react-refresh 要求
 // 组件文件只导出组件；serializer/toolbar/模板 builder 等纯逻辑消费方也不用拖进 three/r3f）。
 // 每种道具 = 图元组合的数据 spec，新增 kind 只加一条 spec。origin 在**地面中心**
@@ -28,7 +30,7 @@ export type PropSpec = {
 
 export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
   car: {
-    label: '车辆',
+    get label() { return i18n.t("customWorkflow.car") },
     defaultColor: '#8f9aa8',
     footprint: { width: 1.9, depth: 4.6 },
     parts: [
@@ -41,7 +43,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   building: {
-    label: '建筑',
+    get label() { return i18n.t("customWorkflow.building") },
     defaultColor: '#b3aca0',
     footprint: { width: 6.4, depth: 6.4 },
     parts: [
@@ -50,7 +52,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   tree: {
-    label: '树木',
+    get label() { return i18n.t("customWorkflow.tree") },
     defaultColor: '#5c9457',
     footprint: { width: 2.3, depth: 2.3 },
     parts: [
@@ -60,7 +62,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   streetlamp: {
-    label: '路灯',
+    get label() { return i18n.t("customWorkflow.streetlamp") },
     defaultColor: '#6b7078',
     footprint: { width: 1.0, depth: 1.0 },
     parts: [
@@ -71,7 +73,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   wall: {
-    label: '墙面',
+    get label() { return i18n.t("customWorkflow.wall") },
     defaultColor: '#b9b2a6',
     footprint: { width: 4.0, depth: 0.3 },
     parts: [
@@ -97,7 +99,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   bus: {
-    label: '公交车',
+    get label() { return i18n.t("customWorkflow.bus") },
     defaultColor: '#d5a13a',
     footprint: { width: 2.35, depth: 7.4 },
     parts: [
@@ -111,7 +113,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   bicycle: {
-    label: '自行车',
+    get label() { return i18n.t("customWorkflow.bicycle") },
     defaultColor: '#e85f4d',
     footprint: { width: 0.6, depth: 1.9 },
     parts: [
@@ -125,7 +127,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   scooter: {
-    label: '电动踏板车',
+    get label() { return i18n.t("customWorkflow.electricScooter") },
     defaultColor: '#3d566e',
     footprint: { width: 0.5, depth: 1.5 },
     parts: [
@@ -137,7 +139,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   sofa: {
-    label: '沙发',
+    get label() { return i18n.t("customWorkflow.sofa") },
     defaultColor: '#b26d4f',
     footprint: { width: 2.3, depth: 1.05 },
     parts: [
@@ -150,7 +152,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   diningTable: {
-    label: '餐桌',
+    get label() { return i18n.t("customWorkflow.diningTable") },
     defaultColor: '#8b5a36',
     footprint: { width: 1.9, depth: 1.15 },
     parts: [
@@ -162,7 +164,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   fridge: {
-    label: '冰箱',
+    get label() { return i18n.t("customWorkflow.fridge") },
     defaultColor: '#e6e9ec',
     footprint: { width: 0.85, depth: 0.8 },
     parts: [
@@ -173,7 +175,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   washingMachine: {
-    label: '洗衣机',
+    get label() { return i18n.t("customWorkflow.washingMachine") },
     defaultColor: '#e6e9ec',
     footprint: { width: 0.7, depth: 0.7 },
     parts: [
@@ -184,7 +186,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   trashBins: {
-    label: '分类垃圾桶',
+    get label() { return i18n.t("customWorkflow.recyclingBins") },
     defaultColor: '#4b9664',
     footprint: { width: 1.75, depth: 0.6 },
     parts: [
@@ -194,7 +196,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   atm: {
-    label: 'ATM 机',
+    get label() { return i18n.t("customWorkflow.atm") },
     defaultColor: '#315e78',
     footprint: { width: 1.1, depth: 0.8 },
     parts: [
@@ -204,7 +206,7 @@ export const PROP_SPECS: Record<Scene3DPropKind, PropSpec> = {
     ],
   },
   backpack: {
-    label: '背包',
+    get label() { return i18n.t("customWorkflow.backpack") },
     defaultColor: '#516b55',
     footprint: { width: 0.5, depth: 0.4 },
     parts: [
@@ -231,7 +233,7 @@ export function propGroundFootprint(kind: Scene3DPropKind): { width: number; dep
 export function makePropObject(kind: Scene3DPropKind): Scene3DObject {
   return {
     id: createScene3DObjectId(),
-    name: propKindLabel(kind),
+    name: PROP_SOURCE_NAMES[kind],
     type: 'prop',
     visible: true,
     position: [0, 0, 0], // origin 在地面中心：y=0 即贴地

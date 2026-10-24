@@ -1,5 +1,7 @@
 import type { JSX } from 'react'
 import React from 'react'
+import { useTranslation } from 'react-i18next'
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 import { Text, useGLTF } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -469,6 +471,8 @@ export function StaticObjectVisual({ object }: { object: Scene3DObject }): JSX.E
 }
 
 export function MannequinRoleLabel({ position, label }: { position: Scene3DVector3; label: string }): JSX.Element {
+  useTranslation()
+  const displayLabel = translateCanvasComponentText(label)
   const ref = React.useRef<THREE.Group>(null)
   const { camera } = useThree()
   const backgroundWidth = React.useMemo(() => Math.max(0.72, label.length * 0.24 + 0.18), [label])
@@ -508,7 +512,7 @@ export function MannequinRoleLabel({ position, label }: { position: Scene3DVecto
         raycast={() => null}
         renderOrder={8}
       >
-        {label}
+        {displayLabel}
       </Text>
     </group>
   )

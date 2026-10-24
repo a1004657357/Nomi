@@ -1,4 +1,6 @@
 import { enCanvasComponents, zhCanvasComponents } from './locales/canvasComponents'
+import { enCustomWorkflow, zhCustomWorkflow } from './locales/customWorkflow'
+import { enScene3d, zhScene3d } from './locales/scene3d'
 import { enShotTable, zhShotTable } from './locales/shotTable'
 import { enAntigravity, zhAntigravity } from './locales/antigravity'
 import { enModelSetup, zhModelSetup } from './locales/modelSetup'
@@ -26,6 +28,8 @@ import { enAgentToolFailure, zhAgentToolFailure } from './locales/agentToolFailu
 import { enCapabilityWorkflow, zhCapabilityWorkflow } from './locales/capabilityWorkflow'
 
 export const zhCN = {
+  customWorkflow: zhCustomWorkflow,
+  scene3d: zhScene3d,
   capabilityWorkflow: zhCapabilityWorkflow,
   canvasComponents: zhCanvasComponents,
   shotTable: zhShotTable,
@@ -457,6 +461,8 @@ type TranslationShape<T> = {
 }
 
 export const en = {
+  customWorkflow: enCustomWorkflow,
+  scene3d: enScene3d,
   capabilityWorkflow: enCapabilityWorkflow,
   canvasComponents: enCanvasComponents,
   shotTable: enShotTable,

@@ -113,6 +113,11 @@ export const zhCreationAi = {
       description: '检查资产引用、时间轴、情绪弧和敏感风险。',
     },
   },
+
+  assistantMessage: {
+    modelAria: "创作助手模型",
+    modelHint: "创作助手的文本模型",
+  },
 } as const
 
 type TranslationShape<T> = {
@@ -233,5 +238,10 @@ export const enCreationAi = {
       title: 'Continuity review',
       description: 'Check asset references, timeline, emotional arc, and sensitivity risks.',
     },
+  },
+
+  assistantMessage: {
+    modelAria: "Creative assistant model",
+    modelHint: "Text model for the creative assistant",
   },
 } satisfies TranslationShape<typeof zhCreationAi>

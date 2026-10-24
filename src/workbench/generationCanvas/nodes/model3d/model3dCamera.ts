@@ -1,3 +1,4 @@
+import { MODEL3D_VIEW_SOURCE_NAMES } from '../../../../../electron/shared/canvas/sourceDefaults'
 export const MODEL3D_CAPTURE_RATIOS = ['16:9', '9:16', '1:1', '4:3'] as const
 
 export type Model3DCaptureRatio = (typeof MODEL3D_CAPTURE_RATIOS)[number]
@@ -35,15 +36,15 @@ export type Model3DGrid9CameraGuide = Model3DGrid9CameraPreset & {
 }
 
 export const MODEL3D_GRID9_CAMERA_PRESETS: readonly Model3DGrid9CameraPreset[] = [
-  { id: 'front', label: '正面', azimuth: 0, elevation: 0 },
-  { id: 'front-right', label: '右前侧', azimuth: 45, elevation: 0 },
-  { id: 'right', label: '右侧', azimuth: 90, elevation: 0 },
-  { id: 'rear-right', label: '右后侧', azimuth: 135, elevation: 0 },
-  { id: 'rear', label: '背面', azimuth: 180, elevation: 0 },
-  { id: 'rear-left', label: '左后侧', azimuth: -135, elevation: 0 },
-  { id: 'left', label: '左侧', azimuth: -90, elevation: 0 },
-  { id: 'front-left', label: '左前侧', azimuth: -45, elevation: 0 },
-  { id: 'top', label: '俯视', azimuth: 0, elevation: 75 },
+  { id: 'front', label: MODEL3D_VIEW_SOURCE_NAMES['front'], azimuth: 0, elevation: 0 },
+  { id: 'front-right', label: MODEL3D_VIEW_SOURCE_NAMES['front-right'], azimuth: 45, elevation: 0 },
+  { id: 'right', label: MODEL3D_VIEW_SOURCE_NAMES['right'], azimuth: 90, elevation: 0 },
+  { id: 'rear-right', label: MODEL3D_VIEW_SOURCE_NAMES['rear-right'], azimuth: 135, elevation: 0 },
+  { id: 'rear', label: MODEL3D_VIEW_SOURCE_NAMES['rear'], azimuth: 180, elevation: 0 },
+  { id: 'rear-left', label: MODEL3D_VIEW_SOURCE_NAMES['rear-left'], azimuth: -135, elevation: 0 },
+  { id: 'left', label: MODEL3D_VIEW_SOURCE_NAMES['left'], azimuth: -90, elevation: 0 },
+  { id: 'front-left', label: MODEL3D_VIEW_SOURCE_NAMES['front-left'], azimuth: -45, elevation: 0 },
+  { id: 'top', label: MODEL3D_VIEW_SOURCE_NAMES['top'], azimuth: 0, elevation: 75 },
 ]
 
 export function model3dGrid9CameraStates(

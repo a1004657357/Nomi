@@ -1,3 +1,5 @@
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
+import { scene3dCaptureSource } from '../../../../../electron/shared/canvas/sourceDefaults'
 import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 import { withProjectAction } from '../../../project/projectCanvasReadSurface'
 import type { JSX } from 'react'
@@ -151,7 +153,7 @@ export function Scene3DEnvironmentPanel({
 
         onEnvironmentPatch({
           panoramaUrl: previewUrl,
-          panoramaFileName: file.name || t('scene3d.environment.defaultName'),
+          panoramaFileName: file.name || scene3dCaptureSource.panoramaName(),
           showSky: false,
           environmentMode: 'panorama',
         })
@@ -162,7 +164,7 @@ export function Scene3DEnvironmentPanel({
         if (panoramaImportRunRef.current !== importRunId) return
         onEnvironmentPatch({
           panoramaUrl: hostedUrl,
-          panoramaFileName: file.name || t('scene3d.environment.defaultName'),
+          panoramaFileName: file.name || scene3dCaptureSource.panoramaName(),
         })
         if (standardRatio) toast(t('scene3d.environment.imported'), 'success')
       } catch {
@@ -171,7 +173,7 @@ export function Scene3DEnvironmentPanel({
           if (panoramaImportRunRef.current !== importRunId) return
           onEnvironmentPatch({
             panoramaUrl: dataUrl,
-            panoramaFileName: file.name || t('scene3d.environment.defaultName'),
+            panoramaFileName: file.name || scene3dCaptureSource.panoramaName(),
           })
           toast(t('scene3d.environment.importedTemporary'), 'info')
         } catch {
@@ -284,7 +286,7 @@ export function Scene3DEnvironmentPanel({
               />
             </div>
             <div className="min-w-0 truncate text-micro text-[var(--nomi-ink-60)]">
-              {environment.panoramaFileName || t('scene3d.environment.defaultName')}
+              {environment.panoramaFileName ? translateCanvasComponentText(environment.panoramaFileName) : t('scene3d.environment.defaultName')}
             </div>
             {previewDimensions && !isStandardPanoramaDimensions(previewDimensions) ? (
               <div className="text-micro text-[var(--nomi-ink-60)]">

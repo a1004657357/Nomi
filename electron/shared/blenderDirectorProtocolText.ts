@@ -1,0 +1,37 @@
+/** Stable Director wire/validation messages, shared by producers and display adapters. */
+export const directorProtocolSource = {
+  preflightRejected: (v0: string | number) => `计划与当前 Blender 状态不一致：${v0}`,
+  noJson: () => '兼容协议没有返回可解析的 JSON 对象。',
+  invalidRoot: () => '兼容协议返回了 JSON，但顶层不是 Blender 导演计划对象。',
+  explanationOnly: () => '当前模型只返回了解释文本，没有返回可执行的 Blender 导演 JSON 计划。',
+  missingNodeId: () => 'Blender 导演计划缺少当前 Director 节点 id。',
+  wrongPlanNode: (v0: string | number, v1: string | number) => `Blender 导演计划目标是「${v0}」，当前节点是「${v1}」。`,
+  invalidJsonPlan: () => 'JSON 已返回，但包含不支持的操作、缺少必填字段或字段类型不正确。',
+  wrongReadNode: (v0: string | number, v1: string | number) => `读取目标「${v0}」不是当前 Director 节点「${v1}」。`,
+  readNodeRequired: () => '读取当前 Director 前必须提供 directorNodeId。',
+  unsupportedOperation: (v0: string | number) => `VIBING Director 不支持操作「${v0}」。`,
+  readBeforeEdit: () => '修改 Blender 场景前必须先读取当前 Director 状态，请先调用 read_vibing_director。',
+  invalidPlan: () => 'Blender 导演计划包含不支持的操作、缺少必填字段或字段类型不正确。',
+  moveRequiresField: () => 'move_object 至少需要一个要修改的字段',
+  cameraRequiresField: () => 'set_camera 至少需要一个要修改的字段',
+  cameraTargetRequired: () => 'target 取景必须指定 targetRef',
+  distanceRequired: () => 'distance 空间关系必须指定 distance',
+  distinctObjectsRequired: () => '空间关系不能引用同一个对象',
+  beatTitle: (v0: string | number) => `节拍 ${v0}`,
+  running: () => 'Blender 正在执行导演计划',
+  declined: () => '用户没有确认这次 Blender 导演计划',
+}
+
+export const directorActionSource = {
+  setStage: (v0: string | number) => `设置场景：${v0}`,
+  blockingLayout: (v0: string | number) => `整理摆位：${v0}`,
+  placeAsset: (v0: string | number) => `摆放资产：${v0}`,
+  addMarker: (v0: string | number) => `添加走位标记：${v0}`,
+  moveObject: (v0: string | number) => `调整对象：${v0}`,
+  removeObject: (v0: string | number) => `移除对象：${v0}`,
+  setRelation: (v0: string | number) => `设置空间关系：${v0}`,
+  removeRelation: (v0: string | number) => `移除空间关系：${v0}`,
+  setCamera: (v0: string | number) => `调整机位：${v0}`,
+  setCameraPath: (v0: string | number) => `设置运镜：${v0}`,
+  setBeat: (v0: string | number) => `更新节拍：${v0}`,
+}

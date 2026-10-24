@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../electron/shared/canvas/sourceDefaults'
 import type { WorkbenchDocument } from '../workbenchTypes'
 import { markdownToTiptapContent } from './markdownToTiptap'
 
@@ -16,7 +17,7 @@ function fileExtension(fileName: string): string {
 export function scriptFileTitle(fileName: string): string {
   const normalized = fileName.trim().replace(/^.*[/\\]/, '')
   const withoutExtension = normalized.replace(/\.(?:txt|md|markdown|docx|xlsx|xls|csv)$/i, '').trim()
-  return withoutExtension || '导入剧本'
+  return withoutExtension || canvasSourceDefaults.importedScriptTitle()
 }
 
 function plainTextToTiptapContent(text: string): TiptapParagraph[] {

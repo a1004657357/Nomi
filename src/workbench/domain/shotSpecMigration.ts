@@ -1,3 +1,4 @@
+import { canvasSourceDefaults, generationModeRationale } from '../../../electron/shared/canvas/sourceDefaults'
 /**
  * Slice 2 — PlanShot ↔ ShotSpecV1 适配层（迁移起点，双向兼容）。
  *
@@ -65,7 +66,7 @@ function inferGenerationMode(shot: PlanShot): GenerationMode {
 
 function inferGenerationStrategy(shot: PlanShot, plan: StoryboardPlan): GenerationStrategyV1 {
   const mode = inferGenerationMode(shot)
-  const rationale = modeRationale(mode)
+  const rationale = generationModeRationale(mode)
   const strategy: GenerationStrategyV1 = {
     mediaKind: mediaKindFromShot(shot),
     mode,
@@ -82,22 +83,6 @@ function inferGenerationStrategy(shot: PlanShot, plan: StoryboardPlan): Generati
   return strategy
 }
 
-function modeRationale(mode: GenerationMode): string {
-  switch (mode) {
-    case 'text-to-image':
-      return '无既有视觉资产、构图自由，文生图'
-    case 'image-to-image':
-      return '角色/场景身份一致，参考锚喂图生图'
-    case 'text-to-video':
-      return '无既有视觉资产，文生视频'
-    case 'first-frame':
-      return '有首帧图，first-frame 锁起始构图'
-    case 'omni-reference':
-      return '角色/场景身份一致但需较大运动自由，全能参考'
-    default:
-      return `迁移期推断模式 ${mode}（PlanShot 无显式 mode 字段）`
-  }
-}
 
 /**
  * PlanShot.anchorIds → ReferenceBindingV1[]。
@@ -172,7 +157,7 @@ export function planShotToShotSpec(
     id: shotSpecIdFromIndex(shot.index, projectId),
     projectId,
     index: shot.index,
-    title: shot.scene ?? `镜 ${shot.index}`,
+    title: shot.scene ?? canvasSourceDefaults.shotTitle(shot.index),
     narrative: {},
     time: {
       durationSeconds: shot.shotKind === 'image' ? 0 : shot.durationSec,

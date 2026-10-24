@@ -1,3 +1,4 @@
+import i18n from "../../../i18n"
 import type { CapabilityRecipeInputKind, CapabilityRecipeInputSlot, CreativeResource } from '../../../config/capabilityRecipes'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 
@@ -13,9 +14,9 @@ function acceptedKinds(kind: ResourceInputKind): readonly CreativeResource['kind
 }
 
 function resourceLabel(kind: ResourceInputKind): string {
-  if (kind === 'style') return '风格或色板'
-  if (kind === 'identity') return '身份'
-  return '效果'
+  if (kind === 'style') return i18n.t("customWorkflow.styleOrPalette")
+  if (kind === 'identity') return i18n.t("customWorkflow.identity")
+  return i18n.t("customWorkflow.effect")
 }
 
 export function isCreativeResourceCandidate(
@@ -34,18 +35,18 @@ export function capabilityRecipeInputReadiness(
   source: GenerationCanvasNode | null,
   selectedResources: readonly GenerationCanvasNode[],
 ): { ready: true } | { ready: false; message: string } {
-  if (!source) return { ready: false, message: '请先选择一个源节点' }
+  if (!source) return { ready: false, message: i18n.t("customWorkflow.selectASourceNodeFirst") }
   if (recipe.inputSlots.some((slot) => slot.kind === 'source_image' && slot.min > 0) && source.result?.type !== 'image') {
-    return { ready: false, message: '源节点需要一张已生成或导入的图片' }
+    return { ready: false, message: i18n.t("customWorkflow.theSourceNodeNeedsAGeneratedOrImported13") }
   }
   if (recipe.inputSlots.some((slot) => slot.kind === 'source_video' && slot.min > 0) && source.result?.type !== 'video') {
-    return { ready: false, message: '源节点需要一个已生成或导入的视频' }
+    return { ready: false, message: i18n.t("customWorkflow.theSourceNodeNeedsAGeneratedOrImported12") }
   }
   if (recipe.inputSlots.some((slot) => slot.kind === 'source_model3d' && slot.min > 0) && source.result?.type !== 'model3d') {
-    return { ready: false, message: '源节点需要一个已生成或导入的 3D 模型' }
+    return { ready: false, message: i18n.t("customWorkflow.theSourceNodeNeedsAGeneratedOrImported") }
   }
   if (recipe.inputSlots.some((slot) => slot.kind === 'text' && slot.min > 0) && !source.prompt?.trim()) {
-    return { ready: false, message: '源节点需要文字提示词' }
+    return { ready: false, message: i18n.t("customWorkflow.theSourceNodeNeedsATextPrompt") }
   }
 
   const totals = new Map<ResourceInputKind, { min: number; max: number }>()
@@ -59,8 +60,8 @@ export function capabilityRecipeInputReadiness(
     const count = selectedResources.filter((node) => (
       node.creativeResource && kinds.includes(node.creativeResource.kind)
     )).length
-    if (count < limits.min) return { ready: false, message: `至少选择 ${limits.min} 个${resourceLabel(kind)}资源` }
-    if (count > limits.max) return { ready: false, message: `最多选择 ${limits.max} 个${resourceLabel(kind)}资源` }
+    if (count < limits.min) return { ready: false, message: i18n.t("customWorkflow.selectAtLeastResources", { v0: limits.min, v1: resourceLabel(kind) }) }
+    if (count > limits.max) return { ready: false, message: i18n.t("customWorkflow.selectAtMostResources", { v0: limits.max, v1: resourceLabel(kind) }) }
   }
 
   return { ready: true }

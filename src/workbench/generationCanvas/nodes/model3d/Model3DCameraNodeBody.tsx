@@ -1,3 +1,4 @@
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 import { useTranslation } from 'react-i18next'
 import i18n from '../../../../i18n'
 import type { JSX } from 'react'
@@ -204,7 +205,7 @@ export default function Model3DCameraNodeBody({
       const dimensions = model3dCaptureDimensions(ratio, 1024)
       const frames = model3dGrid9CameraStates(camera).map((guide) => {
         const capture = viewerRef.current?.captureAt(guide.camera, dimensions)
-        if (!capture) throw new Error(i18n.t("canvasComponents.theViewForCameraIsNotReady", { v0: guide.label }))
+        if (!capture) throw new Error(i18n.t("canvasComponents.theViewForCameraIsNotReady", { v0: translateCanvasComponentText(guide.label) }))
         return { ...guide, capture }
       })
       await createModel3DGrid9CaptureCollection({

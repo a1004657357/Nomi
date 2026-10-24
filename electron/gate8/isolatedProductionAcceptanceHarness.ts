@@ -53,15 +53,15 @@ export type JourneyStep = {
 }
 
 export const GATE8_JOURNEY_CHECKLIST: JourneyStep[] = [
-  { step: '1. 导入短剧本', description: '把 ISOLATED_TEST_SCREENPLAY 导入为项目', passed: false },
-  { step: '2. Agent 拆 6 镜并审阅', description: 'propose_storyboard_plan 产出 6 镜方案，用户审阅', passed: false },
-  { step: '3. 落画布并创建资产卡', description: '角色/场景/道具资产卡就位', passed: false },
-  { step: '4. 生成图片镜头', description: '至少 1 个 image 镜真实生成成功', passed: false },
-  { step: '5. 生成视频镜头', description: '至少 1 个 video 镜真实生成成功', passed: false },
-  { step: '6. 全屏预览 + 选 revision', description: '双击全屏、比较、select revision', passed: false },
-  { step: '7. Blender 预演', description: '发送 1 镜到 Blender，回传 preview/.blend', passed: false },
+  { step: '1. 导入短剧本', get description() { return desktopT("custom.workflow.gate8Import") }, passed: false },
+  { step: '2. Agent 拆 6 镜并审阅', get description() { return desktopT("custom.workflow.gate8PlanReview") }, passed: false },
+  { step: '3. 落画布并创建资产卡', get description() { return desktopT("custom.workflow.gate8Assets") }, passed: false },
+  { step: '4. 生成图片镜头', get description() { return desktopT("custom.workflow.gate8Image") }, passed: false },
+  { step: '5. 生成视频镜头', get description() { return desktopT("custom.workflow.gate8Video") }, passed: false },
+  { step: '6. 全屏预览 + 选 revision', get description() { return desktopT("custom.workflow.gate8Fullscreen") }, passed: false },
+  { step: '7. Blender 预演', get description() { return desktopT("custom.workflow.gate8BlenderPreview") }, passed: false },
   { step: '8. 放入时间线', description: 'selected revision → timeline', passed: false },
-  { step: '9. 导出 MP4', description: '导出可播放 MP4（正确画幅 + 预期音频）', passed: false },
+  { step: '9. 导出 MP4', get description() { return desktopT("custom.workflow.gate8Export") }, passed: false },
 ]
 
 /**

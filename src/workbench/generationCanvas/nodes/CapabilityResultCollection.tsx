@@ -1,4 +1,6 @@
 import { useTranslation } from 'react-i18next'
+import { translateCanvasComponentText } from '../../../i18n/CanvasComponentText'
+import { translateCapabilityWorkflowText } from '../../../i18n/capabilityWorkflowText'
 import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
@@ -87,6 +89,7 @@ export function CapabilityResultCollection({
           onPointerDown={(event) => event.stopPropagation()}
         >
           {collection.items.map((item) => {
+            const displayLabel = translateCanvasComponentText(translateCapabilityWorkflowText(item.label))
             const media = itemMedia(item)
             const isCurrent = Boolean(item.result?.id && item.result.id === node.result?.id)
             const isBusy = item.status === 'pending' || item.status === 'running'
@@ -111,7 +114,7 @@ export function CapabilityResultCollection({
               >
                 <button
                   type="button"
-                  aria-label={`${item.label}${isCurrent ? i18n.t("canvasComponents.currentPrimaryResult") : ''}`}
+                  aria-label={`${displayLabel}${isCurrent ? i18n.t("canvasComponents.currentPrimaryResult") : ''}`}
                   aria-pressed={isCurrent}
                   disabled={!media || isBusy}
                   className={cn(
@@ -157,7 +160,7 @@ export function CapabilityResultCollection({
                   )}
                   <span className="absolute inset-x-0 bottom-0 flex min-h-6 items-center gap-1 bg-black/58 px-1.5 py-1 text-micro font-medium text-white">
                     {isCurrent ? <IconCheck size={11} stroke={2.2} aria-hidden="true" /> : null}
-                    <span className="min-w-0 truncate">{item.label}</span>
+                    <span className="min-w-0 truncate">{displayLabel}</span>
                   </span>
                   {item.status === 'error' && item.error ? (
                     <span className="absolute inset-x-1 top-1 line-clamp-2 rounded-nomi-sm bg-workbench-danger-soft px-1.5 py-1 text-micro leading-tight text-workbench-danger">

@@ -1,3 +1,4 @@
+import { generationPromptSource } from '../../../../electron/shared/generationPromptText'
 import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { sortEdgesByOrder } from '../model/graphOps'
 import { archetypeForNode, referenceAssetKindForNode } from '../agent/referenceEdgeCapability'
@@ -135,35 +136,35 @@ function referenceImageRole(
   nodesById: Map<string, GenerationCanvasNode>,
 ): string {
   const source = nodes.find((candidate) => findNodeResultUrl(nodesById, candidate.id) === url)
-  if (!source) return `参考图片 ${index + 1}，只按提示词指定的用途参考`
+  if (!source) return generationPromptSource.unknownImage(index + 1)
   const directEdge = sortEdgesByOrder(edges).find((edge) => (
     edge.source === source.id && edge.target === targetNodeId
   ))
   const mode = directEdge?.mode
   const title = String(source.title || `图片 ${index + 1}`).trim()
   const meta = source.meta && typeof source.meta === 'object' ? source.meta as Record<string, unknown> : {}
-  if (mode === 'first_frame') return `首帧「${title}」，作为视频起点并保持起始构图`
-  if (mode === 'last_frame') return `尾帧「${title}」，作为视频结束状态`
+  if (mode === 'first_frame') return generationPromptSource.firstFrame(title)
+  if (mode === 'last_frame') return generationPromptSource.lastFrame(title)
   if (mode === 'character_ref' || source.kind === 'character') {
-    return `角色「${title}」的身份、脸、发型和服装参考，不锁定动作与构图`
+    return generationPromptSource.character(title)
   }
   if (mode === 'style_ref' || source.kind === 'scene') {
-    return `场景/风格「${title}」的空间、材质、色调和固定参照物参考`
+    return generationPromptSource.scene(title)
   }
   const storyboardImage = meta.storyboardContainedRole === 'image'
     || meta.storyboardRowOutputRole === 'image'
     || (typeof source.shotIndex === 'number' && !meta.referenceSheet)
     || /^镜头\s*\d+/.test(title)
   if (mode === 'composition_ref' && storyboardImage) {
-    return `分镜图「${title}」，只参考景别、机位、空间关系和动作意图，不作为首帧`
+    return generationPromptSource.storyboard(title)
   }
   if (mode === 'composition_ref') {
-    return `构图/场景「${title}」参考，只锁定空间关系和机位`
+    return generationPromptSource.composition(title)
   }
   if (mode === 'reference' || meta.referenceSheet) {
-    return `道具/视觉资产「${title}」的造型、材质和尺度参考`
+    return generationPromptSource.prop(title)
   }
-  return `参考图片「${title}」，只按提示词指定的用途参考`
+  return generationPromptSource.generic(title)
 }
 
 function referenceImagePurpose(

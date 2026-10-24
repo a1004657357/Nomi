@@ -1,3 +1,4 @@
+import { desktopT } from '../desktopStrings'
 /**
  * Gate 4 Slice 1 — ShotSpec ↔ Blender 桥接（§14.2 ShotSpec→plan + directorNode 闭环升级为 shot 闭环）。
  *
@@ -129,9 +130,9 @@ export function assertShotBlenderInputsSafe(inputs: ShotBlenderInputs): { safe: 
     ...inputs.spatialRelations,
   ].filter((s): s is string => typeof s === 'string')
   for (const s of stringFields) {
-    if (/https?:\/\//i.test(s)) return { safe: false, reason: `blocking 字段含 URL: ${s.slice(0, 30)}` }
-    if (/^\/[a-z]/i.test(s)) return { safe: false, reason: `blocking 字段含绝对路径: ${s.slice(0, 30)}` }
-    if (/(\b|rmdir|rm\s|exec|eval|system)\s*\(/i.test(s)) return { safe: false, reason: `blocking 字段含可疑调用: ${s.slice(0, 30)}` }
+    if (/https?:\/\//i.test(s)) return { safe: false, reason: desktopT("custom.workflow.blockingUrl", { value0: s.slice(0, 30) }) }
+    if (/^\/[a-z]/i.test(s)) return { safe: false, reason: desktopT("custom.workflow.blockingAbsolutePath", { value0: s.slice(0, 30) }) }
+    if (/(\b|rmdir|rm\s|exec|eval|system)\s*\(/i.test(s)) return { safe: false, reason: desktopT("custom.workflow.blockingCall", { value0: s.slice(0, 30) }) }
   }
   return { safe: true }
 }

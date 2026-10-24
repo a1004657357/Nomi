@@ -1,3 +1,4 @@
+import i18n from "../../../../i18n"
 import type {
   GenerationCanvasEdge,
   GenerationCanvasNode,
@@ -32,7 +33,7 @@ export function resolveImageComparisonInputs(
     .filter((node): node is GenerationCanvasNode => Boolean(node))
     .map((node) => ({
       nodeId: node.id,
-      title: node.title || '图片',
+      title: node.title || i18n.t("customWorkflow.image"),
       url: imageUrl(node),
     }))
     .filter((input) => Boolean(input.url))

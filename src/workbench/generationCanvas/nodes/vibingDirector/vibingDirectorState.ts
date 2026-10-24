@@ -1,3 +1,4 @@
+import { directorActionSource } from '../../../../../electron/shared/blenderDirectorProtocolText'
 import type { Model3dValidationSummary } from '../../model/generationCanvasTypes'
 import {
   BLENDER_DIRECTOR_STAGE_PRESETS,
@@ -418,17 +419,17 @@ function resolveObject(objects: BlenderDirectorSceneObject[], objectRef: string)
 
 function label(action: VibingDirectorAction): string {
   switch (action.op) {
-    case 'set_stage': return `设置场景：${action.preset}`
-    case 'set_blocking_layout': return `整理摆位：${action.template}`
-    case 'place_asset': return `摆放资产：${action.name}`
-    case 'add_marker': return `添加走位标记：${action.name}`
-    case 'move_object': return `调整对象：${action.objectRef}`
-    case 'remove_object': return `移除对象：${action.objectRef}`
-    case 'set_relation': return `设置空间关系：${action.id}`
-    case 'remove_relation': return `移除空间关系：${action.relationRef}`
-    case 'set_camera': return `调整机位：${action.name || action.cameraRef || '导演相机'}`
-    case 'set_camera_path': return `设置运镜：${action.cameraRef || '导演相机'}`
-    case 'set_beat': return `更新节拍：${action.title}`
+    case 'set_stage': return directorActionSource.setStage(action.preset)
+    case 'set_blocking_layout': return directorActionSource.blockingLayout(action.template)
+    case 'place_asset': return directorActionSource.placeAsset(action.name)
+    case 'add_marker': return directorActionSource.addMarker(action.name)
+    case 'move_object': return directorActionSource.moveObject(action.objectRef)
+    case 'remove_object': return directorActionSource.removeObject(action.objectRef)
+    case 'set_relation': return directorActionSource.setRelation(action.id)
+    case 'remove_relation': return directorActionSource.removeRelation(action.relationRef)
+    case 'set_camera': return directorActionSource.setCamera(action.name || action.cameraRef || '导演相机')
+    case 'set_camera_path': return directorActionSource.setCameraPath(action.cameraRef || '导演相机')
+    case 'set_beat': return directorActionSource.setBeat(action.title)
   }
 }
 

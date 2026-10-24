@@ -1,3 +1,4 @@
+import { canvasSourceDefaults } from '../../../../electron/shared/canvas/sourceDefaults'
 export { parseStoryboardPlan, storyboardPlanSchema } from './storyboardPlanSchema'
 export { buildDetailedStoryboardShotVideoPrompt, SCREEN_VISIBILITY_PROMPT_RULE, storyboardShotImagePrompt, storyboardShotPromptForKind, storyboardShotVideoPrompt } from './storyboardShotPrompts'
 import type { BuiltinCanvasCategoryId, GenerationCanvasEdgeMode } from '../model/generationCanvasTypes'
@@ -373,7 +374,7 @@ export function storyboardPlanToCreateNodesArgs(
 
   nodes.push({
     clientId: 'storyboard-group', kind: 'text',
-    title: `分镜组：${plan.title.trim() || '未命名分镜'}`,
+    title: canvasSourceDefaults.storyboardGroupTitle(plan.title),
     prompt: [plan.title, ...[...plan.shots].sort((a, b) => a.index - b.index)
       .map(shot => `镜头 ${shot.index}：${compileShotOutbound(shot, 'shot').prompt}`)].join('\n'),
     storyboardGroup: true, storyboardPlanSnapshot: plan,
