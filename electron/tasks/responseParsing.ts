@@ -8,7 +8,7 @@ import { firstString, isJsonRecord, readNestedRecord, trim, type JsonRecord } fr
 export type { TaskStatus } from "../shared/taskStatus";
 export { isTerminalStatus, isFailureStatus } from "../shared/taskStatus";
 import type { TaskStatus } from "../shared/taskStatus";
-import { classifyUpstreamTaskStatus } from "../shared/taskStatus";
+import { classifyUpstreamTaskStatus, KNOWN_TASK_STATUSES } from "../shared/taskStatus";
 
 export function maybeParseJsonString(value: unknown): unknown {
   if (typeof value !== "string") return value;
@@ -111,7 +111,7 @@ export function resolveTaskStatus(response: unknown, responseMapping: JsonRecord
   const fallbackStatus = rawStatus.toLowerCase();
   const recognized = (status: TaskStatus): TaskStatusResolution => ({ status, unrecognizedStatus: "" });
   const sm = statusMapping || {};
-  for (const status of ["queued", "running", "succeeded", "failed", "cancelled"] as const) {
+  for (const status of KNOWN_TASK_STATUSES) {
     const values = Array.isArray(sm[status]) ? sm[status] : [];
     if (values.map((item) => String(item).toLowerCase()).includes(fallbackStatus)) return recognized(status);
   }

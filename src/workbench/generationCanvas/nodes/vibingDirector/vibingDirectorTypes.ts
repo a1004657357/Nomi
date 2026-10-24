@@ -1,16 +1,10 @@
 import type { Model3dValidationSummary } from '../../model/generationCanvasTypes'
+import type { BlenderDirectorStagePreset, BlenderSpatialCheckStatus } from '../../../../../electron/shared/blenderDirectorContract'
+export { BLENDER_DIRECTOR_STAGE_PRESETS } from '../../../../../electron/shared/blenderDirectorContract'
+export type { BlenderDirectorStagePreset } from '../../../../../electron/shared/blenderDirectorContract'
 
 export const VIBING_DIRECTOR_VERSION = 2 as const
 
-export const BLENDER_DIRECTOR_STAGE_PRESETS = [
-  'empty',
-  'studio',
-  'coffee_shop',
-  'city_street',
-  'interior_room',
-] as const
-
-export type BlenderDirectorStagePreset = (typeof BLENDER_DIRECTOR_STAGE_PRESETS)[number]
 export type BlenderDirectorVector3 = [number, number, number]
 export type BlenderDirectorAssetSource = 'local' | 'kenney' | 'polyhaven' | 'quaternius' | 'blenderkit'
 export type BlenderDirectorAssetFormat = 'blend' | 'glb' | 'gltf' | 'fbx' | 'obj'
@@ -96,7 +90,7 @@ export type BlenderDirectorRelation = {
 export type BlenderDirectorSpatialCheck = {
   relationId: string
   kind: BlenderDirectorRelationKind
-  status: 'passed' | 'warning' | 'failed'
+  status: BlenderSpatialCheckStatus
   message: string
   measured?: number
   expected?: number

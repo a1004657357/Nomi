@@ -187,17 +187,11 @@ export type ContinuityConstraintV1 = {
  * - `accepted` 必须指向选中的 revision 和验收报告。
  * - 用户可手动接受带警告结果，但必须记录 override 原因。
  */
-export type ShotStatus =
-  | 'draft'
-  | 'planned'
-  | 'asset-blocked'
-  | 'ready'
-  | 'generating'
-  | 'candidate-ready'
-  | 'evaluating'
-  | 'needs-revision'
-  | 'accepted'
-  | 'placed-on-timeline'
+export const SHOT_STATUSES = [
+  'draft', 'planned', 'asset-blocked', 'ready', 'generating', 'candidate-ready',
+  'evaluating', 'needs-revision', 'accepted', 'placed-on-timeline',
+] as const
+export type ShotStatus = (typeof SHOT_STATUSES)[number]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShotSpec v1（§9.1）—— 镜头唯一真相源
@@ -396,7 +390,8 @@ export type AssetRevisionKind = 'imported' | 'generated' | 'edited' | 'blender-p
  * - rejected：用户淘汰。
  * - archived：归档（默认删除策略，§17.3）。
  */
-export type AssetRevisionStatus = 'candidate' | 'selected' | 'rejected' | 'archived'
+export const ASSET_REVISION_STATUSES = ['candidate', 'selected', 'rejected', 'archived'] as const
+export type AssetRevisionStatus = (typeof ASSET_REVISION_STATUSES)[number]
 
 /**
  * Asset Revision v1（§9.6）。

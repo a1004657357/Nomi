@@ -146,7 +146,7 @@ describe("canvas.read MCP capability projection", () => {
     expect(CANVAS_READ_MCP_ADAPTER.transportInputSchema).toEqual({
       type: "object",
       properties: {
-        leaseHandle: { type: "string", minLength: 1, description: "The project lease handle returned by nomi_session_open." },
+        leaseHandle: { type: "string", minLength: 1, description: "Project lease handle from nomi_session_open." },
         projectId: { type: "string", minLength: 1 },
       },
       required: ["leaseHandle"],

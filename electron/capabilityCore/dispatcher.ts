@@ -43,7 +43,7 @@ import {
   type IntegrationSessionService,
 } from '../integrationCertification/integrationSession'
 import { withCredentialElicitationTicket } from '../integrationCertification/credentialElicitation'
-import { currentCatalogFingerprint, dispatchModelOnboarding } from './modelOnboarding/dispatch'
+import { dispatchModelOnboarding } from './modelOnboarding/dispatch';
 import { buildOnboardingKit } from './modelOnboarding/kit'
 import { dispatchModelSpec } from './modelSpecRead'
 import { dispatchCustomLocalCanvas, type CustomLocalCanvasContext } from './customLocalCanvasDispatcher'

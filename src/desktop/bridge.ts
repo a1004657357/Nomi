@@ -1,4 +1,5 @@
 import type { ExportJobEvent, ExportJobSnapshot, ExportJobVerification } from '../../electron/export/exportJobManager'
+import type { BlenderDirectorStagePreset } from '../../electron/shared/blenderDirectorContract'
 import type { WorkspaceFileListResult } from '../../electron/workspace/workspaceFileIndex'
 import type { WorkspaceSyncInspection } from '../../electron/shared/workspaceSyncContracts'
 import type { ProviderKind } from './providerKind'
@@ -297,7 +298,7 @@ export type DesktopBridge = DesktopMediaBridge &
       projectId: string
       ownerNodeId?: string | null
       title?: string
-      stagePreset?: 'empty' | 'studio' | 'coffee_shop' | 'city_street' | 'interior_room'
+      stagePreset?: BlenderDirectorStagePreset
       scene: unknown
       timeoutMs?: number
     }) => Promise<{

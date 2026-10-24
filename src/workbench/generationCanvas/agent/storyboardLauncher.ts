@@ -5,7 +5,13 @@
  * 规划本身是一条独立的单次模型请求，只返回 JSON，不发工具调用。
  */
 
-import { SCREEN_VISIBILITY_PROMPT_RULE, type StoryboardPlan } from './storyboardPlan'
+/**
+ * 分镜规划师的技能标识 + 用户消息构造。
+ *
+ * 生产编排请求一份只读方案，用户确认后由既有 materialize 阶段落画布。
+ * 规划本身是一条独立的单次模型请求，只返回 JSON，不发工具调用。
+ */
+import { type StoryboardPlan } from './storyboardPlan';
 
 export const STORYBOARD_PLANNER_SKILL = {
   key: 'workbench.storyboard.planner',

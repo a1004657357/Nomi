@@ -74,8 +74,6 @@ test('cross-process exact copies stay debt until a neutral runtime contract exis
     ],
     [
       'electron/catalog/codexCli.ts::type:CodexImageJobStatus/type-union',
-      'electron/runtime.ts::type:TaskResult/property:status/type-union',
-      'electron/tasks/responseParsing.ts::function:resolveTaskStatus/as-const',
     ],
   ]
 
@@ -90,6 +88,20 @@ test('cross-process exact copies stay debt until a neutral runtime contract exis
     }
   }
   // 任务状态：renderer 的 TaskStatus / TERMINAL_STATUSES 副本已收进中立模块 electron/shared/taskStatus.ts（唯一 owner）。
+  for (const retired of [
+    'electron/runtime.ts::type:TaskResult/property:status/type-union',
+    'electron/tasks/responseParsing.ts::function:resolveTaskStatus/as-const',
+    'electron/shared/taskStatus.ts::type:TaskStatus/type-union',
+    'electron/shared/taskStatus.ts::function:isTerminalTaskStatus/type-union',
+  ]) {
+    assert.equal(debtBySite.has(retired), false, `${retired} must remain derived, not new debt`)
+    assert.equal(registeredSites.has(retired), false, `${retired} must not be re-registered as a duplicate owner`)
+  }
+  const taskSource = fs.readFileSync(path.join(repositoryRoot, 'electron/shared/taskStatus.ts'), 'utf8')
+  assert.match(taskSource, /export type TaskStatus = GenerationProviderTaskState/)
+  assert.match(taskSource, /\[Status in TaskStatus\].*TASK_STATUS_PHASE\)\[Status\]/)
+  assert.match(fs.readFileSync(path.join(repositoryRoot, 'electron/tasks/responseParsing.ts'), 'utf8'), /for \(const status of KNOWN_TASK_STATUSES\)/)
+  assert.equal(registeredSites.has('electron/capabilityCore/generationRuntimeAdapter.ts::type:GenerationProviderTaskState/type-union'), true)
   assert.equal(registeredSites.has('electron/shared/taskStatus.ts::variable:TASK_STATUS_PHASE/type-union'), true)
   assert.equal(
     registeredSites.has('electron/shared/providerAdapterContract.ts::variable:ADAPTER_RUN_STAGES/as-const'),

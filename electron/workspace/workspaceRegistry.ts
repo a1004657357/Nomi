@@ -37,7 +37,7 @@ function withRegistryLock<T>(settingsRoot: string, fn: () => T): T {
   const spin = new Int32Array(new SharedArrayBuffer(4));
   const deadline = Date.now() + 15_000;
   const staleAfterMs = 10_000;
-  let locked = false;
+  let locked: boolean;
   for (;;) {
     try {
       fs.mkdirSync(lockDir);
@@ -45,9 +45,9 @@ function withRegistryLock<T>(settingsRoot: string, fn: () => T): T {
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw new Error(`Workspace registry lock failed: ${(error as Error).message}`);
+        throw Object.assign(new Error(`Workspace registry lock failed: ${(error as Error).message}`), { cause: error });
       }
-      let stale = false;
+      let stale: boolean;
       try {
         stale = Date.now() - fs.statSync(lockDir).mtimeMs > staleAfterMs;
       } catch (statError) {
@@ -63,7 +63,7 @@ function withRegistryLock<T>(settingsRoot: string, fn: () => T): T {
         continue;
       }
       if (Date.now() > deadline) {
-        throw new Error("Workspace registry lock timed out");
+        throw Object.assign(new Error("Workspace registry lock timed out"), { cause: error });
       }
       Atomics.wait(spin, 0, 0, 10); // 同步退避 10ms 再抢
     }

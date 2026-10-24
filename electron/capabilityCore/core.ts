@@ -37,7 +37,6 @@ import { previousShotPromptFor } from './shotOrder'
 import { MediaImportRejectedError, importLocalFile } from '../assets/localFileImport'
 import { mcpImportRejectionMessage } from './mcpImportRejectionMessage'
 import { checkImportAsset, contentTypeForExtension } from './importAssetGuard'
-import { copyAssetFile } from '../assets/projectAssetStore'
 import { bindReferencesToNode } from './canvasReferenceBindings'
 export { renderDirectorOnProject, type DirectorStagePreset, type DirectorRenderInput, type DirectorRenderResult, type RunDirectorFn } from './directorRender'
 import { assertCatalogModelIdentity } from './canvasModelIdentity'
@@ -264,7 +263,7 @@ export async function importProjectAsset(input: {
       { allowSourcePath: true },
     )) as typeof record
   } catch (error) {
-    if (error instanceof MediaImportRejectedError) throw new Error(mcpImportRejectionMessage(fileName, error.rejection))
+    if (error instanceof MediaImportRejectedError) throw Object.assign(new Error(mcpImportRejectionMessage(fileName, error.rejection)), { cause: error })
     throw error
   }
   const data = record.data
@@ -524,7 +523,6 @@ export async function generateOnProject(
     if (fetchTaskResultFn && frame.status && !isTerminalTaskStatus(frame.status)) {
       const startedAt = Date.now()
       let pollFailureStreakStartedAt: number | null = null
-      let pollFailureCount = 0
       while (frame.status && !isTerminalTaskStatus(frame.status)) {
         if (Date.now() - startedAt > 240000) break // 首帧是增益，到点就放弃走一跳，不拖垮整镜
         await delay(1500)
@@ -535,9 +533,7 @@ export async function generateOnProject(
           })
           frame = polled.result
           pollFailureStreakStartedAt = null
-          pollFailureCount = 0
         } catch {
-          pollFailureCount += 1
           // 查结果失败：免费重试（首帧是增益，不冒泡拖垮整镜）；持续失败超 grace 就放弃两跳。
           const now = Date.now()
           if (pollFailureStreakStartedAt == null) pollFailureStreakStartedAt = now

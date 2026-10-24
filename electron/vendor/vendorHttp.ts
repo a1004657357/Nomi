@@ -20,7 +20,7 @@ import { providerDispatcher } from "../providerNetwork";
 import { createFreshConnectionDispatcher } from "../systemProxy";
 import type { Dispatcher } from "undici";
 import { authorizeSubmitDestination } from "./vendorOutboundGuard";
-import { outboundRequestWasNeverWritten } from "../outboundDispatchEvidence";
+import { outboundRequestWasNeverWritten, type OutboundDispatchState } from "../outboundDispatchEvidence";
 
 export type VendorErrorCategory = "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "submission-unknown" | "unknown";
 
@@ -90,7 +90,7 @@ export type VendorErrorStructured = {
   retryable: boolean;
   reasonCode?: "response_timeout";
   operationRole?: VendorRequestRole;
-  dispatchState?: "not-written" | "unknown";
+  dispatchState?: OutboundDispatchState;
 };
 
 export class VendorRequestError extends Error {

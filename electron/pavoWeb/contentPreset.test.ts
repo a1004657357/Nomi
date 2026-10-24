@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const source = fs.readFileSync(path.join(process.cwd(), 'integrations/pavo-web-adapter/content.js'), 'utf8');
 const target = 'Agnes Video 2.5 Flash';
 type PresetReply = { success: boolean; result: Record<string, boolean>; error?: string };
+type FetchReply = { ok: boolean; json: () => Promise<unknown>; text: () => Promise<string> };
 
 class ElementFixture {
   children: ElementFixture[] = [];
@@ -15,6 +16,7 @@ class ElementFixture {
   className = '';
   id = '';
   attributes: Record<string, string> = {};
+  files?: File[];
   private currentValue = '';
   get value() { return this.currentValue; }
   set value(value: string) { this.currentValue = value; }
@@ -73,7 +75,7 @@ function content(childFrame = false) {
   const newWork = new ElementFixture('DIV', '新作品');
   newWork.click.mockImplementation(() => { location.href = 'https://app.pavo-ai.cn/chat'; editor.value = ''; images = []; });
   const generationClicks = submit.click;
-  const fetch = vi.fn(async (): Promise<any> => { throw new Error('Network forbidden in preset tests'); });
+  const fetch = vi.fn(async (): Promise<FetchReply> => { throw new Error('Network forbidden in preset tests'); });
   let settingsButton: ElementFixture | null = null;
   let settingsPopup: ElementFixture | null = null;
   let settingsOpen = false;
@@ -91,7 +93,7 @@ function content(childFrame = false) {
   let images: ElementFixture[] = [];
   fileInput.dispatchEvent.mockImplementation((event: { type: string }) => {
     if (event.type !== 'change') return;
-    images = attachmentState === 'absent' ? [] : Array.from((fileInput as any).files || []).map((file: any) => {
+    images = attachmentState === 'absent' ? [] : Array.from(fileInput.files || []).map(file => {
       const image = Object.assign(new ElementFixture('IMG'), { complete: true, naturalWidth: 720, naturalHeight: 1280 });
       image.attributes.alt = attachmentState === 'stale' ? 'other.png' : file.name;
       return image;
@@ -140,7 +142,7 @@ function content(childFrame = false) {
       onMessage: { addListener: (callback: typeof listener) => { listener = callback; }, removeListener() {} } } },
     PavoMedia: {}, setTimeout, clearTimeout, Date, fetch,
     File, Uint8Array, atob, localStorage: { getItem: () => 'fixture-only' },
-    DataTransfer: class { files: any[] = []; items = { add: (file: any) => this.files.push(file) }; },
+    DataTransfer: class { files: File[] = []; items = { add: (file: File) => this.files.push(file) }; },
   });
   vm.runInContext(source, context);
   function control(label: string, onClick?: () => void) {

@@ -109,7 +109,7 @@ export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, ge
   }),
   cancel: () => set({ plan: null, regenerationSourceNodeId: null, running: false }),
   confirm: async () => {
-    const { plan, regenerationSourceNodeId, running } = get()
+    const { plan, running } = get()
     if (!plan || running) return
     const projectId = withProjectAction((project) => project.binding.projectId) ?? ''
     set({ running: true })

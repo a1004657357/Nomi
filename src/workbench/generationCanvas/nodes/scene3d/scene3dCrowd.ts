@@ -4,7 +4,7 @@
 import * as THREE from 'three'
 import type { Scene3DObject, Scene3DVector3 } from './scene3dTypes'
 import { MANNEQUIN_LABEL_BASE_HEIGHT } from './scene3dConstants'
-import { crowdColumns, crowdCount, crowdRows, crowdSpacing, vectorFromArray, vectorToArray } from './scene3dMath'
+import { crowdColumns, crowdCount, crowdRows, crowdSpacing } from './scene3dMath';
 import { propGroundFootprint } from './scene3dPropSpecs'
 
 export function mannequinFootRingRadius(object: Scene3DObject): number {

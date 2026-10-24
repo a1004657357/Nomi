@@ -1,4 +1,5 @@
 import i18n from '../../../i18n'
+import type { BlenderDirectorStagePreset } from '../../../../electron/shared/blenderDirectorContract'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -66,7 +67,7 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 type BlenderOutputSource = 'blender' | 'blender-director'
-type DirectorStagePreset = 'empty' | 'studio' | 'coffee_shop' | 'city_street' | 'interior_room'
+type DirectorStagePreset = BlenderDirectorStagePreset
 
 function directorStagePreset(state: Scene3DState): DirectorStagePreset {
   const preset = state.environment.preset

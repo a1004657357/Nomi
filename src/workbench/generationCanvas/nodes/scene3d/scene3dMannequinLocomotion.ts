@@ -1,4 +1,5 @@
 import React from 'react'
+import { logRendererWarn } from '../../../../desktop/rendererLog'
 import { useGLTF } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { clone as cloneSkeleton, retargetClip } from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -71,7 +72,7 @@ export function useMannequinLocomotion(
         )
         map.set(clip.name, filtered)
       } catch (error) {
-        console.warn(`Mannequin clip retarget failed: ${clip.name}`, error)
+        logRendererWarn('mannequin-clip-retarget-failed', { clip: clip.name }, error)
       }
     }
     return map
@@ -99,7 +100,7 @@ export function useMannequinLocomotion(
       const clip = clips.get(activeClip)
       if (!clip) {
         // clip 名对不上 / retarget 失败：诚实退出，回静态路径，别假装在动。
-        console.warn(`Mannequin locomotion clip unavailable: ${activeClip}`)
+        logRendererWarn('mannequin-locomotion-clip-unavailable', { clip: activeClip })
         return
       }
       nextAction = mixer.clipAction(clip)

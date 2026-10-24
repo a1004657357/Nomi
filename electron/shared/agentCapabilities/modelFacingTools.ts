@@ -141,7 +141,7 @@ export const MCP_LEASE_PROPERTIES: Readonly<Record<string, JsonSchemaObject>> = 
   leaseHandle: Object.freeze({
     type: "string",
     minLength: 1,
-    description: "The project lease handle returned by nomi_session_open.",
+    description: "Project lease handle from nomi_session_open.",
   }),
   projectId: Object.freeze({ type: "string", minLength: 1 }),
 });
@@ -215,7 +215,7 @@ function aliasBoundProperty(values: readonly string[], field: string): JsonSchem
   return {
     type: "string",
     enum: [...values],
-    description: `Which action to perform. Every other field is required by, or only meaningful to, specific values of \`${field}\`.`,
+    description: `Select \`${field}\`; other fields are required or relevant per selected value.`,
   };
 }
 

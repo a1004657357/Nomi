@@ -47,10 +47,20 @@ function validationShape(value: unknown): unknown {
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(validationShape(value))).digest('hex')
 
 describe('creative metadata compatibility boundaries', () => {
-  it('describes every creative and transition field without changing validation', () => {
+  it('describes all fields and preserves prior validation beyond the explicit beat-title repair', () => {
     const specs = MODEL_FACING_TOOL_SPECS.filter(spec => spec.name in original.internal)
     expect(fieldDescriptions(specs.map(spec => ({ name: spec.name, schema: toPublishedJsonSchema(spec.schema) })))).toEqual([])
-    for (const spec of specs) expect(digest(toPublishedJsonSchema(spec.schema))).toBe(original.internal[spec.name as keyof typeof original.internal])
+    for (const spec of specs) {
+      const schema = structuredClone(toPublishedJsonSchema(spec.schema))
+      if (spec.name === 'apply_vibing_director_plan') {
+        const plan = (schema.properties as Record<string, { properties: { actions: { items: { properties: Record<string, unknown> } } } }>).plan
+        const fields = plan.properties.actions.items.properties
+        expect(fields.title).toEqual({ type: 'string', maxLength: 160, description: 'Beat title' })
+        // Compare every pre-existing wire field unchanged; the canonical round-trip test covers title.
+        delete fields.title
+      }
+      expect(digest(schema)).toBe(original.internal[spec.name as keyof typeof original.internal])
+    }
   })
 
   it.each(Object.entries(original.mcp))('derives existing %s without changing schema, route, hints or result handling', (name, before) => {

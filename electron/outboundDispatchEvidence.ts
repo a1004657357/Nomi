@@ -15,13 +15,15 @@
  * 由来与现场证据见 `docs/fixes/2026-09-18-submission-not-dispatched.root-cause.json`。
  */
 
+export type OutboundDispatchState = 'not-written' | 'unknown';
+
 type ErrorLike = {
   code?: unknown;
   syscall?: unknown;
   cause?: unknown;
   message?: unknown;
   name?: unknown;
-  structured?: { retryable?: boolean; category?: string; dispatchState?: "not-written" | "unknown" };
+  structured?: { retryable?: boolean; category?: string; dispatchState?: OutboundDispatchState };
 };
 
 /** DNS 解析失败：连接从未建立，请求不可能写出去。 */

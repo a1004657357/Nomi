@@ -9,6 +9,7 @@
  * 让既有 PlanShot/GenerationNodeResult 可无损 parse。严格的"必填"约束在各 Slice 迁移稳定后收紧。
  */
 import { z } from 'zod'
+import { ASSET_REVISION_STATUSES, SHOT_STATUSES } from './cinematicTypes'
 import type {
   AssetRevisionKind,
   AssetRevisionStatus,
@@ -81,18 +82,7 @@ export const continuityKindSchema = z.enum([
   'light',
 ])
 
-export const shotStatusSchema = z.enum([
-  'draft',
-  'planned',
-  'asset-blocked',
-  'ready',
-  'generating',
-  'candidate-ready',
-  'evaluating',
-  'needs-revision',
-  'accepted',
-  'placed-on-timeline',
-])
+export const shotStatusSchema = z.enum(SHOT_STATUSES)
 
 export const assetRevisionKindSchema = z.enum([
   'imported',
@@ -102,7 +92,7 @@ export const assetRevisionKindSchema = z.enum([
   'exported',
 ])
 
-export const assetRevisionStatusSchema = z.enum(['candidate', 'selected', 'rejected', 'archived'])
+export const assetRevisionStatusSchema = z.enum(ASSET_REVISION_STATUSES)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 子对象 schema

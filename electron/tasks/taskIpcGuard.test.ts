@@ -10,7 +10,13 @@ describe('runTaskIpcGuard structured task errors', () => {
     })
     await expect(runTaskIpcGuard({}, async () => { throw failure })).rejects.toSatisfy((error: Error) => {
       expect(parseVendorErrorFromMessage(error.message)).toMatchObject({ code: 'production_shot_claimed', reason: 'in_flight' })
+      expect(error).toHaveProperty('cause', failure)
       return true
     })
+  })
+
+  it('keeps unstructured errors unchanged instead of replacing their identity', async () => {
+    const failure = new Error('fixture failure')
+    await expect(runTaskIpcGuard({}, async () => { throw failure })).rejects.toBe(failure)
   })
 })

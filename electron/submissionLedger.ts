@@ -1,4 +1,5 @@
 import { desktopT } from "./desktopStrings";
+import { TASK_STATUSES } from './shared/taskStatus';
 // 进程内提交合并器：把同一幂等键的并发调用 memo 化，避免当前进程重复执行提交内核。
 //
 // 这不是跨重启的 at-most-once 保证。ProductionRun 的持久化 outbox 才负责提交意图、预算负债、
@@ -185,14 +186,9 @@ function extractRequestContext(payload: unknown): {
   };
 }
 
-const PERSISTABLE_TASK_STATUSES = new Set([
+const PERSISTABLE_TASK_STATUSES = new Set<string>([
   'submitted',
-  'queued',
-  'running',
-  'succeeded',
-  'failed',
-  'cancelled',
-  'unknown',
+  ...TASK_STATUSES,
 ]);
 
 function extractTaskStatus(value: unknown): import('./tasks/idempotencyStore').IdempotencyRecord['status'] | undefined {

@@ -1,4 +1,5 @@
 import { desktopT } from "../desktopStrings";
+import type { BlenderSpatialCheckStatus, BlenderTerminationReason } from '../shared/blenderDirectorContract';
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -31,7 +32,7 @@ export type VibingDirectorPreviewCamera = {
 export type VibingDirectorSpatialCheck = {
   relationId: string;
   kind: "facing" | "distance" | "support" | "offset" | "line_of_sight";
-  status: "passed" | "warning" | "failed";
+  status: BlenderSpatialCheckStatus;
   message: string;
   measured?: number;
   expected?: number;
@@ -94,7 +95,7 @@ type BridgeOutput = {
 type ActiveJob = {
   child: ChildProcess;
   closed?: boolean;
-  terminationReason?: "cancelled" | "timeout";
+  terminationReason?: BlenderTerminationReason;
   forceKillTimer?: NodeJS.Timeout;
 };
 

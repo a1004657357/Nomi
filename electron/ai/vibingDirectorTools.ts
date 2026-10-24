@@ -1,9 +1,10 @@
 import { desktopT } from "../desktopStrings";
 import { z } from 'zod'
+import { BLENDER_DIRECTOR_STAGE_PRESETS } from '../shared/blenderDirectorContract'
 
 const finiteNumber = z.number().finite()
 const vector3Schema = z.tuple([finiteNumber, finiteNumber, finiteNumber])
-const stagePresetSchema = z.enum(['empty', 'studio', 'coffee_shop', 'city_street', 'interior_room'])
+const stagePresetSchema = z.enum(BLENDER_DIRECTOR_STAGE_PRESETS)
 const blockingTemplateSchema = z.enum(['coffee_two_person_conversation'])
 const aspectRatioSchema = z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '2.39:1'])
 const cameraFramingSchema = z.enum(['all', 'target', 'fixed'])
@@ -123,6 +124,7 @@ const planActionWireSchema = z.object({
   id: identifierSchema.optional().describe("Edit ID"),
   assetId: identifierSchema.optional().describe("Asset ID"),
   name: z.string().max(160).optional().describe("Display name"),
+  title: z.string().max(160).optional().describe('Beat title'),
   role: z.string().max(120).optional().describe("Marker role"),
   position: vector3Schema.optional().describe("Y-up XYZ units"),
   rotation: vector3Schema.optional().describe("XYZ degrees"),

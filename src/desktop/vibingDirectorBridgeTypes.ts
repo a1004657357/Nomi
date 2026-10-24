@@ -1,3 +1,5 @@
+import type { BlenderSpatialCheckStatus } from '../../electron/shared/blenderDirectorContract'
+
 export type VibingDirectorAsset = {
   id: string
   name: string
@@ -47,7 +49,7 @@ export type VibingDirectorSpatialReport = {
   checks: Array<{
     relationId: string
     kind: 'facing' | 'distance' | 'support' | 'offset' | 'line_of_sight'
-    status: 'passed' | 'warning' | 'failed'
+    status: BlenderSpatialCheckStatus
     message: string
     measured?: number
     expected?: number

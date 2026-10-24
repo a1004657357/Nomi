@@ -14,7 +14,7 @@ import { assetReadInputOf, timelineReadInputOf } from "./verbSemanticInput";
 const OUTPUT_LIMIT = `Long text is truncated to the first ${LANE_MODEL_OUTPUT_MAX_LINES} lines or ${LANE_MODEL_OUTPUT_MAX_BYTES / 1024}KB; the result says so when that happens.`;
 
 export const READ_GUIDELINES = Object.freeze([
-  "Read before you write: every id you pass to a write verb comes from a read in this conversation, never from memory or guesswork.",
+  "For writes, use IDs only from reads in this conversation, never memory or guesses.",
 ]);
 
 /** 「哪一份文稿」只有外部宿主需要说；Agent lane 永远写用户此刻正看着的那份（传输字段，不进语义输入）。 */
@@ -59,7 +59,7 @@ export function readVerbs(): VerbDeclaration[] {
   const lookAtCanvas: VerbDeclaration = {
     name: "look_at_canvas", contractId: "canvas.read", effect: "read", nextAction: "none",
     describe: {
-      does: "Read everything on the generation canvas: every node (id, kind, title, prompt, model, status), the reference links and groups, and the selection.",
+      does: "Read all canvas nodes (id, kind, title, prompt, model, status), reference links, groups and selection.",
       useWhen: "Before any change to shots, links or groups, and whenever the user asks what is on the canvas or what is still waiting on them.",
       notWhen: "Do not use it to read the script (read_script), the timeline (read_timeline) or the media library (look_at_media). It never changes anything.",
       params: "Takes no arguments. Every id you pass to a write verb comes from here; inventing an id is the most common way an edit fails.",
@@ -70,7 +70,7 @@ export function readVerbs(): VerbDeclaration[] {
   const readScript: VerbDeclaration = {
     name: "read_script", contractId: "document.read", effect: "read", nextAction: "none",
     describe: {
-      does: "Read the creation document as plain text: the whole document, or only the text the user has selected.",
+      does: "Read all creation-document plain text or only the user's selected text.",
       useWhen: `Before editing the script, when splitting it into shots, and whenever the user says "this" or "here" (use scope selection — it is the only way to resolve those words).`,
       notWhen: "Not for shots or canvas content (look_at_canvas). An empty selection means ask, not guess.",
       params: `scope is full (default) or selection. ${OUTPUT_LIMIT}`,
@@ -93,7 +93,7 @@ export function readVerbs(): VerbDeclaration[] {
     // 常驻（设计正本 §5.1 / PR A 的常驻 10 个）：读时间轴不需要先请求 timeline 组；执行绑在 laneTimelineTools。
     name: "read_timeline", contractId: "timeline.read", effect: "read", nextAction: "none",
     describe: {
-      does: "Read the project timeline: fps, duration, playhead, every track, clip, text overlay and transition, plus the revision every edit must carry.",
+      does: "Read timeline fps, duration, playhead, every track, clip, text overlay and transition, and the edit revision.",
       useWhen: `Before edit_timeline, and when the user talks about a moment ("the part around 0:30" — pass startFrame and endFrame to read only that range).`,
       notWhen: "Not for canvas shots that are not on the timeline yet (look_at_canvas). Frames, not seconds: convert with the fps this verb returns.",
       params: "startFrame and endFrame are optional integer frames at the project fps; give both to read one range, neither to read the whole timeline (which is the only call that returns the revision).",
@@ -159,7 +159,7 @@ export function readVerbs(): VerbDeclaration[] {
     outputSchema: z.object({ models: z.array(agentModelEntrySchema) }).strict(),
     name: "list_models", profiles: ["internal"], profileReason: "mcpHandwrittenTransport", contractId: "generation.context.read", effect: "read", nextAction: "none", internalGroup: "models",
     describe: {
-      does: "Read the models the user has connected: each model's modes, parameters with allowed values, and reference slots.",
+      does: "Read connected models, their modes, allowed parameter values and reference slots.",
       useWhen: "Before choosing a modelId or any parameter in draft_shots, and when the user asks which models can do something.",
       notWhen: "It cannot connect a model or take an API key (start_model_setup). Never invent a modelId — use the exact strings returned here.",
       params: "kind (image, video or audio) narrows the catalog; modelId returns one model in full; vendor picks which provider when two of them carry the same modelId.",

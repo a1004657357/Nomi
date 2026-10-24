@@ -135,8 +135,8 @@ export function resolveTextBrainKeys(): { vendor: string; modelKey: string } | n
  * 判据全部复用既有单一真相源（chooseTextModel 的候选选择 + secrets.apiKeyDecryptStatus），不另造探测（P1）。
  */
 export function resolveTextBrainStatus():
-  | { status: "ok"; brain: { vendor: string; modelKey: string } }
-  | { status: "locked" | "missing" } {
+  | ReturnType<typeof import('./textBrainResolver').resolveTextBrainStatus>
+  | { status: 'locked' } {
   const brain = resolveTextBrainKeys();
   if (brain) return { status: "ok", brain };
   // 没解出大脑：区分「有候选但都 locked」与「压根没候选」。

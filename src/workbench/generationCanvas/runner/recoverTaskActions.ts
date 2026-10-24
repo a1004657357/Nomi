@@ -95,7 +95,7 @@ export async function recoverNodeResult(nodeId: string, project: ProjectExecutio
   })
 
   const startedAt = Date.now()
-  let current: TaskResultDto | null = null
+  let current: TaskResultDto | null
   try {
     while (true) {
       // 找回的这次查询里可能就包着整段下载（主进程查到成片就地落盘，且不为找回广播「开始落地」），

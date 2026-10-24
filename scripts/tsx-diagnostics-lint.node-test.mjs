@@ -56,6 +56,47 @@ for (const [file, symbol, level, event, flag] of cases) {
   })
 }
 
+for (const [file, event, level, hasError] of [
+  ['src/workbench/capability/capabilityLegacyActions.ts', 'capability-generation-batch-failed', 'error', true],
+  [dir + 'scene3dMannequinLocomotion.ts', 'mannequin-clip-retarget-failed', 'warn', true],
+  [dir + 'scene3dMannequinLocomotion.ts', 'mannequin-locomotion-clip-unavailable', 'warn', false],
+]) {
+  test(`${event} keeps the original error and scalar context in the shared reporter`, () => {
+    const text = fs.readFileSync(new URL(file, root), 'utf8')
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+    let call
+    const visit = node => {
+      if (ts.isCallExpression(node) && node.arguments[0] && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === event) call = node
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    assert.ok(call, 'the production failure must remain observable')
+    const invoke = new Function('logRendererError', 'logRendererWarn', 'error', 'clip', 'activeClip', call.getText(source))
+    const reports = [], local = []
+    const previousWindow = globalThis.window, previousConsole = console[level]
+    globalThis.window = { nomiDesktop: { log: { report: entry => reports.push(entry) } } }
+    console[level] = (...args) => local.push(args)
+    try {
+      const error = Object.assign(new Error('fixture failure'), { code: 'FIXTURE_FAILURE' })
+      invoke(logging.logRendererError, logging.logRendererWarn, error, { name: 'walk' }, 'walk')
+      assert.equal(reports.length, 1)
+      assert.equal(local.length, 1)
+      assert.equal(reports[0].event, event)
+      assert.equal(reports[0].level, level)
+      if (hasError) {
+        assert.equal(reports[0].error.message, error.message)
+        assert.equal(reports[0].error.code, error.code)
+        assert.equal(reports[0].error.stack, error.stack)
+      } else assert.equal(reports[0].error, undefined)
+      if (level === 'warn') assert.deepEqual(reports[0].fields, { clip: 'walk' })
+    } finally {
+      console[level] = previousConsole
+      if (previousWindow === undefined) delete globalThis.window
+      else globalThis.window = previousWindow
+    }
+  })
+}
+
 test('safe cleanup retains a stable memo owner and removes only unused work', () => {
   const session = fs.readFileSync(new URL(dir + 'useScene3DEditorSession.ts', root), 'utf8')
   assert.match(session, /const initialEditorCameraRef = React\.useRef/)

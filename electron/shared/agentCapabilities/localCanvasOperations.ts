@@ -1,10 +1,11 @@
 import { z } from 'zod'
+import { BLENDER_DIRECTOR_STAGE_PRESETS } from '../blenderDirectorContract'
 import type { CapabilityContract } from './capabilityContract'
 
 // Existing desktop-only methods. Registering their metadata does not add execution routes.
 export const directorRenderInputSchema = z.object({
   sourceNodeId: z.string().min(1).describe('Scene3d node ID from nomi_read target=canvas'),
-  stagePreset: z.enum(['empty', 'studio', 'coffee_shop', 'city_street', 'interior_room']).optional().describe('Stage preset'),
+  stagePreset: z.enum(BLENDER_DIRECTOR_STAGE_PRESETS).optional().describe('Stage preset'),
 }).strict()
 
 export const generationBatchRequestInputSchema = z.object({

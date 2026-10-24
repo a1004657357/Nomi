@@ -359,15 +359,6 @@ function detectBalance(upstream: string | undefined, raw: string): boolean {
   )
 }
 
-function detectAssetFetchFailure(upstream: string | undefined, raw: string): boolean {
-  const text = `${upstream || ''} ${raw}`.toLowerCase()
-  return (
-    text.includes('download image url failed') ||
-    text.includes('failed to download image') ||
-    (text.includes('image url') && text.includes('read timed out'))
-  )
-}
-
 /**
  * 「内容安全把输入挡了」——**必须先于 category 判**：各家审核拒绝都用 HTTP 400 回，
  * categorizeVendorFailure 一律派生成 `input`，于是「参考图被审核拦了」被说成「参数不被接受，

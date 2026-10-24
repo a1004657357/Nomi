@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import { buildModelEntryIndex, buildPlannedNodeMeta, resolvePlannedNodeArgs } from "./plannedNodeMeta";
 import { buildAgentModelEntries, type AgentModelEntry } from "./availableModels";
 import type { ModelOption } from "../../../config/models";
-import { getArchetypeById } from "../../../../electron/shared/modelArchetypes";
-import { buildArchetypeInputParams } from "../nodes/controls/archetypeMeta";
 
 function entryByKey(): Map<string, AgentModelEntry> {
   const entries = buildAgentModelEntries([

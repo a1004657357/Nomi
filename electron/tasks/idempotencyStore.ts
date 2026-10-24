@@ -18,6 +18,7 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
+import type { TaskStatus } from '../shared/taskStatus'
 
 /** 持久化的单条记录（append-only jsonl）。 */
 export type IdempotencyRecord = {
@@ -30,7 +31,7 @@ export type IdempotencyRecord = {
   projectId?: string
   nodeId?: string
   /** Provider 任务状态。submitting/unknown 都禁止自动重新 create。 */
-  status: 'submitting' | 'submitted' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown'
+  status: TaskStatus | 'submitting' | 'submitted'
   /** 受理时间（ms）。 */
   createdAt: number
   /** settle 时间（ms）；in-flight 时为 null。 */

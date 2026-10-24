@@ -2,7 +2,6 @@ import { activeGenerationRuns, createGenerationBatchCancellation } from './gener
 export { cancelGenerationNode, cancelGenerationNodes, cancelAllGenerationRuns } from './generationCancellation'
 import { runWithGenerationProviderSlot } from './generationProviderScheduler'
 import i18n from '../../../i18n'
-import { normalizeCanvasBatchConcurrency } from '../components/canvasProductionScope'
 import type { GenerationCanvasEdge, GenerationCanvasNode, GenerationNodeResult } from '../model/generationCanvasTypes'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
@@ -37,7 +36,7 @@ import {
 // 错误分类(classifyGenerationError)已抽到 observability/classifyError(人话叶子层,生成域+对话域共用);
 // 这里 re-export 保持 NodeErrorReport / classifyGenerationError.test 等既有 import 不破。
 export { classifyGenerationError, type GenerationErrorReport } from '../../observability/classifyError'
-import type { DependencyWavePlan } from './dependencyWaves'
+
 import { resolveGenerationReferences } from './generationReferenceResolver'
 import { stampUpstreamRefSnapshot } from './refSnapshotStamp'
 import { archetypeForNode, resolveModeForConnectedReferences } from '../agent/referenceEdgeCapability'

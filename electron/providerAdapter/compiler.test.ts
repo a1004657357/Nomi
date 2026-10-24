@@ -8,35 +8,6 @@ import {
   type StructuredGenerator,
 } from "./compiler";
 
-const draft = (): ProviderAdapterDraft => ({
-  provider: { baseUrl: "https://api.example.com/v1", authType: "bearer" },
-  sources: [
-    {
-      url: "https://docs.example.com/api",
-      evidence: "POST /v1/images/generations accepts model and prompt",
-    },
-  ],
-  models: [
-    {
-      modelKey: "paint-v2",
-      labelZh: "Paint V2",
-      kind: "image",
-      modes: [
-        {
-          taskKind: "text_to_image",
-          create: {
-            method: "POST",
-            path: "/images/generations",
-            body: { model: "{{model.modelKey}}", prompt: "{{request.prompt}}" },
-            response_mapping: { image_url: "data.0.url" },
-          },
-          testParams: {},
-          sourceUrls: ["https://docs.example.com/api"],
-        },
-      ],
-    },
-  ],
-});
 
 function modelContract(modelKey: string): { modes: ProviderAdapterDraft["models"][number]["modes"] } {
   return {

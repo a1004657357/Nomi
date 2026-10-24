@@ -53,12 +53,12 @@ export async function applyRelayFirstFrame(
   const extractFrame = getDesktopBridge()?.video?.extractFrame
   if (!extractFrame) throw new Error('视频接力失败：当前环境不支持抽帧（需桌面端）')
 
-  let url = ''
+  let url: string
   try {
     const result = await extractFrame({ videoUrl: relayVideoUrl, which: 'last', projectId })
     url = result?.url || ''
   } catch (error) {
-    throw new Error(`视频接力抽帧失败：${error instanceof Error ? error.message : String(error)}`)
+    throw Object.assign(new Error(`视频接力抽帧失败：${error instanceof Error ? error.message : String(error)}`), { cause: error })
   }
   // ③ 拿不到 → 抛错，不冒充。
   if (!url) throw new Error('视频接力失败：未能从源视频取到尾帧')

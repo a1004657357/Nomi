@@ -219,7 +219,6 @@ describe("resident Agent production journey (zero quota contract)", () => {
     let finish!: () => void;
     const deferred = new Promise<void>(resolve => { finish = resolve });
     let background: Promise<unknown> | undefined;
-    let closeLane!: () => Promise<void>;
     const schedulerFinished = vi.fn();
     const planning = vi.fn(async (input) => {
       expect(input.capability).toBe('start');
@@ -245,7 +244,7 @@ describe("resident Agent production journey (zero quota contract)", () => {
     const signal = surface.registry.resolveProjectSession(surface.session).signal;
     const onClosed = vi.fn();
     const lane = bindLaneProjectSession({ close: async () => { adapter.dispose() } }, surface.registry, surface.session, onClosed);
-    closeLane = lane.close;
+    const closeLane = lane.close;
     const decision = await adapter.tryExecute({ toolCallId: 'start', toolName: GENERATION_METHODS.start, args: { operationId: OPERATION_ID } }, signal);
     if (timing === 'after-result') expect(decision).toMatchObject({ ok: true, result: { state: 'submitted' } });
     else expect(decision).toMatchObject({ ok: false, code: 'generation_cancelled' });

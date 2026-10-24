@@ -34,7 +34,7 @@ import { runSingleShotAgent } from '../../ai/agentLoopMode'
 import { getDesktopBridge, type DesktopBridge } from '../../../desktop/bridge'
 import type { StoryboardPlan } from './storyboardPlan'
 import { STORYBOARD_TABLE_DEFAULT_SIZE } from '../model/storyboardTableSizing'
-import { listAvailableModelsForAgent, type AgentModelEntry } from './availableModels'
+import { listAvailableModelsForAgent } from './availableModels'
 import { runCapabilityRecipeOnNode } from '../runner/capabilityRecipeController'
 import { mintSpendGrant } from '../../api/taskApi'
 import { handoffModel3dNode } from './model3dHandoff'
@@ -67,25 +67,6 @@ function resetCanvas() {
   mockedCreateVisionComparator.mockClear()
 }
 
-const capabilityModels: AgentModelEntry[] = [
-  {
-    modelId: 'gpt-image-2',
-    modelAlias: 'GPT Image 2',
-    vendor: 'openai',
-    label: 'GPT Image 2',
-    kind: 'image',
-    archetypeId: 'gpt-image-2',
-    defaultModeId: 't2i',
-    modes: [
-      { modeId: 't2i', vendorTerm: '文生图', intent: 'text', hint: '', params: [], slots: [] },
-      {
-        modeId: 'i2i', vendorTerm: '图生图', intent: 'single', hint: '', params: [],
-        slots: [{ kind: 'image_ref', label: '输入图', max: 1 }],
-      },
-    ],
-    variants: [],
-  },
-]
 
 // 回归锁(评测 sb-001 抓出):agent 用 clientId(n1/n2)连边,渲染层曾不翻译直接
 // 入 store → 落盘 "n1→n2" 吊边(指向不存在节点,连线静默丢失)。

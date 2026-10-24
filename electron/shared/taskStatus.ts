@@ -5,11 +5,11 @@
  * 编译就红（`generation.completed` 只在终态上报，新状态默认不许被当成结果）。
  *
  * 供应商原始状态（`processing` / `in_progress` / `generating` 等）在 `electron/tasks/responseParsing.ts`
- * 就被收成这四种之一；还没收的（任何不在表里的字符串）一律当「还在路上」：轮询继续、遥测不报。
+ * 就被收成同一份任务态；未识别的原词保留为 unknown，调用方继续查询而不自动重提。
  */
 import type { GenerationProviderTaskState } from '../capabilityCore/generationRuntimeAdapter'
 
-export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown'
+export type TaskStatus = GenerationProviderTaskState
 
 export const TASK_STATUS_PHASE = {
   queued: 'in-flight',
@@ -20,7 +20,15 @@ export const TASK_STATUS_PHASE = {
   unknown: 'in-flight',
 } as const satisfies Record<TaskStatus, 'in-flight' | 'terminal'>
 
-export function isTerminalTaskStatus(status: string | undefined | null): status is 'succeeded' | 'failed' | 'cancelled' {
+export const TASK_STATUSES = Object.freeze(Object.keys(TASK_STATUS_PHASE) as TaskStatus[])
+export const KNOWN_TASK_STATUSES = Object.freeze(TASK_STATUSES.filter(
+  (status): status is Exclude<TaskStatus, 'unknown'> => status !== 'unknown',
+))
+type TerminalTaskStatus = {
+  [Status in TaskStatus]: (typeof TASK_STATUS_PHASE)[Status] extends 'terminal' ? Status : never
+}[TaskStatus]
+
+export function isTerminalTaskStatus(status: string | undefined | null): status is TerminalTaskStatus {
   return typeof status === 'string' && Object.prototype.hasOwnProperty.call(TASK_STATUS_PHASE, status)
     && TASK_STATUS_PHASE[status as TaskStatus] === 'terminal'
 }

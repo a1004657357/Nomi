@@ -376,7 +376,6 @@ export function applyArchetypeModeSwitch(
   archetype: ModelArchetype,
   nextModeId: string,
 ): Record<string, unknown> {
-  const modeId = (archetype.modes.find((mode) => mode.id === nextModeId) ?? archetype.modes[0]).id
   const variantId = preservedVariantId(meta, archetype)
   // 按当前变体特化后再取模式参数：变体与模式**都**可能收窄同一个 select，夹的必须是两层叠加后的选项集。
   const specialized = specializeArchetypeForVariant(archetype, variantId)
@@ -597,10 +596,6 @@ const SINGLE_SLOT_ACCEPT: Partial<Record<ArchetypeReferenceSlotKind, 'image' | '
  */
 export function referenceSlotAccept(kind: ArchetypeReferenceSlotKind): 'image' | 'video' | 'audio' {
   return ARRAY_SLOT_ROUTE[kind]?.accept ?? SINGLE_SLOT_ACCEPT[kind] ?? 'image'
-}
-
-function volcengineImageContentItem(url: string, role: string): Record<string, unknown> {
-  return { type: 'image_url', image_url: { url }, role }
 }
 
 /** MiniMax 系 content 项（type + 嵌套 {url} + 顶层 role）：MiniMax v2（H3/Pixstag）与火山方舟同形线缆。 */

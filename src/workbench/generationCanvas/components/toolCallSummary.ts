@@ -7,7 +7,6 @@ import { getGenerationNodeDefaultTitle, isGenerationNodeKind } from '../model/ge
 import { BUILTIN_CATEGORY_IDS } from '../../project/projectCategories'
 import { CAMERA_SPEED_DURATION, type CameraMove, type CameraSpeed } from '../nodes/director/agent/cameraMoveVocab'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
-import { BUILTIN_CAPABILITY_RECIPES } from '../../../config/capabilityRecipes'
 
 const T = 'generationCommon.assistant.toolCall'
 const tt = (key: string, values?: Record<string, unknown>): string =>

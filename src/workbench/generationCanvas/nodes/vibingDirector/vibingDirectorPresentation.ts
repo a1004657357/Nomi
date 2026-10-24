@@ -1,10 +1,11 @@
+import type { BlenderSpatialCheckStatus } from '../../../../../electron/shared/blenderDirectorContract'
 import type {
   BlenderDirectorSpatialReport,
   VibingDirectorState,
 } from './vibingDirectorState'
 
 export type VibingDirectorSpatialSummary = {
-  status: 'idle' | 'passed' | 'warning' | 'failed'
+  status: 'idle' | BlenderSpatialCheckStatus
   total: number
   passed: number
   warning: number

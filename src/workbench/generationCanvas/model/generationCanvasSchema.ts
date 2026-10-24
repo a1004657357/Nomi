@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { generationNodeStatusSchema } from '../../../../electron/shared/canvas/generationNodeStatus'
-import { CATEGORY_IDS } from './generationCanvasTypes'
+import { CATEGORY_IDS, GENERATION_COLLECTION_ITEM_STATUSES, GENERATION_QUALITY_STATUSES } from './generationCanvasTypes'
 import { GENERATION_NODE_KINDS } from './generationNodeKinds'
 import { creativeResourceSchema } from '../../../config/capabilityRecipes'
 
@@ -92,7 +92,7 @@ export const generationResultCollectionItemSchema = z.object({
   shotSize: z.string().optional(),
   energy: z.number().min(0).max(4).optional(),
   affinity: z.number().min(0).max(4).optional(),
-  status: z.enum(['pending', 'running', 'success', 'error']),
+  status: z.enum(GENERATION_COLLECTION_ITEM_STATUSES),
   result: generationNodeResultSchema.optional(),
   candidates: z.array(generationNodeResultSchema).optional(),
   selectedResultId: z.string().min(1).optional(),
@@ -116,12 +116,12 @@ export const generationResultCollectionSchema = z.object({
     version: z.literal(1),
     kind: z.enum(['grid9', 'multiview', 'panorama', 'portrait', 'mood', 'style', 'video', 'model3d']),
     evaluator: z.string().min(1),
-    status: z.enum(['pass', 'warning', 'fail', 'unavailable']),
+    status: z.enum(GENERATION_QUALITY_STATUSES),
     evaluatedAt: z.number(),
     checks: z.array(z.object({
       id: z.string().min(1),
       label: z.string().min(1),
-      status: z.enum(['pass', 'warning', 'fail', 'unavailable']),
+      status: z.enum(GENERATION_QUALITY_STATUSES),
       summary: z.string().min(1),
       details: z.array(z.string()).optional(),
       itemIds: z.array(z.string()).optional(),

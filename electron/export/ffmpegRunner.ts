@@ -216,11 +216,10 @@ function defaultRunProcess(command: string, args: string[], options: RunFfmpegPr
     const child = spawn(command, args, { windowsHide: true });
     let stderr = "";
     let settled = false;
-    let onAbort: (() => void) | undefined;
     const cleanup = () => {
       if (onAbort) options.signal?.removeEventListener("abort", onAbort);
     };
-    onAbort = () => {
+    const onAbort = () => {
       if (settled) return;
       child.kill();
       settled = true;

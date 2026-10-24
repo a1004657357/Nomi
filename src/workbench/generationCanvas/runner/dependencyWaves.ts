@@ -93,12 +93,11 @@ export function buildDependencyWaves(
   // Kahn 分层(排除已 blocked 的;依赖 blocked 节点的也传染 blocked)
   const waves: string[][] = []
   const placed = new Set<string>(blockedIds)
-  let frontier: string[] = []
   let remaining = [...selection].filter((id) => !blockedIds.has(id))
   let guard = remaining.length + 1
   while (remaining.length > 0 && guard > 0) {
     guard -= 1
-    frontier = remaining.filter((id) => {
+    const frontier = remaining.filter((id) => {
       const deps = internalDeps.get(id) ?? new Set()
       for (const dep of deps) {
         if (blockedIds.has(dep)) return false // 依赖被拦 → 自己也跑不了(下面传染处理)

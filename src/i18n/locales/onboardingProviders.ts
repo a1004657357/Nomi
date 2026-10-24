@@ -1,5 +1,3 @@
-import { zhOnboardingProviderWorkspaceWorkspace, zhOnboardingProviderWorkspaceDrawer, enOnboardingProviderWorkspaceWorkspace, enOnboardingProviderWorkspaceDrawer } from './onboardingProviderWorkspace'
-import { zhOnboardingProviderCustomCall, enOnboardingProviderCustomCall } from './onboardingProviderCustomCall'
 import { enOnboardingWebBridge, zhOnboardingWebBridge } from './onboardingWebBridge'
 export const zhOnboardingProviders = {
   splash: {

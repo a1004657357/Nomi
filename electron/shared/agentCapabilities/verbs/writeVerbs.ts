@@ -148,7 +148,7 @@ function rejectDuplicateShotIdentity(args: unknown): Record<string, unknown> {
 }
 
 const CANVAS_WRITE_GUIDELINES = Object.freeze([
-  "Every canvas write is a reversible local edit: describe what changed in your reply using the returned userSees line rather than claiming more.",
+  "Canvas writes are reversible local edits. Report only the returned userSees change; never claim more.",
 ]);
 
 export function writeVerbs(): VerbDeclaration[] {

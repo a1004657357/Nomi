@@ -163,7 +163,7 @@ function parseChunks(bytes: Buffer): { document: JsonRecord; binary: Buffer } {
   try {
     document = JSON.parse(jsonBytes.toString('utf8').replace(/\0+$/g, '').trim())
   } catch (error) {
-    throw new Error(desktopT("custom.assets.glbValidation.text16", { value0: `${error instanceof Error ? error.message : String(error)}` }))
+    throw Object.assign(new Error(desktopT("custom.assets.glbValidation.text16", { value0: `${error instanceof Error ? error.message : String(error)}` })), { cause: error })
   }
   const parsed = record(document)
   if (String(record(parsed.asset).version || '') !== '2.0') throw new Error(desktopT("custom.assets.glbValidation.text17"))

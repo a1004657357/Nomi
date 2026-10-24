@@ -6,6 +6,12 @@ import {
 } from './vibingDirectorTools'
 
 describe('VIBING Director Agent tools', () => {
+  it('keeps canonical beat-title validation after the flat wire is parsed', () => {
+    const request = { directorNodeId: 'fixture', summary: 'fixture', plan: { mode: 'amend', actions: [{ op: 'set_beat', id: 'beat' }] } }
+    const wire = applyVibingDirectorPlanParamsSchema.parse(request)
+    expect(parseVibingDirectorPlanRequest(wire)).toBeNull()
+    expect(parseVibingDirectorPlanRequest({ ...request, plan: { ...request.plan, actions: [{ ...request.plan.actions[0], title: '' }] } })).toBeNull()
+  })
   it('accepts only declared Blender director plans', () => {
     const parsed = applyVibingDirectorPlanParamsSchema.safeParse({
       directorNodeId: 'director-1',
@@ -21,6 +27,11 @@ describe('VIBING Director Agent tools', () => {
     })
 
     expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parseVibingDirectorPlanRequest(parsed.data)).toMatchObject({
+        plan: { actions: expect.arrayContaining([{ op: 'set_beat', id: 'opening', title: '进入店内', durationSec: 4 }]) },
+      })
+    }
     expect(vibingDirectorToolNames).toEqual(['read_vibing_director', 'apply_vibing_director_plan'])
   })
 

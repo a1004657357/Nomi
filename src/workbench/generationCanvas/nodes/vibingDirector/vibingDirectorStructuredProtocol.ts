@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BLENDER_DIRECTOR_STAGE_PRESETS } from '../../../../../electron/shared/blenderDirectorContract'
 import type { VibingDirectorPlan } from './vibingDirectorState'
 
 export type VibingDirectorPlanRequest = {
@@ -9,7 +10,7 @@ export type VibingDirectorPlanRequest = {
 
 const finiteNumber = z.number().finite()
 const vector3Schema = z.tuple([finiteNumber, finiteNumber, finiteNumber])
-const stagePresetSchema = z.enum(['empty', 'studio', 'coffee_shop', 'city_street', 'interior_room'])
+const stagePresetSchema = z.enum(BLENDER_DIRECTOR_STAGE_PRESETS)
 const blockingTemplateSchema = z.enum(['coffee_two_person_conversation'])
 const aspectRatioSchema = z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '2.39:1'])
 const cameraFramingSchema = z.enum(['all', 'target', 'fixed'])

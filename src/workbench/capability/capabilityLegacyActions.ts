@@ -3,6 +3,7 @@ import { useSpendConfirmStore } from '../generationCanvas/spend/spendConfirm'
 import { isProjectOpen, subscribeProjectOpened, withProjectAction, type ProjectExecutionContext } from '../project/projectCanvasReadSurface'
 import { buildStudioUrl } from '../../utils/appRoutes'
 import i18n from '../../i18n'
+import { logRendererError } from '../../desktop/rendererLog'
 
 export type GenerationBatchPayload = {
   projectId?: string
@@ -51,7 +52,7 @@ export function queueGenerationBatchConfirmation(info: GenerationBatchPayload): 
   generationBatchConfirmationQueued = true
   void confirmAndRunGenerationBatch(project, nodeIds)
     .catch((error: unknown) => {
-      console.error('[capability] generation.batch failed:', error)
+      logRendererError('capability-generation-batch-failed', error)
     })
     .finally(() => {
       generationBatchConfirmationQueued = false

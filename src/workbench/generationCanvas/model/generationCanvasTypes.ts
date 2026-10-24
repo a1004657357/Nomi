@@ -1,4 +1,5 @@
 import type { ProgressNarrationContext } from '../../observability/narrate'
+import type { AssetRevisionStatus } from '../../domain/cinematicTypes'
 import type { GenerationNodeKind } from './generationNodeKinds'
 import type { NodeRenderKind } from '../../project/projectCategories'
 import type { CreativeResource } from '../../../config/capabilityRecipes'
@@ -133,7 +134,7 @@ export type GenerationNodeResult = {
    * Revision 生命周期状态（§17）。迁移期缺省 = 'candidate'（既有条目无此字段时按 candidate 处理）。
    * selected = 当前选中版本（只是指针，旧条目不删）；rejected = 淘汰；archived = 归档。
    */
-  revisionStatus?: 'candidate' | 'selected' | 'rejected' | 'archived'
+  revisionStatus?: AssetRevisionStatus
   /** 内容哈希（结果去重用，§21.5）。 */
   sha256?: string
   /** 实际费用（人民币；Provider 未返回时空）。 */
@@ -144,6 +145,7 @@ export type GenerationNodeResult = {
   promptSnapshot?: string
 }
 
+export const GENERATION_COLLECTION_ITEM_STATUSES = ['pending', 'running', 'success', 'error'] as const
 export type GenerationResultCollectionItem = {
   id: string
   label: string
@@ -152,7 +154,7 @@ export type GenerationResultCollectionItem = {
   shotSize?: string
   energy?: number
   affinity?: number
-  status: 'pending' | 'running' | 'success' | 'error'
+  status: (typeof GENERATION_COLLECTION_ITEM_STATUSES)[number]
   result?: GenerationNodeResult
   /** All assets returned for this logical output by one provider request. */
   candidates?: GenerationNodeResult[]
@@ -170,7 +172,8 @@ export type GenerationResultCollectionSource = {
   providerUrl?: string
 }
 
-export type GenerationQualityStatus = 'pass' | 'warning' | 'fail' | 'unavailable'
+export const GENERATION_QUALITY_STATUSES = ['pass', 'warning', 'fail', 'unavailable'] as const
+export type GenerationQualityStatus = (typeof GENERATION_QUALITY_STATUSES)[number]
 
 export type GenerationQualityCheck = {
   id: string

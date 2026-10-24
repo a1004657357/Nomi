@@ -1,4 +1,5 @@
 import { desktopT } from "../desktopStrings";
+import { BLENDER_DIRECTOR_STAGE_PRESETS, type BlenderDirectorStagePreset, type BlenderTerminationReason } from '../shared/blenderDirectorContract';
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,7 +15,7 @@ export type DirectorBlenderRenderRequest = {
   projectId: string;
   ownerNodeId?: string | null;
   title?: string;
-  stagePreset?: "empty" | "studio" | "coffee_shop" | "city_street" | "interior_room";
+  stagePreset?: BlenderDirectorStagePreset;
   scene: unknown;
   timeoutMs?: number;
   /** Test/development override. Renderer callers must not provide executable paths. */
@@ -42,7 +43,7 @@ type BridgeOutput = {
 type ActiveDirectorJob = {
   child: ChildProcess;
   closed?: boolean;
-  terminationReason?: "cancelled" | "timeout";
+  terminationReason?: BlenderTerminationReason;
   forceKillTimer?: NodeJS.Timeout;
 };
 
@@ -50,7 +51,7 @@ const activeDirectorJobs = new Map<string, ActiveDirectorJob>();
 const pendingDirectorJobs = new Map<string, { cancelled: boolean }>();
 const OUTPUT_LIMIT = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-const STAGE_PRESETS = new Set(["empty", "studio", "coffee_shop", "city_street", "interior_room"]);
+const STAGE_PRESETS = new Set(BLENDER_DIRECTOR_STAGE_PRESETS);
 
 export function resolveDirectorHarnessRoot(): string {
   const override = String(process.env.NOMI_DIRECTOR_HARNESS_ROOT || "").trim();

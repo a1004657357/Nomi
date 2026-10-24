@@ -1,16 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  DENSE_EDGE_PAN_THRESHOLD,
-  LIGHTWEIGHT_NODE_RENDER_THRESHOLD,
-  LIGHTWEIGHT_NODE_ZOOM_THRESHOLD,
-  isLargeCanvas,
-  isZoomedOutForLightweight,
-  retainLargeCanvasLightweightRendering,
-  resolveLightweightNodePreview,
-  shouldRenderFullNodeContent,
-  shouldUseLightweightNodeRendering,
-  shouldUseLightweightNodeRenderingForSelection,
-} from './canvasNodeLevelOfDetail'
+import { LIGHTWEIGHT_NODE_RENDER_THRESHOLD, LIGHTWEIGHT_NODE_ZOOM_THRESHOLD, isLargeCanvas, isZoomedOutForLightweight, retainLargeCanvasLightweightRendering, resolveLightweightNodePreview, shouldRenderFullNodeContent, shouldUseLightweightNodeRendering, shouldUseLightweightNodeRenderingForSelection } from './canvasNodeLevelOfDetail';
 
 describe('canvas node level of detail', () => {
   it('uses lightweight rendering only for large zoomed-out canvases', () => {

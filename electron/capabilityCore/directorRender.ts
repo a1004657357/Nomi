@@ -1,8 +1,9 @@
 import crypto from 'node:crypto'
+import { BLENDER_DIRECTOR_STAGE_PRESETS, type BlenderDirectorStagePreset } from '../shared/blenderDirectorContract'
 import { addNodes, connectNodes, type CanvasSnapshot } from './canvasGraph'
 import type { ProjectGateway } from './gateway'
 
-export type DirectorStagePreset = 'empty' | 'studio' | 'coffee_shop' | 'city_street' | 'interior_room'
+export type DirectorStagePreset = BlenderDirectorStagePreset
 
 export type DirectorRenderInput = {
   projectId: string
@@ -28,7 +29,7 @@ export type RunDirectorFn = (input: {
   scene: unknown
 }) => Promise<DirectorRenderResult>
 
-const DIRECTOR_STAGE_PRESETS = new Set<DirectorStagePreset>(['empty', 'studio', 'coffee_shop', 'city_street', 'interior_room'])
+const DIRECTOR_STAGE_PRESETS = new Set<DirectorStagePreset>(BLENDER_DIRECTOR_STAGE_PRESETS)
 
 function plainRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null

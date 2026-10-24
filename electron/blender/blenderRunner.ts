@@ -1,4 +1,5 @@
 import { desktopT } from "../desktopStrings";
+import type { BlenderTerminationReason } from '../shared/blenderDirectorContract';
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -30,7 +31,7 @@ export type BlenderSceneRenderResult = {
 type ActiveBlenderJob = {
   child: ChildProcess;
   closed?: boolean;
-  terminationReason?: "cancelled" | "timeout";
+  terminationReason?: BlenderTerminationReason;
   forceKillTimer?: NodeJS.Timeout;
 };
 

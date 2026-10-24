@@ -125,7 +125,7 @@ export function onboardingVerbs(): VerbDeclaration[] {
       { when: "The user pasted their key to you and asked you to save it:", arguments: { vendorKey: "example-relay", apiKey: "<the key the user gave you>" } },
     ],
     promptGuidelines: [
-      "Nomi never hands a saved key back: not in a result, not in an error, not in a trace. If you need to know whether a key is saved, read nomi_read target=models, which only says yes or no.",
+      "Saved keys are never returned in results, errors or traces. Check only saved-key presence via nomi_read target=models (yes/no).",
     ],
   };
 

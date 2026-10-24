@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import * as directorCaptureRetry from '../director/agent/cameraMoveCaptureRetry'
 import {
   canRetryCameraMoveCapture,
   decideCameraMoveRetry,
@@ -7,6 +8,16 @@ import {
 } from './cameraMoveCaptureRetry'
 
 const cfg: CameraMoveRetryConfig = { maxAttempts: 3, retryDelayMs: 800, attemptTimeoutMs: 30_000 }
+
+it('uses the existing director decision owner at the compatibility path', () => {
+  expect(decideCameraMoveRetry).toBe(directorCaptureRetry.decideCameraMoveRetry)
+  expect(DEFAULT_CAMERA_MOVE_RETRY).toBe(directorCaptureRetry.DEFAULT_CAMERA_MOVE_RETRY)
+  for (const outcome of ['ok', 'null', 'timeout'] as const) for (const attempt of [0, 1, 2, 3, 4]) {
+    for (const config of [cfg, { ...cfg, maxAttempts: 0, retryDelayMs: -1 }]) {
+      expect(decideCameraMoveRetry(outcome, attempt, config)).toEqual(directorCaptureRetry.decideCameraMoveRetry(outcome, attempt, config))
+    }
+  }
+})
 
 describe('canRetryCameraMoveCapture', () => {
   it('允许在到达上限前重试', () => {

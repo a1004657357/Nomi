@@ -147,7 +147,7 @@ describe("付费卡的宿主投影", () => {
     // 这条测试要的只有一件事——这个函数不许在「明明有一笔在等」的时候安静地回「没有」。
     const empty = run();
     empty.generationPlan = { ...empty.generationPlan!, shots: [], candidate: undefined as never };
-    let outcome: unknown = "did-not-throw";
+    let outcome: unknown;
     try { outcome = projectPendingSpendConfirm(empty, resolvePricing); } catch (error) { outcome = error; }
     expect(outcome).toBeInstanceOf(Error);
   });
