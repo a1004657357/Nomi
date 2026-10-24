@@ -699,7 +699,7 @@ export const zhGenerationCommon = {
     narrowedModeGuidanceDismiss: '关闭模式提示',
     narrowedModeNone: '你接入的这条中转发不出{{modes}}—— 已接入的模型里也没有能做的',
 
-    selectTextModel: "配置文本模型",
+    selectTextModel: "文本模型",
   },
   resultDownload: {
     actions: '结果操作',
@@ -2254,7 +2254,7 @@ export const enGenerationCommon = {
     narrowedModeGuidanceDismiss: 'Dismiss mode availability hint',
     narrowedModeNone: 'The relay you connected cannot send {{modes}} — none of your connected models can either',
 
-    selectTextModel: "Configure a text model",
+    selectTextModel: "Text Models",
   },
   resultDownload: {
     actions: 'Result actions',

@@ -947,7 +947,7 @@ export const zhOnboardingProviders = {
     starting: '发起中…',
     login: '扫码登录',
 
-    update: "更新命令行工具",
+    update: "更新工具",
     updating: "更新中…",
   },
   comfyWorkflow: {
@@ -2217,7 +2217,7 @@ export const enOnboardingProviders = {
     starting: 'Starting…',
     login: 'Scan Login',
 
-    update: "Update command-line tool",
+    update: "Update CLI",
     updating: "Updating…",
   },
   comfyWorkflow: {
