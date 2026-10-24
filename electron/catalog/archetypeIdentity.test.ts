@@ -6,6 +6,24 @@ import { hostRootBase } from "../ai/requestPipeline";
 import { archetypeParameterControls, getArchetypeById, resolveArchetypeForModel } from "../shared/modelArchetypes";
 
 describe("archetypeIdForModel", () => {
+  it.each(['gpt-image-2', 'gpt_image_2', 'gpt-4o-image', 'codex-img2', 'codex-imagegen-img2'])(
+    'keeps legacy product identity in catalog and renderer for %s', (identity) => {
+      for (const modelKey of [identity, `models/${identity}`, `relay/${identity.toUpperCase()}`]) {
+        expect(archetypeIdForModel(modelKey)).toBe('gpt-image-2');
+        expect(resolveArchetypeForModel({ modelKey, vendorKey: null })?.id).toBe('gpt-image-2');
+      }
+      expect(archetypeIdForModel('unknown', identity)).toBe('gpt-image-2');
+      expect(resolveArchetypeForModel({ modelAlias: identity, vendorKey: null })?.id).toBe('gpt-image-2');
+    },
+  );
+
+  it('does not collapse future model versions or lookalike aliases into GPT Image 2', () => {
+    for (const modelKey of ['codex-img25', 'codex-imagegen-img25', 'gpt-image-2.5']) {
+      expect(archetypeIdForModel(modelKey)).toBeNull();
+      expect(resolveArchetypeForModel({ modelKey, vendorKey: null })).toBeNull();
+    }
+  });
+
   it("认出用户那三个 Seedance 2.0 变体，全都落火山档案", () => {
     expect(archetypeIdForModel("doubao-seedance-2-0-260128")).toBe("volcengine-seedance-2");
     expect(archetypeIdForModel("doubao-seedance-2-0-fast-260128")).toBe("volcengine-seedance-2");

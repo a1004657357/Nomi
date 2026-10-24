@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { __resetCanvasUndoJournalForTests } from '../../events/canvasUndoJournal'
 import { isStoryboardContainedNodeHidden, storyboardContainedRole } from '../../model/storyboardContainedNodes'
-import type { PlanShot } from '../../agent/storyboardPlan'
+import type { PlanShot, StoryboardPlan } from '../../agent/storyboardPlan'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import {
   ensureStoryboardRowImageOutput,
@@ -37,6 +37,48 @@ function seedTable() {
 }
 
 describe('storyboard row outputs', () => {
+  function scopedTable(row: PlanShot, aspectRatio = '4:3') {
+    const tableNode = seedTable()
+    const plan: StoryboardPlan = { title: 'scope', anchors: [], shots: [row], aspectRatio }
+    const meta = { ...tableNode.meta, storyboardPlanSnapshot: plan }
+    useGenerationCanvasStore.getState().updateNode(tableNode.id, { meta })
+    return { ...tableNode, meta }
+  }
+
+  it('resolves film defaults for new and reused row video outputs without stale parameters', async () => {
+    const row = { ...shot, params: { seed: 0 } }
+    const tableNode = scopedTable(row)
+    const first = await ensureStoryboardRowVideoOutput({ tableNode, shot: row })
+    expect(first.node.meta).toMatchObject({ aspect_ratio: '4:3', seed: 0 })
+    const next = { ...row, params: { aspect_ratio: '1:1', resolution: '720p' } }
+    const reused = await ensureStoryboardRowVideoOutput({ tableNode, shot: next })
+    expect(reused.nodeId).toBe(first.nodeId)
+    expect(reused.node.meta).toMatchObject({ aspect_ratio: '1:1', resolution: '720p' })
+    expect(reused.node.meta).not.toHaveProperty('seed')
+  })
+
+  it('resolves keyframe parameters separately from video parameters', async () => {
+    const row: PlanShot = { ...shot, params: { seed: 12 }, keyframe: { enabled: true, params: { seed: 34 } } }
+    const result = await ensureStoryboardRowVideoOutput({ tableNode: scopedTable(row), shot: row })
+    const image = useGenerationCanvasStore.getState().nodes.find(node => node.id === result.imageNodeId)!
+    expect(image.meta).toMatchObject({ aspect_ratio: '4:3', seed: 34 })
+    expect(result.node.meta).toMatchObject({ aspect_ratio: '4:3', seed: 12 })
+  })
+
+  it('resolves image-shot overrides without importing image settings into its independent video', async () => {
+    const row: PlanShot = { ...shot, shotKind: 'image', modelKey: 'codex-img2', params: { aspect_ratio: '1:1', resolution: '2K' } }
+    const tableNode = scopedTable(row)
+    const image = ensureStoryboardRowImageOutput({ tableNode, shot: row })
+    expect(image.node.meta).toMatchObject({ aspect_ratio: '1:1', resolution: '2K' })
+    const result = await ensureStoryboardRowVideoOutput({
+      tableNode, shot: row,
+      resolveVideoDefault: async () => ({ modelKey: 'agnes-video-v2.0', modeId: 'i2v' }),
+    })
+    expect(result.node.meta).not.toHaveProperty('resolution', '2K')
+    expect(useGenerationCanvasStore.getState().nodes.find(node => node.id === image.nodeId)?.meta)
+      .toMatchObject({ aspect_ratio: '1:1', resolution: '2K' })
+  })
+
   it('creates a visible image output for the row without entering dangling connection mode', () => {
     const tableNode = seedTable()
     const result = ensureStoryboardRowImageOutput({ tableNode, shot, expanded: true })

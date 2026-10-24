@@ -49,7 +49,7 @@ export function readStoryboardAsShotSpecs(
   // 镜头节点候选：按画布位置/类别筛 image/video/panorama（排除 character/scene 等资产卡）
   const shotNodes = nodes.filter((n) => isShotLikeNode(n))
   return plan.shots.map((shot, i) => {
-    const spec = planShotToShotSpec(shot, projectId, anchorsById)
+    const spec = planShotToShotSpec(shot, projectId, anchorsById, plan)
     // 按 index 关联画布节点（shotNumbering 的顺序约定：镜头节点按出现序对应 shot.index）
     const node = shotNodes[i]
     const view: ShotSpecView = { spec }

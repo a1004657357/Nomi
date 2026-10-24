@@ -18,6 +18,7 @@
  * `migrateStoryboardPlanShots` 让旧项目加载即迁移（见本文件末导出）。
  */
 import type { PlanAnchor, PlanShot, StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
+import { resolveShotParams } from '../generationCanvas/agent/storyboardShotScope'
 import type {
   GenerationMode,
   GenerationStrategyV1,
@@ -62,7 +63,7 @@ function inferGenerationMode(shot: PlanShot): GenerationMode {
   return 'text-to-video'
 }
 
-function inferGenerationStrategy(shot: PlanShot): GenerationStrategyV1 {
+function inferGenerationStrategy(shot: PlanShot, plan: StoryboardPlan): GenerationStrategyV1 {
   const mode = inferGenerationMode(shot)
   const rationale = modeRationale(mode)
   const strategy: GenerationStrategyV1 = {
@@ -73,8 +74,9 @@ function inferGenerationStrategy(shot: PlanShot): GenerationStrategyV1 {
   if (shot.modelKey) strategy.modelKey = shot.modelKey
   if (shot.variantId) strategy.providerId = shot.variantId // variantId 在 PlanShot 里是型号 id，近似 provider 标识
   if (shot.modeId) strategy.overrides = { modeId: shot.modeId }
-  if (shot.params && Object.keys(shot.params).length > 0) {
-    strategy.overrides = { ...(strategy.overrides ?? {}), ...shot.params }
+  const params = resolveShotParams(plan, shot)
+  if (Object.keys(params).length > 0) {
+    strategy.overrides = { ...(strategy.overrides ?? {}), ...params }
   }
   return strategy
 }
@@ -162,6 +164,7 @@ export function planShotToShotSpec(
   shot: PlanShot,
   projectId: string,
   anchorsById: Map<string, PlanAnchor>,
+  plan: StoryboardPlan = { title: '', anchors: [], shots: [shot] },
 ): ShotSpecV1 {
   return {
     version: 1,
@@ -195,7 +198,7 @@ export function planShotToShotSpec(
     },
     continuity: [],
     references: referencesFromAnchors(shot, anchorsById),
-    generationStrategy: inferGenerationStrategy(shot),
+    generationStrategy: inferGenerationStrategy(shot, plan),
     acceptanceCriteria: [],
     status: inferShotStatus(shot),
   }
@@ -246,7 +249,7 @@ export function migrateStoryboardPlanShots(
   const anchorsById = new Map<string, PlanAnchor>(plan.anchors.map((a) => [a.id, a]))
   const result = new Map<number, ShotSpecV1>()
   for (const shot of plan.shots) {
-    result.set(shot.index, planShotToShotSpec(shot, projectId, anchorsById))
+    result.set(shot.index, planShotToShotSpec(shot, projectId, anchorsById, plan))
   }
   return result
 }

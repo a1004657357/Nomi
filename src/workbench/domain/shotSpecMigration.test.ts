@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PlanAnchor, PlanShot, StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
 import { shotSpecSchema } from './cinematicSchema'
+import { readShotSpec, readStoryboardAsShotSpecs } from './shotSpecReaders'
 import {
   mergeShotSpecIntoPlanShot,
   migrateStoryboardPlanShots,
@@ -170,6 +171,27 @@ describe('mergeShotSpecIntoPlanShot — round-trip 守恒', () => {
 })
 
 describe('migrateStoryboardPlanShots — 批量迁移', () => {
+  it('resolves film defaults and explicit shot parameters before projecting strategy overrides', () => {
+    const plan: StoryboardPlan = {
+      title: 'scope', anchors: [], aspectRatio: '4:3',
+      shots: [
+        makeShot({ index: 1, params: { resolution: '1080p' } }),
+        makeShot({ index: 2, params: { aspect_ratio: '1:1', seed: 0 }, modeId: 'first' }),
+      ],
+    }
+    const before = structuredClone(plan)
+    const specs = migrateStoryboardPlanShots(plan, 'p')
+    expect(specs.get(1)?.generationStrategy.overrides).toEqual({ aspect_ratio: '4:3', resolution: '1080p' })
+    expect(specs.get(2)?.generationStrategy.overrides).toEqual({ aspect_ratio: '1:1', seed: 0, modeId: 'first' })
+    expect(plan).toEqual(before)
+  })
+
+  it('keeps the plan context through storyboard and single-shot reader wrappers', () => {
+    const plan: StoryboardPlan = { title: 'scope', anchors: [], shots: [makeShot()], aspectRatio: '4:3' }
+    expect(readStoryboardAsShotSpecs(plan, [], 'p')[0].spec.generationStrategy.overrides).toEqual({ aspect_ratio: '4:3' })
+    expect(readShotSpec(1, plan, [], 'p')?.spec.generationStrategy.overrides).toEqual({ aspect_ratio: '4:3' })
+  })
+
   it('migrates all shots, keyed by index', () => {
     const plan: StoryboardPlan = {
       title: '短片',

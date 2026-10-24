@@ -1,10 +1,13 @@
 import { convertImageShotToVideo } from '../../agent/convertShotToVideo'
 import { resolveStoryboardVideoDefault } from '../../agent/availableModels'
 import {
+  parseStoryboardPlan,
   storyboardShotImagePrompt,
   storyboardShotVideoPrompt,
   type PlanShot,
+  type StoryboardPlan,
 } from '../../agent/storyboardPlan'
+import { resolveKeyframeParams, resolveShotParams } from '../../agent/storyboardShotScope'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { getGenerationNodeExecutionKind } from '../../model/generationNodeKinds'
 import { STORYBOARD_TABLE_MIN_CONTENT_WIDTH } from '../../model/storyboardTableSizing'
@@ -165,16 +168,28 @@ const VIDEO_MODEL_META_KEYS = [
   'videoModelVendor',
 ] as const
 
-function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot): Record<string, unknown> {
+function rowPlan(tableNode: GenerationCanvasNode, shot: PlanShot): StoryboardPlan {
+  const snapshot = currentNode(tableNode)?.meta?.storyboardPlanSnapshot
+    ?? tableNode.meta?.storyboardPlanSnapshot
+  return snapshot
+    ? parseStoryboardPlan(snapshot)
+    : { title: '', anchors: [], shots: [shot] }
+}
+
+function withResolvedParams(target: Pick<GenerationCanvasNode, 'meta'>, params: Record<string, unknown>): Record<string, unknown> {
   const next = { ...metaRecord(target) }
   const previousParamKeys = Array.isArray(next.storyboardAppliedParamKeys)
     ? next.storyboardAppliedParamKeys.filter((key): key is string => typeof key === 'string')
     : []
   for (const key of previousParamKeys) delete next[key]
 
-  const params = shot.params && typeof shot.params === 'object' ? shot.params : {}
   Object.assign(next, params)
   next.storyboardAppliedParamKeys = Object.keys(params)
+  return next
+}
+
+function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot, params: Record<string, unknown>): Record<string, unknown> {
+  const next = withResolvedParams(target, params)
 
   if (Number.isFinite(shot.durationSec)) {
     next.duration = shot.durationSec
@@ -317,11 +332,11 @@ function syncStoryboardReferenceEdges(imageNodeId: string, videoNodeId: string):
   }
 }
 
-function syncVideoOutput(target: GenerationCanvasNode, shot: PlanShot): GenerationCanvasNode {
+function syncVideoOutput(target: GenerationCanvasNode, shot: PlanShot, params: Record<string, unknown>): GenerationCanvasNode {
   useGenerationCanvasStore.getState().updateNode(target.id, {
     title: `镜头 ${shot.index} · 视频`,
     shotIndex: shot.index,
-    meta: videoMetaForShot(target, shot),
+    meta: videoMetaForShot(target, shot, params),
   })
   return useGenerationCanvasStore.getState().nodes.find((node) => node.id === target.id) || target
 }
@@ -331,10 +346,16 @@ export function ensureStoryboardRowImageOutput(input: EnsureRowOutputInput): Sto
   const existing = findOwnedOutput(input.tableNode.id, input.shot.index, 'image')
     || fallbackOutput(input.imageNode, input.tableNode.id, input.shot.index, 'image')
   const prompt = storyboardShotImagePrompt(input.shot)
+  const plan = rowPlan(input.tableNode, input.shot)
+  const params = input.shot.shotKind === 'image'
+    ? resolveShotParams(plan, input.shot)
+    : resolveKeyframeParams(plan, input.shot)
   if (existing) {
     if (existing.prompt !== prompt) store.updateNodePrompt(existing.id, prompt)
     const expanded = input.expanded ?? isStoryboardContainedNodeExpanded(existing)
-    const node = markRowOutput(input.tableNode, input.shot, existing, 'image', expanded)
+    store.updateNode(existing.id, { meta: withResolvedParams(existing, params) })
+    const synced = useGenerationCanvasStore.getState().nodes.find(node => node.id === existing.id) || existing
+    const node = markRowOutput(input.tableNode, input.shot, synced, 'image', expanded)
     return { nodeId: node.id, node, created: false }
   }
 
@@ -346,7 +367,7 @@ export function ensureStoryboardRowImageOutput(input: EnsureRowOutputInput): Sto
     categoryId: input.tableNode.categoryId || 'shots',
     select: false,
     exactPosition: true,
-    meta: rowOutputMeta(input.tableNode, input.shot, undefined, 'image', Boolean(input.expanded)),
+    meta: rowOutputMeta(input.tableNode, input.shot, withResolvedParams({}, params), 'image', Boolean(input.expanded)),
   })
   useGenerationCanvasStore.getState().updateNode(created.id, { shotIndex: input.shot.index })
   const node = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === created.id) || created
@@ -408,12 +429,14 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
       }
   const image = ensureStoryboardRowImageOutput({
     ...input,
-    shot,
     expanded: input.expanded,
   })
   // The row image is a paired frame, not a second owner of the video's shot number.
   store.updateNode(image.nodeId, { meta: { ...image.node.meta, storyboardKeyframe: true } })
   const prompt = storyboardShotVideoPrompt(shot)
+  const params = usesStoryboardVideoSettings && (!requestedArchetype || requestedArchetype.kind === 'video')
+    ? resolveShotParams(rowPlan(input.tableNode, input.shot), input.shot)
+    : {}
 
   if (existing) {
     if (existing.prompt !== prompt) store.updateNodePrompt(existing.id, prompt)
@@ -421,6 +444,7 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
     const synced = syncVideoOutput(
       useGenerationCanvasStore.getState().nodes.find((node) => node.id === existing.id) || existing,
       shot,
+      params,
     )
     const node = markRowOutput(input.tableNode, shot, synced, 'video', expanded)
     syncStoryboardReferenceEdges(image.nodeId, node.id)
@@ -432,7 +456,7 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
   useGenerationCanvasStore.getState().updateNodePrompt(converted.nodeId, prompt)
   const video = useGenerationCanvasStore.getState().nodes.find((node) => node.id === converted.nodeId)
   if (!video) throw new Error('视频节点创建失败')
-  const synced = syncVideoOutput(video, shot)
+  const synced = syncVideoOutput(video, shot, params)
   const node = markRowOutput(input.tableNode, shot, synced, 'video', Boolean(input.expanded))
   syncStoryboardReferenceEdges(image.nodeId, node.id)
   const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === node.id) || node

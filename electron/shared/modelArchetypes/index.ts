@@ -1,4 +1,5 @@
 import { anchorsConsumedBy } from './anchorPolicy';
+import { canonicalArchetypeIdentifier } from './identifierAliases';
 import type { ModelParameterControl } from "../videoCapabilities/types";
 // Video archetypes are defined in electron/shared/videoCapabilities (canonical home,
 // shared with main-process planning). The renderer takes the whole video set from that
@@ -111,7 +112,7 @@ function normalizeIdentifier(value: unknown): string {
 /** 去掉 models/ 前缀但保留原始大小写；APIMart/KIE 的同名模型靠大小写区分官方 key。 */
 function rawIdentifier(value: unknown): string {
   const raw = typeof value === "string" ? value.trim() : "";
-  return raw.startsWith("models/") ? raw.slice("models/".length) : raw;
+  return canonicalArchetypeIdentifier(raw.startsWith("models/") ? raw.slice("models/".length) : raw);
 }
 
 /** 取标识的末段（去掉 vendor 前缀，如 "bytedance/seedance-2" → "seedance-2"）。 */

@@ -28,12 +28,12 @@
 // veo-3.1 三行、seedance-2 三行），必须看档案自己声明的 identifierPatterns 指向几个产品。
 //
 // ── 判别信号（这是本门岗的核心，改之前先读懂）──────────────────────────────
-// 把每条 identifierPattern 归一成「产品词干」：去供应商前缀（bytedance/…）、去分隔符、
+// 先经运行时共用的精确旧名身份表归一，再把 identifierPattern 归一成「产品词干」：去供应商前缀（bytedance/…）、去分隔符、
 // 去 t2v/i2v 这类模式后缀、去版本号、去变体词（fast/mini/pro/turbo/fal/rh…）。再把词干
 // 按「互为子串」聚类（gen ⊂ runwaygen、seedream ⊂ doubaoseedream 是同一产品的写法差异）。
 //
 // 判据：**词干簇 > 2 即平台档案。**
-// 为什么是 2 而不是 1：一个产品可以有**一个**别名——供应商内部代号或 SKU
+// 为什么是 2 而不是 1：已登记的精确旧名先归一；未登记的供应商内部代号或 SKU 仍容纳**一个**别名
 // （nano-banana-2 ↔ gemini-3.1-flash-image；rh-veo-3.1 ↔ rhart-video-v3.1-pro-official）。
 // 一个产品有两套名字是常态，有三套就不成立了——三个互不相干的词干只能是三个产品。
 // 实测分离干净且有真实间隔：三个违规是 7 / 5 / 4 簇，全部正确档案 ≤ 2 簇，**没有任何档案落在 3**。
@@ -48,6 +48,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { canonicalArchetypeIdentifier } from '../electron/shared/modelArchetypes/identifierAliases.ts'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const baselinePath = path.join(repoRoot, 'scripts/platform-archetypes-baseline.json')
@@ -65,7 +66,7 @@ const MODE_SUFFIX = /(text|image|video|audio|reference|sound|multilingual)?to(vi
 
 /** identifierPattern → 产品词干。 */
 function productStem(pattern) {
-  let x = String(pattern).toLowerCase()
+  let x = canonicalArchetypeIdentifier(String(pattern).trim()).toLowerCase()
   const slash = x.lastIndexOf('/')
   if (slash >= 0) x = x.slice(slash + 1) // 去供应商命名空间前缀
   x = x.replace(/[-_.\s]/g, '')
