@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import {
@@ -21,13 +23,13 @@ function qualityTone(status: GenerationQualityStatus): string {
 }
 
 function qualityKindLabel(kind: GenerationQualityReport['kind']): string {
-  if (kind === 'grid9') return '九宫格'
-  if (kind === 'multiview') return '自定义机位'
-  if (kind === 'panorama') return '全景'
-  if (kind === 'portrait') return '人像'
-  if (kind === 'mood') return '情绪'
-  if (kind === 'style') return '风格'
-  if (kind === 'video') return '视频'
+  if (kind === 'grid9') return i18n.t("canvasComponents.text33Grid")
+  if (kind === 'multiview') return i18n.t("canvasComponents.customCameraAngles")
+  if (kind === 'panorama') return i18n.t("canvasComponents.panorama")
+  if (kind === 'portrait') return i18n.t("canvasComponents.portrait")
+  if (kind === 'mood') return i18n.t("canvasComponents.emotion")
+  if (kind === 'style') return i18n.t("canvasComponents.style")
+  if (kind === 'video') return i18n.t("canvasComponents.video")
   return '3D'
 }
 
@@ -54,6 +56,7 @@ export function CapabilityQualityReportPopover({
   className?: string
   actions?: React.ReactNode
 }): JSX.Element {
+  useTranslation()
   const [open, setOpen] = React.useState(false)
   const kindLabel = qualityKindLabel(report.kind)
   return (
@@ -65,9 +68,9 @@ export function CapabilityQualityReportPopover({
       <button
         type="button"
         data-capability-quality-status={report.status}
-        aria-label={`查看质量报告：${qualityLabel(report.status)}`}
+        aria-label={i18n.t("canvasComponents.viewQualityReport", { v0: qualityLabel(report.status) })}
         aria-expanded={open}
-        title={`${kindLabel}质量报告：${qualityLabel(report.status)}`}
+        title={i18n.t("canvasComponents.qualityReport", { v0: kindLabel, v1: qualityLabel(report.status) })}
         className={cn(
           'grid size-7 place-items-center rounded-nomi-sm border border-white/70 bg-nomi-paper shadow-nomi-md',
           'hover:bg-nomi-ink-05 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
@@ -80,11 +83,11 @@ export function CapabilityQualityReportPopover({
         <section
           data-capability-quality-report={report.kind}
           className="mt-1.5 max-h-[360px] w-[300px] overflow-auto rounded-nomi border border-nomi-line bg-nomi-paper p-2.5 shadow-nomi-md"
-          aria-label={`${kindLabel}质量报告`}
+          aria-label={i18n.t("canvasComponents.qualityReport446", { v0: kindLabel })}
         >
           <header className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 border-b border-nomi-line pb-2 [overflow-wrap:anywhere]">
             <CapabilityQualityStatusIcon status={report.status} size={16} />
-            <span className="text-caption font-semibold text-nomi-ink">本地质量报告</span>
+            <span className="text-caption font-semibold text-nomi-ink">{i18n.t("canvasComponents.localQualityReport")}</span>
             <span className={cn('min-w-0 max-w-full text-micro font-medium', qualityTone(report.status))}>
               {qualityLabel(report.status)}
             </span>

@@ -1,3 +1,4 @@
+import i18n from '../../../i18n'
 import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconBrandBlender, IconCube, IconDownload } from '@tabler/icons-react'
@@ -31,10 +32,10 @@ export default function NodeResultDownloadButton({ reportFeedback, node, selecte
     if (handoffBusy) return
     setHandoffBusy(target)
     void handoffModel3dNode({ project, sourceNodeId: node.id, target })
-      .then(() => { project.assertCurrent(); toast(target === 'scene3d' ? '已送入 3D 导演台' : '已送入 Blender Director', 'success') })
-      .catch((error: unknown) => { if (isProjectExecutionContextCurrent(project)) toast(error instanceof Error ? error.message : '3D 模型交接失败', 'error') })
+      .then(() => { project.assertCurrent(); toast(target === 'scene3d' ? i18n.t("canvasComponents.sentToThe3DDirectorWorkspace") : i18n.t("canvasComponents.sentToBlenderDirector"), 'success') })
+      .catch((error: unknown) => { if (isProjectExecutionContextCurrent(project)) toast(error instanceof Error ? error.message : i18n.t("canvasComponents.text3dModelHandoffFailed"), 'error') })
       .finally(() => { if (isProjectExecutionContextCurrent(project)) setHandoffBusy(null) })
-  }, () => { toast('请先打开一个本地项目', 'error') }), [handoffBusy, node.id])
+  }, () => { toast(i18n.t("canvasComponents.openALocalProjectFirst"), 'error') }), [handoffBusy, node.id])
   const { canDownload, downloading, download } = useResultDownload(node, reportFeedback)
   if (!selected || !canDownload || node.result?.type === 'image') return null
 
@@ -45,27 +46,27 @@ export default function NodeResultDownloadButton({ reportFeedback, node, selecte
 
   if (node.result?.type === 'model3d' && isCapabilityRecipesEnabled()) {
     return (
-      <FloatingToolbarShell ariaLabel="3D 模型操作" lockNodeId={node.id}>
+      <FloatingToolbarShell ariaLabel={i18n.t("canvasComponents.text3dModelActions")} lockNodeId={node.id}>
         <ToolbarButton
           icon={<IconCube size={I.size} stroke={I.stroke} />}
-          label="送入 3D 导演台"
-          title="创建可交互的 Scene3D 导演台节点"
+          label={i18n.t("canvasComponents.sendTo3DDirectorWorkspace")}
+          title={i18n.t("canvasComponents.createAnInteractiveScene3DDirectorNode")}
           disabled={Boolean(handoffBusy)}
           onClick={() => handoff('scene3d')}
         />
         <ToolbarDivider />
         <ToolbarButton
           icon={<IconBrandBlender size={I.size} stroke={I.stroke} />}
-          label="送入 Blender Director"
-          title="复制到 Blender Director 资产库并创建摆位对象"
+          label={i18n.t("canvasComponents.sendToBlenderDirector")}
+          title={i18n.t("canvasComponents.copyToTheBlenderDirectorAssetLibraryAndCreateA")}
           disabled={Boolean(handoffBusy)}
           onClick={() => handoff('vibingDirector')}
         />
         <ToolbarDivider />
         <ToolbarButton
           icon={<IconDownload size={I.size} stroke={I.stroke} />}
-          label="下载"
-          title="下载 / 另存到本地"
+          label={i18n.t("canvasComponents.download")}
+          title={i18n.t("canvasComponents.downloadSaveLocally")}
           disabled={downloading || Boolean(handoffBusy)}
           onClick={download}
         />

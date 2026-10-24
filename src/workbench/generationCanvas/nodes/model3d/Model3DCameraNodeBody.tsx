@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import { withProjectAction } from '../../../project/projectCanvasReadSurface'
 import React from 'react'
@@ -31,9 +33,9 @@ import {
 
 const CAPTURE_LONG_EDGES = [1024, 1920, 2048] as const
 const CAMERA_FIELDS = [
-  { key: 'azimuth', label: '方位', min: -180, max: 180, step: 1 },
-  { key: 'elevation', label: '仰俯', min: -89, max: 89, step: 1 },
-  { key: 'distance', label: '距离', min: 0.01, max: 1000000, step: 0.1 },
+  { key: 'azimuth', get label() { return i18n.t("canvasComponents.azimuth") }, min: -180, max: 180, step: 1 },
+  { key: 'elevation', get label() { return i18n.t("canvasComponents.elevation") }, min: -89, max: 89, step: 1 },
+  { key: 'distance', get label() { return i18n.t("canvasComponents.distance") }, min: 0.01, max: 1000000, step: 0.1 },
   { key: 'fov', label: 'FOV', min: 10, max: 100, step: 1 },
 ] as const
 
@@ -105,6 +107,7 @@ export default function Model3DCameraNodeBody({
   node: GenerationCanvasNode
   readOnly: boolean
 }): JSX.Element {
+  useTranslation()
   const viewerRef = React.useRef<Model3DViewerHandle>(null)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [capturing, setCapturing] = React.useState(false)
@@ -172,7 +175,7 @@ export default function Model3DCameraNodeBody({
     const dimensions = model3dCaptureDimensions(ratio, longEdge)
     const frame = viewerRef.current.capture(dimensions)
     if (!frame) {
-      toast('当前 3D 画面还没有准备好，请稍后重试', 'warning')
+      toast(i18n.t("canvasComponents.theCurrent3DViewIsNotReadyTryAgainShortly"), 'warning')
       return
     }
     setCapturing(true)
@@ -184,9 +187,9 @@ export default function Model3DCameraNodeBody({
         capture: frame,
       })
       useWorkbenchStore.getState().requestCanvasFit()
-      toast(`已按 ${ratio} 机位创建回拍图片`, 'success')
+      toast(i18n.t("canvasComponents.createdACaptureImageUsingTheCameraFraming", { v0: ratio }), 'success')
     } catch (error) {
-      toast(error instanceof Error ? error.message : '3D 机位回拍失败', 'error')
+      toast(error instanceof Error ? error.message : i18n.t("canvasComponents.text3dCameraCaptureFailed"), 'error')
     } finally {
       setCapturing(false)
     }
@@ -201,7 +204,7 @@ export default function Model3DCameraNodeBody({
       const dimensions = model3dCaptureDimensions(ratio, 1024)
       const frames = model3dGrid9CameraStates(camera).map((guide) => {
         const capture = viewerRef.current?.captureAt(guide.camera, dimensions)
-        if (!capture) throw new Error(`机位「${guide.label}」画面尚未准备好`)
+        if (!capture) throw new Error(i18n.t("canvasComponents.theViewForCameraIsNotReady", { v0: guide.label }))
         return { ...guide, capture }
       })
       await createModel3DGrid9CaptureCollection({
@@ -210,9 +213,9 @@ export default function Model3DCameraNodeBody({
         frames,
       })
       useWorkbenchStore.getState().requestCanvasFit()
-      toast(`已创建 ${ratio} 九机位几何引导集合`, 'success')
+      toast(i18n.t("canvasComponents.createdANineCameraGeometryGuideCollection", { v0: ratio }), 'success')
     } catch (error) {
-      toast(error instanceof Error ? error.message : '九机位引导生成失败', 'error')
+      toast(error instanceof Error ? error.message : i18n.t("canvasComponents.failedToGenerateTheNineCameraGuide"), 'error')
     } finally {
       setCapturing(false)
     }
@@ -242,19 +245,19 @@ export default function Model3DCameraNodeBody({
           >
             <WorkbenchIconButton
               icon={<IconAdjustmentsHorizontal />}
-              label="机位设置"
+              label={i18n.t("canvasComponents.cameraSettings")}
               aria-pressed={settingsOpen}
               onClick={() => setSettingsOpen((open) => !open)}
             />
             <WorkbenchIconButton
               icon={<IconCamera />}
-              label="按当前机位拍摄"
+              label={i18n.t("canvasComponents.captureTheCurrentCameraView")}
               disabled={!camera || capturing}
               onClick={() => void handleCapture()}
             />
             <WorkbenchIconButton
               icon={<IconGridDots />}
-              label="生成九机位引导"
+              label={i18n.t("canvasComponents.generateNineCameraGuide")}
               disabled={!camera || capturing}
               onClick={() => void handleGrid9Capture()}
             />
@@ -283,7 +286,7 @@ export default function Model3DCameraNodeBody({
                 ))}
               </div>
               <div className="flex min-w-0 flex-wrap items-end gap-1.5">
-                <span className="inline-flex shrink-0 items-center self-center text-nomi-ink-40" title="相机目标点">
+                <span className="inline-flex shrink-0 items-center self-center text-nomi-ink-40" title={i18n.t("canvasComponents.cameraTarget")}>
                   <IconFocusCentered size={15} stroke={1.6} />
                 </span>
                 {camera.target.map((value, index) => (
@@ -310,7 +313,7 @@ export default function Model3DCameraNodeBody({
                             : 'bg-nomi-paper text-nomi-ink-60 hover:bg-nomi-ink-05',
                         )}
                         aria-pressed={ratio === option}
-                        title={`回拍画幅 ${option}`}
+                        title={i18n.t("canvasComponents.captureAspectRatio", { v0: option })}
                         onClick={() => {
                           setRatio(option)
                           persistCaptureSettings(option, longEdge)
@@ -322,8 +325,8 @@ export default function Model3DCameraNodeBody({
                   </div>
                   <NomiSelect
                     value={String(longEdge)}
-                    ariaLabel="回拍分辨率"
-                    leadingLabel="尺寸"
+                    ariaLabel={i18n.t("canvasComponents.captureResolution")}
+                    leadingLabel={i18n.t("canvasComponents.size")}
                     size="xs"
                     options={CAPTURE_LONG_EDGES.map((value) => ({
                       value: String(value),
@@ -337,7 +340,7 @@ export default function Model3DCameraNodeBody({
                   />
                   <WorkbenchIconButton
                     icon={<IconRefresh />}
-                    label="复位机位"
+                    label={i18n.t("canvasComponents.resetCamera")}
                     onClick={handleReset}
                   />
                 </div>

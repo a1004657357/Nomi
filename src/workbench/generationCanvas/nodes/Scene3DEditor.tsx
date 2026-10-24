@@ -1,3 +1,4 @@
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -408,7 +409,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     await persistActiveWorkbenchProjectNow()
     project.assertCurrent()
     requestCanvasFit()
-    toast(source === 'blender-director' ? 'Blender 导演预演已回传画布' : 'Blender 场景已回传画布', 'success')
+    toast(source === 'blender-director' ? i18n.t("canvasComponents.blenderDirectorPreviewReturnedToTheCanvas") : i18n.t("canvasComponents.blenderSceneReturnedToTheCanvas"), 'success')
   }, [addNode, connectNodes, node.categoryId, node.id, node.meta, node.position, requestCanvasFit, updateNode, width])
 
   const runBlenderJob = React.useCallback((
@@ -418,7 +419,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     project.assertCurrent()
     const desktop = getDesktopBridge()
     if (!desktop?.scene3d) {
-      toast('当前运行环境不支持 Blender 后台渲染', 'error')
+      toast(i18n.t("canvasComponents.thisEnvironmentDoesNotSupportBackgroundBlenderRendering"), 'error')
       return
     }
     const activeJobId = blenderJobIdRef.current
@@ -439,17 +440,17 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
     } catch (error) {
       if (!isProjectExecutionContextCurrent(project)) return
       const message = error instanceof Error ? error.message : String(error)
-      toast(message.includes('已取消') ? 'Blender 渲染已取消' : message, message.includes('已取消') ? 'info' : 'error')
+      toast(message.includes('已取消') ? i18n.t("canvasComponents.blenderRenderingCancelled") : message, message.includes('已取消') ? 'info' : 'error')
     } finally {
       if (blenderJobIdRef.current === jobId) blenderJobIdRef.current = null
       if (isProjectExecutionContextCurrent(project)) setBlenderJobId(null)
     }
-  }, () => { toast('请先打开一个本地项目', 'error') }), [applyBlenderOutput])
+  }, () => { toast(i18n.t("canvasComponents.openALocalProjectFirst"), 'error') }), [applyBlenderOutput])
 
   const handleBlenderRender = React.useCallback(() => {
     const desktop = getDesktopBridge()
     if (!desktop?.scene3d?.renderWithBlender) {
-      toast('当前运行环境不支持 Blender 后台渲染', 'error')
+      toast(i18n.t("canvasComponents.thisEnvironmentDoesNotSupportBackgroundBlenderRendering"), 'error')
       return
     }
     return runBlenderJob('blender', (project, jobId) => {
@@ -468,7 +469,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
   const handleBlenderDirectorRender = React.useCallback(() => {
     const desktop = getDesktopBridge()
     if (!desktop?.scene3d?.renderDirectorWithBlender) {
-      toast('当前运行环境尚未安装 Blender 导演预演', 'error')
+      toast(i18n.t("canvasComponents.theBlenderDirectorPreviewIsNotInstalledInThisEnvironment"), 'error')
       return
     }
     return runBlenderJob('blender-director', (project, jobId) => {
@@ -551,9 +552,9 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
           <div className={cn('flex h-full w-full items-center justify-center')}>
             <EmptyStateLauncher
               icon={<IconCube size={24} stroke={1.65} />}
-              label="点击进入 3D 导演台"
-              hint="摆位、运镜并输出预演"
-              activateAriaLabel="进入 3D 导演台"
+              label={i18n.t("canvasComponents.clickToEnterThe3DDirectorWorkspace")}
+              hint={i18n.t("canvasComponents.stageObjectsPlanCameraMovementAndExportAPreview")}
+              activateAriaLabel={i18n.t("canvasComponents.enterThe3DDirectorWorkspace")}
               onActivate={() => setFullscreen(true)}
               onPreload={preloadFullscreenEditor}
             />
@@ -589,8 +590,8 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
               blenderJobId && 'text-nomi-accent',
             )}
             type="button"
-            aria-label={blenderJobId ? '停止 Blender 渲染' : '使用 Blender 渲染'}
-            title={blenderJobId ? '停止 Blender 渲染' : '使用 Blender 渲染'}
+            aria-label={blenderJobId ? i18n.t("canvasComponents.stopBlenderRendering") : i18n.t("canvasComponents.renderWithBlender")}
+            title={blenderJobId ? i18n.t("canvasComponents.stopBlenderRendering") : i18n.t("canvasComponents.renderWithBlender")}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation()
@@ -612,8 +613,8 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
               blenderJobId && 'text-nomi-accent',
             )}
             type="button"
-            aria-label={blenderJobId ? '停止 Blender 导演预演' : 'Blender 导演预演'}
-            title={blenderJobId ? '停止 Blender 导演预演' : 'Blender 导演预演'}
+            aria-label={blenderJobId ? i18n.t("canvasComponents.stopTheBlenderDirectorPreview") : i18n.t("canvasComponents.blenderDirectorPreview")}
+            title={blenderJobId ? i18n.t("canvasComponents.stopTheBlenderDirectorPreview") : i18n.t("canvasComponents.blenderDirectorPreview")}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation()
@@ -631,7 +632,7 @@ function Scene3DEditor({ node, width, height, readOnly = false }: Scene3DEditorP
         <React.Suspense fallback={null}>
           <Scene3DFullscreen
             initialState={sceneState}
-            nodeTitle={node.title || '3D导演台'}
+            nodeTitle={node.title || i18n.t("canvasComponents.text3dDirectorWorkspace")}
             readOnly={readOnly}
             onClose={handleCloseFullscreen}
             onScreenshot={(capture) => {

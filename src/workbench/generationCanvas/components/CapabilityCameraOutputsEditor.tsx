@@ -1,4 +1,7 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
+import { translateCanvasComponentText } from '../../../i18n/CanvasComponentText'
 import { NomiSelect } from '../../../design'
 
 export type CameraOutput = {
@@ -22,6 +25,7 @@ export function CapabilityCameraOutputsEditor({
   count: number
   onChange: (index: number, patch: Partial<CameraOutput>) => void
 }): JSX.Element {
+  useTranslation()
   return (
     <div className="mt-3 divide-y divide-nomi-line border-y border-nomi-line">
       {outputs.slice(0, count).map((output, index) => (
@@ -31,13 +35,13 @@ export function CapabilityCameraOutputsEditor({
         >
           <input
             className={inputClass()}
-            aria-label={`机位 ${index + 1} 名称`}
+            aria-label={i18n.t("canvasComponents.cameraName", { v0: index + 1 })}
             value={output.label}
             onChange={(event) => onChange(index, { label: event.target.value })}
           />
           <input
             className={inputClass()}
-            aria-label={`机位 ${index + 1} 方位角`}
+            aria-label={i18n.t("canvasComponents.cameraAzimuth", { v0: index + 1 })}
             type="number"
             min={-180}
             max={180}
@@ -46,7 +50,7 @@ export function CapabilityCameraOutputsEditor({
           />
           <input
             className={inputClass()}
-            aria-label={`机位 ${index + 1} 仰俯角`}
+            aria-label={i18n.t("canvasComponents.cameraElevation", { v0: index + 1 })}
             type="number"
             min={-30}
             max={30}
@@ -54,9 +58,9 @@ export function CapabilityCameraOutputsEditor({
             onChange={(event) => onChange(index, { elevation: Number(event.target.value) })}
           />
           <NomiSelect
-            ariaLabel={`机位 ${index + 1} 景别`}
+            ariaLabel={i18n.t("canvasComponents.cameraShotSize", { v0: index + 1 })}
             value={output.shotSize}
-            options={['特写', '近景', '中景', '全景'].map((value) => ({ value, label: value }))}
+            options={['特写', '近景', '中景', '全景'].map((value) => ({ value, label: translateCanvasComponentText(value) }))}
             onChange={(value) => onChange(index, { shotSize: value })}
           />
         </div>

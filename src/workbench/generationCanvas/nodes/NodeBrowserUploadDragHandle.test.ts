@@ -5,6 +5,7 @@ import { NodeBrowserUploadDragHandle } from './NodeBrowserUploadDragHandle'
 const mocks = vi.hoisted(() => ({ startAssetDrag: vi.fn(), toast: vi.fn() }))
 vi.mock('../../../desktop/bridge', () => ({ getDesktopBridge: () => ({ browser: { startAssetDrag: mocks.startAssetDrag } }) }))
 vi.mock('../../../ui/toast', () => ({ toast: mocks.toast }))
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks() })
 

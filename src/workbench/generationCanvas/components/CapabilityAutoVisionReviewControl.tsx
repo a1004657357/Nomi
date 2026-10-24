@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { IconEye } from '@tabler/icons-react'
@@ -17,6 +19,7 @@ export function CapabilityAutoVisionReviewControl({
 }: {
   onChange: (selection: CapabilityVisionReviewSelection) => void
 }): JSX.Element {
+  useTranslation()
   const [models, setModels] = React.useState<VisionReviewModelOption[]>([])
   const [modelId, setModelId] = React.useState('')
   const [enabled, setEnabled] = React.useState(false)
@@ -37,7 +40,7 @@ export function CapabilityAutoVisionReviewControl({
       setModels([])
       setModelId('')
       setEnabled(false)
-      setError(loadError instanceof Error ? loadError.message : '视觉模型目录加载失败')
+      setError(loadError instanceof Error ? loadError.message : i18n.t("canvasComponents.failedToLoadTheVisionModelCatalog"))
     } finally {
       setLoading(false)
     }
@@ -62,10 +65,9 @@ export function CapabilityAutoVisionReviewControl({
       <label className="flex min-h-7 min-w-0 flex-wrap items-center gap-1.5 text-body-sm font-medium text-nomi-ink">
         <span className="inline-flex min-w-0 max-w-full items-center gap-2 [overflow-wrap:anywhere]">
           <IconEye size={16} stroke={1.7} className="shrink-0" aria-hidden />
-          生成后自动视觉复核
-        </span>
+          {i18n.t("canvasComponents.automaticVisualReviewAfterGeneration")}</span>
         <input
-          aria-label="生成后自动视觉复核"
+          aria-label={i18n.t("canvasComponents.automaticVisualReviewAfterGeneration")}
           type="checkbox"
           className="size-4 shrink-0 accent-[var(--nomi-accent)]"
           checked={enabled}
@@ -76,23 +78,21 @@ export function CapabilityAutoVisionReviewControl({
       {enabled && selectedModel ? (
         <div className="mt-3">
           <NomiSelect
-            ariaLabel="视觉复核模型"
+            ariaLabel={i18n.t("canvasComponents.visualReviewModel")}
             value={modelId}
             options={models.map((model) => ({ value: model.id, label: model.label }))}
             onChange={setModelId}
           />
-          <p className="mt-2 text-micro text-nomi-ink-60">整批增加 1 次多图请求，复核失败不会重新生成。</p>
+          <p className="mt-2 text-micro text-nomi-ink-60">{i18n.t("canvasComponents.addsOneMultiImageRequestForTheBatchAFailed")}</p>
         </div>
       ) : loading ? (
-        <p className="mt-2 text-micro text-nomi-ink-60">正在读取视觉模型</p>
+        <p className="mt-2 text-micro text-nomi-ink-60">{i18n.t("canvasComponents.loadingVisionModels")}</p>
       ) : models.length === 0 ? (
         <button
           type="button"
           className="mt-2 text-micro font-medium text-nomi-accent hover:underline"
           onClick={() => window.dispatchEvent(new CustomEvent('nomi-open-model-catalog'))}
-        >
-          连接支持图片输入的文本模型
-        </button>
+        >{i18n.t("canvasComponents.connectATextModelThatSupportsImageInput")}</button>
       ) : null}
       {error ? <p className="mt-2 text-micro text-workbench-danger">{error}</p> : null}
     </div>

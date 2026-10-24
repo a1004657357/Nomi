@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { IconPlayerStopFilled, IconRobot, IconSend2 } from '@tabler/icons-react'
@@ -54,17 +56,17 @@ function messageId(): string {
 
 function planActionLabel(action: VibingDirectorPlan['actions'][number]): string {
   switch (action.op) {
-    case 'set_stage': return `设置场景：${action.preset}`
-    case 'set_blocking_layout': return `整理摆位：${action.template}`
-    case 'place_asset': return `摆放资产：${action.name}`
-    case 'add_marker': return `添加走位标记：${action.name}`
-    case 'move_object': return `调整对象：${action.objectRef}`
-    case 'remove_object': return `移除对象：${action.objectRef}`
-    case 'set_relation': return `设置关系：${action.id}`
-    case 'remove_relation': return `移除关系：${action.relationRef}`
-    case 'set_camera': return `调整机位：${action.name || action.cameraRef || '导演相机'}`
-    case 'set_camera_path': return `设置运镜：${action.cameraRef || '导演相机'}`
-    case 'set_beat': return `更新节拍：${action.title}`
+    case 'set_stage': return i18n.t("canvasComponents.setScene", { v0: action.preset })
+    case 'set_blocking_layout': return i18n.t("canvasComponents.arrangeBlocking", { v0: action.template })
+    case 'place_asset': return i18n.t("canvasComponents.placeAsset", { v0: action.name })
+    case 'add_marker': return i18n.t("canvasComponents.addBlockingMarker", { v0: action.name })
+    case 'move_object': return i18n.t("canvasComponents.adjustObject", { v0: action.objectRef })
+    case 'remove_object': return i18n.t("canvasComponents.removeObject", { v0: action.objectRef })
+    case 'set_relation': return i18n.t("canvasComponents.setRelationship", { v0: action.id })
+    case 'remove_relation': return i18n.t("canvasComponents.removeRelationship", { v0: action.relationRef })
+    case 'set_camera': return i18n.t("canvasComponents.adjustCamera", { v0: action.name || action.cameraRef || i18n.t("canvasComponents.directorCamera") })
+    case 'set_camera_path': return i18n.t("canvasComponents.setCameraMovement", { v0: action.cameraRef || i18n.t("canvasComponents.directorCamera") })
+    case 'set_beat': return i18n.t("canvasComponents.updateBeat", { v0: action.title })
   }
 }
 
@@ -80,6 +82,7 @@ export default function VibingDirectorAssistantPanel({
   onApplyPlan,
   onCancelBlender,
 }: VibingDirectorAssistantPanelProps): JSX.Element {
+  useTranslation()
   const [draft, setDraft] = React.useState('')
   const [messages, setMessages] = React.useState<DirectorMessage[]>([])
   const [busy, setBusy] = React.useState(false)
@@ -115,7 +118,7 @@ export default function VibingDirectorAssistantPanel({
     setMessages((current) => [
       ...current,
       { id: userId, role: 'user', content: text },
-      { id: assistantId, role: 'assistant', content: '处理中...', pending: true },
+      { id: assistantId, role: 'assistant', content: i18n.t("canvasComponents.processing"), pending: true },
     ])
     setDraft('')
     setBusy(true)
@@ -136,7 +139,7 @@ export default function VibingDirectorAssistantPanel({
           onRepairStart: (firstFailure) => {
             project.assertCurrent()
             updateMessage(assistantId, {
-              content: `${failurePrefix}兼容协议响应不可执行：${firstFailure}\n正在自动修复一次…`,
+              content: i18n.t("canvasComponents.theCompatibilityProtocolResponseCannotBeExecutedAttemptingOneAutomatic", { v0: failurePrefix, v1: firstFailure }),
               pending: true,
               error: false,
             })
@@ -160,7 +163,7 @@ export default function VibingDirectorAssistantPanel({
         const { resolution } = outcome
         if (!resolution.ok) {
           updateMessage(assistantId, {
-            content: `Director Agent 执行失败：${failurePrefix}${resolution.message}`,
+            content: i18n.t("canvasComponents.directorAgentFailed", { v0: failurePrefix, v1: resolution.message }),
             pending: false,
             error: true,
           })
@@ -215,21 +218,21 @@ export default function VibingDirectorAssistantPanel({
           if (!request) return
           queuePlan(request, project)
           updateMessage(assistantId, {
-            content: `${request.summary}\n\n已生成 Blender 导演计划，等待确认。`,
+            content: i18n.t("canvasComponents.blenderDirectorPlanGeneratedAwaitingConfirmation", { v0: request.summary }),
             pending: false,
           })
           return
         }
         const finalText = result.response.text.trim()
         updateMessage(assistantId, {
-          content: streamed || finalText || '已提交 Blender 导演计划，等待确认。',
+          content: streamed || finalText || i18n.t("canvasComponents.blenderDirectorPlanSubmittedAwaitingConfirmation"),
           pending: false,
         })
       } catch (error: unknown) {
         if (!isProjectExecutionContextCurrent(project)) return
         const detail = error instanceof Error && error.message ? error.message : String(error)
         if (initialProtocol !== 'tools' || !isNativeToolTransportError(error)) {
-          updateMessage(assistantId, { content: `Director Agent 执行失败：${detail}`, pending: false, error: true })
+          updateMessage(assistantId, { content: i18n.t("canvasComponents.directorAgentFailed199", { v0: detail }), pending: false, error: true })
           return
         }
         // This provider/model has already rejected the native tool envelope. Persist the
@@ -237,7 +240,7 @@ export default function VibingDirectorAssistantPanel({
         // make every later message repeat the rejected native request.
         rememberVibingDirectorStructuredProtocol()
         updateMessage(assistantId, {
-          content: '当前模型不兼容 Nomi 原生 Function Call；已为该模型启用兼容协议，正在重试…',
+          content: i18n.t("canvasComponents.thisModelDoesNotSupportNomiSNativeFunctionCall"),
           pending: true,
         })
         try {
@@ -252,19 +255,19 @@ export default function VibingDirectorAssistantPanel({
             },
           })
           project.assertCurrent()
-          const request = await resolveStructuredResponse(fallback.response.text, '原生工具请求被拒绝；')
+          const request = await resolveStructuredResponse(fallback.response.text, i18n.t("canvasComponents.nativeToolRequestRejected"))
           project.assertCurrent()
           if (!request) return
           queuePlan(request, project)
           updateMessage(assistantId, {
-            content: `${request.summary}\n\n已生成 Blender 导演计划，等待确认。`,
+            content: i18n.t("canvasComponents.blenderDirectorPlanGeneratedAwaitingConfirmation", { v0: request.summary }),
             pending: false,
           })
         } catch (fallbackError: unknown) {
           if (!isProjectExecutionContextCurrent(project)) return
           const fallbackDetail = fallbackError instanceof Error && fallbackError.message ? fallbackError.message : String(fallbackError)
           updateMessage(assistantId, {
-            content: `Director Agent 执行失败：原生工具请求被拒绝；兼容协议也未完成（${fallbackDetail}）`,
+            content: i18n.t("canvasComponents.directorAgentFailedTheNativeToolRequestWasRejectedAnd", { v0: fallbackDetail }),
             pending: false,
             error: true,
           })
@@ -306,8 +309,8 @@ export default function VibingDirectorAssistantPanel({
         id: messageId(),
         role: 'assistant',
         content: result.rejected.length
-          ? `Blender 已回传，但有 ${result.rejected.length} 项未应用。`
-          : 'Blender 已完成场景更新并回传预览。',
+          ? i18n.t("canvasComponents.blenderReturnedAResultButItemsWereNotApplied", { v0: result.rejected.length })
+          : i18n.t("canvasComponents.blenderUpdatedTheSceneAndReturnedAPreview"),
       }])
     } catch (error: unknown) {
       if (!isProjectExecutionContextCurrent(project) || !isProjectExecutionContextCurrent(pending.project)) return
@@ -317,7 +320,7 @@ export default function VibingDirectorAssistantPanel({
       setMessages((current) => [...current, {
         id: messageId(),
         role: 'assistant',
-        content: `Blender 导演计划未执行：${message}`,
+        content: i18n.t("canvasComponents.blenderDirectorPlanWasNotExecuted", { v0: message }),
         error: true,
       }])
     }
@@ -331,16 +334,16 @@ export default function VibingDirectorAssistantPanel({
   }, [applying, pendingPlan])
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-[var(--workbench-surface-solid)]" aria-label="VIBING Director Agent">
+    <section className="flex h-full min-h-0 flex-col bg-[var(--workbench-surface-solid)]" aria-label={i18n.t('canvasComponents.vibingDirectorAgent')}>
       <header className="flex shrink-0 items-center gap-2 border-b border-[var(--workbench-border)] px-3 py-2">
         <IconRobot size={16} className="text-[var(--workbench-muted)]" />
-        <span className="min-w-0 flex-1 truncate text-body-sm font-medium text-[var(--workbench-ink)]">Director Agent</span>
+        <span className="min-w-0 flex-1 truncate text-body-sm font-medium text-[var(--workbench-ink)]">{i18n.t('canvasComponents.directorAgent')}</span>
         <AssistantModelPicker className="h-7 max-w-[150px]" />
       </header>
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
         {messages.length === 0 ? (
-          <div className="text-caption leading-5 text-[var(--workbench-muted)]">描述要在 Blender 中搭建的场景、人物调度或机位。</div>
+          <div className="text-caption leading-5 text-[var(--workbench-muted)]">{i18n.t("canvasComponents.describeTheSceneCharacterBlockingOrCameraSetupToBuild")}</div>
         ) : messages.map((message) => (
           <div
             key={message.id}
@@ -368,16 +371,14 @@ export default function VibingDirectorAssistantPanel({
                 type="button"
                 disabled={applying}
                 onClick={rejectPendingPlan}
-              >
-                跳过
-              </button>
+              >{i18n.t("canvasComponents.skip")}</button>
               <button
                 className="rounded-nomi-sm border border-transparent bg-[var(--nomi-ink)] px-2 py-1 text-micro text-[var(--nomi-paper)] hover:bg-[var(--nomi-accent)] disabled:opacity-40"
                 type="button"
                 disabled={applying}
                 onClick={() => { void approvePendingPlan() }}
               >
-                {applying ? '正在执行 Blender…' : '应用到 Blender'}
+                {applying ? i18n.t("canvasComponents.executingInBlender") : i18n.t("canvasComponents.applyToBlender")}
               </button>
             </div>
           </div>
@@ -393,8 +394,8 @@ export default function VibingDirectorAssistantPanel({
       >
         <AutoGrowTextarea
           className="min-h-16 w-full rounded-nomi border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] px-2 py-2 text-caption leading-5 text-[var(--workbench-ink)] placeholder:text-[var(--workbench-muted)]"
-          aria-label="向 Director Agent 发送消息"
-          placeholder="例如：搭一个雨后街道开场，两位角色在门口相遇，镜头缓慢推进。"
+          aria-label={i18n.t("canvasComponents.sendAMessageToDirectorAgent")}
+          placeholder={i18n.t("canvasComponents.forExampleAStreetAfterRainTwoCharactersMeetAt")}
           value={draft}
           disabled={busy || applying}
           onChange={(event) => setDraft(event.target.value)}
@@ -405,7 +406,7 @@ export default function VibingDirectorAssistantPanel({
             <WorkbenchIconButton
               type="button"
               className="grid size-7 place-items-center rounded-full border-0 bg-[var(--nomi-ink)] text-[var(--nomi-paper)] hover:bg-[var(--nomi-accent)]"
-              label="停止 Blender 导演计划"
+              label={i18n.t("canvasComponents.stopTheBlenderDirectorPlan")}
               onClick={onCancelBlender}
               icon={<IconPlayerStopFilled size={13} />}
             />
@@ -413,7 +414,7 @@ export default function VibingDirectorAssistantPanel({
             <WorkbenchIconButton
               type="button"
               className="grid size-7 place-items-center rounded-full border-0 bg-[var(--nomi-ink)] text-[var(--nomi-paper)] hover:bg-[var(--nomi-accent)]"
-              label="停止 Director Agent"
+              label={i18n.t("canvasComponents.stopDirectorAgent")}
               onClick={() => cancelRef.current?.()}
               icon={<IconPlayerStopFilled size={13} />}
             />
@@ -422,7 +423,7 @@ export default function VibingDirectorAssistantPanel({
               type="submit"
               className="grid size-7 place-items-center rounded-full border-0 bg-[var(--nomi-ink)] text-[var(--nomi-paper)] hover:bg-[var(--nomi-accent)] disabled:cursor-not-allowed disabled:bg-[var(--nomi-ink-05)]"
               disabled={!draft.trim()}
-              label="发送给 Director Agent"
+              label={i18n.t("canvasComponents.sendToDirectorAgent")}
               icon={<IconSend2 size={15} />}
             />
           )}

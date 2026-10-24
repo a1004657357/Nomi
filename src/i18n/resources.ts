@@ -1,3 +1,4 @@
+import { enCanvasComponents, zhCanvasComponents } from './locales/canvasComponents'
 import { enShotTable, zhShotTable } from './locales/shotTable'
 import { enAntigravity, zhAntigravity } from './locales/antigravity'
 import { enModelSetup, zhModelSetup } from './locales/modelSetup'
@@ -26,6 +27,7 @@ import { enCapabilityWorkflow, zhCapabilityWorkflow } from './locales/capability
 
 export const zhCN = {
   capabilityWorkflow: zhCapabilityWorkflow,
+  canvasComponents: zhCanvasComponents,
   shotTable: zhShotTable,
   common: {
     language: '语言',
@@ -456,6 +458,7 @@ type TranslationShape<T> = {
 
 export const en = {
   capabilityWorkflow: enCapabilityWorkflow,
+  canvasComponents: enCanvasComponents,
   shotTable: enShotTable,
   common: {
     language: 'Language',

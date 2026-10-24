@@ -1,6 +1,7 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
-import i18n from '../../../i18n'
 import { IconPaperclip } from '@tabler/icons-react'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { toast } from '../../../ui/toast'
@@ -13,7 +14,7 @@ function ensureAssetDragErrorSubscription(): void {
   const subscribe = getDesktopBridge()?.browser?.onAssetDragError
   if (!subscribe) return
   assetDragErrorSubscribed = true
-  subscribe((event) => toast(event.message || '素材拖入网页失败', 'error'))
+  subscribe((event) => toast(event.message || i18n.t("canvasComponents.failedToDragTheAssetIntoTheWebpage"), 'error'))
 }
 
 export type NodeBrowserUploadDragHandleProps = {
@@ -21,6 +22,7 @@ export type NodeBrowserUploadDragHandleProps = {
 }
 
 export function NodeBrowserUploadDragHandle({ url }: NodeBrowserUploadDragHandleProps): JSX.Element | null {
+  useTranslation()
   React.useEffect(ensureAssetDragErrorSubscription, [])
   if (!url.startsWith('nomi-local://asset/')) return null
 
@@ -48,8 +50,8 @@ export function NodeBrowserUploadDragHandle({ url }: NodeBrowserUploadDragHandle
         'hover:text-nomi-ink hover:shadow-nomi-md',
         'focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
       )}
-      aria-label="拖到网页上传"
-      title="拖到 ChatGPT 或即梦上传区"
+      aria-label={i18n.t("canvasComponents.dragToUploadOnAWebpage")}
+      title={i18n.t("canvasComponents.dragToTheChatGPTOrJimengUploadArea")}
       onClick={(event) => event.stopPropagation()}
       onDragStart={handleDragStart}
       onPointerDown={(event) => event.stopPropagation()}

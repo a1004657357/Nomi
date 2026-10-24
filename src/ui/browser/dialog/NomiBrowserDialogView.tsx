@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { type JSX } from 'react'
+import { translateCanvasComponentText } from '../../../i18n/CanvasComponentText'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import { IconCamera } from '@tabler/icons-react'
@@ -305,7 +306,7 @@ export function NomiBrowserDialogView({
                         }}
                       >
                         <IconWorld size={15} stroke={1.7} className="shrink-0 text-nomi-ink-40" aria-hidden="true" />
-                        <span className="min-w-0 flex-1 truncate">{site.name}</span>
+                        <span className="min-w-0 flex-1 truncate">{translateCanvasComponentText(site.name)}</span>
                         <IconExternalLink size={13} stroke={1.7} className="shrink-0 text-nomi-ink-30" aria-hidden="true" />
                       </button>
                     ))}

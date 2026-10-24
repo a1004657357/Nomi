@@ -1,6 +1,7 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
-import i18n from '../../../i18n'
 import { Popover } from '@mantine/core'
 import { IconAdjustmentsHorizontal, IconPlayerPlay } from '@tabler/icons-react'
 import { NomiSelect, WorkbenchButton } from '../../../design'
@@ -53,7 +54,7 @@ function firstSelectedModelValue(nodes: readonly GenerationCanvasNode[], mediaKi
 }
 
 function targetKindLabel(mediaKind: BatchMediaKind): string {
-  return mediaKind === 'video' ? '视频' : '图片'
+  return mediaKind === 'video' ? i18n.t("canvasComponents.video") : i18n.t("canvasComponents.image")
 }
 
 function isTargetKindNode(node: GenerationCanvasNode, mediaKind: BatchMediaKind): boolean {
@@ -61,6 +62,7 @@ function isTargetKindNode(node: GenerationCanvasNode, mediaKind: BatchMediaKind)
 }
 
 export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Element {
+  useTranslation()
   const [open, setOpen] = React.useState(false)
   const [skipExisting, setSkipExisting] = React.useState(true)
   const [targetKind, setTargetKind] = React.useState<BatchMediaKind>('image')
@@ -132,12 +134,12 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
     const selectedTargets = state.nodes.filter((node) => selectedIdSet.has(node.id) && isTargetKindNode(node, targetKind))
     const label = targetKindLabel(targetKind)
     if (!selectedTargets.length) {
-      toast(`没有可批量设置的${label}节点`, 'warning')
+      toast(i18n.t("canvasComponents.noNodesAvailableForBatchSettings", { v0: label }), 'warning')
       return
     }
     const generationTargets = run ? selectedTargets.filter((node) => !skipExisting || !hasResult(node)) : selectedTargets
     if (run && !generationTargets.length) {
-      toast(`选中的${label}节点都已经有结果`, 'warning')
+      toast(i18n.t("canvasComponents.allSelectedNodesAlreadyHaveResults", { v0: label }), 'warning')
       return
     }
     const regenerationTargetIds = new Set(
@@ -172,7 +174,7 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
       applySettings(node, state.nodes, state.edges)
     }
     if (!run) {
-      toast(`已应用到 ${applyTargets.length} 个${label}节点`, 'success')
+      toast(i18n.t("canvasComponents.appliedToNodes", { v0: applyTargets.length, v1: label }), 'success')
       setOpen(false)
       return
     }
@@ -208,7 +210,7 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
           ariaLabel={control.label}
           leadingLabel={control.label}
           value={controlInitialValue(control, draftMeta) || 'false'}
-          options={[{ value: 'true', label: '开' }, { value: 'false', label: '关' }]}
+          options={[{ value: 'true', label: i18n.t("canvasComponents.on") }, { value: 'false', label: i18n.t("canvasComponents.off") }]}
           onChange={(value) => patchControl(control, value)}
         />
       )
@@ -258,13 +260,12 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
             'bg-nomi-ink text-nomi-paper text-body font-medium hover:bg-nomi-accent',
             'transition-colors duration-nomi-fast ease-nomi-fast disabled:opacity-50 disabled:cursor-not-allowed',
           )}
-          title="批量设置模型和参数"
+          title={i18n.t("canvasComponents.batchModelAndParameterSettings")}
           disabled={selectedImageNodes.length === 0 && selectedVideoNodes.length === 0}
           onClick={() => setOpen((value) => !value)}
         >
           <IconAdjustmentsHorizontal size={16} stroke={1.6} aria-hidden />
-          批量设置
-        </button>
+          {i18n.t("canvasComponents.batchSettings")}</button>
       </Popover.Target>
       <Popover.Dropdown
         className={cn('w-[360px] max-w-[calc(100vw-32px)]')}
@@ -281,8 +282,8 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
         <div className={cn('flex flex-col gap-3')}>
           <div className={cn('flex min-w-0 flex-wrap items-center gap-1.5')}>
             <div className={cn('min-w-0 max-w-full [overflow-wrap:anywhere]')}>
-              <div className={cn('text-body-sm font-medium text-nomi-ink')}>批量生成设置</div>
-              <div className={cn('text-caption text-nomi-ink-60')}>{selectedTargetNodes.length} 个{targetLabel}节点</div>
+              <div className={cn('text-body-sm font-medium text-nomi-ink')}>{i18n.t("canvasComponents.batchGenerationSettings")}</div>
+              <div className={cn('text-caption text-nomi-ink-60')}>{i18n.t("canvasComponents.nodes", { v0: selectedTargetNodes.length, v1: targetLabel })}</div>
             </div>
             <label className={cn('inline-flex min-h-7 min-w-0 max-w-full items-center gap-1.5 text-caption text-nomi-ink-80 select-none [overflow-wrap:anywhere]')}>
               <input
@@ -291,17 +292,17 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
                 checked={skipExisting}
                 onChange={(event) => setSkipExisting(event.target.checked)}
               />
-              {targetKind === 'video' ? '只生成未成片' : '只生成未出图'}
+              {targetKind === 'video' ? i18n.t("canvasComponents.onlyGenerateMissingVideos") : i18n.t("canvasComponents.onlyGenerateMissingImages")}
             </label>
           </div>
 
           {hasMixedTargetKinds ? (
             <div className={cn('flex flex-wrap items-center gap-2')}>
               <NomiSelect
-                ariaLabel="类型"
-                leadingLabel="类型"
+                ariaLabel={i18n.t("canvasComponents.type")}
+                leadingLabel={i18n.t("canvasComponents.type")}
                 value={targetKind}
-                options={[{ value: 'image', label: '图片' }, { value: 'video', label: '视频' }]}
+                options={[{ value: 'image', label: i18n.t("canvasComponents.image") }, { value: 'video', label: i18n.t("canvasComponents.video") }]}
                 onChange={(value) => setTargetKind(value === 'video' ? 'video' : 'image')}
               />
             </div>
@@ -318,8 +319,8 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
           ) : (
             <div className={cn('flex flex-wrap items-center gap-2')}>
               <NomiSelect
-                ariaLabel="模型"
-                placeholder="选择模型"
+                ariaLabel={i18n.t("canvasComponents.model")}
+                placeholder={i18n.t("canvasComponents.selectAModel")}
                 triggerMaxWidth={210}
                 value={modelSelect.modelValue}
                 options={modelSelect.modelOptions}
@@ -327,8 +328,8 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
               />
               {modelSelect.providerOptions.length > 0 ? (
                 <NomiSelect
-                  ariaLabel="供应商"
-                  leadingLabel="供应商"
+                  ariaLabel={i18n.t("canvasComponents.provider")}
+                  leadingLabel={i18n.t("canvasComponents.provider")}
                   value={modelSelect.providerValue}
                   options={modelSelect.providerOptions}
                   onChange={modelSelect.onProviderPick}
@@ -344,17 +345,14 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
           ) : null}
 
           <div className={cn('flex items-center justify-end gap-2 pt-1')}>
-            <WorkbenchButton className={cn('h-8 min-h-8 px-3 cursor-pointer')} onClick={() => void applyAndMaybeRun(false)} disabled={selectedTargetNodes.length === 0}>
-              应用参数
-            </WorkbenchButton>
+            <WorkbenchButton className={cn('h-8 min-h-8 px-3 cursor-pointer')} onClick={() => void applyAndMaybeRun(false)} disabled={selectedTargetNodes.length === 0}>{i18n.t("canvasComponents.applyParameters")}</WorkbenchButton>
             <WorkbenchButton
               className={cn('h-8 min-h-8 px-3 cursor-pointer bg-nomi-ink text-nomi-paper border-nomi-ink hover:bg-nomi-ink hover:text-nomi-paper')}
               onClick={() => void applyAndMaybeRun(true)}
               disabled={runnableCount === 0 || modelOptions.length === 0}
             >
               <IconPlayerPlay size={14} stroke={1.7} aria-hidden />
-              应用并生成
-            </WorkbenchButton>
+              {i18n.t("canvasComponents.applyAndGenerate")}</WorkbenchButton>
           </div>
         </div>
       </Popover.Dropdown>

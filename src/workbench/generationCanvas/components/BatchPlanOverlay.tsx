@@ -1,3 +1,4 @@
+import i18n from '../../../i18n'
 // 执行计划画布原位预览(harness S2b,获批样张方案 A):
 // 波次徽标盖在节点左上角(① 先跑、②③ 等前置),被拦节点标 ⚠;顶部确认条一句话+价格+两个键。
 // 外挂 overlay,不喂 GenerationCanvas/BaseGenerationNode 两个白名单巨壳(R12);
@@ -125,9 +126,8 @@ export function BatchPlanOverlay() {
           {t('generationCommon.batchPlan.summary', { count: planCount, waves: plan.waves.length })}
         </span>
         <span className={cn('text-caption text-nomi-ink-60 whitespace-nowrap')}>
-          第 1 波 {firstWaveCount} 个并行,确认前不调用不扣费
-          {regenerationSourceNodeId ? ' · 确认后新建版本，旧结果保留' : ''}
-          {plan.blocked.length > 0 ? ` · ${plan.blocked.length} 个被拦(看 ⚠)` : ''}
+          {i18n.t("canvasComponents.wave1")}{firstWaveCount} {i18n.t("canvasComponents.inParallelNoRequestsOrChargesBeforeConfirmation")}{regenerationSourceNodeId ? i18n.t("canvasComponents.confirmationCreatesANewVersionAndPreservesTheOldResult") : ''}
+          {plan.blocked.length > 0 ? i18n.t("canvasComponents.blockedSee", { v0: plan.blocked.length }) : ''}
         </span>
         {costLabel ? (
           <span

@@ -1,3 +1,4 @@
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -519,9 +520,7 @@ export default function Scene3DFullscreen({
                       className={`min-w-0 flex-1 rounded-nomi-sm px-2 py-1.5 text-caption ${leftPanelTab === 'scene' ? 'bg-[var(--nomi-ink-05)] text-[var(--workbench-ink)]' : 'text-[var(--workbench-muted)] hover:bg-[var(--nomi-ink-05)]'}`}
                       type="button"
                       onClick={() => setLeftPanelTab('scene')}
-                    >
-                      场景
-                    </button>
+                    >{i18n.t("canvasComponents.scene")}</button>
                     <button
                       className={`min-w-0 flex-1 rounded-nomi-sm px-2 py-1.5 text-caption ${leftPanelTab === 'sidecar' ? 'bg-[var(--nomi-ink-05)] text-[var(--workbench-ink)]' : 'text-[var(--workbench-muted)] hover:bg-[var(--nomi-ink-05)]'}`}
                       type="button"

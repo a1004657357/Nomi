@@ -124,7 +124,7 @@ export type BrowserStartShortcut = {
 }
 export const BROWSER_START_SHORTCUTS: readonly BrowserStartShortcut[] = [
   { label: 'ChatGPT Images', url: 'https://chatgpt.com/images/', hintKey: 'browserAssets.sites.chatgptHint' },
-  { label: '即梦 Web', url: 'https://jimeng.jianying.com/ai-tool/image/generate', hintKey: 'browserAssets.sites.jimengHint' },
+  { labelKey: "canvasComponents.jimengWeb", url: 'https://jimeng.jianying.com/ai-tool/image/generate', hintKey: 'browserAssets.sites.jimengHint' },
   { label: 'Pinterest', url: 'https://www.pinterest.com/', hintKey: 'browserAssets.sites.pinterestHint' },
   { label: 'Behance', url: 'https://www.behance.net/', hintKey: 'browserAssets.sites.behanceHint' },
   { label: 'Dribbble', url: 'https://dribbble.com/', hintKey: 'browserAssets.sites.dribbbleHint' },

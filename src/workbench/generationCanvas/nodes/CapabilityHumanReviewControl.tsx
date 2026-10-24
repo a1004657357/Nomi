@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import {
@@ -15,7 +17,7 @@ import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { patchForQualityHumanReview } from './capabilityResultCollectionModel'
 
 function reviewLabel(review: GenerationQualityHumanReview): string {
-  return review.verdict === 'accepted' ? '人工通过' : '人工拒绝'
+  return review.verdict === 'accepted' ? i18n.t("canvasComponents.manuallyAccepted") : i18n.t("canvasComponents.manuallyRejected")
 }
 
 export function CapabilityHumanReviewControl({
@@ -27,6 +29,7 @@ export function CapabilityHumanReviewControl({
   collection: GenerationResultCollection
   readOnly: boolean
 }): JSX.Element | null {
+  useTranslation()
   const captureHistory = useGenerationCanvasStore((state) => state.captureHistory)
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const review = collection.quality?.humanReview
@@ -58,7 +61,7 @@ export function CapabilityHumanReviewControl({
       className="space-y-2"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 [overflow-wrap:anywhere]">
-        <span className="text-micro font-semibold text-nomi-ink-80">人工视觉验收</span>
+        <span className="text-micro font-semibold text-nomi-ink-80">{i18n.t("canvasComponents.manualVisualReview")}</span>
         {review ? (
           <span
             className={cn(
@@ -69,7 +72,7 @@ export function CapabilityHumanReviewControl({
             {reviewLabel(review)}
           </span>
         ) : (
-          <span className="min-w-0 max-w-full text-micro text-nomi-ink-40">未复核</span>
+          <span className="min-w-0 max-w-full text-micro text-nomi-ink-40">{i18n.t("canvasComponents.notReviewed")}</span>
         )}
       </div>
       {readOnly ? (
@@ -77,11 +80,11 @@ export function CapabilityHumanReviewControl({
       ) : (
         <>
           <textarea
-            aria-label="人工验收备注"
+            aria-label={i18n.t("canvasComponents.manualReviewNotes")}
             maxLength={500}
             rows={2}
             value={note}
-            placeholder="记录身份、构图、风格或时序问题"
+            placeholder={i18n.t("canvasComponents.recordIdentityCompositionStyleOrTimingIssues")}
             className="w-full resize-y rounded-nomi-sm border border-nomi-line bg-nomi-ink-05 px-2 py-1.5 text-micro leading-[1.4] text-nomi-ink outline-none focus:border-nomi-accent"
             onChange={(event) => setNote(event.target.value)}
           />
@@ -98,8 +101,7 @@ export function CapabilityHumanReviewControl({
               onClick={() => decide('accepted')}
             >
               <IconCheck size={14} stroke={1.9} aria-hidden />
-              通过
-            </button>
+              {i18n.t("canvasComponents.accept")}</button>
             <button
               type="button"
               aria-pressed={review?.verdict === 'rejected'}
@@ -112,8 +114,7 @@ export function CapabilityHumanReviewControl({
               onClick={() => decide('rejected')}
             >
               <IconX size={14} stroke={1.9} aria-hidden />
-              拒绝
-            </button>
+              {i18n.t("canvasComponents.reject")}</button>
           </div>
           {review ? (
             <button
@@ -122,14 +123,11 @@ export function CapabilityHumanReviewControl({
               onClick={() => applyReview(undefined)}
             >
               <IconTrash size={12} stroke={1.7} aria-hidden />
-              清除人工结论
-            </button>
+              {i18n.t("canvasComponents.clearManualVerdict")}</button>
           ) : null}
         </>
       )}
-      <p className="text-micro leading-[1.35] text-nomi-ink-40">
-        人工结论独立保存，不覆盖自动质量报告。
-      </p>
+      <p className="text-micro leading-[1.35] text-nomi-ink-40">{i18n.t("canvasComponents.manualVerdictsAreSavedSeparatelyAndDoNotOverwriteAutomatic")}</p>
     </div>
   )
 }

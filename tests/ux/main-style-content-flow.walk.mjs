@@ -23,13 +23,15 @@ import { contentFlowCases, findContentFlowRow } from '../../scripts/lib/mainStyl
 const require = createRequire(import.meta.url)
 // The TSX projections load CJS packages; share their provider instances rather than ESM copies.
 const { MantineProvider, Menu } = require('@mantine/core')
-const { I18nextProvider } = require('react-i18next')
+const { I18nextProvider, useTranslation } = require('react-i18next')
+const { resources } = require('../../src/i18n/resources.ts')
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const out = path.resolve(process.env.NOMI_STYLE_SHOTS_DIR || path.join(root, 'tests/ux/shots/main-style-content-flow'))
 fs.mkdirSync(out, { recursive: true })
 const noop = () => {}
+const locale = process.env.NOMI_STYLE_LOCALE === 'en' ? 'en' : 'zh-CN'
 const i18n = createInstance()
-await i18n.init({ lng: 'zh', resources: { zh: { translation: {} } }, initImmediate: false })
+await i18n.init({ lng: locale, resources, initImmediate: false })
 
 function evaluatePresentation(expression, scope) {
   const output = ts.transpileModule(`const result = (${expression});`, {
@@ -57,9 +59,9 @@ function declaration(file, symbol, scope) {
 
 const nodes = 'src/workbench/generationCanvas/nodes/'
 const scope = {
-  React, ...icons, cn, Menu, WorkbenchButton, WorkbenchIconButton, NomiSelect,
+  React, ...icons, cn, Menu, WorkbenchButton, WorkbenchIconButton, NomiSelect, i18n, useTranslation,
   Math, Number, String, Array, qualityLabel, formatVideoFrameTime, MODEL3D_CAPTURE_RATIOS,
-  selectedTargetNodes: [{ id: 'one' }, { id: 'two' }], targetLabel: '图片', targetKind: 'image',
+  selectedTargetNodes: [{ id: 'one' }, { id: 'two' }], targetLabel: i18n.t('canvasComponents.image'), targetKind: 'image',
   skipExisting: true, setSkipExisting: noop, enabled: true, loading: false, models: [{}], setEnabled: noop,
   isMoodRecipe: false, selectedRecipe: { id: 'image.multiview.custom' }, moodOutputCount: 25,
   maxOutputs: 9, outputCount: 6, setOutputCount: noop, moodGenerationMode: 'matrix',
@@ -100,7 +102,7 @@ const cssFile = path.join(out, 'gallery.css')
 fs.writeFileSync(htmlFile, markup)
 execFileSync('pnpm', ['exec', 'tailwindcss', '-c', 'tailwind.config.ts', '--content', htmlFile, '-o', cssFile], { cwd: root, stdio: 'pipe' })
 const css = fs.readFileSync(require.resolve('@mantine/core/styles.css'), 'utf8') + fs.readFileSync(cssFile, 'utf8')
-const documentHtml = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>Nomi Content Flow Verification</title><style>${css}</style><style>html,body{height:auto;min-height:100%;overflow:visible}body{margin:0;background:var(--nomi-bg);font-family:var(--nomi-font-sans)}main{padding:16px;display:grid;gap:18px}section{min-width:0}h2{font-size:12px;font-weight:500;color:var(--nomi-ink-60);margin:0 0 6px}[data-frame]{width:100%;border:1px solid var(--nomi-line);min-width:0}body>style{display:none}</style></head><body><main>${markup}</main></body></html>`
+const documentHtml = `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><title>Nomi Content Flow Verification</title><style>${css}</style><style>html,body{height:auto;min-height:100%;overflow:visible}body{margin:0;background:var(--nomi-bg);font-family:var(--nomi-font-sans)}main{padding:16px;display:grid;gap:18px}section{min-width:0}h2{font-size:12px;font-weight:500;color:var(--nomi-ink-60);margin:0 0 6px}[data-frame]{width:100%;border:1px solid var(--nomi-line);min-width:0}body>style{display:none}</style></head><body><main>${markup}</main></body></html>`
 fs.writeFileSync(htmlFile, documentHtml)
 
 const executablePath = process.env.NOMI_STYLE_CHROMIUM || chromium.executablePath()
@@ -168,7 +170,7 @@ try {
       results.push({ width, stress, cases: contentFlowCases.length, screenshotHeight, screenshot, findings })
       assert.deepEqual(findings, [], JSON.stringify({ width, stress, findings }))
       await page.setViewportSize({ width, height: 1000 })
-      for (const selector of ['[data-case="portrait"] button[aria-label="关闭原图对比"]', '[data-case="keyframe-header"] button[aria-label="关闭"]', '[data-case="image-close"] button[aria-label="关闭全屏对比"]']) {
+      for (const selector of [`[data-case="portrait"] button[aria-label="${i18n.t('canvasComponents.closeSourceComparison')}"]`, `[data-case="keyframe-header"] button[aria-label="${i18n.t('canvasComponents.close')}"]`, `[data-case="image-close"] button[aria-label="${i18n.t('canvasComponents.closeFullscreenComparison')}"]`]) {
         const button = page.locator(selector)
         await button.scrollIntoViewIfNeeded()
         assert.ok(await button.evaluate((element) => {

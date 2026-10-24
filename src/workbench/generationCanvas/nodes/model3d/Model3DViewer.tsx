@@ -1,3 +1,4 @@
+import i18n from '../../../../i18n'
 import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useThree } from '@react-three/fiber'
@@ -304,9 +305,7 @@ const Model3DViewer = React.forwardRef<Model3DViewerHandle, Model3DViewerProps>(
           camera={{ position: [2.4, 1.8, 3.2], fov: 45 }}
           dpr={[1, 2]}
           fence={
-            <div className="flex h-full w-full items-center justify-center text-caption text-nomi-ink-40">
-              3D 场景加载中
-            </div>
+            <div className="flex h-full w-full items-center justify-center text-caption text-nomi-ink-40">{i18n.t("canvasComponents.loading3DScene")}</div>
           }
           frameloop="demand"
           style={{ touchAction: 'none', userSelect: 'none' }}

@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import { IconBrush, IconPalette, IconSparkles, IconUserCheck } from '@tabler/icons-react'
 import type { CreativeResource } from '../../../../config/capabilityRecipes'
@@ -6,10 +8,10 @@ import { cn } from '../../../../utils/cn'
 import { DeferredNodeImage } from '../DeferredNodeMedia'
 
 const KIND_LABEL: Record<CreativeResource['kind'], string> = {
-  style: '风格',
-  effect: '效果',
-  identity: '身份',
-  palette: '色板',
+  get style() { return i18n.t("canvasComponents.style") },
+  get effect() { return i18n.t("canvasComponents.effect") },
+  get identity() { return i18n.t("canvasComponents.identity") },
+  get palette() { return i18n.t("canvasComponents.palette") },
 }
 
 const KIND_ICON = {
@@ -20,9 +22,10 @@ const KIND_ICON = {
 } as const
 
 export function CreativeResourceNodeBody({ node }: { node: GenerationCanvasNode }): JSX.Element {
+  useTranslation()
   const resource = node.creativeResource
   if (!resource) {
-    return <div className="grid h-full place-items-center text-caption text-nomi-ink-40">资源数据不可用</div>
+    return <div className="grid h-full place-items-center text-caption text-nomi-ink-40">{i18n.t("canvasComponents.resourceDataUnavailable")}</div>
   }
   const Icon = KIND_ICON[resource.kind]
   const previewUrl = node.result?.thumbnailUrl || node.result?.url
@@ -52,7 +55,7 @@ export function CreativeResourceNodeBody({ node }: { node: GenerationCanvasNode 
           </div>
         ) : null}
         <div className="mt-auto truncate text-micro text-nomi-ink-40">
-          商用：{resource.license?.commercialUse === 'allowed' ? '允许' : resource.license?.commercialUse === 'restricted' ? '受限' : '待确认'}
+          {i18n.t("canvasComponents.commercialUse")}{resource.license?.commercialUse === 'allowed' ? i18n.t("canvasComponents.allowed") : resource.license?.commercialUse === 'restricted' ? i18n.t("canvasComponents.restricted") : i18n.t("canvasComponents.toBeConfirmed")}
         </div>
       </div>
     </div>

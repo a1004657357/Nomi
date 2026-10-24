@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { createPortal } from 'react-dom'
@@ -65,10 +67,11 @@ function ComparisonSurface({
   zoom: number
   onPositionChange: (value: number) => void
 }): JSX.Element {
+  useTranslation()
   if (inputs.length < 2) {
     return (
       <div className="grid h-full w-full place-items-center bg-nomi-ink-05 px-6 text-center text-small text-nomi-ink-60">
-        {inputs.length === 0 ? '连接两张图片进行对比' : '再连接一张图片'}
+        {inputs.length === 0 ? i18n.t("canvasComponents.connectTwoImagesToCompare") : i18n.t("canvasComponents.connectOneMoreImage")}
       </div>
     )
   }
@@ -80,7 +83,7 @@ function ComparisonSurface({
           <div key={input.nodeId} className="relative min-h-0 overflow-hidden bg-black">
             <img src={input.url} alt="" draggable={false} className={imageClass} style={{ transform: `scale(${zoom})` }} />
             <span className="absolute left-2 top-2 rounded-nomi-sm bg-black/65 px-2 py-1 text-micro text-white">
-              {index === 0 ? 'A' : 'B'} · {input.title}
+              {index === 0 ? i18n.t('canvasComponents.comparisonA') : i18n.t('canvasComponents.comparisonB')} · {input.title}
             </span>
           </div>
         ))}
@@ -106,20 +109,21 @@ function ComparisonSurface({
             min={0}
             max={100}
             value={position}
-            aria-label="图像对比位置"
+            aria-label={i18n.t("canvasComponents.imageComparisonPosition")}
             className="absolute inset-0 h-full w-full cursor-ew-resize opacity-0"
             onChange={(event) => onPositionChange(Number(event.target.value))}
             onPointerDown={(event) => event.stopPropagation()}
           />
         </>
       ) : null}
-      <span className="absolute left-2 top-2 rounded-nomi-sm bg-black/65 px-2 py-1 text-micro text-white">A · {inputs[0].title}</span>
-      <span className="absolute right-2 top-2 rounded-nomi-sm bg-black/65 px-2 py-1 text-micro text-white">B · {inputs[1].title}</span>
+      <span className="absolute left-2 top-2 rounded-nomi-sm bg-black/65 px-2 py-1 text-micro text-white">{i18n.t('canvasComponents.comparisonAPrefix')}{inputs[0].title}</span>
+      <span className="absolute right-2 top-2 rounded-nomi-sm bg-black/65 px-2 py-1 text-micro text-white">{i18n.t('canvasComponents.comparisonBPrefix')}{inputs[1].title}</span>
     </div>
   )
 }
 
 export default function ImageComparisonNodeBody({ node }: { node: GenerationCanvasNode }): JSX.Element {
+  useTranslation()
   const inputs = useGenerationCanvasStore((state) => resolveImageComparisonInputs(node.id, state.nodes, state.edges))
   const [mode, setMode] = React.useState<ComparisonMode>('wipe')
   const [position, setPosition] = React.useState(50)
@@ -138,13 +142,13 @@ export default function ImageComparisonNodeBody({ node }: { node: GenerationCanv
 
   const controls = (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b border-nomi-line bg-nomi-paper px-2">
-      <IconButton label="滑杆对比" active={mode === 'wipe'} onClick={() => setMode('wipe')}>
+      <IconButton label={i18n.t("canvasComponents.wipeComparison")} active={mode === 'wipe'} onClick={() => setMode('wipe')}>
         <IconArrowsDiff size={16} stroke={1.8} />
       </IconButton>
-      <IconButton label="并排对比" active={mode === 'side'} onClick={() => setMode('side')}>
+      <IconButton label={i18n.t("canvasComponents.sideBySideComparison")} active={mode === 'side'} onClick={() => setMode('side')}>
         <IconColumns size={16} stroke={1.8} />
       </IconButton>
-      <IconButton label="叠加对比" active={mode === 'overlay'} onClick={() => setMode('overlay')}>
+      <IconButton label={i18n.t("canvasComponents.overlayComparison")} active={mode === 'overlay'} onClick={() => setMode('overlay')}>
         <IconLayersIntersect size={16} stroke={1.8} />
       </IconButton>
       {mode === 'overlay' ? (
@@ -153,23 +157,23 @@ export default function ImageComparisonNodeBody({ node }: { node: GenerationCanv
           min={0}
           max={100}
           value={overlayOpacity}
-          aria-label="叠加图透明度"
+          aria-label={i18n.t("canvasComponents.overlayOpacity")}
           className="mx-2 min-w-20 flex-1 accent-nomi-accent"
           onChange={(event) => setOverlayOpacity(Number(event.target.value))}
           onPointerDown={(event) => event.stopPropagation()}
         />
       ) : <span className="flex-1" />}
-      <IconButton label="缩小" onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}>
+      <IconButton label={i18n.t("canvasComponents.zoomOut")} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}>
         <IconZoomOut size={16} stroke={1.8} />
       </IconButton>
-      <IconButton label="重置缩放" onClick={() => setZoom(1)}>
+      <IconButton label={i18n.t("canvasComponents.resetZoom")} onClick={() => setZoom(1)}>
         <IconRefresh size={16} stroke={1.8} />
       </IconButton>
-      <IconButton label="放大" onClick={() => setZoom((value) => Math.min(3, value + 0.25))}>
+      <IconButton label={i18n.t("canvasComponents.zoomIn")} onClick={() => setZoom((value) => Math.min(3, value + 0.25))}>
         <IconZoomIn size={16} stroke={1.8} />
       </IconButton>
       {!fullscreen ? (
-        <IconButton label="全屏对比" onClick={() => setFullscreen(true)}>
+        <IconButton label={i18n.t("canvasComponents.fullscreenComparison")} onClick={() => setFullscreen(true)}>
           <IconMaximize size={16} stroke={1.8} />
         </IconButton>
       ) : null}
@@ -198,13 +202,13 @@ export default function ImageComparisonNodeBody({ node }: { node: GenerationCanv
               className="fixed inset-0 z-[10030] flex h-[100dvh] w-screen flex-col bg-black text-white"
               role="dialog"
               aria-modal="true"
-              aria-label="全屏图像对比"
+              aria-label={i18n.t("canvasComponents.fullscreenImageComparison")}
               onPointerDown={(event) => event.stopPropagation()}
             >
               <div className="flex min-h-12 min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-white/15 bg-black px-3">
-                <span className="min-w-0 max-w-full text-body-sm font-medium [overflow-wrap:anywhere]">图像对比</span>
+                <span className="min-w-0 max-w-full text-body-sm font-medium [overflow-wrap:anywhere]">{i18n.t("canvasComponents.imageComparison")}</span>
                 <div className="shrink-0">
-                  <IconButton label="关闭全屏对比" onClick={() => setFullscreen(false)}>
+                  <IconButton label={i18n.t("canvasComponents.closeFullscreenComparison")} onClick={() => setFullscreen(false)}>
                     <IconX size={17} stroke={1.8} />
                   </IconButton>
                 </div>

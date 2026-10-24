@@ -41,7 +41,7 @@ test('close and selection controls keep their existing explicit hit sizes', () =
 
 test('long keyframe and camera field labels are bounded and may break unspaced text', () => {
   const video = findContentFlowRow(root, contentFlowCases.find((entry) => entry.id === 'keyframe-selection')).text
-  assert.match(video, /max-w-full[^"\n]*\[overflow-wrap:anywhere\][^"\n]*">抽帧数量/)
+  assert.match(video, /max-w-full[^"\n]*\[overflow-wrap:anywhere\][^"\n]*">\{i18n\.t\("canvasComponents\.frameCount"\)/)
   const camera = fs.readFileSync(path.join(root, 'src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx'), 'utf8')
   assert.match(camera, /<label className="grid min-w-0 max-w-full[^"\n]*\[overflow-wrap:anywhere\]/)
 })

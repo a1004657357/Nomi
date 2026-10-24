@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { IconEye, IconRefresh } from '@tabler/icons-react'
@@ -25,6 +27,7 @@ export function MultiviewVisionReviewControl({
   nodeId: string
   collection: GenerationResultCollection
 }): JSX.Element {
+  useTranslation()
   const addNodeResultCollection = useGenerationCanvasStore((state) => state.addNodeResultCollection)
   const [models, setModels] = React.useState<VisionReviewModelOption[]>([])
   const [selectedId, setSelectedId] = React.useState('')
@@ -65,13 +68,13 @@ export function MultiviewVisionReviewControl({
       return
     }
     const confirmed = await useSpendConfirmStore.getState().requestConfirm({
-      title: '视觉模型复核多视角',
-      message: `将把 1 张来源图和 ${assets.successfulOutputCount} 张结果图发送给「${model.label}」，执行 1 次多模态文本模型请求。会消耗该模型额度。`,
-      confirmLabel: '开始复核',
+      title: i18n.t("canvasComponents.reviewMultipleViewsWithAVisionModel"),
+      message: i18n.t("canvasComponents.send1SourceImageAndResultImagesToInOne", { v0: assets.successfulOutputCount, v1: model.label }),
+      confirmLabel: i18n.t("canvasComponents.startReview"),
       details: [
-        { label: '模型', value: model.label },
-        { label: '调用', value: '1 次批量视觉复核' },
-        { label: '图片', value: `${assets.attachmentCount} 张本地图片` },
+        { label: i18n.t("canvasComponents.model"), value: model.label },
+        { label: i18n.t("canvasComponents.calls"), value: i18n.t("canvasComponents.text1BatchVisualReview") },
+        { label: i18n.t("canvasComponents.image"), value: i18n.t("canvasComponents.localImages", { v0: assets.attachmentCount }) },
       ],
     })
     if (!confirmed) return
@@ -87,12 +90,12 @@ export function MultiviewVisionReviewControl({
       addNodeResultCollection(nodeId, reviewed)
       await persistActiveWorkbenchProjectNow()
       if (reviewed.quality?.metrics?.semanticComparatorAvailable === true) {
-        showInfoToast('多视角视觉复核已写入质量报告')
+        showInfoToast(i18n.t("canvasComponents.multiViewVisualReviewSavedToTheQualityReport"))
       } else {
         const detail = reviewed.quality?.checks
           .find((check) => check.id === 'subject-semantic-identity')
           ?.details?.[0]
-        setError(detail || '视觉复核未返回可用结论，报告已按未验证保存')
+        setError(detail || i18n.t("canvasComponents.visualReviewReturnedNoUsableConclusionTheReportWasSaved"))
       }
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : String(reviewError))
@@ -105,24 +108,19 @@ export function MultiviewVisionReviewControl({
     return (
       <div className="flex items-center gap-1.5 text-micro text-nomi-ink-60">
         <IconRefresh size={12} stroke={1.8} className="animate-spin" aria-hidden />
-        正在读取视觉模型
-      </div>
+        {i18n.t("canvasComponents.loadingVisionModels")}</div>
     )
   }
 
   if (!models.length) {
     return (
       <div className="space-y-1.5">
-        <p className="text-micro leading-[1.4] text-nomi-ink-60">
-          当前没有已连接并声明支持图片输入的文本模型。
-        </p>
+        <p className="text-micro leading-[1.4] text-nomi-ink-60">{i18n.t("canvasComponents.noConnectedTextModelDeclaresSupportForImageInput")}</p>
         <button
           type="button"
           className="text-micro font-medium text-nomi-accent hover:underline"
           onClick={() => window.dispatchEvent(new CustomEvent('nomi-open-model-catalog'))}
-        >
-          去模型接入
-        </button>
+        >{i18n.t("canvasComponents.connectModels51")}</button>
         {error ? <p className="text-micro leading-[1.4] text-workbench-danger">{error}</p> : null}
       </div>
     )
@@ -130,12 +128,10 @@ export function MultiviewVisionReviewControl({
 
   return (
     <div className="space-y-2">
-      <label className="block text-micro font-semibold text-nomi-ink-80" htmlFor={`vision-review-model-${nodeId}`}>
-        语义视觉复核
-      </label>
+      <label className="block text-micro font-semibold text-nomi-ink-80" htmlFor={`vision-review-model-${nodeId}`}>{i18n.t("canvasComponents.semanticVisualReview")}</label>
       <select
         id={`vision-review-model-${nodeId}`}
-        aria-label="视觉复核模型"
+        aria-label={i18n.t("canvasComponents.visualReviewModel")}
         value={selectedId}
         disabled={busy}
         onChange={(event) => setSelectedId(event.currentTarget.value)}
@@ -160,7 +156,7 @@ export function MultiviewVisionReviewControl({
         {busy
           ? <IconRefresh size={13} stroke={1.8} className="animate-spin" aria-hidden />
           : <IconEye size={13} stroke={1.8} aria-hidden />}
-        {busy ? '复核中' : '视觉模型复核'}
+        {busy ? i18n.t("canvasComponents.reviewing") : i18n.t("canvasComponents.visionModelReview")}
       </button>
       {error ? <p className="text-micro leading-[1.4] text-workbench-danger">{error}</p> : null}
     </div>

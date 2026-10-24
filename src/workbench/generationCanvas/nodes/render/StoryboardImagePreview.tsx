@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
+import { translateCanvasComponentText } from '../../../../i18n/CanvasComponentText'
 import type { JSX } from 'react'
 import React from 'react'
 import { localAssetThumbnailUrl } from '../../../../design/localAssetThumbnail'
@@ -30,10 +33,11 @@ export function StoryboardImagePreview({
   visibilityRoot,
   labelKind = '图片',
 }: Props): JSX.Element {
+  useTranslation()
   const configuredAspectRatio = readStoryboardMediaAspectRatio(node)
   const [aspectRatio, setAspectRatio] = React.useState(configuredAspectRatio)
   const [lightboxOpen, setLightboxOpen] = React.useState(false)
-  const label = node.shotIndex ? `镜头 ${node.shotIndex}${labelKind}` : node.title || labelKind
+  const label = node.shotIndex ? i18n.t("canvasComponents.shot549", { v0: node.shotIndex, v1: translateCanvasComponentText(labelKind) }) : node.title || translateCanvasComponentText(labelKind)
   const frameStyle = fitStoryboardMediaPreview(aspectRatio, compact ? 72 : 104)
   const previewUrl = localAssetThumbnailUrl(
     thumbnailUrl || imageUrl,
@@ -50,8 +54,8 @@ export function StoryboardImagePreview({
         type="button"
         data-storyboard-media-preview="image"
         data-media-aspect-ratio={aspectRatio}
-        aria-label={`${label}预览`}
-        title="双击放大图片预览"
+        aria-label={i18n.t("canvasComponents.preview", { v0: label })}
+        title={i18n.t("canvasComponents.doubleClickToEnlargeTheImagePreview")}
         style={frameStyle}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {

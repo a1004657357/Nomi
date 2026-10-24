@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { cn } from '../../../../utils/cn'
@@ -8,16 +10,16 @@ import { StoryboardVideoPreview } from './StoryboardVideoPreview'
 import type { ShotTextField } from './storyboardTableFieldConfig'
 
 const FIELD_LABEL: Record<ShotTextField, string> = {
-  scene: '场景',
-  shotSize: '景别',
-  cameraAngle: '机位',
-  cameraMove: '运镜',
-  characters: '角色',
-  performance: '表演',
-  dialogue: '对白',
-  props: '道具',
-  sound: '音乐/音效',
-  notes: '备注',
+  get scene() { return i18n.t("canvasComponents.scene") },
+  get shotSize() { return i18n.t("canvasComponents.shotSize") },
+  get cameraAngle() { return i18n.t("canvasComponents.cameraAngle") },
+  get cameraMove() { return i18n.t("canvasComponents.cameraMovement") },
+  get characters() { return i18n.t("canvasComponents.characters") },
+  get performance() { return i18n.t("canvasComponents.performance") },
+  get dialogue() { return i18n.t("canvasComponents.dialogue") },
+  get props() { return i18n.t("canvasComponents.props") },
+  get sound() { return i18n.t("canvasComponents.musicSoundEffects") },
+  get notes() { return i18n.t("canvasComponents.notes") },
 }
 
 function BufferedTextarea({
@@ -123,13 +125,14 @@ export function GroupedFieldsCell({
   fields: ShotTextField[]
   onCommit: (field: ShotTextField, value: string) => void
 }): JSX.Element {
+  useTranslation()
   return (
     <div className="space-y-1.5 px-1.5 py-2">
       {fields.map((field) => (
         <label key={field} className="block">
           <span className="mb-0.5 block text-micro font-medium text-nomi-ink-40">{FIELD_LABEL[field]}</span>
           <BufferedTextarea
-            ariaLabel={`镜头 ${row.shot.index} ${FIELD_LABEL[field]}`}
+            ariaLabel={i18n.t("canvasComponents.shot497", { v0: row.shot.index, v1: FIELD_LABEL[field] })}
             value={String(row.shot[field] || '')}
             rows={1}
             onCommit={(value) => onCommit(field, value)}
@@ -147,11 +150,11 @@ export function GroupedFieldsCell({
 
 function nodeStatusLabel(node: GenerationCanvasNode | null, emptyLabel: string): string {
   if (!node) return emptyLabel
-  if (node.status === 'queued' || node.status === 'running') return '生成中'
-  if (node.status === 'error') return '失败'
-  if (node.status === 'recoverable') return '待取回'
-  if (node.status === 'success') return '已生成'
-  return '待生成'
+  if (node.status === 'queued' || node.status === 'running') return i18n.t("canvasComponents.generating")
+  if (node.status === 'error') return i18n.t("canvasComponents.failed")
+  if (node.status === 'recoverable') return i18n.t("canvasComponents.awaitingRetrieval")
+  if (node.status === 'success') return i18n.t("canvasComponents.generated")
+  return i18n.t("canvasComponents.pendingGeneration")
 }
 
 export function StoryboardMediaPreview({
@@ -231,6 +234,7 @@ export function CompactPromptCell({
   type: 'image' | 'video'
   visibilityRoot: Element | null
 }): JSX.Element {
+  useTranslation()
   return (
     <div className="flex h-full items-center gap-2 px-2 py-2">
       <div className="min-w-0 flex-1">
@@ -240,7 +244,7 @@ export function CompactPromptCell({
         <StoryboardMediaPreview
           node={node}
           type={type}
-          emptyLabel={type === 'image' ? '待生成图' : '待生成视频'}
+          emptyLabel={type === 'image' ? i18n.t("canvasComponents.imageNotGenerated") : i18n.t("canvasComponents.videoNotGenerated")}
           compact
           visibilityRoot={visibilityRoot}
         />

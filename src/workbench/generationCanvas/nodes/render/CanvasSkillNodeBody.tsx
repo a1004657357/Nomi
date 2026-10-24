@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import {
@@ -61,6 +63,7 @@ export default function CanvasSkillNodeBody({
   node: GenerationCanvasNode
   readOnly?: boolean
 }): JSX.Element {
+  useTranslation()
   const state = readCanvasSkillNodeState(node)
   const nodes = useGenerationCanvasStore((store) => store.nodes)
   const edges = useGenerationCanvasStore((store) => store.edges)
@@ -87,9 +90,7 @@ export default function CanvasSkillNodeBody({
 
   if (!state) {
     return (
-      <div className="grid h-full place-items-center bg-nomi-paper p-5 text-center text-caption text-workbench-danger">
-        技能节点数据已损坏，请从技能库重新放入。
-      </div>
+      <div className="grid h-full place-items-center bg-nomi-paper p-5 text-center text-caption text-workbench-danger">{i18n.t("canvasComponents.skillNodeDataIsCorruptedAddTheSkillAgainFrom")}</div>
     )
   }
 
@@ -105,10 +106,10 @@ export default function CanvasSkillNodeBody({
       .filter((kind): kind is 'image' | 'video' | 'model3d' => kind !== null),
   ))
   const sourceHint = requiredSourceKinds.length
-    ? `${requiredSourceKinds.map((kind) => (
-      kind === 'video' ? '视频' : kind === 'model3d' ? '3D' : '图片'
-    )).join(' / ')}输入`
-    : '素材输入'
+    ? i18n.t("canvasComponents.input", { v0: requiredSourceKinds.map((kind) => (
+      kind === 'video' ? i18n.t("canvasComponents.video") : kind === 'model3d' ? '3D' : i18n.t("canvasComponents.image")
+    )).join(' / ') })
+    : i18n.t("canvasComponents.mediaInput")
 
   const launchRecipe = (recipe: CapabilityRecipe): void => {
     const binding = resolveCanvasSkillRecipeBinding(recipe, connectedNodes)
@@ -143,7 +144,7 @@ export default function CanvasSkillNodeBody({
         <div className="min-w-0 flex-1">
           <div className="truncate text-body-sm font-semibold">{state.label}</div>
           <div className="mt-0.5 line-clamp-2 text-caption leading-relaxed text-nomi-ink-60">
-            {state.description || '画布工作流技能'}
+            {state.description || i18n.t("canvasComponents.canvasWorkflowSkill")}
           </div>
           <div className="mt-1 text-micro text-nomi-accent">{component.label}</div>
         </div>
@@ -153,12 +154,12 @@ export default function CanvasSkillNodeBody({
         {connectedNodes.length ? (
           <>
             <IconCheck size={14} stroke={2} className="text-workbench-success" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">已连接 {connectedNodes.length} 个输入</span>
+            <span className="min-w-0 flex-1 truncate">{i18n.t("canvasComponents.inputsConnected", { v0: connectedNodes.length })}</span>
           </>
         ) : (
           <>
             <IconAlertCircle size={14} stroke={1.8} className="text-nomi-ink-40" aria-hidden />
-            <span className="min-w-0 flex-1 text-nomi-ink-60">等待连接{sourceHint}</span>
+            <span className="min-w-0 flex-1 text-nomi-ink-60">{i18n.t("canvasComponents.waitingForConnection", { v0: sourceHint })}</span>
           </>
         )}
         {state.neededProviders.length ? (
@@ -176,7 +177,7 @@ export default function CanvasSkillNodeBody({
                 <button
                   key={recipe.id}
                   type="button"
-                  aria-label={directRecipeAction ? `配置并运行 ${recipe.label}` : recipe.label}
+                  aria-label={directRecipeAction ? i18n.t("canvasComponents.configureAndRun", { v0: recipe.label }) : recipe.label}
                   data-recipe-ready={binding.ready ? 'true' : 'false'}
                   disabled={readOnly || !binding.ready}
                   className={cn(
@@ -185,7 +186,7 @@ export default function CanvasSkillNodeBody({
                     'disabled:cursor-not-allowed disabled:opacity-40',
                     state.defaultRecipeId === recipe.id && 'border-nomi-accent/40 bg-nomi-accent-soft/40',
                   )}
-                  title={binding.ready ? `配置并运行 ${recipe.label}` : binding.statusLabel}
+                  title={binding.ready ? i18n.t("canvasComponents.configureAndRun", { v0: recipe.label }) : binding.statusLabel}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation()
@@ -194,7 +195,7 @@ export default function CanvasSkillNodeBody({
                 >
                   {sourceKindIcon(sourceKind)}
                   <span className="min-w-0 flex-1 truncate">
-                    {directRecipeAction ? '配置并运行' : recipe.label}
+                    {directRecipeAction ? i18n.t("canvasComponents.configureAndRun334") : recipe.label}
                   </span>
                   <span
                     className={cn(
@@ -233,7 +234,7 @@ export default function CanvasSkillNodeBody({
 
       {outputNodes.length ? (
         <div className="flex items-center gap-1 border-t border-nomi-line py-2">
-          <span className="mr-1 text-micro text-nomi-ink-40">最近输出</span>
+          <span className="mr-1 text-micro text-nomi-ink-40">{i18n.t("canvasComponents.recentOutputs")}</span>
           {outputNodes.slice(-3).map((output) => (
             <button
               key={output.id}
@@ -263,16 +264,16 @@ export default function CanvasSkillNodeBody({
       >
         <IconRobot size={15} stroke={1.8} aria-hidden />
         {state.runStatus === 'running'
-          ? 'Agent 执行中'
+          ? i18n.t("canvasComponents.agentRunning")
           : state.runStatus === 'awaiting-confirm'
-            ? `确认并继续 · ${state.currentStageIndex + 1}/${state.stages.length}`
+            ? i18n.t("canvasComponents.confirmAndContinue", { v0: state.currentStageIndex + 1, v1: state.stages.length })
             : state.runStatus === 'done'
-              ? '重新运行 Playbook'
+              ? i18n.t("canvasComponents.runPlaybookAgain")
               : state.runStatus === 'error'
-                ? '重试当前阶段'
+                ? i18n.t("canvasComponents.retryCurrentStage")
                 : state.stages.length
-                  ? `开始 · 1/${state.stages.length}`
-                  : '用 Agent 推进'}
+                  ? i18n.t("canvasComponents.start1", { v0: state.stages.length })
+                  : i18n.t("canvasComponents.continueWithAgent")}
         <IconArrowRight size={14} stroke={1.8} aria-hidden />
       </button>
     </div>

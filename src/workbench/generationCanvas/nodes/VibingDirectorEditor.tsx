@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { IconBrandBlender, IconMaximize } from '@tabler/icons-react'
@@ -101,6 +103,7 @@ export function createVibingDirectorPreviewResult(
 }
 
 function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorProps): JSX.Element {
+  useTranslation()
   const [fullscreen, setFullscreen] = React.useState(false)
   const [blenderJobId, setBlenderJobId] = React.useState<string | null>(null)
   const blenderJobIdRef = React.useRef<string | null>(null)
@@ -146,9 +149,9 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     editorProjectRef.current.assertCurrent()
     project.assertCurrent()
     const desktop = getDesktopBridge()
-    if (!desktop?.vibingDirector) throw new Error('当前运行环境不支持 Blender Director')
+    if (!desktop?.vibingDirector) throw new Error(i18n.t("canvasComponents.thisEnvironmentDoesNotSupportBlenderDirector"))
     const projectId = project.binding.projectId
-    if (blenderJobIdRef.current) throw new Error('Blender Director 正在执行另一个计划')
+    if (blenderJobIdRef.current) throw new Error(i18n.t("canvasComponents.blenderDirectorIsExecutingAnotherPlan"))
 
     const executablePlan = materializeVibingDirectorPlan(plan)
     const preflight = applyVibingDirectorPlan(directorState, executablePlan)
@@ -196,7 +199,7 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
       persistDirectorState(applied.state, project)
       await persistActiveWorkbenchProjectNow()
       project.assertCurrent()
-      toast('Blender 导演预演已回传当前节点', 'success')
+      toast(i18n.t("canvasComponents.blenderDirectorPreviewReturnedToTheCurrentNode"), 'success')
       return applied
     } catch (error: unknown) {
       if (!isProjectExecutionContextCurrent(project)) throw error
@@ -207,7 +210,7 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
       if (blenderJobIdRef.current === jobId) blenderJobIdRef.current = null
       if (isProjectExecutionContextCurrent(project)) setBlenderJobId(null)
     }
-  }, () => { throw new Error('请先打开一个本地项目') }), [node.id, persistDirectorState, updateNode])
+  }, () => { throw new Error(i18n.t("canvasComponents.openALocalProjectFirst")) }), [node.id, persistDirectorState, updateNode])
 
   const cancelBlender = React.useCallback(() => {
     const jobId = blenderJobIdRef.current
@@ -223,16 +226,16 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     editorProjectRef.current.assertCurrent()
     project.assertCurrent()
     const desktop = getDesktopBridge()
-    if (!desktop?.vibingDirector) throw new Error('当前运行环境不支持 Blender 资产库')
+    if (!desktop?.vibingDirector) throw new Error(i18n.t("canvasComponents.thisEnvironmentDoesNotSupportTheBlenderAssetLibrary"))
     const payload = { projectId: project.binding.projectId, projectBinding: project.binding, directorNodeId: node.id, source, ...(license ? { license } : {}) }
     const result = await desktop.vibingDirector.importAsset(payload)
     project.assertCurrent()
     return result.canceled ? null : result.asset ?? null
-  }, () => { throw new Error('请先打开一个本地项目') }), [node.id])
+  }, () => { throw new Error(i18n.t("canvasComponents.openALocalProjectFirst")) }), [node.id])
 
   const listCatalogAssets = React.useCallback(async (query: string): Promise<VibingDirectorCatalogAsset[]> => {
     const director = getDesktopBridge()?.vibingDirector
-    if (!director) throw new Error('当前运行环境不支持 Director 开源资产目录')
+    if (!director) throw new Error(i18n.t("canvasComponents.thisEnvironmentDoesNotSupportTheDirectorOpenSourceAsset"))
     return director.listCatalogAssets({ query, limit: 60 })
   }, [])
 
@@ -241,7 +244,7 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     editorProjectRef.current.assertCurrent()
     project.assertCurrent()
     const director = getDesktopBridge()?.vibingDirector
-    if (!director) throw new Error('当前运行环境不支持 Director 开源资产目录')
+    if (!director) throw new Error(i18n.t("canvasComponents.thisEnvironmentDoesNotSupportTheDirectorOpenSourceAsset"))
     const payload = {
       projectId: project.binding.projectId,
       projectBinding: project.binding,
@@ -251,7 +254,7 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     const result = await director.importCatalogAsset(payload)
     project.assertCurrent()
     return result.asset
-  }, () => { throw new Error('请先打开一个本地项目') }), [node.id])
+  }, () => { throw new Error(i18n.t("canvasComponents.openALocalProjectFirst")) }), [node.id])
 
   const openBlender = React.useCallback((directorState: VibingDirectorState) => withProjectAction(project => {
     if (!editorProjectRef.current) throw new Error('project_identity_unavailable')
@@ -259,23 +262,23 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     project.assertCurrent()
     const output = directorState.output
     if (!output) {
-      toast('请先让 Director Agent 应用一个 Blender 计划', 'info')
+      toast(i18n.t("canvasComponents.askDirectorAgentToApplyABlenderPlanFirst"), 'info')
       return
     }
     const desktop = getDesktopBridge()
     if (!desktop?.vibingDirector) {
-      toast('当前运行环境无法打开 Blender 工程', 'error')
+      toast(i18n.t("canvasComponents.thisEnvironmentCannotOpenBlenderProjects"), 'error')
       return
     }
     const payload = { projectId: project.binding.projectId, projectBinding: project.binding, directorNodeId: node.id, blendRelativePath: output.blendRelativePath }
     void desktop.vibingDirector.openBlender(payload)
-      .then(() => { project.assertCurrent(); toast('已在 Blender 中打开 Director 工程', 'success') })
-      .catch((error: unknown) => { if (isProjectExecutionContextCurrent(project)) toast(error instanceof Error ? error.message : '无法打开 Blender 工程', 'error') })
+      .then(() => { project.assertCurrent(); toast(i18n.t("canvasComponents.openedTheDirectorProjectInBlender"), 'success') })
+      .catch((error: unknown) => { if (isProjectExecutionContextCurrent(project)) toast(error instanceof Error ? error.message : i18n.t("canvasComponents.cannotOpenTheBlenderProject"), 'error') })
   }), [node.id])
 
   const openAssetSource = React.useCallback((source: Exclude<BlenderDirectorAssetSource, 'local'>) => {
     void getDesktopBridge()?.vibingDirector.openAssetSource(source).catch((error: unknown) => {
-      toast(error instanceof Error ? error.message : '无法打开资产来源', 'error')
+      toast(error instanceof Error ? error.message : i18n.t("canvasComponents.cannotOpenTheAssetSource"), 'error')
     })
   }, [])
 
@@ -284,7 +287,7 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
     withProjectAction(project => {
       editorProjectRef.current = project
       setFullscreen(true)
-    }, () => { toast('请先打开一个本地项目', 'error') })
+    }, () => { toast(i18n.t("canvasComponents.openALocalProjectFirst"), 'error') })
   }, [])
 
   return (
@@ -295,23 +298,23 @@ function VibingDirectorEditor({ node, readOnly = false }: VibingDirectorEditorPr
           'border-0 p-0 text-[var(--workbench-ink)]',
         )}
         type="button"
-        aria-label="打开 VIBING Director"
+        aria-label={i18n.t("canvasComponents.openVIBINGDirector")}
         onClick={openDirector}
       >
         <div className="relative min-h-0 flex-1 overflow-hidden bg-[var(--nomi-ink-05)]">
           {thumbnailUrl ? (
-            <img className="h-full w-full object-cover" src={thumbnailUrl} alt="VIBING Director Blender 预览" draggable={false} />
+            <img className="h-full w-full object-cover" src={thumbnailUrl} alt={i18n.t("canvasComponents.vibingDirectorBlenderPreview")} draggable={false} />
           ) : (
             <div className="flex h-full items-center justify-center text-[var(--workbench-muted)]"><IconBrandBlender size={44} stroke={1.25} /></div>
           )}
           <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-nomi-sm bg-[var(--nomi-ink)] px-2 py-1 text-micro font-medium text-[var(--nomi-paper)]">
-            <IconBrandBlender size={13} />VIBING Director
+            <IconBrandBlender size={13} />{i18n.t('canvasComponents.vibingDirector')}
           </span>
           <span className="absolute right-2 top-2 grid size-7 place-items-center rounded-nomi-sm bg-[var(--nomi-paper)] text-[var(--workbench-ink)] opacity-0 shadow-nomi-sm transition-opacity group-hover:opacity-100"><IconMaximize size={15} /></span>
         </div>
         <div className="flex shrink-0 items-center gap-2 border-t border-[var(--workbench-border)] px-3 py-2">
           <div className="min-w-0 flex-1">
-            <div className="truncate text-caption font-medium">{state.brief || '未设置创作简述'}</div>
+            <div className="truncate text-caption font-medium">{state.brief || i18n.t("canvasComponents.noCreativeBriefSet")}</div>
             <div className="mt-0.5 text-micro text-[var(--workbench-muted)]">{formatVibingDirectorNodeStats(state)}</div>
           </div>
           <IconBrandBlender size={17} className={cn('shrink-0 text-[var(--workbench-muted)]', blenderJobId && 'text-[var(--nomi-accent)]')} />

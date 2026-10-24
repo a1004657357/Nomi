@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { IconAlertCircle, IconCheck, IconRefresh, IconStack2 } from '@tabler/icons-react'
@@ -43,6 +45,7 @@ export function CapabilityResultCollection({
   readOnly: boolean
   mediaPreviewPriority: boolean
 }): JSX.Element | null {
+  useTranslation()
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
   const collection = latestMultiResultCollection(node)
   const [lightboxItem, setLightboxItem] = React.useState<GenerationResultCollectionItem | null>(null)
@@ -67,8 +70,8 @@ export function CapabilityResultCollection({
       >
         {isMoodCollection ? (
           <div className="flex min-h-7 min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-nomi-line bg-nomi-paper px-2 text-micro text-nomi-ink-60 [overflow-wrap:anywhere]">
-            <span>能量 0 → 4</span>
-            <span>亲和 0 → 4</span>
+            <span>{i18n.t("canvasComponents.energy04")}</span>
+            <span>{i18n.t("canvasComponents.affinity04")}</span>
           </div>
         ) : null}
         <div
@@ -80,7 +83,7 @@ export function CapabilityResultCollection({
           )}
           style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
           role="list"
-          aria-label={`${collection.items.length} 个配方生成结果`}
+          aria-label={i18n.t("canvasComponents.recipeResults", { v0: collection.items.length })}
           onPointerDown={(event) => event.stopPropagation()}
         >
           {collection.items.map((item) => {
@@ -108,7 +111,7 @@ export function CapabilityResultCollection({
               >
                 <button
                   type="button"
-                  aria-label={`${item.label}${isCurrent ? '，当前主结果' : ''}`}
+                  aria-label={`${item.label}${isCurrent ? i18n.t("canvasComponents.currentPrimaryResult") : ''}`}
                   aria-pressed={isCurrent}
                   disabled={!media || isBusy}
                   className={cn(
@@ -164,7 +167,7 @@ export function CapabilityResultCollection({
                   {qualityStatus ? (
                     <span
                       className="absolute left-1 top-1 grid size-5 place-items-center rounded-nomi-sm border border-white/70 bg-nomi-paper shadow-nomi-md"
-                      title={`质量检查：${qualityLabel(qualityStatus)}`}
+                      title={i18n.t("canvasComponents.qualityCheck", { v0: qualityLabel(qualityStatus) })}
                     >
                       <CapabilityQualityStatusIcon status={qualityStatus} size={13} />
                     </span>
@@ -174,8 +177,8 @@ export function CapabilityResultCollection({
                   <button
                     type="button"
                     data-provider-candidate-count={candidates.length}
-                    aria-label={`选择 ${candidates.length} 个候选`}
-                    title={`选择 ${candidates.length} 个候选`}
+                    aria-label={i18n.t("canvasComponents.selectCandidates", { v0: candidates.length })}
+                    title={i18n.t("canvasComponents.selectCandidates", { v0: candidates.length })}
                     className={cn(
                       'absolute right-1 top-1 z-[4] flex h-6 items-center gap-1 rounded-nomi-sm px-1.5',
                       'border border-white/70 bg-nomi-paper text-micro font-semibold text-nomi-ink-80 shadow-nomi-md',
@@ -205,8 +208,8 @@ export function CapabilityResultCollection({
               'hover:bg-nomi-ink-05 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nomi-accent',
               'disabled:cursor-wait disabled:opacity-60',
             )}
-            aria-label={`重试 ${failedCount} 个失败结果`}
-            title={`重试 ${failedCount} 个失败结果`}
+            aria-label={i18n.t("canvasComponents.retryFailedResults", { v0: failedCount })}
+            title={i18n.t("canvasComponents.retryFailedResults", { v0: failedCount })}
             disabled={retrying}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
@@ -251,21 +254,21 @@ export function CapabilityResultCollection({
         open={Boolean(lightboxItem && lightboxMedia)}
         type={lightboxMedia?.type ?? 'image'}
         src={lightboxMedia?.src ?? ''}
-        label={lightboxItem?.label ?? '生成结果'}
+        label={lightboxItem?.label ?? i18n.t("canvasComponents.generatedResult")}
         onClose={() => setLightboxItem(null)}
       />
       {candidateItem ? (
         <DesignModal
           opened
           onClose={() => setCandidateItemId(null)}
-          title={`${candidateItem.label} · 选择候选`}
+          title={i18n.t("canvasComponents.selectCandidate", { v0: candidateItem.label })}
           centered
           size="lg"
         >
           <div
             className="grid grid-cols-2 gap-2"
             role="list"
-            aria-label={`${candidateItem.candidates?.length ?? 0} 个供应商候选`}
+            aria-label={i18n.t("canvasComponents.providerCandidates", { v0: candidateItem.candidates?.length ?? 0 })}
           >
             {(candidateItem.candidates ?? []).map((candidate, index) => {
               const selected = candidate.id === (candidateItem.selectedResultId || candidateItem.result?.id)
@@ -299,7 +302,7 @@ export function CapabilityResultCollection({
                     <img src={src} alt="" draggable={false} className="h-full w-full object-contain" />
                   ) : null}
                   <span className="absolute inset-x-0 bottom-0 flex min-h-7 min-w-0 flex-wrap items-center gap-1.5 bg-black/60 px-2 text-xs text-white [overflow-wrap:anywhere]">
-                    <span>候选 {index + 1}</span>
+                    <span>{i18n.t("canvasComponents.candidate", { v0: index + 1 })}</span>
                     {selected ? <IconCheck size={14} stroke={2.2} className="shrink-0" aria-hidden="true" /> : null}
                   </span>
                 </button>

@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { IconX } from '@tabler/icons-react'
@@ -21,6 +23,7 @@ export function StoryboardMediaLightbox({
   label,
   onClose,
 }: Props): JSX.Element | null {
+  useTranslation()
   React.useEffect(() => {
     if (!open || typeof document === 'undefined') return undefined
     const previousOverflow = document.body.style.overflow
@@ -42,7 +45,7 @@ export function StoryboardMediaLightbox({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`${label}放大预览`}
+        aria-label={i18n.t("canvasComponents.enlargedPreview", { v0: label })}
         data-storyboard-media-lightbox={type}
         className="fixed inset-0 flex items-center justify-center bg-black/90 p-12"
         style={{ zIndex: 9000 }}
@@ -54,8 +57,8 @@ export function StoryboardMediaLightbox({
       >
         <button
           type="button"
-          aria-label="关闭预览"
-          title="关闭预览"
+          aria-label={i18n.t("canvasComponents.closePreview")}
+          title={i18n.t("canvasComponents.closePreview")}
           onClick={(event) => {
             event.stopPropagation()
             onClose()
@@ -78,7 +81,7 @@ export function StoryboardMediaLightbox({
             controls
             autoPlay
             playsInline
-            aria-label={`${label}播放器`}
+            aria-label={i18n.t("canvasComponents.player", { v0: label })}
             className="block max-h-[calc(100vh-96px)] max-w-[calc(100vw-96px)] bg-black object-contain"
             onPointerDown={(event) => event.stopPropagation()}
           />

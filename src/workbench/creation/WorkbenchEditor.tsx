@@ -1,3 +1,4 @@
+import i18n from '../../i18n'
 import React, { type JSX } from 'react'
 import { workspacePanelFrame, workspacePanelHeader } from '../WorkspacePanelFrame'
 import { CreationResourceTreeToggle } from './CreationResourceTreeToggle'
@@ -111,19 +112,18 @@ function WorkbenchEditorToolbar({
     >
       <WorkbenchIconButton
         className="workbench-editor-toolbar__button size-[30px]"
-        label="导入剧本"
+        label={i18n.t("canvasComponents.importScript")}
         onClick={onImportScript}
         icon={<IconFileImport size={16} />}
       />
       <WorkbenchButton
         className="h-[30px] px-2 text-body-sm whitespace-nowrap"
         disabled={!canExtract}
-        title={canExtract ? '提取角色、场景和道具参考卡' : '请先写入或导入剧本'}
+        title={canExtract ? i18n.t("canvasComponents.extractCharacterSceneAndPropReferenceCards") : i18n.t("canvasComponents.writeOrImportAScriptFirst")}
         onClick={onExtractAssets}
       >
         <IconSparkles size={15} />
-        提取设定
-      </WorkbenchButton>
+        {i18n.t("canvasComponents.extractReferences")}</WorkbenchButton>
       {leftGroups.length > 0 ? <ToolbarDivider /> : null}
       <CreationResourceTreeToggle placement="panel" />
       {leftGroups.map((group, index) => (
@@ -215,14 +215,14 @@ export default function WorkbenchEditor(): JSX.Element {
 
   const handleScriptFile = React.useCallback(async (file: File) => {
     if (file.size > SCRIPT_IMPORT_MAX_BYTES) {
-      toast('剧本文件不能超过 20 MB', 'error')
+      toast(i18n.t("canvasComponents.theScriptFileMustNotExceed20MB"), 'error')
       return
     }
     if (documentText) {
       const confirmed = await confirmDialog({
-        title: '替换当前文稿？',
-        message: '导入剧本会替换创作区当前文稿，画布中的已有节点不会改变。',
-        confirmLabel: '继续导入',
+        title: i18n.t("canvasComponents.replaceTheCurrentDocument"),
+        message: i18n.t("canvasComponents.importingAScriptReplacesTheCurrentDocumentInTheCreation"),
+        confirmLabel: i18n.t("canvasComponents.continueImport"),
       })
       if (!confirmed) return
     }
@@ -239,28 +239,28 @@ export default function WorkbenchEditor(): JSX.Element {
       } else if (/\.(?:txt|md|markdown|csv)$/i.test(file.name)) {
         text = await file.text()
       } else {
-        throw new Error('当前运行环境不支持解析这个剧本文件')
+        throw new Error(i18n.t("canvasComponents.thisEnvironmentCannotParseThisScriptFile"))
       }
-      if (!text.trim()) throw new Error('剧本文件没有可读取的文字')
+      if (!text.trim()) throw new Error(i18n.t("canvasComponents.theScriptFileContainsNoReadableText"))
       setWorkbenchDocument(buildImportedWorkbenchDocument(text, file.name))
       clearSelectionText()
-      toast(`已导入《${file.name}》`, 'success')
+      toast(i18n.t("canvasComponents.imported304", { v0: file.name }), 'success')
     } catch (error) {
-      toast(error instanceof Error ? error.message : '剧本导入失败', 'error')
+      toast(error instanceof Error ? error.message : i18n.t("canvasComponents.scriptImportFailed"), 'error')
     }
   }, [clearSelectionText, documentText, setWorkbenchDocument])
 
   const handleExtractAssets = React.useCallback(() => {
     const storyText = extractWorkbenchDocumentText(workbenchDocumentRef.current)
     if (!storyText) {
-      toast('请先写入或导入剧本', 'warning')
+      toast(i18n.t("canvasComponents.writeOrImportAScriptFirst"), 'warning')
       return
     }
     setWorkspaceMode('generation')
     window.setTimeout(() => {
       requestFixationPlanning({ storyText, source: 'script-import-toolbar' })
     }, 60)
-    toast('正在整理角色、场景和道具，请在 Agent 计划卡确认', 'info')
+    toast(i18n.t("canvasComponents.organizingCharactersScenesAndPropsConfirmInTheAgentPlan"), 'info')
   }, [setWorkspaceMode])
 
   // Publish creation document tools = the shared rich-text read/write surface (read full/selection,
@@ -321,7 +321,7 @@ export default function WorkbenchEditor(): JSX.Element {
         className="hidden"
         type="file"
         accept={SCRIPT_IMPORT_ACCEPT}
-        aria-label="选择剧本文件"
+        aria-label={i18n.t("canvasComponents.selectAScriptFile")}
         onChange={(event) => {
           const file = event.currentTarget.files?.[0]
           event.currentTarget.value = ''

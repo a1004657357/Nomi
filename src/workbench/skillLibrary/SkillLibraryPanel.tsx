@@ -228,7 +228,7 @@ export function SkillLibraryContent({
     <div
       className={cn('inline-flex bg-nomi-ink-05 rounded-full p-0.5', compact ? 'w-full' : 'shrink-0')}
       role="tablist"
-      aria-label={componentFirst ? '组件来源' : '技能来源'}
+      aria-label={componentFirst ? i18n.t("canvasComponents.componentSource") : i18n.t("canvasComponents.skillSource")}
     >
       {SOURCE_OPTIONS.map((option) => {
         const activeOption = source === option.value

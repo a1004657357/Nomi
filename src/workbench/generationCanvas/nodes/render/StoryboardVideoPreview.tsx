@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { IconPlayerPlayFilled, IconVideo } from '@tabler/icons-react'
@@ -50,7 +52,7 @@ function requestVideoPoster(project: ProjectExecutionContext, videoUrl: string):
   if (pending && isProjectExecutionContextCurrent(pending.project)) return pending.request.then(url => { project.assertCurrent(); return url })
 
   const extractFrame = getDesktopBridge()?.video?.extractFrame
-  if (!extractFrame) return Promise.reject(new Error('当前环境不支持视频抽帧'))
+  if (!extractFrame) return Promise.reject(new Error(i18n.t("canvasComponents.thisEnvironmentDoesNotSupportVideoFrameExtraction")))
 
   const request = new Promise<string>((resolve, reject) => {
     requestDeferredNodeMediaSlot('video', (release) => {
@@ -61,7 +63,7 @@ function requestVideoPoster(project: ProjectExecutionContext, videoUrl: string):
         .then((result) => {
           project.assertCurrent()
           const url = String(result?.url || '').trim()
-          if (!url) throw new Error('视频抽帧没有返回图片')
+          if (!url) throw new Error(i18n.t("canvasComponents.videoFrameExtractionReturnedNoImage"))
           posterCache.set(key, { binding: project.binding, url })
           resolve(url)
         })
@@ -97,6 +99,7 @@ export function StoryboardVideoPreview({
   compact,
   visibilityRoot,
 }: Props): JSX.Element {
+  useTranslation()
   const projectId = useOpenProjectId()
   const key = projectId ? posterCacheKey(projectId, videoUrl) : ''
   const configuredAspectRatio = readStoryboardMediaAspectRatio(node)
@@ -157,7 +160,7 @@ export function StoryboardVideoPreview({
   }, [node.id, previewElement, projectId, resolvedPosterUrl, videoUrl, visibilityRoot])
 
   const previewSrc = buildVideoPlaybackUrl(videoUrl)
-  const label = node.shotIndex ? `镜头 ${node.shotIndex}` : node.title || '当前镜头'
+  const label = node.shotIndex ? i18n.t("canvasComponents.shot112", { v0: node.shotIndex }) : node.title || i18n.t("canvasComponents.currentShot")
   const frameStyle = fitStoryboardMediaPreview(aspectRatio, compact ? 72 : 104)
   const lightboxPoster = resolvedPosterUrl
     ? localAssetThumbnailUrl(resolvedPosterUrl, LIGHTBOX_POSTER_SIZE)
@@ -186,8 +189,8 @@ export function StoryboardVideoPreview({
           preload="metadata"
           data-storyboard-media-preview="video"
           data-media-aspect-ratio={aspectRatio}
-          aria-label={`${label}视频预览`}
-          title="双击放大视频预览"
+          aria-label={i18n.t("canvasComponents.videoPreview", { v0: label })}
+          title={i18n.t("canvasComponents.doubleClickToEnlargeTheVideoPreview")}
           style={frameStyle}
           onPointerDown={(event) => event.stopPropagation()}
           onDoubleClick={(event) => {
@@ -203,7 +206,7 @@ export function StoryboardVideoPreview({
           type="video"
           src={previewSrc}
           poster={lightboxPoster}
-          label={`${label}视频`}
+          label={i18n.t("canvasComponents.video512", { v0: label })}
           onClose={closeLightbox}
         />
       </>
@@ -218,9 +221,9 @@ export function StoryboardVideoPreview({
         type="button"
         data-storyboard-media-preview="video"
         data-media-aspect-ratio={aspectRatio}
-        aria-label={`${playing ? '停止' : '播放'}${label}视频预览`}
+        aria-label={i18n.t("canvasComponents.videoPreview513", { v0: playing ? i18n.t("canvasComponents.stop") : i18n.t("canvasComponents.play"), v1: label })}
         aria-pressed={playing}
-        title="双击放大视频预览"
+        title={i18n.t("canvasComponents.doubleClickToEnlargeTheVideoPreview")}
         style={frameStyle}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
@@ -297,7 +300,7 @@ export function StoryboardVideoPreview({
         type="video"
         src={previewSrc}
         poster={lightboxPoster}
-        label={`${label}视频`}
+        label={i18n.t("canvasComponents.video512", { v0: label })}
         onClose={closeLightbox}
       />
     </>

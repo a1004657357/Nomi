@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n'
 import { Drawer } from '@mantine/core'
 import type { JSX } from 'react'
 import React from 'react'
@@ -52,10 +54,10 @@ type InspectorView = 'recipes' | 'resource'
 
 const CAMERA_ANGLES = [0, 45, 90, 135, 180, -90]
 const RESOURCE_KIND_OPTIONS = [
-  { value: 'style', label: '风格' },
-  { value: 'effect', label: '效果' },
-  { value: 'identity', label: '身份' },
-  { value: 'palette', label: '色板' },
+  { value: 'style', get label() { return i18n.t("canvasComponents.style") } },
+  { value: 'effect', get label() { return i18n.t("canvasComponents.effect") } },
+  { value: 'identity', get label() { return i18n.t("canvasComponents.identity") } },
+  { value: 'palette', get label() { return i18n.t("canvasComponents.palette") } },
 ]
 function targetValue(target: AgentRecipeCompatibleModel): string {
   return `${target.vendorKey}::${target.modelKey}::${target.variantId ?? ''}::${target.modeId}`
@@ -102,6 +104,7 @@ export function CapabilityRecipeInspector({
   selectedNodeId: string | null
   triggerVariant?: 'floating' | 'toolbar'
 }): JSX.Element | null {
+  useTranslation()
   const enabled = isCapabilityRecipesEnabled()
   const [open, setOpen] = React.useState(false)
   const [view, setView] = React.useState<InspectorView>('recipes')
@@ -156,7 +159,7 @@ export function CapabilityRecipeInspector({
       if (requestedNodeId) {
         const store = useGenerationCanvasStore.getState()
         if (!store.nodes.some((candidate) => candidate.id === requestedNodeId)) {
-          toast('要打开创作能力的源节点已不存在', 'warning')
+          toast(i18n.t("canvasComponents.theSourceNodeForCreativeCapabilitiesNoLongerExists"), 'warning')
           return
         }
         store.selectNode(requestedNodeId)
@@ -187,7 +190,7 @@ export function CapabilityRecipeInspector({
       ))
     } catch (error) {
       if (requestId === catalogRequestId.current) {
-        setCatalogError(error instanceof Error ? error.message : '模型目录加载失败')
+        setCatalogError(error instanceof Error ? error.message : i18n.t("canvasComponents.failedToLoadTheModelCatalog"))
       }
     } finally {
       if (requestId === catalogRequestId.current) setLoading(false)
@@ -245,7 +248,7 @@ export function CapabilityRecipeInspector({
   const selectedResources = resourceCandidates.filter((node) => applicableResourceIds.includes(node.id))
   const inputReadiness = selectedRecipe
     ? capabilityRecipeInputReadiness(selectedRecipe, source, selectedResources)
-    : { ready: false as const, message: '请选择能力配方' }
+    : { ready: false as const, message: i18n.t("canvasComponents.selectACapabilityRecipe") }
   const connectionGuidance = selectedRecipe && selectedRecipe.compatibleModels.length === 0
     ? capabilityRecipeConnectionGuidance(selectedRecipe.id)
     : null
@@ -254,7 +257,7 @@ export function CapabilityRecipeInspector({
   const recipeOptions = recipes.map((recipe) => ({
     value: recipe.id,
     label: recipe.label,
-    trailing: recipe.compatibleModels.length ? `${recipe.compatibleModels.length} 个模式` : '无兼容模型',
+    trailing: recipe.compatibleModels.length ? i18n.t("canvasComponents.modes", { v0: recipe.compatibleModels.length }) : i18n.t("canvasComponents.noCompatibleModels"),
     trailingTone: recipe.compatibleModels.some((model) => model.tier === 'native')
       ? ('accent' as const)
       : ('muted' as const),
@@ -262,7 +265,7 @@ export function CapabilityRecipeInspector({
   const modelOptions = (selectedRecipe?.compatibleModels ?? []).map((target) => ({
     value: targetValue(target),
     label: `${target.modelLabel} · ${target.modeLabel}`,
-    trailing: target.tier === 'native' ? '原生' : target.tier === 'experimental' ? '实验' : '兼容',
+    trailing: target.tier === 'native' ? i18n.t("canvasComponents.native") : target.tier === 'experimental' ? i18n.t("canvasComponents.experimental") : i18n.t("canvasComponents.compatible"),
     trailingTone: target.tier === 'native' ? ('accent' as const) : ('muted' as const),
   }))
   const maxOutputs = isMoodRecipe
@@ -284,7 +287,7 @@ export function CapabilityRecipeInspector({
       return
     }
     if (visionReview.enabled && !selectedVisionReviewModel) {
-      toast('自动视觉复核需要先连接一个支持图片输入的文本模型', 'warning')
+      toast(i18n.t("canvasComponents.automaticVisualReviewRequiresAConnectedTextModelThatSupports"), 'warning')
       return
     }
     const count = selectedRecipe.id === 'image.multiview.grid9'
@@ -300,24 +303,24 @@ export function CapabilityRecipeInspector({
       selectedRecipe.output.kind === 'video' ? 'video' : 'image',
     )
     const ok = await useSpendConfirmStore.getState().requestConfirm({
-      title: `生成${selectedRecipe.label}`,
+      title: i18n.t("canvasComponents.generate", { v0: selectedRecipe.label }),
       message: visionReview.enabled
-        ? `${generationCost}；生成完成后额外执行 1 次批量视觉复核。`
+        ? i18n.t("canvasComponents.oneAdditionalBatchVisualReviewWillRunAfterGeneration", { v0: generationCost })
         : generationCost,
-      confirmLabel: '生成新结果',
+      confirmLabel: i18n.t("canvasComponents.generateNewResults"),
       source: 'user',
       details: [
-        { label: '源节点', value: source.title },
-        { label: '模型', value: `${selectedTarget.modelLabel} · ${selectedTarget.modeLabel}` },
+        { label: i18n.t("canvasComponents.sourceNode"), value: source.title },
+        { label: i18n.t("canvasComponents.model"), value: `${selectedTarget.modelLabel} · ${selectedTarget.modeLabel}` },
         ...(taskCount !== count
-          ? [{ label: '生成任务', value: `${taskCount} 次请求，本地拆分为 ${count} 个结果` }]
+          ? [{ label: i18n.t("canvasComponents.generationTasks"), value: i18n.t("canvasComponents.requestsSplitLocallyIntoResults", { v0: taskCount, v1: count }) }]
           : selectedRecipe.id === 'image.multiview.grid9'
-            ? [{ label: '生成任务', value: `${taskCount} 次独立请求` }]
+            ? [{ label: i18n.t("canvasComponents.generationTasks"), value: i18n.t("canvasComponents.separateRequests", { v0: taskCount }) }]
           : isMoodRecipe
-            ? [{ label: '生成任务', value: moodRequestSummary(moodGenerationMode) }]
+            ? [{ label: i18n.t("canvasComponents.generationTasks"), value: moodRequestSummary(moodGenerationMode) }]
             : []),
         ...(visionReview.enabled && selectedVisionReviewModel
-          ? [{ label: '视觉复核', value: `${selectedVisionReviewModel.label} · 整批 1 次` }]
+          ? [{ label: i18n.t("canvasComponents.visualReview"), value: i18n.t("canvasComponents.onceForTheEntireBatch", { v0: selectedVisionReviewModel.label }) }]
           : []),
       ],
     })
@@ -349,10 +352,10 @@ export function CapabilityRecipeInspector({
           sourceNodeId: source.id,
         })
       }
-      toast(outcome.targetNodeId ? `已创建「${selectedRecipe.label}」结果节点` : '配方任务已受理', 'success')
+      toast(outcome.targetNodeId ? i18n.t("canvasComponents.createdAResultNodeFor", { v0: selectedRecipe.label }) : i18n.t("canvasComponents.recipeTaskAccepted"), 'success')
       setOpen(false)
     } catch (error) {
-      toast(error instanceof Error ? error.message : '配方执行失败', 'error')
+      toast(error instanceof Error ? error.message : i18n.t("canvasComponents.recipeExecutionFailed"), 'error')
     } finally {
       setRunning(false)
     }
@@ -373,11 +376,11 @@ export function CapabilityRecipeInspector({
       })) as { nodeId: string }
       useWorkbenchStore.getState().setActiveCategoryId('scene')
       useWorkbenchStore.getState().requestCanvasFit()
-      toast(`已保存创作资源「${resourceLabel}」`, 'success')
+      toast(i18n.t("canvasComponents.savedCreativeResource", { v0: resourceLabel }), 'success')
       setOpen(false)
       useGenerationCanvasStore.getState().selectNode(result.nodeId)
     } catch (error) {
-      toast(error instanceof Error ? error.message : '保存资源失败', 'error')
+      toast(error instanceof Error ? error.message : i18n.t("canvasComponents.failedToSaveTheResource"), 'error')
     }
   }
 
@@ -400,21 +403,21 @@ export function CapabilityRecipeInspector({
               ],
         )}
         disabled={!source}
-        title={source ? '创作能力' : '先选择一个节点'}
+        title={source ? i18n.t("canvasComponents.creativeCapabilities") : i18n.t("canvasComponents.selectANodeFirst")}
         onClick={() => {
           setOriginSkillNodeId(null)
           setOpen(true)
         }}
       >
         <IconSparkles size={16} stroke={1.7} aria-hidden />
-        <span className={triggerVariant === 'toolbar' ? 'sr-only' : undefined}>创作能力</span>
+        <span className={triggerVariant === 'toolbar' ? 'sr-only' : undefined}>{i18n.t("canvasComponents.creativeCapabilities")}</span>
       </button>
       <Drawer
         opened={open}
         onClose={() => setOpen(false)}
         position="right"
         size={440}
-        title="创作能力"
+        title={i18n.t("canvasComponents.creativeCapabilities")}
         overlayProps={{ backgroundOpacity: 0.12, blur: 0 }}
         styles={{ body: { padding: 0 }, header: { borderBottom: '1px solid var(--nomi-line)' } }}
       >
@@ -424,9 +427,9 @@ export function CapabilityRecipeInspector({
               <IconPhoto size={19} stroke={1.6} aria-hidden />
             </span>
             <div className="min-w-0">
-              <div className="truncate text-body-sm font-medium text-nomi-ink">{source?.title ?? '未选择节点'}</div>
+              <div className="truncate text-body-sm font-medium text-nomi-ink">{source?.title ?? i18n.t("canvasComponents.noNodeSelected")}</div>
               <div className="truncate text-caption text-nomi-ink-60">
-                {source?.result ? '已有生成结果' : '尚无生成结果'}
+                {source?.result ? i18n.t("canvasComponents.generatedResultAvailable") : i18n.t("canvasComponents.noGeneratedResultYet")}
               </div>
             </div>
           </div>
@@ -434,8 +437,8 @@ export function CapabilityRecipeInspector({
           <div className="mx-4 mt-3 grid h-8 grid-cols-2 rounded-nomi-sm bg-nomi-ink-05 p-0.5">
             {(
               [
-                ['recipes', '能力配方'],
-                ['resource', '保存资源'],
+                ['recipes', i18n.t("canvasComponents.capabilityRecipes")],
+                ['resource', i18n.t("canvasComponents.saveResource")],
               ] as const
             ).map(([key, label]) => (
               <button
@@ -458,21 +461,21 @@ export function CapabilityRecipeInspector({
             <div className="flex flex-1 flex-col">
               <div className="flex flex-wrap items-center gap-2 border-b border-nomi-line px-4 py-4">
                 <NomiSelect
-                  ariaLabel="能力配方"
-                  leadingLabel="配方"
+                  ariaLabel={i18n.t("canvasComponents.capabilityRecipes")}
+                  leadingLabel={i18n.t("canvasComponents.recipe")}
                   value={recipeId}
                   options={recipeOptions}
-                  placeholder={loading ? '加载中' : '选择配方'}
+                  placeholder={loading ? i18n.t("canvasComponents.loading") : i18n.t("canvasComponents.selectARecipe")}
                   disabled={loading || recipeOptions.length === 0}
                   triggerMaxWidth={180}
                   onChange={setRecipeId}
                 />
                 <NomiSelect
-                  ariaLabel="模型与模式"
-                  leadingLabel="模型"
+                  ariaLabel={i18n.t("canvasComponents.modelAndMode")}
+                  leadingLabel={i18n.t("canvasComponents.model")}
                   value={modelValue}
                   options={modelOptions}
-                  placeholder="无兼容模型"
+                  placeholder={i18n.t("canvasComponents.noCompatibleModels")}
                   disabled={modelOptions.length === 0}
                   triggerMaxWidth={210}
                   onChange={setModelValue}
@@ -493,12 +496,11 @@ export function CapabilityRecipeInspector({
                     </div>
                   </div>
                   <WorkbenchButton
-                    aria-label={`去模型接入：${connectionGuidance.vendorLabel}`}
+                    aria-label={i18n.t("canvasComponents.connectModels", { v0: connectionGuidance.vendorLabel })}
                     onClick={() => window.dispatchEvent(new CustomEvent('nomi-open-model-catalog'))}
                   >
                     <IconPlugConnected size={14} stroke={1.7} aria-hidden />
-                    去模型接入
-                  </WorkbenchButton>
+                    {i18n.t("canvasComponents.connectModels51")}</WorkbenchButton>
                 </div>
               ) : null}
 
@@ -508,9 +510,7 @@ export function CapabilityRecipeInspector({
                   className="flex items-start gap-2 border-b border-nomi-line bg-nomi-ink-05 px-4 py-3"
                 >
                   <IconAlertTriangle className="mt-0.5 shrink-0 text-workbench-warning-ink" size={16} stroke={1.7} aria-hidden />
-                  <p className="text-caption leading-relaxed text-nomi-ink-60">
-                    当前模型未声明该能力为原生支持，将通过通用模型和专用提示词实验执行；实际机位、身份、肤质或效果仍需质量报告和视觉复核确认。
-                  </p>
+                  <p className="text-caption leading-relaxed text-nomi-ink-60">{i18n.t("canvasComponents.thisModelDoesNotDeclareNativeSupportForThisCapability")}</p>
                 </div>
               ) : null}
 
@@ -526,7 +526,7 @@ export function CapabilityRecipeInspector({
                             checked={params[control.key] === true}
                             onChange={(event) => patchParam(control, event.target.checked)}
                           />
-                          <span>{params[control.key] === true ? '开' : '关'}</span>
+                          <span>{params[control.key] === true ? i18n.t("canvasComponents.on") : i18n.t("canvasComponents.off")}</span>
                         </span>
                       ) : control.options.length ? (
                         <NomiSelect
@@ -576,11 +576,11 @@ export function CapabilityRecipeInspector({
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <span className="inline-flex min-w-0 max-w-full items-center gap-2 text-body-sm font-medium text-nomi-ink [overflow-wrap:anywhere]">
                       <IconRotate size={16} stroke={1.7} className="shrink-0" aria-hidden />
-                      {isMoodRecipe ? '输出情绪' : '输出机位'}
+                      {isMoodRecipe ? i18n.t("canvasComponents.outputEmotions") : i18n.t("canvasComponents.outputCameraAngles")}
                     </span>
                     <input
                       className={cn(inputClass(), 'w-[72px] shrink-0')}
-                      aria-label="输出数量"
+                      aria-label={i18n.t("canvasComponents.outputCount")}
                       type="number"
                       min={1}
                       max={selectedRecipe?.id === 'image.multiview.grid9' ? 9 : isMoodRecipe ? 25 : maxOutputs}
@@ -594,7 +594,7 @@ export function CapabilityRecipeInspector({
                   {isMoodRecipe ? (
                     <div className="mt-3 rounded-nomi-sm border border-nomi-line bg-nomi-ink-05 p-3">
                       <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-caption [overflow-wrap:anywhere]">
-                        <span className="text-nomi-ink-60">行：能量 · 列：亲和</span>
+                        <span className="text-nomi-ink-60">{i18n.t("canvasComponents.rowsEnergyColumnsAffinity")}</span>
                         <span
                           data-mood-request-summary="true"
                           className="min-w-0 max-w-full font-medium text-nomi-ink"
@@ -629,7 +629,7 @@ export function CapabilityRecipeInspector({
                                   key={`mood-${energy}-${affinity}`}
                                   type="button"
                                   data-mood-coordinate={`${energy}-${affinity}`}
-                                  aria-label={`能量 ${energy}，亲和 ${affinity}`}
+                                  aria-label={i18n.t("canvasComponents.energyAffinity", { v0: energy, v1: affinity })}
                                   aria-pressed={selected}
                                   disabled={moodGenerationMode !== 'single'}
                                   className={cn(
@@ -671,7 +671,7 @@ export function CapabilityRecipeInspector({
 
               {resourceCandidates.length ? (
                 <div className="border-b border-nomi-line px-4 py-4">
-                  <div className="mb-2 text-body-sm font-medium text-nomi-ink">创作资源</div>
+                  <div className="mb-2 text-body-sm font-medium text-nomi-ink">{i18n.t("canvasComponents.creativeResources")}</div>
                   <div className="flex flex-wrap gap-2">
                     {resourceCandidates.map((node) => {
                       const checked = resourceIds.includes(node.id)
@@ -712,14 +712,14 @@ export function CapabilityRecipeInspector({
               ) : null}
 
               <div className="mt-auto flex items-center justify-end gap-2 px-4 py-4">
-                <WorkbenchButton onClick={() => setOpen(false)}>取消</WorkbenchButton>
+                <WorkbenchButton onClick={() => setOpen(false)}>{i18n.t("canvasComponents.cancel")}</WorkbenchButton>
                 <WorkbenchButton
                   className="bg-nomi-ink text-nomi-paper border-nomi-ink hover:bg-nomi-ink hover:text-nomi-paper"
                   disabled={!source || !selectedRecipe || !selectedTarget || !inputReadiness.ready || running}
                   onClick={() => void startRecipe()}
                 >
                   <IconPlayerPlay size={15} stroke={1.7} aria-hidden />
-                  {running ? '受理中' : '生成新结果'}
+                  {running ? i18n.t("canvasComponents.submitting") : i18n.t("canvasComponents.generateNewResults")}
                 </WorkbenchButton>
               </div>
             </div>
@@ -727,30 +727,30 @@ export function CapabilityRecipeInspector({
             <div className="flex flex-1 flex-col px-4 py-4">
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1.5 text-caption text-nomi-ink-60">
-                  <span>资源类型</span>
+                  <span>{i18n.t("canvasComponents.resourceType")}</span>
                   <NomiSelect
-                    ariaLabel="资源类型"
+                    ariaLabel={i18n.t("canvasComponents.resourceType")}
                     value={resourceKind}
                     options={RESOURCE_KIND_OPTIONS}
                     onChange={setResourceKind}
                   />
                 </label>
                 <label className="flex flex-col gap-1.5 text-caption text-nomi-ink-60">
-                  <span>商用许可</span>
+                  <span>{i18n.t("canvasComponents.commercialLicense")}</span>
                   <NomiSelect
-                    ariaLabel="商用许可"
+                    ariaLabel={i18n.t("canvasComponents.commercialLicense")}
                     value={commercialUse}
                     options={[
-                      { value: 'allowed', label: '允许' },
-                      { value: 'restricted', label: '受限' },
-                      { value: 'unknown', label: '待确认' },
+                      { value: 'allowed', label: i18n.t("canvasComponents.allowed") },
+                      { value: 'restricted', label: i18n.t("canvasComponents.restricted") },
+                      { value: 'unknown', label: i18n.t("canvasComponents.toBeConfirmed") },
                     ]}
                     onChange={setCommercialUse}
                   />
                 </label>
               </div>
               <label className="mt-4 flex flex-col gap-1.5 text-caption text-nomi-ink-60">
-                <span>名称</span>
+                <span>{i18n.t("canvasComponents.name")}</span>
                 <input
                   className={inputClass()}
                   value={resourceLabel}
@@ -758,7 +758,7 @@ export function CapabilityRecipeInspector({
                 />
               </label>
               <label className="mt-4 flex flex-col gap-1.5 text-caption text-nomi-ink-60">
-                <span>描述</span>
+                <span>{i18n.t("canvasComponents.description")}</span>
                 <textarea
                   className={cn(inputClass(), 'h-20 resize-none py-2')}
                   value={resourceDescription}
@@ -766,7 +766,7 @@ export function CapabilityRecipeInspector({
                 />
               </label>
               <label className="mt-4 flex flex-col gap-1.5 text-caption text-nomi-ink-60">
-                <span>提示词标签</span>
+                <span>{i18n.t("canvasComponents.promptTags")}</span>
                 <textarea
                   className={cn(inputClass(), 'h-24 resize-none py-2')}
                   value={resourceTokens}
@@ -774,15 +774,14 @@ export function CapabilityRecipeInspector({
                 />
               </label>
               <div className="mt-auto flex justify-end gap-2 pt-4">
-                <WorkbenchButton onClick={() => setOpen(false)}>取消</WorkbenchButton>
+                <WorkbenchButton onClick={() => setOpen(false)}>{i18n.t("canvasComponents.cancel")}</WorkbenchButton>
                 <WorkbenchButton
                   className="bg-nomi-ink text-nomi-paper border-nomi-ink hover:bg-nomi-ink hover:text-nomi-paper"
                   disabled={!source?.result?.url || !resourceLabel.trim()}
                   onClick={() => void saveResource()}
                 >
                   <IconDeviceFloppy size={15} stroke={1.7} aria-hidden />
-                  保存资源
-                </WorkbenchButton>
+                  {i18n.t("canvasComponents.saveResource")}</WorkbenchButton>
               </div>
             </div>
           )}

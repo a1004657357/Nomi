@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { IconArchive, IconCheck, IconFile3d, IconFolderOpen, IconMusic, IconPhoto, IconVideo } from '@tabler/icons-react'
@@ -15,6 +17,7 @@ import {
 import { StoryboardMediaLightbox } from './StoryboardMediaLightbox'
 
 export default function OutputCollectorNodeBody({ node }: { node: GenerationCanvasNode }): JSX.Element {
+  useTranslation()
   const nodes = useGenerationCanvasStore((state) => state.nodes)
   const edges = useGenerationCanvasStore((state) => state.edges)
   const updateNode = useGenerationCanvasStore((state) => state.updateNode)
@@ -57,13 +60,13 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
     project.assertCurrent()
     const chosen = items.filter((item) => selected.has(item.id))
     if (!chosen.length) {
-      toast('请先选择至少一个输出', 'warning')
+      toast(i18n.t("canvasComponents.selectAtLeastOneOutputFirst"), 'warning')
       return
     }
     const projectId = project.binding.projectId
     const bridge = getDesktopBridge()
     if (!projectId || !bridge?.assets.archiveOutputCollection) {
-      toast('本地归档需要已保存的 Nomi 桌面端项目', 'error')
+      toast(i18n.t("canvasComponents.localArchivingRequiresASavedProjectInTheNomiDesktop"), 'error')
       return
     }
     setBusy(true)
@@ -95,14 +98,14 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
           },
         },
       })
-      toast(`已归档 ${result.items.length} 个输出`, 'success')
+      toast(i18n.t("canvasComponents.archivedOutputs", { v0: result.items.length }), 'success')
     } catch (error) {
       if (!isProjectExecutionContextCurrent(project)) return
-      toast(`归档失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+      toast(i18n.t("canvasComponents.archiveFailed", { v0: error instanceof Error ? error.message : String(error) }), 'error')
     } finally {
       if (isProjectExecutionContextCurrent(project)) setBusy(false)
     }
-  }, () => { toast('本地归档需要已打开的 Nomi 桌面端项目', 'error') })
+  }, () => { toast(i18n.t("canvasComponents.localArchivingRequiresAnOpenProjectInTheNomiDesktop"), 'error') })
 
   const reveal = () => withProjectAction(async project => {
     project.assertCurrent()
@@ -114,7 +117,7 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
       project.assertCurrent()
     } catch (error) {
       if (!isProjectExecutionContextCurrent(project)) return
-      toast(`无法打开归档目录：${error instanceof Error ? error.message : String(error)}`, 'error')
+      toast(i18n.t("canvasComponents.cannotOpenTheArchiveFolder", { v0: error instanceof Error ? error.message : String(error) }), 'error')
     }
   })
 
@@ -128,23 +131,21 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
             meta: { ...(node.meta || {}), outputCollectionName: collectionName.trim() || node.title },
           })}
           className="min-h-8 min-w-0 flex-1 rounded-nomi-sm border border-nomi-line bg-nomi-paper px-2.5 text-body-sm outline-none focus:border-nomi-accent"
-          aria-label="归档名称"
-          placeholder="输出收集"
+          aria-label={i18n.t("canvasComponents.archiveName")}
+          placeholder={i18n.t("canvasComponents.outputCollection")}
         />
         <button
           type="button"
           className="min-h-8 rounded-nomi-sm px-2 text-caption text-nomi-ink-60 hover:bg-nomi-ink-05"
           onClick={() => writeSelection(selected.size === items.length ? new Set() : new Set(items.map((item) => item.id)))}
         >
-          {selected.size === items.length ? '取消全选' : '全选'}
+          {selected.size === items.length ? i18n.t("canvasComponents.deselectAll") : i18n.t("canvasComponents.selectAll")}
         </button>
       </div>
 
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
         {!items.length ? (
-          <div className="grid h-full min-h-48 place-items-center px-5 text-center text-body-sm leading-relaxed text-nomi-ink-60">
-            把已有结果的图片或视频节点连接到这里。
-          </div>
+          <div className="grid h-full min-h-48 place-items-center px-5 text-center text-body-sm leading-relaxed text-nomi-ink-60">{i18n.t("canvasComponents.connectImageOrVideoNodesThatAlreadyHaveResultsHere")}</div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
             {items.map((item) => {
@@ -198,10 +199,10 @@ export default function OutputCollectorNodeBody({ node }: { node: GenerationCanv
           onClick={() => void archive()}
         >
           <IconArchive size={16} stroke={1.7} />
-          {busy ? '归档中…' : `归档 ${selected.size} 项`}
+          {busy ? i18n.t("canvasComponents.archiving") : i18n.t("canvasComponents.archiveItems", { v0: selected.size })}
         </button>
         {typeof lastManifest === 'string' ? (
-          <button type="button" className="grid size-9 place-items-center rounded-nomi-sm border border-nomi-line text-nomi-ink-60 hover:bg-nomi-ink-05" title="在 Finder 中显示最近归档" aria-label="打开最近归档" onClick={() => void reveal()}>
+          <button type="button" className="grid size-9 place-items-center rounded-nomi-sm border border-nomi-line text-nomi-ink-60 hover:bg-nomi-ink-05" title={i18n.t("canvasComponents.showTheLatestArchiveInFinder")} aria-label={i18n.t("canvasComponents.openLatestArchive")} onClick={() => void reveal()}>
             <IconFolderOpen size={17} stroke={1.7} />
           </button>
         ) : null}

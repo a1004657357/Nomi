@@ -1,0 +1,1966 @@
+{
+  "files": {
+    "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx": {
+      "classHash": "e3a21f3a39f5c91be8caf4619e8c8f2d4eb4c581c22b240e8bb0ff506afebcf2",
+      "keys": [
+        "style",
+        "effect",
+        "identity",
+        "palette",
+        "theSourceNodeForCreativeCapabilitiesNoLongerExists",
+        "failedToLoadTheModelCatalog",
+        "selectACapabilityRecipe",
+        "modes",
+        "noCompatibleModels",
+        "native",
+        "experimental",
+        "compatible",
+        "automaticVisualReviewRequiresAConnectedTextModelThatSupports",
+        "generate",
+        "oneAdditionalBatchVisualReviewWillRunAfterGeneration",
+        "generateNewResults",
+        "sourceNode",
+        "model",
+        "generationTasks",
+        "requestsSplitLocallyIntoResults",
+        "separateRequests",
+        "visualReview",
+        "onceForTheEntireBatch",
+        "createdAResultNodeFor",
+        "recipeTaskAccepted",
+        "recipeExecutionFailed",
+        "savedCreativeResource",
+        "failedToSaveTheResource",
+        "creativeCapabilities",
+        "selectANodeFirst",
+        "noNodeSelected",
+        "generatedResultAvailable",
+        "noGeneratedResultYet",
+        "capabilityRecipes",
+        "saveResource",
+        "recipe",
+        "loading",
+        "selectARecipe",
+        "modelAndMode",
+        "connectModels",
+        "connectModels51",
+        "thisModelDoesNotDeclareNativeSupportForThisCapability",
+        "on",
+        "off",
+        "outputEmotions",
+        "outputCameraAngles",
+        "outputCount",
+        "rowsEnergyColumnsAffinity",
+        "energyAffinity",
+        "creativeResources",
+        "cancel",
+        "submitting",
+        "resourceType",
+        "commercialLicense",
+        "allowed",
+        "restricted",
+        "toBeConfirmed",
+        "name",
+        "description",
+        "promptTags"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx": {
+      "classHash": "4be3f8313a723fd12a1d857f7fc1b5c28a6eff81df23f5527b3aded27b6bdc99",
+      "keys": [
+        "generated",
+        "generating",
+        "failed",
+        "pendingGeneration",
+        "polishedTheVideoPromptForShot",
+        "polishedVideoPrompts",
+        "agentFilledInShots",
+        "agentCouldNotFillInTheTable",
+        "containedStoryboardGenerationNodes",
+        "noStoryboardGenerationNodesToContain",
+        "storyboardTableFittedToItsCurrentRowsAndColumns",
+        "storyboardTableRestoredToACompactWindow",
+        "openedCreativeCapabilitiesForShot",
+        "shotNodeExtractedChooseAModelAndParameters",
+        "failedToExtractTheGenerationNodeForShot",
+        "createdThe5SecondActionFrameAnd8SecondEnding",
+        "the53SecondKeyframesForShotAlreadyExistAnd",
+        "failedToGenerateKeyframesForShot",
+        "dragTheStoryboardTableNode",
+        "storyboardScript",
+        "agentFill",
+        "containStoryboardGenerationNodes",
+        "restoreTheCompactStoryboardTableWindow",
+        "restoreCompactWindow",
+        "moreScriptActions",
+        "overwriteExistingContent",
+        "polishAllVideoPrompts",
+        "showAllShots",
+        "shots",
+        "noStoryboardDataYet",
+        "shot",
+        "image",
+        "video",
+        "generationSettings",
+        "shot112",
+        "durationSeconds",
+        "shotDuration",
+        "seconds",
+        "shotImagePrompt",
+        "imageNotGenerated",
+        "shotVideoPrompt",
+        "videoNotGenerated",
+        "collapse",
+        "edit",
+        "openCreativeCapabilitiesForShot",
+        "continueCreatingFromThisShotSImageOrVideo",
+        "continueFromImage",
+        "continueFromVideo",
+        "configureImageGenerationForShot",
+        "extractAnImageGenerationNodeAndConfigureItsModelParameters",
+        "imageSettings",
+        "configureVideoGenerationForShot",
+        "extractAVideoGenerationNodeAndConfigureItsModelParameters",
+        "videoSettings",
+        "generate53SecondKeyframesForShot",
+        "useTheStoryboardReferenceAsThe0SecondFrameThen",
+        "generatingKeyframes",
+        "generate53Keyframes",
+        "polishVideoPrompt"
+      ]
+    },
+    "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx": {
+      "classHash": "035d54958fb0ea15edf82992edeae950e2998b2857ad0b889e283b8649cb930d",
+      "keys": [
+        "video",
+        "image",
+        "noNodesAvailableForBatchSettings",
+        "allSelectedNodesAlreadyHaveResults",
+        "appliedToNodes",
+        "on",
+        "off",
+        "batchModelAndParameterSettings",
+        "batchSettings",
+        "batchGenerationSettings",
+        "nodes",
+        "onlyGenerateMissingVideos",
+        "onlyGenerateMissingImages",
+        "type",
+        "model",
+        "selectAModel",
+        "provider",
+        "applyParameters",
+        "applyAndGenerate"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx": {
+      "classHash": "b2720ac6c6fe32c6ea89cd5cb88a77772a242d9484a0424f6fd246e2156d1887",
+      "keys": [
+        "blenderPreviewReceived",
+        "waitingForTheFirstBlenderPlan",
+        "blenderCameraRenderPreview",
+        "inspectTheBlenderScene",
+        "viewTheBlenderCameraRender",
+        "resetSceneView",
+        "waitingForABlenderPreview",
+        "rebuiltBlenderBlockingForATwoPersonConversation",
+        "failedToRebuildBlenderBlocking",
+        "blenderDirectorWorkspace",
+        "rebuildBlockingForTwoPeopleAtACoffeeTable",
+        "openTheCurrentProjectInBlender",
+        "closeDirector",
+        "blenderIsExecutingTheDirectorPlan",
+        "scene",
+        "assets",
+        "stagedObjects",
+        "spatialRelationships",
+        "shotBeats",
+        "spatialQuality",
+        "performanceAndCameraDetailsNeeded",
+        "directorAgentWillWriteShotBeatsHereAlongWithThe"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx": {
+      "classHash": "0b3e00f6366cc5965262fec64ede33d508362ddc88b53b92bf1552c17eb3c6ea",
+      "keys": [
+        "setScene",
+        "arrangeBlocking",
+        "placeAsset",
+        "addBlockingMarker",
+        "adjustObject",
+        "removeObject",
+        "setRelationship",
+        "removeRelationship",
+        "adjustCamera",
+        "setCameraMovement",
+        "updateBeat",
+        "processing",
+        "theCompatibilityProtocolResponseCannotBeExecutedAttemptingOneAutomatic",
+        "directorAgentFailed",
+        "blenderDirectorPlanGeneratedAwaitingConfirmation",
+        "blenderDirectorPlanSubmittedAwaitingConfirmation",
+        "directorAgentFailed199",
+        "thisModelDoesNotSupportNomiSNativeFunctionCall",
+        "nativeToolRequestRejected",
+        "directorAgentFailedTheNativeToolRequestWasRejectedAnd",
+        "blenderReturnedAResultButItemsWereNotApplied",
+        "blenderUpdatedTheSceneAndReturnedAPreview",
+        "blenderDirectorPlanWasNotExecuted",
+        "describeTheSceneCharacterBlockingOrCameraSetupToBuild",
+        "skip",
+        "executingInBlender",
+        "applyToBlender",
+        "sendAMessageToDirectorAgent",
+        "forExampleAStreetAfterRainTwoCharactersMeetAt",
+        "stopTheBlenderDirectorPlan",
+        "stopDirectorAgent",
+        "sendToDirectorAgent"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx": {
+      "classHash": "672e7491192cf13467b0104f379b9c32a068c65973c2409ba293c3e6edcd131e",
+      "keys": [
+        "theKeyframeInspectorRequiresTheNomiDesktopApp",
+        "keyframeExtractionFailed",
+        "keyframeInspectionFailedOpenTheCurrentProjectFirst",
+        "theProjectHasChangedExtractTheKeyframesAgain",
+        "selectAtLeastOneKeyframeFirst",
+        "createdKeyframeNodes",
+        "videoKeyframeInspector",
+        "seconds",
+        "videoDurationNotAvailable",
+        "close",
+        "frameCount",
+        "extracting",
+        "extractAgain",
+        "selected",
+        "playTheVideoOnceSoNomiCanReadItsActual",
+        "extractingKeyframesFromTheSameVideoSource",
+        "keyframe",
+        "cancel",
+        "create",
+        "keyframeNodes"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx": {
+      "classHash": "f9a3c6cbb54e55fcbb11f6e4895a1ba2ebf487e601335b01925bfaf8be4463b9",
+      "keys": [
+        "authorizedLocalFiles",
+        "kenneyOpenSourceCatalog",
+        "cannotReadTheOpenSourceAssetCatalog",
+        "importedAsset",
+        "failedToImportTheBlenderAsset",
+        "downloadedAndImported",
+        "failedToDownloadTheOpenSourceAsset",
+        "blenderAssetLibrary",
+        "open",
+        "assetSource",
+        "searchOpenSource3DAssets",
+        "coffeeTablesChairsLights",
+        "assetLicense",
+        "licenseLeaveBlankToMarkAsNeedingConfirmation",
+        "importLocalModel",
+        "readingCatalog",
+        "imported",
+        "import",
+        "noMatching3DAssets",
+        "noDirectorAssetsInThisProjectYet"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/ImageComparisonNodeBody.tsx": {
+      "classHash": "2a584b60dd576de264e19c4cc3e45b3a7c21b6a77fdbb950aeec638ad4823322",
+      "keys": [
+        "connectTwoImagesToCompare",
+        "connectOneMoreImage",
+        "imageComparisonPosition",
+        "wipeComparison",
+        "sideBySideComparison",
+        "overlayComparison",
+        "overlayOpacity",
+        "zoomOut",
+        "resetZoom",
+        "zoomIn",
+        "fullscreenComparison",
+        "fullscreenImageComparison",
+        "imageComparison",
+        "closeFullscreenComparison"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/Scene3DEditor.tsx": {
+      "classHash": "8d4a98ba01e2232ce9c64ac3821d86358dbb80e4f007b00b915f70c5bb428ae8",
+      "keys": [
+        "blenderDirectorPreviewReturnedToTheCanvas",
+        "blenderSceneReturnedToTheCanvas",
+        "thisEnvironmentDoesNotSupportBackgroundBlenderRendering",
+        "blenderRenderingCancelled",
+        "openALocalProjectFirst",
+        "theBlenderDirectorPreviewIsNotInstalledInThisEnvironment",
+        "clickToEnterThe3DDirectorWorkspace",
+        "stageObjectsPlanCameraMovementAndExportAPreview",
+        "enterThe3DDirectorWorkspace",
+        "stopBlenderRendering",
+        "renderWithBlender",
+        "stopTheBlenderDirectorPreview",
+        "blenderDirectorPreview",
+        "text3dDirectorWorkspace"
+      ]
+    },
+    "src/workbench/creation/WorkbenchEditor.tsx": {
+      "classHash": "e25e66298daede359736fb21381e96b23e1adad49cb64a19e43a9ef002d161a6",
+      "keys": [
+        "importScript",
+        "extractCharacterSceneAndPropReferenceCards",
+        "writeOrImportAScriptFirst",
+        "extractReferences",
+        "theScriptFileMustNotExceed20MB",
+        "replaceTheCurrentDocument",
+        "importingAScriptReplacesTheCurrentDocumentInTheCreation",
+        "continueImport",
+        "thisEnvironmentCannotParseThisScriptFile",
+        "theScriptFileContainsNoReadableText",
+        "imported304",
+        "scriptImportFailed",
+        "organizingCharactersScenesAndPropsConfirmInTheAgentPlan",
+        "selectAScriptFile"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx": {
+      "classHash": "0907416120239f8587699398253c2fa60518d27d15f6a7023a2c23c2b57fa602",
+      "keys": [
+        "azimuth",
+        "elevation",
+        "distance",
+        "theCurrent3DViewIsNotReadyTryAgainShortly",
+        "createdACaptureImageUsingTheCameraFraming",
+        "text3dCameraCaptureFailed",
+        "theViewForCameraIsNotReady",
+        "createdANineCameraGeometryGuideCollection",
+        "failedToGenerateTheNineCameraGuide",
+        "cameraSettings",
+        "captureTheCurrentCameraView",
+        "generateNineCameraGuide",
+        "cameraTarget",
+        "captureAspectRatio",
+        "captureResolution",
+        "size",
+        "resetCamera"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx": {
+      "classHash": "f96fa58297eb49edcbfb30f1b9f3e0f245d8161e34ecfb04f74fe89814e0bc31",
+      "keys": [
+        "skillNodeDataIsCorruptedAddTheSkillAgainFrom",
+        "input",
+        "mediaInput",
+        "canvasWorkflowSkill",
+        "inputsConnected",
+        "waitingForConnection",
+        "configureAndRun",
+        "configureAndRun334",
+        "recentOutputs",
+        "agentRunning",
+        "confirmAndContinue",
+        "runPlaybookAgain",
+        "retryCurrentStage",
+        "start1",
+        "continueWithAgent"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx": {
+      "classHash": "b7f8e9141a87dbcebdaa823a5015603e47bba77affcaa39dc8be01fcdb59b848",
+      "keys": [
+        "selectAtLeastOneOutputFirst",
+        "localArchivingRequiresASavedProjectInTheNomiDesktop",
+        "archivedOutputs",
+        "archiveFailed",
+        "localArchivingRequiresAnOpenProjectInTheNomiDesktop",
+        "cannotOpenTheArchiveFolder",
+        "archiveName",
+        "outputCollection",
+        "deselectAll",
+        "selectAll",
+        "connectImageOrVideoNodesThatAlreadyHaveResultsHere",
+        "archiving",
+        "archiveItems",
+        "showTheLatestArchiveInFinder",
+        "openLatestArchive"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx": {
+      "classHash": "6324fae37ae63d974e767083d7e6175b837c82b1363a8095260199ae1ce41808",
+      "keys": [
+        "reviewEmotionalPerformancesWithAVisionModel",
+        "send1SourceImageAndEmotionResultsToInOne",
+        "startReview",
+        "model",
+        "calls",
+        "text1BatchVisualReview",
+        "image",
+        "localImages",
+        "emotionalPerformanceReviewSavedToTheQualityReport",
+        "loadingVisionModels",
+        "noConnectedTextModelDeclaresSupportForImageInput",
+        "connectModels51",
+        "expressionSemanticReview",
+        "emotionReviewModel",
+        "reviewing",
+        "visionModelReview"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx": {
+      "classHash": "6324fae37ae63d974e767083d7e6175b837c82b1363a8095260199ae1ce41808",
+      "keys": [
+        "reviewMultipleViewsWithAVisionModel",
+        "send1SourceImageAndResultImagesToInOne",
+        "startReview",
+        "model",
+        "calls",
+        "text1BatchVisualReview",
+        "image",
+        "localImages",
+        "multiViewVisualReviewSavedToTheQualityReport",
+        "visualReviewReturnedNoUsableConclusionTheReportWasSaved",
+        "loadingVisionModels",
+        "noConnectedTextModelDeclaresSupportForImageInput",
+        "connectModels51",
+        "semanticVisualReview",
+        "visualReviewModel",
+        "reviewing",
+        "visionModelReview"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/PortraitComparisonDialog.tsx": {
+      "classHash": "09bcd34e41607e657b25fa7e4b57e88a81997c3a0e737dc9aad82778c191a198",
+      "keys": [
+        "currentResult",
+        "portraitSourceComparison",
+        "sourceComparison",
+        "zoomOutComparison",
+        "zoomOut",
+        "comparisonZoom",
+        "zoomInComparison",
+        "zoomIn",
+        "resetComparisonZoom",
+        "resetZoom",
+        "closeSourceComparison",
+        "close",
+        "originalPortrait",
+        "compareWithSource"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx": {
+      "classHash": "160cf74b2a7d438794555a4e0343f5216877d669609aa7f35c197a0cbb960ae7",
+      "keys": [
+        "energy04",
+        "affinity04",
+        "recipeResults",
+        "currentPrimaryResult",
+        "qualityCheck",
+        "selectCandidates",
+        "retryFailedResults",
+        "generatedResult",
+        "selectCandidate",
+        "providerCandidates",
+        "candidate"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx": {
+      "classHash": "bd38ee6152a7e2bb41107ba9fb2455c90d9dc93bd80854a004bbc33e2c150ab9",
+      "keys": [
+        "thisEnvironmentDoesNotSupportBlenderDirector",
+        "blenderDirectorIsExecutingAnotherPlan",
+        "blenderDirectorPreviewReturnedToTheCurrentNode",
+        "openALocalProjectFirst",
+        "thisEnvironmentDoesNotSupportTheBlenderAssetLibrary",
+        "thisEnvironmentDoesNotSupportTheDirectorOpenSourceAsset",
+        "askDirectorAgentToApplyABlenderPlanFirst",
+        "thisEnvironmentCannotOpenBlenderProjects",
+        "openedTheDirectorProjectInBlender",
+        "cannotOpenTheBlenderProject",
+        "cannotOpenTheAssetSource",
+        "openVIBINGDirector",
+        "vibingDirectorBlenderPreview",
+        "noCreativeBriefSet"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx": {
+      "classHash": "e8543a137c446690420d691fe03b8ed8a392e187d8ef3541dd698aa21c18d578",
+      "keys": [
+        "text33Grid",
+        "customCameraAngles",
+        "panorama",
+        "portrait",
+        "emotion",
+        "style",
+        "video",
+        "viewQualityReport",
+        "qualityReport",
+        "qualityReport446",
+        "localQualityReport"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/NodeResultDownloadButton.tsx": {
+      "classHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "keys": [
+        "sentToThe3DDirectorWorkspace",
+        "sentToBlenderDirector",
+        "text3dModelHandoffFailed",
+        "openALocalProjectFirst",
+        "text3dModelActions",
+        "sendTo3DDirectorWorkspace",
+        "createAnInteractiveScene3DDirectorNode",
+        "sendToBlenderDirector",
+        "copyToTheBlenderDirectorAssetLibraryAndCreateA",
+        "download",
+        "downloadSaveLocally"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreenToolbar.tsx": {
+      "classHash": "0860ef77345fe1e07c49c6c7ed6f5fef69b63e3895dcdef78fe117cf9534c180",
+      "keys": [
+        "move",
+        "rotate",
+        "captureCurrentViewport",
+        "capture",
+        "exitTrajectoryMode",
+        "enterTrajectoryMode",
+        "trajectory",
+        "pauseTrajectoryPlayback",
+        "playTrajectory",
+        "speed",
+        "exit3DScene"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/CapabilityHumanReviewControl.tsx": {
+      "classHash": "ccd4857f19c9953281de3f5670561b3cb427c08fedfb4f62cf8dfae903b02d88",
+      "keys": [
+        "manuallyAccepted",
+        "manuallyRejected",
+        "manualVisualReview",
+        "notReviewed",
+        "manualReviewNotes",
+        "recordIdentityCompositionStyleOrTimingIssues",
+        "accept",
+        "reject",
+        "clearManualVerdict",
+        "manualVerdictsAreSavedSeparatelyAndDoNotOverwriteAutomatic"
+      ]
+    },
+    "src/workbench/generationCanvas/components/CapabilityAutoVisionReviewControl.tsx": {
+      "classHash": "fbf145bb8600a54de0a93f7f2b3bcdb79586207b55a00cdb9c4894b3f90e82d2",
+      "keys": [
+        "failedToLoadTheVisionModelCatalog",
+        "automaticVisualReviewAfterGeneration",
+        "visualReviewModel",
+        "addsOneMultiImageRequestForTheBatchAFailed",
+        "loadingVisionModels",
+        "connectATextModelThatSupportsImageInput"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx": {
+      "classHash": "10dd2343e6d0953900481d62ae5db0ddb5415404e0c8d6b70623b2cc2ffb1d08",
+      "keys": [
+        "scene",
+        "shotSize",
+        "cameraAngle",
+        "cameraMovement",
+        "characters",
+        "performance",
+        "dialogue",
+        "props",
+        "musicSoundEffects",
+        "notes",
+        "shot497",
+        "generating",
+        "failed",
+        "awaitingRetrieval",
+        "generated",
+        "pendingGeneration",
+        "imageNotGenerated",
+        "videoNotGenerated"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx": {
+      "classHash": "244a8c6cef7f9988caf6eb77ebdcb7cbe1cb5daf887dd1eeda462c8c9862c1b9",
+      "keys": [
+        "thisEnvironmentDoesNotSupportVideoFrameExtraction",
+        "videoFrameExtractionReturnedNoImage",
+        "shot112",
+        "currentShot",
+        "videoPreview",
+        "doubleClickToEnlargeTheVideoPreview",
+        "video512",
+        "videoPreview513"
+      ]
+    },
+    "src/ui/onboarding/CodexImagegenManage.tsx": {
+      "classHash": "a1664bd9c61c6a08ffe2cc80be76fddcadc8ae304d2d5ea141096c43b1c663d3",
+      "keys": [
+        "localCodexImageChannel",
+        "noAPIKeyRequired",
+        "nomiUsesYourLocalChatGPTCodexLoginToCallThe",
+        "thenSavesGeneratedAssetsToTheCurrentProjectIfYou"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/CreativeResourceNodeBody.tsx": {
+      "classHash": "543d3d09da97aadc6163bda82857c7cd876966ab11ca66319043a575e482d936",
+      "keys": [
+        "style",
+        "effect",
+        "identity",
+        "palette",
+        "resourceDataUnavailable",
+        "commercialUse",
+        "allowed",
+        "restricted",
+        "toBeConfirmed"
+      ]
+    },
+    "src/workbench/generationCanvas/components/BatchPlanOverlay.tsx": {
+      "classHash": "c470e9c699f44a62f43620ad30e29f89e42ca86ca00e884fb57720c8fa370e27",
+      "keys": [
+        "wave1",
+        "inParallelNoRequestsOrChargesBeforeConfirmation",
+        "confirmationCreatesANewVersionAndPreservesTheOldResult",
+        "blockedSee"
+      ]
+    },
+    "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx": {
+      "classHash": "fa67338bf056b717a6a8c9537120ab35d103a9637004f9cb8bc7be7e877cee27",
+      "keys": [
+        "cameraName",
+        "cameraAzimuth",
+        "cameraElevation",
+        "cameraShotSize"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/StoryboardMediaLightbox.tsx": {
+      "classHash": "a3b04e41d984375741572de0640ee7d2252e7c068cc1909eac9bd4e290f6402e",
+      "keys": [
+        "enlargedPreview",
+        "closePreview",
+        "player"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/NodeBrowserUploadDragHandle.tsx": {
+      "classHash": "2a23e75c83d47aaf28a815325bb3759013b9b72ef6d10a6bf35a60f5b9fa3f2b",
+      "keys": [
+        "failedToDragTheAssetIntoTheWebpage",
+        "dragToUploadOnAWebpage",
+        "dragToTheChatGPTOrJimengUploadArea"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx": {
+      "classHash": "7e5a2e79fb1d6f37281a0fab554399b65892a879042c6d4e273a3edf8f448b13",
+      "keys": [
+        "shot549",
+        "preview",
+        "doubleClickToEnlargeTheImagePreview"
+      ]
+    },
+    "src/workbench/skillLibrary/SkillLibraryPanel.tsx": {
+      "classHash": "c38b17f4ca470c64eec7183568c15ea6bcd791206b29ad3cdbc3f2cacc3c99a2",
+      "keys": [
+        "componentSource",
+        "skillSource"
+      ]
+    },
+    "src/ui/browser/dialog/NomiBrowserDialogModel.tsx": {
+      "classHash": "543dbaabb60b2a5db6eb3cfaf306c0ceebfa377165803d2f9f9dc4e0f6aa5c80",
+      "keys": [
+        "jimengWeb"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/model3d/Model3DViewer.tsx": {
+      "classHash": "2e69e0e9e89bf5ee879dd35b259012f097f84795daeed5bbea4d9fe4b4151cbb",
+      "keys": [
+        "loading3DScene"
+      ]
+    },
+    "src/workbench/generationCanvas/nodes/scene3d/Scene3DFullscreen.tsx": {
+      "classHash": "c4da52f92a76cde59ea277bc67c7945515a8bbd9d460c21496a4a28ba3bcd40c",
+      "keys": [
+        "scene"
+      ]
+    },
+    "src/ui/browser/dialog/NomiBrowserDialogView.tsx": {
+      "classHash": "b14fa9ebef6dd06fdd973beb818c16ea5546323dd74be79a6639ba1ccaa6c3ed",
+      "keys": [
+        "chatgptImages",
+        "jimengWeb"
+      ]
+    }
+  },
+  "zh": {
+    "imagegenTool": "image_gen.imagegen",
+    "vibingDirector": "VIBING Director",
+    "comparisonA": "A",
+    "comparisonB": "B",
+    "comparisonAPrefix": "A · ",
+    "comparisonBPrefix": "B · ",
+    "kenneyKitLicense": "Kenney Furniture Kit 1.0 · CC0",
+    "glbPrefix": "GLB · ",
+    "vibingDirectorAgent": "VIBING Director Agent",
+    "directorAgent": "Director Agent",
+    "secondsSuffix": "s",
+    "style": "风格",
+    "effect": "效果",
+    "identity": "身份",
+    "palette": "色板",
+    "theSourceNodeForCreativeCapabilitiesNoLongerExists": "要打开创作能力的源节点已不存在",
+    "failedToLoadTheModelCatalog": "模型目录加载失败",
+    "selectACapabilityRecipe": "请选择能力配方",
+    "modes": "{{v0}} 个模式",
+    "noCompatibleModels": "无兼容模型",
+    "native": "原生",
+    "experimental": "实验",
+    "compatible": "兼容",
+    "automaticVisualReviewRequiresAConnectedTextModelThatSupports": "自动视觉复核需要先连接一个支持图片输入的文本模型",
+    "generate": "生成{{v0}}",
+    "oneAdditionalBatchVisualReviewWillRunAfterGeneration": "{{v0}}；生成完成后额外执行 1 次批量视觉复核。",
+    "generateNewResults": "生成新结果",
+    "sourceNode": "源节点",
+    "model": "模型",
+    "generationTasks": "生成任务",
+    "requestsSplitLocallyIntoResults": "{{v0}} 次请求，本地拆分为 {{v1}} 个结果",
+    "separateRequests": "{{v0}} 次独立请求",
+    "visualReview": "视觉复核",
+    "onceForTheEntireBatch": "{{v0}} · 整批 1 次",
+    "createdAResultNodeFor": "已创建「{{v0}}」结果节点",
+    "recipeTaskAccepted": "配方任务已受理",
+    "recipeExecutionFailed": "配方执行失败",
+    "savedCreativeResource": "已保存创作资源「{{v0}}」",
+    "failedToSaveTheResource": "保存资源失败",
+    "creativeCapabilities": "创作能力",
+    "selectANodeFirst": "先选择一个节点",
+    "noNodeSelected": "未选择节点",
+    "generatedResultAvailable": "已有生成结果",
+    "noGeneratedResultYet": "尚无生成结果",
+    "capabilityRecipes": "能力配方",
+    "saveResource": "保存资源",
+    "recipe": "配方",
+    "loading": "加载中",
+    "selectARecipe": "选择配方",
+    "modelAndMode": "模型与模式",
+    "connectModels": "去模型接入：{{v0}}",
+    "connectModels51": "去模型接入",
+    "thisModelDoesNotDeclareNativeSupportForThisCapability": "当前模型未声明该能力为原生支持，将通过通用模型和专用提示词实验执行；实际机位、身份、肤质或效果仍需质量报告和视觉复核确认。",
+    "on": "开",
+    "off": "关",
+    "outputEmotions": "输出情绪",
+    "outputCameraAngles": "输出机位",
+    "outputCount": "输出数量",
+    "rowsEnergyColumnsAffinity": "行：能量 · 列：亲和",
+    "energyAffinity": "能量 {{v0}}，亲和 {{v1}}",
+    "creativeResources": "创作资源",
+    "cancel": "取消",
+    "submitting": "受理中",
+    "resourceType": "资源类型",
+    "commercialLicense": "商用许可",
+    "allowed": "允许",
+    "restricted": "受限",
+    "toBeConfirmed": "待确认",
+    "name": "名称",
+    "description": "描述",
+    "promptTags": "提示词标签",
+    "generated": "已生成",
+    "generating": "生成中",
+    "failed": "失败",
+    "pendingGeneration": "待生成",
+    "polishedTheVideoPromptForShot": "镜头 {{v0}} 视频提示词已润色",
+    "polishedVideoPrompts": "已润色 {{v0}} 个视频提示词",
+    "agentFilledInShots": "Agent 已填写 {{v0}} 个镜头",
+    "agentCouldNotFillInTheTable": "Agent 填表失败",
+    "containedStoryboardGenerationNodes": "已收纳 {{v0}} 个分镜生成节点",
+    "noStoryboardGenerationNodesToContain": "当前没有可收纳的分镜生成节点",
+    "storyboardTableFittedToItsCurrentRowsAndColumns": "分镜表已适配当前行列",
+    "storyboardTableRestoredToACompactWindow": "分镜表已恢复紧凑窗口",
+    "openedCreativeCapabilitiesForShot": "已打开镜头 {{v0}} 的{{v1}}创作能力",
+    "shotNodeExtractedChooseAModelAndParameters": "镜头 {{v0}} 的{{v1}}节点已提取，可选择模型和参数",
+    "failedToExtractTheGenerationNodeForShot": "镜头 {{v0}} 生成节点提取失败",
+    "createdThe5SecondActionFrameAnd8SecondEnding": "已建立镜头 {{v0}} 的 5秒动作帧和 8秒结尾帧",
+    "the53SecondKeyframesForShotAlreadyExistAnd": "镜头 {{v0}} 的 5+3 秒关键帧已存在，准备重新生成",
+    "failedToGenerateKeyframesForShot": "镜头 {{v0}} 关键帧生成失败",
+    "dragTheStoryboardTableNode": "拖动分镜表节点",
+    "storyboardScript": "分镜头脚本",
+    "agentFill": "Agent补表",
+    "containStoryboardGenerationNodes": "收纳分镜生成节点",
+    "restoreTheCompactStoryboardTableWindow": "恢复分镜表紧凑窗口",
+    "restoreCompactWindow": "恢复紧凑窗口",
+    "moreScriptActions": "更多脚本操作",
+    "overwriteExistingContent": "覆盖填写已有内容",
+    "polishAllVideoPrompts": "润色全部视频提示词",
+    "showAllShots": "显示全部镜头",
+    "shots": "{{v0}} 镜",
+    "noStoryboardDataYet": "暂无分镜数据",
+    "shot": "镜头",
+    "image": "图片",
+    "video": "视频",
+    "generationSettings": "生成设置",
+    "shot112": "镜头 {{v0}}",
+    "durationSeconds": "时长（秒）",
+    "shotDuration": "镜头 {{v0}} 时长",
+    "seconds": "{{v0}} 秒",
+    "shotImagePrompt": "镜头 {{v0}} 图片提示词",
+    "imageNotGenerated": "待生成图",
+    "shotVideoPrompt": "镜头 {{v0}} 视频提示词",
+    "videoNotGenerated": "待生成视频",
+    "collapse": "收起",
+    "edit": "编辑",
+    "openCreativeCapabilitiesForShot": "打开镜头 {{v0}} 创作能力",
+    "continueCreatingFromThisShotSImageOrVideo": "基于该镜头的图片或视频继续创作",
+    "continueFromImage": "基于图片继续创作",
+    "continueFromVideo": "基于视频继续创作",
+    "configureImageGenerationForShot": "配置镜头 {{v0}} 图片生成",
+    "extractAnImageGenerationNodeAndConfigureItsModelParameters": "提取图片生成节点并设置模型参数",
+    "imageSettings": "图片设置",
+    "configureVideoGenerationForShot": "配置镜头 {{v0}} 视频生成",
+    "extractAVideoGenerationNodeAndConfigureItsModelParameters": "提取视频生成节点并设置模型参数",
+    "videoSettings": "视频设置",
+    "generate53SecondKeyframesForShot": "生成镜头 {{v0}} 的 5+3 秒关键帧",
+    "useTheStoryboardReferenceAsThe0SecondFrameThen": "以分镜参考图为 0 秒帧，依次生成第 5 秒动作帧和第 8 秒结尾帧",
+    "generatingKeyframes": "关键帧生成中",
+    "generate53Keyframes": "生成5+3关键帧",
+    "polishVideoPrompt": "润色视频词",
+    "noNodesAvailableForBatchSettings": "没有可批量设置的{{v0}}节点",
+    "allSelectedNodesAlreadyHaveResults": "选中的{{v0}}节点都已经有结果",
+    "appliedToNodes": "已应用到 {{v0}} 个{{v1}}节点",
+    "batchModelAndParameterSettings": "批量设置模型和参数",
+    "batchSettings": "批量设置",
+    "batchGenerationSettings": "批量生成设置",
+    "nodes": "{{v0}} 个{{v1}}节点",
+    "onlyGenerateMissingVideos": "只生成未成片",
+    "onlyGenerateMissingImages": "只生成未出图",
+    "type": "类型",
+    "selectAModel": "选择模型",
+    "provider": "供应商",
+    "applyParameters": "应用参数",
+    "applyAndGenerate": "应用并生成",
+    "blenderPreviewReceived": "Blender 预览已回传",
+    "waitingForTheFirstBlenderPlan": "等待首个 Blender 计划",
+    "blenderCameraRenderPreview": "Blender 相机渲染预览",
+    "inspectTheBlenderScene": "检查 Blender 场景",
+    "viewTheBlenderCameraRender": "查看 Blender 相机渲染",
+    "resetSceneView": "重置场景视角",
+    "waitingForABlenderPreview": "等待 Blender 回传预览",
+    "rebuiltBlenderBlockingForATwoPersonConversation": "已按双人对话关系重建 Blender 摆位",
+    "failedToRebuildBlenderBlocking": "重建 Blender 摆位失败",
+    "blenderDirectorWorkspace": "{{v0}} Blender 导演台",
+    "rebuildBlockingForTwoPeopleAtACoffeeTable": "按双人咖啡桌关系重建摆位",
+    "openTheCurrentProjectInBlender": "在 Blender 中打开当前工程",
+    "closeDirector": "关闭 Director",
+    "blenderIsExecutingTheDirectorPlan": "Blender 正在执行导演计划",
+    "scene": "场景",
+    "assets": "资产",
+    "stagedObjects": "摆位对象",
+    "spatialRelationships": "空间关系",
+    "shotBeats": "镜头节拍",
+    "spatialQuality": "空间质量",
+    "performanceAndCameraDetailsNeeded": "待补充表演与机位",
+    "directorAgentWillWriteShotBeatsHereAlongWithThe": "Director Agent 会把镜头节拍随 Blender 计划一起写入这里。",
+    "setScene": "设置场景：{{v0}}",
+    "arrangeBlocking": "整理摆位：{{v0}}",
+    "placeAsset": "摆放资产：{{v0}}",
+    "addBlockingMarker": "添加走位标记：{{v0}}",
+    "adjustObject": "调整对象：{{v0}}",
+    "removeObject": "移除对象：{{v0}}",
+    "setRelationship": "设置关系：{{v0}}",
+    "removeRelationship": "移除关系：{{v0}}",
+    "adjustCamera": "调整机位：{{v0}}",
+    "setCameraMovement": "设置运镜：{{v0}}",
+    "updateBeat": "更新节拍：{{v0}}",
+    "processing": "处理中...",
+    "theCompatibilityProtocolResponseCannotBeExecutedAttemptingOneAutomatic": "{{v0}}兼容协议响应不可执行：{{v1}}\n正在自动修复一次…",
+    "directorAgentFailed": "Director Agent 执行失败：{{v0}}{{v1}}",
+    "blenderDirectorPlanGeneratedAwaitingConfirmation": "{{v0}}\n\n已生成 Blender 导演计划，等待确认。",
+    "blenderDirectorPlanSubmittedAwaitingConfirmation": "已提交 Blender 导演计划，等待确认。",
+    "directorAgentFailed199": "Director Agent 执行失败：{{v0}}",
+    "thisModelDoesNotSupportNomiSNativeFunctionCall": "当前模型不兼容 Nomi 原生 Function Call；已为该模型启用兼容协议，正在重试…",
+    "nativeToolRequestRejected": "原生工具请求被拒绝；",
+    "directorAgentFailedTheNativeToolRequestWasRejectedAnd": "Director Agent 执行失败：原生工具请求被拒绝；兼容协议也未完成（{{v0}}）",
+    "blenderReturnedAResultButItemsWereNotApplied": "Blender 已回传，但有 {{v0}} 项未应用。",
+    "blenderUpdatedTheSceneAndReturnedAPreview": "Blender 已完成场景更新并回传预览。",
+    "blenderDirectorPlanWasNotExecuted": "Blender 导演计划未执行：{{v0}}",
+    "describeTheSceneCharacterBlockingOrCameraSetupToBuild": "描述要在 Blender 中搭建的场景、人物调度或机位。",
+    "skip": "跳过",
+    "executingInBlender": "正在执行 Blender…",
+    "applyToBlender": "应用到 Blender",
+    "sendAMessageToDirectorAgent": "向 Director Agent 发送消息",
+    "forExampleAStreetAfterRainTwoCharactersMeetAt": "例如：搭一个雨后街道开场，两位角色在门口相遇，镜头缓慢推进。",
+    "stopTheBlenderDirectorPlan": "停止 Blender 导演计划",
+    "stopDirectorAgent": "停止 Director Agent",
+    "sendToDirectorAgent": "发送给 Director Agent",
+    "theKeyframeInspectorRequiresTheNomiDesktopApp": "关键帧检查器需要 Nomi 桌面端",
+    "keyframeExtractionFailed": "关键帧抽取失败：{{v0}}",
+    "keyframeInspectionFailedOpenTheCurrentProjectFirst": "关键帧检查失败：请先打开当前项目",
+    "theProjectHasChangedExtractTheKeyframesAgain": "项目已变化，请重新抽取关键帧",
+    "selectAtLeastOneKeyframeFirst": "请先选择至少一个关键帧",
+    "createdKeyframeNodes": "已创建 {{v0}} 个关键帧节点",
+    "videoKeyframeInspector": "视频关键帧检查器",
+    "videoDurationNotAvailable": "未读取到视频时长",
+    "close": "关闭",
+    "frameCount": "抽帧数量",
+    "extracting": "抽帧中…",
+    "extractAgain": "重新抽取",
+    "selected": "已选 {{v0}} / {{v1}}",
+    "playTheVideoOnceSoNomiCanReadItsActual": "请先播放一次视频，让 Nomi 读取真实时长。",
+    "extractingKeyframesFromTheSameVideoSource": "正在从同一视频源抽取关键帧…",
+    "keyframe": "{{v0}} 关键帧",
+    "create": "创建 ",
+    "keyframeNodes": " 个关键帧节点",
+    "authorizedLocalFiles": "本地已授权文件",
+    "kenneyOpenSourceCatalog": "Kenney 开源目录",
+    "cannotReadTheOpenSourceAssetCatalog": "无法读取开源资产目录",
+    "importedAsset": "已导入资产「{{v0}}」",
+    "failedToImportTheBlenderAsset": "导入 Blender 资产失败",
+    "downloadedAndImported": "已下载并导入「{{v0}}」",
+    "failedToDownloadTheOpenSourceAsset": "下载开源资产失败",
+    "blenderAssetLibrary": "Blender 资产库",
+    "open": "打开 {{v0}}",
+    "assetSource": "资产来源",
+    "searchOpenSource3DAssets": "搜索开源三维资产",
+    "coffeeTablesChairsLights": "咖啡、桌子、椅子、灯…",
+    "assetLicense": "资产许可证",
+    "licenseLeaveBlankToMarkAsNeedingConfirmation": "许可证（未填写则标记为需确认）",
+    "importLocalModel": "导入本地模型",
+    "readingCatalog": "正在读取目录",
+    "imported": "{{v0}} 已导入",
+    "import": "导入 {{v0}}",
+    "noMatching3DAssets": "没有匹配的三维资产",
+    "noDirectorAssetsInThisProjectYet": "当前项目还没有 Director 资产",
+    "connectTwoImagesToCompare": "连接两张图片进行对比",
+    "connectOneMoreImage": "再连接一张图片",
+    "imageComparisonPosition": "图像对比位置",
+    "wipeComparison": "滑杆对比",
+    "sideBySideComparison": "并排对比",
+    "overlayComparison": "叠加对比",
+    "overlayOpacity": "叠加图透明度",
+    "zoomOut": "缩小",
+    "resetZoom": "重置缩放",
+    "zoomIn": "放大",
+    "fullscreenComparison": "全屏对比",
+    "fullscreenImageComparison": "全屏图像对比",
+    "imageComparison": "图像对比",
+    "closeFullscreenComparison": "关闭全屏对比",
+    "blenderDirectorPreviewReturnedToTheCanvas": "Blender 导演预演已回传画布",
+    "blenderSceneReturnedToTheCanvas": "Blender 场景已回传画布",
+    "thisEnvironmentDoesNotSupportBackgroundBlenderRendering": "当前运行环境不支持 Blender 后台渲染",
+    "blenderRenderingCancelled": "Blender 渲染已取消",
+    "openALocalProjectFirst": "请先打开一个本地项目",
+    "theBlenderDirectorPreviewIsNotInstalledInThisEnvironment": "当前运行环境尚未安装 Blender 导演预演",
+    "clickToEnterThe3DDirectorWorkspace": "点击进入 3D 导演台",
+    "stageObjectsPlanCameraMovementAndExportAPreview": "摆位、运镜并输出预演",
+    "enterThe3DDirectorWorkspace": "进入 3D 导演台",
+    "stopBlenderRendering": "停止 Blender 渲染",
+    "renderWithBlender": "使用 Blender 渲染",
+    "stopTheBlenderDirectorPreview": "停止 Blender 导演预演",
+    "blenderDirectorPreview": "Blender 导演预演",
+    "text3dDirectorWorkspace": "3D导演台",
+    "importScript": "导入剧本",
+    "extractCharacterSceneAndPropReferenceCards": "提取角色、场景和道具参考卡",
+    "writeOrImportAScriptFirst": "请先写入或导入剧本",
+    "extractReferences": "提取设定",
+    "theScriptFileMustNotExceed20MB": "剧本文件不能超过 20 MB",
+    "replaceTheCurrentDocument": "替换当前文稿？",
+    "importingAScriptReplacesTheCurrentDocumentInTheCreation": "导入剧本会替换创作区当前文稿，画布中的已有节点不会改变。",
+    "continueImport": "继续导入",
+    "thisEnvironmentCannotParseThisScriptFile": "当前运行环境不支持解析这个剧本文件",
+    "theScriptFileContainsNoReadableText": "剧本文件没有可读取的文字",
+    "imported304": "已导入《{{v0}}》",
+    "scriptImportFailed": "剧本导入失败",
+    "organizingCharactersScenesAndPropsConfirmInTheAgentPlan": "正在整理角色、场景和道具，请在 Agent 计划卡确认",
+    "selectAScriptFile": "选择剧本文件",
+    "azimuth": "方位",
+    "elevation": "仰俯",
+    "distance": "距离",
+    "theCurrent3DViewIsNotReadyTryAgainShortly": "当前 3D 画面还没有准备好，请稍后重试",
+    "createdACaptureImageUsingTheCameraFraming": "已按 {{v0}} 机位创建回拍图片",
+    "text3dCameraCaptureFailed": "3D 机位回拍失败",
+    "theViewForCameraIsNotReady": "机位「{{v0}}」画面尚未准备好",
+    "createdANineCameraGeometryGuideCollection": "已创建 {{v0}} 九机位几何引导集合",
+    "failedToGenerateTheNineCameraGuide": "九机位引导生成失败",
+    "cameraSettings": "机位设置",
+    "captureTheCurrentCameraView": "按当前机位拍摄",
+    "generateNineCameraGuide": "生成九机位引导",
+    "cameraTarget": "相机目标点",
+    "captureAspectRatio": "回拍画幅 {{v0}}",
+    "captureResolution": "回拍分辨率",
+    "size": "尺寸",
+    "resetCamera": "复位机位",
+    "skillNodeDataIsCorruptedAddTheSkillAgainFrom": "技能节点数据已损坏，请从技能库重新放入。",
+    "input": "{{v0}}输入",
+    "mediaInput": "素材输入",
+    "canvasWorkflowSkill": "画布工作流技能",
+    "inputsConnected": "已连接 {{v0}} 个输入",
+    "waitingForConnection": "等待连接{{v0}}",
+    "configureAndRun": "配置并运行 {{v0}}",
+    "configureAndRun334": "配置并运行",
+    "recentOutputs": "最近输出",
+    "agentRunning": "Agent 执行中",
+    "confirmAndContinue": "确认并继续 · {{v0}}/{{v1}}",
+    "runPlaybookAgain": "重新运行 Playbook",
+    "retryCurrentStage": "重试当前阶段",
+    "start1": "开始 · 1/{{v0}}",
+    "continueWithAgent": "用 Agent 推进",
+    "selectAtLeastOneOutputFirst": "请先选择至少一个输出",
+    "localArchivingRequiresASavedProjectInTheNomiDesktop": "本地归档需要已保存的 Nomi 桌面端项目",
+    "archivedOutputs": "已归档 {{v0}} 个输出",
+    "archiveFailed": "归档失败：{{v0}}",
+    "localArchivingRequiresAnOpenProjectInTheNomiDesktop": "本地归档需要已打开的 Nomi 桌面端项目",
+    "cannotOpenTheArchiveFolder": "无法打开归档目录：{{v0}}",
+    "archiveName": "归档名称",
+    "outputCollection": "输出收集",
+    "deselectAll": "取消全选",
+    "selectAll": "全选",
+    "connectImageOrVideoNodesThatAlreadyHaveResultsHere": "把已有结果的图片或视频节点连接到这里。",
+    "archiving": "归档中…",
+    "archiveItems": "归档 {{v0}} 项",
+    "showTheLatestArchiveInFinder": "在 Finder 中显示最近归档",
+    "openLatestArchive": "打开最近归档",
+    "reviewEmotionalPerformancesWithAVisionModel": "视觉模型复核情绪表演",
+    "send1SourceImageAndEmotionResultsToInOne": "将把 1 张来源图和 {{v0}} 张情绪结果发送给「{{v1}}」，执行 1 次多模态文本模型请求。会消耗该模型额度。",
+    "startReview": "开始复核",
+    "calls": "调用",
+    "text1BatchVisualReview": "1 次批量视觉复核",
+    "localImages": "{{v0}} 张本地图片",
+    "emotionalPerformanceReviewSavedToTheQualityReport": "情绪表演视觉复核已写入质量报告",
+    "loadingVisionModels": "正在读取视觉模型",
+    "noConnectedTextModelDeclaresSupportForImageInput": "当前没有已连接并声明支持图片输入的文本模型。",
+    "expressionSemanticReview": "表情语义复核",
+    "emotionReviewModel": "情绪复核模型",
+    "reviewing": "复核中",
+    "visionModelReview": "视觉模型复核",
+    "reviewMultipleViewsWithAVisionModel": "视觉模型复核多视角",
+    "send1SourceImageAndResultImagesToInOne": "将把 1 张来源图和 {{v0}} 张结果图发送给「{{v1}}」，执行 1 次多模态文本模型请求。会消耗该模型额度。",
+    "multiViewVisualReviewSavedToTheQualityReport": "多视角视觉复核已写入质量报告",
+    "visualReviewReturnedNoUsableConclusionTheReportWasSaved": "视觉复核未返回可用结论，报告已按未验证保存",
+    "semanticVisualReview": "语义视觉复核",
+    "visualReviewModel": "视觉复核模型",
+    "currentResult": "当前结果",
+    "portraitSourceComparison": "人像原图对比",
+    "sourceComparison": "原图对比",
+    "zoomOutComparison": "缩小对比图",
+    "comparisonZoom": "对比图缩放",
+    "zoomInComparison": "放大对比图",
+    "resetComparisonZoom": "重置对比图缩放",
+    "closeSourceComparison": "关闭原图对比",
+    "originalPortrait": "原始人像",
+    "compareWithSource": "与原图对比",
+    "energy04": "能量 0 → 4",
+    "affinity04": "亲和 0 → 4",
+    "recipeResults": "{{v0}} 个配方生成结果",
+    "currentPrimaryResult": "，当前主结果",
+    "qualityCheck": "质量检查：{{v0}}",
+    "selectCandidates": "选择 {{v0}} 个候选",
+    "retryFailedResults": "重试 {{v0}} 个失败结果",
+    "generatedResult": "生成结果",
+    "selectCandidate": "{{v0}} · 选择候选",
+    "providerCandidates": "{{v0}} 个供应商候选",
+    "candidate": "候选 {{v0}}",
+    "thisEnvironmentDoesNotSupportBlenderDirector": "当前运行环境不支持 Blender Director",
+    "blenderDirectorIsExecutingAnotherPlan": "Blender Director 正在执行另一个计划",
+    "blenderDirectorPreviewReturnedToTheCurrentNode": "Blender 导演预演已回传当前节点",
+    "thisEnvironmentDoesNotSupportTheBlenderAssetLibrary": "当前运行环境不支持 Blender 资产库",
+    "thisEnvironmentDoesNotSupportTheDirectorOpenSourceAsset": "当前运行环境不支持 Director 开源资产目录",
+    "askDirectorAgentToApplyABlenderPlanFirst": "请先让 Director Agent 应用一个 Blender 计划",
+    "thisEnvironmentCannotOpenBlenderProjects": "当前运行环境无法打开 Blender 工程",
+    "openedTheDirectorProjectInBlender": "已在 Blender 中打开 Director 工程",
+    "cannotOpenTheBlenderProject": "无法打开 Blender 工程",
+    "cannotOpenTheAssetSource": "无法打开资产来源",
+    "openVIBINGDirector": "打开 VIBING Director",
+    "vibingDirectorBlenderPreview": "VIBING Director Blender 预览",
+    "noCreativeBriefSet": "未设置创作简述",
+    "text33Grid": "九宫格",
+    "customCameraAngles": "自定义机位",
+    "wideShot": "全景",
+    "portrait": "人像",
+    "emotion": "情绪",
+    "viewQualityReport": "查看质量报告：{{v0}}",
+    "qualityReport": "{{v0}}质量报告：{{v1}}",
+    "qualityReport446": "{{v0}}质量报告",
+    "localQualityReport": "本地质量报告",
+    "sentToThe3DDirectorWorkspace": "已送入 3D 导演台",
+    "sentToBlenderDirector": "已送入 Blender Director",
+    "text3dModelHandoffFailed": "3D 模型交接失败",
+    "text3dModelActions": "3D 模型操作",
+    "sendTo3DDirectorWorkspace": "送入 3D 导演台",
+    "createAnInteractiveScene3DDirectorNode": "创建可交互的 Scene3D 导演台节点",
+    "sendToBlenderDirector": "送入 Blender Director",
+    "copyToTheBlenderDirectorAssetLibraryAndCreateA": "复制到 Blender Director 资产库并创建摆位对象",
+    "download": "下载",
+    "downloadSaveLocally": "下载 / 另存到本地",
+    "move": "移动",
+    "rotate": "旋转",
+    "captureCurrentViewport": "当前视口截图",
+    "capture": "截图",
+    "exitTrajectoryMode": "退出轨迹模式",
+    "enterTrajectoryMode": "进入轨迹模式",
+    "trajectory": "轨迹",
+    "pauseTrajectoryPlayback": "暂停轨迹播放",
+    "playTrajectory": "播放轨迹",
+    "speed": "速度",
+    "exit3DScene": "退出 3D 场景",
+    "manuallyAccepted": "人工通过",
+    "manuallyRejected": "人工拒绝",
+    "manualVisualReview": "人工视觉验收",
+    "notReviewed": "未复核",
+    "manualReviewNotes": "人工验收备注",
+    "recordIdentityCompositionStyleOrTimingIssues": "记录身份、构图、风格或时序问题",
+    "accept": "通过",
+    "reject": "拒绝",
+    "clearManualVerdict": "清除人工结论",
+    "manualVerdictsAreSavedSeparatelyAndDoNotOverwriteAutomatic": "人工结论独立保存，不覆盖自动质量报告。",
+    "failedToLoadTheVisionModelCatalog": "视觉模型目录加载失败",
+    "automaticVisualReviewAfterGeneration": "生成后自动视觉复核",
+    "addsOneMultiImageRequestForTheBatchAFailed": "整批增加 1 次多图请求，复核失败不会重新生成。",
+    "connectATextModelThatSupportsImageInput": "连接支持图片输入的文本模型",
+    "shotSize": "景别",
+    "cameraAngle": "机位",
+    "cameraMovement": "运镜",
+    "characters": "角色",
+    "performance": "表演",
+    "dialogue": "对白",
+    "props": "道具",
+    "musicSoundEffects": "音乐/音效",
+    "notes": "备注",
+    "shot497": "镜头 {{v0}} {{v1}}",
+    "awaitingRetrieval": "待取回",
+    "thisEnvironmentDoesNotSupportVideoFrameExtraction": "当前环境不支持视频抽帧",
+    "videoFrameExtractionReturnedNoImage": "视频抽帧没有返回图片",
+    "currentShot": "当前镜头",
+    "videoPreview": "{{v0}}视频预览",
+    "doubleClickToEnlargeTheVideoPreview": "双击放大视频预览",
+    "video512": "{{v0}}视频",
+    "videoPreview513": "{{v0}}{{v1}}视频预览",
+    "localCodexImageChannel": "本机 Codex 图片通道",
+    "noAPIKeyRequired": "无需 API Key",
+    "nomiUsesYourLocalChatGPTCodexLoginToCallThe": "Nomi 使用本机 ChatGPT/Codex 登录态调用内置 ",
+    "thenSavesGeneratedAssetsToTheCurrentProjectIfYou": "， 生成完成后自动写回当前项目素材。未登录时会直接提示先登录，失败不会自动重复提交。",
+    "resourceDataUnavailable": "资源数据不可用",
+    "commercialUse": "商用：",
+    "wave1": "第 1 波 ",
+    "inParallelNoRequestsOrChargesBeforeConfirmation": " 个并行,确认前不调用不扣费",
+    "confirmationCreatesANewVersionAndPreservesTheOldResult": " · 确认后新建版本，旧结果保留",
+    "blockedSee": " · {{v0}} 个被拦(看 ⚠)",
+    "cameraName": "机位 {{v0}} 名称",
+    "cameraAzimuth": "机位 {{v0}} 方位角",
+    "cameraElevation": "机位 {{v0}} 仰俯角",
+    "cameraShotSize": "机位 {{v0}} 景别",
+    "closeUp": "特写",
+    "mediumCloseUp": "近景",
+    "mediumShot": "中景",
+    "enlargedPreview": "{{v0}}放大预览",
+    "closePreview": "关闭预览",
+    "player": "{{v0}}播放器",
+    "failedToDragTheAssetIntoTheWebpage": "素材拖入网页失败",
+    "dragToUploadOnAWebpage": "拖到网页上传",
+    "dragToTheChatGPTOrJimengUploadArea": "拖到 ChatGPT 或即梦上传区",
+    "shot549": "镜头 {{v0}}{{v1}}",
+    "preview": "{{v0}}预览",
+    "doubleClickToEnlargeTheImagePreview": "双击放大图片预览",
+    "componentSource": "组件来源",
+    "skillSource": "技能来源",
+    "chatgptImages": "ChatGPT 图像",
+    "jimengWeb": "即梦 Web",
+    "loading3DScene": "3D 场景加载中",
+    "directorCamera": "导演相机",
+    "stop": "停止",
+    "play": "播放",
+    "panorama": "全景"
+  },
+  "bindings": [
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.modes",
+      "expressions": [
+        "recipe.compatibleModels.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.generate",
+      "expressions": [
+        "selectedRecipe.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.oneAdditionalBatchVisualReviewWillRunAfterGeneration",
+      "expressions": [
+        "generationCost"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.requestsSplitLocallyIntoResults",
+      "expressions": [
+        "taskCount",
+        "count"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.separateRequests",
+      "expressions": [
+        "taskCount"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.onceForTheEntireBatch",
+      "expressions": [
+        "selectedVisionReviewModel.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.createdAResultNodeFor",
+      "expressions": [
+        "selectedRecipe.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.savedCreativeResource",
+      "expressions": [
+        "resourceLabel"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.connectModels",
+      "expressions": [
+        "connectionGuidance.vendorLabel"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx",
+      "key": "canvasComponents.energyAffinity",
+      "expressions": [
+        "energy",
+        "affinity"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.polishedTheVideoPromptForShot",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.polishedVideoPrompts",
+      "expressions": [
+        "promptByShotIndex.size"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.agentFilledInShots",
+      "expressions": [
+        "result.updatedShotCount"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.containedStoryboardGenerationNodes",
+      "expressions": [
+        "count"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.openedCreativeCapabilitiesForShot",
+      "expressions": [
+        "row.shot.index",
+        "role === 'image' ? '图片' : '视频'"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.shotNodeExtractedChooseAModelAndParameters",
+      "expressions": [
+        "row.shot.index",
+        "role === 'image' ? '图片' : '视频'"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.failedToExtractTheGenerationNodeForShot",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.createdThe5SecondActionFrameAnd8SecondEnding",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.the53SecondKeyframesForShotAlreadyExistAnd",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.failedToGenerateKeyframesForShot",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.shots",
+      "expressions": [
+        "rows.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.shot112",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.shotDuration",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.seconds",
+      "expressions": [
+        "row.shot.durationSec || 0"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.shotImagePrompt",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.shotVideoPrompt",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.openCreativeCapabilitiesForShot",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.configureImageGenerationForShot",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.configureVideoGenerationForShot",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableNode.tsx",
+      "key": "canvasComponents.generate53SecondKeyframesForShot",
+      "expressions": [
+        "row.shot.index"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "key": "canvasComponents.noNodesAvailableForBatchSettings",
+      "expressions": [
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "key": "canvasComponents.allSelectedNodesAlreadyHaveResults",
+      "expressions": [
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "key": "canvasComponents.appliedToNodes",
+      "expressions": [
+        "applyTargets.length",
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/BatchGenerateSettingsButton.tsx",
+      "key": "canvasComponents.nodes",
+      "expressions": [
+        "selectedTargetNodes.length",
+        "targetLabel"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorFullscreen.tsx",
+      "key": "canvasComponents.blenderDirectorWorkspace",
+      "expressions": [
+        "nodeTitle"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.setScene",
+      "expressions": [
+        "action.preset"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.arrangeBlocking",
+      "expressions": [
+        "action.template"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.placeAsset",
+      "expressions": [
+        "action.name"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.addBlockingMarker",
+      "expressions": [
+        "action.name"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.adjustObject",
+      "expressions": [
+        "action.objectRef"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.removeObject",
+      "expressions": [
+        "action.objectRef"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.setRelationship",
+      "expressions": [
+        "action.id"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.removeRelationship",
+      "expressions": [
+        "action.relationRef"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.adjustCamera",
+      "expressions": [
+        "action.name || action.cameraRef || '导演相机'"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.setCameraMovement",
+      "expressions": [
+        "action.cameraRef || '导演相机'"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.updateBeat",
+      "expressions": [
+        "action.title"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.theCompatibilityProtocolResponseCannotBeExecutedAttemptingOneAutomatic",
+      "expressions": [
+        "failurePrefix",
+        "firstFailure"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.directorAgentFailed",
+      "expressions": [
+        "failurePrefix",
+        "resolution.message"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.blenderDirectorPlanGeneratedAwaitingConfirmation",
+      "expressions": [
+        "request.summary"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.directorAgentFailed199",
+      "expressions": [
+        "detail"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.blenderDirectorPlanGeneratedAwaitingConfirmation",
+      "expressions": [
+        "request.summary"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.directorAgentFailedTheNativeToolRequestWasRejectedAnd",
+      "expressions": [
+        "fallbackDetail"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.blenderReturnedAResultButItemsWereNotApplied",
+      "expressions": [
+        "result.rejected.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssistantPanel.tsx",
+      "key": "canvasComponents.blenderDirectorPlanWasNotExecuted",
+      "expressions": [
+        "message"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "key": "canvasComponents.keyframeExtractionFailed",
+      "expressions": [
+        "error instanceof Error ? error.message : String(error)"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "key": "canvasComponents.createdKeyframeNodes",
+      "expressions": [
+        "ids.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "key": "canvasComponents.seconds",
+      "expressions": [
+        "duration.toFixed(2)"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "key": "canvasComponents.selected",
+      "expressions": [
+        "selected.size",
+        "frames.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/VideoKeyframeInspectorDialog.tsx",
+      "key": "canvasComponents.keyframe",
+      "expressions": [
+        "formatVideoFrameTime(frame.timeSeconds)"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "key": "canvasComponents.importedAsset",
+      "expressions": [
+        "asset.name"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "key": "canvasComponents.downloadedAndImported",
+      "expressions": [
+        "asset.name"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "key": "canvasComponents.open",
+      "expressions": [
+        "ASSET_SOURCE_LABEL[assetSource]"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "key": "canvasComponents.imported",
+      "expressions": [
+        "item.name"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/vibingDirector/VibingDirectorAssetLibrary.tsx",
+      "key": "canvasComponents.import",
+      "expressions": [
+        "item.name"
+      ]
+    },
+    {
+      "file": "src/workbench/creation/WorkbenchEditor.tsx",
+      "key": "canvasComponents.imported304",
+      "expressions": [
+        "file.name"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "key": "canvasComponents.createdACaptureImageUsingTheCameraFraming",
+      "expressions": [
+        "ratio"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "key": "canvasComponents.theViewForCameraIsNotReady",
+      "expressions": [
+        "guide.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "key": "canvasComponents.createdANineCameraGeometryGuideCollection",
+      "expressions": [
+        "ratio"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/model3d/Model3DCameraNodeBody.tsx",
+      "key": "canvasComponents.captureAspectRatio",
+      "expressions": [
+        "option"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "key": "canvasComponents.input",
+      "expressions": [
+        "requiredSourceKinds.map((kind) => (\n      kind === 'video' ? '视频' : kind === 'model3d' ? '3D' : '图片'\n    )).join(' / ')"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "key": "canvasComponents.inputsConnected",
+      "expressions": [
+        "connectedNodes.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "key": "canvasComponents.waitingForConnection",
+      "expressions": [
+        "sourceHint"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "key": "canvasComponents.configureAndRun",
+      "expressions": [
+        "recipe.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "key": "canvasComponents.configureAndRun",
+      "expressions": [
+        "recipe.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "key": "canvasComponents.confirmAndContinue",
+      "expressions": [
+        "state.currentStageIndex + 1",
+        "state.stages.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/CanvasSkillNodeBody.tsx",
+      "key": "canvasComponents.start1",
+      "expressions": [
+        "state.stages.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "key": "canvasComponents.archivedOutputs",
+      "expressions": [
+        "result.items.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "key": "canvasComponents.archiveFailed",
+      "expressions": [
+        "error instanceof Error ? error.message : String(error)"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "key": "canvasComponents.cannotOpenTheArchiveFolder",
+      "expressions": [
+        "error instanceof Error ? error.message : String(error)"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/OutputCollectorNodeBody.tsx",
+      "key": "canvasComponents.archiveItems",
+      "expressions": [
+        "selected.size"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "key": "canvasComponents.send1SourceImageAndEmotionResultsToInOne",
+      "expressions": [
+        "assets.outputCount",
+        "model.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/MoodVisionReviewControl.tsx",
+      "key": "canvasComponents.localImages",
+      "expressions": [
+        "assets.attachmentCount"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "key": "canvasComponents.send1SourceImageAndResultImagesToInOne",
+      "expressions": [
+        "assets.successfulOutputCount",
+        "model.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/MultiviewVisionReviewControl.tsx",
+      "key": "canvasComponents.localImages",
+      "expressions": [
+        "assets.attachmentCount"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.recipeResults",
+      "expressions": [
+        "collection.items.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.qualityCheck",
+      "expressions": [
+        "qualityLabel(qualityStatus)"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.selectCandidates",
+      "expressions": [
+        "candidates.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.selectCandidates",
+      "expressions": [
+        "candidates.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.retryFailedResults",
+      "expressions": [
+        "failedCount"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.retryFailedResults",
+      "expressions": [
+        "failedCount"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.selectCandidate",
+      "expressions": [
+        "candidateItem.label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.providerCandidates",
+      "expressions": [
+        "candidateItem.candidates?.length ?? 0"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityResultCollection.tsx",
+      "key": "canvasComponents.candidate",
+      "expressions": [
+        "index + 1"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "key": "canvasComponents.viewQualityReport",
+      "expressions": [
+        "qualityLabel(report.status)"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "key": "canvasComponents.qualityReport",
+      "expressions": [
+        "kindLabel",
+        "qualityLabel(report.status)"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/CapabilityQualityReportPopover.tsx",
+      "key": "canvasComponents.qualityReport446",
+      "expressions": [
+        "kindLabel"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardTableCells.tsx",
+      "key": "canvasComponents.shot497",
+      "expressions": [
+        "row.shot.index",
+        "FIELD_LABEL[field]"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "key": "canvasComponents.shot112",
+      "expressions": [
+        "node.shotIndex"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "key": "canvasComponents.videoPreview",
+      "expressions": [
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "key": "canvasComponents.video512",
+      "expressions": [
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "key": "canvasComponents.videoPreview513",
+      "expressions": [
+        "playing ? '停止' : '播放'",
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+      "key": "canvasComponents.video512",
+      "expressions": [
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/BatchPlanOverlay.tsx",
+      "key": "canvasComponents.blockedSee",
+      "expressions": [
+        "plan.blocked.length"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "key": "canvasComponents.cameraName",
+      "expressions": [
+        "index + 1"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "key": "canvasComponents.cameraAzimuth",
+      "expressions": [
+        "index + 1"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "key": "canvasComponents.cameraElevation",
+      "expressions": [
+        "index + 1"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx",
+      "key": "canvasComponents.cameraShotSize",
+      "expressions": [
+        "index + 1"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardMediaLightbox.tsx",
+      "key": "canvasComponents.enlargedPreview",
+      "expressions": [
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardMediaLightbox.tsx",
+      "key": "canvasComponents.player",
+      "expressions": [
+        "label"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "key": "canvasComponents.shot549",
+      "expressions": [
+        "node.shotIndex",
+        "labelKind"
+      ]
+    },
+    {
+      "file": "src/workbench/generationCanvas/nodes/render/StoryboardImagePreview.tsx",
+      "key": "canvasComponents.preview",
+      "expressions": [
+        "label"
+      ]
+    }
+  ]
+}

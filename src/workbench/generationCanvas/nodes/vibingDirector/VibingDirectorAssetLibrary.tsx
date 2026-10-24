@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import {
@@ -18,8 +20,8 @@ import type {
 } from './vibingDirectorState'
 
 const ASSET_SOURCE_LABEL: Record<BlenderDirectorAssetSource, string> = {
-  local: '本地已授权文件',
-  kenney: 'Kenney 开源目录',
+  get local() { return i18n.t("canvasComponents.authorizedLocalFiles") },
+  get kenney() { return i18n.t("canvasComponents.kenneyOpenSourceCatalog") },
   polyhaven: 'Poly Haven',
   quaternius: 'Quaternius',
   blenderkit: 'BlenderKit',
@@ -47,6 +49,7 @@ export default function VibingDirectorAssetLibrary({
   onAssetImported,
   onOpenAssetSource,
 }: VibingDirectorAssetLibraryProps): JSX.Element {
+  useTranslation()
   const [assetSource, setAssetSource] = React.useState<BlenderDirectorAssetSource>('kenney')
   const [assetLicense, setAssetLicense] = React.useState('')
   const [localBusy, setLocalBusy] = React.useState(false)
@@ -69,7 +72,7 @@ export default function VibingDirectorAssetLibrary({
         .catch((error: unknown) => {
           if (!disposed) {
             setCatalogItems([])
-            setCatalogError(error instanceof Error ? error.message : '无法读取开源资产目录')
+            setCatalogError(error instanceof Error ? error.message : i18n.t("canvasComponents.cannotReadTheOpenSourceAssetCatalog"))
           }
         })
         .finally(() => {
@@ -90,9 +93,9 @@ export default function VibingDirectorAssetLibrary({
       if (!asset) return
       onAssetImported(asset)
       setAssetLicense('')
-      toast(`已导入资产「${asset.name}」`, 'success')
+      toast(i18n.t("canvasComponents.importedAsset", { v0: asset.name }), 'success')
     } catch (error: unknown) {
-      toast(error instanceof Error ? error.message : '导入 Blender 资产失败', 'error')
+      toast(error instanceof Error ? error.message : i18n.t("canvasComponents.failedToImportTheBlenderAsset"), 'error')
     } finally {
       setLocalBusy(false)
     }
@@ -104,9 +107,9 @@ export default function VibingDirectorAssetLibrary({
     try {
       const asset = await onImportCatalogAsset(catalogAssetId)
       onAssetImported(asset)
-      toast(`已下载并导入「${asset.name}」`, 'success')
+      toast(i18n.t("canvasComponents.downloadedAndImported", { v0: asset.name }), 'success')
     } catch (error: unknown) {
-      toast(error instanceof Error ? error.message : '下载开源资产失败', 'error')
+      toast(error instanceof Error ? error.message : i18n.t("canvasComponents.failedToDownloadTheOpenSourceAsset"), 'error')
     } finally {
       setCatalogImportingId(null)
     }
@@ -124,10 +127,10 @@ export default function VibingDirectorAssetLibrary({
     >
       <header className="flex items-center gap-2 border-b border-[var(--workbench-border)] px-3 py-2.5">
         <IconFolderPlus size={16} className="text-[var(--workbench-muted)]" />
-        <span className="min-w-0 flex-1 text-body-sm font-medium">Blender 资产库</span>
+        <span className="min-w-0 flex-1 text-body-sm font-medium">{i18n.t("canvasComponents.blenderAssetLibrary")}</span>
         {assetSource !== 'local' ? (
           <WorkbenchIconButton
-            label={`打开 ${ASSET_SOURCE_LABEL[assetSource]}`}
+            label={i18n.t("canvasComponents.open", { v0: ASSET_SOURCE_LABEL[assetSource] })}
             icon={<IconExternalLink size={15} />}
             onClick={() => onOpenAssetSource(assetSource)}
           />
@@ -138,7 +141,7 @@ export default function VibingDirectorAssetLibrary({
         <div className="space-y-2 border-b border-[var(--workbench-border)] p-3">
           <select
             className="h-8 w-full rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] px-2 text-caption text-[var(--workbench-ink)]"
-            aria-label="资产来源"
+            aria-label={i18n.t("canvasComponents.assetSource")}
             value={assetSource}
             onChange={(event) => setAssetSource(event.target.value as BlenderDirectorAssetSource)}
           >
@@ -154,23 +157,23 @@ export default function VibingDirectorAssetLibrary({
                 />
                 <input
                   className="h-8 w-full rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] pl-7 pr-2 text-caption text-[var(--workbench-ink)] placeholder:text-[var(--workbench-muted)]"
-                  aria-label="搜索开源三维资产"
-                  placeholder="咖啡、桌子、椅子、灯…"
+                  aria-label={i18n.t("canvasComponents.searchOpenSource3DAssets")}
+                  placeholder={i18n.t("canvasComponents.coffeeTablesChairsLights")}
                   value={catalogQuery}
                   onChange={(event) => setCatalogQuery(event.target.value)}
                 />
               </label>
               <div className="flex items-center gap-1.5 text-micro text-[var(--workbench-muted)]">
                 <IconBadgeCc size={13} />
-                Kenney Furniture Kit 1.0 · CC0
+                {i18n.t('canvasComponents.kenneyKitLicense')}
               </div>
             </>
           ) : (
             <>
               <input
                 className="h-8 w-full rounded-nomi-sm border border-[var(--nomi-line-soft)] bg-[var(--nomi-paper)] px-2 text-caption text-[var(--workbench-ink)] placeholder:text-[var(--workbench-muted)]"
-                aria-label="资产许可证"
-                placeholder="许可证（未填写则标记为需确认）"
+                aria-label={i18n.t("canvasComponents.assetLicense")}
+                placeholder={i18n.t("canvasComponents.licenseLeaveBlankToMarkAsNeedingConfirmation")}
                 value={assetLicense}
                 onChange={(event) => setAssetLicense(event.target.value)}
               />
@@ -180,9 +183,7 @@ export default function VibingDirectorAssetLibrary({
                 disabled={localBusy}
                 onClick={() => { void importLocalAsset() }}
               >
-                {localBusy ? <NomiLoadingMark size={14} /> : <IconFolderPlus size={14} />}
-                导入本地模型
-              </button>
+                {localBusy ? <NomiLoadingMark size={14} /> : <IconFolderPlus size={14} />}{i18n.t("canvasComponents.importLocalModel")}</button>
             </>
           )}
         </div>
@@ -192,8 +193,7 @@ export default function VibingDirectorAssetLibrary({
         <div className="min-h-0 flex-1 overflow-y-auto" data-director-asset-catalog="kenney">
           {catalogLoading ? (
             <div className="flex items-center gap-2 px-3 py-5 text-caption text-[var(--workbench-muted)]">
-              <NomiLoadingMark size={15} />正在读取目录
-            </div>
+              <NomiLoadingMark size={15} />{i18n.t("canvasComponents.readingCatalog")}</div>
           ) : catalogError ? (
             <div className="px-3 py-5 text-caption leading-5 text-workbench-danger">{catalogError}</div>
           ) : catalogItems.length ? catalogItems.map((item) => {
@@ -207,10 +207,10 @@ export default function VibingDirectorAssetLibrary({
               >
                 <div className="min-w-0">
                   <div className="truncate text-caption font-medium">{item.name}</div>
-                  <div className="mt-1 text-micro text-[var(--workbench-muted)]">GLB · {item.license}</div>
+                  <div className="mt-1 text-micro text-[var(--workbench-muted)]">{i18n.t('canvasComponents.glbPrefix')}{item.license}</div>
                 </div>
                 <WorkbenchIconButton
-                  label={imported ? `${item.name} 已导入` : `导入 ${item.name}`}
+                  label={imported ? i18n.t("canvasComponents.imported", { v0: item.name }) : i18n.t("canvasComponents.import", { v0: item.name })}
                   icon={importing
                     ? <NomiLoadingMark size={14} />
                     : imported
@@ -222,7 +222,7 @@ export default function VibingDirectorAssetLibrary({
               </div>
             )
           }) : (
-            <div className="px-3 py-5 text-caption text-[var(--workbench-muted)]">没有匹配的三维资产</div>
+            <div className="px-3 py-5 text-caption text-[var(--workbench-muted)]">{i18n.t("canvasComponents.noMatching3DAssets")}</div>
           )}
         </div>
       ) : (
@@ -236,7 +236,7 @@ export default function VibingDirectorAssetLibrary({
               <div className="mt-1 truncate text-micro text-[var(--workbench-muted)]">{asset.license}</div>
             </div>
           )) : (
-            <div className="px-3 py-5 text-caption leading-5 text-[var(--workbench-muted)]">当前项目还没有 Director 资产</div>
+            <div className="px-3 py-5 text-caption leading-5 text-[var(--workbench-muted)]">{i18n.t("canvasComponents.noDirectorAssetsInThisProjectYet")}</div>
           )}
         </div>
       )}

@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../../i18n'
 import type { JSX } from 'react'
 import React from 'react'
 import { createPortal } from 'react-dom'
@@ -48,11 +50,12 @@ type VibingDirectorFullscreenProps = {
 
 function stateSummary(state: VibingDirectorState): string {
   if (state.output?.blenderVersion) return `Blender ${state.output.blenderVersion}`
-  if (state.output) return 'Blender 预览已回传'
-  return '等待首个 Blender 计划'
+  if (state.output) return i18n.t("canvasComponents.blenderPreviewReceived")
+  return i18n.t("canvasComponents.waitingForTheFirstBlenderPlan")
 }
 
 function ArtifactPreview({ state }: { state: VibingDirectorState }): JSX.Element {
+  useTranslation()
   const output = state.output
   const hasSceneModel = Boolean(output?.modelUrl)
   const spatial = summarizeVibingDirectorSpatialReport(output?.spatialReport)
@@ -78,21 +81,21 @@ function ArtifactPreview({ state }: { state: VibingDirectorState }): JSX.Element
           <img
             className="h-full w-full object-contain"
             src={output.previewUrl}
-            alt="Blender 相机渲染预览"
+            alt={i18n.t("canvasComponents.blenderCameraRenderPreview")}
             draggable={false}
           />
         )}
         {hasSceneModel ? (
           <div className="absolute left-3 top-3 z-10 flex items-center gap-1 rounded-nomi-sm border border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] p-1 shadow-nomi-sm">
             <WorkbenchIconButton
-              label="检查 Blender 场景"
+              label={i18n.t("canvasComponents.inspectTheBlenderScene")}
               icon={<IconCube size={16} />}
               aria-pressed={mode === 'scene'}
               className={cn(mode === 'scene' && 'bg-[var(--workbench-hover)] text-[var(--workbench-ink)]')}
               onClick={() => setMode('scene')}
             />
             <WorkbenchIconButton
-              label="查看 Blender 相机渲染"
+              label={i18n.t("canvasComponents.viewTheBlenderCameraRender")}
               icon={<IconPhoto size={16} />}
               aria-pressed={mode === 'render'}
               className={cn(mode === 'render' && 'bg-[var(--workbench-hover)] text-[var(--workbench-ink)]')}
@@ -100,7 +103,7 @@ function ArtifactPreview({ state }: { state: VibingDirectorState }): JSX.Element
             />
             {mode === 'scene' ? (
               <WorkbenchIconButton
-                label="重置场景视角"
+                label={i18n.t("canvasComponents.resetSceneView")}
                 icon={<IconRefresh size={16} />}
                 onClick={() => setSceneViewKey((value) => value + 1)}
               />
@@ -130,7 +133,7 @@ function ArtifactPreview({ state }: { state: VibingDirectorState }): JSX.Element
   return (
     <div className="flex h-full min-h-[260px] flex-col items-center justify-center gap-3 text-[var(--workbench-muted)]">
       <IconBrandBlender size={52} stroke={1.25} />
-      <span className="text-caption">等待 Blender 回传预览</span>
+      <span className="text-caption">{i18n.t("canvasComponents.waitingForABlenderPreview")}</span>
     </div>
   )
 }
@@ -150,6 +153,7 @@ export default function VibingDirectorFullscreen({
   onCancelBlender,
   onOpenAssetSource,
 }: VibingDirectorFullscreenProps): JSX.Element | null {
+  useTranslation()
   const [state, setState] = React.useState(() => normalizeVibingDirectorState(initialState))
   const [planApplying, setPlanApplying] = React.useState(false)
   const stateRef = React.useRef(state)
@@ -198,8 +202,8 @@ export default function VibingDirectorFullscreen({
   const rebuildCoffeeConversation = React.useCallback(() => {
     if (readOnly || planApplying) return
     void applyPlan(createCoffeeConversationLayoutPlan(stateRef.current))
-      .then(() => toast('已按双人对话关系重建 Blender 摆位', 'success'))
-      .catch((error: unknown) => toast(error instanceof Error ? error.message : '重建 Blender 摆位失败', 'error'))
+      .then(() => toast(i18n.t("canvasComponents.rebuiltBlenderBlockingForATwoPersonConversation"), 'success'))
+      .catch((error: unknown) => toast(error instanceof Error ? error.message : i18n.t("canvasComponents.failedToRebuildBlenderBlocking"), 'error'))
   }, [applyPlan, planApplying, readOnly])
 
   const canRebuildCoffeeConversation = state.stagePreset === 'coffee_shop' || /咖啡|coffee/i.test(state.brief)
@@ -213,7 +217,7 @@ export default function VibingDirectorFullscreen({
       style={{ zIndex: 9999 }}
       role="dialog"
       aria-modal="true"
-      aria-label={`${nodeTitle} Blender 导演台`}
+      aria-label={i18n.t("canvasComponents.blenderDirectorWorkspace", { v0: nodeTitle })}
       onWheel={(event) => event.stopPropagation()}
     >
       <header className="relative z-[2] flex min-h-[52px] shrink-0 items-center gap-3 border-b border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)] px-4 shadow-nomi-sm">
@@ -227,7 +231,7 @@ export default function VibingDirectorFullscreen({
         <div className="flex items-center gap-1">
           {!readOnly && canRebuildCoffeeConversation ? (
             <WorkbenchIconButton
-              label="按双人咖啡桌关系重建摆位"
+              label={i18n.t("canvasComponents.rebuildBlockingForTwoPeopleAtACoffeeTable")}
               icon={<IconLayoutGrid size={17} />}
               disabled={planApplying}
               onClick={rebuildCoffeeConversation}
@@ -235,12 +239,12 @@ export default function VibingDirectorFullscreen({
           ) : null}
           {state.output ? (
             <WorkbenchIconButton
-              label="在 Blender 中打开当前工程"
+              label={i18n.t("canvasComponents.openTheCurrentProjectInBlender")}
               icon={<IconBrandBlender size={17} />}
               onClick={() => onOpenBlender(stateRef.current)}
             />
           ) : null}
-          <WorkbenchIconButton label="关闭 Director" icon={<IconX size={17} />} onClick={onClose} />
+          <WorkbenchIconButton label={i18n.t("canvasComponents.closeDirector")} icon={<IconX size={17} />} onClick={onClose} />
         </div>
       </header>
 
@@ -261,7 +265,7 @@ export default function VibingDirectorFullscreen({
               <ArtifactPreview state={state} />
               {planApplying ? (
                 <div className="absolute inset-0 grid place-items-center bg-[var(--nomi-ink)]/45 text-[var(--nomi-paper)]">
-                  <div className="flex items-center gap-2 text-caption"><NomiLoadingMark size={17} />Blender 正在执行导演计划</div>
+                  <div className="flex items-center gap-2 text-caption"><NomiLoadingMark size={17} />{i18n.t("canvasComponents.blenderIsExecutingTheDirectorPlan")}</div>
                 </div>
               ) : null}
             </div>
@@ -269,13 +273,13 @@ export default function VibingDirectorFullscreen({
 
           <section className="shrink-0 border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)]">
             <div className="grid grid-cols-2 divide-x divide-y divide-[var(--workbench-border)] md:grid-cols-3 xl:grid-cols-6 xl:divide-y-0">
-              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">场景</div><div className="mt-1 truncate text-caption font-medium">{state.stagePreset}</div></div>
-              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">资产</div><div className="mt-1 text-caption font-medium">{state.assets.length}</div></div>
-              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">摆位对象</div><div className="mt-1 text-caption font-medium">{state.objects.length}</div></div>
-              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">空间关系</div><div className="mt-1 text-caption font-medium">{state.relations.length}</div></div>
-              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">镜头节拍</div><div className="mt-1 text-caption font-medium">{state.beats.length}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">{i18n.t("canvasComponents.scene")}</div><div className="mt-1 truncate text-caption font-medium">{state.stagePreset}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">{i18n.t("canvasComponents.assets")}</div><div className="mt-1 text-caption font-medium">{state.assets.length}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">{i18n.t("canvasComponents.stagedObjects")}</div><div className="mt-1 text-caption font-medium">{state.objects.length}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">{i18n.t("canvasComponents.spatialRelationships")}</div><div className="mt-1 text-caption font-medium">{state.relations.length}</div></div>
+              <div className="px-4 py-3"><div className="text-micro text-[var(--workbench-muted)]">{i18n.t("canvasComponents.shotBeats")}</div><div className="mt-1 text-caption font-medium">{state.beats.length}</div></div>
               <div className="px-4 py-3">
-                <div className="text-micro text-[var(--workbench-muted)]">空间质量</div>
+                <div className="text-micro text-[var(--workbench-muted)]">{i18n.t("canvasComponents.spatialQuality")}</div>
                 <div className={cn(
                   'mt-1 truncate text-caption font-medium',
                   spatial.status === 'failed' && 'text-workbench-danger',
@@ -300,15 +304,15 @@ export default function VibingDirectorFullscreen({
           </section>
 
           <section className="shrink-0 border-t border-[var(--workbench-border)] bg-[var(--workbench-surface-solid)]">
-            <div className="flex items-center gap-2 px-4 py-2.5"><IconMovie size={15} className="text-[var(--workbench-muted)]" /><span className="text-caption font-medium">镜头节拍</span></div>
+            <div className="flex items-center gap-2 px-4 py-2.5"><IconMovie size={15} className="text-[var(--workbench-muted)]" /><span className="text-caption font-medium">{i18n.t("canvasComponents.shotBeats")}</span></div>
             <div className="max-h-48 overflow-y-auto border-t border-[var(--workbench-border)]">
               {state.beats.length ? state.beats.map((beat, index) => (
                 <div key={beat.id} className="grid grid-cols-[32px_minmax(0,1fr)_72px] items-center gap-2 border-b border-[var(--workbench-border)] px-4 py-2.5 last:border-b-0">
                   <span className="text-micro text-[var(--workbench-muted)]">{String(index + 1).padStart(2, '0')}</span>
-                  <div className="min-w-0"><div className="truncate text-caption font-medium">{beat.title}</div><div className="truncate text-micro text-[var(--workbench-muted)]">{beat.action || beat.cameraNote || '待补充表演与机位'}</div></div>
-                  <span className="text-right text-micro text-[var(--workbench-muted)]">{beat.durationSec}s</span>
+                  <div className="min-w-0"><div className="truncate text-caption font-medium">{beat.title}</div><div className="truncate text-micro text-[var(--workbench-muted)]">{beat.action || beat.cameraNote || i18n.t("canvasComponents.performanceAndCameraDetailsNeeded")}</div></div>
+                  <span className="text-right text-micro text-[var(--workbench-muted)]">{beat.durationSec}{i18n.t('canvasComponents.secondsSuffix')}</span>
                 </div>
-              )) : <div className="px-4 py-5 text-caption text-[var(--workbench-muted)]">Director Agent 会把镜头节拍随 Blender 计划一起写入这里。</div>}
+              )) : <div className="px-4 py-5 text-caption text-[var(--workbench-muted)]">{i18n.t("canvasComponents.directorAgentWillWriteShotBeatsHereAlongWithThe")}</div>}
             </div>
           </section>
         </section>
