@@ -360,6 +360,14 @@ test("match: CLI feeds file contents for every changed file, not just door paths
     "没有这一行，isGeneratedDataFile 读不到正文，@generated 纯数据免门那条规则恒为 false");
 });
 
+test("auto-filled doors hydrate their evidence before contract validation", () => {
+  const checker = fs.readFileSync(path.join(repoRoot, "scripts/check-root-cause-contracts.mjs"), "utf8");
+  const autoFill = checker.indexOf("contract.doors = doors;");
+  const validation = checker.indexOf("const result = validateRootCauseChange(");
+  assert.ok(autoFill >= 0 && validation > autoFill);
+  assert.match(checker.slice(autoFill, validation), /for \(const door of doors\) loadFileContent\(door\.path\);/);
+});
+
 test("not_match: unrelated historical contracts are ignored", () => {
   const unrelated = {
     ...completeContract,

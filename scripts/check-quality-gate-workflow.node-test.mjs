@@ -17,6 +17,12 @@ const workflow = load(fs.readFileSync(path.join(repoRoot, '.github/workflows/qua
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
 const runCommands = (job) => job.steps?.flatMap((step) => (typeof step.run === 'string' ? [step.run] : [])) ?? []
 
+test('browser validation lanes pin the supported Ubuntu release instead of a rolling host', () => {
+  for (const name of ['unit', 'desktop-linux', 'canvas-acceptance', 'canvas-performance', 'core-smoke']) {
+    assert.equal(workflow.jobs[name]['runs-on'], 'ubuntu-24.04', name)
+  }
+})
+
 test('the unit lane provisions Chromium before either browser integration test entry', () => {
   const steps = workflow.jobs.unit.steps
   const install = steps.findIndex(step => step.run === 'pnpm exec playwright install --with-deps chromium')

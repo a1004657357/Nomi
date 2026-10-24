@@ -1,0 +1,37 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-contract-history-evidence",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "合同的真实证据因装载时机和净差异丢失",
+  "symptom": "长期版本同步中，历史已删路径不在净差异，自动补齐门表后正文未装载，导致十八处不可验证错误。",
+  "direct_cause": "只读取 base 到工作树的净文件列表，遗漏范围内新增后删除的路径；自动生成 doors 发生在原始正文装载之后。",
+  "class_root": "校验器消费派生的证据视图却没有确保它保留所验证历史事实和新发现引用的完整来源。",
+  "affected_population": ["跨多个修复提交的同步 PR", "通过 door-map 补齐门表的合同"],
+  "scope_paths": ["scripts/check-root-cause-contracts.mjs", "scripts/root-cause-history-evidence.mjs", "scripts/root-cause-history-evidence.node-test.mjs", "scripts/check-root-cause-contracts.node-test.mjs"],
+  "entry_points": ["check-root-cause-contracts 的 Git 差异输入", "自动补门表后的 fileContents 输入"],
+  "external_sources": [],
+  "internal_only_reason": "只以本仓可达 Git 提交、NUL 路径 API 和真实文件正文核验，不采信合同自报已删除。",
+  "invariants": ["历史删除必须在可信 base..HEAD 范围内有实际 Git 删除提交。", "从未存在或范围外删除的路径不能被承认为本次删除。", "自动补齐的每个 door 在正式校验前必须装载正文。"],
+  "invariant_owner_layer": {"layer": "scripts/check-root-cause-contracts.mjs", "tests": ["scripts/root-cause-history-evidence.node-test.mjs", "scripts/check-root-cause-contracts.node-test.mjs"]},
+  "doors": [
+    {"kind": "read", "path": "scripts/check-root-cause-contracts.mjs", "symbol": "loadFileContent"},
+    {"kind": "write", "path": "scripts/check-root-cause-contracts.mjs", "symbol": "historicalRemovedPaths"},
+    {"kind": "write", "path": "scripts/root-cause-history-evidence.node-test.mjs", "symbol": "historicalRemovedPaths"}
+  ],
+  "door_reduction": {"before": 1, "after": 3, "why_not": "原有正文装载边界与新增 Git 历史事实输入职责不同；新增函数的第二个调用方是独立真实仓库回归，不能移除该验证入口。"},
+  "generality_proof": "真实临时 Git 仓库回归同时覆盖空净差异、中文/空格/换行路径、伪造路径及无效 base；不按某份历史合同或 Provider 特判。",
+  "shared_boundaries": [{"path": "scripts/check-root-cause-contracts.mjs", "symbol": "loadFileContent", "responsibility": "给同一正式 validator 提供完整且可核对的证据。"}],
+  "same_class_entry_points": [
+    {"path": "scripts/check-root-cause-contracts.mjs", "entry_point": "changedFiles", "disposition": "enforced", "evidence": "净差异之外的删除只允许真实 Git 范围证据补入。"},
+    {"path": "scripts/check-root-cause-contracts.mjs", "entry_point": "contract.doors", "disposition": "enforced", "evidence": "显式门表与自动门表都在 validateRootCauseChange 前加载正文。"}
+  ],
+  "recurrence": {"classification": "recurring", "reason": "任何新增后删除或自动补门表都会触发同一机制。", "same_class_scan": ["核对十八条具体失败及全部 loadFileContent/doors 入口", "使用 gitPaths 的 NUL 分隔而非按行拆文件名"]},
+  "prevention": {"kind": "centralized-boundary", "enforcement_path": "scripts/check-root-cause-contracts.mjs", "invariant": "派生证据不丢 Git 范围中的实际删除或自动生成引用。", "failure_mode": "无有效 Git 证据时不补路径，原正式校验继续失败；Git 读取错误直接失败。", "exception_policy": "none", "strategy": "补证据装载而非改写合同、降低分类或增加路径白名单。", "artifacts": ["scripts/check-root-cause-contracts.mjs", "scripts/root-cause-history-evidence.mjs"]},
+  "regression_tests": ["scripts/root-cause-history-evidence.node-test.mjs", "scripts/check-root-cause-contracts.node-test.mjs"],
+  "class_regression_tests": ["scripts/root-cause-history-evidence.node-test.mjs"],
+  "legacy_paths": {"status": "not-applicable", "removed_paths": [], "rationale": "替换原证据输入，不保留旧的净差异专用判断旁路；历史合同原文不改。"},
+  "dependency_lifecycle": {"decision": "not-applicable", "rationale": "仅使用已有 Node/Git 和 gitPaths 工具。", "exit_criteria": []},
+  "migration": "无用户数据迁移；既有合同在其可达提交范围内重新读取证据。",
+  "residual_risks": ["本轮只补真实存在的历史删除，不把不存在的证明视为成功；最终全仓重新验证。"]
+}

@@ -30,3 +30,13 @@
 - delivery:preflight 仅运行一次：transport_failed，127.0.0.1:7897 不可连接，未重试。
 - 安装首次沙箱 DNS ENOTFOUND；正常权限以同一指定命令成功，独立 node_modules。
 - 核心 generate 提交只调用一次；轮询重试是查询，不是付费重提。生成重试策略仍需尊重结构化不可重试与未知证据。
+
+## 先查别人
+
+2026-10-25 同步时补充可核对的既有实现来源，不声称这是原实施前新增的外部调研。
+
+- 仓库已有：`electron/outboundDispatchEvidence.ts:83` 的 outboundRequestWasNeverWritten 已统一判断未写出证据，继续复用它，不按供应商新增盲重提判据。
+- 仓库已有：`electron/vendor/vendorHttp.ts:52` 的 vendorHttpTimeoutMs 以及 `electron/vendor/vendorHttp.ts:421` 的 requestJson 已拥有请求预算和传输边界，媒体与配置使用角色参数，而不是第二套 HTTP 客户端。
+- 仓库已有：`electron/productionRun/submissionOutbox.ts:103` 的 createSubmissionOutbox 是持久提交与有界重试的现有 owner，未知结果保留原笔并查询，不再生成第二笔。
+- 展示复用：`src/workbench/observability/narrate.ts:192` 的 narrateGenerationError 和同文件动作投影保持结构化错误到文案的共享路径，不把等待超时冒称额度不足。
+- 结论：复用已有状态机、错误信封和传输，不引入新框架。该内部不变量由真实提交次数和持久化回读验证，自媒体经验不能替代证据，本轮未编造额外检索记录。

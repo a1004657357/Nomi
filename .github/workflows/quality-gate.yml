@@ -115,7 +115,7 @@ jobs:
   unit:
     name: Unit
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
@@ -153,7 +153,7 @@ jobs:
       needs.scope.outputs.desktop == 'true' ||
       needs.scope.outputs.journeys == 'true' ||
       needs.scope.outputs.canvas == 'critical'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
@@ -265,7 +265,7 @@ jobs:
     name: Canvas Acceptance (Linux)
     needs: scope
     if: needs.scope.outputs.canvas == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -315,7 +315,7 @@ jobs:
     name: Canvas Performance (Linux)
     needs: scope
     if: needs.scope.outputs.performance == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -363,7 +363,7 @@ jobs:
     name: Core Flow Smoke (${{ matrix.fixture }})
     needs: scope
     if: needs.scope.outputs.core_smoke == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # used 这一格**照跑、照传证据，但不阻断**（2026-09-22 用户拍板）：实测同一份代码连跑 5 次
     # 只有 1 次全绿，三种失败都出自还没修的小窗布局问题（ /  / ），

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { DOOR_MAP_SINCE, classifyFindings, inheritLegacyContractHashes, validateRootCauseChange, validateRootCauseHistory } from "./root-cause-contracts.mjs";
 import { doorsForTargets } from "./door-map.mjs";
 import { gitPaths } from "./lib/gitPaths.mjs";
+import { historicalRemovedPaths } from "./root-cause-history-evidence.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -77,6 +78,12 @@ const contracts = contractFiles.map((file) => {
     process.exit(1);
   }
 });
+
+const removedCandidates = contracts
+  .filter((contract) => changedFiles.has(contract.__file))
+  .flatMap((contract) => contract.legacy_paths?.status === "removed" ? contract.legacy_paths.removed_paths ?? [] : [])
+  .filter((file) => typeof file === "string" && !changedFiles.has(file));
+for (const file of historicalRemovedPaths(baseRef, removedCandidates, { cwd: repoRoot })) changedFiles.add(file);
 
 const legacyBaselineRelativePath = "scripts/root-cause-contract-v1-baseline.json";
 const legacyBaselinePath = path.join(repoRoot, legacyBaselineRelativePath);
@@ -164,6 +171,7 @@ for (const contract of contracts) {
   const doors = doorsForTargets(targets);
   if (doors.length === 0) continue;
   contract.doors = doors;
+  for (const door of doors) loadFileContent(door.path);
   doorFillNotes.push(`${contract.__file}: 门表缺失，door-map 数出 ${doors.length} 扇（${targets.length} 个改动文件）${fixDoors ? "，已写回" : "，加 --fix-doors 写回"}`);
   if (fixDoors) {
     const absolute = path.join(repoRoot, contract.__file);
