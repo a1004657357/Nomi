@@ -170,7 +170,35 @@
     {"path":"src/config/knownVendors*","reason":"已知供应商清单：我们策展的供应商名称、图标与默认地址"},
     {"path":"src/config/modelBoxPreference*","reason":"模型框偏好：画布模型下拉框的展示偏好（渲染层）"},
     {"path":"src/config/models*","reason":"模型选项的领域配置"},
-    {"path":"src/devlab/","reason":"设计实验室：Nomi 界面的样张与状态集，不进产物"}
+    {"path":"src/devlab/","reason":"设计实验室：Nomi 界面的样张与状态集，不进产物"},
+    {"path":"electron/blender/shotBlenderBridge.ts","reason":"ShotSpec 镜头语言与 Blender 场景输入/相机补丁映射；不实现渲染或通用进程机制"},
+    {"path":"electron/blender/vibingDirectorAssets.ts","reason":"Director 项目资产的许可来源与对象引用落地；路径和写入委托既有资产 owner"},
+    {"path":"electron/capabilityCore/customLocalCanvasDispatcher.ts","reason":"Nomi 自定义本地导演渲染/批量生成入口，使用既有项目 lease、gateway 和提交边界"},
+    {"path":"electron/capabilityCore/directorRender.ts","reason":"导演渲染结果回填 Nomi 节点与引用边；不另造图、渲染器或数据库"},
+    {"path":"electron/capabilityCore/mcpGenerationOperationMemoryStore.ts","reason":"Nomi generation operation 的镜头范围与候选计划投影；不提供通用持久存储 API"},
+    {"path":"electron/capabilityCore/mcpImportRejectionMessage.ts","reason":"媒体准入拒绝原因投影到 Nomi MCP 导入回执；不提供通用错误解析器"},
+    {"path":"electron/capabilityCore/modelOnboarding/","reason":"Nomi 模型接入声明、供应商身份指纹、付费试跑与可证实范围信封；校验/执行委托既有目录、adapter 与审批 owner"},
+    {"path":"electron/evaluation/qualityGates.ts","reason":"Nomi 镜头、参考素材、连续性与能力约束的质量判据；不是通用测试运行器"},
+    {"path":"electron/shared/buildArtifactUrl.ts","reason":"识别 Nomi app.asar/开发示例构建地址与资产 mention，禁止其成为项目持久引用"},
+    {"path":"electron/shared/contracts/assetImportResult.ts","reason":"Nomi SurfacePort 媒体导入失败信封及有类型错误；不实现 IPC 或异常框架"},
+    {"path":"electron/shared/contracts/mediaImportPolicy.ts","reason":"Nomi 各导入界面的媒体种类、磁盘预留和容量准入合同，统一 accept 派生来源"},
+    {"path":"electron/shared/contracts/modelBoxPreference.ts","reason":"Nomi 模型盒显示顺序/隐藏/供应商偏好规范；只归一自有偏好 schema，不定义模型协议"},
+    {"path":"electron/shared/contracts/workspaceBusy.ts","reason":"Nomi manifest 忙态错误的跨进程身份与识别；不实现文件锁"},
+    {"path":"electron/shared/mcpClientRegistry.ts","reason":"Nomi 支持的 MCP 客户端位置、信任默认值与配置元数据；无协议传输实现"},
+    {"path":"electron/shared/mcpConnectionContract.ts","reason":"Nomi MCP 连接设置与验证原因的状态词表；无 RPC 引擎"},
+    {"path":"electron/shared/taskStatus.ts","reason":"Nomi 任务终态与上游词表到自有阶段的映射；无通用状态机运行时"},
+    {"path":"src/assets/vendor-logos/index.ts","reason":"Nomi 随包供应商标识与单色显示属性清单；不实现图像解析"},
+    {"path":"src/config/capabilityRecipes/","reason":"Nomi 创作配方的输入槽、资源、输出计划与模型能力匹配；schema 交由已有 Zod"},
+    {"path":"src/workbench/domain/cinematic*","reason":"Nomi FilmBible、ShotSpec、ReferenceBinding 与 AssetRevision 领域类型及 Zod schema"},
+    {"path":"src/workbench/domain/semanticAgentTools.ts","reason":"Nomi 创作语义工具到画布动作的对应表和覆盖统计；不实现 Agent runtime"},
+    {"path":"src/workbench/domain/shotSpec*","reason":"Nomi 分镜旧字段到 ShotSpec 的迁移/读取视图；不引入通用迁移框架"},
+    {"path":"src/workbench/generationCanvas/quality/","reason":"Nomi 创作配方产物质量合同、已存在检查器/视觉评审调用与阈值；不实现图像解码、视觉模型或通用测试引擎"},
+    {"path":"src/workbench/generationCanvas/reactFlow/groupConnectionPorts.ts","reason":"Nomi 组框内卡片与领域引用边投影到组端口；不实现 React Flow 图引擎"},
+    {"path":"src/workbench/generationCanvas/resultMediaBackfillBridge.ts","reason":"Nomi 节点结果的项目绑定本地化与预览补全；使用既有资产/项目 owner，不改存储格式"},
+    {"path":"src/workbench/generationCanvas/skills/","reason":"Nomi 画布技能拖放、资源槽、阶段进度与视频拆解消息胶合；不实现通用工作流引擎"},
+    {"path":"src/workbench/workbenchStoreLifetime.ts","reason":"Nomi 工作台文档/会话/视图字段的生命周期声明；store 机制沿用既有 owner"},
+    {"path":"electron/locales/customIntegrations.ts","reason":"Nomi 自定义桌面集成的中英 locale 数据；不包含插值、语言加载或翻译引擎"},
+    {"path":"electron/shared/blenderDirectorContract.ts","reason":"Nomi Blender 导演台跨 renderer/native/Agent 的五类舞台、三类空间检查状态与本地进程终止词汇；只是共享领域合同，不是新的状态机或进程生命周期引擎"}
   ],
   "genericZones": [
     {"path":"**/hooks/","reason":"通用 hooks 子树：轮询、订阅、节流等不分领域，新文件要登记"},
@@ -208,14 +236,29 @@
         "electron/agentLane/laneApprovalGate.ts",
         "electron/agentLane/laneAskUserTool.ts",
         "electron/agentLane/laneNativeApproval.ts",
-        "electron/shared/agentLane/laneApproval.ts"
+        "electron/shared/agentLane/laneApproval.ts",
+        "electron/capabilityCore/spendCardActionQueue.ts",
+        "electron/spendConfirmGrant.ts"
       ],
       "alternativesChecked": [
-        { "name": "pi harness 的 before_tool 钩子（只有钩子，没有对话框）", "source": "node_modules/@earendil-works/pi-agent-core/dist/harness/hooks.d.ts:17" },
-        { "name": "pi RPC 的 extension_ui_request / response（属于 AgentSession 栈，harness 不提供）", "source": "node_modules/@earendil-works/pi-coding-agent/docs/rpc.md:1184" },
-        { "name": "pi 九层对照「控制流」「扩展 API」两层的逐项结论", "source": "docs/research/2026-10-01-pi-coding-agent-reference-conformance/report.md" }
+        {
+          "name": "pi harness 的 before_tool 钩子（只有钩子，没有对话框）",
+          "source": "node_modules/@earendil-works/pi-agent-core/dist/harness/hooks.d.ts:17"
+        },
+        {
+          "name": "pi RPC 的 extension_ui_request / response（属于 AgentSession 栈，harness 不提供）",
+          "source": "node_modules/@earendil-works/pi-coding-agent/docs/rpc.md:1184"
+        },
+        {
+          "name": "pi 九层对照「控制流」「扩展 API」两层的逐项结论",
+          "source": "docs/research/2026-10-01-pi-coding-agent-reference-conformance/report.md"
+        },
+        {
+          "name": "ECMAScript Promise then/finally 合同的本地类型声明",
+          "source": "node_modules/typescript/lib/lib.es2018.promise.d.ts:22"
+        }
       ],
-      "whyNotIntegrated": "领域约束：花钱与写画布必须由用户批准，且批准有七种结局（确认 / 拒绝 / 改口 / 停止 / 关窗 / 重启…）要给用户不同的话；pi 的确认只有 yes / no / 取消，harness 层连对话框都没有。形状（按 id 匹配、阻塞到回复、取消是一等结局）已经照 pi 的协议抄了。",
+      "whyNotIntegrated": "领域约束：花钱与写画布必须由用户批准，且批准有七种结局（确认 / 拒绝 / 改口 / 停止 / 关窗 / 重启…）要给用户不同的话；pi 的确认只有 yes / no / 取消，harness 层连对话框都没有。形状（按 id 匹配、阻塞到回复、取消是一等结局）已经照 pi 的协议抄了。 补充 Promise.then/finally 的单 projectId/operationId 付费卡动作排序，以及调用既有 quote/decision/grant 的确认 wrapper；不是通用持久队列或新授权引擎。",
       "revisitWhen": "pi 的 harness 层提供带结局枚举的待决确认原语时；或 0.24 B（付费卡并进投影）落地后复查是否还有第二份「等」"
     },
     {
@@ -264,13 +307,34 @@
         "electron/agentLane/laneExtendedTools.ts",
         "electron/agentLane/laneExtendedDesktopPorts.ts",
         "electron/agentLane/laneNativeAssembly.mts",
-        "electron/agentLane/laneNativeDesktop.mts"
+        "electron/agentLane/laneNativeDesktop.mts",
+        "electron/agentLane/laneCreativeTools.ts",
+        "electron/ai/canvasTools.ts",
+        "electron/ai/cinematicDirectorTools.ts",
+        "electron/ai/vibingDirectorTools.ts",
+        "electron/capabilityCore/transportFailure.ts",
+        "electron/shared/agentLane/laneArgumentFailure.ts",
+        "electron/shared/agentLane/laneFailureFromDecision.ts",
+        "electron/shared/agentLane/laneToolFailureEnvelope.ts",
+        "electron/shared/agentLane/laneToolGroupNames.ts",
+        "electron/shared/agentLane/laneToolNextAction.ts",
+        "electron/shared/agentLane/generateUserDecision.ts"
       ],
       "alternativesChecked": [
-        { "name": "pi 的工具定义（description / promptSnippet / promptGuidelines / prepareArguments / addedToolNames，在用）", "source": "node_modules/@earendil-works/pi-coding-agent/docs/sdk.md:579" },
-        { "name": "pi 九层对照「工具」层的逐项结论", "source": "docs/research/2026-10-01-pi-coding-agent-reference-conformance/report.md" }
+        {
+          "name": "pi 的工具定义（description / promptSnippet / promptGuidelines / prepareArguments / addedToolNames，在用）",
+          "source": "node_modules/@earendil-works/pi-coding-agent/docs/sdk.md:579"
+        },
+        {
+          "name": "pi 九层对照「工具」层的逐项结论",
+          "source": "docs/research/2026-10-01-pi-coding-agent-reference-conformance/report.md"
+        },
+        {
+          "name": "已安装 Zod runtime validator 源码",
+          "source": "node_modules/zod/v3/types.cjs:1"
+        }
       ],
-      "whyNotIntegrated": "这是对 pi 工具形状的适配，不是第二份工具系统：领域能力契约（画布 / 分镜 / 时间轴 / 生成的动词、效果类、超时预算、审批语义）是我们的，pi 只负责工具的激活、校验与执行。",
+      "whyNotIntegrated": "这是对 pi 工具形状的适配，不是第二份工具系统：领域能力契约（画布 / 分镜 / 时间轴 / 生成的动词、效果类、超时预算、审批语义）是我们的，pi 只负责工具的激活、校验与执行。 补充创作工具的 Zod/AI SDK 声明、lane 参数失败和公共拒绝/nextAction 信封，仍是同一工具面 adapter，不改 schema 或动作。",
       "revisitWhen": "pi 的工具定义新增我们另写了一份的字段（例如内建超时预算、效果类）时，用 framework-surface 门岗逐字段裁决"
     },
     {
@@ -305,13 +369,24 @@
         "electron/agentLane/laneInputAdmission.mts",
         "electron/agentLane/laneInputPreparation.ts",
         "electron/agentLane/laneContinuation.mts",
-        "electron/agentLane/laneRestoredInput.ts"
+        "electron/agentLane/laneRestoredInput.ts",
+        "electron/shared/agentLane/laneConversation.ts"
       ],
       "alternativesChecked": [
-        { "name": "pi 的 JsonlSessionRepo / Session / Branch API（在用）", "source": "electron/agentLane/laneSession.mts:17" },
-        { "name": "pi 会话文件不指定 mode（世界可读）", "source": "docs/research/2026-09-07-pi-reference-implementation-conformance.md" }
+        {
+          "name": "pi 的 JsonlSessionRepo / Session / Branch API（在用）",
+          "source": "electron/agentLane/laneSession.mts:17"
+        },
+        {
+          "name": "pi 会话文件不指定 mode（世界可读）",
+          "source": "docs/research/2026-09-07-pi-reference-implementation-conformance.md"
+        },
+        {
+          "name": "现有 lane workspace 合同",
+          "source": "electron/shared/agentLane/laneContracts.ts:1"
+        }
       ],
-      "whyNotIntegrated": "适配层，不是第二份持久化：会话里是用户的原稿正文，所以文件 0600 / 目录 0700、原子替换由我们注入的 FileSystem 保证（领域约束：隐私承诺）。",
+      "whyNotIntegrated": "适配层，不是第二份持久化：会话里是用户的原稿正文，所以文件 0600 / 目录 0700、原子替换由我们注入的 FileSystem 保证（领域约束：隐私承诺）。 补充 workspace projection 到指定 lane conversation 的只读领域视图，不新增 session store。",
       "revisitWhen": "pi 的 JsonlSessionRepo 自己默认 0600，或提供注入 mode 的选项时"
     },
     {
@@ -336,12 +411,20 @@
       "paths": [
         "electron/agentLane/laneSkillCatalog.mts",
         "electron/agentLane/laneSkillPrompt.mts",
-        "electron/agentLane/laneNativeLoader.cts"
+        "electron/agentLane/laneNativeLoader.cts",
+        "electron/shared/agentLane/skillPromptPlacement.ts"
       ],
       "alternativesChecked": [
-        { "name": "pi 的 loadSourcedSkills / formatSkillInvocation（在用，发现与解析全交给 pi）", "source": "electron/agentLane/laneSkillCatalog.mts:14" }
+        {
+          "name": "pi 的 loadSourcedSkills / formatSkillInvocation（在用，发现与解析全交给 pi）",
+          "source": "electron/agentLane/laneSkillCatalog.mts:14"
+        },
+        {
+          "name": "现有 skill prompt owner",
+          "source": "electron/agentLane/laneSkillPrompt.mts:1"
+        }
       ],
-      "whyNotIntegrated": "只做投影与策略（哪些技能对创作者可见、选中技能怎么进提示词），发现与解析不自写；pi 包是 ESM-only，CJS 侧只能经动态 import 接缝。",
+      "whyNotIntegrated": "只做投影与策略（哪些技能对创作者可见、选中技能怎么进提示词），发现与解析不自写；pi 包是 ESM-only，CJS 侧只能经动态 import 接缝。 补充 skill body 后工具权限段的位置和 framing 常量；只登记既有文本 owner，不改出站 prompt。",
       "revisitWhen": "pi 的技能策略（可见性、按项目启停）有公开接口时"
     },
     {
@@ -391,13 +474,24 @@
         "electron/agentLane/laneRuntimePort.ts",
         "electron/agentLane/laneIpc.ts",
         "electron/agentLane/laneCommandCodec.ts",
-        "electron/agentLane/laneSingleShot.mts"
+        "electron/agentLane/laneSingleShot.mts",
+        "src/workbench/ai/workbenchAiClient.ts"
       ],
       "alternativesChecked": [
-        { "name": "pi 的 createAgentSession / AgentSessionRuntime（官方嵌入入口，我们走更底层的 AgentHarness）", "source": "node_modules/@earendil-works/pi-coding-agent/docs/sdk.md:44" },
-        { "name": "pi --mode rpc 子进程集成", "source": "node_modules/@earendil-works/pi-coding-agent/docs/sdk.md:1150" }
+        {
+          "name": "pi 的 createAgentSession / AgentSessionRuntime（官方嵌入入口，我们走更底层的 AgentHarness）",
+          "source": "node_modules/@earendil-works/pi-coding-agent/docs/sdk.md:44"
+        },
+        {
+          "name": "pi --mode rpc 子进程集成",
+          "source": "node_modules/@earendil-works/pi-coding-agent/docs/sdk.md:1150"
+        },
+        {
+          "name": "现有客户端 single-shot 入口",
+          "source": "src/api/desktopClient.ts:1"
+        }
       ],
-      "whyNotIntegrated": "pi 包是 ESM-only，Electron 主进程只能动态 import；宿主只做三件事（lane 生命周期、把 Nomi 的闸挂到 before_tool / after_tool、投影推送）。AgentSession / RPC 两条官方路都会多一台状态机或一个进程，与「进程内耐久」冲突——但「进程内 AgentSession 能否承载」尚未评估（见 pi 九层对照的开放问题）。",
+      "whyNotIntegrated": "pi 包是 ESM-only，Electron 主进程只能动态 import；宿主只做三件事（lane 生命周期、把 Nomi 的闸挂到 before_tool / after_tool、投影推送）。AgentSession / RPC 两条官方路都会多一台状态机或一个进程，与「进程内耐久」冲突——但「进程内 AgentSession 能否承载」尚未评估（见 pi 九层对照的开放问题）。 补充旧工作台请求到现有 single-shot lane 的 UI adapter；附件 claim 和内容回调不新造 Agent/模型调用层。",
       "revisitWhen": "评估完「进程内 AgentSession 能否承载 lane」之后；或 pi 的 CLI 开始使用 AgentHarness 时",
       "revisitBy": "2026-11-30"
     },
@@ -461,13 +555,26 @@
       "paths": [
         "electron/telemetry/",
         "electron/settings/telemetryIpc.ts",
-        "infra/feedback-worker/"
+        "infra/feedback-worker/",
+        "electron/feedback/feedbackIpc.ts",
+        "electron/feedback/feedbackReport.ts",
+        "electron/shared/contracts/feedback.ts"
       ],
       "alternativesChecked": [
-        { "name": "Sentry / PostHog / Aptabase 等第三方 SDK（方案四列表里逐个比过）", "source": "infra/feedback-worker/src/worker.mjs:3" },
-        { "name": "OpenTelemetry error.type 等通行字段（字段命名已对齐，未引入 SDK）", "source": "docs/plan/2026-10-01-generation-result-reasons.md" }
+        {
+          "name": "Sentry / PostHog / Aptabase 等第三方 SDK（方案四列表里逐个比过）",
+          "source": "infra/feedback-worker/src/worker.mjs:3"
+        },
+        {
+          "name": "OpenTelemetry error.type 等通行字段（字段命名已对齐，未引入 SDK）",
+          "source": "docs/plan/2026-10-01-generation-result-reasons.md"
+        },
+        {
+          "name": "已安装 Electron IPC/BrowserWindow/asar API 合同",
+          "source": "node_modules/electron/electron.d.ts:1"
+        }
       ],
-      "whyNotIntegrated": "领域约束：对用户的承诺是「数据只去我们的端点」。第三方 SDK 的代价不是钱，是这句承诺无法自证——只要它在进程里，「不收别的」就只能靠对方文档。传输自建，白名单 / 同意合同 / 脱敏沿用仓库里已有的一套。",
+      "whyNotIntegrated": "领域约束：对用户的承诺是「数据只去我们的端点」。第三方 SDK 的代价不是钱，是这句承诺无法自证——只要它在进程里，「不收别的」就只能靠对方文档。传输自建，白名单 / 同意合同 / 脱敏沿用仓库里已有的一套。 补充既有 redact/trajectoryProjection/intake owner 的用户反馈包与 Electron IPC，以及有限 feedback 表面词表；不新造遥测运输或通用序列化系统。",
       "revisitWhen": "出现可在进程内审计、且字段白名单由我们强制的开源遥测 SDK 时；或隐私承诺的表述改变时"
     },
     {
@@ -492,12 +599,29 @@
       "id": "full-walk-monitor",
       "capability": "全功能走查的九条铁律监视器（跑完整旅程，每一步收尾核对铁律）",
       "status": "justified",
-      "paths": ["tests/ux/full-walk/"],
-      "alternativesChecked": [
-        { "name": "Playwright Test 的 reporter 与 fixtures 机制（运行器在用，监视器规则无现成的）", "source": "https://playwright.dev/docs/test-reporters" },
-        { "name": "监视器的纪律：违反不中断剧本、证据只从真相源读", "source": "tests/ux/full-walk/monitor.mjs:1" }
+      "paths": [
+        "tests/ux/full-walk/",
+        "electron/gate8/isolatedProductionAcceptanceHarness.ts",
+        "electron/gate8/liveAgnesRecoveryRunner.ts",
+        "electron/gate8/liveBlenderAcceptanceRunner.ts",
+        "electron/gate8/liveTimelineExportRunner.ts",
+        "src/workbench/perf/perfFixtureSpec.ts"
       ],
-      "whyNotIntegrated": "领域约束：九条铁律是 Nomi 的产品不变量（批准范围 = 派发范围、界面不露内部 id、付费卡图 / 视频一致……），没有通用测试框架自带；运行器与浏览器自动化已经是 Playwright，自写的只有规则与判据。",
+      "alternativesChecked": [
+        {
+          "name": "Playwright Test 的 reporter 与 fixtures 机制（运行器在用，监视器规则无现成的）",
+          "source": "https://playwright.dev/docs/test-reporters"
+        },
+        {
+          "name": "监视器的纪律：违反不中断剧本、证据只从真相源读",
+          "source": "tests/ux/full-walk/monitor.mjs:1"
+        },
+        {
+          "name": "已安装 Electron IPC/BrowserWindow/asar API 合同",
+          "source": "node_modules/electron/electron.d.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "领域约束：九条铁律是 Nomi 的产品不变量（批准范围 = 派发范围、界面不露内部 id、付费卡图 / 视频一致……），没有通用测试框架自带；运行器与浏览器自动化已经是 Playwright，自写的只有规则与判据。 补充 Node/Electron 隔离生产 journey、Blender/恢复/导出验收入口与性能 fixture/SLO 描述符；采用既有 gateway/exportJobs/task query，不另造测试框架。本批未执行这些 live harness。",
       "revisitWhen": "监视器规则能以 Playwright 自定义 matcher / reporter 的形式表达而不损失「违反不中断」语义时"
     },
     {
@@ -510,13 +634,24 @@
         "electron/capabilityCore/mcpStdioLine.ts",
         "electron/capabilityCore/mcpStdioServer.ts",
         "electron/capabilityCore/mcpArgValidation.ts",
-        "electron/capabilityCore/mcpTransportSchemaFromZod.ts"
+        "electron/capabilityCore/mcpTransportSchemaFromZod.ts",
+        "electron/capabilityCore/mcpPassiveDiscovery.ts"
       ],
       "alternativesChecked": [
-        { "name": "官方 MCP TypeScript SDK（server、stdio 传输、工具 / 资源 / 提示）", "source": "https://github.com/modelcontextprotocol/typescript-sdk" },
-        { "name": "仓库里没有 @modelcontextprotocol/sdk 依赖，协议层手写", "source": "package.json:1" }
+        {
+          "name": "官方 MCP TypeScript SDK（server、stdio 传输、工具 / 资源 / 提示）",
+          "source": "https://github.com/modelcontextprotocol/typescript-sdk"
+        },
+        {
+          "name": "仓库里没有 @modelcontextprotocol/sdk 依赖，协议层手写",
+          "source": "package.json:1"
+        },
+        {
+          "name": "现有 Skill 资源路径与 mime owner",
+          "source": "electron/capabilityCore/mcpSkillResources.ts:1"
+        }
       ],
-      "whyNotIntegrated": "尚未评估，不能当成合理自写。需要回答的是：官方 SDK 是否覆盖我们用到的 MCP Apps（内嵌 widget）、elicitation、取消与进度、以及按 Nomi 审批语义的拦截；能覆盖则接 SDK，Nomi 只留领域能力投影与审批。",
+      "whyNotIntegrated": "尚未评估，不能当成合理自写。需要回答的是：官方 SDK 是否覆盖我们用到的 MCP Apps（内嵌 widget）、elicitation、取消与进度、以及按 Nomi 审批语义的拦截；能覆盖则接 SDK，Nomi 只留领域能力投影与审批。 补充 Skill resources/prompts 的现有资源元数据投影，仍由本条 MCP SDK 接入复评覆盖；不称 SDK 已安装。",
       "revisitWhen": "出评估结论（官方 TypeScript SDK 存在，按 P0 默认应接入，评估只回答「覆盖不覆盖」）；评估前这里新增 mcp* 文件会被门岗报"
     },
     {
@@ -534,14 +669,31 @@
         "electron/appFetch.ts",
         "electron/networkHostPolicy.ts",
         "electron/networkOutboundPolicy.ts",
-        "electron/providerNetwork.ts"
+        "electron/providerNetwork.ts",
+        "electron/browser/core/browserAllowlist.ts",
+        "electron/credentialRedirectPolicy.ts",
+        "electron/outboundDispatchEvidence.ts",
+        "electron/shared/crossOriginIsolation.ts"
       ],
       "alternativesChecked": [
-        { "name": "undici ProxyAgent（HTTP 代理 dispatcher）", "source": "https://undici.nodejs.org/#/docs/api/ProxyAgent" },
-        { "name": "socks-proxy-agent（SOCKS 代理）", "source": "https://www.npmjs.com/package/socks-proxy-agent" },
-        { "name": "Electron session.setProxy（Chromium 侧代理配置）", "source": "https://www.electronjs.org/docs/latest/api/session#sessetproxyconfig" }
+        {
+          "name": "undici ProxyAgent（HTTP 代理 dispatcher）",
+          "source": "https://undici.nodejs.org/#/docs/api/ProxyAgent"
+        },
+        {
+          "name": "socks-proxy-agent（SOCKS 代理）",
+          "source": "https://www.npmjs.com/package/socks-proxy-agent"
+        },
+        {
+          "name": "Electron session.setProxy（Chromium 侧代理配置）",
+          "source": "https://www.electronjs.org/docs/latest/api/session#sessetproxyconfig"
+        },
+        {
+          "name": "Fetch/Headers 与 DOM 标准 API 合同",
+          "source": "node_modules/typescript/lib/lib.dom.d.ts:1"
+        }
       ],
-      "whyNotIntegrated": "尚未下结论。领域约束成立的部分：付费取片的出站策略（fake-ip / 私网需要确证，请求发出前拒绝要说明「没计费」）是 Nomi 的真钱语义；代理 / SOCKS 的 dispatcher 本身看起来有现成的。评估方向：代理层接现成库，只留出站策略这层领域判定。",
+      "whyNotIntegrated": "尚未下结论。领域约束成立的部分：付费取片的出站策略（fake-ip / 私网需要确证，请求发出前拒绝要说明「没计费」）是 Nomi 的真钱语义；代理 / SOCKS 的 dispatcher 本身看起来有现成的。评估方向：代理层接现成库，只留出站策略这层领域判定。 补充浏览器目标 allowlist、Fetch redirect:error、出站错误链和 COOP/COEP 标准头；原 under-review 状态/期限不变，不宣称代理或网络栈改造完成。",
       "revisitWhen": "出评估结论；评估前这里不得新增网络栈文件"
     },
     {
@@ -551,13 +703,26 @@
       "reviewBy": "2026-11-30",
       "paths": [
         "electron/jsonFile.ts",
-        "electron/durability.ts"
+        "electron/durability.ts",
+        "electron/catalog/catalogFileAccess.ts",
+        "electron/configFileStore.ts",
+        "electron/settings/sideBySideInstallSeed.ts"
       ],
       "alternativesChecked": [
-        { "name": "write-file-atomic（临时文件 + rename，npm 通用）", "source": "https://www.npmjs.com/package/write-file-atomic" },
-        { "name": "pi 的 publishFileAtomically 与 FileSystem.renameFile 语义（lane 侧已注入）", "source": "docs/research/2026-09-07-pi-reference-implementation-conformance.md" }
+        {
+          "name": "write-file-atomic（临时文件 + rename，npm 通用）",
+          "source": "https://www.npmjs.com/package/write-file-atomic"
+        },
+        {
+          "name": "pi 的 publishFileAtomically 与 FileSystem.renameFile 语义（lane 侧已注入）",
+          "source": "docs/research/2026-09-07-pi-reference-implementation-conformance.md"
+        },
+        {
+          "name": "已安装 Node fs API 合同；本机 Node 内置 fs 源码已读取 statfsSync/rm",
+          "source": "node_modules/@types/node/fs.d.ts:1216"
+        }
       ],
-      "whyNotIntegrated": "尚未下结论。领域理由成立的部分：project.json 是用户最贵的数据，且测试里需要关 fsync 的唯一开关（durability.ts 是全仓唯一决定要不要 fsync 的地方）；原子写本身有现成库。评估：原子写换库、保留 fsync 开关。",
+      "whyNotIntegrated": "尚未下结论。领域理由成立的部分：project.json 是用户最贵的数据，且测试里需要关 fsync 的唯一开关（durability.ts 是全仓唯一决定要不要 fsync 的地方）；原子写本身有现成库。评估：原子写换库、保留 fsync 开关。 补充 configFileStore/catalogFileAccess 对既有 jsonFile 的读取隔离、版本备份及 Nomi 并行安装配置 seed。原 under-review 仍约束原子写/耐久机制，未被本次登记消除。",
       "revisitWhen": "出评估结论"
     },
     {
@@ -567,13 +732,25 @@
       "reviewBy": "2026-11-30",
       "paths": [
         "electron/logging/",
-        "electron/crashLog.ts"
+        "electron/crashLog.ts",
+        "electron/shared/contracts/rendererLog.ts",
+        "src/desktop/rendererLog.ts"
       ],
       "alternativesChecked": [
-        { "name": "electron-log（主进程 / 渲染进程日志、文件轮转）", "source": "https://www.npmjs.com/package/electron-log" },
-        { "name": "Electron crashReporter", "source": "https://www.electronjs.org/docs/latest/api/crash-reporter" }
+        {
+          "name": "electron-log（主进程 / 渲染进程日志、文件轮转）",
+          "source": "https://www.npmjs.com/package/electron-log"
+        },
+        {
+          "name": "Electron crashReporter",
+          "source": "https://www.electronjs.org/docs/latest/api/crash-reporter"
+        },
+        {
+          "name": "实际 renderer 日志桥与 fallback",
+          "source": "src/desktop/rendererLog.ts:99"
+        }
       ],
-      "whyNotIntegrated": "尚未下结论。领域理由成立的部分：日志不记提示词、密钥与文件路径，脱敏规则（redact）是隐私承诺的一部分；日志落盘与轮转本身有现成库。评估：落盘交给 electron-log，只留脱敏规则。",
+      "whyNotIntegrated": "尚未下结论。领域理由成立的部分：日志不记提示词、密钥与文件路径，脱敏规则（redact）是隐私承诺的一部分；日志落盘与轮转本身有现成库。评估：落盘交给 electron-log，只留脱敏规则。 补充 rendererLog 的字段/事件合同及 renderer 到既有主进程日志桥的 adapter，保留 DevTools 级别/错误栈；原日志轮转/崩溃机制仍待复评。",
       "revisitWhen": "出评估结论"
     },
     {
@@ -583,15 +760,33 @@
       "reviewBy": "2026-10-31",
       "paths": [
         "scripts/check-*.mjs",
-        "scripts/run-gates-contracts.mjs"
+        "scripts/run-gates-contracts.mjs",
+        "electron/preload/preloadSurfaceSources.ts",
+        "src/desktop/bridgeSurfaceSources.ts"
       ],
       "alternativesChecked": [
-        { "name": "eslint 自定义规则 / eslint-plugin-boundaries（谁能 import 谁）", "source": "https://github.com/javierbrea/eslint-plugin-boundaries" },
-        { "name": "dependency-cruiser（依赖图规则）", "source": "https://github.com/sverweij/dependency-cruiser" },
-        { "name": "knip（未用导出 / 依赖）", "source": "https://knip.dev" },
-        { "name": "门岗账本：每道门岗红过几次、真问题 / 纸面 / 误报各占多少", "source": "docs/audit/2026-10-01-gate-ledger.md" }
+        {
+          "name": "eslint 自定义规则 / eslint-plugin-boundaries（谁能 import 谁）",
+          "source": "https://github.com/javierbrea/eslint-plugin-boundaries"
+        },
+        {
+          "name": "dependency-cruiser（依赖图规则）",
+          "source": "https://github.com/sverweij/dependency-cruiser"
+        },
+        {
+          "name": "knip（未用导出 / 依赖）",
+          "source": "https://knip.dev"
+        },
+        {
+          "name": "门岗账本：每道门岗红过几次、真问题 / 纸面 / 误报各占多少",
+          "source": "docs/audit/2026-10-01-gate-ledger.md"
+        },
+        {
+          "name": "已安装 Node fs API 合同；本机 Node 内置 fs 源码已读取 statfsSync/rm",
+          "source": "node_modules/@types/node/fs.d.ts:1216"
+        }
       ],
-      "whyNotIntegrated": "尚未下结论。大部分门岗检查的是 Nomi 自己的登记表与合同（概念 owner、根因合同、真实素材登记），没有现成工具；但「只加不减」本身是问题。结论等门岗账本出来后由用户按保留 / 合并 / 降级 / 删除逐项拍板。",
+      "whyNotIntegrated": "尚未下结论。大部分门岗检查的是 Nomi 自己的登记表与合同（概念 owner、根因合同、真实素材登记），没有现成工具；但「只加不减」本身是问题。结论等门岗账本出来后由用户按保留 / 合并 / 降级 / 删除逐项拍板。 补充读取真实 preload/desktop bridge 源面给原有检查器的 Node fs 小适配，仍在原复评期限内，未改变门岗。",
       "revisitWhen": "门岗账本的保留 / 降级 / 删除清单被拍板后；之后每次周期审计重跑账本"
     },
     {
@@ -614,13 +809,32 @@
       "id": "design-system",
       "capability": "Nomi 设计系统：token-only 的组件封装、浮层、选择器、分段控件与光 / 暗主题翻转",
       "status": "justified",
-      "paths": ["src/design/Nomi*", "src/theme/"],
-      "alternativesChecked": [
-        { "name": "Mantine（已在用的基础组件库，设计系统是它之上的 token 层）", "source": "package.json:1" },
-        { "name": "Radix UI Primitives（无样式的可访问性原语）", "source": "https://www.radix-ui.com/primitives" },
-        { "name": "设计系统规范：token-only、禁止任意 px / hex / 默认色板", "source": "docs/design/nomi-design-system.md:1" }
+      "paths": [
+        "src/design/Nomi*",
+        "src/theme/",
+        "src/design/SwipeToDeleteRow.tsx",
+        "src/design/localAssetThumbnail.ts",
+        "src/design/vendorLogoImage.tsx"
       ],
-      "whyNotIntegrated": "领域约束：产品的视觉识别与密度优先的规范是 Nomi 自己的（token 翻转、天黑自动暗、一致的控件层级）；基础交互原语已经用 Mantine，不自写。这里自写的只有品牌层（登记只覆盖 Nomi 前缀的品牌组件与主题）。新增的通用交互组件（例如又一个浮层）仍应先看 Mantine / Radix 有没有。",
+      "alternativesChecked": [
+        {
+          "name": "Mantine（已在用的基础组件库，设计系统是它之上的 token 层）",
+          "source": "package.json:1"
+        },
+        {
+          "name": "Radix UI Primitives（无样式的可访问性原语）",
+          "source": "https://www.radix-ui.com/primitives"
+        },
+        {
+          "name": "设计系统规范：token-only、禁止任意 px / hex / 默认色板",
+          "source": "docs/design/nomi-design-system.md:1"
+        },
+        {
+          "name": "已安装 Framer Motion 模块入口",
+          "source": "node_modules/framer-motion/dist/es/index.mjs:1"
+        }
+      ],
+      "whyNotIntegrated": "领域约束：产品的视觉识别与密度优先的规范是 Nomi 自己的（token 翻转、天黑自动暗、一致的控件层级）；基础交互原语已经用 Mantine，不自写。这里自写的只有品牌层（登记只覆盖 Nomi 前缀的品牌组件与主题）。新增的通用交互组件（例如又一个浮层）仍应先看 Mantine / Radix 有没有。 补充 Framer Motion 的 swipe 删除行、React 供应商图标和本地资产缩略图参数 wrapper；手势/动画/图片解码仍由已有框架负责。",
       "revisitWhen": "0.24 S6：Tailwind 4 与 AI Elements 评估时，一并评估设计系统与它们的冲突与可替换部分",
       "revisitBy": "2026-12-31"
     },
@@ -673,7 +887,11 @@
       "capability": "Nomi main-process quit teardown boundary: coordinate cancellable quit intent with capability-core, Agent lane, and export cleanup under a hard async budget",
       "status": "justified",
       "paths": [
-        "electron/quitTeardown.ts"
+        "electron/quitTeardown.ts",
+        "electron/backgroundIdleExit.ts",
+        "electron/backgroundLaunch.ts",
+        "electron/customGenerationLifecycle.ts",
+        "electron/protocolRegistration.ts"
       ],
       "alternativesChecked": [
         {
@@ -687,10 +905,488 @@
         {
           "name": "Node.js timers for a bounded Promise race",
           "source": "https://nodejs.org/api/timers.html"
+        },
+        {
+          "name": "已安装 Electron IPC/BrowserWindow/asar API 合同",
+          "source": "node_modules/electron/electron.d.ts:1"
         }
       ],
-      "whyNotIntegrated": "Domain constraint: Electron exposes lifecycle events and termination APIs, but it does not know Nomi capability-core, Agent lane IPC, or background export owners, nor can it coordinate the required order of cancellable window confirmation, irreversible will-quit cleanup, and timeout-bounded exit. This module composes those existing platform mechanisms without reimplementing IPC, window confirmation, or a timer library; the Nomi-specific invariants are live capabilities after a cancelled close and guaranteed termination after cleanup timeout.",
+      "whyNotIntegrated": "Domain constraint: Electron exposes lifecycle events and termination APIs, but it does not know Nomi capability-core, Agent lane IPC, or background export owners, nor can it coordinate the required order of cancellable window confirmation, irreversible will-quit cleanup, and timeout-bounded exit. This module composes those existing platform mechanisms without reimplementing IPC, window confirmation, or a timer library; the Nomi-specific invariants are live capabilities after a cancelled close and guaranteed termination after cleanup timeout. 补充后台空闲退出、任务存活、自定义渲染清理和正式安装协议登记；只组合既有 Electron/Node 生命周期 API。",
       "revisitWhen": "When Electron provides a unified async teardown coordinator that can express these Nomi owners and timeout semantics, remove this boundary and use that mechanism."
+    },
+    {
+      "id": "creative-process-adapters",
+      "capability": "Nomi 图像/Blender 创作产物的既有 CLI、Node 进程及 Blender bpy adapter",
+      "status": "justified",
+      "paths": [
+        "electron/ai/codexImagegenPolicy.ts",
+        "electron/ai/codexImagegenRecovery.ts",
+        "electron/ai/codexImagegenRunner.ts",
+        "electron/blender/blenderRenderScript.ts",
+        "electron/blender/blenderRunner.ts",
+        "electron/blender/directorCli.ts",
+        "electron/blender/vibingDirectorBlenderScript.ts",
+        "electron/blender/vibingDirectorRunner.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Node fs API 合同；本机 Node 内置 fs 源码已读取 statfsSync/rm",
+          "source": "node_modules/@types/node/fs.d.ts:1216"
+        },
+        {
+          "name": "Node child_process.spawn 本地 API 合同；运行时内置源码 child_process:755 已读",
+          "source": "node_modules/@types/node/child_process.d.ts:1"
+        },
+        {
+          "name": "仓库已有 Blender harness bridge",
+          "source": "integrations/blender/agent-harness/cli_anything/blender/bridge.py:1"
+        }
+      ],
+      "whyNotIntegrated": "已接入 Node spawn/fs、既有媒体/资产 owner 和 Blender 引擎；Nomi 必须绑定隔离任务目录、项目产物和取消。Codex 另有单次工具调用/单并发收费约束，这些局部队列与清理不是新的通用进程或图像引擎。",
+      "revisitWhen": "当既有 CLI 提供保留项目资产回执、隔离 HOME 和单次收费验收的同等 adapter 时替换相应局部胶合。"
+    },
+    {
+      "id": "node-asset-filesystem-adapters",
+      "capability": "项目 scratch 清理、磁盘容量和声明资产 hash 校验的 Node/既有下载 adapter",
+      "status": "justified",
+      "paths": [
+        "electron/assets/scratchCleanup.ts",
+        "electron/assets/storageCapacity.ts",
+        "electron/downloads/verifiedAssetCache.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Node fs API 合同；本机 Node 内置 fs 源码已读取 statfsSync/rm",
+          "source": "node_modules/@types/node/fs.d.ts:1216"
+        },
+        {
+          "name": "现有 hardenedFetch 下载边界",
+          "source": "electron/hardenedFetch.ts:1"
+        },
+        {
+          "name": "Node crypto.createHash 本地 API 合同",
+          "source": "node_modules/@types/node/crypto.d.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "已使用 fs.rm/statfs/文件流与 crypto hash；网络仍由既有 hardenedFetch 负责。领域约束是 Nomi 项目 staging、磁盘安全预留与已声明资产字节/hash，未另造下载器、压缩器或容量引擎。",
+      "revisitWhen": "既有资产 owner 统一提供 scratch 清理、容量快照和校验下载入口时，删除本组重复的 wrapper；不能丢失 hash、大小或失败可见性。"
+    },
+    {
+      "id": "electron-desktop-adapters",
+      "capability": "Nomi 桌面 IPC/preload、窗口和子进程 ASAR 路径的 Electron adapter",
+      "status": "justified",
+      "paths": [
+        "electron/desktopIntegrationIpc.ts",
+        "electron/preload/creationBridge.ts",
+        "electron/preload/ipcCall.ts",
+        "electron/preload/mediaBridge.ts",
+        "electron/preload/modelOnboardingBridge.ts",
+        "electron/preload/runtimeBridge.ts",
+        "electron/shared/asarUnpackedPath.ts",
+        "electron/windowActivator.ts",
+        "electron/windowNavigation.ts",
+        "src/desktop/bridgeBrowserTypes.ts",
+        "src/workbench/api/modelBoxPreferenceApi.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Electron IPC/BrowserWindow/asar API 合同",
+          "source": "node_modules/electron/electron.d.ts:1"
+        },
+        {
+          "name": "Electron IPC 标准文档",
+          "source": "https://www.electronjs.org/docs/latest/api/ipc-main"
+        },
+        {
+          "name": "Node path 本地 API 合同",
+          "source": "node_modules/@types/node/path.d.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "已经调用 Electron ipcMain/ipcRenderer/BrowserWindow/webUtils 与 Node path；Nomi 保留频道身份、受信 sender、结果信封和订阅解绑，asar 改写只适配包外进程不认识 app.asar 的边界。不提供新的 IPC/RPC 或窗口框架；bridgeBrowserTypes 是具体桥面类型。",
+      "revisitWhen": "Electron 或仓库现有 bridge generator 能保留这些确切频道、sender guard、订阅解绑和包内/包外路径合同后，删掉对应手工 wrapper。"
+    },
+    {
+      "id": "web-bridge-transport-adapters",
+      "capability": "即梦/Pavo 本地任务协议到已有 Fetch、Electron session/extension 与 Nomi 任务 owner 的 adapter",
+      "status": "justified",
+      "paths": [
+        "electron/jimengWeb/auth.ts",
+        "electron/jimengWeb/ipc.ts",
+        "electron/jimengWeb/runner.ts",
+        "electron/jimengWeb/seedanceBridge.ts",
+        "electron/pavoWeb/auth.ts",
+        "electron/pavoWeb/bridge.ts",
+        "electron/pavoWeb/ipc.ts",
+        "electron/pavoWeb/runner.ts",
+        "electron/webBridge/registry.ts",
+        "electron/webBridge/taskDispatch.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Electron IPC/BrowserWindow/asar API 合同",
+          "source": "node_modules/electron/electron.d.ts:1"
+        },
+        {
+          "name": "Node crypto.randomBytes 已安装 API 合同",
+          "source": "node_modules/@types/node/crypto.d.ts:1896"
+        },
+        {
+          "name": "既有资产出站下载边界",
+          "source": "electron/hardenedFetch.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "实际复用原生 Fetch/Headers/AbortController、Electron session/extension 和 Node spawn/crypto。Nomi 只拥有 loopback bridge 的 taskCode、媒体引用、提交指纹/花费授权和资产回填；不是自行实现浏览器、随机数、HTTP 引擎或供应商生成模型。所有 Cookie/Key/代理数据与行为本批不变。",
+      "revisitWhen": "本地 bridge 发布可保留 taskCode、幂等/花费回执与现有扩展隔离语义的受支持 SDK 时，用该 SDK 取代同一 wire adapter；不得借机改供应商协议。"
+    },
+    {
+      "id": "locale-display-adapters",
+      "capability": "Nomi 原始字段到 i18next/Intl 显示边界的薄适配",
+      "status": "justified",
+      "paths": [
+        "src/i18n/capabilityWorkflowText.ts",
+        "src/workbench/ai/v4/formatMoney.ts",
+        "src/i18n/CanvasComponentText.tsx"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 i18next Translator.translate 实现",
+          "source": "node_modules/i18next/dist/cjs/i18next.js:533"
+        },
+        {
+          "name": "Intl.NumberFormat 本地标准 API 合同",
+          "source": "node_modules/typescript/lib/lib.es2020.intl.d.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "两个 *Text helper 实际调用既有 i18next.t，formatMoney 实际调用 Intl.NumberFormat。Nomi 要求原始 label/protocol/prompt 与用户内容不随语言写回，只在显示边界映射；未知输入逐字保留。不是新造翻译引擎，desktopT 的手写插值另列待替换。",
+      "revisitWhen": "所有生成默认字段已有稳定 displayKey、或 i18next 调用方可在不修改存储/出站 prompt 的前提下直接使用 key 时删除反向显示映射；保留未知内容回退和中英文回归。"
+    },
+    {
+      "id": "react-dom-product-adapters",
+      "capability": "Nomi 画布/导入/项目/面板的既有 React、DOM 与 store adapter",
+      "status": "justified",
+      "paths": [
+        "src/config/featureFlags.ts",
+        "src/media/remoteExampleMedia.ts",
+        "src/media/videoCodecProbe.ts",
+        "src/ui/onboarding/useDuplicateHostHint.ts",
+        "src/ui/onboarding/useIntegrationVerificationRefresh.ts",
+        "src/workbench/ai/AssistantModelPicker.tsx",
+        "src/workbench/ai/aiComposerKeyboard.ts",
+        "src/workbench/assets/useLocalAssetPreview.ts",
+        "src/workbench/creation/storyboard/shotRow/useElementWidth.ts",
+        "src/workbench/creation/useCreationResourceTreeCollapsed.ts",
+        "src/workbench/generation/dockCollapsePrefs.ts",
+        "src/workbench/generation/useDockCollapsed.ts",
+        "src/workbench/generationCanvas/components/useCanvasAssistantSkillEvents.ts",
+        "src/workbench/generationCanvas/components/useCanvasSelectionActions.ts",
+        "src/workbench/generationCanvas/nodes/useComposerPromptExpand.ts",
+        "src/workbench/generationCanvas/nodes/useNodeMediaMeasurement.ts",
+        "src/workbench/generationCanvas/nodes/useNodeResultHistory.ts",
+        "src/workbench/generationCanvas/nodes/useNodeVideoPreviewIntent.ts",
+        "src/workbench/project/useOpenProjectId.ts",
+        "src/workbench/shortcutSurface.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 React Hooks 与 useSyncExternalStore 实现",
+          "source": "node_modules/react/cjs/react.development.js:1249"
+        },
+        {
+          "name": "本地 DOM 标准 API 合同：ResizeObserver / MediaSource / Storage",
+          "source": "node_modules/typescript/lib/lib.dom.d.ts:26217"
+        },
+        {
+          "name": "现有工作台 store owner",
+          "source": "src/workbench/workbenchStore.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "实际使用 React state/effect/ref、原生 DOM observer/event/storage 与已有项目/画布/预览 owner。Hook 名称不是新框架：这里只接 Nomi 的选择、尺寸、折叠、预览意图及会话内失效示例；preview Promise Map 仅合并既有 assets.ensurePreview，不是 HTTP/持久 cache。独立 listeners/notify store 另列待替换，未混入本条。",
+      "revisitWhen": "React/DOM 或现有产品 owner 提供等价生命周期封装时，删除对应 wrapper；必须保留 observer/listener 清理、IME、项目切换失效与持久偏好语义。"
+    },
+    {
+      "id": "scene3d-react-adapters",
+      "capability": "Nomi Scene3D 编辑/轨迹/录制语义到既有 React、R3F 与 Three owner 的 adapter",
+      "status": "justified",
+      "paths": [
+        "src/workbench/generationCanvas/nodes/scene3d/trajectory/useScene3DObjectRefRegistration.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/trajectory/useTrajectoryAnimation.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DBoundDrag.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DCameraFraming.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DCameraViewEdit.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DCaptureExport.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DCharacterDrive.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DEditorSession.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DFullscreenActions.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DSemanticPose.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DTakeRecorder.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DTaskFlow.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/useScene3DTrajectoryEditing.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 React Hooks 与 useSyncExternalStore 实现",
+          "source": "node_modules/react/cjs/react.development.js:1249"
+        },
+        {
+          "name": "已安装 R3F useFrame 订阅实现",
+          "source": "node_modules/@react-three/fiber/dist/events-21d8cd92.cjs.dev.js:1286"
+        },
+        {
+          "name": "现有 Nomi 轨迹 runtime store",
+          "source": "src/workbench/generationCanvas/nodes/scene3d/trajectory/trajectoryRuntimeStore.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "帧循环使用 R3F useFrame，位置/朝向使用 Three，React 负责挂卸与局部状态；Nomi 保留相机、对象绑定、只读、姿势/位移恢复、录制时间及产物回调语义。采样/倒计时是对这些既有 owner 的局部适配，不是新造动画、3D 或通用录制引擎。",
+      "revisitWhen": "R3F 或既有场景 owner 能统一表达这些 Nomi 任务/轨迹/接管规则时合并对应 hook；保留取消、订阅清理、输出和姿势恢复的已有回归。"
+    },
+    {
+      "id": "react-flow-view-adapters",
+      "capability": "Nomi 画布手势/zoom/到达/粘贴位置到现有 React Flow 的 adapter",
+      "status": "justified",
+      "paths": [
+        "src/workbench/generationCanvas/reactFlow/canvasViewportGestureProps.ts",
+        "src/workbench/generationCanvas/reactFlow/canvasViewportScale.ts",
+        "src/workbench/generationCanvas/reactFlow/useCanvasArrivalHint.ts",
+        "src/workbench/generationCanvas/reactFlow/useCanvasPastePlacement.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 React Flow useStore 实现",
+          "source": "node_modules/@xyflow/react/dist/esm/index.mjs:38"
+        },
+        {
+          "name": "已安装 React Hooks 与 useSyncExternalStore 实现",
+          "source": "node_modules/react/cjs/react.development.js:1249"
+        }
+      ],
+      "whyNotIntegrated": "已使用 React Flow 的 viewport/store/fit-bounds API；Nomi 只提供手势偏好、逆缩放显示密度、到达提示与指针贴入位置。分组端口的领域图投影另归具体领域文件，没有重写图交互引擎。",
+      "revisitWhen": "现有 React Flow API 能直接承载 Nomi 的到达类别和贴入锚点语义时删除相应投影；验证缩放/长文本/指针坐标和项目切换。"
+    },
+    {
+      "id": "generation-paid-action-policy-adapters",
+      "capability": "Nomi 收费生成重试/轮询与相机捕获决策的既有运行器策略 adapter",
+      "status": "justified",
+      "paths": [
+        "electron/capabilityCore/pollingPolicy.ts",
+        "src/workbench/generationCanvas/nodes/scene3d/cameraMoveCaptureRetry.ts",
+        "src/workbench/generationCanvas/runner/capabilityRecipeRetryAction.ts",
+        "src/workbench/generationCanvas/runner/catalogTaskPollingPolicy.ts",
+        "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+        "src/workbench/generationCanvas/nodes/director/agent/cameraMoveCaptureRetry.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "既有 submission-unknown 错误 owner",
+          "source": "electron/shared/nomiErrorCodes.ts:1"
+        },
+        {
+          "name": "已有导演捕获重试决策 owner；六项原 API",
+          "source": "src/workbench/generationCanvas/nodes/director/agent/cameraMoveCaptureRetry.ts:1"
+        },
+        {
+          "name": "Node/DOM timers 和 AbortSignal 本地合同",
+          "source": "node_modules/typescript/lib/lib.dom.d.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "轮询文件只给 timeout/interval 常量，等待使用现有 timer/AbortSignal；付费重试先走已有确认/grant/controller，submission-unknown 不得重提。Scene3D 捕获策略在已提交版本仍是旧决策副本，协调线将改为重导出既有 director/agent owner 的六项，默认 3 次/800ms/30s 不变；这是复用兼容口，不是新重试框架，本批不改该源文件。",
+      "revisitWhen": "协调线重导出完成后以 unchanged wiring exemption 验证兼容口；已有 controller 统一提供同等未知提交/确认/取消判据时删除重复策略。不能把收费请求交给无条件 SDK retry。"
+    },
+    {
+      "id": "fence-typography-policy",
+      "capability": "已有 Streamdown/Shiki 上 Nomi 可复制提示词与代码字体的有限显示策略",
+      "status": "justified",
+      "paths": [
+        "src/workbench/common/codeFenceTypeface.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Streamdown 代码插件 supportsLanguage",
+          "source": "node_modules/@streamdown/code/dist/index.js:1"
+        },
+        {
+          "name": "本地 DOM 标准 API 合同：ResizeObserver / MediaSource / Storage",
+          "source": "node_modules/typescript/lib/lib.dom.d.ts:26217"
+        }
+      ],
+      "whyNotIntegrated": "语言支持判断已经委托代码插件；剩下是 Nomi 未标注围栏内提示词应换行显示的字体策略。有限标点启发式不用于执行、语法验证或安全判定，不声称替代 parser/highlighter。",
+      "revisitWhen": "Streamdown 支持未标语言围栏的 prose/copyable-text 显示策略后删除启发式；保留真实提示词、代码、文本语言和未知语言的回归。"
+    },
+    {
+      "id": "director-catalog-archive",
+      "capability": "Director 可信素材目录中仍手写的 ZIP 解码和独立文件发布",
+      "status": "to-replace",
+      "paths": [
+        "electron/blender/vibingDirectorCatalog.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 fflate unzipSync/filter 实现",
+          "source": "node_modules/fflate/lib/node.cjs:2693"
+        },
+        {
+          "name": "现有原子 JSON 发布 owner；不是 ZIP 解码器",
+          "source": "electron/jsonFile.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "此文件含通用 ZIP 中央目录/局部头解析和重复原子写，不能因 Kenney 业务名划为领域。已有 fflate 是真实替代，但当前 16MiB 解压界限、单条目、路径和可信归档 hash 必须在解码/写盘前保留；本批禁止更换生产逻辑，没有声称已接入或跑过 spike。",
+      "revisitWhen": "按同一 research plan 完成 fflate 受限提取和现有文件发布 owner 的契约对照；路径/加密/压缩方法/损坏头/声明与实际尺寸/解压上限用例先红后绿且保持 CLI/API 后，删除手写 ZIP 解析。",
+      "plan": "docs/research/2026-10-25-self-written-fork-main-source-review.md"
+    },
+    {
+      "id": "snapshot-structural-sharing",
+      "capability": "通用完整 snapshot 的递归结构共享（尚未接库）",
+      "status": "to-replace",
+      "paths": [
+        "src/workbench/ai/v4/shareEqualDeep.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "TanStack query-core replaceEqualDeep 的真实源码；未安装该直接依赖",
+          "source": "https://github.com/TanStack/query/blob/main/packages/query-core/src/utils.ts"
+        },
+        {
+          "name": "已安装 Immer，但其 producer/patch API 不等于完整 snapshot 比较",
+          "source": "node_modules/immer/dist/immer.d.ts:1"
+        },
+        {
+          "name": "已安装 SWR；不能把 boolean compare 当成结构共享返回 API",
+          "source": "node_modules/swr/dist/index/index.mjs:1"
+        }
+      ],
+      "whyNotIntegrated": "这是通用递归算法，不是 Nomi 领域胶合。混合 snapshot 含函数和 non-plain 对象且调用方依赖未变子树 identity；已有 Immer/SWR 接口并非可直接替换。query-core 未直接安装，react-virtual 也不提供此 API；本批不加库、不替换算法，保留明确替换计划。",
+      "revisitWhen": "经独立批准的既有 store/框架结构共享入口或 query-core 依赖决策完成后，对函数/non-plain/null-prototype/数组/对象新增删除键/未变子树 identity 做真实 parity tests，再替换；不得声称本批已验证候选等价。",
+      "plan": "docs/research/2026-10-25-self-written-fork-main-source-review.md"
+    },
+    {
+      "id": "renderer-external-stores",
+      "capability": "两处手写 listeners/notify 的 renderer 外部 store",
+      "status": "to-replace",
+      "paths": [
+        "src/workbench/common/useModelBoxPreference.ts",
+        "src/workbench/generationCanvas/components/useCanvasPerformance.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Zustand vanilla createStore/setState/subscribe 实现",
+          "source": "node_modules/zustand/vanilla.js:3"
+        },
+        {
+          "name": "已安装 React Hooks 与 useSyncExternalStore 实现",
+          "source": "node_modules/react/cjs/react.development.js:1249"
+        }
+      ],
+      "whyNotIntegrated": "useModelBoxPreference 与 useCanvasPerformance 虽已使用 useSyncExternalStore，模块级 Set/notify/loading Promise 仍是自建 store。已有 Zustand 可承担订阅机制，不能把当前实现全称为已接框架；Nomi 偏好字段/加载单例/写回顺序需保留，本批只登记，不改冻结模型面。",
+      "revisitWhen": "以既有 zustand/vanilla 承担 getState/subscribe/setState；保留一次加载、保存成功后的通知、错误/重试与项目无关偏好语义，聚焦回归验证卸载和多订阅者后删除手写 listeners/notify。",
+      "plan": "docs/research/2026-10-25-self-written-fork-main-source-review.md"
+    },
+    {
+      "id": "desktop-string-interpolation",
+      "capability": "主进程 desktopT 的手写占位符插值（locale 数据另属领域）",
+      "status": "to-replace",
+      "paths": [
+        "electron/desktopStrings.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 i18next Translator.translate 实现",
+          "source": "node_modules/i18next/dist/cjs/i18next.js:533"
+        },
+        {
+          "name": "现有桌面语言设置 owner",
+          "source": "electron/desktopLocale.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "desktopT 目前只用字典索引和 String.replace，不是 i18next adapter；不能将 renderer 两个 helper 的真实接库结论挪给它。已有 i18next 可替代，需保留同步桌面入口、zh-CN/en-US、字面未知占位符及主进程打包可用性。本批不改实现或依赖。",
+      "revisitWhen": "在相同 desktopT API 下验证已安装 i18next 的主进程打包/初始化与 locale 选择，中文逐字、英文、缺值和占位符顺序 parity 通过后删除手写插值。",
+      "plan": "docs/research/2026-10-25-self-written-fork-main-source-review.md"
+    },
+    {
+      "id": "web-bridge-png-fixture",
+      "capability": "Pavo 预置任务 fixture 中手写 PNG chunk/CRC 编码（不执行）",
+      "status": "to-replace",
+      "paths": [
+        "electron/pavoWeb/fixtures/preset-tasks.cjs"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Node 标准 zlib.crc32 API 合同；本机内置 zlib:923 实现已读取",
+          "source": "node_modules/@types/node/zlib.d.ts:297"
+        },
+        {
+          "name": "已安装 Playwright 公共截图 API，可由测试 owner 离线产生固定合成 fixture；非 runtime 编码 API",
+          "source": "node_modules/.pnpm/playwright-core@1.60.0/node_modules/playwright-core/types/types.d.ts:3888"
+        }
+      ],
+      "whyNotIntegrated": "此文件不只是三项任务数据，还包含 PNG chunk/CRC 编码，不能扩大 fixture 豁免或称为框架复用。Node zlib.crc32 能替代 CRC 循环但不能独自替代整个 PNG encoder；Playwright 仅作为测试 fixture 生成候选，不导入服务运行时。没有运行造图或 spike。",
+      "revisitWhen": "优先让测试 owner 提供经验证的固定合成 PNG bytes，服务只消费数据；保留 512x512、四种颜色和 realSubmit:false。另评估用 Node zlib.crc32 消除重复 CRC；完整 PNG 语义与部署依赖未核对前不宣称可直接替换，也不生成/提交真实媒体。",
+      "plan": "docs/research/2026-10-25-self-written-fork-main-source-review.md"
+    },
+    {
+      "id": "vendor-submission-ledger",
+      "capability": "供应商提交节奏的跨进程预约台账与陈旧锁（仍手写）",
+      "status": "under-review",
+      "paths": [
+        "electron/vendorSubmissionRateLimiter.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Node fs API 合同；本机 Node 内置 fs 源码已读取 statfsSync/rm",
+          "source": "node_modules/@types/node/fs.d.ts:1216"
+        },
+        {
+          "name": "现有 workspace manifest lease/锁恢复 owner；不能直接等同 settings 台账锁",
+          "source": "electron/workspace/workspaceManifestLock.ts:345"
+        },
+        {
+          "name": "现有原子 JSON 发布 owner",
+          "source": "electron/jsonFile.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "任务种类/供应商间隔是 Nomi 策略，但台账预约、mkdir 锁、5 秒陈旧判定是独立通用协调机制，不能全划领域。当前已接原子 JSON 写，尚未复用 lease/锁 owner；内存限流库不能证明多个 Nomi 进程共享同一账号的持久预约。本批不改逻辑，不把间隔单测冒充跨进程正确性证明。",
+      "revisitWhen": "2026-11-15 前对照现有 lease owner 的持有者存活/初始化/释放/恢复语义与可用库，验证活但慢进程、崩溃、多进程公平及最大预约 horizon；选定共用 owner 后删除重复锁/调度，否则提供真实不能接入的约束。",
+      "reviewBy": "2026-11-15"
+    },
+    {
+      "id": "controlled-editor-echo-ledger",
+      "capability": "Tiptap 到 Nomi 延迟 owner 投影的手写未确认回声账本",
+      "status": "under-review",
+      "paths": [
+        "src/workbench/common/controlledEditorSync.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "已安装 Tiptap setContent/emitUpdate 源码",
+          "source": "node_modules/@tiptap/core/src/commands/setContent.ts:50"
+        },
+        {
+          "name": "仓库现有 ledger 的实际消费者与回归",
+          "source": "src/workbench/common/controlledEditorSync.test.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "已使用 Tiptap 内核，但 pending/acknowledged 数组与回声裁决仍自写，不能称库已提供该机制。Nomi editor 会收到 store/React Flow 延迟回流，单靠 emitUpdate:false 不表达版本确认；同值外部改写和旧回声有已知歧义。本批保持行为，登记真实复评而不是以领域名免责。",
+      "revisitWhen": "2026-11-15 前评估 owner revision/transaction identity 与现有 Tiptap transaction metadata 的接入，验证快速输入、延迟旧回声、切节点、撤销和外部同值写入；能够唯一裁决后替换字符串账本，否则保留明确歧义与证据。",
+      "reviewBy": "2026-11-15"
+    },
+    {
+      "id": "security-advisory-audit",
+      "capability": "声明式安全风险清单与启发式文本扫描（非 fresh 安全审计）",
+      "status": "under-review",
+      "paths": [
+        "electron/security/securityAuditFramework.ts"
+      ],
+      "alternativesChecked": [
+        {
+          "name": "现有日志脱敏 owner",
+          "source": "electron/logging/redact.ts:1"
+        },
+        {
+          "name": "现有通用事件脱敏 owner",
+          "source": "electron/events/redact.ts:1"
+        }
+      ],
+      "whyNotIntegrated": "runSecurityAudit 汇总静态 KNOWN_SECURITY_RISKS，scanForCredentialLeak 另有三条手写正则；这不能证明当前版本凭据、网络、文件系统或许可安全。领域风险清单应保留，通用探测应复用现有脱敏/扫描边界；本批不运行扫描、不访问凭据，也不把声明 pass 当实测。",
+      "revisitWhen": "2026-11-15 前核实真实生产调用方与现有脱敏 owner 的覆盖，选择统一扫描/脱敏入口；保留未知/误报，不让静态风险表替代 fresh 安全证据，再删除重复通用正则。",
+      "reviewBy": "2026-11-15"
     }
   ]
 }

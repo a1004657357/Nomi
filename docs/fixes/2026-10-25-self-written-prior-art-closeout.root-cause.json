@@ -1,0 +1,146 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-self-written-prior-art-closeout",
+  "problem_type": "Fork integration source ownership is missing from the shared registry",
+  "symptom": "The explicit fork/main added-source gate reports 180 files in the isolated branch and 182 in the main working tree without a self-written owner.",
+  "direct_cause": "Capability additions and existing-library adapters were introduced without extending the concrete domain inventory or mechanism registrations.",
+  "class_root": "A source addition needs a verifiable shared ownership decision: domain data/glue, an existing-library adapter, or an explicitly bounded replacement/review plan.",
+  "affected_population": [
+    "New Electron integration and canvas sources relative to the user fork/main target",
+    "Renderer display helpers, coordinator locale and PNG fixture additions"
+  ],
+  "scope_paths": [
+    "docs/engineering/self-written.json",
+    "scripts/self-written-closeout.node-test.mjs",
+    "scripts/check-self-written.node-test.mjs"
+  ],
+  "entry_points": [
+    "check-self-written.mjs explicit SELF_WRITTEN_BASE_REF=fork/main",
+    "check-prior-art.mjs explicit PRIOR_ART_BASE_REF=fork/main and real PR-body reference"
+  ],
+  "external_sources": [
+    {
+      "kind": "source-code",
+      "url": "https://github.com/TanStack/query/blob/main/packages/query-core/src/utils.ts",
+      "checked_at": "2026-10-25",
+      "purpose": "A real generic structural-sharing alternative, not an installed dependency claim"
+    },
+    {
+      "kind": "official-doc",
+      "url": "https://www.i18next.com/overview/api",
+      "checked_at": "2026-10-25",
+      "purpose": "Distinguish existing display translation calls from the still-handwritten desktop interpolator"
+    }
+  ],
+  "invariants": [
+    "Use the user fork/main reference, not the official default branch",
+    "Preserve enforceFrom, genericZones and the 161 existing domain roots",
+    "No production source, dependency, baseline, checker, API, prompt, stored data or model surface changes",
+    "Every inspected source is tied to a source locator, SHA256 and bounded owner",
+    "A to-replace registration is not evidence that its replacement has already shipped"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "scripts/check-prior-art.mjs",
+      "symbol": "registryChanges"
+    },
+    {
+      "kind": "read",
+      "path": "scripts/check-self-written.mjs",
+      "symbol": "evaluateSelfWritten"
+    }
+  ],
+  "door_reduction": {
+    "before": 2,
+    "after": 2,
+    "why_not": "The added-source gate checks registry ownership; the separate PR gate checks the human prior-art reference. They enforce different obligations and must remain independent. Registry data is edited offline; this change introduces no runtime writer."
+  },
+  "generality_proof": "Concrete capability roots and exact adapter paths cover every inspected entry, including generic-zone hooks and helpers. Independent tests reject widened policy, silently domain-classified generic mechanisms, missing source evidence, and a registry-changing PR without a qualifying plan reference.",
+  "shared_boundaries": [
+    {
+      "path": "docs/engineering/self-written.json",
+      "symbol": "entries",
+      "responsibility": "One machine-readable ownership and replacement-policy inventory consumed by the unchanged existing gates"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/i18n/CanvasComponentText.tsx",
+      "entry_point": "translateCanvasComponentText",
+      "disposition": "enforced",
+      "evidence": "Display-only lookup is assigned to the existing-i18next adapter family, with no persistence or prompt mutation"
+    },
+    {
+      "path": "electron/blender/vibingDirectorCatalog.ts",
+      "entry_point": "extractVerifiedZipEntry",
+      "disposition": "enforced",
+      "evidence": "The handwritten ZIP decoder remains outside domain roots and is explicitly to-replace with the already installed fflate alternative and security parity criteria"
+    },
+    {
+      "path": "src/workbench/common/useModelBoxPreference.ts",
+      "entry_point": "useModelBoxPreference",
+      "disposition": "enforced",
+      "evidence": "Generic-zone custom listeners/notify state is assigned an explicit existing-Zustand replacement plan instead of a model-domain exemption"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any later capability, UI helper or integration fixture can add a similarly unowned generic mechanism.",
+    "same_class_scan": [
+      "Actual added source under src/electron relative to fork/main, including main working-tree additions",
+      "179 inventory entries plus the TSX helper, main-only locale/PNG fixture and the explicitly requested Blender vocabulary contract",
+      "Source bodies and AST-assisted import/declaration/call review, with focused full reads of generic mechanisms",
+      "Installed fflate, React, Zustand, i18next, React Flow, R3F, Tiptap and Node/DOM API contracts"
+    ]
+  },
+  "prevention": {
+    "kind": "static-gate",
+    "enforcement_path": "docs/engineering/self-written.json",
+    "invariant": "New source must match an honest capability root or an exact, sourced mechanism registration.",
+    "failure_mode": "The unchanged gate rejects unknown paths, missing plans, stale paths and invalid metadata; prior-art rejects an unreferenced registry change.",
+    "exception_policy": "none",
+    "strategy": "Fill the existing shared inventory with audited ownership and explicit replacement obligations, retaining generic exclusion rules and all gate thresholds.",
+    "artifacts": [
+      "docs/engineering/self-written.json"
+    ]
+  },
+  "regression_tests": [
+    "scripts/self-written-closeout.node-test.mjs",
+    "scripts/check-self-written.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/self-written-closeout.node-test.mjs",
+    "scripts/check-self-written.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "No runtime implementation, export, caller or compatibility path is changed or removed."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "This is registry metadata repair only. Existing runtime dependencies are not installed, upgraded or swapped; mechanism-specific exit criteria are recorded in the registry and research report.",
+    "exit_criteria": []
+  },
+  "migration": "No stored project or prompt data migration. Coordinator cherry-picks the metadata after its already completed A/helper/locale/fixture source batches.",
+  "invariant_owner_layer": {
+    "layer": "scripts",
+    "tests": [
+      "scripts/check-self-written.node-test.mjs",
+      "scripts/check-prior-art.node-test.mjs",
+      "scripts/self-written-closeout.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/self-written-closeout.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "residual_risks": [
+    "The isolated branch lacks four actual main integration sources; its real CLI also still sees an old textModelCapabilities implementation already replaced by pure re-export in main. These failures are reported, not bypassed by registering the obsolete model inference copy.",
+    "Injected local PR text proves the gate input, not that the remote PR body or CI was updated",
+    "Replacement and review items remain open engineering work; no spike, media generation, provider call or App acceptance is claimed"
+  ]
+}

@@ -168,8 +168,8 @@ test('真实登记表：形状完整、领域目录与登记路径都存在', ()
 
 test('领域目录是概念级的：顶层树里混着的通用代码（hooks、协议层、缓存、IPC、存储、深比较）新文件一律要登记', () => {
   const real = JSON.parse(fs.readFileSync(path.join(repoRoot, SELF_WRITTEN_FILE), 'utf8'))
-  const flagged = (file) => evaluateSelfWritten({
-    registry: real, added: [{ path: file, content: 'export function f() { return 1 }\n' }], today: '2026-10-20', exists: () => true,
+  const flagged = (file, entries = real.entries) => evaluateSelfWritten({
+    registry: { ...real, entries }, added: [{ path: file, content: 'export function f() { return 1 }\n' }], today: '2026-10-20', exists: () => true,
   }).violations.length === 1
   // 领域：不报
   for (const file of [
@@ -222,7 +222,11 @@ test('领域目录是概念级的：顶层树里混着的通用代码（hooks、
     'electron/conversations/conversationsStoreV2.ts',
     'electron/connectors/connectorPrefsStoreV2.ts',
     'src/design/NewPopover.tsx',
-  ]) assert.equal(flagged(file), true, `${file} 是通用代码，应该报`)
+  ]) {
+    assert.equal(flagged(file, []), true, `${file} 是通用代码，领域目录不能使它免登记`)
+    const explicitlyRegistered = real.entries.some(entry => entry.paths.includes(file))
+    assert.equal(flagged(file), !explicitlyRegistered, `${file} 只能通过确切 entry 登记，不能借宽路径隐身`)
+  }
 })
 
 test('exclude 与 genericZones 的语义：exclude 只作用于它所在的领域目录；genericZones 覆盖一切领域目录', () => {
