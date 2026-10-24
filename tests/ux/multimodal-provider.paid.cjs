@@ -12,7 +12,11 @@ const runRoot = process.env.NOMI_ACCEPTANCE_RUN_ROOT;
 const channel = process.env.NOMI_ACCEPTANCE_CHANNEL;
 const paid = process.env.NOMI_SPEND_OK === '1';
 const batch = process.env.NOMI_ACCEPTANCE_BATCH === '1';
+const singleImage = process.env.NOMI_ACCEPTANCE_SINGLE_IMAGE === '1';
+const proxyPort = Number(process.env.NOMI_ACCEPTANCE_CLIPROXY_PORT || 8317);
+if (!Number.isInteger(proxyPort) || proxyPort < 1024 || proxyPort > 65535) throw new Error('Invalid local CLIProxy acceptance port');
 if (batch && channel !== 'cliproxy') throw new Error('Batch acceptance is limited to CLIProxy');
+if (singleImage && (batch || channel !== 'cliproxy')) throw new Error('Single-image acceptance cannot run a batch or another channel');
 if (!runRoot || !path.isAbsolute(runRoot) || !['cliproxy', 'plan'].includes(channel)) {
   throw new Error('An absolute isolated NOMI_ACCEPTANCE_RUN_ROOT and cliproxy/plan channel are required');
 }
@@ -32,7 +36,8 @@ app.setPath('logs', path.join(userData, 'logs'));
 if (!app.requestSingleInstanceLock()) throw new Error('Acceptance profile is already in use');
 
 const report = { runId: path.basename(runRoot), channel, startedAt: new Date().toISOString(),
-  state: 'running', paidAuthorized: paid, createIntents: 0, maxCreateIntents: batch ? 4 : 2,
+  state: 'running', paidAuthorized: paid, createIntents: 0, maxCreateIntents: singleImage ? 1 : batch ? 4 : 2,
+  singleImage,
   upstreamInternalAttempts: 'unavailable', automaticHarnessRetry: false,
   credentialsRemoved: false, cases: [], projectId: null };
 const reportPath = path.join(runRoot, 'report.json');
@@ -43,7 +48,7 @@ const nativeFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = async (input, init) => {
   const url = new URL(input instanceof Request ? input.url : String(input));
   const method = String(init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-  const provider = (url.hostname === '127.0.0.1' && url.port === '8317') || url.hostname === 'ark.cn-beijing.volces.com';
+  const provider = (url.hostname === '127.0.0.1' && url.port === String(proxyPort)) || url.hostname === 'ark.cn-beijing.volces.com';
   if (provider && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     const activeIntent = intentContext.getStore();
     if (!paid || !activeIntent) throw new Error('Provider POST blocked outside an authorized media intent');
@@ -106,7 +111,10 @@ app.whenReady().then(async () => {
   let imageModel;
   if (channel === 'cliproxy') {
     const dependencyRequire = createRequire(path.join(repoRoot, 'node_modules/.pnpm/node_modules/acceptance.cjs'));
-    const config = dependencyRequire('js-yaml').load(fs.readFileSync('/usr/local/etc/cliproxyapi.conf', 'utf8'));
+    const configPath = process.env.NOMI_ACCEPTANCE_PROXY_CONFIG || '/usr/local/etc/cliproxyapi.conf';
+    if (!path.isAbsolute(configPath)) throw new Error('Proxy config path must be absolute');
+    const config = dependencyRequire('js-yaml').load(fs.readFileSync(configPath, 'utf8'));
+    if (Number(config.server?.port ?? config.port) !== proxyPort) throw new Error('Acceptance listener differs from its explicitly selected proxy config');
     const key = config.access?.['api-keys']?.find(value => typeof value === 'string' && value.trim());
     if (!key) throw new Error('CLIProxy has no configured client key');
     secrets.push(key);
@@ -114,7 +122,7 @@ app.whenReady().then(async () => {
     vendorKey = 'acceptance-cliproxy';
     imageModel = 'gpt-image-2';
     catalog.upsertModelCatalogVendor({ key: vendorKey, name: 'CLIProxy acceptance',
-      baseUrlHint: 'http://127.0.0.1:8317', authType: 'bearer', providerKind: 'openai-compatible', enabled: true,
+      baseUrlHint: `http://127.0.0.1:${proxyPort}`, authType: 'bearer', providerKind: 'openai-compatible', enabled: true,
       network: { proxyEnabled: false } });
     catalog.upsertModelCatalogVendorApiKey(vendorKey, { apiKey: key, enabled: true });
     status('certifying-cli-proxy-shape-without-generation');
@@ -290,8 +298,10 @@ app.whenReady().then(async () => {
   }
 
   const initial = await generate('image', imageModel, 'text_to_image',
-    `Square 1:1 photograph, exactly 1024 by 1024 pixels. One red ceramic cup beside one green pear on a grey kitchen table, soft neutral daylight, no text, no people. Acceptance ${report.runId}.`,
-    channel === 'cliproxy' ? { size: '1024x1024', aspect_ratio: '1:1', resolution: '1K', quality: 'low', n: 1 }
+    singleImage
+      ? `One square documentary photograph of a lived-in kitchen in neutral daylight: a red ceramic cup, green pear, folded linen towel and a stainless steel spoon on a grey table. Realistic material texture, natural color, no illustration, no text, no people. One final image only. Acceptance ${report.runId}.`
+      : `Square 1:1 photograph, exactly 1024 by 1024 pixels. One red ceramic cup beside one green pear on a grey kitchen table, soft neutral daylight, no text, no people. Acceptance ${report.runId}.`,
+    channel === 'cliproxy' ? { size: singleImage ? 'auto' : '1024x1024', aspect_ratio: '1:1', resolution: '1K', quality: singleImage ? 'high' : 'low', n: 1 }
       : { size: '1K', aspect_ratio: '1:1', n: 1 });
   if (channel === 'cliproxy' && batch) {
     const { createGenerationProviderScheduler } = require(path.join(repoRoot, 'src/workbench/generationCanvas/runner/generationProviderScheduler.ts'));
@@ -318,11 +328,11 @@ app.whenReady().then(async () => {
       && report.batch.finalSnapshot.active === 0 && report.batch.finalSnapshot.queued === 0
       && report.batch.distinctAssets === 4 && report.batch.persistedNodeBindings.every(item => item.matches)
       && report.cases.every(entry => entry.httpPosts === 1 && entry.canvasReadBack);
-  } else if (channel === 'cliproxy') {
+  } else if (channel === 'cliproxy' && !singleImage) {
     await generate('reference-edit', imageModel, 'image_edit',
       'Keep the square 1:1 image and its 1024 by 1024 pixel output. Change only the red ceramic cup to blue. Keep the pear, table, daylight and camera position unchanged. One image.',
       { size: '1024x1024', aspect_ratio: '1:1', resolution: '1K', quality: 'low', n: 1, referenceImages: [initial.dataUrl] });
-  } else {
+  } else if (channel !== 'cliproxy') {
     await generate('reference-video', 'doubao-seedance-2.0', 'image_to_video',
       'Use the reference as the first frame. A single continuous static-camera shot: the ceramic cup slides gently a short distance toward the pear and comes to rest. The pear remains still. Preserve the tabletop, object shapes and neutral daylight. No text, no cuts.',
       { model: 'doubao-seedance-2.0-fast', variantId: 'fast', archetype: { id: 'volcengine-plan-seedance', modeId: 'first', variantId: 'fast' },

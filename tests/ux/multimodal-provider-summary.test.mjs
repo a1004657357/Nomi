@@ -23,3 +23,11 @@ for (const scenario of [
     assert.equal(context.report.cases.length, scenario.cases.length)
   })
 }
+
+test('single-image mode cannot start the second media intent', () => {
+  assert.ok(source.includes('maxCreateIntents: singleImage ? 1 : batch ? 4 : 2'))
+  assert.ok(source.includes("channel === 'cliproxy' && !singleImage"))
+  assert.ok(source.includes("else if (channel !== 'cliproxy')"))
+  assert.ok(source.includes("activeIntent.httpPosts >= 1"))
+  assert.ok(source.includes("if (singleImage && (batch || channel !== 'cliproxy'))"))
+})
