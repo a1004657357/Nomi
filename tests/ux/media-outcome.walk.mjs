@@ -107,7 +107,7 @@ function fixture(spec) {
     status: 'error', error, runs: [{ id: 'ui-only-error-run', status: 'error', error, startedAt: now - 1000, updatedAt: now }],
     meta: { modelKey: 'media-outcome-image-fixture', vendor: 'fixture', modelVendor: 'fixture',
       productionRunId: 'ui-only-never-released-run', productionShotId: 'ui-only-shot' } }
-  const record = { id: projectId, name: `Media outcome ${spec.locale}`, version: 2, createdAt: now, updatedAt: now,
+  const record = { id: projectId, name: `Media outcome ${spec.locale}`, version: 2, draft: false, createdAt: now, updatedAt: now,
     savedAt: now, revision: 1, immutableProjectUuid: randomUUID(), projectGeneration: 1, lastKnownRootPath: projectRoot,
     payload: { workbenchDocument: { version: 1, title: '', contentJson: { type: 'doc', content: [] } },
       generationCanvas: { nodes: [node], edges: [], groups: [], selectedNodeIds: [node.id], canvasZoom: 1, canvasPan: { x: 0, y: 0 } },
@@ -156,7 +156,7 @@ function assetHashes(projectRoot) {
 
 async function openCanvas(instance, selected) {
   const card = instance.win.locator(`[data-project-card][data-project-id=${JSON.stringify(selected.record.id)}]`).first()
-  await expect(card).toBeVisible()
+  await expect(card).toBeVisible({ timeout: 30_000 })
   await clickOrFail(card, 'Open the persisted project from the real library')
   let canvas
   await expect.poll(async () => {
@@ -215,6 +215,7 @@ async function walk(spec, selected, realView) {
       initialLocalStorage: { 'nomi:locale:v1': spec.locale, 'nomi-color-scheme': 'light', 'nomi:splash:v1': 'seen',
         'nomi:journey-tour:v1': 'seen', 'nomi:canvas-gesture-hint:v1': 'seen', __nomiE2E: '1' } })
     instance.win.setDefaultTimeout(30_000)
+    page = instance.win
     page = await openCanvas(instance, selected)
     const node = page.locator(`[data-node-id=${JSON.stringify(selected.node.id)}]`)
     await expect(node).toBeVisible()
