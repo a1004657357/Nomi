@@ -36,7 +36,11 @@ test('Base keeps the media measurement hook at the original hook position withou
   assert.equal(body[index].expression.arguments[0].getText(source), 'node')
   assert.equal(body[index - 1].declarationList.declarations[0].name.getText(source), 'handleAddToTimelineAtPlayhead')
   assert.equal(body[index + 1].declarationList.declarations[0].name.getText(source), 'videoPreview')
-  for (const name of ['MagneticConnectionHandle', 'ConnectionAnchorSide', 'completeNodeConnection', 'isImageLikeGenerationNodeKind']) assert.ok(!imports(source).includes(name), name)
+  for (const name of ['MagneticConnectionHandle', 'ConnectionAnchorSide', 'completeNodeConnection']) assert.ok(!imports(source).includes(name), name)
+  assert.ok(imports(source).includes('isImageLikeGenerationNodeKind'), 'retain the genuinely consumed image-kind predicate')
+  const imageKindCalls = collect(source, node => ts.isCallExpression(node) && node.expression.getText(source) === 'isImageLikeGenerationNodeKind')
+  assert.equal(imageKindCalls.length, 1)
+  assert.equal(imageKindCalls[0].arguments[0].getText(source), 'node.kind')
   for (const name of ['mediaMeasurement', 'showFlowConnectionHandle']) assert.ok(!variables(source).includes(name), name)
 })
 

@@ -1,9 +1,26 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import test from 'node:test'
+import test, { after } from 'node:test'
 import { createRequire } from 'node:module'
 import ts from 'typescript'
 import React from 'react'
+import { fileURLToPath } from 'node:url'
+import { register } from 'tsx/cjs/api'
+
+const appConfigPath = fileURLToPath(new URL('../tsconfig.app.json', import.meta.url))
+function registerAppTsx() {
+  const previous = process.env.TSX_TSCONFIG_PATH
+  process.env.TSX_TSCONFIG_PATH = appConfigPath
+  try { return register() } finally {
+    if (previous === undefined) delete process.env.TSX_TSCONFIG_PATH
+    else process.env.TSX_TSCONFIG_PATH = previous
+  }
+}
+const unregister = registerAppTsx()
+after(() => unregister())
+const appConfig = ts.getParsedCommandLineOfConfigFile(appConfigPath, {}, ts.sys)
+assert.ok(appConfig)
+assert.equal(appConfig.options.jsx, ts.JsxEmit.ReactJSX)
 
 const require = createRequire(import.meta.url)
 const logging = require('../src/desktop/rendererLog.ts')
@@ -20,8 +37,8 @@ for (const [file, symbol, level, event, flag] of cases) {
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
     const node = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === symbol)
     assert.ok(node, symbol)
-    const code = ts.transpileModule(node.getText(source).replace(/^export\s+/, ''), { compilerOptions: { jsx: ts.JsxEmit.React, module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText
-    const Boundary = new Function('React', 'logRendererError', 'logRendererWarn', code + `\nreturn ${symbol}`)(React, logging.logRendererError, logging.logRendererWarn)
+    const code = ts.transpileModule(node.getText(source).replace(/^export\s+/, ''), { compilerOptions: { ...appConfig.options, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+    const Boundary = new Function('require', 'exports', 'React', 'logRendererError', 'logRendererWarn', code + `\nreturn ${symbol}`)(require, {}, React, logging.logRendererError, logging.logRendererWarn)
     const boundary = new Boundary({ children: 'content', fallback: 'fallback', resetKey: 'a' })
     assert.equal(boundary.render(), 'content')
     const report = [], local = []

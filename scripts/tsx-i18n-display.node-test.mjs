@@ -1,10 +1,85 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
-import test from 'node:test'
+import test, { after } from 'node:test'
 import ts from 'typescript'
 import i18next from 'i18next'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
+import { register } from 'tsx/cjs/api'
+
+function registerAppTsx() {
+  const previous = process.env.TSX_TSCONFIG_PATH
+  process.env.TSX_TSCONFIG_PATH = fileURLToPath(new URL('../tsconfig.app.json', import.meta.url))
+  try { return register() } finally {
+    if (previous === undefined) delete process.env.TSX_TSCONFIG_PATH
+    else process.env.TSX_TSCONFIG_PATH = previous
+  }
+}
+const unregister = registerAppTsx()
+after(() => unregister())
+const require = createRequire(import.meta.url)
+
+const approvedCopy = {
+  zh: [
+    ["generateNewResults","生成新结果","再生成"],
+    ["connectModels51","去模型接入","接入模型"],
+    ["generatingKeyframes","关键帧生成中","生成中"],
+    ["generate53Keyframes","生成5+3关键帧","生成帧"],
+    ["polishVideoPrompt","润色视频词","润色"],
+    ["applyAndGenerate","应用并生成","生成"],
+    ["executingInBlender","正在执行 Blender…","执行中"],
+    ["applyToBlender","应用到 Blender","写入 Blender"],
+    ["keyframeNodes"," 个关键帧节点"," 帧节点"],
+    ["importLocalModel","导入本地模型","导入模型"],
+    ["renderWithBlender","使用 Blender 渲染","Blender 渲染"],
+    ["writeOrImportAScriptFirst","请先写入或导入剧本","剧本为空"],
+    ["configureAndRun334","配置并运行","配置"],
+    ["confirmAndContinue","确认并继续 · {{v0}}/{{v1}}","确认 {{v0}}/{{v1}}"],
+    ["runPlaybookAgain","重新运行 Playbook","再运行"],
+    ["retryCurrentStage","重试当前阶段","重试本步"],
+    ["continueWithAgent","用 Agent 推进","Agent 推进"],
+    ["visionModelReview","视觉模型复核","视觉复核"],
+    ["sendTo3DDirectorWorkspace","送入 3D 导演台","送导演台"],
+    ["clearManualVerdict","清除人工结论","清除结论"],
+    ["connectATextModelThatSupportsImageInput","连接支持图片输入的文本模型","接入视觉"],
+  ],
+  en: [
+    ["generateNewResults","Generate new results","Regenerate"],
+    ["generatingKeyframes","Generating keyframes","Generating"],
+    ["generate53Keyframes","Generate 5+3 keyframes","Generate frames"],
+    ["polishVideoPrompt","Polish video prompt","Polish prompt"],
+    ["applyAndGenerate","Apply and generate","Generate"],
+    ["executingInBlender","Executing in Blender…","Executing"],
+    ["applyToBlender","Apply to Blender","Apply plan"],
+    ["keyframeNodes"," keyframe nodes"," frames"],
+    ["importLocalModel","Import local model","Import model"],
+    ["renderWithBlender","Render with Blender","Blender render"],
+    ["writeOrImportAScriptFirst","Write or import a script first","Script required"],
+    ["configureAndRun334","Configure and run","Configure"],
+    ["confirmAndContinue","Confirm and continue · {{v0}}/{{v1}}","Confirm {{v0}}/{{v1}}"],
+    ["runPlaybookAgain","Run Playbook again","Run again"],
+    ["retryCurrentStage","Retry current stage","Retry step"],
+    ["continueWithAgent","Continue with Agent","Ask agent"],
+    ["visionModelReview","Vision model review","Vision review"],
+    ["sendTo3DDirectorWorkspace","Send to 3D director workspace","Open director"],
+    ["sendToBlenderDirector","Send to Blender Director","To Blender"],
+    ["clearManualVerdict","Clear manual verdict","Clear verdict"],
+    ["connectATextModelThatSupportsImageInput","Connect a text model that supports image input","Connect vision"],
+  ],
+}
+const approvedClasses = [
+  {
+    "file": "src/workbench/generationCanvas/nodes/VibingDirectorEditor.tsx",
+    "from": "bd38ee6152a7e2bb41107ba9fb2455c90d9dc93bd80854a004bbc33e2c150ab9",
+    "to": "f14b9c20973952702a992dce505c3b3609e0156e3db888a74bccdf4099fd3f71"
+  },
+  {
+    "file": "src/workbench/generationCanvas/nodes/render/StoryboardVideoPreview.tsx",
+    "from": "244a8c6cef7f9988caf6eb77ebdcb7cbe1cb5daf887dd1eeda462c8c9862c1b9",
+    "to": "56f95ee22d076efd59897f2a558674e480586d661db0bcf4ce984e794dcf696d"
+  }
+]
 
 const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/tsx-i18n-display.json', import.meta.url), 'utf8'))
 const localePath = new URL('../src/i18n/locales/canvasComponents.ts', import.meta.url)
@@ -20,6 +95,47 @@ function sourceClassHash(file, text) {
   visit(source)
   return crypto.createHash('sha256').update(values.join('\n')).digest('hex')
 }
+test('only the approved copy and two class snapshots differ; all bindings stay exact', () => {
+  const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  assert.equal(Object.keys(fixture.zh).length, 475)
+  assert.equal(Object.keys(fixture.files).length, 37)
+  assert.equal(fixture.bindings.length, 111)
+  assert.equal(digest(fixture.bindings), 'bbc286e4f3396183fb7ffaa4f09afe4f1b82d08036394600453428e0b1196f48')
+  const restoredCopy = { ...fixture.zh }
+  for (const [key, before, approved] of approvedCopy.zh) {
+    assert.equal(restoredCopy[key], approved, key)
+    restoredCopy[key] = before
+  }
+  assert.equal(digest(restoredCopy), 'df589ebafb9bbe5a5d7dd6f99edf46a1cda58fff599ed9b590726d8c536c9f55')
+  const restoredFiles = structuredClone(fixture.files)
+  for (const { file, from, to } of approvedClasses) {
+    assert.equal(restoredFiles[file].classHash, to, file)
+    restoredFiles[file].classHash = from
+  }
+  assert.equal(digest(restoredFiles), 'f539f4633a7678f4588aeb1908a6c25c316fac0254954b34853afd663c34adfa')
+  const { enCanvasComponents: en } = readLocale()
+  assert.equal(approvedCopy.zh.length, 21)
+  assert.equal(approvedCopy.en.length, 21)
+  for (const [key, , approved] of approvedCopy.en) assert.equal(en[key], approved, key)
+})
+
+test('new integration Node regressions run exactly once in the existing engineering gate', () => {
+  const { scripts } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const commands = scripts['test:eng-system'].split(' && ')
+  const original = ['./scripts/merge-preflight.node-test.mjs', './scripts/eng-metrics.node-test.mjs', './scripts/archetype-autosync-workflow.node-test.mjs']
+  assert.equal(commands.length, 2)
+  assert.equal(commands[0], ['node', '--test', ...original].join(' '))
+  const args = commands[1].split(/\s+/)
+  assert.deepEqual(args.slice(0, 4), ['node', '--import', 'tsx', '--test'])
+  const additions = ['agent-tool-face-usecases', 'browser-shortcut-label', 'check-fresh-base', 'main-style-content-flow', 'main-style-reference-repair', 'root-cause-history-evidence', 'self-written-closeout', 'tsx-diagnostics-lint', 'tsx-i18n-display', 'tsx-redundant-bindings']
+  assert.equal(args.length, 4 + additions.length)
+  const allArgs = commands.flatMap(command => command.split(/\s+/))
+  for (const file of [...original, ...additions.map(name => `./scripts/${name}.node-test.mjs`)]) assert.equal(allArgs.filter(arg => arg === file).length, 1, file)
+  assert.ok(!args.some(arg => arg.includes('extension-lint-hosts')), 'the existing quality workflow gate already owns this suite')
+  assert.ok(scripts['check:quality-gate-workflow'].includes('./scripts/extension-lint-hosts.node-test.mjs'))
+  assert.match(scripts.test, /pnpm run test:eng-system/, 'the existing unit entry must still reach the engineering gate')
+})
+
 test('dedicated namespace keeps original Chinese and complete real English interpolation', () => {
   const { zhCanvasComponents: zh, enCanvasComponents: en } = readLocale()
   assert.deepEqual(zh, fixture.zh)
@@ -50,14 +166,33 @@ for (const [file, expected] of Object.entries(fixture.files)) {
     }
   })
 }
-test('mixed-use canonical defaults remain language-independent', () => {
+test('mixed-use canonical defaults remain language-independent', async () => {
   const inspector = fs.readFileSync(new URL('../src/workbench/generationCanvas/components/CapabilityRecipeInspector.tsx', import.meta.url), 'utf8')
-  assert.match(inspector, /label: `机位 \$\{index \+ 1\}`/)
-  assert.match(inspector, /shotSize: '中景'/)
+  assert.match(inspector, /import \{ createRecipeCameraOutputs \} from '\.\.\/\.\.\/\.\.\/\.\.\/electron\/shared\/canvas\/sourceDefaults'/)
+  assert.match(inspector, /createRecipeCameraOutputs\(2, \[\]\)/)
+  assert.match(inspector, /createRecipeCameraOutputs\(nextCount, current\)/)
+  const { createRecipeCameraOutputs } = require('../electron/shared/canvas/sourceDefaults.ts')
+  const appI18n = require('../src/i18n/index.ts').default
+  const previousLocale = appI18n.language
+  try {
+    for (const lng of ['zh-CN', 'en', 'zh-CN']) {
+      await appI18n.changeLanguage(lng)
+      for (let count = 0; count < 10; count++) {
+        assert.deepEqual(createRecipeCameraOutputs(count, []), Array.from({ length: count }, (_, index) => ({
+          id: `view-${index + 1}`, label: `机位 ${index + 1}`,
+          azimuth: [0, 45, 90, 135, 180, -90, 180, 180, 180][index], elevation: 0, shotSize: '中景',
+        })))
+      }
+      const edited = Object.freeze({ id: 'custom', label: '用户的侧面机位', azimuth: -13, elevation: 7, shotSize: '全景' })
+      const before = JSON.stringify(edited)
+      assert.equal(createRecipeCameraOutputs(3, [edited])[0], edited)
+      assert.equal(JSON.stringify(edited), before)
+    }
+  } finally { await appI18n.changeLanguage(previousLocale) }
   assert.match(inspector, /setResourceLabel\(`\$\{sourceTitle\} 资源`\)/)
   assert.match(inspector, /source: '用户自有素材'/)
   const editor = fs.readFileSync(new URL('../src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx', import.meta.url), 'utf8')
-  assert.match(editor, /value=\{output.label\}/)
+  assert.match(editor, /value=\{translateCanvasComponentText\(output.label\)\}/)
   assert.match(editor, /\['特写', '近景', '中景', '全景'\]/)
   assert.match(editor, /shotSize: value/)
   const scene = fs.readFileSync(new URL('../src/workbench/generationCanvas/nodes/Scene3DEditor.tsx', import.meta.url), 'utf8')
@@ -65,7 +200,7 @@ test('mixed-use canonical defaults remain language-independent', () => {
 })
 
 test('actual rendered display boundaries switch language without changing editable values', async () => {
-  const require = createRequire(import.meta.url)
+  assert.equal('React' in globalThis, false, 'the app JSX runtime must not rely on global React')
   const React = require('react')
   const { renderToStaticMarkup } = require('react-dom/server')
   const { MantineProvider } = require('@mantine/core')
@@ -74,17 +209,26 @@ test('actual rendered display boundaries switch language without changing editab
   const { translateCanvasComponentText } = require('../src/i18n/CanvasComponentText.tsx')
   const { CodexImagegenManage } = require('../src/ui/onboarding/CodexImagegenManage.tsx')
   const { CapabilityCameraOutputsEditor } = require('../src/workbench/generationCanvas/components/CapabilityCameraOutputsEditor.tsx')
-  const outputs = [{ id: 'camera-1', label: '机位 1', azimuth: 45, elevation: 10, shotSize: '中景' }]
+  const { createRecipeCameraOutputs } = require('../electron/shared/canvas/sourceDefaults.ts')
+  const outputs = Object.freeze([
+    ...createRecipeCameraOutputs(1, []).map(output => Object.freeze({ ...output, azimuth: 45, elevation: 10 })),
+    Object.freeze({ id: 'custom', label: '用户的侧面机位', azimuth: -13, elevation: 7, shotSize: '全景' }),
+  ])
   const before = JSON.stringify(outputs)
   let changes = 0
   for (const lng of ['zh-CN', 'en', 'zh-CN']) {
     await appI18n.changeLanguage(lng)
     const html = renderToStaticMarkup(React.createElement(I18nextProvider, { i18n: appI18n }, React.createElement(MantineProvider, { forceColorScheme: 'light' },
-      React.createElement(React.Fragment, null, React.createElement(CodexImagegenManage), React.createElement(CapabilityCameraOutputsEditor, { outputs, count: 1, onChange: () => changes++ })),
+      React.createElement(React.Fragment, null, React.createElement(CodexImagegenManage), React.createElement(CapabilityCameraOutputsEditor, { outputs, count: 2, onChange: () => changes++ })),
     )))
     assert.ok(html.includes(lng === 'en' ? 'Local Codex image channel' : '本机 Codex 图片通道'))
     assert.ok(html.includes(lng === 'en' ? 'Medium shot' : '中景'))
-    assert.ok(html.includes('value="机位 1"'))
+    assert.ok(html.includes(lng === 'en' ? 'value="View 1"' : 'value="机位 1"'))
+    assert.ok(html.includes('value="用户的侧面机位"'))
+    assert.ok(html.includes('value="-13"'))
+    assert.ok(html.includes('value="7"'))
+    assert.ok(html.includes('value="45"'))
+    assert.ok(html.includes('value="10"'))
     assert.equal(translateCanvasComponentText('即梦 Web'), lng === 'en' ? 'Jimeng Web' : '即梦 Web')
     assert.equal(translateCanvasComponentText('全景'), lng === 'en' ? 'Wide shot' : '全景')
     assert.equal(translateCanvasComponentText('我自己的未登记标题'), '我自己的未登记标题')
