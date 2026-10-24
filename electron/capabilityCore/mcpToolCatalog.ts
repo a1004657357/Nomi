@@ -19,7 +19,8 @@ import { MCP_CAPABILITY_RESOLVER, immutableSchemaSnapshot } from './mcpCapabilit
 import { MCP_GENERATION_TOOL_CATALOG } from './mcpGenerationToolCatalog'
 import { MCP_PROJECT_SESSION_TOOL } from './mcpProjectSessionTool'
 import { MCP_READ_TOOL_NAME } from '../shared/agentCapabilities/mcpTransportNames'
-import { paidBoundaryAnnotations } from '../shared/agentCapabilities/paidBoundary'
+import { mcpProfileToolFor } from '../shared/agentCapabilities/modelFacingToolRegistry'
+import { DIRECTOR_RENDER_CAPABILITY, GENERATION_BATCH_REQUEST_CAPABILITY } from '../shared/agentCapabilities/localCanvasOperations'
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '')
 
@@ -328,22 +329,15 @@ const PROJECT_CREATE_TOOL = {
 
 // Existing-node desktop operations have no equivalent operation in the canonical
 // canvas-write or sealed-generation contracts. Do not expand the retired aliases.
+const directorProfile = mcpProfileToolFor(DIRECTOR_RENDER_CAPABILITY.id)
+const batchProfile = mcpProfileToolFor(GENERATION_BATCH_REQUEST_CAPABILITY.id)
+if (!directorProfile || !batchProfile) throw new Error('Existing local canvas MCP verbs are not registered')
 const LOCAL_CANVAS_TOOLS = [
   {
     name: 'nomi_render_director',
     title: '渲染本地导演预演',
-    description: 'Render an existing scene3d node through local Blender and add PNG/GLB output nodes with reference links. Requires a canvas:write project lease and Nomi desktop. No provider generation; returns output node IDs, not binary media.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        leaseHandle: { type: 'string', minLength: 1 },
-        projectId: { type: 'string', minLength: 1 },
-        sourceNodeId: { type: 'string', minLength: 1 },
-        stagePreset: { type: 'string', enum: ['empty', 'studio', 'coffee_shop', 'city_street', 'interior_room'] },
-      },
-      required: ['leaseHandle', 'sourceNodeId'],
-      additionalProperties: false,
-    },
+    description: directorProfile.description,
+    inputSchema: directorProfile.inputSchema,
     method: 'director.render',
     build: (a: Record<string, unknown>): Record<string, unknown> => ({
       leaseHandle: a.leaseHandle, projectId: a.projectId, sourceNodeId: a.sourceNodeId,
@@ -353,18 +347,9 @@ const LOCAL_CANVAS_TOOLS = [
   {
     name: 'nomi_generate_batch',
     title: '请求画布批量生成',
-    description: 'Request generation for 1–24 existing nodes in Nomi desktop. Requires a generation:plan project lease. Returns a pending confirmation, not finished media; a person must confirm spending. Inspect results before retrying.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        leaseHandle: { type: 'string', minLength: 1 },
-        projectId: { type: 'string', minLength: 1 },
-        nodeIds: { type: 'array', minItems: 1, maxItems: 24, items: { type: 'string', minLength: 1 } },
-      },
-      required: ['leaseHandle', 'nodeIds'],
-      additionalProperties: false,
-    },
-    annotations: paidBoundaryAnnotations(),
+    description: batchProfile.description,
+    inputSchema: batchProfile.inputSchema,
+    annotations: batchProfile.annotations,
     method: 'generation.batch',
     build: (a: Record<string, unknown>): Record<string, unknown> => ({ leaseHandle: a.leaseHandle, projectId: a.projectId, nodeIds: a.nodeIds }),
   },

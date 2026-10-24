@@ -1,0 +1,363 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-agent-tool-metadata-compatibility",
+  "problem_type": "Published tool metadata is incomplete or independently handwritten instead of owned by executable shared contracts",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "symptom": "52 fields lack explanations; two existing MCP tools are absent from verb projection; six already-published internal verbs lack offline usecases.",
+  "direct_cause": "New creative schemas omitted field descriptions, transport metadata was written outside the shared declarations, and the usecase manifest was not extended.",
+  "class_root": "Tool discovery, input semantics, transport publication and offline coverage do not converge on their actual shared owners.",
+  "affected_population": [
+    "Six existing creative tools and draft_shots transitions",
+    "Existing local director render and native batch MCP requests",
+    "Offline internal tool inventory"
+  ],
+  "scope_paths": [
+    "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+    "electron/ai/vibingDirectorTools.ts",
+    "electron/shared/storyboard/storyboardPlanSchema.ts",
+    "electron/shared/agentCapabilities/verbs/creativeVerbs.ts",
+    "electron/shared/agentCapabilities/localCanvasOperations.ts",
+    "electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts",
+    "electron/shared/agentCapabilities/registry.ts",
+    "electron/shared/agentCapabilities/verbDeclarations.ts",
+    "electron/capabilityCore/mcpToolCatalog.ts",
+    "scripts/check-agent-tool-face-usecases.ts",
+    "scripts/agent-tool-face-usecases-lib.mjs"
+  ],
+  "entry_points": [
+    "creativeComponentArgumentSchemas / Blender plan schemas / storyboard transition",
+    "Existing MCP tools/list and method builders",
+    "Agent tool-face usecase CLI and offline fixtures"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "Units, authorization, schema and transport behavior are determined by repository-owned Blender harness, dispatcher and declarations; no external provider or model behavior is changed.",
+  "invariants": [
+    "All published fields retain types, bounds, defaults, enum values and names; descriptions are meaningful English.",
+    "MCP tool names, validation shape, method, builder behavior, scope, hints and raw results remain compatible.",
+    "Batch requests never approve spending; no new executable permissions or automatic resubmission.",
+    "Six real offline scenarios exercise existing semantics and review restrictions; missing/unknown tool names still fail.",
+    "No model-face baseline, frozen count, budget ceiling, policy or handler changes."
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/shared/agentCapabilities",
+    "tests": [
+      "electron/shared/agentCapabilities/creativeToolMetadata.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/ai/canvasTools.ts",
+      "symbol": "capabilityRecipeRunParamsSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "symbol": "planActionWireSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/mcpProtocol.ts",
+      "symbol": "MCP_TOOL_RESOLVER"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/mcpToolCatalog.ts",
+      "symbol": "DIRECTOR_RENDER_CAPABILITY"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/mcpToolCatalog.ts",
+      "symbol": "GENERATION_BATCH_REQUEST_CAPABILITY"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "symbol": "readVibingDirectorParamsSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "symbol": "capabilityRecipeRunParamsSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "symbol": "applyVibingDirectorPlanParamsSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "symbol": "creativeComponentArgumentSchemas"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/generationPlanSchemas.ts",
+      "symbol": "planShotSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/localCanvasOperations.ts",
+      "symbol": "directorRenderInputSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/localCanvasOperations.ts",
+      "symbol": "generationBatchRequestInputSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/registry.ts",
+      "symbol": "DIRECTOR_RENDER_CAPABILITY"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/registry.ts",
+      "symbol": "GENERATION_BATCH_REQUEST_CAPABILITY"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/verbs/creativeVerbs.ts",
+      "symbol": "creativeComponentArgumentSchemas"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts",
+      "symbol": "DIRECTOR_RENDER_CAPABILITY"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts",
+      "symbol": "directorRenderInputSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts",
+      "symbol": "GENERATION_BATCH_REQUEST_CAPABILITY"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts",
+      "symbol": "generationBatchRequestInputSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/storyboard/storyboardPlanSchema.ts",
+      "symbol": "planShotSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/storyboard/storyboardPlanSchema.ts",
+      "symbol": "storyboardPlanSchema"
+    },
+    {
+      "kind": "read",
+      "path": "electron/shared/storyboard/storyboardSubjectAdapter.ts",
+      "symbol": "planShotSchema"
+    },
+    {
+      "kind": "read",
+      "path": "scripts/check-agent-facing-tool-names.mjs",
+      "symbol": "MCP_TOOL_RESOLVER"
+    },
+    {
+      "kind": "read",
+      "path": "scripts/check-credential-origin.ts",
+      "symbol": "MCP_TOOL_RESOLVER"
+    },
+    {
+      "kind": "read",
+      "path": "scripts/check-mcp-operation-constructible.mjs",
+      "symbol": "MCP_TOOL_RESOLVER"
+    },
+    {
+      "kind": "read",
+      "path": "scripts/check-mcp-payload.ts",
+      "symbol": "MCP_TOOL_RESOLVER"
+    },
+    {
+      "kind": "read",
+      "path": "scripts/check-mcp-tool-references.ts",
+      "symbol": "MCP_TOOL_RESOLVER"
+    },
+    {
+      "kind": "read",
+      "path": "scripts/check-model-schema.ts",
+      "symbol": "MCP_TOOL_RESOLVER"
+    },
+    {
+      "kind": "read",
+      "path": "scripts/check-tool-face.ts",
+      "symbol": "MCP_TOOL_RESOLVER"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/capability/creativeToolExecute.ts",
+      "symbol": "creativeComponentArgumentSchemas"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/creation/storyboard/agentStoryboardDesign.ts",
+      "symbol": "storyboardPlanSchema"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/agent/runStoryboardPlanner.ts",
+      "symbol": "storyboardPlanSchema"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/project/projectNormalize.ts",
+      "symbol": "storyboardPlanSchema"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/project/projectRecordSchema.ts",
+      "symbol": "storyboardPlanSchema"
+    },
+    {
+      "kind": "write",
+      "path": "electron/agentLane/laneCreativeTools.ts",
+      "symbol": "parseVibingDirectorPlanRequest"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/mcpCapabilityProjection.ts",
+      "symbol": "mcpProfileToolFor"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/mcpToolCatalog.ts",
+      "symbol": "mcpProfileToolFor"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/agentCapabilities/verbDeclarations.ts",
+      "symbol": "creativeVerbs"
+    },
+    {
+      "kind": "write",
+      "path": "electron/shared/agentCapabilities/verbDeclarations.ts",
+      "symbol": "localCanvasVerbs"
+    },
+    {
+      "kind": "write",
+      "path": "scripts/check-agent-tool-face-usecases.ts",
+      "symbol": "validateAgentToolFaceUsecases"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts",
+      "symbol": "parseVibingDirectorPlanRequest"
+    }
+  ],
+  "door_reduction": {
+    "before": 28,
+    "after": 41,
+    "why_not": "Keep existing native schema consumers (canvasTools and creativeToolExecute), storyboard plan generation/subject adaptation/project hydration readers, Director parsers (laneCreativeTools and vibingDirectorAgentProtocol), MCP protocol publication and its independent integrity gates. Each reads or validates a distinct existing surface. Added calls register shared metadata/projections and centralize manifest validation; they do not register new dispatch methods or permissions. Both historical and current maps were generated by door-map, with historical reads from parent git objects."
+  },
+  "generality_proof": "Shared Zod fields own explanations and unchanged constraints; MCP input/description metadata derives from the same registered verb owners while routing remains unchanged. Complete manifest validation rejects omitted or unknown tools independently of the deliberately preserved frozen count.",
+  "shared_boundaries": [
+    {
+      "path": "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "symbol": "creativeComponentArgumentSchemas",
+      "responsibility": "Own field explanations without widening accepted inputs."
+    },
+    {
+      "path": "electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts",
+      "symbol": "localCanvasVerbs",
+      "responsibility": "Own metadata for the two already-published MCP operations; handlers and scopes remain existing."
+    },
+    {
+      "path": "scripts/agent-tool-face-usecases-lib.mjs",
+      "symbol": "validateAgentToolFaceUsecases",
+      "responsibility": "Require exact name coverage and valid offline trajectories without changing count freezes."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/ai/vibingDirectorTools.ts",
+      "entry_point": "applyVibingDirectorPlanParamsSchema",
+      "disposition": "enforced",
+      "evidence": "Validation-shape fingerprints and unit/action tests preserve the real Blender trust boundary."
+    },
+    {
+      "path": "electron/capabilityCore/mcpToolCatalog.ts",
+      "entry_point": "MCP_TOOL_RESOLVER",
+      "disposition": "enforced",
+      "evidence": "Before/after MCP schema fingerprints, methods, annotations, builders and original dispatcher safety tests."
+    },
+    {
+      "path": "scripts/check-agent-tool-face-usecases.ts",
+      "entry_point": "usecase manifest validation",
+      "disposition": "enforced",
+      "evidence": "Add six offline scenarios and positive/negative completeness tests; keep the original 21-count frozen assertion unchanged."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Every future action, schema field or tool publication can repeat metadata/coverage drift.",
+    "same_class_scan": [
+      "Read actual 52+2 findings and reproduced all 54 locally under bundled Node24.19.",
+      "Inspected shared verb assembly, MCP projection and both original method builders/handlers.",
+      "Read Blender coordinate conversion, degrees/FOV and camera-path 24fps harness semantics.",
+      "Captured validation-only fingerprints for seven existing internal schemas and two MCP schemas before changes.",
+      "Read original usecase checker, manifest and its explicit frozen 21-count signature; preserve that count and all freeze owners.",
+      "Targets include storyboard schemas, the actual flat plan wire schema, and both new semantic inputs; generated historical 28/current 41 doors with the actual AST mapper and parent git-object reads."
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts",
+    "invariant": "Public tool metadata and offline coverage are derived from their actual owners without altering authority or compatibility.",
+    "failure_mode": "Unknown/missing tools and invalid input still reject; unauthorized freezes remain visibly red.",
+    "exception_policy": "none",
+    "strategy": "Complete typed metadata, derive existing MCP surfaces, retain explicit safe routing, and exercise actual offline creative semantics.",
+    "artifacts": [
+      "electron/shared/agentCapabilities/creativeComponentSchemas.ts",
+      "electron/ai/vibingDirectorTools.ts",
+      "electron/shared/storyboard/storyboardPlanSchema.ts",
+      "electron/shared/agentCapabilities/verbs/creativeVerbs.ts",
+      "electron/shared/agentCapabilities/localCanvasOperations.ts",
+      "electron/shared/agentCapabilities/verbs/localCanvasVerbs.ts",
+      "electron/shared/agentCapabilities/registry.ts",
+      "electron/shared/agentCapabilities/verbDeclarations.ts",
+      "electron/capabilityCore/mcpToolCatalog.ts",
+      "scripts/check-agent-tool-face-usecases.ts",
+      "scripts/agent-tool-face-usecases-lib.mjs"
+    ]
+  },
+  "regression_tests": [
+    "electron/shared/agentCapabilities/creativeToolMetadata.test.ts",
+    "src/workbench/capability/creativeToolFaceUsecases.test.ts",
+    "scripts/agent-tool-face-usecases.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "electron/shared/agentCapabilities/creativeToolMetadata.test.ts",
+    "src/workbench/capability/creativeToolFaceUsecases.test.ts",
+    "scripts/agent-tool-face-usecases.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "electron/capabilityCore/mcpToolCatalog.ts",
+      "scripts/check-agent-tool-face-usecases.ts"
+    ],
+    "rationale": "Remove independent MCP schema/description copies and move manifest validation to one tested boundary; do not delete existing tools or frozen guards."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "Use existing Zod, shared verb projection and bundled Node24.19 without dependency/version changes.",
+    "exit_criteria": []
+  },
+  "migration": "No project or tool-input migration. Existing names/fields and input validation remain; only metadata ownership, English explanations and offline coverage change.",
+  "residual_risks": [
+    "Model-face freeze and usecase checker's literal 21-count remain unchanged; actual 27 verbs leave both checks red pending approval. No freeze/baseline updates or update-baseline invocation.",
+    "MCP payload remains 54562 versus 54083 bytes (+479) after prose compaction. Shared envelope/semantic field descriptions and confirmation/no-auto-resend discipline are retained. Coordinator should free bytes under other MCP owners; no payload baseline or ledger change here.",
+    "Canonical set_beat already requires title but its wire schema lacks title. Preserve the existing input set in this metadata batch; hand off the adjacent functional gap instead of changing validation.",
+    "Native maximum is 9999/10000 tokens with bundled Node24.19. Only one token headroom in this isolated checkout; re-measure on integrated main.",
+    "No actual generation, Blender process, user App launch or disk/App persistence proof. Fixtures exercise real domains and serialized state with injected IO only.",
+    "Remote preflight failed once on the existing proxy; remote freshness remains unverified."
+  ]
+}

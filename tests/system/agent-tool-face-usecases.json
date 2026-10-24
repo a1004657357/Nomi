@@ -21,7 +21,13 @@
     "cancel_job",
     "save_skill",
     "start_model_setup",
-    "ask_user"
+    "ask_user",
+    "list_capability_recipes",
+    "read_vibing_director",
+    "apply_capability_recipe",
+    "save_creative_resource",
+    "handoff_model3d",
+    "apply_vibing_director_plan"
   ],
   "metrics": [
     "first_tool_accuracy",
@@ -509,6 +515,156 @@
       "tools": [
         "ask_user"
       ]
+    },
+    {
+      "id": "U35",
+      "userSays": "有哪些可用配方、兼容模型和已保存资源？",
+      "firstTool": "list_capability_recipes",
+      "tools": [
+        "list_capability_recipes"
+      ],
+      "proof": [
+        "trajectory",
+        "offline-state-readback",
+        "no-generation"
+      ],
+      "offline": {
+        "operation": "list_capability_recipes",
+        "args": {}
+      }
+    },
+    {
+      "id": "U36",
+      "userSays": "先读取当前 Blender 导演节点的场景、资源和关系。",
+      "firstTool": "read_vibing_director",
+      "tools": [
+        "read_vibing_director"
+      ],
+      "proof": [
+        "trajectory",
+        "offline-state-readback",
+        "no-generation"
+      ],
+      "offline": {
+        "operation": "read_vibing_director",
+        "args": {
+          "directorNodeId": "director-1"
+        }
+      }
+    },
+    {
+      "id": "U37",
+      "userSays": "用选定的肖像准备真实化配方，先只给计划，不生成。",
+      "firstTool": "list_capability_recipes",
+      "tools": [
+        "list_capability_recipes",
+        "apply_capability_recipe"
+      ],
+      "proof": [
+        "trajectory",
+        "offline-state-readback",
+        "no-generation",
+        "approval"
+      ],
+      "offline": {
+        "operation": "apply_capability_recipe",
+        "args": {
+          "sourceNodeId": "source-1",
+          "recipeId": "portrait.refine",
+          "modelKey": "gpt-image-2",
+          "vendorKey": "openai"
+        }
+      }
+    },
+    {
+      "id": "U38",
+      "userSays": "把已选肖像结果保存为身份资源，保留我填写的授权信息。",
+      "firstTool": "look_at_canvas",
+      "tools": [
+        "look_at_canvas",
+        "save_creative_resource"
+      ],
+      "proof": [
+        "trajectory",
+        "offline-state-readback",
+        "no-generation",
+        "approval"
+      ],
+      "offline": {
+        "operation": "save_creative_resource",
+        "args": {
+          "sourceNodeId": "source-1",
+          "kind": "identity",
+          "label": "User identity",
+          "promptTokens": [
+            "same identity"
+          ],
+          "license": {
+            "source": "User-owned fixture",
+            "commercialUse": "allowed",
+            "attribution": "User"
+          }
+        }
+      }
+    },
+    {
+      "id": "U39",
+      "userSays": "把这个已验证的 GLB 放入 3D 场景，保留原结果和来源。",
+      "firstTool": "look_at_canvas",
+      "tools": [
+        "look_at_canvas",
+        "handoff_model3d"
+      ],
+      "proof": [
+        "trajectory",
+        "offline-state-readback",
+        "no-generation",
+        "approval"
+      ],
+      "offline": {
+        "operation": "handoff_model3d",
+        "args": {
+          "sourceNodeId": "model-source",
+          "target": "scene3d",
+          "license": "user-owned"
+        }
+      }
+    },
+    {
+      "id": "U40",
+      "userSays": "读取当前导演状态后，把角色 A 向右移，先审核再应用，不渲染。",
+      "firstTool": "read_vibing_director",
+      "tools": [
+        "read_vibing_director",
+        "apply_vibing_director_plan"
+      ],
+      "proof": [
+        "trajectory",
+        "offline-state-readback",
+        "no-generation",
+        "approval"
+      ],
+      "offline": {
+        "operation": "apply_vibing_director_plan",
+        "args": {
+          "directorNodeId": "director-1",
+          "summary": "Move actor right",
+          "plan": {
+            "mode": "amend",
+            "actions": [
+              {
+                "op": "move_object",
+                "objectRef": "actor-A",
+                "position": [
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ]
+          }
+        }
+      }
     }
   ]
 }

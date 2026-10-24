@@ -3,6 +3,7 @@
 // 「20 个动词」不靠正则扫源码数——从注册表投影 `modelFacingToolSpecs("internal")` 取真实发布的名单，
 // 与题库 `canonicalVerbs` 逐个对账。多一个、少一个、名字不同都红；没有任何跳过分支。
 import fs from "node:fs";
+import { validateAgentToolFaceUsecases } from "./agent-tool-face-usecases-lib.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,30 +21,11 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
 };
 
 const published = modelFacingToolSpecs("internal").map((spec) => spec.name);
-const declared = new Set(published);
-const expected = new Set(manifest.canonicalVerbs);
-const errors: string[] = [];
+const errors: string[] = validateAgentToolFaceUsecases(manifest, published);
 
-if (manifest.schemaVersion !== 1) errors.push("schemaVersion must be 1");
 // 21 = 设计正本的 20 个动词 + 2026-09-21 的通用反问 `ask_user`。这个数手写而不是从
 // 投影数出来，理由与 `check-model-face-frozen.mjs` 里那个一样：动它就等于一次签名。
 if (published.length !== 21) errors.push(`internal profile publishes ${published.length} verbs, the design says 21: ${published.join(", ")}`);
-if (new Set(published).size !== published.length) errors.push("internal profile publishes a duplicate name");
-for (const verb of expected) if (!declared.has(verb)) errors.push(`manifest verb is not published on the internal profile: ${verb}`);
-for (const verb of declared) if (!expected.has(verb)) errors.push(`published verb missing from manifest: ${verb}`);
-
-const caseIds = new Set<string>();
-const covered = new Set(manifest.cases.flatMap((entry) => entry.tools ?? [entry.firstTool]));
-for (const entry of manifest.cases) {
-  if (caseIds.has(entry.id)) errors.push(`duplicate case id: ${entry.id}`);
-  caseIds.add(entry.id);
-  if (!expected.has(entry.firstTool)) errors.push(`${entry.id}: firstTool is not canonical: ${entry.firstTool}`);
-  for (const tool of entry.tools ?? []) if (!expected.has(tool)) errors.push(`${entry.id}: trajectory names an unknown verb: ${tool}`);
-  if (!Array.isArray(entry.tools) || entry.tools.length === 0) errors.push(`${entry.id}: tools must list the full semantic trajectory`);
-  if (!Array.isArray(entry.proof) || entry.proof.length < 2) errors.push(`${entry.id}: proof must contain trajectory and one result dimension`);
-}
-for (const verb of expected) if (!covered.has(verb)) errors.push(`canonical verb has no user case: ${verb}`);
-if (manifest.cases.length < 20) errors.push(`at least 20 user cases required, got ${manifest.cases.length}`);
 
 // ── 技能面：题库里点名的每一条技能都必须真的装着，而且真的能在 composer 里选中 ──────────
 //

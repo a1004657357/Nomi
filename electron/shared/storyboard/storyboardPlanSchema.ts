@@ -64,7 +64,7 @@ export const planShotSchema = z.object({
   notes: z.string().optional().describe('Continuity and production notes.'),
   variantId: z.string().optional().describe('Model variant id from list_models.'),
   subtitle: z.string().optional().describe('Editorial subtitle, not a request to burn text into an image.'),
-  transition: z.object({ type: z.enum(['cut', 'dissolve', 'fade', 'match_cut', 'whip_pan']), durationFrames: z.number().optional() })
+  transition: z.object({ type: z.enum(['cut', 'dissolve', 'fade', 'match_cut', 'whip_pan']).describe('Transition style'), durationFrames: z.number().optional().describe('Timeline frames') })
     .optional().describe('Editorial transition after this shot.'),
   shotId: z.string().min(1).optional().describe('Stable shot id; the host assigns one when omitted.'),
   sceneId: z.string().min(1).optional().describe('Scene id; omit when the story has no scene grouping.'),
