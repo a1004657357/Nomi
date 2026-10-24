@@ -441,7 +441,7 @@ function addTask(taskData, lineage = null) {
       model: 'Agnes Video 2.5 Flash',
       referenceMode: '全能参考',
       aspectRatio: '16:9',
-      duration: '5s',
+      duration: '4s',
     },
     referenceFiles: (taskData.referenceFiles || []).map((file, index) => file.filePath
       ? { ...file, downloadPath: `/api/task-references/${encodeURIComponent(taskCode)}/${index}` }

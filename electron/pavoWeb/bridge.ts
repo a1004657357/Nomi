@@ -202,8 +202,10 @@ async function materializeReference(source: ReferenceSource, index: number): Pro
 
 function durationText(value: unknown): string {
   const raw = firstString(value);
-  const duration = !raw ? "5s" : /s$/i.test(raw) ? raw.toLowerCase() : `${raw}s`;
-  if (!["5s", "10s"].includes(duration)) throw new Error("Pavo Web 当前只支持 5 或 10 秒时长");
+  // 2026-10-24 官网设置弹层实测：时长为数字输入 min=4 max=12，页面档位 4/10/12 秒；旧 5 秒档已不存在。
+  // 未显式给时长时默认 4 秒（原 5 秒默认值在页面上无法应用）。
+  const duration = !raw ? "4s" : /s$/i.test(raw) ? raw.toLowerCase() : `${raw}s`;
+  if (!["4s", "10s", "12s"].includes(duration)) throw new Error("Pavo Web 当前只支持 4、10 或 12 秒时长");
   return duration;
 }
 

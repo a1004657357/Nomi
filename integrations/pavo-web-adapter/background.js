@@ -8,7 +8,7 @@ chrome.runtime.onInstalled.addListener(() => {
         referenceMode: '全能模式',
         aspectRatio: '16:9',
         resolution: '720P',
-        duration: '5s',
+        duration: '4s',
       },
     });
   });

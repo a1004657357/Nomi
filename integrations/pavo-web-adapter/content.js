@@ -349,20 +349,32 @@
     if (!await openOutputSettings()) return false;
     const duration = wanted.match(/^(\d+)\s*(?:s|秒)$/i);
     // A popup shell can mount before its controls; bind and re-read the live owner on every probe.
-    const deadline = Date.now() + 3_000;
+    const deadline = Date.now() + 4_000;
     let choice = null;
     while (!choice && Date.now() < deadline) {
       if (outputSummaryMatches(wanted)) return true;
       const container = outputSettingsContainer();
       if (container) {
-        choice = duration && Array.from(container.querySelectorAll('input'))
-          .filter(element => visible(element) && /时长|\bduration\b/i.test(element.getAttribute('aria-label') || ''))
-          .sort((a, b) => Number(a.getAttribute('type') === 'range') - Number(b.getAttribute('type') === 'range'))[0];
-        choice = choice || Array.from(container.querySelectorAll(
-          'button, [role="button"], [role="radio"], [role="option"], label, input',
-        )).filter(element => visible(element) && !element.disabled && element.getAttribute('aria-disabled') !== 'true')
-          .find(element => [textOf(element), element.getAttribute('aria-label'), element.getAttribute('value')]
-            .some(value => norm(value) === norm(wanted)));
+        if (duration) {
+          // 2026-10 版设置弹层：时长是数字输入 + 滑杆（无 aria-label），比例是裸文本选项。
+          const inputs = Array.from(container.querySelectorAll('input')).filter(element => visible(element) && !element.disabled);
+          choice = inputs.find(element => element.getAttribute('type') === 'number')
+            || inputs.find(element => element.getAttribute('type') === 'range') || null;
+        } else {
+          choice = Array.from(container.querySelectorAll(
+            'button, [role="button"], [role="radio"], [role="option"], label, input',
+          )).find(element => visible(element) && !element.disabled && element.getAttribute('aria-disabled') !== 'true'
+            && [textOf(element), element.getAttribute('aria-label'), element.getAttribute('value')]
+              .some(value => norm(value) === norm(wanted)));
+          // 新版弹层的比例选项（16:9 / 9:16 / 1:1 …）是无角色的叶子 span，逐层上找可点击宿主。
+          if (!choice) {
+            const leaf = Array.from(container.querySelectorAll('span, div'))
+              .filter(element => visible(element) && !element.children.length
+                && norm(textOf(element)) === norm(wanted) && textOf(element).length <= 8)
+              .find(Boolean);
+            if (leaf) choice = { leafHost: leaf.closest('button, [role="button"], label') || leaf.parentElement || leaf };
+          }
+        }
       }
       if (!choice) await sleep(150);
     }
@@ -376,6 +388,8 @@
       setNativeValue(choice, String(value));
       choice.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
       choice.blur?.();
+    } else if (choice.leafHost) {
+      realClick(choice.leafHost);
     } else {
       const clickable = choice.closest('button, [role="button"], [role="radio"], [role="option"], label') || choice;
       clickable.click();
@@ -403,9 +417,15 @@
     const result = {};
     if (preset.model) result.model = await chooseOption(preset.model, [/模型|model|agnes|seedance/i]);
     if (preset.referenceMode) {
-      const modeLabels = ['全能模式', 'Omni Mode'];
-      const labels = modeLabels.some(label => norm(label) === norm(preset.referenceMode)) ? modeLabels : [preset.referenceMode];
-      result.referenceMode = await chooseOption(preset.referenceMode, [/模式|mode|全能|首帧|尾帧/i], labels);
+      // 2026-10 版官网模式下拉是英文：Omni Mode / First and Last Frames。
+      const labelSets = {
+        '全能模式': ['全能模式', 'Omni Mode'],
+        '首尾帧': ['首尾帧', 'First and Last Frames', 'First & Last Frames'],
+        '首帧': ['首帧', 'First Frame'],
+      };
+      const labels = labelSets[preset.referenceMode]
+        || (norm(preset.referenceMode) === 'omni mode' ? ['全能模式', 'Omni Mode'] : [preset.referenceMode]);
+      result.referenceMode = await chooseOption(preset.referenceMode, [/模式|mode|全能|首帧|尾帧|omni|first/i], labels);
     }
     if (preset.aspectRatio) result.aspectRatio = await chooseOutputSetting(preset.aspectRatio);
     if (preset.resolution) result.resolution = await chooseOutputSetting(preset.resolution);
@@ -543,17 +563,41 @@
     return !String(input || '').trim() && !refs.images.length && !refs.busy;
   }
 
+  function freshConsoleState() {
+    // 2026-10-24 官网改版：首页本身就是全新创作台，不再有独立「新作品/新对话」按钮。
+    // 干净态判据：URL 无会话编号、仍停在创作页（新版 / 或旧版 /chat）、输入区为空且无残留素材。
+    try {
+      if (currentConversationId()) return false;
+      if (!['/', '/chat'].includes(new URL(location.href).pathname)) return false;
+      return emptyComposer();
+    } catch { return false; }
+  }
+
   async function recoverComposer() {
+    if (freshConsoleState()) {
+      let stableSince = 0;
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline) {
+        if (freshConsoleState()) {
+          stableSince ||= Date.now();
+          if (Date.now() - stableSince >= 750) {
+            preparedSnapshot = null;
+            return { recovered: 'already-fresh', freshConsoleConfirmed: true, previousConversationId: '' };
+          }
+        } else stableSince = 0;
+        await sleep(250);
+      }
+    }
     const exactLabel = element => /^(新作品|新对话|新建对话|New (?:Work|Chat|Conversation|Project))$/i.test(textOf(element));
     const named = candidates('[class~="group/newwork"]').filter(exactLabel);
     const targets = named.length ? named : candidates('button, [role="button"], a').filter(exactLabel);
-    if (targets.length !== 1) throw new Error('Pavo 新对话入口不唯一或尚未加载，未刷新或继续提交');
+    if (targets.length !== 1) throw new Error('Pavo 当前控制台有残留内容且新版页面没有「新对话」入口，请手动新建对话后重试');
     const before = currentConversationId();
     realClick(targets[0]);
     const deadline = Date.now() + 12_000;
     let stableSince = 0;
     while (Date.now() < deadline) {
-      if (!currentConversationId() && new URL(location.href).pathname === '/chat' && emptyComposer()) {
+      if (freshConsoleState()) {
         stableSince ||= Date.now();
         if (Date.now() - stableSince >= 750) {
           preparedSnapshot = null;
@@ -583,7 +627,7 @@
   }
 
   function pageGeneratingIndication() {
-    if (/生成中|排队中|处理中|创作中|预计等待|队列中/.test(textOf(document.body))) return true;
+    if (/生成中|排队中|处理中|创作中|预计等待|队列中|generating|queued|processing|creating|estimated/i.test(textOf(document.body))) return true;
     const button = findSubmitButton();
     return Boolean(button && (button.disabled === true || button.getAttribute('aria-disabled') === 'true'));
   }
@@ -627,9 +671,9 @@
 
   function pageFailureMessage() {
     const bodyText = textOf(document.body);
-    if (/请登录|登录后|重新登录/.test(bodyText)) return 'Pavo 登录状态已失效';
-    if (/积分不足|余额不足|额度不足|次数不足/.test(bodyText)) return 'Pavo 账号积分或可用额度不足';
-    if (/生成失败|审核未通过|内容违规|任务失败/.test(bodyText)) return 'Pavo 页面显示生成失败或内容审核未通过';
+    if (/请登录|登录后|重新登录|please (?:log ?in|sign ?in)|log ?in to continue/i.test(bodyText)) return 'Pavo 登录状态已失效';
+    if (/积分不足|余额不足|额度不足|次数不足|insufficient (?:credits?|balance|quota)/i.test(bodyText)) return 'Pavo 账号积分或可用额度不足';
+    if (/生成失败|审核未通过|内容违规|任务失败|generation failed|generation error/i.test(bodyText)) return 'Pavo 页面显示生成失败或内容审核未通过';
     return '';
   }
 
