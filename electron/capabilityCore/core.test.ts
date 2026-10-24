@@ -91,6 +91,11 @@ let mockedDocumentsRoot = ''
 let mockedUserDataRoot = ''
 
 vi.mock('electron', () => ({
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (value: string) => Buffer.from(value),
+    decryptString: (value: Buffer) => value.toString(),
+  },
   app: {
     getPath: (name: string) => {
       if (name === 'documents') return mockedDocumentsRoot
@@ -163,12 +168,16 @@ describe('capabilityCore/core (磁盘网关：直写 project.json)', () => {
         model('disabled-vendor-image', 'disabled-vendor'),
         model('disabled-model', 'local', { enabled: false }),
       ],
-      mappings: [],
+      mappings: ['local', 'connected', 'missing-key', 'disabled-vendor'].map((vendorKey) => ({
+        id: `${vendorKey}-image`, vendorKey, modelKey: `${vendorKey}-image`, taskKind: 'text_to_image',
+        name: 'Fixture image', enabled: true, createdAt: now, updatedAt: now,
+        create: { method: 'POST', path: '/v1/images/generations', body: { prompt: '{{request.prompt}}' } },
+      })),
       apiKeysByVendor: {
         connected: {
           vendorKey: 'connected',
-          apiKey: 'opaque-test-value',
-          enc: 'plain',
+          apiKey: Buffer.from('opaque-test-value').toString('base64'),
+          enc: 'safeStorage',
           enabled: true,
           createdAt: now,
           updatedAt: now,

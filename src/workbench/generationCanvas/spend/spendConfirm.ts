@@ -8,6 +8,7 @@ import type { ProductionContractView } from './productionContractView'
 import type { AnchorCheckpointCardModel } from './anchorCheckpointView'
 import i18n from '../../../i18n'
 import { getDesktopBridge } from '../../../desktop/bridge'
+import { classifyGenerationError } from '../../observability/classifyError'
 
 type GenerationEtaBucket = {
   key: string
@@ -243,8 +244,9 @@ export function spendConfirmationRequirement(input: {
   initiator: SpendInitiator
   runCount: number
   hostingDisclosure: boolean
+  submissionUnknown?: boolean
 }): boolean {
-  return input.initiator === 'agent' || input.runCount > 1 || input.hostingDisclosure
+  return input.submissionUnknown === true || input.initiator === 'agent' || input.runCount > 1 || input.hostingDisclosure
 }
 
 /**
@@ -256,10 +258,18 @@ export function spendConfirmationRequirement(input: {
  * 那一下承担。报价只拿来铸令牌，不参与「问不问」。
  */
 export async function confirmGenerationSpend(
-  nodes: Array<{ meta?: Record<string, unknown> | null } | undefined>,
+  nodes: Array<{ meta?: Record<string, unknown> | null; error?: string; runs?: readonly { status?: string; error?: string }[] } | undefined>,
   opts: { title: string; message: string; confirmLabel?: string; hostingDisclosure?: HostingDisclosure; onQuoteConfirmed?: (quoteId: string) => void; initiator: SpendInitiator },
 ): Promise<boolean> {
-  if (!generationSpendsCredits(nodes)) return true
+  const submissionUnknown = nodes.some((node) => {
+    const latest = node?.runs?.[0]
+    const error = node?.error || (latest?.status === 'error' ? latest.error : undefined)
+    return error && classifyGenerationError(error).kind === 'submission-unknown'
+  })
+  const message = submissionUnknown
+    ? `${i18n.t('generationCommon.observability.error.submissionUnknown.hint')}\n\n${opts.message}`
+    : opts.message
+  if (!generationSpendsCredits(nodes) && !submissionUnknown) return true
   const inputs = nodes.map((node) => {
     const context = generationCostContextForNode(node, null)
     return { vendorKey: context.vendorKey ?? '', modelKey: context.modelKey ?? '', parameters: node?.meta ?? {} }
@@ -274,6 +284,7 @@ export async function confirmGenerationSpend(
     initiator: opts.initiator,
     runCount: nodes.length,
     hostingDisclosure: Boolean(opts.hostingDisclosure),
+    submissionUnknown,
   })
   if (!required) {
     if (quote) opts.onQuoteConfirmed?.(quote.quoteId)
@@ -282,7 +293,7 @@ export async function confirmGenerationSpend(
   // 卡上不印金额（2026-09-26 用户拍板：官方额度上线前隐藏价格维度）；报价照样拿，只用来铸令牌。
   const confirmed = await useSpendConfirmStore.getState().requestConfirm({
     title: opts.title,
-    message: opts.message,
+    message,
     ...(opts.confirmLabel ? { confirmLabel: opts.confirmLabel } : {}),
 
     ...(opts.hostingDisclosure ? { hostingDisclosure: opts.hostingDisclosure } : {}),

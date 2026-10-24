@@ -310,13 +310,17 @@ export const zhGenerationCommon = {
       codexNetwork: { reason: 'Codex Img2 网络请求失败', hint: 'ChatGPT 图片服务没有返图片，与额度无关。本次没有自动重试；请确认网络或代理稳定后再重试。' },
       pollTimeout: {
         reason: '生成超时',
-        hint: '视频生成较慢，等待超过上限。任务可能仍在进行，请稍后重新生成，或换更快的模型（如 Seedance Fast）。',
+        hint: '查询已有任务超过等待上限，任务可能仍在进行。请在任务中心核对或重新拉取原任务结果，不要重新提交生成。',
       },
       // 这桶同时装「超时」和「压根没连上」（ECONNREFUSED/ENOTFOUND/fetch failed），所以标题
       // 不能写死「超时」。首要嫌疑是代理没覆盖到海外接口——和参考图图床那条同一个真凶。
       network: {
         reason: '连不上服务商',
-        hint: '请求没发到服务商——多半是本机网络或代理没覆盖到它（海外接口尤其常见）。先检查网络和代理，再重试。',
+        hint: '网络请求未完成。请检查本机网络或代理；没有明确的连接阶段证据，不能据此判断服务商是否收到请求或是否计费。',
+      },
+      configurationTimeout: {
+        reason: '等待验证回复超时',
+        hint: '配置验证没有在等待上限内收到完整回复，不代表请求没有到达服务商。检查网络或代理后可以重新验证；这不会重新提交媒体生成。',
       },
       modelConfig: { reason: '模型未配置', hint: '这个模型没配好，请去「设置 → 模型」检查。' },
       modelKindMismatch: {
@@ -401,7 +405,7 @@ export const zhGenerationCommon = {
       // 付费提交发出后没拿到回复：只说事实（可能已被收下、Nomi 没法核对）和下一步（先去服务商后台看），不说花没花钱。
       submissionUnknown: {
         reason: '这一镜可能已被服务商收下，结果没法确认',
-        hint: '请求发出去之后，Nomi 没拿到服务商的回复，所以不知道它有没有收下这一镜。Nomi 没法自动核对，也不会自动重发。请先到服务商后台看一眼有没有这一笔；确认没有，再重新生成——否则可能重复提交。',
+        hint: '请求已进入提交阶段，但 Nomi 没拿到可确认的生成结果，服务商可能仍在处理。是否计费也无法据此判断。Nomi 不会自动重发，请不要重复提交；先到服务商后台或任务中心核对这一笔，确认未受理后再经风险确认重新生成。',
       },
       // 认不出的失败如实说「认不出」：不编原因（不是「服务商临时故障」，更不是「额度」——今天没有价格，猜额度只会把人引去查账）。
       // 服务商给了错误码就带上码（hintWithCode）；原文和完整报文留在「技术详情」里。重试 / 换模型是动作建议，不是对原因的判断。
@@ -1873,11 +1877,15 @@ export const enGenerationCommon = {
       codexNetwork: { reason: 'Codex Img2 network request failed', hint: 'ChatGPT image service returned no image. This is not a quota error and Nomi did not retry automatically. Check the network or proxy before retrying.' },
       pollTimeout: {
         reason: 'Generation timed out',
-        hint: 'Video generation exceeded the wait limit and may still be running. Try again later or use a faster model such as Seedance Fast.',
+        hint: 'The query for an existing task exceeded the wait limit. It may still be running. Check the task center or retrieve the original result again; do not submit another generation.',
       },
       network: {
         reason: 'Cannot reach the provider',
-        hint: 'The request never reached the provider — usually your network or proxy does not cover it (common for overseas endpoints). Check your network and proxy, then retry.',
+        hint: 'The network request did not complete. Check your network or proxy. Without connection-stage evidence, this does not establish whether the provider received or charged for the request.',
+      },
+      configurationTimeout: {
+        reason: 'Timed out waiting for verification',
+        hint: 'Configuration verification did not receive a complete reply within the wait limit. This does not mean the provider never received it. Check your network or proxy and verify again; this does not resubmit media generation.',
       },
       modelConfig: { reason: 'Model not configured', hint: 'Configure this model in Model access.' },
       modelKindMismatch: {
@@ -1963,7 +1971,7 @@ export const enGenerationCommon = {
       },
       submissionUnknown: {
         reason: 'Result unconfirmed: the provider may have received this shot',
-        hint: 'The request was sent, but Nomi never got a reply, so it cannot tell whether the provider accepted this shot. Nomi cannot check this itself and will not resend automatically. Look in the provider’s dashboard for this request first; only generate again once you have confirmed it is not there, otherwise it may be submitted twice.',
+        hint: 'Submission started, but Nomi could not confirm the generation result. The provider may still be processing it; charging is also unknown. Nomi will not resend automatically. Do not submit again. Check this request in the provider dashboard or task center first; only regenerate after confirming it was not accepted and acknowledging the duplication risk.',
       },
       unknown: {
         reason: 'Generation failed',

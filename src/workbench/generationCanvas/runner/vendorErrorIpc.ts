@@ -14,6 +14,7 @@ export type VendorErrorStructuredLite = {
   upstreamCode?: string
   category?: string
   retryable?: boolean
+  operationRole?: 'media-submit' | 'submit' | 'query' | 'configuration'
 }
 
 /** 从错误 message 中解出 structured;没有标记/解析失败 → null(走 legacy 正则兜底)。 */

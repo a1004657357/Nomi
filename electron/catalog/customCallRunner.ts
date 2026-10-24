@@ -8,7 +8,7 @@
 // transcript：http/request 每次调用记一条（Authorization/apiKey 脱敏），试跑面板摊开
 // 「实际发了什么」——参考图第三闸对脚本失明的补偿（plan §10）。
 import { isJsonRecord, type JsonRecord } from "../jsonUtils";
-import { requestJson, requestMultipart, vendorResponseLimitForKind, VendorRequestError } from "../vendor/vendorHttp";
+import { requestJson, requestMultipart, vendorResponseLimitForKind, vendorRequestRole, VendorRequestError } from "../vendor/vendorHttp";
 import { CustomCallSandboxError, runCustomCallSandbox } from "./customCallSandbox";
 import type { Model, ProfileKind, Vendor } from "./types";
 import { desktopT } from "../i18n";
@@ -236,13 +236,16 @@ export async function runCustomCallScript(input: {
     const headers = init.headers || {};
     const restoredForm = restoreSandboxFormData(init.body);
     const body = restoredForm ?? init.body;
+    const role = vendorRequestRole(input.model.kind, /^(GET|HEAD)$/i.test(init.method) ? "query" : "create");
     return record(init.method, url, body, () =>
       restoredForm
         ? requestMultipart(vendor, apiKey, url, headers, init.query || {}, restoredForm, controller.signal, {
             maxResponseBytes: vendorResponseLimitForKind(input.model.kind),
+            role,
           })
         : requestJson(vendor, apiKey, String(init.method || "POST"), url, headers, init.query || {}, body, controller.signal, {
             maxResponseBytes: vendorResponseLimitForKind(input.model.kind),
+            role,
           }),
     );
   };

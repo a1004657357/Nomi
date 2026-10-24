@@ -4,7 +4,8 @@ import { textDocumentDigest } from './textGenerationDocument'
 import { buildDependencyWaves } from './dependencyWaves'
 import { collectConnectedTextPromptParts } from './connectedTextPrompt'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { confirmAndRunNode, confirmAndRunNodeVariants } from './generationRunController'
+import { confirmAndRunNode, confirmAndRunNodeVariants, regenerateNodeInPlace } from './generationRunController'
+import { tagNomiError } from '../../../../electron/shared/nomiErrorCodes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { useGenerationQueueStore } from './generationQueueStore'
 import { createProjectSessionTestHarness, type ProjectSessionTestHarness } from '../../project/projectSessionTestHarness'
@@ -40,6 +41,26 @@ beforeEach(() => {
   useGenerationQueueStore.setState({ entries: [], batches: {} })
 })
 afterEach(() => { session.dispose(); vi.restoreAllMocks() })
+
+it.each(['single', 'regenerate', 'dismissed'] as const)('the actual %s entry reads the saved unknown outcome before clearing any error', async (entry) => {
+  await session.open('project-a')
+  const store = useGenerationCanvasStore.getState()
+  const node = store.addNode({ kind: 'image', prompt: 'original shot' })
+  const error = tagNomiError('submission-unknown', 'generation_outcome_unknown')
+  store.updateNode(node.id, { status: 'error', error, meta: { modelVendor: 'relay', modelKey: 'image' }, runs: [
+    { id: 'previous-intent', status: 'error', startedAt: 1, updatedAt: 2, error },
+  ] })
+  if (entry === 'dismissed') store.dismissNodeError(node.id)
+  calls.confirm.mockResolvedValue(false)
+  const outcome = entry === 'regenerate'
+    ? await regenerateNodeInPlace(node.id, { initiator: 'user' })
+    : await confirmAndRunNode(node.id, { initiator: 'user' })
+  expect(outcome).toBe('declined')
+  expect(calls.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('重复提交') }))
+  expect(calls.mint).not.toHaveBeenCalled()
+  expect(calls.execute).not.toHaveBeenCalled()
+  expect(useGenerationCanvasStore.getState().nodes[0].runs?.[0].id).toBe('previous-intent')
+})
 
 it.each(['no-switch', 'canvas-switch', 'storyboard-switch'] as const)('approved ×3 continues at the original confirmation entry: %s', async scenario => {
   const target = await session.open('project-a')

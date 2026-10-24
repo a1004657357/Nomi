@@ -1,4 +1,5 @@
 import React from 'react'
+import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MantineProvider } from '@mantine/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -68,7 +69,8 @@ describe('CLIProxy configuration uses the existing API connection UI', () => {
     })
     const entry = result.homeConnections[0]
     expect(entry).toHaveProperty('onAddModels', expect.any(Function))
-    Reflect.get(entry, 'onAddModels')()
+    assert(entry.onAddModels)
+    entry.onAddModels()
     expect(openPage).toHaveBeenCalledWith({ type: 'add', existingVendorKey: vendorKey })
     expect(bridge.onboarding.httpConnectionListModels).not.toHaveBeenCalled()
   })

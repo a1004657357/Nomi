@@ -358,7 +358,7 @@ export async function runGenerationNode(
         }), { signal: controller.signal, onQueueWait: () => reportProgress({ runId: run.id, phase: 'queued', message: narrateProgress('queued') }), onRateLimitWait: () => reportProgress({ runId: run.id, phase: 'rate-limited', message: narrateProgress('rate-limited') }) })
         break
       } catch (error: unknown) {
-        if (attempt >= maxAttempts || !isRetryableGenerationError(error)) {
+        if (attempt >= maxAttempts || !isRetryableGenerationError(error, executionNode.kind)) {
           throw error
         }
         reportProgress({

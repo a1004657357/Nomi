@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { tagNomiError } from '../../../../electron/shared/nomiErrorCodes'
+import i18n from '../../../i18n'
 import {
   confirmGenerationSpend,
   spendConfirmationRequirement,
@@ -32,6 +34,20 @@ describe('confirmGenerationSpend 走判据', () => {
     vi.restoreAllMocks()
     quoteSpend.mockReset()
     bridge.present = true
+  })
+
+  it.each(['zh-CN', 'en'])('unknown single-node outcome requires an explicit risk acknowledgement (%s)', async (language) => {
+    await i18n.changeLanguage(language)
+    try {
+      quoteSpend.mockResolvedValue({ quoteId: 'quote-unknown', amount: null, lines: [] })
+      const card = vi.spyOn(useSpendConfirmStore.getState(), 'requestConfirm').mockResolvedValue(false)
+      const accepted = vi.fn()
+      const node = { ...paidNode, error: tagNomiError('submission-unknown', 'generation_outcome_unknown') }
+      const ok = await confirmGenerationSpend([node], { title: 'Generate', message: 'One image', onQuoteConfirmed: accepted, initiator: 'user' })
+      expect(ok).toBe(false)
+      expect(card).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(language === 'en' ? /duplicat|submit again/ : /重复提交/) }))
+      expect(accepted).not.toHaveBeenCalled()
+    } finally { await i18n.changeLanguage('zh-CN') }
   })
 
   it('reported case: single user run skips the card but still hands over the quote for the grant', async () => {

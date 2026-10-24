@@ -182,7 +182,7 @@ export type AdapterModeResult = {
    * 渲染层据此说人话 + 给对应的下一步动作；**不要在 UI 里用关键词猜**（同型 bug 已反复出现 5 轮，
    * 见 2026-08-12 `fix(errors): 文本侧错误也在源头留住 category`）。
    */
-  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "unknown";
+  errorCategory?: "auth" | "balance" | "quota" | "input" | "server" | "network" | "timeout" | "submission-unknown" | "unknown";
   /**
    * stage === "compile" 时的结构化细分原因。`compile` 这个 stage 混着两种完全不同的处境：
    * 「我们没读懂这家文档」与「这个 kind 压根没有通用协议」——给用户的话和该点的按钮都不一样，

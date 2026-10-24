@@ -20,7 +20,7 @@ function canvasRequest(modelKey: string, modeId: 't2i' | 'i2i') {
     prompt: 'A red ceramic cup',
     meta: {
       modelKey, modelVendor: vendor.key,
-      archetype: { id: resolveArchetypeForModel({ modelKey })!.id, modeId }, aspectRatio: '1:1', resolution: '1K',
+      archetype: { id: resolveArchetypeForModel({ modelKey, vendorKey: vendor.key })!.id, modeId }, aspectRatio: '1:1', resolution: '1K',
     },
   };
   const request = buildCatalogTaskRequest(node, {

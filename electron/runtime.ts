@@ -424,6 +424,8 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
       response_format: "url",
       extras: request.extras,
     },
+    undefined,
+    { role: "media-submit", maxResponseBytes: vendorResponseLimitForKind(wantedKind) },
   );
   const assetUrl = readTaskResponse({ response: providerResponse, responseMapping: null, statusMapping: undefined, wantedKind: expectedMediaKind(wantedKind) }).assetUrls[0] ?? ""; // 无 mapping 兜底提交也走唯一读法
   const upstreamTaskId = extractTaskIdShared(providerResponse) || taskId;

@@ -11,7 +11,7 @@ import type { GenerationProvider, GenerationProviderRequestInputV1 } from "./gen
 import { classifyUpstreamTaskStatus } from "../shared/taskStatus";
 import { appFetch } from "../appFetch";
 import { createFreshConnectionDispatcher } from "../systemProxy";
-import { vendorHttpTimeoutMs } from "../vendor/vendorHttp";
+import { isGenerationOutcomeUnknown, vendorHttpTimeoutMs, vendorRequestRole, vendorResponseDispatcher, VendorRequestError, type VendorRequestRole } from "../vendor/vendorHttp";
 import type { Dispatcher } from "undici";
 import { describeOutboundFailure } from "../outboundDispatchEvidence";
 import { readMaterializationOutputs } from "./apimartGenerationOutputs";
@@ -470,13 +470,6 @@ export function createCatalogGenerationProvider(options: CatalogGenerationProvid
     selectCatalogSelection(catalogReader, vendorKey, extractVendorExtraHeaders, modelKey, taskKind);
 
   /**
-   * 发一次请求。**method / url / headers / query 全部来自 `buildProfileHttpRequest`**
-   * ——与引擎 A（`runtime.executeProfileOperation`）同一个渲染器，于是鉴权方案词
-   * （Higgsfield 的 `Key`）、自定义网关头、query 式鉴权、host-root 端点统统自动正确。
-   * 此前这里是写死的 `Authorization: Bearer` + `base + createPath`，那正是
-   * 「同一把 key 画布上能跑、Agent 上 401」的形状。
-   */
-  /**
    * 解一次密钥。**整个出站只解这一次**：渲染（url/headers/query）与发送用的是同一把，
    * 否则 keychain 会被同一次提交问两遍，测试里那条「第一次真网络请求之前不解密」的断言
    * 也就名存实亡了。
@@ -498,6 +491,7 @@ export function createCatalogGenerationProvider(options: CatalogGenerationProvid
     built: { method: string; url: string; headers: Record<string, string>; query: Record<string, unknown> },
     body: unknown,
     context: string,
+    role: VendorRequestRole,
   ): Promise<JsonRecord> => {
     const url = new URL(built.url);
     for (const [key, value] of Object.entries(built.query)) {
@@ -510,18 +504,19 @@ export function createCatalogGenerationProvider(options: CatalogGenerationProvid
     // 那时抛出的 UND_ERR_SOCKET 与「请求写出去后连接被重置」一模一样，判不出哪个才是「没发出去」。
     // 用完（含读完响应体）必须关掉；查询（GET）不受影响，照旧走共享池。
     let fresh: Dispatcher | undefined;
+    const timeoutMs = vendorHttpTimeoutMs(role);
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
       let response: Response;
       try {
-        if (isSubmission) fresh = await createFreshConnectionDispatcher(undefined, url.toString());
+        if (isSubmission) fresh = await createFreshConnectionDispatcher(signal, url.toString());
         response = await fetchImpl(url.toString(), {
           method,
           headers: built.headers,
           ...(isSubmission ? { body: JSON.stringify(body) } : {}),
-          ...(fresh ? { dispatcher: fresh } : {}),
-          // 付费提交要有响应超时（此前没有：供应商接了连接却不回话，会一直挂在「生成中」，136 秒还不报）。
-          // 与旧通道 vendorHttp 同一个时长；到点 abort 发生在请求发出之后，判据把它记成「结果未知」，不自动重发。
-          ...(isSubmission ? { signal: AbortSignal.timeout(vendorHttpTimeoutMs()) } : {}),
+          ...(fresh ? { dispatcher: vendorResponseDispatcher(fresh, timeoutMs) } : {}),
+          // Role budget covers headers and body; an expired submission is not safe to resend.
+          signal,
         } as RequestInit);
       } catch (error) {
         // `fetch failed` 是 undici 的外壳，真正的原因在 cause 链里。两件事都要带出去：
@@ -533,6 +528,13 @@ export function createCatalogGenerationProvider(options: CatalogGenerationProvid
         );
       }
       const payload = await readJson(response, vendorKey);
+      if (isGenerationOutcomeUnknown(response.status, payload)) {
+        throw new VendorRequestError("Submitted generation outcome is unknown; do not resubmit", {
+          vendorKey, method, url: url.origin + url.pathname, httpStatus: response.status,
+          upstreamCode: "generation_outcome_unknown", upstreamMsg: "Submitted generation outcome is unknown; do not resubmit",
+          category: "submission-unknown", retryable: false,
+        });
+      }
       const code = payload.code;
       // 信封码：OpenAI 兼容的中转/网关普遍用 HTTP 200 + 信封 `code` 表达失败（APIMart、kie…）。
       // 声明了 code 却不是成功码 = 上游拒了，绝不能当成「受理成功」往下走。没有 code 的家不受影响。
@@ -611,7 +613,7 @@ export function createCatalogGenerationProvider(options: CatalogGenerationProvid
     const providerMeta: JsonRecord = { task_id: taskId, query_id: taskId, id: taskId };
     const request = { kind: target.mapping.taskKind, prompt: "", extras: { ...providerMeta } } as TaskRequest;
     const built = renderOperation(target, queryOperation, request, providerMeta, requireApiKey());
-    const payload = await send(built, undefined, "task query");
+    const payload = await send(built, undefined, "task query", "query");
     const responseMapping = isJsonRecord(queryOperation.response_mapping) ? queryOperation.response_mapping : null;
     // 状态只经唯一读法（tasks/taskResultReading，与引擎 A 同一份）；Run 的账本记上游原话，方言词交归一判词。
     return { status: readProviderStatusWord(payload, responseMapping, target.mapping.statusMapping), raw: payload };
@@ -641,7 +643,7 @@ export function createCatalogGenerationProvider(options: CatalogGenerationProvid
     const built = renderOperation(selection, selection.mapping.create, rendered, {}, requireApiKey());
     // **发的是封存过的那份 body**（用户批准的就是它），传输层（method/url/headers/query）
     // 才是这一刻按真 key 现渲染的。两者分开，正是「批准的是 A、发出去的是 B」的反面。
-    const payload = await send(built, body, `${selection.endpoint} submission`);
+    const payload = await send(built, body, `${selection.endpoint} submission`, vendorRequestRole(selection.model.kind));
     const createMapping = isJsonRecord(selection.mapping.create.response_mapping) ? selection.mapping.create.response_mapping : null;
     const metaMapping = isJsonRecord(selection.mapping.create.provider_meta_mapping) ? selection.mapping.create.provider_meta_mapping : null;
     // 任务编号从**声明**里取（与引擎 A 的 `buildProfileTaskResult` 同一条链），

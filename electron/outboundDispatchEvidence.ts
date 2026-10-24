@@ -21,6 +21,7 @@ type ErrorLike = {
   cause?: unknown;
   message?: unknown;
   name?: unknown;
+  structured?: { retryable?: boolean; category?: string; dispatchState?: "not-written" | "unknown" };
 };
 
 /** DNS 解析失败：连接从未建立，请求不可能写出去。 */
@@ -80,7 +81,7 @@ function provesNotWritten(node: ErrorLike): boolean {
  * 这次 `fetch()` 的失败，能不能**证明**请求一个字节都没写出去？证明不了就是 false。
  */
 export function outboundRequestWasNeverWritten(error: unknown): boolean {
-  return causeChain(error).some(provesNotWritten);
+  return causeChain(error).some((node) => node.structured?.dispatchState === "not-written" || provesNotWritten(node));
 }
 
 const TRANSPORT_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "ECONNABORTED"]);
@@ -91,6 +92,7 @@ const TRANSPORT_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "ECONNABORT
  * 就是它的答复，重发不会换来不同结果。用户主动取消（AbortError）不算。
  */
 export function isTransportLevelFailure(error: unknown): boolean {
+  if (causeChain(error).some((node) => node.structured?.retryable === false)) return false;
   return causeChain(error).some((node) => {
     const code = typeof node.code === "string" ? node.code : "";
     if (code.startsWith("UND_ERR_") || TRANSPORT_CODES.has(code)) return true;

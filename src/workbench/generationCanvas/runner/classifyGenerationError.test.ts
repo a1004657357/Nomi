@@ -49,9 +49,9 @@ describe('classifyGenerationError — 已知分类', () => {
     expect(r.reason).toBe('配额或限流')
   })
 
-  it('超时归「连不上服务商」', () => {
+  it('超时不能证明未发送，先核对结果', () => {
     const r = classifyGenerationError('request failed: ETIMEDOUT')
-    expect(r.reason).toBe('连不上服务商')
+    expect(r.kind).toBe('submission-unknown')
   })
 
   // 2026-08-12：network 桶原先只认 timeout 一族，「压根没连上」那半边全落 unknown，拿到
@@ -67,8 +67,9 @@ describe('classifyGenerationError — 已知分类', () => {
     ['我们自己的代理兜底文案（中文，匹配不到 network）', '网络请求失败：无法连接到该地址。'],
   ])('连不上归「连不上服务商」并指向网络/代理，不甩锅额度：%s', (_label, message) => {
     const r = classifyGenerationError(message)
-    expect(r.reason).toBe('连不上服务商')
-    expect(r.hint).toMatch(/代理/)
+    const uncertain = /fetch failed|failed to fetch|socket hang up/i.test(message)
+    expect(r.kind).toBe(uncertain ? 'submission-unknown' : 'network')
+    expect(r.hint).toMatch(uncertain ? /核对/ : /代理/)
     expect(r.hint).not.toMatch(/临时故障|额度问题/)
   })
 
@@ -139,8 +140,8 @@ describe('classifyGenerationError — 已知分类', () => {
   )
 
   it('does not confuse a paid submission timeout or output download with reference download', () => {
-    expect(classifyGenerationError('Provider submission timeout').kind).toBe('network')
-    expect(classifyGenerationError('Output media download failed: timeout').kind).toBe('network')
+    expect(classifyGenerationError('Provider submission timeout').kind).toBe('submission-unknown')
+    expect(classifyGenerationError('Output media download failed: timeout').kind).toBe('submission-unknown')
   })
 
   it('余额不足（中文）与限流区分开', () => {
@@ -490,7 +491,8 @@ describe('structured 路径(S4-2:VendorRequestError 经 IPC 标记穿透)', () =
       { category: 'timeout', reasonCode: 'response_timeout', upstreamMsg: '读取响应超时（120s）' },
       'Provider request failed: 读取响应超时（120s）',
     ))
-    expect(result.reason).toBe('连不上服务商')
+    expect(result.kind).toBe('submission-unknown')
+    expect(result.primary).toBe('reconcile')
   })
 
   it('balance 类别直读 structured,不靠正则;raw 剥掉标记段', () => {
@@ -613,7 +615,7 @@ describe('每类错误都说得出「该干嘛」（2026-07-30 拍板：主按�
   })
 
   it('偶发失败仍给重试当主按钮（不是一刀切换模型）', () => {
-    expect(classifyGenerationError('ETIMEDOUT while connecting').primary).toBe('retry')
+    expect(classifyGenerationError('ETIMEDOUT while connecting').primary).toBe('reconcile')
     expect(classifyGenerationError('429 rate limit').primary).toBe('retry')
     expect(classifyGenerationError('某种没见过的报错').primary).toBe('retry')
   })
@@ -624,7 +626,7 @@ describe('每类错误都说得出「该干嘛」（2026-07-30 拍板：主按�
       expect(report.secondary).not.toBe(report.primary)
     }
     // 主 = 重试 → 次给换模型（等不及就换一家）。
-    expect(classifyGenerationError('ETIMEDOUT').secondary).toBe('switch-model')
+    expect(classifyGenerationError('ETIMEDOUT').secondary).toBe('release-regenerate')
   })
 })
 
@@ -646,7 +648,7 @@ describe('动作表：每类主 / 次动作都写在表里，改一类不许带�
       const before = primary === 'retry' || primary === 'fix-model-kind' ? 'switch-model' : 'retry'
       // 已下线、读不出来：这两类不给第二个动作（重试必再撞同一张卡 / 换供应商不是解法）；
       // 结果未知：不给重试（可能重复提交），只指路去核对。
-      expect({ kind, secondary }).toEqual({ kind, secondary: kind === 'model-retired' || kind === 'output-unreadable' ? null : kind === 'submission-unknown' ? 'release-regenerate' : before })
+      expect({ kind, secondary }).toEqual({ kind, secondary: kind === 'model-retired' || kind === 'output-unreadable' || kind === 'poll-timeout' ? null : kind === 'submission-unknown' ? 'release-regenerate' : before })
     }
   })
 })
@@ -665,8 +667,8 @@ describe('付费提交结果未知（连接在请求发出后被重置）', () =
     expect(report.hint).toContain('先到服务商后台')
   })
 
-  it('同样的原始网络报错不带标记时仍按网络类处理（标记才是「未知」的唯一出处）', () => {
-    expect(classifyGenerationError('fetch failed UND_ERR_SOCKET').kind).toBe('network')
+  it('旧网络报错没有发送证据也不能假定未发送', () => {
+    expect(classifyGenerationError('fetch failed UND_ERR_SOCKET').kind).toBe('submission-unknown')
   })
 })
 

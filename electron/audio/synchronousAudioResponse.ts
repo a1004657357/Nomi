@@ -117,7 +117,7 @@ export async function executeSynchronousAudioOperation(input: {
     built.query,
     built.body,
     input.signal,
-    { maxResponseBytes: MAX_SYNCHRONOUS_AUDIO_BYTES },
+    { maxResponseBytes: MAX_SYNCHRONOUS_AUDIO_BYTES, role: "media-submit" },
   );
   return {
     ...decodeAudioBody(response.bytes, response.contentType, input.operation, built.body, built.query),

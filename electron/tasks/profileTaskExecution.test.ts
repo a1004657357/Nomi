@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setSubmitOutboundDepsForTests } from "../vendor/vendorOutboundGuard";
 import type { HttpOperation, Mapping, Model, Vendor } from "../catalog/types";
 import { NEWAPI_IMAGE_CREATE_OP, OPENAI_MULTIPART_IMAGE_EDIT_OP } from "../catalog/newapiTransport";
 import {
@@ -54,7 +55,15 @@ const mapping: Mapping = {
   updatedAt: "",
 };
 
+beforeEach(() => {
+  setSubmitOutboundDepsForTests({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    readEnvironment: async () => ({ syntheticResolver: false, syntheticSample: "" }),
+    isApplicationProxyActive: () => false,
+  });
+});
 afterEach(() => {
+  setSubmitOutboundDepsForTests(null);
   vi.unstubAllGlobals();
 });
 

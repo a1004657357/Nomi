@@ -1,0 +1,653 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-24-media-submission-outcomes",
+  "problem_type": "Paid submission transport ambiguity collapsed into safe-to-retry network failure",
+  "symptom": "A synchronous image POST times out at 120s; Nomi says the request never reached the provider and offers retry although the upstream may already be generating.",
+  "direct_cause": "vendorHttp classifies pre-response timeout as retryable network; classifyError also maps timeout to network. A single 120s budget ignores operation roles.",
+  "class_root": "No evidence-preserving invariant at the shared HTTP/error/retry boundary distinguishes proven not-dispatched from submitted outcome unknown.",
+  "affected_population": [
+    "JSON and multipart media submissions",
+    "Synchronous audio",
+    "Catalog generation provider",
+    "Canvas and headless capability consumers"
+  ],
+  "scope_paths": [
+    "electron/vendor/vendorHttp.ts",
+    "electron/tasks/profileTaskExecution.ts",
+    "electron/runtime.ts",
+    "electron/catalog/customCallRunner.ts",
+    "electron/audio/synchronousAudioResponse.ts",
+    "electron/capabilityCore/apimartGenerationProvider.ts",
+    "electron/outboundDispatchEvidence.ts",
+    "src/workbench/observability/classifyError.ts",
+    "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+    "src/i18n/locales/generationCommon.ts",
+    "electron/providerAdapter/types.ts",
+    "electron/integrationCertification/types.ts",
+    "src/workbench/generationCanvas/spend/spendConfirm.ts",
+    "src/workbench/generationCanvas/runner/vendorErrorIpc.ts",
+    "src/workbench/observability/narrate.ts",
+    "src/workbench/generationCanvas/runner/generationRunController.ts"
+  ],
+  "entry_points": [
+    "Profile JSON/multipart create/query",
+    "Runtime unmapped media fallback",
+    "Custom catalog request",
+    "Synchronous audio",
+    "Catalog provider submit/query",
+    "Canvas automatic retry and human error actions"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "This fix enforces internal operation-role, submission-evidence and UI-action contracts. Proxy generation_outcome_unknown JSON is the explicit handoff contract supplied by the user; no live generation, credential or external API inspection is authorized. Installed undici source is inspected for timeout behavior without upgrading dependencies.",
+  "invariants": [
+    "Only proven connection-stage failure can claim no submission",
+    "Unknown media outcomes never authorize automatic or unconfirmed paid resubmission",
+    "Explicit HTTP 401/400 retain auth/input",
+    "Media create waits at most 600s by default; query/configuration stays 120s; caller cancellation remains effective",
+    "JSON/multipart/binary share policy and error semantics",
+    "Query/configuration timeouts carry operationRole; existing-task query failures remain free retrieval, not new submission uncertainty",
+    "Dismissed error cards retain latest failed run evidence for repeat-risk confirmation",
+    "Existing text streaming retries retain their previous behavior; only unknown media transport retries fail closed"
+  ],
+  "doors": [
+    {
+      "kind": "write",
+      "path": "electron/audio/synchronousAudioResponse.ts",
+      "symbol": "requestBinary"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "symbol": "vendorHttpTimeoutMs"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/customCallRunner.ts",
+      "symbol": "requestMultipart"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/customCallRunner.ts",
+      "symbol": "requestJson"
+    },
+    {
+      "kind": "write",
+      "path": "electron/productionRun/productionGenerationSubmission.ts",
+      "symbol": "isTransportLevelFailure"
+    },
+    {
+      "kind": "write",
+      "path": "electron/productionRun/productionGenerationSubmission.ts",
+      "symbol": "outboundRequestWasNeverWritten"
+    },
+    {
+      "kind": "write",
+      "path": "electron/runtime.ts",
+      "symbol": "requestJson"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "symbol": "requestMultipart"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "symbol": "requestJson"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "vendorHttpTimeoutMs"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "symbol": "isRetryableGenerationError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/aiSdkVendorError.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/ai/runtimeVendorError.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "symbol": "VendorRequestRole"
+    },
+    {
+      "kind": "read",
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/customCallRunner.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/imageRouteFallback.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/relayNativeWireUpgrade.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/events/vendorCallTrace.ts",
+      "symbol": "VendorErrorStructured"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/verifier.ts",
+      "symbol": "VendorErrorCategory"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/taskIpcGuard.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/taskResultQuery.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "VendorRequestRole"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "MEDIA_VENDOR_RESPONSE_MAX_BYTES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "DEFAULT_VENDOR_RESPONSE_MAX_BYTES"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "VendorErrorCategory"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "VendorErrorStructured"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "VendorRequestError"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "VENDOR_ERROR_IPC_MARKER"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "BinaryVendorResponse"
+    },
+    {
+      "kind": "read",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "VendorRequestOptions"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/locales/generationCommon.ts",
+      "symbol": "zhGenerationCommon"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "zhGenerationCommon"
+    },
+    {
+      "kind": "read",
+      "path": "src/i18n/resources.ts",
+      "symbol": "enGenerationCommon"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "GenerationErrorReport"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/agentError.ts",
+      "symbol": "encodeVendorErrorMessage"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/aiSdkVendorError.ts",
+      "symbol": "categorizeVendorFailure"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/runtimeVendorError.ts",
+      "symbol": "encodeVendorErrorMessage"
+    },
+    {
+      "kind": "write",
+      "path": "electron/ai/runtimeVendorError.ts",
+      "symbol": "categorizeVendorFailure"
+    },
+    {
+      "kind": "write",
+      "path": "electron/assets/localAssetFile.ts",
+      "symbol": "categorizeVendorFailure"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "symbol": "vendorResponseDispatcher"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "symbol": "describeOutboundFailure"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "symbol": "isGenerationOutcomeUnknown"
+    },
+    {
+      "kind": "write",
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "symbol": "vendorRequestRole"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/customCallRunner.ts",
+      "symbol": "vendorRequestRole"
+    },
+    {
+      "kind": "write",
+      "path": "electron/catalog/customCallRunner.ts",
+      "symbol": "vendorResponseLimitForKind"
+    },
+    {
+      "kind": "write",
+      "path": "electron/runtime.ts",
+      "symbol": "vendorResponseLimitForKind"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "symbol": "vendorRequestRole"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "symbol": "vendorResponseLimitForKind"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/taskIpcGuard.ts",
+      "symbol": "encodeVendorErrorMessage"
+    },
+    {
+      "kind": "write",
+      "path": "electron/tasks/taskIpcGuard.ts",
+      "symbol": "encodeStructuredErrorMessage"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "encodeStructuredErrorMessage"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "vendorAuthQueryParams"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "vendorResponseDispatcher"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "outboundRequestWasNeverWritten"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "categorizeVendorFailure"
+    },
+    {
+      "kind": "write",
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "isGenerationOutcomeUnknown"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/ai/lane/laneCommandFailure.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/api/taskApi.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeErrorReport.tsx",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/NodeRecoverableReport.tsx",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/useNodeModelAutoSelect.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "symbol": "normalizeRetryAttempts"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "symbol": "normalizeBaseDelayMs"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "symbol": "waitForRetry"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/observability/generationFeedback.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/taskCenter/taskCenterEntries.ts",
+      "symbol": "classifyGenerationError"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRunController.ts",
+      "symbol": "confirmGenerationSpend"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/spend/spendConfirm.ts",
+      "symbol": "confirmGenerationSpend"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/spend/spendConfirm.ts",
+      "symbol": "spendConfirmationRequirement"
+    },
+    {
+      "kind": "read",
+      "path": "electron/catalog/comfyuiCandidateLifecycle.ts",
+      "symbol": "AdapterModeResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/integrationCertification/operationLedger.ts",
+      "symbol": "CertificationSettledResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/integrationCertification/providerAdapterCoordinator.ts",
+      "symbol": "CertificationSettledResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/integrationCertification/types.ts",
+      "symbol": "CertificationSettledResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/promotionMeta.ts",
+      "symbol": "AdapterModeResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/serviceFallback.ts",
+      "symbol": "AdapterModeResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/serviceRunLifecycle.ts",
+      "symbol": "AdapterModeResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/serviceVerificationResults.ts",
+      "symbol": "AdapterModeResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/store.ts",
+      "symbol": "AdapterModeResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/terminalGuarantee.ts",
+      "symbol": "AdapterModeResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/types.ts",
+      "symbol": "AdapterModeResult"
+    },
+    {
+      "kind": "read",
+      "path": "electron/providerAdapter/types.ts",
+      "symbol": "CertificationSettledResult"
+    },
+    {
+      "kind": "write",
+      "path": "electron/outboundDispatchEvidence.ts",
+      "symbol": "causeChain"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/catalogTaskActions.ts",
+      "symbol": "parseVendorErrorFromMessage"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+      "symbol": "parseVendorErrorFromMessage"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "parseVendorErrorFromMessage"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/runner/vendorErrorIpc.ts",
+      "symbol": "VendorErrorStructuredLite"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "GenerationErrorKind"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "VendorErrorStructuredLite"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/observability/narrate.ts",
+      "symbol": "GenerationErrorKind"
+    }
+  ],
+  "door_reduction": {
+    "before": 11,
+    "after": 90,
+    "why_not": "Initial narrow scan observed 11 transport/retry doors; expanded owner/type/projection scans enumerate the complete 90-door union. Distinct JSON, multipart, binary, catalog, outbox, renderer classification, certification DTO and spend-confirmation readers must remain; all use shared evidence, role budgets and existing error actions instead of independent policies."
+  },
+  "generality_proof": "All requestVendor wires use the same role budget, evidence-preserving errors and unknown-outcome classification. Directory-provider waits use the same role resolver; retry consumers fail closed on unknown and explicit retryable:false. Existing error actions require reconciliation and an explicit release confirmation; no provider-key special case is introduced.",
+  "shared_boundaries": [
+    {
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "requestVendor",
+      "responsibility": "Normalize dispatchState without retaining unsafe raw causes, distinguish submission ambiguity from query/configuration timeouts, enforce role-based bounded response waits"
+    },
+    {
+      "path": "electron/vendor/vendorHttp.ts",
+      "symbol": "vendorHttpTimeoutMs",
+      "responsibility": "Single role-based wait budget for both transport families"
+    },
+    {
+      "path": "electron/outboundDispatchEvidence.ts",
+      "symbol": "isTransportLevelFailure",
+      "responsibility": "Unknown non-retryable outcomes cannot authorize automatic outbox resend"
+    },
+    {
+      "path": "src/workbench/observability/classifyError.ts",
+      "symbol": "classifyGenerationError",
+      "responsibility": "Unknown submission uses existing reconciliation/confirmed-release actions before text heuristics"
+    },
+    {
+      "path": "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+      "symbol": "isRetryableGenerationError",
+      "responsibility": "No text-only automatic paid retry when outcome evidence is absent"
+    },
+    {
+      "path": "src/workbench/generationCanvas/spend/spendConfirm.ts",
+      "symbol": "confirmGenerationSpend",
+      "responsibility": "Unknown saved outcome overrides the single-click no-dialog exemption with explicit duplicate-submission risk confirmation."
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "entry_point": "executeProfileOperation",
+      "disposition": "enforced",
+      "evidence": "JSON and multipart converge on requestVendor; stage query/result uses query role, create uses kind-based submit role."
+    },
+    {
+      "path": "electron/audio/synchronousAudioResponse.ts",
+      "entry_point": "executeSynchronousAudioOperation",
+      "disposition": "enforced",
+      "evidence": "Binary uses the same role and requestVendor boundary."
+    },
+    {
+      "path": "electron/capabilityCore/apimartGenerationProvider.ts",
+      "entry_point": "send",
+      "disposition": "enforced",
+      "evidence": "Submit/query share vendorHttp role budget; unknown proxy envelope cannot authorize a transport resend."
+    },
+    {
+      "path": "electron/capabilityCore/core.ts",
+      "entry_point": "generateOnProject",
+      "disposition": "enforced",
+      "evidence": "Shared headless core calls runTask once and rethrows create errors; retry loop only fetches existing task results. Inspected runTaskFn and fetchTaskResultFn paths."
+    },
+    {
+      "path": "electron/tasks/taskSubmissionRuntime.ts",
+      "entry_point": "createTaskSubmissionRuntime",
+      "disposition": "enforced",
+      "evidence": "Existing submissionLedger and node exclusion retain unknown as query-only; this fix preserves cause rather than inventing retry."
+    },
+    {
+      "path": "src/workbench/generationCanvas/spend/spendConfirm.ts",
+      "entry_point": "confirmGenerationSpend",
+      "disposition": "enforced",
+      "evidence": "Single, variants and regeneration all pass full node objects to this shared confirmation; persisted unknown result overrides the ordinary single-user-click exemption."
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any provider or wire can lose acknowledgement after accepting a paid create; not specific to CLIProxy or a model.",
+    "same_class_scan": [
+      "node scripts/door-map.mjs requestJson requestMultipart requestBinary vendorHttpTimeoutMs isRetryableGenerationError outboundRequestWasNeverWritten isTransportLevelFailure: 2956 files, 11 doors",
+      "rg requestJson/requestMultipart/requestBinary across all production electron files",
+      "rg retryable/isRetryable across electron and src; inspect core generate, submissionLedger, submissionOutbox and canvas retry policy",
+      "Inspect Node/undici dispatcher header/body timeout defaults and signal coverage",
+      "Additional door-map scans of exported HTTP/error/locale owners, causeChain, parseVendorErrorFromMessage, AdapterModeResult, CertificationSettledResult and spend confirmation; machine output union retained in doors."
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/vendor/vendorHttp.ts",
+    "invariant": "Every ambiguous mutating request is submission-unknown and non-retryable; never-written evidence and explicit rejection remain distinct.",
+    "failure_mode": "Fail visibly as unknown and require reconciliation instead of retransmitting; preserve caller cancellation and bounded response limits.",
+    "exception_policy": "none",
+    "strategy": "Existing evidence predicate plus one shared role/error boundary; error-action and retry readers honor machine semantics before prose.",
+    "artifacts": [
+      "electron/vendor/vendorHttp.ts",
+      "electron/outboundDispatchEvidence.ts",
+      "src/workbench/observability/classifyError.ts",
+      "src/workbench/generationCanvas/runner/generationRetryPolicy.ts",
+      "src/workbench/generationCanvas/spend/spendConfirm.ts"
+    ]
+  },
+  "regression_tests": [
+    "electron/vendor/mediaSubmissionOutcomes.class.test.ts",
+    "src/workbench/generationCanvas/spend/spendConfirmPolicy.test.ts",
+    "src/workbench/generationCanvas/runner/classifyGenerationError.test.ts",
+    "src/workbench/generationCanvas/runner/confirmedProjectContinuation.test.ts",
+    "electron/tasks/profileTaskExecution.test.ts",
+    "electron/audioTaskRunner.test.ts",
+    "electron/capabilityCore/core.test.ts",
+    "electron/catalog/transportModelIdentity.test.ts"
+  ],
+  "class_regression_tests": [
+    "electron/vendor/mediaSubmissionOutcomes.class.test.ts",
+    "src/workbench/generationCanvas/spend/spendConfirmPolicy.test.ts",
+    "src/workbench/generationCanvas/runner/confirmedProjectContinuation.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "removed",
+    "removed_paths": [
+      "electron/vendor/vendorHttp.ts",
+      "src/workbench/observability/classifyError.ts",
+      "src/workbench/generationCanvas/runner/generationRetryPolicy.ts"
+    ],
+    "rationale": "Remove pre-response timeout=retryable network, timeout UI=no submission, and text-only transport retry authorization in place; no parallel fallback retained."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency replacement needed: this is an application submission invariant. Existing fetch/undici AbortSignal and bounded reader implement the wait budget; dependency versions and lockfile unchanged.",
+    "exit_criteria": []
+  },
+  "migration": "No persistent schema migration. New IPC fields operationRole and dispatchState preserve only role/evidence, never raw credential-bearing causes. Legacy unqualified errors remain conservative. The latest failed run survives dismissing the error card, so confirmation cannot be bypassed by hiding it. Existing outbox/ledger and confirmed release ownership remain.",
+  "residual_risks": [
+    "No real provider generation or credential inspection authorized",
+    "Daily Nomi is not started or stopped; zh/en local UI acceptance remains unverified",
+    "Mainline must independently review this high-risk change before merge",
+    "Upstream implicit resubmission and EOF transport investigation remain Go/mainline responsibilities",
+    "Full build intentionally deferred to mainline"
+  ],
+  "detected_by": "user",
+  "recurrence_check_on": "2026-10-31",
+  "invariant_owner_layer": {
+    "layer": "electron/vendor/vendorHttp.ts",
+    "has_tests": true,
+    "tests": [
+      "electron/vendor/mediaSubmissionOutcomes.class.test.ts"
+    ],
+    "rationale": "Shared request boundary owns role budget and dispatch evidence; consumers preserve its non-retryable submission outcome."
+  }
+}

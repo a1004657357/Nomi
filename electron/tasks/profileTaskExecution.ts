@@ -2,7 +2,7 @@ import { localizeAssetsForVendor } from "../catalog/assetLocalization";
 import { assetIngestionResolver, assetLocalizationOptions } from "../catalog/assetTransportRuntime";
 import { readNomiLocalAsset, postJsonForAssetUpload, postMultipartForAssetUpload, putBinaryForAssetUpload } from "../assets/localAssetFile";
 import { writeAsset, writeDeterministicAsset } from "../assets/projectAssetStore";
-import { requestJson, requestMultipart, vendorResponseLimitForKind } from "../vendor/vendorHttp";
+import { requestJson, requestMultipart, vendorResponseLimitForKind, vendorRequestRole } from "../vendor/vendorHttp";
 import { runMultipartProfileOperation } from "../catalog/multipartOperation";
 import { templateContext, buildProfileHttpRequest } from "../catalog/profileHttpRequest";
 import { assertCanonicalAntigravityOperation, executeProcessOperation } from "../catalog/processOperation";
@@ -40,6 +40,7 @@ export async function executeProfileOperation(input: {
   localAssetReader?: import("../catalog/assetLocalization").LocalAssetReader; signal?: AbortSignal; stage?: ProfileOperationStage; antigravityPreflight?: import("../ai/antigravityTask").PreparedAntigravityTask;
 }): Promise<{ response: unknown; request: unknown; timings: ProfileOperationTimings; expectedImageSize?: string }> {
   const startedAt = Date.now();
+  const httpOptions = { maxResponseBytes: vendorResponseLimitForKind(input.model.kind), role: vendorRequestRole(input.model.kind, input.stage) };
   const timings: ProfileOperationTimings = { assetLocalizationMs: 0, localizedAssetCount: 0, publicAssetProbeMs: 0, submissionRateLimitMs: 0, providerRequestMs: 0, totalMs: 0 };
   const execute = async (run: () => Promise<{ response: unknown; request: unknown; expectedImageSize?: string }>) => {
     const waitStartedAt = Date.now();
@@ -76,7 +77,7 @@ export async function executeProfileOperation(input: {
     }));
   }
   if (input.operation.multipart) return execute(async () => {
-    const result = await runMultipartProfileOperation(input, (u, h, q, f) => requestMultipart(input.vendor, input.apiKey, u, h, q, f, input.signal, { maxResponseBytes: vendorResponseLimitForKind(input.model.kind) }));
+    const result = await runMultipartProfileOperation(input, (u, h, q, f) => requestMultipart(input.vendor, input.apiKey, u, h, q, f, input.signal, httpOptions));
     return { ...result, expectedImageSize: requestedImageSizeFromBody(isJsonRecord(result.request) ? result.request.fields : undefined) };
   });
   const localizationStartedAt = Date.now();
@@ -104,5 +105,5 @@ export async function executeProfileOperation(input: {
   const built = buildProfileHttpRequest(effectiveInput);
   const body = await applyRequestTransform(input.operation.request_transform, built.body, { baseUrl: String(input.vendor.baseUrlHint || ""), promptId: trim(input.request.extras?.comfyPromptId), request: input.request });
   const { vendor, apiKey } = effectiveInput;
-  return execute(async () => ({ response: await requestJson(vendor, apiKey, built.method, built.url, built.headers, built.query, body, input.signal, { maxResponseBytes: vendorResponseLimitForKind(input.model.kind) }), request: built.preview, expectedImageSize: requestedImageSizeFromBody(body) }));
+  return execute(async () => ({ response: await requestJson(vendor, apiKey, built.method, built.url, built.headers, built.query, body, input.signal, httpOptions), request: built.preview, expectedImageSize: requestedImageSizeFromBody(body) }));
 }

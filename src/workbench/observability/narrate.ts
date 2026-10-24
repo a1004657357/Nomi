@@ -282,7 +282,7 @@ const ACTION_BY_KIND: Record<GenerationErrorKind, GenerationErrorActions> = {
   'asset-fetch': RETRY_FIRST,
   'web-bridge': ACCESS_FIRST,
   quota: RETRY_FIRST,
-  'poll-timeout': RETRY_FIRST,
+  'poll-timeout': { primary: 'reconcile', secondary: null },
   network: RETRY_FIRST,
   server: RETRY_FIRST,
   // 改提示词/参数后重试（按钮只给 retry，改的地方就在下方 composer）。
