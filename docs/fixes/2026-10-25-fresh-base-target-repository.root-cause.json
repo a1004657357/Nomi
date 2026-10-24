@@ -2,21 +2,22 @@
   "schema_version": 3,
   "id": "2026-10-25-fresh-base-target-repository",
   "problem_type": "Freshness enforcement is bound to a remote name instead of the actual delivery repository",
-  "symptom": "GH_REPO=a1004657357/Nomi still compares unrelated official origin/main and requests a large upstream integration outside the current PR target; CI=true can also skip the check entirely.",
-  "direct_cause": "check-fresh-base hardcodes origin/main and returns early on CI=true without resolving target repository identity.",
-  "class_root": "A freshness baseline must be a fully qualified remote-tracking main tip whose fetch repository matches unambiguous delivery context, followed by an unconditional real ancestry check.",
+  "symptom": "Local GH_REPO=a1004657357/Nomi incorrectly compared official origin/main. c5aaa75 fixed that binding but also incorrectly rejected existing desktop-rc CI checkouts whose selected release ref predates main.",
+  "direct_cause": "The local gate hardcoded origin/main; the first repair additionally removed the original CI=true checkout-tree path by mistaking a session execution constraint for a request to change CI behavior.",
+  "class_root": "Validation context must be preserved before selecting a freshness policy: local work requires strict ancestry of the actual delivery repository main tip; existing CI validates its selected checkout tree and must retain the original CI=true path.",
   "affected_population": [
     "Local fork PR worktrees with separate official origin and target fork remotes",
-    "Normal same-repository GitHub checkout and ambiguous/missing/misconfigured target contexts"
+    "Existing desktop-rc release refs, PR and merge_group CI checkout trees; local ambiguous/missing/misconfigured target contexts"
   ],
   "scope_paths": [
     "scripts/git-delivery.mjs",
     "scripts/check-fresh-base.mjs",
-    "scripts/check-fresh-base.node-test.mjs"
+    "scripts/check-fresh-base.node-test.mjs",
+    "scripts/git-delivery.node-test.mjs"
   ],
   "entry_points": [
     "check-fresh-base CLI with GH_REPO and optional explicit --remote",
-    "GitHub checkout with GITHUB_REPOSITORY and an origin belonging to that repository"
+    "Existing CI=true checkout-tree path including desktop-rc, PR and merge_group"
   ],
   "external_sources": [
     {
@@ -39,9 +40,10 @@
     }
   ],
   "invariants": [
-    "Only a remote whose fetch GitHub repository matches the target context may supply main",
-    "Conflicting repository hints, ambiguous remotes, unsupported identities and missing target refs fail closed",
-    "Freshness uses refs/remotes/<selected remote>/main commit ancestry, never an arbitrary BASE_REF, local branch shadow, common ancestor, matching tree or CI flag",
+    "Only a remote whose fetch GitHub repository matches local target context may supply main",
+    "Local conflicting repository hints, ambiguous remotes, unsupported identities and missing target refs fail closed",
+    "Local freshness uses refs/remotes/<selected remote>/main commit ancestry, never arbitrary BASE_REF, local branch shadow, common ancestor or matching tree",
+    "Preserve the original exact CI=true early-return path before local resolution; desktop-rc release refs may predate main and no new local bypass argument is added",
     "No fetch, merge, push, remote configuration, worktree, baseline, workflow, frozen model or product content mutation",
     "Existing preflight/verify-merged command defaults and fetch/receipt behavior remain unchanged"
   ],
@@ -62,7 +64,7 @@
     "after": 2,
     "why_not": "The existing delivery repository parser/verification and freshness gate remain distinct callers. Freshness now delegates target identity to the delivery owner; the gate stays in place and keeps the strict Git ancestry responsibility. Final doors were regenerated with door-map resolveDeliveryTarget parseGitHubRepository --roots=scripts (2 doors, 3 occurrences); kind=write is the tool classification of parser result assignment, not a Git ref mutation."
   },
-  "generality_proof": "The shared delivery resolver binds repository identity before selecting a remote/ref, then the existing gate compares the resulting real main commit to HEAD. Temporary Git repositories exercise true refs/ancestry for origin, fork, newer target main, matching-tree non-ancestors, wrong/missing/ambiguous repos, GitHub-looking relative fetch paths, ref shadows, CI flags and arbitrary environment refs; refs/config/HEAD are checked unchanged after each CLI call. Shorthand normalization applies only to declared repository context, never to fetch URLs.",
+  "generality_proof": "The original CI context boundary is restored before local target resolution. Real temporary Git objects prove an older detached tagged release passes only through the original CI=true path, while the same local state fails strict ancestry; PR/merge_group keep the original path even without main refs. All existing local target identity, ambiguity, shadow, relative-fetch-path and arbitrary-ref regressions remain. Explicit preflight CLI arguments are tested against a real local fork with an unusable origin; no delivery implementation rewiring or shared remote mutation occurs.",
   "shared_boundaries": [
     {
       "path": "scripts/git-delivery.mjs",
@@ -72,7 +74,7 @@
     {
       "path": "scripts/check-fresh-base.mjs",
       "symbol": "mainSha",
-      "responsibility": "Require selected target main to be a real HEAD ancestor, without CI or arbitrary ref bypasses"
+      "responsibility": "Preserve original CI=true selected-tree validation, and require selected local target main to be a real HEAD ancestor without arbitrary ref bypasses"
     }
   ],
   "same_class_entry_points": [
@@ -84,9 +86,9 @@
     },
     {
       "path": "scripts/check-fresh-base.mjs",
-      "entry_point": "same-repository GitHub checkout",
+      "entry_point": "desktop-rc, PR and merge_group CI checkout trees",
       "disposition": "enforced",
-      "evidence": "Origin still works when it belongs to the declared repository, but CI=true alone never bypasses stale ancestry"
+      "evidence": "Restore original CI=true early return: an older release ref is a legitimate selected tree, not a stale local task branch; tests retain local failures for the same ancestry and for other metadata/CI values"
     },
     {
       "path": "scripts/git-delivery.mjs",
@@ -97,48 +99,50 @@
   ],
   "recurrence": {
     "classification": "recurring",
-    "reason": "Any fork/upstream checkout, alias, stale branch or CI environment can otherwise bind a gate to the wrong repository or skip the real ancestry obligation.",
+    "reason": "Any fork/upstream checkout can bind to the wrong repository, and applying local ancestry policy to existing selected-tree CI contexts can break later RC, PR or merge_group runs.",
     "same_class_scan": [
       "Read check-fresh-base, git-delivery parser/CLI/state/fetch/verification paths and their existing tests",
       "Read workflow GH_REPO=github.repository and fetch-depth=0 configuration without changing it",
       "Observed real fork/main=3d94d96fe and official origin/main=182666a988; original GH_REPO CLI still rejects official ancestry",
-      "Temporary real Git tests include wrong repo, missing remote/ref, duplicate aliases, multiple fetch URLs, push-only target identity, qualified ref shadows and untrusted CI/BASE_REF inputs"
+      "Temporary real Git tests include wrong repo, missing remote/ref, duplicate aliases, multiple fetch URLs, push-only target identity, qualified ref shadows and arbitrary BASE_REF inputs",
+      "Read desktop-rc inputs.ref checkout and PR/merge_group workflow; added real detached old-release regression and explicit fork preflight CLI test"
     ]
   },
   "prevention": {
     "kind": "runtime-assertion",
-    "enforcement_path": "scripts/git-delivery.mjs",
-    "invariant": "Resolve an unambiguous actual target repository/remote/main before comparing strict main-tip ancestry.",
-    "failure_mode": "Resolver errors or missing refs stop the gate; the selected target main must pass Git --is-ancestor with exit 0. No fallback/skip selects an easier commit.",
+    "enforcement_path": "scripts/check-fresh-base.mjs",
+    "invariant": "Preserve the original CI checkout-tree context; outside it, resolve actual target repository/remote/main before strict ancestry.",
+    "failure_mode": "Outside the original CI=true path, resolver errors, missing refs or target main not being a HEAD ancestor stop the gate. No new skip switch or arbitrary baseline is accepted.",
     "exception_policy": "none",
-    "strategy": "Reuse the existing delivery owner/parser and native Git rather than add a parallel target parser or weaken freshness. Keep main fixed in this gate and remove the old origin/CI shortcuts.",
+    "strategy": "Restore the existing context boundary exactly, keeping native Git and the shared target resolver for local work. Keep main fixed locally, remove only the wrong hardcoded origin binding, and leave preflight remote/base behavior unchanged.",
     "artifacts": [
-      "scripts/git-delivery.mjs",
       "scripts/check-fresh-base.mjs"
     ]
   },
   "regression_tests": [
-    "scripts/check-fresh-base.node-test.mjs"
+    "scripts/check-fresh-base.node-test.mjs",
+    "scripts/git-delivery.node-test.mjs"
   ],
   "class_regression_tests": [
-    "scripts/check-fresh-base.node-test.mjs"
+    "scripts/check-fresh-base.node-test.mjs",
+    "scripts/git-delivery.node-test.mjs"
   ],
   "legacy_paths": {
     "status": "removed",
     "removed_paths": [
       "scripts/check-fresh-base.mjs"
     ],
-    "rationale": "Remove the hardcoded unrelated origin/main baseline and unconditional CI=true early return from the same gate; do not retain a parallel legacy fallback."
+    "rationale": "Remove only the wrong hardcoded local origin/main baseline and the c5aaa75 regression that forced local ancestry onto CI. Restore the original CI=true path rather than create a parallel release exception."
   },
   "dependency_lifecycle": {
     "decision": "not-applicable",
     "rationale": "No package or Git version is changed. Existing native Git commands and the repository delivery parser own the invariant.",
     "exit_criteria": []
   },
-  "migration": "No repository config or stored data migration. Local multi-repository worktrees declare GH_REPO; the existing GitHub repository context selects same-repository origin. Missing tracking refs require the user-owned fetch step, not automatic transport.",
+  "migration": "No repository config, workflow or stored data migration. Local worktrees declare GH_REPO; preflight still needs explicit --remote fork --base main in this multi-repository setup. CI retains its original selected-tree path. Missing local refs require the user-owned fetch step, not automatic transport.",
   "residual_risks": [
     "A local remote-tracking tip is a cached observation; this read-only gate does not prove it was just fetched. Existing delivery preflight remains the refresh owner",
-    "Actual GitHub CI is not executed in this batch; shallow/missing main refs fail explicitly instead of being excused",
+    "Actual GitHub CI is not executed; its environment and older release behavior are exercised only in isolated temporary Git subprocesses. Actual local acceptance never sets CI=true",
     "Default historical-scope root-cause regression is 49/50 with 18 existing removed-path findings; batch-parent-scoped regression is 50/50. No checker, history contract, baseline or ignore is changed",
     "A new A source registration tail remains a separate batch; no unrelated/frozen/working-tree changes are integrated here"
   ],

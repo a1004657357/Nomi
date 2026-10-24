@@ -81,17 +81,38 @@ test('a newer target main must reject stale HEAD even when origin/main is an anc
   rejected(run(f, { GH_REPO: target }), /fork\/main/)
 })
 
-test('CI=true cannot turn a stale branch into a pass', t => {
+test('GitHub metadata without CI=true does not bypass local stale-main enforcement', t => {
   const f = fixture(t)
   advance(f, 'origin')
-  rejected(run(f, { GH_REPO: target, GITHUB_REPOSITORY: target, GITHUB_ACTIONS: 'true', CI: 'true' }), /origin\/main/)
+  for (const ci of [undefined, 'false', '1', 'TRUE']) {
+    const env = { GH_REPO: target, GITHUB_REPOSITORY: target, GITHUB_ACTIONS: 'true' }
+    if (ci !== undefined) env.CI = ci
+    rejected(run(f, env), /origin\/main/)
+  }
 })
 
-test('normal same-repository GitHub checkout still passes using origin, without a CI skip', t => {
-  const result = run(fixture(t), { GITHUB_REPOSITORY: target, GITHUB_ACTIONS: 'true', CI: 'true' })
+test('desktop-rc preserves CI tree validation for a real detached release ref older than main', t => {
+  const f = fixture(t)
+  const main = advance(f, 'origin')
+  git(f.cwd, ['tag', 'v0.23.2-rc.1', f.base])
+  git(f.cwd, ['switch', '--detach', 'v0.23.2-rc.1'])
+  assert.equal(git(f.cwd, ['merge-base', main, 'HEAD']), f.base)
+  assert.notEqual(main, git(f.cwd, ['rev-parse', 'HEAD']))
+  rejected(run(f, { GH_REPO: target }), /origin\/main/)
+  const result = run(f, { GITHUB_REPOSITORY: target, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_WORKFLOW: 'Desktop RC', INPUT_REF: 'v0.23.2-rc.1', CI: 'true' })
   assert.equal(result.status, 0, output(result))
-  assert.match(output(result), /origin\/main/)
-  assert.doesNotMatch(output(result), /跳过|skipp/i)
+  assert.match(output(result), /CI.*跳过/)
+})
+
+test('PR and merge_group CI retain their original checkout-tree path without requiring a main ref', t => {
+  const f = fixture(t)
+  git(f.cwd, ['update-ref', '-d', 'refs/remotes/origin/main'])
+  rejected(run(f, { GH_REPO: target }), /origin\/main/)
+  for (const event of ['pull_request', 'merge_group']) {
+    const result = run(f, { GITHUB_REPOSITORY: target, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: event, CI: 'true' })
+    assert.equal(result.status, 0, output(result))
+    assert.match(output(result), /CI.*跳过/)
+  }
 })
 
 test('wrong target repository cannot fall back to an ancestor origin/main', t => {

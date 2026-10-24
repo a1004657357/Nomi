@@ -18,6 +18,7 @@ import {
   parseGitHubRepository,
   preflightDelivery,
   runBoundedCommand,
+  runDeliveryCommand,
   verifyMergedDelivery,
 } from './git-delivery.mjs'
 import { CORE_SMOKE_ADVISORY_CHECK_NAMES, CORE_SMOKE_BLOCKING_CHECK_NAMES, CORE_SMOKE_CHECK_NAMES } from './validation-policy.mjs'
@@ -146,6 +147,20 @@ test('preflight refreshes once and accepts a clean task branch containing remote
   assert.equal(result.branch, 'codex/delivery-test')
   assert.equal(result.remoteBaseIsAncestor, true)
   assert.equal(result.relation, 'different-tree')
+})
+
+test('preflight CLI --remote fork --base main fetches the explicit fork, not default origin', async t => {
+  const f = fixture()
+  t.after(f.cleanup)
+  git(f.work, ['switch', '-c', 'codex/fork-preflight'])
+  commit(f.work, 'task', 'task\n')
+  git(f.work, ['remote', 'add', 'fork', f.remote])
+  git(f.work, ['remote', 'set-url', 'origin', path.join(f.root, 'missing-origin.git')])
+  const result = await runDeliveryCommand(['preflight', '--remote', 'fork', '--base', 'main'], { cwd: f.work })
+  assert.equal(result.state.remoteRef, 'fork/main')
+  assert.equal(result.state.remoteCommit, f.baseSha)
+  assert.equal(result.state.remoteBaseIsAncestor, true)
+  assert.equal(result.state.clean, true)
 })
 
 test('preflight fails closed on protected, dirty, and stale task branches', async (t) => {

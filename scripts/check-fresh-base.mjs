@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 // 棘轮/门岗属于目标仓库 main 的树；fork 的 PR 不必整合另一个仓库的官方 main。
-// 只读检查真实 tracking tip；是否刷新由 delivery fetch owner 负责，CI 也不得跳过祖先检查。
+// 本地只读检查真实 tracking tip；CI 按原语义验指定树，RC 发布 ref 允许落后 main。
 import { execFileSync, spawnSync } from 'node:child_process'
 import { DeliveryError, parseCli, resolveDeliveryTarget } from './git-delivery.mjs'
+
+if (process.env.CI === 'true') {
+  console.log('✅ 新鲜基线闸：CI 环境跳过（CI 验的就是目标树本身）')
+  process.exit(0)
+}
 
 try {
   const { options } = parseCli(['preflight', ...process.argv.slice(2)])
