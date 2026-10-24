@@ -1,0 +1,134 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-browser-shortcut-label-contract",
+  "problem_type": "Localized default descriptors and their public display type disagree",
+  "symptom": "Integration app/testtypes report TS2741 on the key-only Jimeng BrowserStartShortcut default introduced by the first TSX locale batch.",
+  "direct_cause": "The default data producer switched one item to labelKey, but the shared type still requires label and permits raw/key display sources to compete.",
+  "class_root": "A display descriptor must carry exactly one owned display identity: raw user/literal text or a localization key, with rendering narrowing the same type boundary.",
+  "affected_population": [
+    "Jimeng and Xiaohongshu localized browser start defaults",
+    "Raw/literal or custom shortcut labels, including strings that look like translation keys"
+  ],
+  "scope_paths": [
+    "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+    "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+    "scripts/browser-shortcut-label.node-test.mjs"
+  ],
+  "entry_points": [
+    "BROWSER_START_SHORTCUTS typed defaults",
+    "NomiBrowserDialogView siteLabel rendering"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "Actual default literals, the existing view expression and unchanged local i18next resources determine this internal data contract; no framework behavior, dependency version, browser/provider or storage API changes.",
+  "invariants": [
+    "A shortcut has raw label or labelKey, never neither or both",
+    "Raw custom labels remain byte-identical and never pass through t(), even when they look like localization keys",
+    "Localized default keys are translated at rendering, not initialization or persistence",
+    "URLs, hint keys, bookmark storage, tab actions, JSX attributes, layout and controls remain unchanged"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BrowserStartShortcut"
+    },
+    {
+      "kind": "read",
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "BROWSER_START_SHORTCUTS"
+    }
+  ],
+  "door_reduction": {
+    "before": 2,
+    "after": 2,
+    "why_not": "The model must continue declaring defaults and the view must continue rendering them. They now agree on one exclusive display type; neither entry nor any browser action is removed."
+  },
+  "generality_proof": "The union accepts both existing raw labels and key-only defaults while rejecting missing and competing display identities. Focused compilation uses the actual production alias, actual default array and actual view expression. Real i18next resources verify language switching without translating or mutating raw custom labels.",
+  "shared_boundaries": [
+    {
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "symbol": "BrowserStartShortcut",
+      "responsibility": "Own the exact-one-identity descriptor type shared by raw labels and localized defaults"
+    },
+    {
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "symbol": "siteLabel",
+      "responsibility": "Narrow a keyed descriptor to t(key); leave raw/literal/custom labels untouched at the display boundary"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "entry_point": "BROWSER_START_SHORTCUTS",
+      "disposition": "enforced",
+      "evidence": "Actual defaults must conform to the exact-one-identity union, including key-only Jimeng and localized Xiaohongshu"
+    },
+    {
+      "path": "src/ui/browser/dialog/NomiBrowserDialogView.tsx",
+      "entry_point": "NomiBrowserDialogView.siteLabel",
+      "disposition": "enforced",
+      "evidence": "The actual ternary expression narrows key ownership before calling t(); raw text is returned directly"
+    },
+    {
+      "path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "entry_point": "readBookmarks/writeBookmarks",
+      "disposition": "not-affected",
+      "evidence": "Persisted BrowserBookmark title records and their storage functions are not changed; this fix only changes the start shortcut descriptor type/default literal and its display expression"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any later localization of a literal default can introduce a key-only descriptor that conflicts with a raw-label-required type, or ambiguous raw/key precedence.",
+    "same_class_scan": [
+      "All BrowserStartShortcut and BROWSER_START_SHORTCUTS references under src/ui/browser read",
+      "Actual model typed defaults and the view siteLabel expression inspected; ten default URLs and hint keys preserved",
+      "Raw custom labels and key-looking raw strings checked through repeated zh-CN/en/zh-CN switches",
+      "Generated door map confirms one model type-read and one view default-array read"
+    ]
+  },
+  "prevention": {
+    "kind": "type-system",
+    "enforcement_path": "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+    "invariant": "A shared shortcut descriptor has exactly one display source, narrowed explicitly by the renderer.",
+    "failure_mode": "TypeScript rejects missing or competing labels, and focused diagnostics use actual defaults/consumer expression rather than a copied substitute type.",
+    "exception_policy": "none",
+    "strategy": "Fix the shared producer/consumer type boundary, retaining existing t() and literal rendering; do not add dummy labels, casts, optional-both fields or persistence rewrites.",
+    "artifacts": [
+      "src/ui/browser/dialog/NomiBrowserDialogModel.tsx",
+      "src/ui/browser/dialog/NomiBrowserDialogView.tsx"
+    ]
+  },
+  "regression_tests": [
+    "scripts/browser-shortcut-label.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/browser-shortcut-label.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "No public shortcut variant, URL, bookmark, operation or compatibility runtime path is removed; only a redundant default fallback field is removed where an authoritative localization key already owns the display."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "The existing TypeScript and i18next APIs/versions are unchanged; the defect is an internal descriptor type mismatch.",
+    "exit_criteria": []
+  },
+  "migration": "No stored data or prompt/protocol migration. Custom raw labels are preserved. Static defaults keep their existing URLs/hint keys and are translated at rendering.",
+  "residual_risks": [
+    "Full integration app/testtypes TSC must be rerun by the coordinator after cherry-pick; this batch performs focused strict checking of actual type/data/view expressions",
+    "No real browser navigation, App launch or Provider task is executed or claimed"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/ui/browser/dialog",
+    "tests": [
+      "scripts/browser-shortcut-label.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/browser-shortcut-label.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

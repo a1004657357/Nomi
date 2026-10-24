@@ -443,7 +443,7 @@ export function NomiBrowserDialogView({
                       {BROWSER_START_SHORTCUTS.map((site) => {
                         // 预设站图标不求第三方 favicon 服务（Google s2 对部分域 404、
                         // 中国网络下每次开浏览器都刷 console 错）——首字母瓷贴，零网络零 flake。
-                        const siteLabel = site.labelKey ? t(site.labelKey) : site.label
+                        const siteLabel = site.labelKey !== undefined ? t(site.labelKey) : site.label
                         const initial = (siteLabel || '?').trim().slice(0, 1)
                         return (
                           <button

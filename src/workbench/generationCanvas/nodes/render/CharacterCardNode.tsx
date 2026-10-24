@@ -12,7 +12,6 @@ import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/m
  */
 import React, { type JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { localAssetThumbnailUrl } from '../../../../design/localAssetThumbnail'
 import { cn } from '../../../../utils/cn'
 import type { GenerationCanvasNode } from '../../model/generationCanvasTypes'
 import { readCharacterMeta } from '../../model/nodeMetaFields'
@@ -22,8 +21,6 @@ import { useNodeImageUpload } from '../../adapters/useNodeImageUpload'
 import { EditableNodeTitle } from './EditableNodeTitle'
 import { useNodeMediaMeasurement } from '../useNodeMediaMeasurement'
 import { DeferredNodeImage } from '../DeferredNodeMedia'
-
-const CARD_IMAGE_PREVIEW_SIZE = { width: 256, height: 256 } as const
 
 type Props = {
   node: GenerationCanvasNode

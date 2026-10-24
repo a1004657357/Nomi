@@ -1,0 +1,198 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-tsx-redundant-bindings",
+  "problem_type": "Unconsumed component bindings accumulate lint debt during UI ownership changes",
+  "symptom": "Fresh lint over 521 TSX files reports 14 no-unused-vars warnings in six canvas/card/whiteboard consumers.",
+  "direct_cause": "Unused imports and pure constants survive rendering changes; one hook result and three public props are still destructured without consumers.",
+  "class_root": "A consumer binding must represent a real use without confusing removal of a binding with removal of its hook call, effect, public type, or operation.",
+  "affected_population": [
+    "Canvas Base/preview and Character/Scene/Prop card renders",
+    "Whiteboard canvas progress props and existing operation callbacks"
+  ],
+  "scope_paths": [
+    "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+    "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+    "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx",
+    "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx",
+    "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx",
+    "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardLeaferCanvas.tsx",
+    "scripts/tsx-redundant-bindings.node-test.mjs",
+    "src/workbench/generationCanvas/nodes/useNodeMediaMeasurement.ts"
+  ],
+  "entry_points": [
+    "BaseGenerationNodeImpl.useNodeMediaMeasurement",
+    "GenerationNodePreviewBody parameter binding",
+    "LeaferCanvas parameter binding",
+    "CharacterCardNodeImpl / SceneCardNodeImpl / PropCardNodeImpl"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "The invariant is determined by actual repository consumers, existing hook effects, public Props types and the unchanged ESLint configuration; no dependency or third-party runtime behavior is changed.",
+  "invariants": [
+    "Keep JSX, class/style, visible text, conditions, callback arguments, and controls identical",
+    "Retain every hook call in its original relative position; discard only the unused result binding",
+    "Retain public Props fields, optionality, types and caller attributes; remove only unused parameter destructuring",
+    "Remove only imports and initializers proved unconsumed and pure",
+    "Do not alter Fast Refresh ownership, crowd memo dependencies, rules, warning limit, baseline, model/task routing, providers, i18n or stored data"
+  ],
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "GenerationNodePreviewBody"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "GenerationNodePreviewBodyProps"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardDrawingTool.tsx",
+      "symbol": "LeaferCanvas"
+    },
+    {
+      "kind": "read",
+      "path": "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardLeaferCanvas.tsx",
+      "symbol": "LeaferCanvas"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/components/LightweightGenerationNode.tsx",
+      "symbol": "useNodeMediaMeasurement"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "useNodeMediaMeasurement"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx",
+      "symbol": "useNodeMediaMeasurement"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx",
+      "symbol": "useNodeMediaMeasurement"
+    },
+    {
+      "kind": "write",
+      "path": "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx",
+      "symbol": "useNodeMediaMeasurement"
+    }
+  ],
+  "door_reduction": {
+    "before": 9,
+    "after": 9,
+    "why_not": "All existing measurement and preview/whiteboard consumers must remain callable with the same Props and lifecycle. Removing dead local bindings does not justify merging components, removing observers/subscriptions, or changing public entry points."
+  },
+  "generality_proof": "A fresh TSX-only lint scan finds the complete no-unused population in six consumers. The unchanged lint owner catches unused imports/locals while focused AST tests retain the hook position, card measurement/upload/title consumers, public Props, and whiteboard callbacks. A before/after AST comparison additionally verifies unchanged JSX, public types, hook sequence and every other call.",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "symbol": "BaseGenerationNodeImpl",
+      "responsibility": "Bind only consumed values, retaining the media measurement hook as an unconditional same-position call"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "symbol": "GenerationNodePreviewBody",
+      "responsibility": "Keep the public preview contract and operations while omitting unused local parameter bindings"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardLeaferCanvas.tsx",
+      "symbol": "LeaferCanvas",
+      "responsibility": "Keep progress in public Props and preserve all whiteboard actions/hooks while omitting its unused local binding"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/useNodeMediaMeasurement.ts",
+      "symbol": "useNodeMediaMeasurement",
+      "responsibility": "Unchanged existing owner of measurements, ResizeObserver subscription and cleanup; never removed to satisfy lint"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "entry_point": "BaseGenerationNodeImpl",
+      "disposition": "enforced",
+      "evidence": "Unused hook result becomes a standalone call; original neighbors and all hook expressions are retained"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "entry_point": "GenerationNodePreviewBody",
+      "disposition": "enforced",
+      "evidence": "shotIndex/displayPrompt remain in public Props and caller attributes but no longer create unused local bindings"
+    },
+    {
+      "path": "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardLeaferCanvas.tsx",
+      "entry_point": "LeaferCanvas",
+      "disposition": "enforced",
+      "evidence": "removingBackgroundProgress remains optional number|null in the public type; all operations stay bound"
+    },
+    {
+      "path": "src/workbench/generationCanvas/components/LightweightGenerationNode.tsx",
+      "entry_point": "useNodeMediaMeasurement",
+      "disposition": "not-affected",
+      "evidence": "Independent measured-node consumer is not changed; no unused result is reported by fresh lint"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "Any later component extraction or rendering-owner move can leave unused imports, locals or parameter bindings with live hook effects behind them.",
+    "same_class_scan": [
+      "Fresh pnpm exec eslint src/**/*.tsx: 521 files, 14 unused warnings in exactly six consumers",
+      "Actual imports/initializers, media measurement observer/cleanup, public Props and all local references read",
+      "Generated door map of useNodeMediaMeasurement, GenerationNodePreviewBody and LeaferCanvas: nine retained entries, including the existing preview Props type-read edge",
+      "Fast Refresh, exhaustive-deps/crowd memo and explicit-any warnings deliberately excluded from this approved batch"
+    ]
+  },
+  "prevention": {
+    "kind": "type-system",
+    "enforcement_path": "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+    "invariant": "An unused result binding can disappear only while preserving the hook call and the existing public/rendering contract.",
+    "failure_mode": "Unchanged no-unused-vars identifies residual unused values; focused AST regressions fail if the hook, Props, operations or card consumers disappear.",
+    "exception_policy": "none",
+    "strategy": "Clean the binding at each existing consumer rather than changing shared hooks, public contracts, styles or lint policy; retain the existing shared measurement owner.",
+    "artifacts": [
+      "src/workbench/generationCanvas/nodes/BaseGenerationNode.tsx",
+      "src/workbench/generationCanvas/nodes/GenerationNodePreviewBody.tsx",
+      "src/workbench/generationCanvas/nodes/render/CharacterCardNode.tsx",
+      "src/workbench/generationCanvas/nodes/render/SceneCardNode.tsx",
+      "src/workbench/generationCanvas/nodes/render/PropCardNode.tsx",
+      "src/workbench/generationCanvas/nodes/whiteboard/WhiteboardLeaferCanvas.tsx"
+    ]
+  },
+  "regression_tests": [
+    "scripts/tsx-redundant-bindings.node-test.mjs"
+  ],
+  "class_regression_tests": [
+    "scripts/tsx-redundant-bindings.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "No callable legacy path or API is removed or replaced; only non-consumed local bindings, unused imports and pure constants disappear."
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "No dependency controls this local binding invariant and no dependency/API/version is changed; existing React, DOM, TypeScript and ESLint owners remain in place.",
+    "exit_criteria": []
+  },
+  "migration": "No data or caller migration. Existing Props fields and JSX callers stay intact; coordinator integrates only this small commit over its own handler/i18n changes.",
+  "residual_risks": [
+    "The main total warning budget must be checked after integration; this isolated branch has different already-completed non-TSX batches",
+    "No real App/Provider/media acceptance is performed or claimed for this behavior-preserving static cleanup",
+    "Other Fast Refresh, memo dependency and any warnings remain intentionally outside this batch"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/generationCanvas/nodes",
+    "tests": [
+      "scripts/tsx-redundant-bindings.node-test.mjs"
+    ]
+  },
+  "rewrite_decision": {
+    "decision": "patch",
+    "characterization_test": "scripts/tsx-redundant-bindings.node-test.mjs"
+  },
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}
