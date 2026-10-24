@@ -18,7 +18,6 @@ import { assertAgnesPublicImageReachable, isAgnesImageToVideoRequest } from '../
 import type { JsonRecord } from '../jsonUtils';
 import { requestedImageSizeFromBody } from "../review/imageSizeSpecification";
 export { localizeTaskAsset } from "../assets/localizeTaskAsset";
-export { buildProfileTaskResult, findTaskMapping } from "../runtime";
 export { buildProfileHttpRequest };
 export type ProfileOperationTimings = {
   assetLocalizationMs: number; localizedAssetCount: number; publicAssetProbeMs: number;
@@ -98,7 +97,7 @@ export async function executeProfileOperation(input: {
   timings.assetLocalizationMs = Date.now() - localizationStartedAt;
   timings.localizedAssetCount = localized.uploaded;
   const probeStartedAt = Date.now();
-  if (input.stage !== 'query' && input.stage !== 'result' && isAgnesImageToVideoRequest(input.vendor.key, input.request.kind)) {
+  if (input.stage !== 'query' && input.stage !== 'result' && isAgnesImageToVideoRequest(input.vendor.key, input.request.kind, [input.vendor])) {
     await assertAgnesPublicImageReachable(firstReferenceImage(effectiveInput.request));
   }
   timings.publicAssetProbeMs = Date.now() - probeStartedAt;

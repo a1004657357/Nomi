@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -105,7 +106,7 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 function safeSegment(value: unknown, label: string): string {
   const normalized = String(value || "").trim();
   if (!normalized || normalized === "." || normalized === ".." || normalized.includes("/") || normalized.includes("\\") || normalized.includes("\0")) {
-    throw new Error(`${label} 不安全`);
+    throw new Error(desktopT("custom.blender.vibingDirectorRunner.text1", { value0: `${label}` }));
   }
   return normalized;
 }
@@ -151,7 +152,7 @@ function record(value: unknown): Record<string, unknown> {
 
 function requiredAbsolutePath(value: unknown, field: string): string {
   const candidate = typeof value === "string" ? value.trim() : "";
-  if (!candidate || !path.isAbsolute(candidate)) throw new Error(`Blender 导演桥接返回的 ${field} 无效`);
+  if (!candidate || !path.isAbsolute(candidate)) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text2", { value0: `${field}` }));
   return candidate;
 }
 
@@ -252,7 +253,7 @@ export function parseVibingDirectorBridgeOutput(stdout: string): BridgeOutput {
     }
   }
   if (payload === undefined) {
-    throw new Error("Blender 导演桥接返回了无效 JSON");
+    throw new Error(desktopT("custom.blender.vibingDirectorRunner.text3"));
   }
   const raw = record(payload);
   if (raw.ok !== true) {
@@ -260,7 +261,7 @@ export function parseVibingDirectorBridgeOutput(stdout: string): BridgeOutput {
     throw new Error(message);
   }
   const jobId = typeof raw.jobId === "string" ? raw.jobId.trim() : "";
-  if (!jobId) throw new Error("Blender 导演桥接未返回 jobId");
+  if (!jobId) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text4"));
   const artifacts = record(raw.artifacts);
   const previewCamera = parsePreviewCamera(raw.previewCamera);
   const spatialReport = parseSpatialReport(raw.spatialReport);
@@ -285,16 +286,16 @@ function appendCapped(current: string, chunk: unknown): string {
 }
 
 function outputBytes(root: string, filePath: string, label: string): Buffer {
-  if (!inside(root, filePath)) throw new Error(`Blender 导演桥接返回的 ${label} 不在当前 Director 输出目录`);
+  if (!inside(root, filePath)) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text5", { value0: `${label}` }));
   const bytes = fs.readFileSync(filePath);
-  if (bytes.byteLength === 0) throw new Error(`Blender 导演桥接返回的 ${label} 为空`);
+  if (bytes.byteLength === 0) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text6", { value0: `${label}` }));
   return bytes;
 }
 
 function asAssetRef(value: unknown): AssetRef {
   const raw = value as { id?: unknown; data?: { url?: unknown } };
   const url = typeof raw?.data?.url === "string" ? raw.data.url : "";
-  if (!url) throw new Error("Blender 导演产物写入项目素材失败");
+  if (!url) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text7"));
   return { url, ...(typeof raw.id === "string" ? { assetId: raw.id } : {}) };
 }
 
@@ -317,7 +318,7 @@ export function resolveVibingDirectorBlendPath(projectDir: string, directorNodeI
   const root = directorRootPath(projectDir, directorNodeId);
   const candidate = path.resolve(projectDir, String(relativePath || ""));
   if (!inside(root, candidate) || path.extname(candidate).toLowerCase() !== ".blend") {
-    throw new Error("Blender 工程路径不在当前 Director 工作目录内");
+    throw new Error(desktopT("custom.blender.vibingDirectorRunner.text8"));
   }
   return candidate;
 }
@@ -363,14 +364,14 @@ async function persistOutputs(request: VibingDirectorBlenderRequest, projectDir:
 export async function runVibingDirectorBlenderPlan(request: VibingDirectorBlenderRequest): Promise<VibingDirectorBlenderResult> {
   const jobId = safeSegment(request.jobId, "Blender jobId");
   const projectId = String(request.projectId || "").trim();
-  if (!projectId) throw new Error("Blender Director projectId 不能为空");
-  if (activeJobs.has(jobId) || pendingJobs.has(jobId)) throw new Error(`Blender Director 任务 ${jobId} 已在运行`);
+  if (!projectId) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text9"));
+  if (activeJobs.has(jobId) || pendingJobs.has(jobId)) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text10", { value0: `${jobId}` }));
   const pending = { cancelled: false };
   pendingJobs.set(jobId, pending);
   let context: AssetWriteContext;
   try {
     context = await captureAssetWriteContext(projectId);
-    if (pending.cancelled) throw new Error("Blender Director 预演已取消");
+    if (pending.cancelled) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text11"));
   } finally {
     pendingJobs.delete(jobId);
   }
@@ -382,9 +383,9 @@ export async function runVibingDirectorBlenderPlan(request: VibingDirectorBlende
   const assets: Array<{ id: string; path: string }> = [];
   for (const assetId of requestedAssetIds(request.plan)) {
     const asset = assetById.get(assetId);
-    if (!asset) throw new Error(`资产库中没有「${assetId}」`);
+    if (!asset) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text12", { value0: `${assetId}` }));
     const assetPath = vibingDirectorAssetPath(projectDir, request.directorNodeId, asset);
-    if (!fs.existsSync(assetPath)) throw new Error(`资产文件不存在：${asset.fileName}`);
+    if (!fs.existsSync(assetPath)) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text13", { value0: `${asset.fileName}` }));
     assets.push({ id: asset.id, path: assetPath });
   }
 
@@ -426,14 +427,14 @@ export async function runVibingDirectorBlenderPlan(request: VibingDirectorBlende
       child.stderr?.on("data", (chunk) => { stderr = appendCapped(stderr, chunk); });
       child.once("error", (error) => {
         if (job.terminationReason === "timeout") {
-          finish(new Error(`Blender Director 预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
+          finish(new Error(desktopT("custom.blender.vibingDirectorRunner.text14", { value0: `${Math.round(timeoutMs / 1000)}` })));
           return;
         }
         if (job.terminationReason === "cancelled") {
-          finish(new Error("Blender Director 预演已取消"));
+          finish(new Error(desktopT("custom.blender.vibingDirectorRunner.text15")));
           return;
         }
-        finish(new Error(`Blender Director 启动失败：${error.message}`));
+        finish(new Error(desktopT("custom.blender.vibingDirectorRunner.text16", { value0: `${error.message}` })));
       });
       child.once("close", async (code, signal) => {
         if (settled) return;
@@ -441,21 +442,21 @@ export async function runVibingDirectorBlenderPlan(request: VibingDirectorBlende
         clearTimeout(timeout);
         if (job.forceKillTimer) clearTimeout(job.forceKillTimer);
         if (job.terminationReason === "timeout") {
-          finish(new Error(`Blender Director 预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
+          finish(new Error(desktopT("custom.blender.vibingDirectorRunner.text17", { value0: `${Math.round(timeoutMs / 1000)}` })));
           return;
         }
         if (job.terminationReason === "cancelled") {
-          finish(new Error("Blender Director 预演已取消"));
+          finish(new Error(desktopT("custom.blender.vibingDirectorRunner.text18")));
           return;
         }
         if (code !== 0) {
           const detail = stderr.trim() || stdout.trim() || `signal=${signal || "none"}`;
-          finish(new Error(`Blender Director 预演失败（退出码 ${String(code)}）：${detail.slice(-6000)}`));
+          finish(new Error(desktopT("custom.blender.vibingDirectorRunner.text19", { value0: `${String(code)}`, value1: `${detail.slice(-6000)}` })));
           return;
         }
         try {
           finish(undefined, await persistOutputs(request, projectDir, outputDir, parseVibingDirectorBridgeOutput(stdout), context, () => {
-            if (job.terminationReason === "cancelled") throw new Error("Blender Director 预演已取消");
+            if (job.terminationReason === "cancelled") throw new Error(desktopT("custom.blender.vibingDirectorRunner.text20"));
           }));
         } catch (error) {
           finish(error instanceof Error ? error : new Error(String(error)));
@@ -499,9 +500,9 @@ export function openVibingDirectorBlend(input: {
   blenderPath?: string;
 }): { opened: boolean } {
   const projectDir = projectDirById(String(input.projectId || "").trim());
-  if (!projectDir) throw new Error("无法找到当前项目目录");
+  if (!projectDir) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text21"));
   const blendPath = resolveVibingDirectorBlendPath(projectDir, input.directorNodeId, input.blendRelativePath);
-  if (!fs.existsSync(blendPath)) throw new Error("当前 Director 的 Blender 工程不存在，请先应用一个导演计划");
+  if (!fs.existsSync(blendPath)) throw new Error(desktopT("custom.blender.vibingDirectorRunner.text22"));
   const child = spawn(resolveBlenderExecutable(input.blenderPath), [blendPath], {
     detached: true,
     stdio: "ignore",

@@ -1,0 +1,145 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-task-execution-evidence-owners",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "任务执行下沉后的反向依赖与证据指针未同步",
+  "symptom": "执行器反向导出 runtime 形成新硬环；生成入口登记仍指向已迁走的代码，变异测试目标也过期。",
+  "direct_cause": "业务拆分完成后保留了只供旧测试消费的反向转口和旧登记地址。",
+  "class_root": "定制功能接回官方主线时，业务入口与既有共享 owner 和工程证据未同步。",
+  "affected_population": [
+    "现有定制功能的主线集成",
+    "离线回归和 CI 验收"
+  ],
+  "scope_paths": [
+    "electron/tasks/profileTaskExecution.ts",
+    "electron/tasks/profileTaskExecution.test.ts",
+    "electron/parity/generationEntrances.ts",
+    "scripts/check-generation-entrances.node-test.mjs",
+    "scripts/generation-entrances-ledger.json",
+    "scripts/boundaries-baseline.json",
+    "scripts/boundary-owners-ledger.json",
+    "scripts/root-cause-history-evidence.node-test.mjs"
+  ],
+  "entry_points": [
+    "electron/catalog/catalogCommit.ts::executeProfileOperation",
+    "electron/runtime.ts::executeProfileOperation",
+    "electron/tasks/taskResultQuery.ts::executeProfileOperation"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用仓库已存在的领域合同、运行时与检查器，只修内部接线，没有新第三方能力假设。",
+  "invariants": [
+    "保留现有用户功能和项目内容。",
+    "规则只有既有共享 owner；不扩大违规上限或删除检查。",
+    "对外 runtime API 保留，执行器不反向值依赖上层 runtime。",
+    "所有能发出生成的调用点仍被登记，10 个入口/7 个用例矩阵形状不变。",
+    "变异测试先断言当前真实锚点存在，再验证错误 dispatchSite 必须被拦。",
+    "仅移除已消失的旧循环/重定位豁免，不新增豁免。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "electron/tasks/profileTaskExecution.ts",
+    "tests": [
+      "scripts/check-generation-entrances.node-test.mjs",
+      "electron/tasks/profileTaskExecution.test.ts",
+      "electron/parity/generationParity.matrix.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "electron/catalog/catalogCommit.ts",
+      "symbol": "executeProfileOperation"
+    },
+    {
+      "kind": "read",
+      "path": "electron/runtime.ts",
+      "symbol": "executeProfileOperation"
+    },
+    {
+      "kind": "read",
+      "path": "electron/tasks/taskResultQuery.ts",
+      "symbol": "executeProfileOperation"
+    }
+  ],
+  "door_reduction": {
+    "before": 3,
+    "after": 3,
+    "why_not": "保留所有真实消费者；分散入口统一接入既有 owner，不通过删除功能减少入口。新纳管的入口使共享 owner 的读取门数增加，不冒充入口已减少。"
+  },
+  "generality_proof": "对同类入口一并扫描并通过已有硬零门岗；回归同时覆盖正常、失败与状态释放，不依赖某个节点或供应商特例。",
+  "shared_boundaries": [
+    {
+      "path": "electron/tasks/profileTaskExecution.ts",
+      "symbol": "executeProfileOperation",
+      "responsibility": "任务执行下沉后的反向依赖与证据指针未同步"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "electron/catalog/catalogCommit.ts",
+      "entry_point": "executeProfileOperation",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/runtime.ts",
+      "entry_point": "executeProfileOperation",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    },
+    {
+      "path": "electron/tasks/taskResultQuery.ts",
+      "entry_point": "executeProfileOperation",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增定制入口、字段或文件移动都可能再次遗漏共享声明。",
+    "same_class_scan": [
+      "本轮实际数门报告",
+      "完整 contracts 扫描和聚焦回归"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "electron/tasks/profileTaskExecution.ts",
+    "invariant": "实际实现和共享声明保持一致。",
+    "failure_mode": "新增遗漏或脱离 owner 时现有检查和类回归失败。",
+    "exception_policy": "none",
+    "strategy": "修复 owner 接线并保留错误可见性，不创建并行实现。",
+    "artifacts": [
+      "electron/tasks/profileTaskExecution.ts",
+      "electron/tasks/profileTaskExecution.test.ts",
+      "electron/parity/generationEntrances.ts",
+      "scripts/check-generation-entrances.node-test.mjs",
+      "scripts/generation-entrances-ledger.json",
+      "scripts/boundaries-baseline.json",
+      "scripts/boundary-owners-ledger.json",
+      "scripts/root-cause-history-evidence.node-test.mjs"
+    ]
+  },
+  "regression_tests": [
+    "scripts/check-generation-entrances.node-test.mjs",
+    "electron/tasks/profileTaskExecution.test.ts",
+    "electron/parity/generationParity.matrix.test.ts"
+  ],
+  "class_regression_tests": [
+    "scripts/check-generation-entrances.node-test.mjs"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "生产模块保留；只把过期引用指向真实 owner，不删除用户功能文件。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "复用锁定依赖，没有升级或新增三方依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不迁移或修改日常项目、素材、账号、密钥或 Cookie。",
+  "residual_risks": [
+    "完整 CI、真实 UI 与最终 merge SHA 收据仍须在最终整合树上确认。"
+  ]
+}

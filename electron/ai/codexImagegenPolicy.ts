@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -111,7 +112,7 @@ export function planCodexAspectRatioCrop(
 
 async function conformCodexImageAspectRatio(outputPath: string, plan: CodexAspectRatioCropPlan): Promise<void> {
   const ffmpegPath = resolveFfmpegPath();
-  if (!ffmpegPath) throw new Error("FFmpeg 不可用，无法校正图片比例");
+  if (!ffmpegPath) throw new Error(desktopT("custom.ai.codexImagegenPolicy.text1"));
   const parsed = path.parse(outputPath);
   const conformedPath = path.join(parsed.dir, `${parsed.name}-conformed${parsed.ext || ".png"}`);
   await new Promise<void>((resolve, reject) => {
@@ -143,7 +144,7 @@ async function conformCodexImageAspectRatio(outputPath: string, plan: CodexAspec
     };
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
-      finish(new Error("FFmpeg 图片比例校正超时"));
+      finish(new Error(desktopT("custom.ai.codexImagegenPolicy.text2")));
     }, 30_000);
     timeout.unref?.();
     child.stderr?.on("data", (chunk) => {
@@ -152,7 +153,7 @@ async function conformCodexImageAspectRatio(outputPath: string, plan: CodexAspec
     child.on("error", (error) => finish(error));
     child.on("close", (code) => {
       if (code === 0 && fs.existsSync(conformedPath)) finish();
-      else finish(new Error(`FFmpeg 图片比例校正失败（退出码 ${code ?? "unknown"}）：${stderr.slice(-500)}`));
+      else finish(new Error(desktopT("custom.ai.codexImagegenPolicy.text3", { value0: `${code ?? "unknown"}`, value1: `${stderr.slice(-500)}` })));
     });
   });
   const originalPath = path.join(parsed.dir, `${parsed.name}-original${parsed.ext || ".png"}`);
@@ -272,7 +273,7 @@ export async function validateCodexGeneratedImage(
   // badge report the mismatch instead of discarding an already paid result.
   const blockingChecks = verdict.checks.filter((check) => check.suspect && check.id === "undecodable");
   if (blockingChecks.length > 0) {
-    throw new Error(`Codex Img2 产物验收失败：${blockingChecks.map((check) => check.detail).join("；")}`);
+    throw new Error(desktopT("custom.ai.codexImagegenPolicy.text4", { value0: `${blockingChecks.map((check) => check.detail).join("；")}` }));
   }
   const aspectCheck = verdict.checks.find((check) => check.suspect && check.id === "aspect-ratio");
   const width = verdict.metadata?.width ?? aspectCheck?.metrics?.width ?? 0;

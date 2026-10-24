@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../electron/shared/contracts/mediaImportPolicy';
 import { CanvasAddPreferenceActions } from './CanvasAddPreferenceActions'
 import { useCanvasMenuPreferenceStore } from '../store/canvasMenuPreferenceStore'
 import React, { type JSX } from 'react'
@@ -74,7 +75,7 @@ function useLocalFilePicker(onFiles: (files: File[]) => void): { input: JSX.Elem
       multiple
       // 画布上只有图片 / 视频有落点（音频的家是素材库 → 时间轴），让选择器自己筛掉，
       // 而不是让用户选完再被静默丢弃。
-      accept="image/*,video/*"
+      accept={acceptAttrForSurface('generation-canvas')}
       className="hidden"
       aria-hidden="true"
       tabIndex={-1}

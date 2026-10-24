@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import fs from "node:fs";
 import { registerAppWindow } from '../appWindowRegistry';
 import os from "node:os";
@@ -139,7 +140,7 @@ async function waitForServer(serverUrl: string, timeoutMs = 12_000): Promise<voi
     if (status.ok) return;
     await sleep(400);
   }
-  throw new Error("即梦 Web 本地任务服务启动超时");
+  throw new Error(desktopT("custom.jimengWeb.runner.text1"));
 }
 
 async function waitForClient(serverUrl: string, timeoutMs = 12_000): Promise<boolean> {
@@ -171,7 +172,7 @@ async function ensureMockServer(serverUrl: string, extensionDir: string): Promis
   const existing = await probeJimengWebServer(serverUrl);
   if (existing.ok) return;
   if (existing.reachable) {
-    throw new Error(`${serverUrl} 已被其他或不兼容的服务占用：${existing.error || "实例身份不匹配"}`);
+    throw new Error(desktopT("custom.jimengWeb.runner.text2", { value0: `${serverUrl}`, value1: `${existing.error || "实例身份不匹配"}` }));
   }
   if (serverProcess && !serverProcess.killed) {
     await waitForServer(serverUrl);
@@ -248,7 +249,7 @@ async function setExtensionApiBaseUrl(serverUrl: string): Promise<void> {
   if (!currentPanelUrl) return;
   const setupWindow = new BrowserWindow(
     runnerWindowOptions({
-      title: "即梦 Web 扩展初始化",
+      title: desktopT("custom.jimengWeb.runner.text3"),
       width: 480,
       height: 360,
       show: false,
@@ -278,7 +279,7 @@ async function ensureJimengWindow(): Promise<BrowserWindow> {
 
   jimengWindow = new BrowserWindow(
     runnerWindowOptions({
-      title: "即梦 Web 运行器 - Nomi",
+      title: desktopT("custom.jimengWeb.runner.text4"),
       width: 1220,
       height: 860,
       show: true,
@@ -326,7 +327,7 @@ async function ensureFallbackPanelWindow(): Promise<void> {
   }
   fallbackPanelWindow = new BrowserWindow(
     runnerWindowOptions({
-      title: "即梦 Web 扩展面板 - Nomi",
+      title: desktopT("custom.jimengWeb.runner.text5"),
       width: 420,
       height: 820,
       show: false,

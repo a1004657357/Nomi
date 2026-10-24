@@ -1,5 +1,6 @@
 import type { RefObject } from 'react'
-import * as THREE from 'three'
+import type * as THREE from 'three'
+import { declareStoreLifetime } from '../../../../project/storeLifetime'
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import type { Scene3DTimeline, Scene3DTrajectory, Scene3DTrajectoryBinding, Scene3DTrajectoryGroup } from '../scene3dTypes'
@@ -120,3 +121,26 @@ export function setScene3DTrajectorySnapshot(snapshot: {
 }): void {
   useScene3DTrajectoryRuntimeStore.getState().setSceneSnapshot(snapshot)
 }
+
+export const scene3DTrajectoryRuntimeStoreLifetime = declareStoreLifetime({
+  store: 'useScene3DTrajectoryRuntimeStore',
+  fields: {
+    playheadSeconds: 'project',
+    trajectories: 'project',
+    trajectoryBindings: 'project',
+    trajectoryGroups: 'project',
+    sceneTimeline: 'project',
+    objectRefMap: 'view',
+  },
+  releaseProject: () => {
+    heldObjectIds.clear()
+    // Live refs are released by marker unmounts, never by clearing the registry underneath them.
+    useScene3DTrajectoryRuntimeStore.setState({
+      playheadSeconds: 0,
+      trajectories: [],
+      trajectoryBindings: [],
+      trajectoryGroups: [],
+      sceneTimeline: { totalDuration: 10 },
+    })
+  },
+})

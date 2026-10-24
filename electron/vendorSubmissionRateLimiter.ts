@@ -1,3 +1,4 @@
+import { desktopT } from "./desktopStrings";
 import fs from "node:fs";
 import path from "node:path";
 import { app } from "electron";
@@ -113,7 +114,7 @@ function readLedger(filePath: string, now: number): RateLedger {
   if (!fs.existsSync(filePath)) return emptyLedger(now);
   const raw = readJsonFile(filePath) as Partial<RateLedger>;
   if (raw.version !== LEDGER_VERSION || !raw.nextStartByRateKey || typeof raw.nextStartByRateKey !== "object") {
-    throw new Error("服务商频率控制台账格式无效，请关闭 Nomi 后删除该台账再重试");
+    throw new Error(desktopT("custom.vendorSubmissionRateLimiter.text1"));
   }
   const nextStartByRateKey: Record<string, number> = {};
   for (const [key, value] of Object.entries(raw.nextStartByRateKey)) {
@@ -152,7 +153,7 @@ async function acquireLedgerLock(input: {
         continue;
       }
       if (input.now() - startedAt >= input.timeoutMs) {
-        throw new Error("服务商频率控制正被另一个 Nomi 进程占用，请稍后重试", { cause: error });
+        throw new Error(desktopT("custom.vendorSubmissionRateLimiter.text2"), { cause: error });
       }
       await input.sleep(input.retryMs);
     }

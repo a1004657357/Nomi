@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 /**
  * Gate 3 Slice 2 — ProviderAdapter 接口合约（§12.2）+ cancel/download 通用化。
  *
@@ -175,7 +176,7 @@ export async function downloadProviderResult(
 ): Promise<{ bytes: Buffer; mimeType: string; sha256?: string }> {
   const decl = getAdapterDeclaration(providerId)
   const url = result.providerUrl ?? result.url
-  if (!url) throw new Error('downloadProviderResult: 无 url')
+  if (!url) throw new Error(desktopT("custom.catalog.providerAdapterContract.text1"))
   if (!decl.supportsDownloadRetry || !decl.downloadRetry) {
     return downloadImpl(url) // 单次（既有行为）
   }
@@ -192,7 +193,7 @@ export async function downloadProviderResult(
       }
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(`download 失败（${maxAttempts} 次重试）`)
+  throw lastError instanceof Error ? lastError : new Error(desktopT("custom.catalog.providerAdapterContract.text2", { value0: `${maxAttempts}` }))
 }
 
 function sleep(ms: number): Promise<void> {

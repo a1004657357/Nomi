@@ -291,10 +291,10 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   const bridgeResult = await dispatchWebBridgeTask({
     vendor, model, request, wantedKind, projectId, nodeId, grantId, admitTask,
     errors: {
-      unsupported: label => new Error(`${label} 当前不支持该生成类型`),
-      projectRequired: label => new Error(`${label} 需要先打开并保存到本地项目后再生成`),
-      idempotencyRequired: () => new Error("Pavo Web 真实任务缺少本轮确认标识，已拒绝提交以避免重复扣费"),
-      runnerUnavailable: (label, reason) => new Error(`${label} 扩展运行器启动失败：${reason || "扩展客户端没有建立任务连接"}`),
+      unsupported: label => new Error(desktopT("custom.runtime.text1", { value0: `${label}` })),
+      projectRequired: label => new Error(desktopT("custom.runtime.text2", { value0: `${label}` })),
+      idempotencyRequired: () => new Error(desktopT("custom.runtime.text3")),
+      runnerUnavailable: (label, reason) => new Error(desktopT("custom.runtime.text4", { value0: `${label}`, value1: `${reason || "扩展客户端没有建立任务连接"}` })),
     },
   });
   if (bridgeResult) return bridgeResult;

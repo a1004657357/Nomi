@@ -788,7 +788,7 @@ export function resolveAssetIngestionWithFallback(
   //    (litterbox → tmpfiles)，单 host 限速/宕机时自动切下一个。走到这里说明上面更优的通道都没命中
   //    （图片几乎总有 apimart；视频缺 KIE 时此处接住）。NET：上传零配置"开箱即用"，诚实错误
   //    只在链里**所有** host 都不可达时才触发。
-  const anonymousIngestion = targetVendor?.key === "agnes" && ingestionAccepts(AGNES_UPLOAD_CHAIN, mediaKind)
+  const anonymousIngestion = isVendorOfBuiltin(allVendors, targetVendor?.key, 'agnes') && ingestionAccepts(AGNES_UPLOAD_CHAIN, mediaKind)
     ? AGNES_UPLOAD_CHAIN
     : ANON_UPLOAD_CHAIN;
   if (ingestionAccepts(anonymousIngestion, mediaKind)) push(anonymousIngestion, "", null);

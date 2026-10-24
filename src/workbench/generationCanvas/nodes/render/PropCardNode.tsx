@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 /**
  * PropCardNode body — 道具分类节点（v0.8 极简版）。
  *
@@ -47,7 +48,7 @@ function PropCardNodeImpl({ node }: Props): JSX.Element {
             className="w-full h-full object-contain object-center select-none pointer-events-none"
           />
         ) : (
-          <UploadFallback accept="image/*" label={t('generationCommon.card.prop.image')} onUpload={handleUpload} kind="prop" />
+          <UploadFallback accept={acceptAttrForSurface('image-reference')} label={t('generationCommon.card.prop.image')} onUpload={handleUpload} kind="prop" />
         )}
       </div>
 

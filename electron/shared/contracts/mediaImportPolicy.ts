@@ -33,6 +33,11 @@ export type MediaImportSurfaceId =
   | 'agent-composer'
   | 'director-3d'
   | 'panorama'
+  | 'image-reference'
+  | 'audio-reference'
+  | 'media-reference'
+  | 'browser-capture'
+  | 'browser-prompt-image'
 
 /** 素材库展示的媒体种类；项目存储还承载文档/文本产物。 */
 export const LIBRARY_MEDIA_KINDS: readonly MediaKind[] = ['image', 'video', 'audio', 'model3d']
@@ -55,6 +60,41 @@ export type MediaImportSurface = {
 }
 
 export const MEDIA_IMPORT_SURFACES: Readonly<Record<MediaImportSurfaceId, MediaImportSurface>> = {
+  'image-reference': {
+    id: 'image-reference',
+    kinds: ['image'],
+    narrowedBecause: '图片参考槽接收静态图像，不把视频、音频或模型二进制当作图像解码',
+    hardCapBytes: null,
+    hardCapBecause: null,
+  },
+  'audio-reference': {
+    id: 'audio-reference',
+    kinds: ['audio'],
+    narrowedBecause: '音频参考槽只承载音频轨，不能把图像或模型二进制作为音频播放',
+    hardCapBytes: null,
+    hardCapBecause: null,
+  },
+  'media-reference': {
+    id: 'media-reference',
+    kinds: ['image', 'video', 'audio'],
+    narrowedBecause: '媒体引用选择器承载可预览的图像、视频和音频，不承载文稿与模型二进制',
+    hardCapBytes: null,
+    hardCapBecause: null,
+  },
+  'browser-capture': {
+    id: 'browser-capture',
+    kinds: ['image', 'video'],
+    narrowedBecause: '网页捕捞仅处理可解码图像或视频，不把网页与模型文件冒充媒体',
+    hardCapBytes: 200 * 1024 * 1024,
+    hardCapBecause: '保留浏览器采集的既有单次传输预算；data URL 与捕捞降级会把原件编码成 base64 跨 Chromium 进程传递，原件、编码串和解码缓冲可同时驻留内存',
+  },
+  'browser-prompt-image': {
+    id: 'browser-prompt-image',
+    kinds: ['image'],
+    narrowedBecause: '网页提示词图片附件只承载图像数据，不承载视频或模型二进制',
+    hardCapBytes: 16 * 1024 * 1024,
+    hardCapBecause: '保留网页图片提示词的既有 16 MiB 单次 IPC 预算；整个附件必须以 base64 在页面、主进程和提示词上下文间传递，不能流式释放',
+  },
   'project-storage': {
     id: 'project-storage',
     kinds: [...LIBRARY_MEDIA_KINDS, 'document', 'text'],

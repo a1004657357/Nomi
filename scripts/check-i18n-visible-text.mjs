@@ -482,6 +482,8 @@ const VENDOR_SEED_LIST_FILE = path.join(ELECTRON_ROOT, 'catalog', 'builtinVendor
 // \u800c\u4e0d\u662f\u300c\u8be5\u54c1\u724c\u6ca1\u6709\u4e2d\u6587\u540d\u300d\u2014\u2014\u540e\u8005\u662f\u4e2a\u6ca1\u53bb\u9010\u5bb6\u6838\u5b9e\u7684\u5426\u5b9a\u65ad\u8a00,\u4e0d\u8be5\u5199\u6210\u65e2\u6210\u4e8b\u5b9e\u3002
 // \u67d0\u5bb6\u65e5\u540e\u542f\u7528\u5b98\u65b9\u4e2d\u6587\u54c1\u724c\u540d\u65f6,\u8981\u4eba\u628a\u5b83\u4ece\u8fd9\u5f20\u8868\u632a\u8fdb\u8bcd\u5178(\u540d\u5b57\u672c\u8eab\u6df7\u8fdb\u4e2d\u6587\u624d\u4f1a\u81ea\u52a8\u62a5\u7ea2)\u3002
 const LOCALE_NEUTRAL_VENDOR_NAMES = new Map([
+  ['Codex', 'CODEX_VENDOR_SEED uses the globally written Codex brand name; this local CLI integration has no translated vendor name'],
+  ['Pixstag', 'PIXSTAG_VENDOR_SEED uses the Pixstag brand name for the pixstag API connection'],
   ['Kie.ai', '\u5e73\u53f0\u54c1\u724c\u540d,\u79cd\u5b50 baseUrl api.kie.ai'],
   ['APIMart', '\u5e73\u53f0\u54c1\u724c\u540d,\u79cd\u5b50 baseUrl api.apimart.ai'],
   ['Agnes AI', '\u5e73\u53f0\u54c1\u724c\u540d,\u79cd\u5b50 baseUrl apihub.agnes-ai.com'],

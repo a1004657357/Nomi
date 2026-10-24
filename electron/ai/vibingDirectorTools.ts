@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import { z } from 'zod'
 
 const finiteNumber = z.number().finite()
@@ -91,19 +92,19 @@ const canonicalPlanSchema = z.object({
 }).superRefine((plan, context) => {
   plan.actions.forEach((action, index) => {
     if (action.op === 'move_object' && action.position === undefined && action.rotation === undefined && action.scale === undefined && action.name === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'move_object 至少需要一个要修改的字段', path: ['actions', index] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: desktopT("custom.ai.vibingDirectorTools.text1"), path: ['actions', index] })
     }
     if (action.op === 'set_camera' && action.cameraRef === undefined && action.name === undefined && action.position === undefined && action.lookAt === undefined && action.fov === undefined && action.aspectRatio === undefined && action.framing === undefined && action.targetRef === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'set_camera 至少需要一个要修改的字段', path: ['actions', index] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: desktopT("custom.ai.vibingDirectorTools.text2"), path: ['actions', index] })
     }
     if (action.op === 'set_camera' && action.framing === 'target' && action.targetRef === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'target 取景必须指定 targetRef', path: ['actions', index, 'targetRef'] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: desktopT("custom.ai.vibingDirectorTools.text3"), path: ['actions', index, 'targetRef'] })
     }
     if (action.op === 'set_relation' && action.kind === 'distance' && action.distance === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'distance 空间关系必须指定 distance', path: ['actions', index, 'distance'] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: desktopT("custom.ai.vibingDirectorTools.text4"), path: ['actions', index, 'distance'] })
     }
     if (action.op === 'set_relation' && action.subjectRef === action.targetRef) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: '空间关系不能引用同一个对象', path: ['actions', index, 'targetRef'] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: desktopT("custom.ai.vibingDirectorTools.text5"), path: ['actions', index, 'targetRef'] })
     }
   })
 })

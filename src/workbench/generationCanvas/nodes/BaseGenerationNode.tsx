@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../electron/shared/contracts/mediaImportPolicy';
 import NodeGenerationComposer from './LazyNodeGenerationComposer'
 import { notify } from '../../../ui/notificationPolicy'
 import React, { type JSX } from 'react'
@@ -284,7 +285,7 @@ function BaseGenerationNodeImpl({
             ref={panoramaUploadInputRef}
             className="hidden"
             type="file"
-            accept="image/*"
+            accept={acceptAttrForSurface('image-reference')}
             onChange={handlePanoramaFileChange}
           />
         </FloatingToolbarShell>

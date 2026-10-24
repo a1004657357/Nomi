@@ -1,3 +1,4 @@
+import { desktopT } from "../../desktopStrings";
 import { BrowserWindow } from "electron";
 import type { Rectangle, WebContents } from "electron";
 import { browserViews, browserViewsByWindow } from "./browserViewState";
@@ -70,7 +71,7 @@ export function normalizeBrowserUrl(url: unknown): string {
     // 记录违规（不论是否 enforce，供审计）；enforce 时抛错
     logWarn('browser', 'allowlist-target-unlisted', { enforced: enforce, reason: allowlistResult.reason });
     if (enforce) {
-      throw new Error(`browser bridge 拒绝（§22.3）：${allowlistResult.reason}`);
+      throw new Error(desktopT("custom.browser.core.browserViewUtils.text1", { value0: `${allowlistResult.reason}` }));
     }
   }
   return parsed.toString();

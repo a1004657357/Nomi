@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 /**
  * SceneCardNode body — 场景分类节点（v0.8 极简版）。
  *
@@ -48,7 +49,7 @@ function SceneCardNodeImpl({ node }: Props): JSX.Element {
             className="w-full h-full object-contain object-center select-none pointer-events-none"
           />
         ) : (
-          <UploadFallback accept="image/*" label={t('generationCommon.card.scene.image')} onUpload={handleUpload} kind="scene" />
+          <UploadFallback accept={acceptAttrForSurface('image-reference')} label={t('generationCommon.card.scene.image')} onUpload={handleUpload} kind="scene" />
         )}
       </div>
 

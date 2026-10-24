@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -105,7 +106,7 @@ function catalogId(name: string): string {
 function assetNameFromCatalogId(id: string): string {
   const prefix = 'kenney:furniture-kit:'
   const name = String(id || '').trim().startsWith(prefix) ? String(id).trim().slice(prefix.length) : ''
-  if (!KENNEY_FURNITURE_ASSET_NAMES.includes(name)) throw new Error('Director 资产目录项不存在或已失效')
+  if (!KENNEY_FURNITURE_ASSET_NAMES.includes(name)) throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text1"))
   return name
 }
 
@@ -149,25 +150,25 @@ function findEndOfCentralDirectory(archive: Buffer): number {
   for (let offset = archive.length - 22; offset >= minimumOffset; offset -= 1) {
     if (archive.readUInt32LE(offset) === 0x06054b50) return offset
   }
-  throw new Error('Kenney 资产包 ZIP 目录损坏')
+  throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text2"))
 }
 
 export function extractVerifiedZipEntry(archive: Buffer, entryName: string): Buffer {
   if (!entryName || entryName.includes('..') || path.isAbsolute(entryName)) {
-    throw new Error('ZIP 条目路径不安全')
+    throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text3"))
   }
   const endOffset = findEndOfCentralDirectory(archive)
   const centralDirectorySize = archive.readUInt32LE(endOffset + 12)
   const centralDirectoryOffset = archive.readUInt32LE(endOffset + 16)
   const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize
   if (centralDirectoryEnd > endOffset || centralDirectoryOffset < 0) {
-    throw new Error('Kenney 资产包 ZIP 中央目录越界')
+    throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text4"))
   }
 
   let cursor = centralDirectoryOffset
   while (cursor < centralDirectoryEnd) {
     if (cursor + 46 > archive.length || archive.readUInt32LE(cursor) !== 0x02014b50) {
-      throw new Error('Kenney 资产包 ZIP 中央目录损坏')
+      throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text5"))
     }
     const flags = archive.readUInt16LE(cursor + 8)
     const compression = archive.readUInt16LE(cursor + 10)
@@ -182,29 +183,29 @@ export function extractVerifiedZipEntry(archive: Buffer, entryName: string): Buf
     const fileName = archive.subarray(fileNameStart, fileNameEnd).toString('utf8')
     cursor = fileNameEnd + extraLength + commentLength
     if (fileName !== entryName) continue
-    if ((flags & 0x1) !== 0) throw new Error('不支持加密的 Director 资产包')
+    if ((flags & 0x1) !== 0) throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text6"))
     if (uncompressedSize <= 0 || uncompressedSize > 16 * 1024 * 1024) {
-      throw new Error('Director 资产文件大小异常')
+      throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text7"))
     }
     if (localHeaderOffset + 30 > archive.length || archive.readUInt32LE(localHeaderOffset) !== 0x04034b50) {
-      throw new Error('Kenney 资产包 ZIP 本地条目损坏')
+      throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text8"))
     }
     const localFileNameLength = archive.readUInt16LE(localHeaderOffset + 26)
     const localExtraLength = archive.readUInt16LE(localHeaderOffset + 28)
     const dataStart = localHeaderOffset + 30 + localFileNameLength + localExtraLength
     const dataEnd = dataStart + compressedSize
-    if (dataEnd > archive.length) throw new Error('Kenney 资产包 ZIP 条目越界')
+    if (dataEnd > archive.length) throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text9"))
     const compressed = archive.subarray(dataStart, dataEnd)
     const bytes = compression === 0
       ? Buffer.from(compressed)
       : compression === 8
         ? zlib.inflateRawSync(compressed, { maxOutputLength: 16 * 1024 * 1024 })
         : null
-    if (!bytes) throw new Error(`不支持 ZIP 压缩算法 ${compression}`)
-    if (bytes.length !== uncompressedSize) throw new Error('Kenney 资产文件解压长度不一致')
+    if (!bytes) throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text10", { value0: `${compression}` }))
+    if (bytes.length !== uncompressedSize) throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text11"))
     return bytes
   }
-  throw new Error('Kenney 资产包中缺少请求的模型')
+  throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text12"))
 }
 
 function writeFileAtomic(targetPath: string, bytes: Buffer): void {
@@ -240,9 +241,9 @@ async function loadVerifiedArchive(cacheDir: string, options: CatalogLoadOptions
     )
     const finalUrl = new URL(result.finalUrl)
     if (finalUrl.protocol !== 'https:' || !['kenney.nl', 'www.kenney.nl'].includes(finalUrl.hostname)) {
-      throw new Error('Kenney 资产包重定向到了未授权来源')
+      throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text13"))
     }
-    if (sha256(result.bytes) !== expectedHash) throw new Error('Kenney 资产包完整性校验失败')
+    if (sha256(result.bytes) !== expectedHash) throw new Error(desktopT("custom.blender.vibingDirectorCatalog.text14"))
     writeFileAtomic(archivePath, result.bytes)
     return result.bytes
   })()

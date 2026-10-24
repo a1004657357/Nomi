@@ -97,8 +97,10 @@ test('阳性对照⑤：入口指向一个不发请求的 dispatchSite → 红',
   fs.cpSync(path.join(repoRoot, 'electron'), path.join(root, 'electron'), { recursive: true })
   fs.cpSync(path.join(repoRoot, 'src'), path.join(root, 'src'), { recursive: true })
   const file = path.join(root, 'electron/parity/generationEntrances.ts')
-  fs.writeFileSync(file, fs.readFileSync(file, 'utf8')
-    .replace('dispatchSite: "electron/runtime.ts:309 runTask"', 'dispatchSite: "electron/nowhere.ts:1 runTask"'))
+  const source = fs.readFileSync(file, 'utf8')
+  const marker = 'dispatchSite: "electron/tasks/profileTaskExecution.ts:executeProfileOperation"'
+  assert.ok(source.includes(marker), 'mutation must target a current real dispatch site')
+  fs.writeFileSync(file, source.replace(marker, 'dispatchSite: "electron/nowhere.ts:1 runTask"'))
   const problems = checkGenerationEntrances(root)
   assert.ok(problems.some((problem) => problem.includes('不在反向扫到的调用点文件里')), problems.join(' | '))
 })

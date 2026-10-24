@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 /**
  * Gate 8 — 隔离真实生产验收 harness（§27 Gate 8 + §25.5 真实 Provider 验收）。
  *
@@ -18,7 +19,7 @@ import { GenerationBudget, type BudgetSnapshot } from '../tasks/generationBudget
 
 /** §27 Gate 8 隔离测试项目的剧本 fixture（6 镜短片；不含真实资产，仅结构）。 */
 export const ISOLATED_TEST_SCREENPLAY = {
-  title: 'Gate 8 验收短片：天台对峙',
+  title: desktopT("custom.gate8.isolatedProductionAcceptanceHarness.text1"),
   logline: '林夏在天台接到反派电话，从迟疑到转身面对。',
   shots: [
     { index: 1, kind: 'image' as const, scene: '天台远景', shot: '建立空间', durationSec: 0 },

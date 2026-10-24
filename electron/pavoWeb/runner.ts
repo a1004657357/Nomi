@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import fs from "node:fs";
 import { registerAppWindow } from '../appWindowRegistry';
 import path from "node:path";
@@ -79,7 +80,7 @@ async function waitForServer(serverUrl: string): Promise<void> {
     if ((await probePavoWebServer(serverUrl)).ok) return;
     await sleep(350);
   }
-  throw new Error("Pavo Web 本地任务服务启动超时");
+  throw new Error(desktopT("custom.pavoWeb.runner.text1"));
 }
 
 async function waitForClient(serverUrl: string, timeoutMs: number): Promise<boolean> {
@@ -112,7 +113,7 @@ export function pavoWebServerProcessEnv(serverUrl: string): NodeJS.ProcessEnv {
 async function ensureServer(serverUrl: string, extensionDir: string): Promise<void> {
   const existing = await probePavoWebServer(serverUrl);
   if (existing.ok) return;
-  if (existing.reachable) throw new Error(`${serverUrl} 已被不兼容的服务占用`);
+  if (existing.reachable) throw new Error(desktopT("custom.pavoWeb.runner.text2", { value0: `${serverUrl}` }));
   if (serverProcess && !serverProcess.killed) return waitForServer(serverUrl);
   const child = spawn(process.env.NOMI_PAVO_WEB_NODE?.trim() || process.execPath, ["mock-server.js"], {
     cwd: extensionDir,

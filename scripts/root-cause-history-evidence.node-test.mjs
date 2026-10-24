@@ -25,7 +25,7 @@ test('integration history proves an added-then-removed path without inventing ot
     fs.unlinkSync(path.join(cwd, removed))
     git('add', '-u')
     git('commit', '-m', 'remove legacy')
-    assert.equal(git('diff', '--name-only', base, 'HEAD'), '')
+  assert.equal(git('diff', '-z', '--name-only', base, 'HEAD'), '')
     assert.deepEqual(historicalRemovedPaths(base, [removed, 'never-existed.ts', 'base.txt'], { cwd }), [removed])
     assert.deepEqual(historicalRemovedPaths('HEAD', [removed], { cwd }), [])
     assert.throws(() => historicalRemovedPaths('missing-base', [removed], { cwd }))

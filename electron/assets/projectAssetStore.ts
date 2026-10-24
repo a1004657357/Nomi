@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import { assetIdentityOf, findProjectAssetById } from "./assetReferenceIdentity";
 import { contentHashForFile, isContentAddressedUpload, persistUploadBytes, persistUploadFile, storedAssetRecord } from './uploadContentStore';
 import { captureAssetWriteContext, type AssetWriteContext } from './assetWriteContext';
@@ -622,8 +623,8 @@ export function inspectProjectModel3dAsset(payload: unknown): GlbValidationRepor
   const raw = payload as JsonRecord;
   const sourceUrl = String(raw.url || "").trim();
   const sourcePath = absolutePathFromLocalAssetUrlAnyProject(sourceUrl);
-  if (!sourcePath) throw new Error("3D 模型本地资产不存在或已失效");
-  if (path.extname(sourcePath).toLowerCase() !== ".glb") throw new Error("当前只支持校验 GLB 2.0 模型");
+  if (!sourcePath) throw new Error(desktopT("custom.assets.projectAssetStore.text1"));
+  if (path.extname(sourcePath).toLowerCase() !== ".glb") throw new Error(desktopT("custom.assets.projectAssetStore.text2"));
   return inspectGlb(fs.readFileSync(sourcePath));
 }
 
@@ -639,7 +640,7 @@ export async function inspectProjectVideoAsset(
   const raw = payload as JsonRecord;
   const sourceUrl = String(raw.url || "").trim();
   const sourcePath = (deps.resolvePath ?? absolutePathFromLocalAssetUrlAnyProject)(sourceUrl);
-  if (!sourcePath) throw new Error("视频本地资产不存在或已失效");
+  if (!sourcePath) throw new Error(desktopT("custom.assets.projectAssetStore.text3"));
   return (deps.inspectVideo ?? runTechnicalCheck)(sourcePath, "video");
 }
 

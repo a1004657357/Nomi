@@ -1,3 +1,4 @@
+import { stationTimeout } from './_station-budget.mjs'
 // Goal feature smoke: isolated Electron, local files only, no provider requests.
 import fs from 'node:fs'
 import os from 'node:os'
@@ -121,26 +122,26 @@ try {
   }, { projectName, demoVideoPath })
 
   await win.reload()
-  await win.getByText('项目库', { exact: false }).first().waitFor({ timeout: 10_000 })
+  await win.getByText('项目库', { exact: false }).first().waitFor({ timeout: stationTimeout() })
   await win.locator('[data-project-card]', { hasText: projectName }).first().click()
   const creationTab = win.getByRole('button', { name: '创作', exact: false }).first()
-  await creationTab.waitFor({ timeout: 10_000 })
+  await creationTab.waitFor({ timeout: stationTimeout() })
   await creationTab.click()
 
   const importButton = win.locator('button[aria-label="导入剧本"]')
-  await importButton.waitFor({ timeout: 10_000 })
+  await importButton.waitFor({ timeout: stationTimeout() })
   assert(await importButton.isVisible(), '创作区存在可见的剧本导入入口')
   const importInput = win.locator('input[type="file"][aria-label="选择剧本文件"]')
   assert(await importInput.count() === 1, '创作区挂载剧本文件选择器')
   await importInput.setInputFiles(scriptPath)
-  await win.getByText('咖啡师把咖啡杯放到窗边桌面。', { exact: true }).waitFor({ timeout: 10_000 })
+  await win.getByText('咖啡师把咖啡杯放到窗边桌面。', { exact: true }).waitFor({ timeout: stationTimeout() })
   assert(
     !(await win.getByRole('button', { name: '提取设定', exact: true }).isDisabled()),
     '导入后角色/场景/道具提取入口可用',
   )
 
   await win.getByRole('button', { name: '生成', exact: false }).first().click()
-  await win.locator('[aria-label="AI 影像创作画布"]').waitFor({ timeout: 10_000 })
+  await win.locator('[aria-label="AI 影像创作画布"]').waitFor({ timeout: stationTimeout() })
 
   const performanceButton = win.locator('button[aria-label*="流畅模式"]')
   await performanceButton.click()
@@ -151,24 +152,24 @@ try {
   await win.evaluate(() => window.dispatchEvent(new CustomEvent('nomi-focus-generation-node', {
     detail: { nodeId: 'goal-image-compare' },
   })))
-  await win.locator('[data-node-id="goal-image-compare"][data-kind="compare"]').waitFor({ timeout: 10_000 })
+  await win.locator('[data-node-id="goal-image-compare"][data-kind="compare"]').waitFor({ timeout: stationTimeout() })
   const compareEmptyState = win.getByText('连接两张图片进行对比', { exact: true })
-  await compareEmptyState.waitFor({ timeout: 10_000 })
+  await compareEmptyState.waitFor({ timeout: stationTimeout() })
   assert(await compareEmptyState.isVisible(), '图像对比节点真实渲染')
 
   await win.evaluate(() => window.dispatchEvent(new CustomEvent('nomi-focus-generation-node', {
     detail: { nodeId: 'goal-output-collector' },
   })))
-  await win.locator('[data-node-id="goal-output-collector"][data-kind="output"]').waitFor({ timeout: 10_000 })
+  await win.locator('[data-node-id="goal-output-collector"][data-kind="output"]').waitFor({ timeout: stationTimeout() })
   const collectorEmptyState = win.getByText('把已有结果的图片或视频节点连接到这里。', { exact: true })
-  await collectorEmptyState.waitFor({ timeout: 10_000 })
+  await collectorEmptyState.waitFor({ timeout: stationTimeout() })
   assert(await collectorEmptyState.isVisible(), '输出收集节点真实渲染')
 
   await win.evaluate(() => window.dispatchEvent(new CustomEvent('nomi-focus-generation-node', {
     detail: { nodeId: 'goal-local-video' },
   })))
   const localVideoNode = win.locator('[data-node-id="goal-local-video"]')
-  await localVideoNode.waitFor({ timeout: 10_000 })
+  await localVideoNode.waitFor({ timeout: stationTimeout() })
   await localVideoNode.click()
   const extracted = await win.evaluate(async ({ projectId, videoUrl, durationSeconds }) => {
     const count = 8
@@ -178,21 +179,21 @@ try {
   }, fixture)
   assert(extracted.frames.filter((frame) => frame.url).length === 8, 'Electron 批量抽帧桥返回 8 张真实帧')
   const inspectButton = win.getByRole('button', { name: '检查关键帧' })
-  await inspectButton.waitFor({ timeout: 10_000 })
+  await inspectButton.waitFor({ timeout: stationTimeout() })
   await inspectButton.click()
   const inspector = win.getByRole('dialog', { name: '视频关键帧检查器' })
-  await inspector.waitFor({ timeout: 10_000 })
+  await inspector.waitFor({ timeout: stationTimeout() })
   const createFrames = inspector.getByRole('button', { name: /创建 8 个关键帧节点/ })
-  await createFrames.waitFor({ timeout: 60_000 })
+  await createFrames.waitFor({ timeout: stationTimeout() })
   await createFrames.click()
-  await win.locator('[data-kind="keyframe"]').first().waitFor({ timeout: 10_000 })
+  await win.locator('[data-kind="keyframe"]').first().waitFor({ timeout: stationTimeout() })
   assert(await win.locator('[data-kind="keyframe"]').count() === 8, '关键帧检查器从本地视频创建 8 个节点')
 
   await win.getByRole('button', { name: '技能库', exact: true }).click()
   const skillLibrary = win.getByRole('region', { name: '技能库' })
-  await skillLibrary.waitFor({ timeout: 10_000 })
+  await skillLibrary.waitFor({ timeout: stationTimeout() })
   await skillLibrary.getByText('Nomi 内置', { exact: true }).click()
-  await skillLibrary.getByText('视频拆解与提示词反推', { exact: true }).waitFor({ timeout: 10_000 })
+  await skillLibrary.getByText('视频拆解与提示词反推', { exact: true }).waitFor({ timeout: stationTimeout() })
   assert(true, '视频拆解与提示词反推 Skill 在技能库可见')
 
   await win.screenshot({ path: evidencePath, fullPage: false })

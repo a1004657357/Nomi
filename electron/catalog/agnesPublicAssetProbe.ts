@@ -1,4 +1,6 @@
+import { desktopT } from "../desktopStrings";
 import type { ProfileKind } from "./types";
+import { isVendorOfBuiltin, type VendorIdentityEntry } from '../shared/builtinVendorIdentity';
 
 export type AgnesPublicImageProbeReport = {
   url: string;
@@ -44,8 +46,8 @@ function isPublicHttpUrl(value: string): boolean {
   }
 }
 
-export function isAgnesImageToVideoRequest(vendorKey: string, taskKind: ProfileKind): boolean {
-  return vendorKey === "agnes" && taskKind === "image_to_video";
+export function isAgnesImageToVideoRequest(vendorKey: string, taskKind: ProfileKind, vendors: readonly VendorIdentityEntry[] = []): boolean {
+  return isVendorOfBuiltin(vendors, vendorKey, 'agnes') && taskKind === "image_to_video";
 }
 
 export async function assertAgnesPublicImageReachable(
@@ -56,7 +58,7 @@ export async function assertAgnesPublicImageReachable(
   } = {},
 ): Promise<AgnesPublicImageProbeReport> {
   if (!isPublicHttpUrl(imageUrl)) {
-    throw new Error(`AGNES 参考图下载失败：参考图不是公网 HTTP(S) 地址：${imageUrl}`);
+    throw new Error(desktopT("custom.catalog.agnesPublicAssetProbe.text1", { value0: `${imageUrl}` }));
   }
 
   const timeoutMs = Math.max(250, Math.floor(options.timeoutMs ?? 12_000));
@@ -75,7 +77,7 @@ export async function assertAgnesPublicImageReachable(
     const detail = error instanceof Error && error.name === "AbortError"
       ? `${Math.round(timeoutMs / 1000)} 秒内无响应`
       : error instanceof Error ? error.message : String(error);
-    throw new Error(`AGNES 参考图下载失败：公网图片探测失败（${detail}）`, { cause: error });
+    throw new Error(desktopT("custom.catalog.agnesPublicAssetProbe.text2", { value0: `${detail}` }), { cause: error });
   } finally {
     clearTimeout(timer);
   }
@@ -86,14 +88,14 @@ export async function assertAgnesPublicImageReachable(
     .toLowerCase();
   void response.body?.cancel().catch(() => {});
   if (!response.ok) {
-    throw new Error(`AGNES 参考图下载失败：公网图片返回 HTTP ${response.status}`);
+    throw new Error(desktopT("custom.catalog.agnesPublicAssetProbe.text3", { value0: `${response.status}` }));
   }
   if (
     contentType
     && !contentType.startsWith("image/")
     && contentType !== "application/octet-stream"
   ) {
-    throw new Error(`AGNES 参考图下载失败：公网地址返回的内容不是图片（${contentType}）`);
+    throw new Error(desktopT("custom.catalog.agnesPublicAssetProbe.text4", { value0: `${contentType}` }));
   }
 
   return {

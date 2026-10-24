@@ -438,7 +438,7 @@ export const zhCN = {
   timelineEditor: zhTimelineEditor,
   creationAi: zhCreationAi,
   storyboardEditor: zhStoryboardEditor,
-  videoKeyframeInspector: { inspect: '检查关键帧', inspectHint: '均匀抽取并选择关键帧节点' },
+  videoKeyframeInspector: { inspect: '检查帧', inspectHint: '均匀抽取并选择关键帧节点' },
   generationCommon: zhGenerationCommon,
   runtime: zhRuntime,
   videoDepth: zhVideoDepth,

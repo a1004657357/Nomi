@@ -1,3 +1,4 @@
+import { desktopT } from "./desktopStrings";
 import { dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { getSettingsRoot } from './runtimePaths'
@@ -128,9 +129,9 @@ function registerDirectorIpc(setCancelBlenderRendersOnQuit: (cancel: () => numbe
   ipcMain.handle('nomi:vibing-director:import-asset', async (event, payload) => {
     assertTrustedSender(event)
     const raw = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
-    if (raw.source === 'kenney') throw new Error('Kenney 资产请使用 Director 内的开源资产目录导入')
+    if (raw.source === 'kenney') throw new Error(desktopT("custom.desktopIntegrationIpc.text1"))
     const selection = await dialog.showOpenDialog({
-      title: '导入 Blender 资产',
+      title: desktopT("custom.desktopIntegrationIpc.text2"),
       buttonLabel: '导入到 Director 资产库',
       properties: ['openFile'],
       filters: [{ name: 'Blender 资产', extensions: ['blend', 'glb', 'gltf', 'fbx', 'obj'] }],
@@ -184,7 +185,7 @@ function registerDirectorIpc(setCancelBlenderRendersOnQuit: (cancel: () => numbe
       blenderkit: 'https://www.blenderkit.com/asset-base/',
     } as const
     const key = String(source || '') as keyof typeof urls
-    if (!urls[key]) throw new Error('不支持的 Director 资产来源')
+    if (!urls[key]) throw new Error(desktopT("custom.desktopIntegrationIpc.text3"))
     await shell.openExternal(urls[key])
     return { opened: true }
   })
@@ -197,11 +198,11 @@ export function registerDesktopIntegrationIpc(options: RegisterDesktopIntegratio
     const source = raw.bytes
     const bytes = source instanceof ArrayBuffer ? Buffer.from(source)
       : ArrayBuffer.isView(source) ? Buffer.from(source.buffer, source.byteOffset, source.byteLength) : null
-    if (!bytes?.byteLength) throw new Error('文件内容为空')
-    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error('剧本文件不能超过 20 MB')
+    if (!bytes?.byteLength) throw new Error(desktopT("custom.desktopIntegrationIpc.text4"))
+    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error(desktopT("custom.desktopIntegrationIpc.text5"))
     const { extractTextFromBytes } = await import('./files/extractText')
     const text = await extractTextFromBytes(bytes, typeof raw.contentType === 'string' ? raw.contentType : '', typeof raw.fileName === 'string' ? raw.fileName : 'script.txt')
-    if (!text?.trim()) throw new Error('当前文件格式不支持，或没有可读取的文字')
+    if (!text?.trim()) throw new Error(desktopT("custom.desktopIntegrationIpc.text6"))
     return { text }
   })
   registerProviderLoginIpc()

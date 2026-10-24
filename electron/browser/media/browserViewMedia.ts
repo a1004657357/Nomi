@@ -1,4 +1,5 @@
 import { BrowserWindow } from "electron";
+import { MEDIA_IMPORT_SURFACES } from '../../shared/contracts/mediaImportPolicy';
 import type { DownloadItem, WebContents } from "electron";
 import fs from "node:fs";
 import os from "node:os";
@@ -29,7 +30,7 @@ import type {
   BrowserViewRecord,
 } from "../core/browserViewTypes";
 
-export const BROWSER_PROMPT_IMAGE_MAX_BYTES = 16 * 1024 * 1024;
+export const BROWSER_PROMPT_IMAGE_MAX_BYTES = MEDIA_IMPORT_SURFACES['browser-prompt-image'].hardCapBytes!;
 const browserBlobDownloadQueues = new Map<number, Promise<void>>();
 
 async function enqueueBrowserBlobDownload<T>(contents: WebContents, task: () => Promise<T>): Promise<T> {

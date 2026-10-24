@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import path from "node:path";
 import { parseDataUrl } from "../assets/assetBytes";
 import { extensionFromMime } from "../assets/assetPaths";
@@ -103,13 +104,13 @@ export function resolveJimengWebBaseUrl(value?: unknown): string {
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`即梦 Web 本地服务地址无效：${raw || "(空)"}`);
+    throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text1", { value0: `${raw || "(空)"}` }));
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`即梦 Web 本地服务只支持 http/https：${url.protocol}`);
+    throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text2", { value0: `${url.protocol}` }));
   }
   if (!isLoopbackHost(url.hostname)) {
-    throw new Error("即梦 Web 扩展桥当前只允许连接本机 127.0.0.1/localhost 服务");
+    throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text3"));
   }
   url.pathname = url.pathname.replace(/\/+$/, "");
   url.search = "";
@@ -147,7 +148,7 @@ async function fetchJson(
   }
   if (!response.ok) {
     const detail = isJsonRecord(json) ? firstString(json.error, json.message) : "";
-    throw new Error(`即梦 Web 本地服务 HTTP ${response.status}${detail ? `：${detail}` : ""}`);
+    throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text4", { value0: `${response.status}`, value1: `${detail ? `：${detail}` : ""}` }));
   }
   return json;
 }
@@ -286,7 +287,7 @@ function assertSupportedReferenceType(kind: Exclude<JimengReferenceKind, "audio"
   const normalized = normalizedContentType(contentType);
   if (!JIMENG_WEB_REFERENCE_MIME_TYPES[kind].has(normalized)) {
     const label = kind === "video" ? "视频" : "图片";
-    throw new Error(`即梦 Web ${label}参考格式不支持：${normalized}`);
+    throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text5", { value0: `${label}`, value1: `${normalized}` }));
   }
   return normalized;
 }
@@ -330,7 +331,7 @@ async function referenceFileFromSource(
 
   if (url.startsWith("nomi-local://")) {
     const local = readNomiLocalAsset(url);
-    if (!local) throw new Error("即梦 Web 参考素材读取失败：本地素材不存在或项目不匹配");
+    if (!local) throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text6"));
     const contentType = assertSupportedReferenceType(kind, local.contentType);
     return {
       fileName: local.fileName || contentTypeToName(kind, index, contentType, url),
@@ -355,13 +356,13 @@ async function referenceFileFromSource(
     };
   }
 
-  throw new Error(`即梦 Web 不支持的参考素材地址：${url.slice(0, 80)}`);
+  throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text7", { value0: `${url.slice(0, 80)}` }));
 }
 
 async function materializeReferenceFiles(sources: JimengReferenceSource[]): Promise<JimengReferenceFile[]> {
   if (sources.some((source) => source.kind === "audio")) {
     throw new Error(
-      "即梦 Web 扩展暂不支持音频参考；请改选「即梦 Seedance 2.0（会员）」即梦 CLI 模型并使用全能参考模式。",
+      desktopT("custom.jimengWeb.seedanceBridge.text8"),
     );
   }
   const indices = { image: 0, video: 0 };
@@ -460,10 +461,10 @@ export async function submitJimengWebTask(input: {
   );
   const bridgeStatus = await probeJimengWebServer(serverUrl, fetchImpl);
   if (!bridgeStatus.ok) {
-    throw new Error(`即梦 Web 网页桥不可用：${bridgeStatus.error || "本地服务未就绪"}`);
+    throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text9", { value0: `${bridgeStatus.error || "本地服务未就绪"}` }));
   }
   if ((bridgeStatus.sseClients || 0) < 1) {
-    throw new Error("即梦 Web 扩展运行器未连接：请先在「模型接入」启动即梦 Web 运行器");
+    throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text10"));
   }
   const payload = await buildJimengWebTaskPayload(input.request);
   const raw = await fetchJson(fetchImpl, serverUrl, "/api/tasks/push", {
@@ -473,7 +474,7 @@ export async function submitJimengWebTask(input: {
   });
   const taskCodes = isJsonRecord(raw) && Array.isArray(raw.taskCodes) ? raw.taskCodes : [];
   const taskCode = taskCodes.map((item) => String(item || "").trim()).find(Boolean) || "";
-  if (!taskCode) throw new Error("即梦 Web 本地服务没有返回 taskCode");
+  if (!taskCode) throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text11"));
   return { taskCode, serverUrl, payload, raw };
 }
 
@@ -598,7 +599,7 @@ async function downloadLocalServerFile(
     headers: jimengWebAuthHeaders(),
     signal: withTimeout(120_000),
   });
-  if (!response.ok) throw new Error(`即梦 Web 生成结果下载失败：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text12", { value0: `${response.status}` }));
   const arrayBuffer = await response.arrayBuffer();
   return {
     bytes: Buffer.from(arrayBuffer),
@@ -671,7 +672,7 @@ export async function queryJimengWebTask(input: {
         sourceQuality: file.quality || null,
       }, mediaType) as { id?: string; name?: string; data?: { url?: string } };
       const url = trim(saved.data?.url);
-      if (!url) throw new Error("即梦 Web 结果已生成，但写入 Nomi 项目资产失败");
+      if (!url) throw new Error(desktopT("custom.jimengWeb.seedanceBridge.text13"));
       return {
         type: mediaType,
         url,

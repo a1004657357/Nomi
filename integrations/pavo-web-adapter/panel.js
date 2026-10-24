@@ -514,11 +514,11 @@
   async function applyAndFill(task) {
     const mediaType = task.mediaType || 'video';
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      let ready = await waitForWorkbench(mediaType).catch(() => null);
+      const ready = await waitForWorkbench(mediaType).catch(() => null);
       if (!ready) {
         log('工作台不在创作态（可能在结果视图），尝试恢复');
         await send({ action: 'recoverComposer' }, 15_000).catch(() => null);
-        ready = await waitForWorkbench(mediaType);
+        await waitForWorkbench(mediaType);
       }
       const { referenceMode, ...preset } = { ...(task.modelConfig || {}) };
       try {
@@ -729,7 +729,7 @@
         images: Array.isArray(detail.images) ? detail.images : [] };
     }
     for (const task of eligible) {
-      let hit = null;
+      let hit;
       if (!task.pavoConversationId) {
         if (!complete || task.conversationSnapshotComplete !== true
           || !Array.isArray(task.conversationBaselineIds)) {

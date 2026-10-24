@@ -14,6 +14,20 @@ import {
 const SURFACES = Object.keys(MEDIA_IMPORT_SURFACES) as MediaImportSurfaceId[]
 
 describe('媒体导入准入 owner', () => {
+  it('owns browser transfer limits and dedicated reference-picker kinds', () => {
+    expect(MEDIA_IMPORT_SURFACES['browser-capture'].hardCapBytes).toBe(200 * 1024 * 1024)
+    expect(MEDIA_IMPORT_SURFACES['browser-prompt-image'].hardCapBytes).toBe(16 * 1024 * 1024)
+    for (const surface of ['browser-capture', 'browser-prompt-image'] as const) {
+      const cap = MEDIA_IMPORT_SURFACES[surface].hardCapBytes ?? 0
+      expect(admitMediaImport(surface, { kind: 'image', sizeBytes: cap }, null).ok).toBe(true)
+      expect(admitMediaImport(surface, { kind: 'image', sizeBytes: cap + 1 }, null)).toMatchObject({ ok: false, reason: 'over-hard-cap' })
+      expect(admitMediaImport(surface, { kind: 'image', sizeBytes: 1 }, { freeBytes: 0 })).toMatchObject({ ok: false, reason: 'no-disk-space' })
+    }
+    expect(MEDIA_IMPORT_SURFACES['image-reference'].kinds).toEqual(['image'])
+    expect(MEDIA_IMPORT_SURFACES['audio-reference'].kinds).toEqual(['audio'])
+    expect(MEDIA_IMPORT_SURFACES['media-reference'].kinds).toEqual(['image', 'video', 'audio'])
+  })
+
   it('project storage accepts document artifacts without expanding media library placement', () => {
     for (const kind of ['text', 'document'] as const) {
       expect(admitMediaImport('project-storage' as MediaImportSurfaceId, { kind, sizeBytes: 100 }, null).ok).toBe(true)

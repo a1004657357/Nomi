@@ -7,6 +7,14 @@ describe("Agnes upload fallback compatibility", () => {
   const local = "nomi-local://asset/test/frame.png";
   const read = () => ({ bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64"), contentType: "image/png", fileName: "frame.png" });
 
+  it.each([
+    { key: 'agnes--second-account' },
+    { key: 'private-relay', meta: { adapterCandidateRootVendorKey: 'agnes' } },
+  ])('retains the image upload policy for Agnes lineage $key', (vendor) => {
+    const candidates = resolveAssetIngestionWithFallback(vendor, [vendor], () => null, 'image');
+    expect(candidates.at(-1)?.ingestion).toBe(AGNES_UPLOAD_CHAIN);
+  });
+
   it("retains credentialed candidates ahead of the Uguu anonymous chain", () => {
     const candidates = resolveAssetIngestionWithFallback(target, [target, { key: "kie" }], (key) => key === "kie" ? "fixture-only" : null, "image");
     expect(candidates.map((candidate) => candidate.vendorKey)).toEqual(["kie", "nomi-relay", null]);

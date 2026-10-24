@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import { BrowserWindow, session, shell } from "electron";
 import { registerAppWindow } from '../appWindowRegistry';
 import { JIMENG_WEB_VENDOR_SEED } from "../catalog/jimengWeb";
@@ -58,7 +59,7 @@ export async function jimengWebOpenLogin(): Promise<{ ok: boolean; url: string }
   loginWindow = new BrowserWindow({
     width: 1220,
     height: 860,
-    title: "即梦 Web 登录",
+    title: desktopT("custom.jimengWeb.ipc.text1"),
     webPreferences: {
       session: getJimengSession(),
       contextIsolation: true,

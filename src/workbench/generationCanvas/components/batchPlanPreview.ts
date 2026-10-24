@@ -115,7 +115,7 @@ export const useBatchPlanPreviewStore = create<BatchPlanPreviewState>()((set, ge
     set({ running: true })
     try {
       await confirmAndRunPlan(plan, { initiator: 'user' })
-      set({ plan: null })
+      set({ plan: null, regenerationSourceNodeId: null })
     } catch (error: unknown) {
       reportCanvasFeedback(
         error instanceof Error && error.message
@@ -354,6 +354,6 @@ export async function runPlanWithToasts(
  */
 export const batchPlanPreviewStoreLifetime = declareStoreLifetime({
   store: 'useBatchPlanPreviewStore',
-  fields: { plan: 'project', running: 'project' },
-  releaseProject: () => useBatchPlanPreviewStore.setState({ plan: null, running: false }),
+  fields: { plan: 'project', regenerationSourceNodeId: 'project', running: 'project' },
+  releaseProject: () => useBatchPlanPreviewStore.setState({ plan: null, regenerationSourceNodeId: null, running: false }),
 })

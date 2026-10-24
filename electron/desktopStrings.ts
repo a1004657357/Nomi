@@ -10,9 +10,11 @@
 // i18n.ts 引来再原样导出，对既有消费者的公开面不变（P1：函数只此一处定义，i18n 只是转口）。
 
 import { getDesktopLocale, type DesktopLocale } from "./desktopLocale";
+import { enCustomIntegrations, zhCustomIntegrations } from './locales/customIntegrations';
 
 const translations = {
   "zh-CN": {
+    ...zhCustomIntegrations,
     "agent.legacySummary": "旧版摘要：",
     "agent.legacyUnverifiedTool": "旧版工具结果未验证。",
     "credential.invalid": "密钥验证失败，请检查密钥和权限后重试。",
@@ -234,6 +236,7 @@ const translations = {
     "customCall.emptyScript": "脚本为空——先写点内容或让 AI 生成",
   },
   en: {
+    ...enCustomIntegrations,
     "agent.legacySummary": "Legacy summary: ",
     "agent.legacyUnverifiedTool": "Legacy tool outcome is unverified.",
     "credential.invalid": "Key validation failed. Check the key and permissions, then retry.",
@@ -454,9 +457,7 @@ const translations = {
 export type DesktopTranslationKey = keyof (typeof translations)["zh-CN"];
 
 export function desktopT(key: DesktopTranslationKey, values: Record<string, string | number> = {}, locale: DesktopLocale = getDesktopLocale()): string {
-  let text: string = translations[locale][key];
-  for (const [name, value] of Object.entries(values)) {
-    text = text.replace(new RegExp(`\\{\\{${name}\\}\\}`, 'g'), String(value));
-  }
-  return text;
+  const text: string = translations[locale][key];
+  return text.replace(/\{\{([^{}]+)\}\}/g, (placeholder, name: string) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : placeholder);
 }

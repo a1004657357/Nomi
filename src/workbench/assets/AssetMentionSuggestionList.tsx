@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../electron/shared/contracts/mediaImportPolicy';
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { IconPlugConnected } from '@tabler/icons-react'
@@ -133,7 +134,7 @@ const AssetMentionSuggestionList = React.forwardRef<MentionSuggestionListRef, Pr
           >
             {upload.isDragging ? t('assetLibrary.mentionDropUpload') : t('assetLibrary.mentionUpload')}
           </button>
-          <input ref={upload.inputRef} type="file" accept="image/*,video/*,audio/*" onChange={upload.onInputChange} className="sr-only" />
+          <input ref={upload.inputRef} type="file" accept={acceptAttrForSurface('media-reference')} onChange={upload.onInputChange} className="sr-only" />
         </div>
       ) : null}
     </div>

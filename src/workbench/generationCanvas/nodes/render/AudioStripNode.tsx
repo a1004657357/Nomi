@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 import { notify } from '../../../../ui/notificationPolicy'
 /**
  * AudioStripNode body — 声音分类节点（spec §4.4，2026-06-15 升级）。
@@ -245,7 +246,7 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
     return <label className="block h-full w-full cursor-pointer bg-nomi-paper" title={t('generationCommon.audio.upload')}>
       {feedback ? <p role="status" className="m-0 px-2 py-1 text-caption text-nomi-ink-60">{feedback}</p> : null}
       <NodeEmptyState compact icon={<IconWaveSine size={20} stroke={1.6} />} title={t('generationCommon.nodeEmpty.audio.title')} description={t('generationCommon.nodeEmpty.audio.description')} />
-      <input className="hidden" type="file" accept="audio/*" onChange={handleUpload} />
+      <input className="hidden" type="file" accept={acceptAttrForSurface('audio-reference')} onChange={handleUpload} />
     </label>
   }
 

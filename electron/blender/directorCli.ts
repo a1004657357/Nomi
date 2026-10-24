@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -100,18 +101,18 @@ function record(value: unknown): Record<string, unknown> {
 
 function requiredPath(value: unknown, field: string): string {
   const candidate = typeof value === "string" ? value.trim() : "";
-  if (!candidate || !path.isAbsolute(candidate)) throw new Error(`Blender 导演桥接返回的 ${field} 无效`);
+  if (!candidate || !path.isAbsolute(candidate)) throw new Error(desktopT("custom.blender.directorCli.text1", { value0: `${field}` }));
   return candidate;
 }
 
 export function parseDirectorBridgeOutput(stdout: string): BridgeOutput {
   const line = stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).at(-1);
-  if (!line) throw new Error("Blender 导演桥接没有返回 JSON 结果");
+  if (!line) throw new Error(desktopT("custom.blender.directorCli.text2"));
   let raw: unknown;
   try {
     raw = JSON.parse(line);
   } catch {
-    throw new Error("Blender 导演桥接返回了无效 JSON");
+    throw new Error(desktopT("custom.blender.directorCli.text3"));
   }
   const payload = record(raw);
   if (payload.ok !== true) {
@@ -120,7 +121,7 @@ export function parseDirectorBridgeOutput(stdout: string): BridgeOutput {
   }
   const artifacts = record(payload.artifacts);
   const jobId = typeof payload.jobId === "string" ? payload.jobId.trim() : "";
-  if (!jobId) throw new Error("Blender 导演桥接未返回 jobId");
+  if (!jobId) throw new Error(desktopT("custom.blender.directorCli.text4"));
   return {
     jobId,
     ...(typeof payload.blenderVersion === "string" && payload.blenderVersion.trim() ? { blenderVersion: payload.blenderVersion.trim() } : {}),
@@ -139,17 +140,17 @@ function readProjectDirectorOutput(projectDir: string, filePath: string, name: s
   const absolutePath = path.resolve(filePath);
   const relative = path.relative(root, absolutePath);
   if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error(`Blender 导演桥接返回的 ${name} 不在当前项目目录内`);
+    throw new Error(desktopT("custom.blender.directorCli.text5", { value0: `${name}` }));
   }
   const bytes = fs.readFileSync(absolutePath);
-  if (bytes.byteLength === 0) throw new Error(`Blender 导演桥接返回的 ${name} 为空`);
+  if (bytes.byteLength === 0) throw new Error(desktopT("custom.blender.directorCli.text6", { value0: `${name}` }));
   return bytes;
 }
 
 function asAssetRef(value: unknown): DirectorAssetRef {
   const raw = value as { id?: unknown; data?: { url?: unknown } };
   const url = typeof raw?.data?.url === "string" ? raw.data.url : "";
-  if (!url) throw new Error("Blender 导演产物写入项目素材失败");
+  if (!url) throw new Error(desktopT("custom.blender.directorCli.text7"));
   return { url, ...(typeof raw.id === "string" ? { assetId: raw.id } : {}) };
 }
 
@@ -184,23 +185,23 @@ async function persistDirectorOutputs(request: DirectorBlenderRenderRequest, pro
 export async function runDirectorBlenderRender(request: DirectorBlenderRenderRequest): Promise<DirectorBlenderRenderResult> {
   const jobId = String(request.jobId || "").trim();
   const projectId = String(request.projectId || "").trim();
-  if (!jobId) throw new Error("Blender 导演 jobId 不能为空");
-  if (!projectId) throw new Error("Blender 导演 projectId 不能为空");
-  if (activeDirectorJobs.has(jobId) || pendingDirectorJobs.has(jobId)) throw new Error(`Blender 导演任务 ${jobId} 已在运行`);
-  if (request.stagePreset && !STAGE_PRESETS.has(request.stagePreset)) throw new Error("Blender 导演 stagePreset 不受支持");
+  if (!jobId) throw new Error(desktopT("custom.blender.directorCli.text8"));
+  if (!projectId) throw new Error(desktopT("custom.blender.directorCli.text9"));
+  if (activeDirectorJobs.has(jobId) || pendingDirectorJobs.has(jobId)) throw new Error(desktopT("custom.blender.directorCli.text10", { value0: `${jobId}` }));
+  if (request.stagePreset && !STAGE_PRESETS.has(request.stagePreset)) throw new Error(desktopT("custom.blender.directorCli.text11"));
   const pending = { cancelled: false };
   pendingDirectorJobs.set(jobId, pending);
   let context: AssetWriteContext;
   try {
     context = await captureAssetWriteContext(projectId);
-    if (pending.cancelled) throw new Error("Blender 导演预演已取消");
+    if (pending.cancelled) throw new Error(desktopT("custom.blender.directorCli.text12"));
   } finally {
     pendingDirectorJobs.delete(jobId);
   }
   const projectDir = context.root;
   const harnessRoot = path.resolve(request.harnessRoot || resolveDirectorHarnessRoot());
   if (!fs.existsSync(path.join(harnessRoot, "cli_anything", "blender", "bridge.py"))) {
-    throw new Error("未找到 Blender 导演 harness；请重新安装或从源码运行 Nomi");
+    throw new Error(desktopT("custom.blender.directorCli.text13"));
   }
 
   let tempDir = "";
@@ -252,14 +253,14 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
       child.stderr?.on("data", (chunk) => { stderr = appendCapped(stderr, chunk); });
       child.once("error", (error) => {
         if (job.terminationReason === "timeout") {
-          finish(new Error(`Blender 导演预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
+          finish(new Error(desktopT("custom.blender.directorCli.text14", { value0: `${Math.round(timeoutMs / 1000)}` })));
           return;
         }
         if (job.terminationReason === "cancelled") {
-          finish(new Error("Blender 导演预演已取消"));
+          finish(new Error(desktopT("custom.blender.directorCli.text15")));
           return;
         }
-        finish(new Error(`Blender 导演桥接启动失败：${error.message}`));
+        finish(new Error(desktopT("custom.blender.directorCli.text16", { value0: `${error.message}` })));
       });
       child.once("close", async (code, signal) => {
         if (settled) return;
@@ -267,21 +268,21 @@ export async function runDirectorBlenderRender(request: DirectorBlenderRenderReq
         clearTimeout(timeout);
         if (job.forceKillTimer) clearTimeout(job.forceKillTimer);
         if (job.terminationReason === "timeout") {
-          finish(new Error(`Blender 导演预演超时（${Math.round(timeoutMs / 1000)} 秒）`));
+          finish(new Error(desktopT("custom.blender.directorCli.text17", { value0: `${Math.round(timeoutMs / 1000)}` })));
           return;
         }
         if (job.terminationReason === "cancelled") {
-          finish(new Error("Blender 导演预演已取消"));
+          finish(new Error(desktopT("custom.blender.directorCli.text18")));
           return;
         }
         if (code !== 0) {
           const detail = stderr.trim() || stdout.trim() || `signal=${signal || "none"}`;
-          finish(new Error(`Blender 导演预演失败（退出码 ${String(code)}）：${detail.slice(-6000)}`));
+          finish(new Error(desktopT("custom.blender.directorCli.text19", { value0: `${String(code)}`, value1: `${detail.slice(-6000)}` })));
           return;
         }
         try {
           finish(undefined, await persistDirectorOutputs(request, projectDir, parseDirectorBridgeOutput(stdout), context, () => {
-            if (job.terminationReason === "cancelled") throw new Error("Blender 导演预演已取消");
+            if (job.terminationReason === "cancelled") throw new Error(desktopT("custom.blender.directorCli.text20"));
           }));
         } catch (error) {
           finish(error instanceof Error ? error : new Error(String(error)));

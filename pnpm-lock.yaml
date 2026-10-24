@@ -81,12 +81,6 @@ importers:
       react:
         specifier: ^19.3.0
         version: 19.3.0
-      react-markdown:
-        specifier: ^10.1.0
-        version: 10.1.0(@types/react@19.3.0)(react@19.3.0)
-      remark-gfm:
-        specifier: 4.0.1
-        version: 4.0.1
       selfsigned:
         specifier: 5.5.0
         version: 5.5.0
@@ -310,6 +304,9 @@ importers:
       react-i18next:
         specifier: 17.0.10
         version: 17.0.10(i18next@26.3.6(typescript@5.9.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@5.9.3)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.3.0)(react@19.3.0)
       react-reconciler:
         specifier: 0.34.0
         version: 0.34.0(react@19.3.0)
@@ -319,6 +316,9 @@ importers:
       react-router-dom:
         specifier: ^7.9.6
         version: 7.15.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      remark-gfm:
+        specifier: 4.0.1
+        version: 4.0.1
       scheduler:
         specifier: 0.28.0
         version: 0.28.0

@@ -1,3 +1,4 @@
+import { stationTimeout } from './_station-budget.mjs'
 // Run only after the coordinated build; never builds or generates media.
 // NOMI_MEDIA_OUTCOME_WALK_ROOT=/absolute/fresh/run node tests/ux/media-outcome.walk.mjs
 // Optional NOMI_MEDIA_OUTCOME_VIEW_PROJECTS_DIR=/absolute/original/projects: view one existing image.
@@ -156,7 +157,7 @@ function assetHashes(projectRoot) {
 
 async function openCanvas(instance, selected) {
   const card = instance.win.locator(`[data-project-card][data-project-id=${JSON.stringify(selected.record.id)}]`).first()
-  await expect(card).toBeVisible({ timeout: 30_000 })
+  await expect(card).toBeVisible({ timeout: stationTimeout() })
   await clickOrFail(card, 'Open the persisted project from the real library')
   let canvas
   await expect.poll(async () => {
@@ -171,7 +172,7 @@ async function openCanvas(instance, selected) {
       }
     }
     return false
-  }, { timeout: 30_000, message: 'Persisted image node must mount through the real project route' }).toBe(true)
+  }, { timeout: stationTimeout(), message: 'Persisted image node must mount through the real project route' }).toBe(true)
   await canvas.setViewportSize({ width: 1280, height: 933 })
   return canvas
 }
@@ -214,14 +215,14 @@ async function walk(spec, selected, realView) {
       env: { NOMI_WALK_NET_LOG: netLog, NOMI_CAPABILITY_DIR: path.join(tempRoot, 'capability') },
       initialLocalStorage: { 'nomi:locale:v1': spec.locale, 'nomi-color-scheme': 'light', 'nomi:splash:v1': 'seen',
         'nomi:journey-tour:v1': 'seen', 'nomi:canvas-gesture-hint:v1': 'seen', __nomiE2E: '1' } })
-    instance.win.setDefaultTimeout(30_000)
+    instance.win.setDefaultTimeout(stationTimeout())
     page = instance.win
     page = await openCanvas(instance, selected)
     const node = page.locator(`[data-node-id=${JSON.stringify(selected.node.id)}]`)
     await expect(node).toBeVisible()
     if (realView) {
       await expect.poll(() => node.locator('img').evaluateAll(images => images.some(image => image.complete && image.naturalWidth > 0)),
-        { timeout: 30_000, message: 'Original completed image must really render' }).toBe(true)
+        { timeout: stationTimeout(), message: 'Original completed image must really render' }).toBe(true)
       await snap('original-completed-image') // Exactly one real-project screenshot, no mutations/actions.
       entry.originalImageRendered = true
     } else {

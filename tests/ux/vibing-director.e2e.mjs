@@ -1,3 +1,4 @@
+import { stationTimeout } from './_station-budget.mjs'
 // Gate 8 zero-spend VIBING Director UI smoke.
 // Seeds one Blender-return node, opens the fullscreen Director, verifies the
 // spatial-quality UI, and drags the real R3F model preview.
@@ -132,7 +133,7 @@ async function dismissStartup(win) {
   await win.keyboard.press('Escape').catch(() => {})
   const splashSkip = win.locator('[data-splash-skip="true"]').first()
   if ((await splashSkip.count()) > 0) await splashSkip.click().catch(() => {})
-  await win.locator('.nomi-splash').first().waitFor({ state: 'detached', timeout: 6000 }).catch(() => {})
+  await win.locator('.nomi-splash').first().waitFor({ state: 'detached', timeout: stationTimeout() }).catch(() => {})
 }
 
 async function waitForCanvasStore(win) {
@@ -406,9 +407,9 @@ try {
   )
 
   const node = win.locator(`[data-node-id="${nodeId}"]`)
-  await node.waitFor({ state: 'visible', timeout: 8000 })
+  await node.waitFor({ state: 'visible', timeout: stationTimeout() })
   const openDirectorButton = node.getByRole('button', { name: '打开 VIBING Director' })
-  await openDirectorButton.waitFor({ state: 'visible', timeout: 12_000 })
+  await openDirectorButton.waitFor({ state: 'visible', timeout: stationTimeout() })
   const nodeState = await win.evaluate(async (id) => {
     const { useGenerationCanvasStore } = await import('/src/workbench/generationCanvas/store/generationCanvasStore.ts')
     const current = useGenerationCanvasStore.getState().nodes.find((candidate) => candidate.id === id)
@@ -432,19 +433,19 @@ try {
 
   await openDirectorButton.click()
   const dialog = win.locator('[role="dialog"][aria-label*="Blender 导演台"]').last()
-  await dialog.waitFor({ state: 'visible', timeout: 15_000 })
+  await dialog.waitFor({ state: 'visible', timeout: stationTimeout() })
   assert(await dialog.getByLabel('VIBING Director Agent').isVisible(), 'Director Agent panel is visible')
   assert(await dialog.getByLabel('向 Director Agent 发送消息').isVisible(), 'Director Agent composer is usable')
   assert((await dialog.getByText('空间关系', { exact: true }).count()) > 0, 'spatial relation count is visible')
   assert((await dialog.getByText('空间关系已通过', { exact: true }).count()) > 0, 'spatial quality status is visible')
   assert((await dialog.getByText('镜头节拍', { exact: true }).count()) > 0, 'shot beats are visible')
   const assetCatalog = dialog.locator('[data-director-asset-catalog="kenney"]')
-  await assetCatalog.waitFor({ state: 'visible', timeout: 5000 })
+  await assetCatalog.waitFor({ state: 'visible', timeout: stationTimeout() })
   assert(await dialog.getByText('Kenney Furniture Kit 1.0 · CC0', { exact: true }).isVisible(), 'audited CC0 catalog is visible')
   const assetSearch = dialog.getByLabel('搜索开源三维资产')
   await assetSearch.fill('咖啡')
   const coffeeMachine = assetCatalog.locator('[data-catalog-asset-id="kenney:furniture-kit:kitchenCoffeeMachine"]')
-  await coffeeMachine.waitFor({ state: 'visible', timeout: 5000 })
+  await coffeeMachine.waitFor({ state: 'visible', timeout: stationTimeout() })
   assert(await coffeeMachine.getByText('Kitchen Coffee Machine', { exact: true }).isVisible(), 'Chinese catalog search finds a coffee asset')
   assert(await coffeeMachine.getByRole('button', { name: '导入 Kitchen Coffee Machine' }).isEnabled(), 'catalog asset exposes an import action')
 
@@ -453,7 +454,7 @@ try {
   assert(await sceneButton.isVisible() && await renderButton.isVisible(), 'scene and render preview modes are available')
 
   const canvas = dialog.locator('canvas').first()
-  await canvas.waitFor({ state: 'visible', timeout: 12_000 })
+  await canvas.waitFor({ state: 'visible', timeout: stationTimeout() })
   await win.waitForTimeout(2500)
   const before = await canvas.screenshot()
   assert(before.length > 5000, '3D canvas renders nonblank pixels')
@@ -500,16 +501,16 @@ try {
   await dialog.screenshot({ path: path.join(evidenceDir, '04-compact-layout.png') })
 
   await dialog.getByRole('button', { name: '关闭 Director' }).click()
-  await dialog.waitFor({ state: 'hidden', timeout: 5000 })
+  await dialog.waitFor({ state: 'hidden', timeout: stationTimeout() })
   await win.evaluate(async (id) => {
     const { useGenerationCanvasStore } = await import('/src/workbench/generationCanvas/store/generationCanvasStore.ts')
     useGenerationCanvasStore.getState().selectNode(id)
   }, nodeId)
   const stackButton = node.getByRole('button', { name: '2 张堆叠图片' })
-  await stackButton.waitFor({ state: 'visible', timeout: 5000 })
+  await stackButton.waitFor({ state: 'visible', timeout: stationTimeout() })
   await stackButton.click()
   const stack = node.getByRole('list', { name: '可切换的堆叠图片' })
-  await stack.waitFor({ state: 'visible', timeout: 5000 })
+  await stack.waitFor({ state: 'visible', timeout: stationTimeout() })
   await stack.getByRole('button', { name: '设为主图' }).click()
   await win.waitForTimeout(400)
   const rolledBackText = await node.innerText()
@@ -518,7 +519,7 @@ try {
     'selecting an older result restores the Director node snapshot',
   )
   await node.getByRole('button', { name: '打开 VIBING Director' }).click()
-  await dialog.waitFor({ state: 'visible', timeout: 5000 })
+  await dialog.waitFor({ state: 'visible', timeout: stationTimeout() })
   const rolledBackRender = dialog.locator('img[alt="Blender 相机渲染预览"]')
   await dialog.getByRole('button', { name: '查看 Blender 相机渲染' }).click()
   assert(

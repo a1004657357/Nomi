@@ -1,3 +1,4 @@
+import { stationTimeout } from './_station-budget.mjs'
 // Gate 8 capability recipe UI verification. Isolated, deterministic, and zero-spend:
 // it marks a seeded provider as connected with a fake key but never clicks generation.
 import fs from 'node:fs'
@@ -644,9 +645,9 @@ try {
 
   await win.reload()
   await win.waitForLoadState('domcontentloaded')
-  await win.getByText('项目库', { exact: false }).first().waitFor({ timeout: 8000 })
+  await win.getByText('项目库', { exact: false }).first().waitFor({ timeout: stationTimeout() })
   const card = win.locator('[data-project-card]', { hasText: '创作能力 E2E' }).first()
-  await card.waitFor({ state: 'visible', timeout: 8000 })
+  await card.waitFor({ state: 'visible', timeout: stationTimeout() })
   await card.click()
   await win.waitForTimeout(500)
   const continueButton = win.getByText('继续创作', { exact: false }).first()
@@ -660,7 +661,7 @@ try {
   await win.waitForTimeout(1200)
 
   const canvas = win.locator('[aria-label="AI 影像创作画布"]')
-  await canvas.waitFor({ state: 'visible', timeout: 8000 })
+  await canvas.waitFor({ state: 'visible', timeout: stationTimeout() })
   await win.getByRole('button', { name: '能力组件', exact: true }).click()
   const builtinComponentsTab = win.getByRole('tab', { name: '内置组件', exact: true })
   assert(
@@ -670,7 +671,7 @@ try {
   const grid9ComponentCard = win.locator('[data-capability-recipe-id="image.multiview.grid9"]')
   const customViewComponentCard = win.locator('[data-capability-recipe-id="image.multiview.custom"]')
   const imageTo3dComponentCard = win.locator('[data-capability-recipe-id="image.multiview.reconstruct3d"]')
-  await grid9ComponentCard.waitFor({ state: 'visible', timeout: 8000 })
+  await grid9ComponentCard.waitFor({ state: 'visible', timeout: stationTimeout() })
   const componentPaletteScreenshotPath = path.join(evidenceDir, 'skill-component-palette.png')
   const componentPaletteScreenshot = await win.screenshot({ path: componentPaletteScreenshotPath })
   assert(componentPaletteScreenshot.byteLength > 20_000, '能力组件面板展开截图非空')
@@ -687,7 +688,7 @@ try {
   )
   await grid9ComponentCard.locator('[data-skill-use="true"]').click()
   const canvasSkillNode = win.locator('[data-canvas-skill-node="true"]', { hasText: '多机位九宫格' }).first()
-  await canvasSkillNode.waitFor({ state: 'visible', timeout: 8000 })
+  await canvasSkillNode.waitFor({ state: 'visible', timeout: stationTimeout() })
   const multiviewRecipeButton = canvasSkillNode.getByRole(
     'button',
     { name: '配置并运行 多机位九宫格', exact: true },
@@ -760,7 +761,7 @@ try {
   )
   await multiviewRecipeButton.click()
   const skillInspector = win.locator('[data-capability-recipe-inspector="true"]')
-  await skillInspector.waitFor({ state: 'visible', timeout: 5000 })
+  await skillInspector.waitFor({ state: 'visible', timeout: stationTimeout() })
   assert(
     (await skillInspector.getByLabel('能力配方').textContent())?.includes('多机位九宫格'),
     'SkillNode 打开共享配方面板并预选自身配方',
@@ -775,7 +776,7 @@ try {
   await win.getByRole('button', { name: '适应视图', exact: true }).click()
   await win.waitForTimeout(500)
   const collection = win.locator('[data-capability-result-collection="grid-collection"]')
-  await collection.waitFor({ state: 'visible', timeout: 8000 })
+  await collection.waitFor({ state: 'visible', timeout: stationTimeout() })
   assert((await collection.getAttribute('data-collection-columns')) === '3', '九个结果按 3 列网格展示')
   assert((await collection.getByRole('listitem').count()) === 9, '九宫格保留九个有序结果')
 
@@ -975,14 +976,14 @@ try {
     }))
   })
   const inspector = win.locator('[data-capability-recipe-inspector="true"]')
-  await inspector.waitFor({ state: 'visible', timeout: 5000 })
+  await inspector.waitFor({ state: 'visible', timeout: stationTimeout() })
   assert(await inspector.getByText('人像源图', { exact: true }).isVisible(), '分镜行可通过节点事件直接打开对应创作能力')
   await win.keyboard.press('Escape')
   await inspector.waitFor({ state: 'hidden', timeout: 4000 })
   assert(!(await inspector.isVisible()), '创作能力事件入口仍可正常关闭')
   await capabilityTrigger.click()
 
-  await inspector.waitFor({ state: 'visible', timeout: 5000 })
+  await inspector.waitFor({ state: 'visible', timeout: stationTimeout() })
   assert(await win.getByLabel('模型与模式').isEnabled(), '兼容模型模式可选')
   const outputCount = win.getByLabel('输出数量')
   assert((await outputCount.inputValue()) === '9' && (await outputCount.isDisabled()), '九宫格输出数固定为 9')
@@ -1170,7 +1171,7 @@ try {
   await inspector.getByRole('button', { name: '保存资源' }).last().click()
   await win.waitForTimeout(1000)
   const resourceNode = win.locator('[data-kind="resource"]', { hasText: 'E2E 测试风格' }).first()
-  await resourceNode.waitFor({ state: 'visible', timeout: 6000 })
+  await resourceNode.waitFor({ state: 'visible', timeout: stationTimeout() })
   assert(await resourceNode.isVisible(), '保存资源通过真实共享动作落成画布节点')
 
   const screenshotPath = path.join(evidenceDir, 'capability-recipes.png')

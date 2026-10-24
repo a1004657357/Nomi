@@ -128,3 +128,22 @@ test('source imports, upstream package dist, comments and quoted examples are no
   assert.equal(builtArtifactImportLines(source, 'tests/ux/support.mjs').size, 0)
   assert.equal(builtArtifactImportLines("import '../dist/index.js'", 'scripts/build.mjs').size, 0)
 })
+
+test('custom stations share the safety owner and retain observed completion predicates', async () => {
+  const { stationWaitHits } = await import('./check-test-waits.mjs')
+  const { stationTimeout } = await import('../tests/ux/_station-budget.mjs')
+  assert.throws(() => stationTimeout({ turns: 0, operations: 0 }), /INVALID_STATION_BUDGET/)
+  assert.throws(() => stationTimeout({ operations: -1 }), /INVALID_STATION_BUDGET/)
+  for (const file of [
+    'capability-recipes.e2e.mjs', 'cliproxy-config-ui.walk.mjs',
+    'cliproxy-size-warning.walk.mjs', 'goal-feature-smoke.e2e.mjs',
+    'jimeng-web-parameters.e2e.mjs', 'media-outcome.walk.mjs',
+    'smoke.e2e.mjs', 'vibing-director.e2e.mjs',
+  ]) {
+    const relative = `tests/ux/${file}`
+    const source = fs.readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8')
+    assert.equal(stationWaitHits(source, relative).length, 0, `${file} still has a private station deadline`)
+    assert.match(source, /from ['"]\.\/_station-budget\.mjs['"]/, `${file} must use the actual shared owner`)
+    assert.match(source, /(?:\.waitFor\(|expect\(|expect\.poll\()/, `${file} must still observe a result`)
+  }
+})

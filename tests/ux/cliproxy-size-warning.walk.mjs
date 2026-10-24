@@ -1,3 +1,4 @@
+import { stationTimeout } from './_station-budget.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -23,7 +24,7 @@ try {
         'nomi:journey-tour:v1': 'seen', 'nomi:canvas-gesture-hint:v1': 'seen' } })
     try {
       await expect(launched.win.getByRole('button', { name: /新建空白项目|New blank project/ }).first())
-        .toBeVisible({ timeout: 60_000 })
+        .toBeVisible({ timeout: stationTimeout() })
       const nodeId = source.cases[0].nodeId
       await launched.app.evaluate(({ BrowserWindow }, payload) => {
         BrowserWindow.getAllWindows()[0].webContents.send('nomi:production-deep-link', payload)
@@ -32,12 +33,12 @@ try {
       await expect.poll(() => {
         win = launched.app.windows().find(page => page.url().includes(source.projectId)) ?? launched.win
         return win.locator(`[data-node-id="${nodeId}"]`).count()
-      }, { timeout: 60_000 }).toBeGreaterThan(0)
+      }, { timeout: stationTimeout() }).toBeGreaterThan(0)
       const node = win.locator(`[data-node-id="${nodeId}"]`).first()
       const decline = win.getByRole('button', { name: locale === 'en' ? "Don't share" : '不分享', exact: true })
       if (await decline.count()) await decline.click()
       await expect.poll(() => node.locator('img').evaluateAll(images => images.some(image => image.complete && image.naturalWidth > 0)),
-        { timeout: 30_000 }).toBe(true)
+        { timeout: stationTimeout() }).toBe(true)
       const assetFile = path.join(projectsDir, path.relative(path.join(sourceRoot, 'projects'), source.cases[0].asset.path))
       const verdict = await launched.app.evaluate(async ({ app }, input) => {
         const load = process.getBuiltinModule('node:module').createRequire(`${app.getAppPath()}/package.json`)
@@ -53,7 +54,7 @@ try {
         url: `nomi-local://asset/${source.projectId}/${path.relative(projectsDir, assetFile).split(path.sep).slice(1).join('/')}` })
       assert.equal(verdict.imageSizeValidation.status, 'mismatch')
       const badge = node.locator('[data-technical-review="suspect"]')
-      await expect(badge).toBeVisible({ timeout: 15_000 })
+      await expect(badge).toBeVisible({ timeout: stationTimeout() })
       const title = await badge.getAttribute('title')
       assert.ok(title?.includes('1024') && title.includes('1254'))
       await win.screenshot({ path: path.join(root, `${locale}.png`) })

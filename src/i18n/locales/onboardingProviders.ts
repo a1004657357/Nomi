@@ -85,7 +85,7 @@ export const zhOnboardingProviders = {
   workspace: {
     connectionSubtitle: '管理连接、模型和调用方式。',
     addOtherModels: '添加模型',
-    editConnection: '编辑 URL / API Key',
+    editConnection: '编辑连接',
     replaceApiKey: '更换 API Key',
     credentialSavedPending: 'API Key 已保存，待验证',
     handoff: {
@@ -1347,8 +1347,8 @@ export const enOnboardingProviders = {
   workspace: {
     connectionSubtitle: 'Manage the connection, models, and call behavior.',
     addOtherModels: 'Add Models',
-    editConnection: 'Edit URL / API Key',
-    replaceApiKey: 'Replace API Key',
+    editConnection: 'Edit connection',
+    replaceApiKey: 'Replace key',
     credentialSavedPending: 'API Key saved, verification pending',
     handoff: {
       saved: '{{count}} models saved',

@@ -1,3 +1,4 @@
+import { desktopT } from "../../desktopStrings";
 /**
  * Gate 7 P1 修复 — browser bridge 目标站点/端口 allowlist（§22.3）。
  *
@@ -112,6 +113,6 @@ export function isAllowedBrowserTarget(url: unknown): { allowed: boolean; reason
 export function assertAllowedBrowserTarget(url: unknown): void {
   const result = isAllowedBrowserTarget(url)
   if (!result.allowed) {
-    throw new Error(`browser bridge 拒绝：${result.reason}`)
+    throw new Error(desktopT("custom.browser.core.browserAllowlist.text1", { value0: `${result.reason}` }))
   }
 }

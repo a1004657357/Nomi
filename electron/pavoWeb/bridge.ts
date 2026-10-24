@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import path from "node:path";
 import { parseDataUrl } from "../assets/assetBytes";
 import { extensionFromMime } from "../assets/assetPaths";
@@ -81,10 +82,10 @@ export function resolvePavoWebBaseUrl(value?: unknown): string {
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`Pavo Web 本地服务地址无效：${raw || "(空)"}`);
+    throw new Error(desktopT("custom.pavoWeb.bridge.text1", { value0: `${raw || "(空)"}` }));
   }
   if (url.protocol !== "http:" || !isLoopback(url.hostname)) {
-    throw new Error("Pavo Web Bridge 只允许连接本机 HTTP 服务");
+    throw new Error(desktopT("custom.pavoWeb.bridge.text2"));
   }
   url.pathname = url.pathname.replace(/\/+$/, "");
   url.search = "";
@@ -109,7 +110,7 @@ async function fetchJson(fetchImpl: FetchLike, baseUrl: string, route: string, o
   try { body = text ? JSON.parse(text) : null; } catch { body = text; }
   if (!response.ok) {
     const detail = isJsonRecord(body) ? firstString(body.error, body.message) : "";
-    throw new Error(`Pavo Web 本地服务 HTTP ${response.status}${detail ? `：${detail}` : ""}`);
+    throw new Error(desktopT("custom.pavoWeb.bridge.text3", { value0: `${response.status}`, value1: `${detail ? `：${detail}` : ""}` }));
   }
   return body;
 }
@@ -156,7 +157,7 @@ function normalizedMime(value: string): string {
 
 function assertMime(kind: ReferenceKind, value: string): string {
   const mime = normalizedMime(value);
-  if (!ALLOWED_MIME[kind].has(mime)) throw new Error(`Pavo Web 不支持的${kind}参考格式：${mime}`);
+  if (!ALLOWED_MIME[kind].has(mime)) throw new Error(desktopT("custom.pavoWeb.bridge.text4", { value0: `${kind}`, value1: `${mime}` }));
   return mime;
 }
 
@@ -175,7 +176,7 @@ async function materializeReference(source: ReferenceSource, index: number): Pro
   }
   if (source.url.startsWith("nomi-local://")) {
     const local = readNomiLocalAsset(source.url);
-    if (!local) throw new Error("Pavo Web 参考素材读取失败：本地素材不存在或项目不匹配");
+    if (!local) throw new Error(desktopT("custom.pavoWeb.bridge.text5"));
     const mime = assertMime(source.kind, local.contentType);
     return {
       fileName: local.fileName || `reference-${index + 1}.${sourceExtension(source.url, mime, fallback)}`,
@@ -197,7 +198,7 @@ async function materializeReference(source: ReferenceSource, index: number): Pro
       base64: `data:${mime};base64,${fetched.bytes.toString("base64")}`,
     };
   }
-  throw new Error(`Pavo Web 不支持的参考素材地址：${source.url.slice(0, 80)}`);
+  throw new Error(desktopT("custom.pavoWeb.bridge.text6", { value0: `${source.url.slice(0, 80)}` }));
 }
 
 function durationText(value: unknown): string {
@@ -207,7 +208,7 @@ function durationText(value: unknown): string {
   const duration = !raw ? "4s" : /s$/i.test(raw) ? raw.toLowerCase() : `${raw}s`;
   const seconds = Number(duration.slice(0, -1));
   if (!Number.isInteger(seconds) || seconds < 4 || seconds > 12) {
-    throw new Error("Pavo Web 只支持 4–12 秒（整数）时长");
+    throw new Error(desktopT("custom.pavoWeb.bridge.text7"));
   }
   return duration;
 }
@@ -222,7 +223,7 @@ function referenceMode(params: JsonRecord, sources: ReferenceSource[]): string {
 export function pavoWebMediaTypeFromRequest(request: TaskRequest): PavoWebMediaType {
   if (request.kind === "text_to_image" || request.kind === "image_edit") return "image";
   if (request.kind === "text_to_video" || request.kind === "image_to_video") return "video";
-  throw new Error(`Pavo Web 不支持该生成类型：${request.kind}`);
+  throw new Error(desktopT("custom.pavoWeb.bridge.text8", { value0: `${request.kind}` }));
 }
 
 /** 图片任务的期望张数（1-4）：适配器服务端 addTask 对 image 同域钳制（mock-server.js min(4)），两侧一致。 */
@@ -237,20 +238,20 @@ export async function buildPavoWebTaskPayload(request: TaskRequest): Promise<Pav
   const mediaType = pavoWebMediaTypeFromRequest(request);
   const requestExtras = extras(request);
   const idempotencyKey = firstString(requestExtras.idempotencyKey, requestExtras.grantId);
-  if (!idempotencyKey) throw new Error("Pavo Web 真实任务缺少幂等标识，已在点击官网生成前拒绝");
+  if (!idempotencyKey) throw new Error(desktopT("custom.pavoWeb.bridge.text9"));
   const params = taskTemplateParams(request);
-  if (!request.prompt.trim()) throw new Error("Pavo Web 提示词不能为空");
+  if (!request.prompt.trim()) throw new Error(desktopT("custom.pavoWeb.bridge.text10"));
   const sources = collectReferenceSources(params);
   // 视频面的参考限制在物化（可能下载大文件）之前判：先拒绝再动手。
   if (mediaType === "video") {
     if (sources.filter(source => source.kind === "image").length > 5) {
-      throw new Error("Pavo Agnes Video 2.5 Flash 最多接收 5 张参考图");
+      throw new Error(desktopT("custom.pavoWeb.bridge.text11"));
     }
     if (sources.filter(source => source.kind === "audio").length > 3) {
-      throw new Error("Pavo Agnes Video 2.5 Flash 最多接收 3 个参考音频");
+      throw new Error(desktopT("custom.pavoWeb.bridge.text12"));
     }
     if (sources.some(source => source.kind === "video")) {
-      throw new Error("Pavo Agnes Video 2.5 Flash 不接受视频参考");
+      throw new Error(desktopT("custom.pavoWeb.bridge.text13"));
     }
   }
   const referenceFiles = await Promise.all(sources.map(materializeReference));
@@ -263,7 +264,7 @@ export async function buildPavoWebTaskPayload(request: TaskRequest): Promise<Pav
     // count 必须进 modelConfig：panel applyPreset 靠它设置官网张数，服务端完成闸又按
     // expectedResultCount 验收落盘数——两边不一致任务会永远等不到足额结果。
     const aspectRatio = firstString(params.aspect_ratio, params.ratio);
-    if (aspectRatio && !/^\d+\s*:\s*\d+$/.test(aspectRatio)) throw new Error(`Pavo Web 图片比例格式无效：${aspectRatio}`);
+    if (aspectRatio && !/^\d+\s*:\s*\d+$/.test(aspectRatio)) throw new Error(desktopT("custom.pavoWeb.bridge.text14", { value0: `${aspectRatio}` }));
     const count = imageResultCount(params);
     return {
       idempotencyKey,
@@ -286,10 +287,10 @@ export async function buildPavoWebTaskPayload(request: TaskRequest): Promise<Pav
   const resolution = firstString(params.size, params.resolution, params.video_resolution, "720P").toUpperCase();
   const aspectRatio = firstString(params.aspect_ratio, params.ratio, "16:9");
   const duration = durationText(params.duration);
-  if (resolution !== "720P") throw new Error("Pavo Agnes Video 2.5 Flash 当前只支持 720P");
-  if (!["16:9", "9:16", "1:1"].includes(aspectRatio)) throw new Error("Pavo Web 当前只支持 16:9、9:16 或 1:1 比例");
+  if (resolution !== "720P") throw new Error(desktopT("custom.pavoWeb.bridge.text15"));
+  if (!["16:9", "9:16", "1:1"].includes(aspectRatio)) throw new Error(desktopT("custom.pavoWeb.bridge.text16"));
   if (referenceMode(params, sources) === "首尾帧" && (sources.length > 2 || sources.some(source => source.kind !== "image"))) {
-    throw new Error("Pavo Web 首尾帧模式不能混用全能参考素材");
+    throw new Error(desktopT("custom.pavoWeb.bridge.text17"));
   }
   return {
     idempotencyKey,
@@ -347,8 +348,8 @@ export async function submitPavoWebTask(input: {
   const fetchImpl = input.fetchImpl || fetch;
   const serverUrl = resolvePavoWebBaseUrl(firstString(extras(input.request).pavoWebApiBaseUrl, input.vendorBaseUrl));
   const status = await probePavoWebServer(serverUrl, fetchImpl);
-  if (!status.ok) throw new Error(`Pavo Web Bridge 不可用：${status.error || "本地服务未就绪"}`);
-  if ((status.sseClients || 0) < 1) throw new Error("Pavo Web 扩展未连接任务桥");
+  if (!status.ok) throw new Error(desktopT("custom.pavoWeb.bridge.text18", { value0: `${status.error || "本地服务未就绪"}` }));
+  if ((status.sseClients || 0) < 1) throw new Error(desktopT("custom.pavoWeb.bridge.text19"));
   const payload = await buildPavoWebTaskPayload(input.request);
   const raw = await fetchJson(fetchImpl, serverUrl, "/api/tasks/push", {
     method: "POST",
@@ -357,7 +358,7 @@ export async function submitPavoWebTask(input: {
   });
   const taskCodes = isJsonRecord(raw) && Array.isArray(raw.taskCodes) ? raw.taskCodes : [];
   const taskCode = taskCodes.map(item => String(item || "").trim()).find(Boolean) || "";
-  if (!taskCode) throw new Error("Pavo Web 本地服务没有返回 taskCode");
+  if (!taskCode) throw new Error(desktopT("custom.pavoWeb.bridge.text20"));
   return { taskCode, serverUrl, payload, raw };
 }
 
@@ -371,7 +372,7 @@ function normalizeStatus(value: unknown): TaskResult["status"] {
 
 function taskFromResponse(raw: unknown, taskCode: string): TaskSummary {
   const record = isJsonRecord(raw) ? raw.task : null;
-  if (!isJsonRecord(record) || trim(record.taskCode) !== taskCode) throw new Error("Pavo Web 返回的任务标识不匹配");
+  if (!isJsonRecord(record) || trim(record.taskCode) !== taskCode) throw new Error(desktopT("custom.pavoWeb.bridge.text21"));
   return { taskCode, status: trim(record.status), error: firstString(record.error) || null,
     attemptTaskCode: firstString(record.attemptTaskCode, taskCode),
     ...(isJsonRecord(record.owner) ? { owner: {projectId:trim(record.owner.projectId),nodeId:trim(record.owner.nodeId)} } : {}),
@@ -400,13 +401,13 @@ async function downloadFile(fetchImpl: FetchLike, serverUrl: string, fileId: str
     headers: pavoWebAuthHeaders(),
     signal: timeoutSignal(120_000),
   });
-  if (!response.ok) throw new Error(`Pavo Web 结果下载失败：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(desktopT("custom.pavoWeb.bridge.text22", { value0: `${response.status}` }));
   const contentType = normalizedMime(response.headers.get("content-type") || "");
   if (!ALLOWED_MIME[mediaType].has(contentType)) {
-    throw new Error(mediaType === "image" ? "Pavo Web 返回的文件不是图片" : "Pavo Web 返回的文件不是视频");
+    throw new Error(mediaType === "image" ? desktopT("custom.pavoWeb.bridge.text23") : desktopT("custom.pavoWeb.bridge.text24"));
   }
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (!bytes.length) throw new Error(mediaType === "image" ? "Pavo Web 返回的图片为空" : "Pavo Web 返回的视频为空");
+  if (!bytes.length) throw new Error(mediaType === "image" ? desktopT("custom.pavoWeb.bridge.text25") : desktopT("custom.pavoWeb.bridge.text26"));
   return { bytes, contentType };
 }
 
@@ -425,7 +426,7 @@ export async function queryPavoWebTask(input: {
   const tasksRaw = await fetchJson(fetchImpl, serverUrl, `/api/tasks/${encodeURIComponent(input.taskCode)}`, { method: "GET" });
   const task = taskFromResponse(tasksRaw, input.taskCode);
   if (task.owner && (task.owner.projectId !== input.projectId || task.owner.nodeId !== input.nodeId)) {
-    throw new Error("Pavo Web 结果归属与原项目节点不一致，已阻止写入");
+    throw new Error(desktopT("custom.pavoWeb.bridge.text27"));
   }
   const status = normalizeStatus(task.status);
   const filesRaw = await fetchJson(fetchImpl, serverUrl, `/api/files?taskCode=${encodeURIComponent(input.taskCode)}`, { method: "GET" });
@@ -451,7 +452,7 @@ export async function queryPavoWebTask(input: {
     };
   }
   const projectId = input.projectId;
-  if (!projectId?.trim()) throw new Error("Pavo Web 结果缺少目标项目，已阻止写入");
+  if (!projectId?.trim()) throw new Error(desktopT("custom.pavoWeb.bridge.text28"));
   // 图片任务按期望张数全收（多结果不默默丢）；视频任务保持单结果取最新一份。
   const byNewestFirst = [...files].sort((a, b) => Date.parse(b.uploadedAt || "") - Date.parse(a.uploadedAt || ""));
   const resultFiles = mediaType === "image" ? byNewestFirst.slice().reverse() : byNewestFirst.slice(0, 1);
@@ -476,7 +477,7 @@ export async function queryPavoWebTask(input: {
       mediaType,
     ) as { id?: string; name?: string; data?: { url?: string } };
     const url = trim(saved.data?.url);
-    if (!url) throw new Error("Pavo Web 结果已生成，但写入 Nomi 项目资产失败");
+    if (!url) throw new Error(desktopT("custom.pavoWeb.bridge.text29"));
     return {
       type: mediaType,
       url,

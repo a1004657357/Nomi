@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -106,7 +107,7 @@ async function readArchiveSource(item: ArchiveOutputItem): Promise<{
       extension: path.extname(item.url).replace(/^\./, "") || "bin",
     };
   }
-  throw new Error(`无法归档输出：${item.title}`);
+  throw new Error(desktopT("custom.assets.archiveOutputCollection.text1", { value0: `${item.title}` }));
 }
 
 export async function archiveOutputCollection(payload: unknown): Promise<ArchiveOutputCollectionResult> {
@@ -118,8 +119,8 @@ export async function archiveOutputCollection(payload: unknown): Promise<Archive
   const items = Array.isArray(raw?.items)
     ? raw.items.map(normalizeItem).filter((item): item is ArchiveOutputItem => item !== null)
     : [];
-  if (!items.length) throw new Error("没有可归档的输出");
-  if (items.length > 100) throw new Error("一次最多归档 100 个输出");
+  if (!items.length) throw new Error(desktopT("custom.assets.archiveOutputCollection.text2"));
+  if (items.length > 100) throw new Error(desktopT("custom.assets.archiveOutputCollection.text3"));
 
   const archivedAt = new Date();
   const collectionName = normalizeArchiveCollectionName(raw?.collectionName);

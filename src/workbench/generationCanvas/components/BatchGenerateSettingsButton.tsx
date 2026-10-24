@@ -1,5 +1,6 @@
 import type { JSX } from 'react'
 import React from 'react'
+import i18n from '../../../i18n'
 import { Popover } from '@mantine/core'
 import { IconAdjustmentsHorizontal, IconPlayerPlay } from '@tabler/icons-react'
 import { NomiSelect, WorkbenchButton } from '../../../design'
@@ -126,6 +127,7 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
   }, [])
 
   const applyAndMaybeRun = React.useCallback(async (run: boolean) => {
+    try {
     const state = useGenerationCanvasStore.getState()
     const selectedTargets = state.nodes.filter((node) => selectedIdSet.has(node.id) && isTargetKindNode(node, targetKind))
     const label = targetKindLabel(targetKind)
@@ -180,6 +182,9 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
     await confirmAndRunPlan(plan, {
       initiator: 'user',
     })
+    } catch (error) {
+      toast(error instanceof Error && error.message ? error.message : i18n.t('taskCenter.actionFailed'), 'error')
+    }
   }, [draftMeta, modelOptions, modelValue, selectedIdSet, skipExisting, targetKind, updateNode])
 
   const renderControl = (control: DynamicModelControl): JSX.Element => {

@@ -4,9 +4,9 @@ import type { HttpOperation, Mapping, Model, Vendor } from "../catalog/types";
 import { NEWAPI_IMAGE_CREATE_OP, OPENAI_MULTIPART_IMAGE_EDIT_OP } from "../catalog/newapiTransport";
 import {
   attachProfileOperationTimingsToRaw,
-  buildProfileTaskResult,
   executeProfileOperation,
 } from "./profileTaskExecution";
+import { buildProfileTaskResult } from "../runtime";
 
 const vendor: Vendor = {
   key: "agnes",

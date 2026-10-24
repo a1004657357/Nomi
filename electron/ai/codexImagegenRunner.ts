@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -320,7 +321,7 @@ async function materializeReference(url: string, tempDir: string, index: number)
     fs.writeFileSync(out, fetched.bytes);
     return { path: out };
   }
-  throw new Error(`Codex Img2 不支持的参考图地址：${url.slice(0, 120)}`);
+  throw new Error(desktopT("custom.ai.codexImagegenRunner.text1", { value0: `${url.slice(0, 120)}` }));
 }
 
 async function materializeReferences(
@@ -409,8 +410,8 @@ function runCodexExec(
     let forceKillTimer: NodeJS.Timeout | undefined;
     let forceSettleTimer: NodeJS.Timeout | undefined;
     let idleTimer: NodeJS.Timeout | undefined;
-    const timeoutError = new Error(`Codex Img2 生成超时（${Math.round(timeoutMs / 1000)} 秒）`);
-    const idleError = new Error(`Codex Img2 长时间无进展（${Math.round(idleTimeoutMs / 1000)} 秒没有输出）`);
+    const timeoutError = new Error(desktopT("custom.ai.codexImagegenRunner.text2", { value0: `${Math.round(timeoutMs / 1000)}` }));
+    const idleError = new Error(desktopT("custom.ai.codexImagegenRunner.text3", { value0: `${Math.round(idleTimeoutMs / 1000)}` }));
     const clearTimers = () => {
       clearTimeout(timer);
       if (idleTimer) clearTimeout(idleTimer);
@@ -552,7 +553,7 @@ export async function runCodexImageGeneration(input: {
   }
   try {
     return await withCodexRunSlot(async (queueMs) => {
-      if (runKey && cancelledCodexRunKeys.has(runKey)) throw new Error("Codex Img2 生成已取消");
+      if (runKey && cancelledCodexRunKeys.has(runKey)) throw new Error(desktopT("custom.ai.codexImagegenRunner.text4"));
       cleanupDiagnosticsPeriodically();
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), CODEX_IMG2_TEMP_PREFIX));
       const codexCwd = input.cwd ? path.resolve(input.cwd) : path.join(tempDir, "cwd");
@@ -575,7 +576,7 @@ export async function runCodexImageGeneration(input: {
           /* best-effort */
         }
         throw new Error(
-          "Codex Img2 未检测到 ChatGPT/Codex 登录状态。请先打开 ChatGPT 或 Codex 完成登录，再回到 Nomi 重试；无需填写 API Key。",
+          desktopT("custom.ai.codexImagegenRunner.text5"),
         );
       }
       const configuredModel = trim(process.env.NOMI_CODEX_IMG2_MODEL);
@@ -615,7 +616,7 @@ export async function runCodexImageGeneration(input: {
           for (let attempt = 1; attempt <= maxNetworkAttempts; attempt += 1) {
             attemptCount = attempt;
             const remainingTimeoutMs = timeoutMs - (Date.now() - execStartedAt);
-            if (remainingTimeoutMs <= 0) throw new Error(`Codex Img2 生成超时（${Math.round(timeoutMs / 1000)} 秒）`);
+            if (remainingTimeoutMs <= 0) throw new Error(desktopT("custom.ai.codexImagegenRunner.text6", { value0: `${Math.round(timeoutMs / 1000)}` }));
             if (attempt > 1) {
               try {
                 fs.rmSync(outputPath, { force: true });
@@ -639,7 +640,7 @@ export async function runCodexImageGeneration(input: {
               { stdoutPath, stderrPath, append: attempt > 1, attempt },
               runKey,
             );
-            if (runKey && cancelledCodexRunKeys.has(runKey)) throw new Error("Codex Img2 生成已取消");
+            if (runKey && cancelledCodexRunKeys.has(runKey)) throw new Error(desktopT("custom.ai.codexImagegenRunner.text7"));
             if (!isRetryableCodexNetworkFailure(result) || attempt >= maxNetworkAttempts || fs.existsSync(outputPath))
               break;
             await waitForNetworkRetry(Math.min(networkRetryDelayMs, Math.max(0, remainingTimeoutMs - 1)));
@@ -653,7 +654,7 @@ export async function runCodexImageGeneration(input: {
             { cause: error },
           );
         }
-        if (!result) throw new Error("Codex Img2 生成失败：没有执行结果");
+        if (!result) throw new Error(desktopT("custom.ai.codexImagegenRunner.text8"));
         const codexExecMs = Date.now() - execStartedAt;
         const verifyStartedAt = Date.now();
         const lastMessage = fs.existsSync(lastMessagePath) ? fs.readFileSync(lastMessagePath, "utf8").trim() : "";

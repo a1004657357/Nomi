@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 /**
  * CharacterCardNode body — 角色分类节点的渲染主体。
  *
@@ -54,7 +55,7 @@ function CharacterCardNodeImpl({ node }: Props): JSX.Element {
             className="w-full h-full object-contain object-center select-none pointer-events-none"
           />
         ) : (
-          <UploadFallback accept="image/*" label={t('generationCommon.card.character.image')} onUpload={handleUpload} kind="character" />
+          <UploadFallback accept={acceptAttrForSurface('image-reference')} label={t('generationCommon.card.character.image')} onUpload={handleUpload} kind="character" />
         )}
       </div>
 

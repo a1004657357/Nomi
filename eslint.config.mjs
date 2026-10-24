@@ -9,6 +9,32 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import globals from 'globals'
 import prettier from 'eslint-config-prettier'
 
+const PAVO_ADAPTER_LINT_CONTEXTS = [
+  {
+    files: ['integrations/pavo-web-adapter/background.js'],
+    languageOptions: { globals: { ...globals.serviceworker, ...globals.webextensions } },
+  },
+  {
+    files: ['integrations/pavo-web-adapter/content.js', 'integrations/pavo-web-adapter/panel.js'],
+    languageOptions: { globals: { ...globals.browser, ...globals.webextensions } },
+  },
+  {
+    // The media helper is UMD: a browser script with a conditional CommonJS export.
+    files: ['integrations/pavo-web-adapter/pavo-media.js'],
+    languageOptions: { sourceType: 'script', globals: { ...globals.browser, module: 'readonly' } },
+  },
+  {
+    files: [
+      'integrations/pavo-web-adapter/mock-server.js',
+      'integrations/pavo-web-adapter/reference-store.js',
+      'integrations/pavo-web-adapter/server-auth.js',
+      'electron/pavoWeb/fixtures/preset-tasks.cjs',
+    ],
+    languageOptions: { sourceType: 'commonjs', globals: globals.node },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+]
+
 export default tseslint.config(
   {
     ignores: [
@@ -62,6 +88,7 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  ...PAVO_ADAPTER_LINT_CONTEXTS,
   {
     files: ['scripts/check-vocabularies*.mjs'],
     languageOptions: {

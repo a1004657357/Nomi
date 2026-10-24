@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 // 本地 ComfyUI 接入（A 线：当生成后端，窄·稳）。plan：docs/plan/2026-07-04-local-comfyui-provider.md
 //
 // 为什么能几乎只写数据：Nomi 生成侧声明驱动——一个 vendor + 一条 Mapping{create,query}（带 {{}} 模板的
@@ -394,10 +395,10 @@ registerRequestTransform("comfyui-prompt", async (body, { baseUrl, promptId }) =
   if (!needsFill) return sessionBody;
   const checkpoints = await fetchComfyuiCheckpoints(baseUrl);
   if (checkpoints === null) {
-    throw new Error(`没连上 ComfyUI（${baseUrl || "http://127.0.0.1:8188"}）——确认 ComfyUI 已启动，或在参数里手填 checkpoint 文件名`);
+    throw new Error(desktopT("custom.catalog.comfyuiLocal.text1", { value0: `${baseUrl || "http://127.0.0.1:8188"}` }));
   }
   if (checkpoints.length === 0) {
-    throw new Error("ComfyUI 的 models/checkpoints 目录里没有任何模型文件——先放一个 checkpoint（.safetensors）再生成");
+    throw new Error(desktopT("custom.catalog.comfyuiLocal.text2"));
   }
   return { ...sessionBody, prompt: fillEmptyCheckpoint(prompt, checkpoints) };
 });

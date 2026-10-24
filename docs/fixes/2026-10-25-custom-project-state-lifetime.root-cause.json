@@ -1,0 +1,112 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-custom-project-state-lifetime",
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24",
+  "problem_type": "定制项目字段没有参与既有会话释放",
+  "symptom": "filmBible、批量重生成目标和 3D 轨迹快照没有寿命声明，可能跨项目保留旧状态。",
+  "direct_cause": "新增 store 字段未登记 declareStoreLifetime，3D store 也没有接入统一释放装载表。",
+  "class_root": "定制功能接回官方主线时，业务入口与既有共享 owner 和工程证据未同步。",
+  "affected_population": [
+    "现有定制功能的主线集成",
+    "离线回归和 CI 验收"
+  ],
+  "scope_paths": [
+    "src/workbench/workbenchStoreLifetime.ts",
+    "src/workbench/generationCanvas/components/batchPlanPreview.ts",
+    "src/workbench/generationCanvas/nodes/scene3d/trajectory/trajectoryRuntimeStore.ts",
+    "src/workbench/project/releaseWorkbenchProjectSession.ts",
+    "src/workbench/project/customStoreLifetime.test.ts"
+  ],
+  "entry_points": [
+    "src/workbench/NomiStudioApp.tsx::releaseWorkbenchProjectRuntimeState"
+  ],
+  "external_sources": [],
+  "internal_only_reason": "复用仓库已存在的领域合同、运行时与检查器，只修内部接线，没有新第三方能力假设。",
+  "invariants": [
+    "保留现有用户功能和项目内容。",
+    "规则只有既有共享 owner；不扩大违规上限或删除检查。",
+    "只清理离开项目的内存会话态，不写空项目或删除落盘内容。",
+    "窗口偏好保留，存活对象的 ref 仍由组件卸载注销，不全表清空。",
+    "项目切换释放旧播放/手势状态，不把上个项目带到新项目。"
+  ],
+  "invariant_owner_layer": {
+    "layer": "src/workbench/project/storeLifetime.ts",
+    "tests": [
+      "src/workbench/project/customStoreLifetime.test.ts",
+      "src/workbench/project/releaseWorkbenchProjectSession.test.ts"
+    ]
+  },
+  "doors": [
+    {
+      "kind": "read",
+      "path": "src/workbench/NomiStudioApp.tsx",
+      "symbol": "releaseWorkbenchProjectRuntimeState"
+    }
+  ],
+  "door_reduction": {
+    "before": 1,
+    "after": 1,
+    "why_not": "保留所有真实消费者；分散入口统一接入既有 owner，不通过删除功能减少入口。新纳管的入口使共享 owner 的读取门数增加，不冒充入口已减少。"
+  },
+  "generality_proof": "对同类入口一并扫描并通过已有硬零门岗；回归同时覆盖正常、失败与状态释放，不依赖某个节点或供应商特例。",
+  "shared_boundaries": [
+    {
+      "path": "src/workbench/project/storeLifetime.ts",
+      "symbol": "declareStoreLifetime",
+      "responsibility": "定制项目字段没有参与既有会话释放"
+    }
+  ],
+  "same_class_entry_points": [
+    {
+      "path": "src/workbench/NomiStudioApp.tsx",
+      "entry_point": "releaseWorkbenchProjectRuntimeState",
+      "disposition": "enforced",
+      "evidence": "数门报告与实际源码引用一致，共享实现保持唯一。"
+    }
+  ],
+  "recurrence": {
+    "classification": "recurring",
+    "reason": "新增定制入口、字段或文件移动都可能再次遗漏共享声明。",
+    "same_class_scan": [
+      "本轮实际数门报告",
+      "完整 contracts 扫描和聚焦回归"
+    ]
+  },
+  "prevention": {
+    "kind": "centralized-boundary",
+    "enforcement_path": "src/workbench/project/storeLifetime.ts",
+    "invariant": "实际实现和共享声明保持一致。",
+    "failure_mode": "新增遗漏或脱离 owner 时现有检查和类回归失败。",
+    "exception_policy": "none",
+    "strategy": "修复 owner 接线并保留错误可见性，不创建并行实现。",
+    "artifacts": [
+      "src/workbench/workbenchStoreLifetime.ts",
+      "src/workbench/generationCanvas/components/batchPlanPreview.ts",
+      "src/workbench/generationCanvas/nodes/scene3d/trajectory/trajectoryRuntimeStore.ts",
+      "src/workbench/project/releaseWorkbenchProjectSession.ts",
+      "src/workbench/project/customStoreLifetime.test.ts"
+    ]
+  },
+  "regression_tests": [
+    "src/workbench/project/customStoreLifetime.test.ts",
+    "src/workbench/project/releaseWorkbenchProjectSession.test.ts"
+  ],
+  "class_regression_tests": [
+    "src/workbench/project/customStoreLifetime.test.ts"
+  ],
+  "legacy_paths": {
+    "status": "not-applicable",
+    "removed_paths": [],
+    "rationale": "生产模块保留；只把过期引用指向真实 owner，不删除用户功能文件。"
+  },
+  "dependency_lifecycle": {
+    "decision": "not-applicable",
+    "rationale": "复用锁定依赖，没有升级或新增三方依赖。",
+    "exit_criteria": []
+  },
+  "migration": "不迁移或修改日常项目、素材、账号、密钥或 Cookie。",
+  "residual_risks": [
+    "完整 CI、真实 UI 与最终 merge SHA 收据仍须在最终整合树上确认。"
+  ]
+}

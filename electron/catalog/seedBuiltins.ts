@@ -529,7 +529,7 @@ function reconcileAgnesFlashMappingIds(mappings: Mapping[], now: string): boolea
   for (const taskKind of ["text_to_video", "image_to_video"] as const) {
     const legacyId = `seed-agnes-video-2-5-flash-${taskKind}`;
     const upstreamId = `seed-agnes-video-2.5-flash-${taskKind}`;
-    const owned = (mapping: Mapping) => mapping.vendorKey === "agnes"
+    const owned = (mapping: Mapping) => mapping.vendorKey === AGNES_VENDOR_SEED.key
       && mapping.modelKey === "agnes-video-2.5-flash" && mapping.taskKind === taskKind;
     const upstreamIndex = mappings.findIndex((mapping) => mapping.id === upstreamId && owned(mapping));
     if (upstreamIndex < 0) continue;

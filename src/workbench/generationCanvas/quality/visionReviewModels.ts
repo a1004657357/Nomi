@@ -13,13 +13,6 @@ export type VisionReviewModelOption = {
   label: string
 }
 
-function executableVendor(vendor: ModelCatalogVendorDto | undefined): vendor is ModelCatalogVendorDto {
-  return Boolean(
-    vendor?.enabled
-    && (vendor.authType === 'none' || vendor.hasApiKey === true),
-  )
-}
-
 export function visionReviewModelOptions(
   models: readonly ModelCatalogModelDto[],
   vendors: readonly ModelCatalogVendorDto[],
@@ -29,8 +22,7 @@ export function visionReviewModelOptions(
     const vendor = vendorByKey.get(model.vendorKey)
     if (
       model.kind !== 'text'
-      || !model.enabled
-      || !executableVendor(vendor)
+      || model.availability?.usable !== true
       || !modelSupportsImageInput(model.modelKey, model.modelAlias, model.meta)
     ) {
       return []
@@ -40,7 +32,7 @@ export function visionReviewModelOptions(
       id: JSON.stringify([model.vendorKey, model.modelKey]),
       vendorKey: model.vendorKey,
       modelKey: model.modelKey,
-      label: `${modelLabel} · ${vendor.name}`,
+      label: `${modelLabel} · ${vendor?.name || model.vendorKey}`,
     }]
   }).sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'))
 }

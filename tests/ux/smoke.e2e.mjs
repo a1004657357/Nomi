@@ -47,7 +47,7 @@ try {
   const splashSkip = win.locator('[data-splash-skip="true"]');
   if (await splashSkip.count()) {
     await splashSkip.click();
-    await splashSkip.waitFor({ state: "detached", timeout: 8000 });
+    await splashSkip.waitFor({ state: "detached", timeout: stationTimeout() });
   }
 
   // 1) 主进程启动 + 渲染层加载（runtime.ts 拆分后的回归底线）
@@ -71,7 +71,7 @@ try {
 
   // 2) 项目库渲染（渲染 → IPC listProjects → projects/repository 真实数据）
   // 空库与有项目走同一套布局：主入口动作卡片「新建空白项目」恒在（hero 介绍首屏已删）。
-  await win.getByText("项目库", { exact: false }).first().waitFor({ timeout: 8000 });
+  await win.getByText("项目库", { exact: false }).first().waitFor({ timeout: stationTimeout() });
   const primaryCard = win.locator('[data-variant="primary"]', { hasText: "新建空白项目" });
   await expect(primaryCard).toBeVisible();
   assert(await primaryCard.isVisible(), "项目库主入口动作卡片「新建空白项目」可见");
@@ -99,7 +99,7 @@ try {
   const flowNodeCountBeforeAdd = await win.locator('.react-flow__node[data-id]').count();
   await win.locator('button[aria-label="添加图片节点"]').first().click();
   const flowNode = win.locator('.react-flow__node[data-id]').last();
-  await flowNode.waitFor({ timeout: 5000 });
+  await flowNode.waitFor({ timeout: stationTimeout() });
   const flowNodeCountAfterAdd = await win.locator('.react-flow__node[data-id]').count();
   assert(
     flowNodeCountAfterAdd === flowNodeCountBeforeAdd + 1,
@@ -130,7 +130,7 @@ try {
     "React Flow 节点弹入结束后只定位一次（业务卡片与外层左上角对齐）",
   );
   const composer = win.locator(".generation-canvas-v2-node__composer-card").first();
-  await composer.waitFor({ timeout: 5000 });
+  await composer.waitFor({ timeout: stationTimeout() });
   const longPrompt = Array.from({ length: 14 }, (_, i) => `第${i + 1}段：超长提示词溢出回归压测，逐行填满编辑区直到超过卡片高度上限，验证底栏不被盖住。`).join("\n");
   const promptInput = composer.locator(".generation-canvas-v2-node__prompt-input").first();
   await promptInput.click();
@@ -177,7 +177,7 @@ try {
   assert(await directorShell.count() > 0, "导演台节点「进入导演台」后全屏壳挂出（data-testid=director-editor）");
 
   const sceneCanvas = win.locator('[aria-label="3D 场景编辑器"] canvas').first();
-  await expect(sceneCanvas).toBeVisible({ timeout: 20_000 });
+  await expect(sceneCanvas).toBeVisible({ timeout: stationTimeout() });
   const viewportPng = await sceneCanvas.screenshot();
   const viewportPixels = await win.evaluate(async (base64) => {
     const source = new Image();

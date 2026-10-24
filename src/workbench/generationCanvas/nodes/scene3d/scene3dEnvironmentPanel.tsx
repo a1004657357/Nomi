@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 import { withProjectAction } from '../../../project/projectCanvasReadSurface'
 import type { JSX } from 'react'
 import React from 'react'
@@ -376,7 +377,7 @@ export function Scene3DEnvironmentPanel({
           ref={panoramaInputRef}
           className="hidden"
           type="file"
-          accept="image/*"
+          accept={acceptAttrForSurface('image-reference')}
           onChange={handlePanoramaInputChange}
         />
       </div>

@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 /**
  * Gate 3 Slice 3 — 批量生成预算执行闸（§16.2, §23.3）。
  *
@@ -58,7 +59,7 @@ export class GenerationBudget {
 
   constructor(opts: GenerationBudgetOptions) {
     if (!Number.isFinite(opts.maxSubmissions) || opts.maxSubmissions < 1) {
-      throw new Error('GenerationBudget: maxSubmissions 必须 ≥ 1')
+      throw new Error(desktopT("custom.tasks.generationBudget.text1"))
     }
     this.maxSubmissions = opts.maxSubmissions
     this.maxCostCny = opts.maxCostCny

@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -63,12 +64,12 @@ const DEFAULT_LICENSE: Record<VibingDirectorAssetSource, string> = {
 
 function sourceType(value: unknown): VibingDirectorAssetSource {
   if (value === 'kenney' || value === 'polyhaven' || value === 'quaternius' || value === 'blenderkit' || value === 'local') return value
-  throw new Error('资产来源不受支持')
+  throw new Error(desktopT("custom.blender.vibingDirectorAssets.text1"))
 }
 
 function fileFormat(fileName: string): VibingDirectorAssetFormat {
   const format = FORMAT_BY_EXTENSION[path.extname(fileName).toLowerCase()]
-  if (!format) throw new Error('不支持的 Blender 资产格式')
+  if (!format) throw new Error(desktopT("custom.blender.vibingDirectorAssets.text2"))
   return format
 }
 
@@ -77,17 +78,17 @@ export function importVibingDirectorAsset(input: ImportVibingDirectorAssetInput)
   relativePath: string
 } {
   const projectId = String(input.projectId || '').trim()
-  if (!projectId) throw new Error('projectId 不能为空')
+  if (!projectId) throw new Error(desktopT("custom.blender.vibingDirectorAssets.text3"))
   const projectDir = projectDirById(projectId)
-  if (!projectDir) throw new Error('无法找到当前项目目录')
+  if (!projectDir) throw new Error(desktopT("custom.blender.vibingDirectorAssets.text4"))
   const sourcePath = path.resolve(String(input.sourcePath || '').trim())
   const stat = fs.statSync(sourcePath)
-  if (!stat.isFile()) throw new Error('请选择一个模型文件')
+  if (!stat.isFile()) throw new Error(desktopT("custom.blender.vibingDirectorAssets.text5"))
   const fileName = path.basename(sourcePath)
   const format = fileFormat(fileName)
   const source = sourceType(input.source)
   if (source === 'kenney' && input.provenance?.provider !== 'kenney') {
-    throw new Error('Kenney 资产必须通过受控目录导入')
+    throw new Error(desktopT("custom.blender.vibingDirectorAssets.text6"))
   }
   const model3dValidation = format === 'glb' ? inspectGlb(fs.readFileSync(sourcePath)) : undefined
   const asset: ImportedVibingDirectorAsset = {
@@ -112,7 +113,7 @@ export function importVibingDirectorAssetFromUrl(input: ImportVibingDirectorAsse
   relativePath: string
 } {
   const sourcePath = absolutePathFromLocalAssetUrlAnyProject(input.sourceUrl)
-  if (!sourcePath) throw new Error('生成的 3D 模型本地资产不存在或已失效')
+  if (!sourcePath) throw new Error(desktopT("custom.blender.vibingDirectorAssets.text7"))
   return importVibingDirectorAsset({
     projectId: input.projectId,
     directorNodeId: input.directorNodeId,

@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../../../electron/shared/contracts/mediaImportPolicy';
 /**
  * [INPUT]: 依赖 react、react-i18next、../../../../../../design（NomiSegmented / WorkbenchButton / WorkbenchIconButton）、../../../../../../vendor/tablerIcons、
  *          ../../../../../../ui/toast、../../useAiSceneBuilder、../../model/storeAiSceneActions 的 AiSceneTarget、../CanvasImagesContext、../imageFile 的 readFileAsDataUrl、../Popover
@@ -121,7 +122,7 @@ export function AiSceneBar({ open, onOpen, onClose }: { open: boolean; onOpen: (
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={acceptAttrForSurface('image-reference')}
           multiple
           className="hidden"
           aria-label={t('director.ai.addImage')}

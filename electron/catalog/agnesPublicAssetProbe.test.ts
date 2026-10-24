@@ -9,6 +9,10 @@ describe("AGNES public image preflight", () => {
     expect(isAgnesImageToVideoRequest("agnes", "image_to_video")).toBe(true);
     expect(isAgnesImageToVideoRequest("agnes", "text_to_video")).toBe(false);
     expect(isAgnesImageToVideoRequest("other", "image_to_video")).toBe(false);
+    expect(isAgnesImageToVideoRequest("agnes--second-account", "image_to_video")).toBe(true);
+    expect(isAgnesImageToVideoRequest("private-relay", "image_to_video", [
+      { key: "private-relay", meta: { adapterCandidateRootVendorKey: "agnes" } },
+    ])).toBe(true);
   });
 
   it("accepts a reachable public image and requests only the first byte", async () => {

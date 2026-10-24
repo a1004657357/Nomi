@@ -2,7 +2,7 @@ import { captureScenarioFailure } from './canvas-perf/failureDiagnostics.mjs'
 import { prepareWaitingFx, sampleWaitingFx, cleanupWaitingFx } from './canvas-perf/waitingFxScenario.mjs'
 import { launchNomiApp, closeNomiApp } from './_launchApp.mjs'
 import { findCanvasBlankPoint, findNodeHitPoint } from './_canvasHit.mjs'
-import { expect } from './_assert.mjs'
+import { expect, expectAbsent, proveProbe } from './_assert.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -1022,6 +1022,7 @@ async function runAction(page, scenario, fixture, app) {
     const failure = page.locator(failureSelector).first()
     const nodeId = await dispatchMediaError()
     await failure.waitFor({ timeout: 10_000 })
+    const failureProof = await proveProbe(failure, 'the injected media error is visible before recovery')
     const initialFailure = (await page.locator(failureSelector).count()) === 1
     await failure.getByRole('button', { name: '重试' }).click()
     await waitForMountedMedia(nodeId)
@@ -1032,11 +1033,12 @@ async function runAction(page, scenario, fixture, app) {
     const recoveredMedia = await waitForMountedMedia(nodeId)
     await recoveredMedia.evaluate((element) => element.dispatchEvent(new Event('load')))
     await failure.waitFor({ state: 'detached', timeout: 10_000 })
+    await expectAbsent(page.locator(failureSelector), { provenBy: failureProof, message: 'recovered media must remain free of its proven failure surface' })
     return {
       explicitFailures: Number(initialFailure) + Number(retryFailure),
       initialFailure,
       retryFailure,
-      recoverySuccess: (await page.locator(failureSelector).count()) === 0,
+      recoverySuccess: true,
       retryCompleted: true,
     }
   }

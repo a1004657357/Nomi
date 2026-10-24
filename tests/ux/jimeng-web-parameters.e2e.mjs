@@ -1,3 +1,4 @@
+import { stationTimeout } from './_station-budget.mjs'
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -78,7 +79,7 @@ try {
   await win.reload();
   await win.waitForLoadState("domcontentloaded");
   const card = win.locator("[data-project-card]", { hasText: "即梦参数 E2E" }).first();
-  await card.waitFor({ state: "visible", timeout: 8000 });
+  await card.waitFor({ state: "visible", timeout: stationTimeout() });
   await card.click();
   await win.waitForTimeout(500);
   const continueButton = win.getByText("继续创作", { exact: false }).first();
@@ -86,16 +87,16 @@ try {
   await win.waitForTimeout(1800);
   await win.getByRole("button", { name: "生成", exact: false }).first().click().catch(() => undefined);
   const canvas = win.locator('[aria-label="AI 影像创作画布"]');
-  await canvas.waitFor({ state: "visible", timeout: 8000 });
+  await canvas.waitFor({ state: "visible", timeout: stationTimeout() });
   await win.getByRole("button", { name: "适应视图", exact: true }).click();
 
   const node = win.locator('[data-node-id="jimeng-image-params"]');
-  await node.waitFor({ state: "visible", timeout: 8000 });
+  await node.waitFor({ state: "visible", timeout: stationTimeout() });
   await node.click({ position: { x: 40, y: 40 } });
   const variant = node.getByLabel("变体");
   const ratio = node.getByLabel("比例");
   const resolution = node.getByLabel("清晰度");
-  await variant.waitFor({ state: "visible", timeout: 5000 });
+  await variant.waitFor({ state: "visible", timeout: stationTimeout() });
   if (!(await variant.textContent())?.includes("图片 5.0 Pro")) {
     throw new Error("即梦图片节点未显示默认官网型号");
   }

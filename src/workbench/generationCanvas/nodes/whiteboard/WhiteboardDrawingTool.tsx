@@ -1,3 +1,4 @@
+import { acceptAttrForSurface } from '../../../../../electron/shared/contracts/mediaImportPolicy';
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -729,7 +730,7 @@ const WhiteboardDrawingTool = React.forwardRef<WhiteboardDrawingToolHandle, Whit
           ref={fileInputRef}
           className="hidden"
           type="file"
-          accept="image/*"
+          accept={acceptAttrForSurface('image-reference')}
           onChange={(event) => {
             const file = event.currentTarget.files?.[0]
             event.currentTarget.value = ''

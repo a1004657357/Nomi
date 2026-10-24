@@ -58,6 +58,7 @@ export const workbenchStoreLifetime = declareStoreLifetime({
     storyboardDesignsByDocumentId: 'project',
     activeStoryboardId: 'project',
     storyboardRowFocus: 'project',
+    filmBible: 'project',
     projectAgentDraft: 'project',
     projectAgentDraftRevision: 'project',
     // Unsent recovered buffers are keyed by immutable project UUID + pi session; late ACKs
@@ -98,6 +99,7 @@ export const workbenchStoreLifetime = declareStoreLifetime({
       storyboardDesignsByDocumentId: {},
       activeStoryboardId: null,
       storyboardRowFocus: null,
+      filmBible: null,
       projectAgentDraft: '',
       projectAgentDraftRevision: 0,
       projectAgentDraftIntent: null, projectAgentDraftDisplayText: null, projectAgentAdmissionId: null,

@@ -42,6 +42,15 @@ function model(
 }
 
 describe('visionReviewModelOptions', () => {
+  it('uses the shared model availability decision instead of reconstructing readiness', () => {
+    const options = visionReviewModelOptions([
+      model('connected', 'gpt-4o', { published: false, availability: { usable: false, reason: 'model_unpublished' } }),
+      model('connected', 'gemini-2.5-pro', { availability: undefined }),
+      model('connected', 'claude-3-5-sonnet', { availability: { usable: false, reason: 'credential_locked' } }),
+    ], [vendor('connected')])
+    expect(options).toEqual([])
+  })
+
   it('only exposes executable text models that support image input', () => {
     const options = visionReviewModelOptions(
       [

@@ -1,3 +1,4 @@
+import { desktopT } from "./desktopStrings";
 // 进程内提交合并器：把同一幂等键的并发调用 memo 化，避免当前进程重复执行提交内核。
 //
 // 这不是跨重启的 at-most-once 保证。ProductionRun 的持久化 outbox 才负责提交意图、预算负债、
@@ -101,7 +102,7 @@ export function runTaskWithIdempotency<T>(
 
   pruneExpiredSubmissions(defaultLedger, now);
   if (!defaultLedger.has(key) && defaultLedger.size >= DEFAULT_LEDGER_MAX_ENTRIES) {
-    return Promise.reject(new Error("生成提交队列已达到安全上限，请稍后重试"));
+    return Promise.reject(new Error(desktopT("custom.submissionLedger.text1")));
   }
 
   // 持久检查和 submitting 落盘必须放在 dedupeSubmission 的首次 fn 内：这样同进程第二个

@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -72,7 +73,7 @@ export function resolveBlenderExecutable(explicitPath?: string): string {
   for (const candidate of executableCandidates(explicitPath)) {
     if (candidate === "blender" || fs.existsSync(candidate)) return candidate;
   }
-  throw new Error("未找到 Blender。请安装 Blender，或设置 NOMI_BLENDER_PATH。");
+  throw new Error(desktopT("custom.blender.blenderRunner.text1"));
 }
 
 function appendCapped(current: string, chunk: unknown): string {
@@ -83,14 +84,14 @@ function appendCapped(current: string, chunk: unknown): string {
 function readOutputFile(outputDir: string, fileName: string): Buffer {
   const filePath = path.join(outputDir, fileName);
   const bytes = fs.readFileSync(filePath);
-  if (bytes.byteLength === 0) throw new Error(`Blender 没有生成有效的 ${fileName}`);
+  if (bytes.byteLength === 0) throw new Error(desktopT("custom.blender.blenderRunner.text2", { value0: `${fileName}` }));
   return bytes;
 }
 
 function asAssetRef(value: unknown): BlenderAssetRef {
   const record = value as { id?: unknown; data?: { url?: unknown } };
   const url = typeof record?.data?.url === "string" ? record.data.url : "";
-  if (!url) throw new Error("Blender 产物写入项目素材失败");
+  if (!url) throw new Error(desktopT("custom.blender.blenderRunner.text3"));
   return { url, ...(typeof record.id === "string" ? { assetId: record.id } : {}) };
 }
 
@@ -119,15 +120,15 @@ async function persistOutputs(request: BlenderSceneRenderRequest, outputDir: str
 export async function runBlenderSceneRender(request: BlenderSceneRenderRequest): Promise<BlenderSceneRenderResult> {
   const jobId = String(request.jobId || "").trim();
   const projectId = String(request.projectId || "").trim();
-  if (!jobId) throw new Error("Blender jobId 不能为空");
-  if (!projectId) throw new Error("Blender projectId 不能为空");
-  if (activeJobs.has(jobId) || pendingJobs.has(jobId)) throw new Error(`Blender 任务 ${jobId} 已在运行`);
+  if (!jobId) throw new Error(desktopT("custom.blender.blenderRunner.text4"));
+  if (!projectId) throw new Error(desktopT("custom.blender.blenderRunner.text5"));
+  if (activeJobs.has(jobId) || pendingJobs.has(jobId)) throw new Error(desktopT("custom.blender.blenderRunner.text6", { value0: `${jobId}` }));
   const pending = { cancelled: false };
   pendingJobs.set(jobId, pending);
   let context: AssetWriteContext;
   try {
     context = await captureAssetWriteContext(projectId);
-    if (pending.cancelled) throw new Error("Blender 渲染已取消");
+    if (pending.cancelled) throw new Error(desktopT("custom.blender.blenderRunner.text7"));
   } finally {
     pendingJobs.delete(jobId);
   }
@@ -173,14 +174,14 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
       child.stderr?.on("data", (chunk) => { stderr = appendCapped(stderr, chunk); });
       child.once("error", (error) => {
         if (job.terminationReason === "timeout") {
-          finish(new Error(`Blender 渲染超时（${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} 秒）`));
+          finish(new Error(desktopT("custom.blender.blenderRunner.text8", { value0: `${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)}` })));
           return;
         }
         if (job.terminationReason === "cancelled") {
-          finish(new Error("Blender 渲染已取消"));
+          finish(new Error(desktopT("custom.blender.blenderRunner.text9")));
           return;
         }
-        finish(new Error(`Blender 启动失败：${error.message}`));
+        finish(new Error(desktopT("custom.blender.blenderRunner.text10", { value0: `${error.message}` })));
       });
       child.once("close", async (code, signal) => {
         if (settled) return;
@@ -188,21 +189,21 @@ export async function runBlenderSceneRender(request: BlenderSceneRenderRequest):
         clearTimeout(timeout);
         if (job.forceKillTimer) clearTimeout(job.forceKillTimer);
         if (job.terminationReason === "timeout") {
-          finish(new Error(`Blender 渲染超时（${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} 秒）`));
+          finish(new Error(desktopT("custom.blender.blenderRunner.text11", { value0: `${Math.round((request.timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)}` })));
           return;
         }
         if (job.terminationReason === "cancelled") {
-          finish(new Error("Blender 渲染已取消"));
+          finish(new Error(desktopT("custom.blender.blenderRunner.text12")));
           return;
         }
         if (code !== 0) {
           const detail = stderr.trim() || stdout.trim() || `signal=${signal || "none"}`;
-          finish(new Error(`Blender 渲染失败（退出码 ${String(code)}）：${detail}`));
+          finish(new Error(desktopT("custom.blender.blenderRunner.text13", { value0: `${String(code)}`, value1: `${detail}` })));
           return;
         }
         try {
           finish(undefined, await persistOutputs(request, outputDir, stdout, context, () => {
-            if (job.terminationReason === "cancelled") throw new Error("Blender 渲染已取消");
+            if (job.terminationReason === "cancelled") throw new Error(desktopT("custom.blender.blenderRunner.text14"));
           }));
         } catch (error) {
           finish(error instanceof Error ? error : new Error(String(error)));

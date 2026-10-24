@@ -2,7 +2,7 @@
   'use strict';
 
   if (globalThis.__pavoAdapterLoaded) {
-    let alive = false;
+    let alive;
     try { alive = globalThis.__pavoAdapterIsAlive?.() === true; } catch { alive = false; }
     if (alive) return;
     var previousDrawerOpen = false;
@@ -667,14 +667,6 @@
         confirmationObserved: pageGeneratingIndication() || buttonGone || editorCleared,
       };
     });
-  }
-
-  function pageFailureMessage() {
-    const bodyText = textOf(document.body);
-    if (/请登录|登录后|重新登录|please (?:log ?in|sign ?in)|log ?in to continue/i.test(bodyText)) return 'Pavo 登录状态已失效';
-    if (/积分不足|余额不足|额度不足|次数不足|insufficient (?:credits?|balance|quota)/i.test(bodyText)) return 'Pavo 账号积分或可用额度不足';
-    if (/生成失败|审核未通过|内容违规|任务失败|generation failed|generation error/i.test(bodyText)) return 'Pavo 页面显示生成失败或内容审核未通过';
-    return '';
   }
 
   async function findMediaByTaskCode(taskCode, mediaTypeValue, baselineUrls, expectedResultCount, conversationId) {

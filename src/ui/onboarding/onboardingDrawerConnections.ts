@@ -14,8 +14,6 @@ import { LOCAL_TEXT_VENDOR_KEY } from './LocalModelCard'
 import { DREAMINA_CONNECTION_KEY } from './onboardingDrawerConstants'
 import { canAddModelsToConnection, groupOtherVendorModels } from './onboardingDrawerDerivations'
 
-const WEB_BRIDGE_VENDOR_KEYS = new Set(['jimeng-web', 'pavo-web'])
-
 export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatus, localNames, openPage }: {
   models: ChipModel[]
   vendorMeta: ReadonlyMap<string, OnboardingVendorMeta>
@@ -37,6 +35,13 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
   // promotion publishes a usable revision.
   const connectedKnown = knownCards.filter((c) => c.meta.hasApiKey && c.meta.enabled)
   const availableKnown = knownCards.filter((c) => !c.meta.hasApiKey || !c.meta.enabled)
+  const webBridgeEntries = ['jimeng-web', 'pavo-web'].flatMap((vendorKey) => {
+    const meta = vendorMeta.get(vendorKey)
+    if (!meta) return []
+    return [{ vendorKey, meta, models: models.filter((model) => model.vendorKey === vendorKey) }]
+  })
+  // Membership follows the actual account cards, not a second vendor identity list.
+  const hasWebBridgeAccountCard = (vendorKey: string) => webBridgeEntries.some((entry) => entry.vendorKey === vendorKey)
   const otherModels = models.filter((m) =>
     !isKnownVendor(m.vendorKey) &&
     m.vendorKey !== 'dreamina' &&
@@ -44,7 +49,7 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
     m.vendorKey !== CODEX_LOCAL_VENDOR_KEY &&
     m.vendorKey !== LOCAL_TEXT_VENDOR_KEY &&
     m.vendorKey !== ANTIGRAVITY_VENDOR_KEY &&
-    !WEB_BRIDGE_VENDOR_KEYS.has(m.vendorKey),
+    !hasWebBridgeAccountCard(m.vendorKey),
   )
   const otherVendorKeys = [...vendorMeta.keys()].filter((vendorKey) => (
     !isKnownVendor(vendorKey) &&
@@ -54,7 +59,7 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
     vendorKey !== CODEX_LOCAL_VENDOR_KEY &&
     vendorKey !== LOCAL_TEXT_VENDOR_KEY &&
     vendorKey !== ANTIGRAVITY_VENDOR_KEY &&
-    !WEB_BRIDGE_VENDOR_KEYS.has(vendorKey)
+    !hasWebBridgeAccountCard(vendorKey)
   ))
 
   const comfyuiInstances = [...vendorMeta.entries()]
@@ -78,11 +83,6 @@ export function projectOnboardingConnections({ models, vendorMeta, dreaminaStatu
   const otherVendorGroups = groupOtherVendorModels(otherModels, vendorMeta, otherVendorKeys)
   const antigravityEnabled = vendorMeta.get(ANTIGRAVITY_VENDOR_KEY)?.enabled === true
   const antigravityModels = models.filter((model) => model.vendorKey === ANTIGRAVITY_VENDOR_KEY)
-  const webBridgeEntries = ['jimeng-web', 'pavo-web'].flatMap((vendorKey) => {
-    const meta = vendorMeta.get(vendorKey)
-    if (!meta) return []
-    return [{ vendorKey, meta, models: models.filter((model) => model.vendorKey === vendorKey) }]
-  })
 
   const connectionTitle = (vendorKey: string): string => {
     const known = knownCards.find((card) => card.directory.vendorKey === vendorKey)

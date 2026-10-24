@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 type JsonRecord = Record<string, unknown>
 type Vec3 = [number, number, number]
 
@@ -74,7 +75,7 @@ function componentSize(componentType: number): number {
     case 5126:
       return 4
     default:
-      throw new Error(`GLB POSITION accessor 使用了不支持的 componentType=${componentType}`)
+      throw new Error(desktopT("custom.assets.glbValidation.text1", { value0: `${componentType}` }))
   }
 }
 
@@ -86,7 +87,7 @@ function readComponent(bytes: Buffer, offset: number, componentType: number): nu
     case 5123: return bytes.readUInt16LE(offset)
     case 5125: return bytes.readUInt32LE(offset)
     case 5126: return bytes.readFloatLE(offset)
-    default: throw new Error(`GLB POSITION accessor 使用了不支持的 componentType=${componentType}`)
+    default: throw new Error(desktopT("custom.assets.glbValidation.text2", { value0: `${componentType}` }))
   }
 }
 
@@ -96,7 +97,7 @@ function accessorBounds(
   binary: Buffer,
 ): { min: Vec3; max: Vec3 } {
   const accessor = record(accessorValue)
-  if (accessor.type !== 'VEC3') throw new Error('GLB POSITION accessor 必须是 VEC3')
+  if (accessor.type !== 'VEC3') throw new Error(desktopT("custom.assets.glbValidation.text3"))
   const declaredMin = finiteVec3(accessor.min)
   const declaredMax = finiteVec3(accessor.max)
   if (declaredMin && declaredMax) return { min: declaredMin, max: declaredMax }
@@ -105,17 +106,17 @@ function accessorBounds(
   const viewIndex = integer(accessor.bufferView, -1)
   const view = record(views[viewIndex])
   if (viewIndex < 0 || Object.keys(view).length === 0) {
-    throw new Error('GLB POSITION accessor 缺少可读取的 bufferView 和 min/max')
+    throw new Error(desktopT("custom.assets.glbValidation.text4"))
   }
   const componentType = integer(accessor.componentType, -1)
   const count = integer(accessor.count, 0)
-  if (count < 1) throw new Error('GLB POSITION accessor 没有顶点')
+  if (count < 1) throw new Error(desktopT("custom.assets.glbValidation.text5"))
   const elementSize = componentSize(componentType) * 3
   const stride = integer(view.byteStride, elementSize)
-  if (stride < elementSize) throw new Error('GLB POSITION accessor 的 byteStride 无效')
+  if (stride < elementSize) throw new Error(desktopT("custom.assets.glbValidation.text6"))
   const start = integer(view.byteOffset) + integer(accessor.byteOffset)
   const end = start + ((count - 1) * stride) + elementSize
-  if (start < 0 || end > binary.length) throw new Error('GLB POSITION accessor 越界')
+  if (start < 0 || end > binary.length) throw new Error(desktopT("custom.assets.glbValidation.text7"))
 
   const min: Vec3 = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY]
   const max: Vec3 = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY]
@@ -124,7 +125,7 @@ function accessorBounds(
     const base = start + (index * stride)
     for (let axis = 0; axis < 3; axis += 1) {
       const value = readComponent(binary, base + (axis * size), componentType)
-      if (!Number.isFinite(value)) throw new Error('GLB POSITION accessor 包含非有限坐标')
+      if (!Number.isFinite(value)) throw new Error(desktopT("custom.assets.glbValidation.text8"))
       min[axis] = Math.min(min[axis], value)
       max[axis] = Math.max(max[axis], value)
     }
@@ -133,39 +134,39 @@ function accessorBounds(
 }
 
 function parseChunks(bytes: Buffer): { document: JsonRecord; binary: Buffer } {
-  if (bytes.length < 20) throw new Error('GLB 文件过短，缺少完整容器头和 JSON 分块')
-  if (bytes.readUInt32LE(0) !== GLB_MAGIC) throw new Error('GLB magic 无效')
+  if (bytes.length < 20) throw new Error(desktopT("custom.assets.glbValidation.text9"))
+  if (bytes.readUInt32LE(0) !== GLB_MAGIC) throw new Error(desktopT("custom.assets.glbValidation.text10"))
   const version = bytes.readUInt32LE(4)
-  if (version !== 2) throw new Error(`只支持 GLB 2，当前版本为 ${version}`)
+  if (version !== 2) throw new Error(desktopT("custom.assets.glbValidation.text11", { value0: `${version}` }))
   const declaredLength = bytes.readUInt32LE(8)
   if (declaredLength !== bytes.length) {
-    throw new Error(`GLB 声明长度 ${declaredLength} 与实际长度 ${bytes.length} 不一致`)
+    throw new Error(desktopT("custom.assets.glbValidation.text12", { value0: `${declaredLength}`, value1: `${bytes.length}` }))
   }
 
   let offset = 12
   let jsonBytes: Buffer | null = null
   let binary = Buffer.alloc(0)
   while (offset < bytes.length) {
-    if (offset + 8 > bytes.length) throw new Error('GLB 分块头不完整')
+    if (offset + 8 > bytes.length) throw new Error(desktopT("custom.assets.glbValidation.text13"))
     const chunkLength = bytes.readUInt32LE(offset)
     const chunkType = bytes.readUInt32LE(offset + 4)
     const start = offset + 8
     const end = start + chunkLength
-    if (end > bytes.length) throw new Error('GLB 分块长度越界')
+    if (end > bytes.length) throw new Error(desktopT("custom.assets.glbValidation.text14"))
     if (chunkType === JSON_CHUNK && jsonBytes === null) jsonBytes = Buffer.from(bytes.subarray(start, end))
     if (chunkType === BIN_CHUNK && binary.length === 0) binary = Buffer.from(bytes.subarray(start, end))
     offset = end
   }
-  if (!jsonBytes) throw new Error('GLB 缺少 JSON 分块')
+  if (!jsonBytes) throw new Error(desktopT("custom.assets.glbValidation.text15"))
 
   let document: unknown
   try {
     document = JSON.parse(jsonBytes.toString('utf8').replace(/\0+$/g, '').trim())
   } catch (error) {
-    throw new Error(`GLB JSON 无法解析：${error instanceof Error ? error.message : String(error)}`)
+    throw new Error(desktopT("custom.assets.glbValidation.text16", { value0: `${error instanceof Error ? error.message : String(error)}` }))
   }
   const parsed = record(document)
-  if (String(record(parsed.asset).version || '') !== '2.0') throw new Error('GLB asset.version 必须是 2.0')
+  if (String(record(parsed.asset).version || '') !== '2.0') throw new Error(desktopT("custom.assets.glbValidation.text17"))
   return { document: parsed, binary }
 }
 
@@ -174,7 +175,7 @@ function validateBufferViews(document: JsonRecord, binary: Buffer): void {
   const embeddedBuffer = record(buffers[0])
   const declaredBinaryLength = integer(embeddedBuffer.byteLength)
   if (declaredBinaryLength > binary.length) {
-    throw new Error(`GLB BIN 分块过短：声明 ${declaredBinaryLength}，实际 ${binary.length}`)
+    throw new Error(desktopT("custom.assets.glbValidation.text18", { value0: `${declaredBinaryLength}`, value1: `${binary.length}` }))
   }
   for (const [index, value] of array(document.bufferViews).entries()) {
     const view = record(value)
@@ -182,7 +183,7 @@ function validateBufferViews(document: JsonRecord, binary: Buffer): void {
     const start = integer(view.byteOffset)
     const length = integer(view.byteLength, -1)
     if (start < 0 || length < 0 || start + length > binary.length) {
-      throw new Error(`GLB bufferView ${index} 越界`)
+      throw new Error(desktopT("custom.assets.glbValidation.text19", { value0: `${index}` }))
     }
   }
 }
@@ -192,7 +193,7 @@ export function inspectGlb(bytes: Buffer): GlbValidationReport {
   validateBufferViews(document, binary)
 
   const meshes = array(document.meshes)
-  if (meshes.length === 0) throw new Error('GLB 不包含网格')
+  if (meshes.length === 0) throw new Error(desktopT("custom.assets.glbValidation.text20"))
   const accessors = array(document.accessors)
   let primitiveCount = 0
   let min: Vec3 = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY]
@@ -209,11 +210,11 @@ export function inspectGlb(bytes: Buffer): GlbValidationReport {
       max = max.map((value, axis) => Math.max(value, bounds.max[axis])) as Vec3
     }
   }
-  if (primitiveCount === 0) throw new Error('GLB 网格不包含 primitive')
-  if (![...min, ...max].every(Number.isFinite)) throw new Error('GLB 网格没有可验证的 POSITION 边界')
+  if (primitiveCount === 0) throw new Error(desktopT("custom.assets.glbValidation.text21"))
+  if (![...min, ...max].every(Number.isFinite)) throw new Error(desktopT("custom.assets.glbValidation.text22"))
   const size = min.map((value, axis) => max[axis] - value) as Vec3
   const diagonal = Math.hypot(...size)
-  if (!(diagonal > 0)) throw new Error('GLB 网格边界为空或退化')
+  if (!(diagonal > 0)) throw new Error(desktopT("custom.assets.glbValidation.text23"))
 
   const images = array(document.images)
   const externalImageUris = images.map((value) => safeExternalUri(record(value).uri)).filter(Boolean)

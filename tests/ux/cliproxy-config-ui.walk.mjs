@@ -1,3 +1,4 @@
+import { stationTimeout } from './_station-budget.mjs'
 // Built Electron only. Synthetic, isolated URL/key persistence and GET-only discovery.
 // Run after the coordinated build: EVIDENCE_DIR=/absolute/report-dir node tests/ux/cliproxy-config-ui.walk.mjs
 import http from 'node:http'
@@ -22,8 +23,8 @@ const server = http.createServer((req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const baseUrl = `http://127.0.0.1:${server.address().port}/v1`
 const specs = [
-  { locale: 'zh-CN', edit: '编辑 URL / API Key', add: '添加模型', replace: '更换 API Key', fetch: '获取可用模型', cancel: '取消', pending: 'API Key 已保存，待验证' },
-  { locale: 'en', edit: 'Edit URL / API Key', add: 'Add Models', replace: 'Replace API Key', fetch: 'Get available models', cancel: 'Cancel', pending: 'API Key saved, verification pending' },
+  { locale: 'zh-CN', edit: '编辑连接', add: '添加模型', replace: '更换 API Key', fetch: '获取可用模型', cancel: '取消', pending: 'API Key 已保存，待验证' },
+  { locale: 'en', edit: 'Edit connection', add: 'Add Models', replace: 'Replace key', fetch: 'Get available models', cancel: 'Cancel', pending: 'API Key saved, verification pending' },
 ]
 
 async function visibleLayout(win, locator) {
@@ -71,7 +72,7 @@ try {
           'nomi:journey-tour:v1': 'seen', 'nomi:canvas-gesture-hint:v1': 'seen', __nomiE2E: '1' },
       })
       const { win } = instance
-      win.setDefaultTimeout(30_000)
+      win.setDefaultTimeout(stationTimeout())
       await win.evaluate(async ({ baseUrl }) => {
         const catalog = window.nomiDesktop.modelCatalog
         await catalog.upsertVendor({ key: 'cliproxy-local', name: 'CLIProxy', baseUrlHint: baseUrl, providerKind: 'openai-compatible', authType: 'bearer', enabled: true })

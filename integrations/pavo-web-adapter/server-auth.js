@@ -1,8 +1,8 @@
-const crypto = require('node:crypto');
+const nodeCrypto = require('node:crypto');
 
 function createAuthToken(configuredToken) {
   const configured = String(configuredToken || '').trim();
-  return configured || crypto.randomBytes(32).toString('hex');
+  return configured || nodeCrypto.randomBytes(32).toString('hex');
 }
 
 function isAllowedOrigin(origin, port) {
@@ -21,7 +21,7 @@ function isAllowedOrigin(origin, port) {
 function safeTokenEqual(received, expected) {
   const left = Buffer.from(String(received || ''));
   const right = Buffer.from(String(expected || ''));
-  return left.length === right.length && left.length > 0 && crypto.timingSafeEqual(left, right);
+  return left.length === right.length && left.length > 0 && nodeCrypto.timingSafeEqual(left, right);
 }
 
 function isAuthorizedRequest(req, url, expectedToken) {
@@ -31,7 +31,7 @@ function isAuthorizedRequest(req, url, expectedToken) {
   const cookieToken = cookieHeader.split(';')
     .map((part) => part.trim().split('='))
     .find(([name]) => name === 'nomi_token')?.slice(1).join('=');
-  let decodedCookieToken = '';
+  let decodedCookieToken;
   try { decodedCookieToken = decodeURIComponent(cookieToken || ''); } catch { decodedCookieToken = ''; }
   return safeTokenEqual(headerToken || queryToken || decodedCookieToken, expectedToken);
 }

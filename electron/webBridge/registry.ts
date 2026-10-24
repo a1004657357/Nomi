@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import type { WriteAsset } from "../catalog/processOperation";
 import type { TaskRequest, TaskResult } from "../runtime";
 import { queryJimengWebTask } from "../jimengWeb/seedanceBridge";
@@ -38,5 +39,5 @@ export async function queryWebBridgeTask(input: QueryInput): Promise<TaskResult>
       writeAsset: input.writeAsset,
     });
   }
-  throw new Error(`未注册的网页桥供应商：${input.vendor}`);
+  throw new Error(desktopT("custom.webBridge.registry.text1", { value0: `${input.vendor}` }));
 }

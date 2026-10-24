@@ -1,3 +1,4 @@
+import { desktopT } from "../desktopStrings";
 import fs from "node:fs";
 import { contentTypeFromPath, extensionFromMime } from "../assets/assetPaths";
 import { writeAsset } from "../assets/projectAssetStore";
@@ -19,8 +20,8 @@ export async function runCodexImageTask(input: {
   projectId: string; nodeId: string; grantId: string; taskId: string;
 }): Promise<TaskResult> {
   const { vendor, model, request, wantedKind, projectId, nodeId, grantId, taskId } = input;
-  if (wantedKind !== "image") throw new Error("Codex Img2 只支持图片生成");
-  if (!projectId) throw new Error("Codex Img2 需要先打开并保存到本地项目后再生成");
+  if (wantedKind !== "image") throw new Error(desktopT("custom.tasks.codexImageTask.text1"));
+  if (!projectId) throw new Error(desktopT("custom.tasks.codexImageTask.text2"));
   const context = await captureAssetWriteContext(projectId, request.extras?.projectBinding as ProjectBinding | undefined);
   const recipe = buildNormalizedRecipe({ vendor, model, request });
   const fingerprint = recipeFingerprint(recipe);
@@ -38,7 +39,7 @@ export async function runCodexImageTask(input: {
         ownerNodeId: nodeId || null, codexThreadId: generated.threadId || null,
       }, "image", context) as { id?: string; name?: string; data?: { url?: string; absolutePath?: string } };
     const assetUrl = trim(saved.data?.url);
-    if (!assetUrl) throw new Error("Codex Img2 生成成功但资产落盘失败");
+    if (!assetUrl) throw new Error(desktopT("custom.tasks.codexImageTask.text3"));
     scheduleTechnicalReview({ projectId, nodeId, absolutePath: trim(saved.data?.absolutePath), assetUrl,
       type: "image", expectedAspectRatio: firstString(request.extras?.aspect_ratio, request.extras?.aspectRatio) });
     const timings = { ...generated.timings, assetWriteMs: Date.now() - assetWriteStartedAt,

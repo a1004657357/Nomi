@@ -1,5 +1,6 @@
 import type { JSX } from 'react'
 import React from 'react'
+import i18n from '../../../i18n'
 import { IconPaperclip } from '@tabler/icons-react'
 import { getDesktopBridge } from '../../../desktop/bridge'
 import { toast } from '../../../ui/toast'
@@ -23,10 +24,14 @@ export function NodeBrowserUploadDragHandle({ url }: NodeBrowserUploadDragHandle
   React.useEffect(ensureAssetDragErrorSubscription, [])
   if (!url.startsWith('nomi-local://asset/')) return null
 
-  const handleDragStart = (event: React.DragEvent<HTMLDivElement>): void => {
+  const handleDragStart = async (event: React.DragEvent<HTMLDivElement>): Promise<void> => {
     event.preventDefault()
     event.stopPropagation()
-    getDesktopBridge()?.browser?.startAssetDrag?.({ url })
+    try {
+      await getDesktopBridge()?.browser?.startAssetDrag?.({ url })
+    } catch (error) {
+      toast(error instanceof Error && error.message ? error.message : i18n.t('taskCenter.actionFailed'), 'error')
+    }
   }
 
   return (
