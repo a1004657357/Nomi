@@ -109,20 +109,20 @@ export default function VideoKeyframeInspectorDialog({ node, onClose }: Props): 
       }}
     >
       <section className="flex max-h-[88vh] w-[min(980px,94vw)] flex-col overflow-hidden rounded-nomi border border-nomi-line bg-nomi-paper shadow-nomi-lg">
-        <header className="flex shrink-0 items-center justify-between border-b border-nomi-line px-5 py-4">
-          <div className="min-w-0">
+        <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-nomi-line px-5 py-4">
+          <div className="min-w-0 max-w-full [overflow-wrap:anywhere]">
             <h2 className="text-title-sm font-semibold text-nomi-ink">视频关键帧检查器</h2>
             <p className="mt-1 truncate text-body-sm text-nomi-ink-60">
               {node.title} · {duration ? `${duration.toFixed(2)} 秒` : '未读取到视频时长'}
             </p>
           </div>
-          <button type="button" className="grid size-9 place-items-center rounded-nomi-sm text-nomi-ink-60 hover:bg-nomi-ink-05" onClick={onClose} aria-label="关闭">
+          <button type="button" className="grid size-9 shrink-0 place-items-center rounded-nomi-sm text-nomi-ink-60 hover:bg-nomi-ink-05" onClick={onClose} aria-label="关闭">
             <IconX size={18} stroke={1.6} />
           </button>
         </header>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-nomi-line px-5 py-3">
-          <span className="text-body-sm text-nomi-ink-60">抽帧数量</span>
+        <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-nomi-line px-5 py-3">
+          <span className="min-w-0 max-w-full text-body-sm text-nomi-ink-60 [overflow-wrap:anywhere]">抽帧数量</span>
           <div className="inline-flex rounded-nomi-sm border border-nomi-line p-0.5">
             {FRAME_COUNTS.map((count) => (
               <button
@@ -144,7 +144,7 @@ export default function VideoKeyframeInspectorDialog({ node, onClose }: Props): 
             <IconRefresh size={15} stroke={1.6} />
             {busy ? '抽帧中…' : '重新抽取'}
           </button>
-          <span className="ml-auto text-body-sm text-nomi-ink-60">已选 {selected.size} / {frames.length}</span>
+          <span className="min-w-0 max-w-full text-body-sm text-nomi-ink-60 [overflow-wrap:anywhere]">已选 {selected.size} / {frames.length}</span>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
@@ -167,9 +167,9 @@ export default function VideoKeyframeInspectorDialog({ node, onClose }: Props): 
                     <div className="aspect-video overflow-hidden bg-nomi-ink">
                       <img src={frame.url} alt={`${formatVideoFrameTime(frame.timeSeconds)} 关键帧`} className="size-full object-contain" draggable={false} />
                     </div>
-                    <div className="flex items-center justify-between px-2.5 py-2">
-                      <span className="font-mono text-caption text-nomi-ink-80">{formatVideoFrameTime(frame.timeSeconds)}</span>
-                      <span className={`grid size-5 place-items-center rounded-sm border ${checked ? 'border-nomi-accent bg-nomi-accent text-white' : 'border-nomi-line bg-nomi-paper'}`}>
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-2.5 py-2">
+                      <span className="min-w-0 max-w-full font-mono text-caption text-nomi-ink-80 [overflow-wrap:anywhere]">{formatVideoFrameTime(frame.timeSeconds)}</span>
+                      <span className={`grid size-5 shrink-0 place-items-center rounded-sm border ${checked ? 'border-nomi-accent bg-nomi-accent text-white' : 'border-nomi-line bg-nomi-paper'}`}>
                         {checked ? <IconCheck size={13} stroke={2} /> : null}
                       </span>
                     </div>

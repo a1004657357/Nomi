@@ -64,16 +64,16 @@ export function PortraitComparisonControl({
           data-portrait-comparison-dialog="true"
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-white/15 px-4">
-            <IconArrowsDiff size={19} stroke={1.7} aria-hidden />
-            <div className="min-w-0">
+          <header className="flex min-h-14 min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-white/15 px-4">
+            <IconArrowsDiff size={19} stroke={1.7} className="shrink-0" aria-hidden />
+            <div className="min-w-0 max-w-full [overflow-wrap:anywhere]">
               <div className="text-body-sm font-medium">原图对比</div>
               <div className="truncate text-caption text-white/60">{outputLabel}</div>
             </div>
-            <div className="ml-auto flex items-center gap-1.5">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
               <button
                 type="button"
-                className="grid size-8 place-items-center rounded-nomi-sm border-0 bg-white/10 text-white hover:bg-white/15"
+                className="grid size-8 shrink-0 place-items-center rounded-nomi-sm border-0 bg-white/10 text-white hover:bg-white/15"
                 aria-label="缩小对比图"
                 title="缩小"
                 onClick={() => setBoundedZoom(zoom - 0.25)}
@@ -87,12 +87,12 @@ export function PortraitComparisonControl({
                 max={3}
                 step={0.05}
                 value={zoom}
-                className="w-28 accent-white sm:w-40"
+                className="w-28 shrink-0 accent-white sm:w-40"
                 onChange={(event) => setBoundedZoom(Number(event.target.value))}
               />
               <button
                 type="button"
-                className="grid size-8 place-items-center rounded-nomi-sm border-0 bg-white/10 text-white hover:bg-white/15"
+                className="grid size-8 shrink-0 place-items-center rounded-nomi-sm border-0 bg-white/10 text-white hover:bg-white/15"
                 aria-label="放大对比图"
                 title="放大"
                 onClick={() => setBoundedZoom(zoom + 0.25)}
@@ -101,19 +101,19 @@ export function PortraitComparisonControl({
               </button>
               <button
                 type="button"
-                className="grid size-8 place-items-center rounded-nomi-sm border-0 bg-white/10 text-white hover:bg-white/15"
+                className="grid size-8 shrink-0 place-items-center rounded-nomi-sm border-0 bg-white/10 text-white hover:bg-white/15"
                 aria-label="重置对比图缩放"
                 title="重置缩放"
                 onClick={() => setZoom(1)}
               >
                 <IconRefresh size={17} stroke={1.7} aria-hidden />
               </button>
-              <span className="w-12 text-center text-caption tabular-nums text-white/70">
+              <span className="w-12 shrink-0 text-center text-caption tabular-nums text-white/70">
                 {Math.round(zoom * 100)}%
               </span>
               <button
                 type="button"
-                className="grid size-8 place-items-center rounded-nomi-sm border-0 bg-white text-black hover:bg-white/90"
+                className="grid size-8 shrink-0 place-items-center rounded-nomi-sm border-0 bg-white text-black hover:bg-white/90"
                 aria-label="关闭原图对比"
                 title="关闭"
                 onClick={() => setOpen(false)}

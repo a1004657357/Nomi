@@ -573,13 +573,13 @@ export function CapabilityRecipeInspector({
 
               {isCollection ? (
                 <div className="border-b border-nomi-line px-4 py-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="inline-flex items-center gap-2 text-body-sm font-medium text-nomi-ink">
-                      <IconRotate size={16} stroke={1.7} aria-hidden />
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span className="inline-flex min-w-0 max-w-full items-center gap-2 text-body-sm font-medium text-nomi-ink [overflow-wrap:anywhere]">
+                      <IconRotate size={16} stroke={1.7} className="shrink-0" aria-hidden />
                       {isMoodRecipe ? '输出情绪' : '输出机位'}
                     </span>
                     <input
-                      className={cn(inputClass(), 'w-[72px]')}
+                      className={cn(inputClass(), 'w-[72px] shrink-0')}
                       aria-label="输出数量"
                       type="number"
                       min={1}
@@ -593,11 +593,11 @@ export function CapabilityRecipeInspector({
                   </div>
                   {isMoodRecipe ? (
                     <div className="mt-3 rounded-nomi-sm border border-nomi-line bg-nomi-ink-05 p-3">
-                      <div className="flex items-center justify-between gap-3 text-caption">
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-caption [overflow-wrap:anywhere]">
                         <span className="text-nomi-ink-60">行：能量 · 列：亲和</span>
                         <span
                           data-mood-request-summary="true"
-                          className="font-medium text-nomi-ink"
+                          className="min-w-0 max-w-full font-medium text-nomi-ink"
                         >
                           {moodRequestSummary(moodGenerationMode)}
                         </span>

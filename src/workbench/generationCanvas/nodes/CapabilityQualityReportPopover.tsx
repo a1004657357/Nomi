@@ -82,10 +82,10 @@ export function CapabilityQualityReportPopover({
           className="mt-1.5 max-h-[360px] w-[300px] overflow-auto rounded-nomi border border-nomi-line bg-nomi-paper p-2.5 shadow-nomi-md"
           aria-label={`${kindLabel}质量报告`}
         >
-          <header className="mb-2 flex items-center gap-1.5 border-b border-nomi-line pb-2">
+          <header className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 border-b border-nomi-line pb-2 [overflow-wrap:anywhere]">
             <CapabilityQualityStatusIcon status={report.status} size={16} />
             <span className="text-caption font-semibold text-nomi-ink">本地质量报告</span>
-            <span className={cn('ml-auto text-micro font-medium', qualityTone(report.status))}>
+            <span className={cn('min-w-0 max-w-full text-micro font-medium', qualityTone(report.status))}>
               {qualityLabel(report.status)}
             </span>
           </header>

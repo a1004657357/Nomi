@@ -201,9 +201,9 @@ export default function ImageComparisonNodeBody({ node }: { node: GenerationCanv
               aria-label="全屏图像对比"
               onPointerDown={(event) => event.stopPropagation()}
             >
-              <div className="flex h-12 shrink-0 items-center gap-2 border-b border-white/15 bg-black px-3">
-                <span className="text-body-sm font-medium">图像对比</span>
-                <div className="ml-auto">
+              <div className="flex min-h-12 min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-white/15 bg-black px-3">
+                <span className="min-w-0 max-w-full text-body-sm font-medium [overflow-wrap:anywhere]">图像对比</span>
+                <div className="shrink-0">
                   <IconButton label="关闭全屏对比" onClick={() => setFullscreen(false)}>
                     <IconX size={17} stroke={1.8} />
                   </IconButton>

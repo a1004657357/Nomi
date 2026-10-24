@@ -59,15 +59,15 @@ export function CapabilityAutoVisionReviewControl({
 
   return (
     <div className="border-b border-nomi-line px-4 py-4">
-      <label className="flex items-center justify-between gap-3 text-body-sm font-medium text-nomi-ink">
-        <span className="inline-flex items-center gap-2">
-          <IconEye size={16} stroke={1.7} aria-hidden />
+      <label className="flex min-h-7 min-w-0 flex-wrap items-center gap-1.5 text-body-sm font-medium text-nomi-ink">
+        <span className="inline-flex min-w-0 max-w-full items-center gap-2 [overflow-wrap:anywhere]">
+          <IconEye size={16} stroke={1.7} className="shrink-0" aria-hidden />
           生成后自动视觉复核
         </span>
         <input
           aria-label="生成后自动视觉复核"
           type="checkbox"
-          className="size-4 accent-[var(--nomi-accent)]"
+          className="size-4 shrink-0 accent-[var(--nomi-accent)]"
           checked={enabled}
           disabled={loading || models.length === 0}
           onChange={(event) => setEnabled(event.target.checked)}

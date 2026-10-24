@@ -413,15 +413,15 @@ function StoryboardTableNodeImpl({ node }: Props): JSX.Element {
     <div className="relative flex h-full w-full flex-col overflow-hidden rounded-nomi bg-nomi-paper shadow-nomi-md ring-1 ring-inset ring-nomi-line">
       <header
         className={cn(
-          'shrink-0 flex h-9 items-center gap-2 border-b border-nomi-line-soft px-3',
+          'shrink-0 flex min-h-9 min-w-0 flex-wrap items-center gap-1.5 border-b border-nomi-line-soft px-3',
           'cursor-grab select-none text-nomi-ink',
         )}
         aria-label="拖动分镜表节点"
       >
-        <IconGripVertical size={14} stroke={1.8} className="text-nomi-ink-40" aria-hidden="true" />
-        <span className="text-label font-semibold">{plan?.title || node.title || '分镜头脚本'}</span>
+        <IconGripVertical size={14} stroke={1.8} className="shrink-0 text-nomi-ink-40" aria-hidden="true" />
+        <span className="min-w-0 max-w-full text-label font-semibold [overflow-wrap:anywhere]">{plan?.title || node.title || '分镜头脚本'}</span>
         {rows.length > 0 ? (
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
             <WorkbenchButton
               type="button"
               variant="default"

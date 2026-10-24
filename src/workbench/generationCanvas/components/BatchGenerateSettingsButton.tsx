@@ -274,14 +274,15 @@ export function BatchGenerateSettingsButton({ selectedNodeIds }: Props): JSX.Ele
         }}
       >
         <div className={cn('flex flex-col gap-3')}>
-          <div className={cn('flex items-center justify-between gap-3')}>
-            <div className={cn('min-w-0')}>
+          <div className={cn('flex min-w-0 flex-wrap items-center gap-1.5')}>
+            <div className={cn('min-w-0 max-w-full [overflow-wrap:anywhere]')}>
               <div className={cn('text-body-sm font-medium text-nomi-ink')}>批量生成设置</div>
               <div className={cn('text-caption text-nomi-ink-60')}>{selectedTargetNodes.length} 个{targetLabel}节点</div>
             </div>
-            <label className={cn('inline-flex items-center gap-1.5 text-caption text-nomi-ink-80 select-none')}>
+            <label className={cn('inline-flex min-h-7 min-w-0 max-w-full items-center gap-1.5 text-caption text-nomi-ink-80 select-none [overflow-wrap:anywhere]')}>
               <input
                 type="checkbox"
+                className="shrink-0"
                 checked={skipExisting}
                 onChange={(event) => setSkipExisting(event.target.checked)}
               />

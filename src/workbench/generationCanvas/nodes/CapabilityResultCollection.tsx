@@ -66,7 +66,7 @@ export function CapabilityResultCollection({
         data-mood-matrix={isMoodMatrix ? '5x5' : undefined}
       >
         {isMoodCollection ? (
-          <div className="flex h-7 shrink-0 items-center justify-between border-b border-nomi-line bg-nomi-paper px-2 text-micro text-nomi-ink-60">
+          <div className="flex min-h-7 min-w-0 shrink-0 flex-wrap items-center gap-1.5 border-b border-nomi-line bg-nomi-paper px-2 text-micro text-nomi-ink-60 [overflow-wrap:anywhere]">
             <span>能量 0 → 4</span>
             <span>亲和 0 → 4</span>
           </div>
@@ -298,9 +298,9 @@ export function CapabilityResultCollection({
                   {src ? (
                     <img src={src} alt="" draggable={false} className="h-full w-full object-contain" />
                   ) : null}
-                  <span className="absolute inset-x-0 bottom-0 flex h-7 items-center justify-between bg-black/60 px-2 text-xs text-white">
+                  <span className="absolute inset-x-0 bottom-0 flex min-h-7 min-w-0 flex-wrap items-center gap-1.5 bg-black/60 px-2 text-xs text-white [overflow-wrap:anywhere]">
                     <span>候选 {index + 1}</span>
-                    {selected ? <IconCheck size={14} stroke={2.2} aria-hidden="true" /> : null}
+                    {selected ? <IconCheck size={14} stroke={2.2} className="shrink-0" aria-hidden="true" /> : null}
                   </span>
                 </button>
               )

@@ -77,7 +77,7 @@ function CameraNumberField({
   onChange: (value: number) => void
 }): JSX.Element {
   return (
-    <label className="grid min-w-0 gap-0.5 text-micro text-nomi-ink-40">
+    <label className="grid min-w-0 max-w-full gap-0.5 text-micro text-nomi-ink-40 [overflow-wrap:anywhere]">
       <span>{label}</span>
       <input
         className={cn(
@@ -297,7 +297,7 @@ export default function Model3DCameraNodeBody({
                     onChange={(next) => updateTarget(index, next)}
                   />
                 ))}
-                <div className="ml-auto inline-flex items-center gap-1">
+                <div className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
                   <div className="inline-flex overflow-hidden rounded-nomi-sm border border-nomi-line">
                     {MODEL3D_CAPTURE_RATIOS.map((option) => (
                       <button
