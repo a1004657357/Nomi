@@ -120,8 +120,10 @@ export const generationStrategySchema = z.object({
   mediaKind: mediaKindSchema,
   mode: generationModeSchema,
   rationale: z.string(),
+  vendorKey: z.string().optional(),
   providerId: z.string().optional(),
   modelKey: z.string().optional(),
+  variantId: z.string().optional(),
   overrides: z.record(z.unknown()).optional(),
 })
 

@@ -57,6 +57,19 @@ describe('ReferenceBinding schema (§9.2)', () => {
 })
 
 describe('GenerationStrategy schema (§9.3)', () => {
+  it('keeps canonical supplier and variant separate while preserving opaque legacy providerId', () => {
+    const source = {
+      mediaKind: 'video', mode: 'first-frame', rationale: 'legacy',
+      modelKey: 'shared-model', vendorKey: 'apimart', variantId: 'fast', providerId: 'old-variant',
+    }
+    expect(generationStrategySchema.parse(source)).toEqual(source)
+    const legacy = { ...source, vendorKey: undefined, variantId: undefined }
+    const parsed = generationStrategySchema.parse(legacy)
+    expect(parsed.providerId).toBe('old-variant')
+    expect(parsed.vendorKey).toBeUndefined()
+    expect(parsed.variantId).toBeUndefined()
+  })
+
   it('accepts a model-agnostic strategy', () => {
     const s: GenerationStrategyV1 = {
       mediaKind: 'video',

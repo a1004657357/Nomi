@@ -1,6 +1,6 @@
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
-import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
+import type { GenerationCanvasEdge, GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { isShotNumberedNode, isValidShotIndex } from '../model/shotNumbering'
 import {
   storyboardContainedRowIndex,
@@ -45,6 +45,21 @@ export function compileImageShotFallbackVideoPrompt(imagePrompt: string): string
   ].join('\n')
 }
 
+/** Find an existing video without creating nodes or changing the selected model. */
+export function findImageShotVideoOutput(
+  node: GenerationCanvasNode,
+  nodes: readonly GenerationCanvasNode[],
+  edges: readonly GenerationCanvasEdge[],
+): GenerationCanvasNode | null {
+  const hasReferenceEdge = (id: string) => edges.some(edge => edge.source === node.id && edge.target === id
+    && (edge.mode === 'composition_ref' || edge.mode === 'first_frame'))
+  const videos = nodes.filter(candidate => getGenerationNodeExecutionKind(candidate.kind) === 'video')
+  const derived = videos.filter(candidate => candidate.meta?.sourceNodeId === node.id)
+  const candidates = derived.length ? derived : videos.filter(candidate => !candidate.meta?.sourceNodeId && hasReferenceEdge(candidate.id))
+  if (candidates.length > 1) throw new Error('图片镜头关联了多个视频，请先明确要转换的镜头')
+  return candidates[0] || null
+}
+
 /**
  * 图片镜头 → 视频镜头：
  * 建一个派生 video 节点，默认把分镜图作为构图/镜头意图参考，而不是锁死为视频首帧。
@@ -66,11 +81,7 @@ export function convertImageShotToVideo(input: GenerationCanvasNode): { nodeId: 
   if (!node || node.kind !== 'image') throw new Error('图片镜头已不存在，请在当前项目重新操作')
   const hasReferenceEdge = (id: string) => state.edges.some(edge => edge.source === node.id && edge.target === id
     && (edge.mode === 'composition_ref' || edge.mode === 'first_frame'))
-  const videos = state.nodes.filter(candidate => getGenerationNodeExecutionKind(candidate.kind) === 'video')
-  const derived = videos.filter(candidate => candidate.meta?.sourceNodeId === node.id)
-  const candidates = derived.length ? derived : videos.filter(candidate => !candidate.meta?.sourceNodeId && hasReferenceEdge(candidate.id))
-  if (candidates.length > 1) throw new Error('图片镜头关联了多个视频，请先明确要转换的镜头')
-  const existing = candidates[0]
+  const existing = findImageShotVideoOutput(node, state.nodes, state.edges)
   const storyboardPrompt = storyboardPromptForImageNode(node, state.nodes)
   const video = existing || state.addNode({
     kind: 'video',

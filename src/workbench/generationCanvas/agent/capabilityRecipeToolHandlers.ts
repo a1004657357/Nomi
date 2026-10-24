@@ -138,10 +138,12 @@ async function applyRecipe(
     ? sourceMeta.archetype as Record<string, unknown>
     : {}
   const target = selectCapabilityRecipeTarget(recipe, models, {
+    vendorKey: trimmed(record.vendorKey) || undefined,
     modelKey: trimmed(record.modelKey) || undefined,
     variantId: trimmed(record.variantId) || undefined,
     modeId: trimmed(record.modeId) || undefined,
     sourceModelKey: trimmed(sourceMeta.modelKey) || undefined,
+    sourceVendorKey: trimmed(sourceMeta.modelVendor) || trimmed(sourceMeta.vendor) || undefined,
     sourceVariantId: trimmed(sourceArchetype.variantId) || undefined,
     sourceModeId: trimmed(sourceArchetype.modeId) || undefined,
   })

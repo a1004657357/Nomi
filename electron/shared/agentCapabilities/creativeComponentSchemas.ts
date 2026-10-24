@@ -15,6 +15,7 @@ export const capabilityRecipeRunParamsSchema = z.object({
     .min(1)
     .describe("Existing source node id, or a clientId created in this turn. The source is never overwritten."),
   recipeId: z.string().min(1).describe("Recipe id returned by list_capability_recipes."),
+  vendorKey: z.string().min(1).optional().describe("Supplier for modelKey."),
   modelKey: z
     .string()
     .min(1)

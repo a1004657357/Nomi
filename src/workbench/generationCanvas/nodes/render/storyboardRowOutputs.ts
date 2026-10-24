@@ -1,4 +1,4 @@
-import { convertImageShotToVideo } from '../../agent/convertShotToVideo'
+import { convertImageShotToVideo, findImageShotVideoOutput } from '../../agent/convertShotToVideo'
 import { resolveStoryboardVideoDefault } from '../../agent/availableModels'
 import {
   parseStoryboardPlan,
@@ -32,7 +32,7 @@ type EnsureRowOutputInput = {
   imageNode?: GenerationCanvasNode | null
   videoNode?: GenerationCanvasNode | null
   expanded?: boolean
-  resolveVideoDefault?: () => Promise<{ modelKey?: string; modeId?: string }>
+  resolveVideoDefault?: typeof resolveStoryboardVideoDefault
 }
 
 export type StoryboardRowImageOutput = {
@@ -198,14 +198,18 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot, params: 
   }
 
   const modelKey = String(shot.modelKey || '').trim()
+  const modelVendor = modelKey ? String(shot.modelVendor || '').trim() : ''
   const previousModelKey = String(next.modelKey || '').trim()
+  const previousModelVendor = String(next.modelVendor || next.vendor || '').trim()
   const previousArchetype = previousModelKey
     ? resolveArchetypeForModel({
         modelKey: previousModelKey,
         vendorKey: String(next.modelVendor || next.vendor || '') || null,
       })
     : null
-  const modelChanged = Boolean(modelKey && previousModelKey && previousModelKey !== modelKey)
+  const modelChanged = Boolean(modelKey && previousModelKey && (
+    previousModelKey !== modelKey || (modelVendor && previousModelVendor !== modelVendor)
+  ))
   if (modelKey) {
     if (modelChanged) {
       for (const key of VIDEO_MODEL_META_KEYS) delete next[key]
@@ -222,6 +226,10 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot, params: 
     next.modelKey = modelKey
     next.modelAlias = modelKey
     next.videoModel = modelKey
+    if (modelVendor) {
+      next.modelVendor = modelVendor
+      next.vendor = modelVendor
+    }
   }
 
   const effectiveModelKey = modelKey || previousModelKey
@@ -254,8 +262,9 @@ function videoMetaForShot(target: GenerationCanvasNode, shot: PlanShot, params: 
       || resolved.modes.find((mode) => mode.id === resolved.defaultModeId)
       || resolved.modes[0]
     if (referenceMode) {
-      const preserveVariant = !modelChanged && typeof currentArchetype.variantId === 'string'
-        ? { variantId: currentArchetype.variantId }
+      const variantId = shot.variantId || (!modelChanged ? currentArchetype.variantId : undefined)
+      const preserveVariant = typeof variantId === 'string'
+        ? { variantId }
         : {}
       next.archetype = {
         id: resolved.id,
@@ -374,10 +383,20 @@ export function ensureStoryboardRowImageOutput(input: EnsureRowOutputInput): Sto
   return { nodeId: node.id, node, created: true }
 }
 
+function existingRowVideoOutput(input: EnsureRowOutputInput): GenerationCanvasNode | null {
+  const owned = findOwnedOutput(input.tableNode.id, input.shot.index, 'video')
+    || fallbackOutput(input.videoNode, input.tableNode.id, input.shot.index, 'video')
+  if (owned) return owned
+  const image = findOwnedOutput(input.tableNode.id, input.shot.index, 'image')
+    || fallbackOutput(input.imageNode, input.tableNode.id, input.shot.index, 'image')
+  if (!image) return null
+  const state = useGenerationCanvasStore.getState()
+  return fallbackOutput(findImageShotVideoOutput(image, state.nodes, state.edges), input.tableNode.id, input.shot.index, 'video')
+}
+
 export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput): Promise<StoryboardRowVideoOutput> {
   const store = useGenerationCanvasStore.getState()
-  let existing = findOwnedOutput(input.tableNode.id, input.shot.index, 'video')
-    || fallbackOutput(input.videoNode, input.tableNode.id, input.shot.index, 'video')
+  let existing = existingRowVideoOutput(input)
   const existingIdBeforeDefault = existing?.id || ''
   const existingModelKey = String(existing?.meta?.modelKey || existing?.meta?.modelAlias || existing?.meta?.videoModel || '').trim()
   // 图片分镜行里的 modelKey/modeId/params 属于图片生成。视频设置现在由提取出来的
@@ -386,7 +405,7 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
   const usesStoryboardVideoSettings = (input.shot.shotKind ?? 'video') !== 'image'
   const requestedModelKey = usesStoryboardVideoSettings ? String(input.shot.modelKey || '').trim() : ''
   const requestedArchetype = requestedModelKey
-    ? resolveArchetypeForModel({ modelKey: requestedModelKey, vendorKey: null })
+    ? resolveArchetypeForModel({ modelKey: requestedModelKey, vendorKey: input.shot.modelVendor || null })
     : null
   const usableRequestedModelKey = requestedArchetype?.kind && requestedArchetype.kind !== 'video'
     ? ''
@@ -408,21 +427,28 @@ export async function ensureStoryboardRowVideoOutput(input: EnsureRowOutputInput
     throw new Error('分镜项目已切换，请在当前项目重新操作')
   }
   const currentState = useGenerationCanvasStore.getState()
-  const refreshedExisting = findOwnedOutput(input.tableNode.id, input.shot.index, 'video')
-    || fallbackOutput(input.videoNode, input.tableNode.id, input.shot.index, 'video')
+  const refreshedExisting = existingRowVideoOutput(input)
   if (existingIdBeforeDefault && !currentState.nodes.some((node) => node.id === existingIdBeforeDefault) && !refreshedExisting) {
     throw new Error('分镜视频节点已变化，请重新操作')
   }
   existing = refreshedExisting
-  if (needsDefault && !defaults.modelKey) {
+  const refreshedModelKey = String(existing?.meta?.modelKey || existing?.meta?.modelAlias || existing?.meta?.videoModel || '').trim()
+  const refreshedArchetype = refreshedModelKey
+    ? resolveArchetypeForModel({ modelKey: refreshedModelKey, vendorKey: String(existing?.meta?.modelVendor || existing?.meta?.vendor || '') || null })
+    : null
+  const hasRefreshedVideoModel = Boolean(refreshedModelKey && (!refreshedArchetype || refreshedArchetype.kind === 'video'))
+  const useDefault = needsDefault && !hasRefreshedVideoModel
+  if (useDefault && !defaults.modelKey) {
     throw new Error('当前没有已连接且支持图片参考的图生视频模型，请先在「模型接入」中连接一个可用模型')
   }
   const shot: PlanShot = usesStoryboardVideoSettings && usableRequestedModelKey
     ? input.shot
     : {
         ...input.shot,
-        modelKey: needsDefault ? defaults.modelKey : undefined,
-        modeId: needsDefault ? defaults.modeId : undefined,
+        modelKey: useDefault ? defaults.modelKey : undefined,
+        modelVendor: useDefault ? defaults.modelVendor : undefined,
+        variantId: undefined,
+        modeId: useDefault ? defaults.modeId : undefined,
         params: undefined,
         // 图片分镜自身没有视频时长；保留视频节点里用户选过的值或模型默认值。
         durationSec: Number.NaN,

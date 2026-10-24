@@ -72,7 +72,8 @@ function inferGenerationStrategy(shot: PlanShot, plan: StoryboardPlan): Generati
     rationale,
   }
   if (shot.modelKey) strategy.modelKey = shot.modelKey
-  if (shot.variantId) strategy.providerId = shot.variantId // variantId 在 PlanShot 里是型号 id，近似 provider 标识
+  if (shot.modelKey && shot.modelVendor) strategy.vendorKey = shot.modelVendor
+  if (shot.variantId) strategy.variantId = shot.variantId
   if (shot.modeId) strategy.overrides = { modeId: shot.modeId }
   const params = resolveShotParams(plan, shot)
   if (Object.keys(params).length > 0) {
@@ -230,7 +231,18 @@ export function mergeShotSpecIntoPlanShot(shot: PlanShot, spec: ShotSpecV1): Pla
   if (spec.time.durationSeconds && spec.time.durationSeconds > 0) {
     merged.durationSec = spec.time.durationSeconds
   }
-  if (spec.generationStrategy.modelKey) merged.modelKey = spec.generationStrategy.modelKey
+  const strategy = spec.generationStrategy
+  if (strategy.modelKey) {
+    const identityChanged = strategy.modelKey !== shot.modelKey
+      || Boolean(strategy.vendorKey && strategy.vendorKey !== shot.modelVendor)
+    if (identityChanged) {
+      delete merged.modelVendor
+      delete merged.variantId
+    }
+    merged.modelKey = strategy.modelKey
+    if (strategy.vendorKey) merged.modelVendor = strategy.vendorKey
+    if (strategy.variantId) merged.variantId = strategy.variantId
+  }
   return merged
 }
 

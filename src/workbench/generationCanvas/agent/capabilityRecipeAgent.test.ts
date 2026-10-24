@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BUILTIN_CAPABILITY_RECIPES } from '../../../config/capabilityRecipes'
 import { buildAgentModelEntries } from './availableModels'
+import { capabilityRecipeRunParamsSchema } from '../../../../electron/shared/agentCapabilities/creativeComponentSchemas'
 import {
   listCapabilityRecipesForAgent,
   selectCapabilityRecipeTarget,
@@ -100,6 +101,40 @@ describe('listCapabilityRecipesForAgent', () => {
 })
 
 describe('selectCapabilityRecipeTarget', () => {
+  const duplicated = () => {
+    const entry = entries().find(item => item.modelId === 'gpt-image-2')!
+    return [{ ...entry, vendor: 'apimart' }, { ...entry, vendor: 'kie' }]
+  }
+
+  it('accepts vendorKey through the actual strict tool argument boundary', () => {
+    const args = { sourceNodeId: 'source', recipeId: 'portrait.refine', modelKey: 'gpt-image-2', vendorKey: 'kie' }
+    expect(capabilityRecipeRunParamsSchema.strict().parse(args)).toEqual(args)
+  })
+
+  it('selects explicit and source identities by supplier/model pair in either catalog order', () => {
+    for (const catalog of [duplicated(), duplicated().reverse()]) {
+      expect(selectCapabilityRecipeTarget(recipe('portrait.refine'), catalog, {
+        modelKey: 'gpt-image-2', vendorKey: 'kie', modeId: 'i2i',
+      }).vendorKey).toBe('kie')
+      expect(selectCapabilityRecipeTarget(recipe('portrait.refine'), catalog, {
+        sourceModelKey: 'gpt-image-2', sourceVendorKey: 'kie', sourceModeId: 'i2i',
+      }).vendorKey).toBe('kie')
+    }
+  })
+
+  it('rejects ambiguous explicit, source and automatic choices instead of first-supplier wins', () => {
+    for (const preference of [{ modelKey: 'gpt-image-2' }, { sourceModelKey: 'gpt-image-2' }, {}]) {
+      expect(() => selectCapabilityRecipeTarget(recipe('portrait.refine'), duplicated(), preference)).toThrow()
+    }
+  })
+
+  it('does not silently substitute a supplier for an explicit missing pair', () => {
+    expect(() => selectCapabilityRecipeTarget(recipe('portrait.refine'), duplicated(), {
+      modelKey: 'gpt-image-2', vendorKey: 'missing-vendor',
+    })).toThrow()
+    expect(() => selectCapabilityRecipeTarget(recipe('portrait.refine'), entries(), { vendorKey: 'kie' })).toThrow()
+  })
+
   it('honors an explicit compatible model and mode', () => {
     const target = selectCapabilityRecipeTarget(recipe('image.multiview.reconstruct3d'), entries(), {
       modelKey: 'hunyuan3d-v3.1',

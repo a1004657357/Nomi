@@ -1,5 +1,7 @@
 // User-facing capability and local-quality copy. Protocol source below is deliberately locale-invariant.
 export const zhCapabilityWorkflow = {
+  "ambiguousRecipeModel": "模型「{{v0}}」对应多个供应商，请同时指定 vendorKey",
+  "recipeModelKeyRequired": "指定 vendorKey、variantId 或 modeId 时必须同时指定 modelKey",
   "cameraSlots": "机位槽位",
   "metadataOrderAndParametersAreCompleteForCustomViews": "{{v0}} 个自定义机位的顺序和参数元数据完整",
   "outputCountOrderOrCameraParametersDoNotMatch": "输出数量、顺序或机位参数与生成计划不一致",
@@ -371,6 +373,8 @@ export const zhCapabilityWorkflow = {
 } as const
 
 export const enCapabilityWorkflow = {
+  "ambiguousRecipeModel": "Model \"{{v0}}\" exists under multiple suppliers; specify vendorKey as well",
+  "recipeModelKeyRequired": "Specify modelKey together with vendorKey, variantId, or modeId",
   "cameraSlots": "Camera slots",
   "metadataOrderAndParametersAreCompleteForCustomViews": "Metadata order and parameters are complete for {{v0}} custom views",
   "outputCountOrderOrCameraParametersDoNotMatch": "Output count, order or camera parameters do not match the generation plan",

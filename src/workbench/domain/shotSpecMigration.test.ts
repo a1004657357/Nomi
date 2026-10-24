@@ -9,7 +9,7 @@
  * - ShotSpec 通过 cinematicSchema parse（与 Slice 1 schema 对齐）。
  */
 import { describe, expect, it } from 'vitest'
-import type { PlanAnchor, PlanShot, StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
+import { parseStoryboardPlan, type PlanAnchor, type PlanShot, type StoryboardPlan } from '../generationCanvas/agent/storyboardPlan'
 import { shotSpecSchema } from './cinematicSchema'
 import { readShotSpec, readStoryboardAsShotSpecs } from './shotSpecReaders'
 import {
@@ -53,6 +53,37 @@ function makeShot(overrides: Partial<PlanShot> = {}): PlanShot {
 }
 
 describe('planShotToShotSpec — 扁平字段 → ShotSpec 子对象', () => {
+  it('projects supplier and variant independently for same-name models', () => {
+    for (const vendor of ['apimart', 'kie']) {
+      const source = makeShot({ modelKey: 'shared-model', modelVendor: vendor, variantId: 'fast' })
+      const strategy = planShotToShotSpec(source, 'p', new Map()).generationStrategy
+      expect(strategy).toMatchObject({ modelKey: 'shared-model', vendorKey: vendor, variantId: 'fast' })
+      expect(strategy.providerId).toBeUndefined()
+      expect(mergeShotSpecIntoPlanShot(makeShot(), planShotToShotSpec(source, 'p', new Map())))
+        .toMatchObject({ modelKey: 'shared-model', modelVendor: vendor, variantId: 'fast' })
+    }
+  })
+
+  it('reads historical plans without treating a variant as a supplier', () => {
+    const plan = parseStoryboardPlan({ title: 'legacy', anchors: [], shots: [makeShot({ modelKey: 'shared-model', variantId: 'vip' })] })
+    const strategy = readShotSpec(1, plan, [], 'p')!.spec.generationStrategy
+    expect(strategy).toMatchObject({ modelKey: 'shared-model', variantId: 'vip' })
+    expect(strategy.vendorKey).toBeUndefined()
+    expect(strategy.providerId).toBeUndefined()
+    expect(readStoryboardAsShotSpecs(plan, [], 'p')[0].spec.generationStrategy).toEqual(strategy)
+    expect(plan.shots[0]).not.toHaveProperty('modelVendor')
+  })
+
+  it('does not attach an old supplier or variant when a strategy changes the model', () => {
+    const old = makeShot({ modelKey: 'old-model', modelVendor: 'old-vendor', variantId: 'old-variant' })
+    const spec = planShotToShotSpec(makeShot({ modelKey: 'new-model' }), 'p', new Map())
+    spec.generationStrategy.providerId = 'legacy-ambiguous-value'
+    const merged = mergeShotSpecIntoPlanShot(old, spec)
+    expect(merged.modelKey).toBe('new-model')
+    expect(merged.modelVendor).toBeUndefined()
+    expect(merged.variantId).toBeUndefined()
+  })
+
   it('derives cinematography from shotSize/cameraAngle/cameraMove', () => {
     const spec = planShotToShotSpec(makeShot(), 'proj-1', new Map())
     expect(spec.cinematography.shotScale).toBe('中景')

@@ -12,6 +12,7 @@ import {
 import type { ModelCapabilityTier } from '../../../../electron/shared/modelArchetypes/types'
 import type { AgentModelEntry } from './availableModels'
 import type { ModelParameterControl } from '../../../config/modelCatalogMeta'
+import i18n from '../../../i18n'
 
 export type AgentRecipeCompatibleModel = {
   vendorKey: string
@@ -38,10 +39,12 @@ export type CapabilityRecipeTarget = AgentRecipeCompatibleModel & {
 }
 
 export type CapabilityRecipeTargetPreference = {
+  vendorKey?: string
   modelKey?: string
   variantId?: string
   modeId?: string
   sourceModelKey?: string
+  sourceVendorKey?: string
   sourceVariantId?: string
   sourceModeId?: string
 }
@@ -128,16 +131,25 @@ export function selectCapabilityRecipeTarget(
   preference: CapabilityRecipeTargetPreference = {},
 ): CapabilityRecipeTarget {
   const targets = compatibleTargets(recipe, entries)
+  const vendorKey = preference.vendorKey?.trim()
   const modelKey = preference.modelKey?.trim()
   const variantId = preference.variantId?.trim()
   const modeId = preference.modeId?.trim()
 
-  if ((variantId || modeId) && !modelKey) {
-    throw new Error('指定 variantId 或 modeId 时必须同时指定 modelKey')
+  const matchingIdentity = (modelKey: string, vendorKey?: string): CapabilityRecipeTarget[] => {
+    const matches = targets.filter(target => target.modelKey === modelKey && (!vendorKey || target.vendorKey === vendorKey))
+    if (new Set(matches.map(target => target.vendorKey)).size > 1) {
+      throw new Error(i18n.t('capabilityWorkflow.ambiguousRecipeModel', { v0: modelKey }))
+    }
+    return matches
+  }
+
+  if ((vendorKey || variantId || modeId) && !modelKey) {
+    throw new Error(i18n.t('capabilityWorkflow.recipeModelKeyRequired'))
   }
   if (modelKey) {
-    const matchingModel = targets.filter((target) => (
-      target.modelKey === modelKey && (!variantId || target.variantId === variantId)
+    const matchingModel = matchingIdentity(modelKey, vendorKey).filter((target) => (
+      !variantId || target.variantId === variantId
     ))
     if (matchingModel.length === 0) {
       const suffix = variantId ? `的型号「${variantId}」` : ''
@@ -152,11 +164,12 @@ export function selectCapabilityRecipeTarget(
   }
 
   const sourceModelKey = preference.sourceModelKey?.trim()
+  const sourceVendorKey = preference.sourceVendorKey?.trim()
   const sourceVariantId = preference.sourceVariantId?.trim()
   const sourceModeId = preference.sourceModeId?.trim()
   if (sourceModelKey) {
-    const sameModel = targets.filter((target) => (
-      target.modelKey === sourceModelKey && (!sourceVariantId || target.variantId === sourceVariantId)
+    const sameModel = matchingIdentity(sourceModelKey, sourceVendorKey).filter((target) => (
+      !sourceVariantId || target.variantId === sourceVariantId
     ))
     const exactSource = sourceModeId
       ? sameModel.find((target) => target.modeId === sourceModeId)
@@ -167,7 +180,8 @@ export function selectCapabilityRecipeTarget(
 
   const automatic = targets[0]
   if (!automatic) throw new Error(`当前没有已连接且兼容「${recipe.label}」的模型`)
-  return automatic
+  // Automatic ranking may choose a model, but cannot choose a supplier by catalog order.
+  return matchingIdentity(automatic.modelKey)[0]
 }
 
 export function findCapabilityRecipe(recipeId: string): CapabilityRecipe {

@@ -107,15 +107,19 @@ export type MediaKind = 'image' | 'video' | 'model3d' | 'audio'
 
 /**
  * 镜头生成策略（§9.3）。
- * 模型无关；`providerId`/`modelKey` 可空（用户/Agent 未定时回落到项目默认）。
+ * 模型无关；`vendorKey`/`modelKey` 可空（用户/Agent 未定时回落到项目默认）。
  */
 export type GenerationStrategyV1 = {
   mediaKind: MediaKind
   mode: GenerationMode
   /** 为什么选这个 mode（§15.4 规则 + Agent 理由，用户可覆盖）。 */
   rationale: string
-  providerId?: string
+  /** Canonical supplier identity, paired with modelKey; never a model variant. */
+  vendorKey?: string
   modelKey?: string
+  variantId?: string
+  /** @deprecated Opaque legacy value: old migrations also stored variant IDs here. Never infer routing from it. */
+  providerId?: string
   /** Provider 特定覆盖（archetype 控件键 → 值）。 */
   overrides?: Record<string, unknown>
 }

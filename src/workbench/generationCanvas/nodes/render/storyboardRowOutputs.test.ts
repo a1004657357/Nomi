@@ -37,6 +37,63 @@ function seedTable() {
 }
 
 describe('storyboard row outputs', () => {
+  it.each(['sourceNodeId', 'first_frame'])('preserves an already-selected derived video found through %s', async link => {
+    const tableNode = seedTable()
+    const row: PlanShot = { ...shot, shotKind: 'image', modelKey: 'codex-img2', modelVendor: 'codex' }
+    const image = ensureStoryboardRowImageOutput({ tableNode, shot: row }).node
+    const video = useGenerationCanvasStore.getState().addNode({ kind: 'video', title: 'selected', meta: {
+      ...(link === 'sourceNodeId' ? { sourceNodeId: image.id } : {}),
+      modelKey: 'bytedance/seedance-2', modelVendor: 'kie', vendor: 'kie',
+      archetype: { id: 'seedance-2', modeId: 'first', variantId: 'fast' },
+    } })
+    if (link === 'first_frame') useGenerationCanvasStore.getState().connectNodes(image.id, video.id, 'first_frame')
+    const output = await ensureStoryboardRowVideoOutput({ tableNode, shot: row,
+      resolveVideoDefault: async () => { throw new Error('must not replace a selected derived video') },
+    })
+    expect(output.nodeId).toBe(video.id)
+    expect(output.node.meta).toMatchObject({
+      modelKey: 'bytedance/seedance-2', modelVendor: 'kie', archetype: { variantId: 'fast' },
+    })
+  })
+
+  it('carries the default supplier into a new video and preserves it on reuse', async () => {
+    const tableNode = seedTable()
+    const row: PlanShot = { ...shot, shotKind: 'image', modelKey: 'codex-img2', modelVendor: 'codex' }
+    const first = await ensureStoryboardRowVideoOutput({ tableNode, shot: row,
+      resolveVideoDefault: async () => ({ modelKey: 'agnes-video-v2.0', modelVendor: 'agnes', modeId: 'i2v' }),
+    })
+    expect(first.node.meta).toMatchObject({ modelKey: 'agnes-video-v2.0', modelVendor: 'agnes', vendor: 'agnes' })
+    const again = await ensureStoryboardRowVideoOutput({ tableNode, shot: row,
+      resolveVideoDefault: async () => { throw new Error('must not default an already-selected video') },
+    })
+    expect(again.nodeId).toBe(first.nodeId)
+    expect(again.node.meta).toMatchObject({ modelKey: 'agnes-video-v2.0', modelVendor: 'agnes' })
+  })
+
+  it('changes supplier for a same-name storyboard model without retaining the old variant', async () => {
+    const tableNode = seedTable()
+    const first = await ensureStoryboardRowVideoOutput({ tableNode, shot: { ...shot, modelVendor: 'apimart', variantId: 'old' } })
+    const next = await ensureStoryboardRowVideoOutput({ tableNode, shot: { ...shot, modelVendor: 'kie', variantId: 'fast' } })
+    expect(next.nodeId).toBe(first.nodeId)
+    expect(next.node.meta).toMatchObject({ modelVendor: 'kie', vendor: 'kie', archetype: { variantId: 'fast' } })
+  })
+
+  it('preserves a video selection made while the default resolver is pending', async () => {
+    const tableNode = seedTable()
+    const image = ensureStoryboardRowImageOutput({ tableNode, shot }).node
+    const video = useGenerationCanvasStore.getState().addNode({ kind: 'video', title: 'pending' })
+    let finish!: (value: { modelKey: string; modelVendor: string; modeId: string }) => void
+    const pending = ensureStoryboardRowVideoOutput({ tableNode, imageNode: image, videoNode: video,
+      shot: { ...shot, shotKind: 'image', modelKey: 'codex-img2' },
+      resolveVideoDefault: () => new Promise(resolve => { finish = resolve }),
+    })
+    useGenerationCanvasStore.getState().updateNode(video.id, { meta: {
+      modelKey: 'bytedance/seedance-2', modelVendor: 'kie', vendor: 'kie', archetype: { id: 'seedance-2', modeId: 'first' },
+    } })
+    finish({ modelKey: 'agnes-video-v2.0', modelVendor: 'agnes', modeId: 'i2v' })
+    expect((await pending).node.meta).toMatchObject({ modelKey: 'bytedance/seedance-2', modelVendor: 'kie' })
+  })
+
   function scopedTable(row: PlanShot, aspectRatio = '4:3') {
     const tableNode = seedTable()
     const plan: StoryboardPlan = { title: 'scope', anchors: [], shots: [row], aspectRatio }
