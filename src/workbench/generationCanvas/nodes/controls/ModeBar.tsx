@@ -55,7 +55,7 @@ export default function ModeBar({ choices, activeId, onSelect }: ModeBarProps): 
           )
         })}
       </div>
-      <div className={cn('text-nomi-ink-40 text-micro leading-[1.35]')}>{active.hint}</div>
+      <div className={cn('text-nomi-ink-40 text-caption leading-[1.35]')} data-generation-mode-hint>{active.hint}</div>
     </div>
   )
 }

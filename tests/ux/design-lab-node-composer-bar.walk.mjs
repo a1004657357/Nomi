@@ -83,6 +83,14 @@ await walkDesignLabScreen({
   cellWidth: 900,
   columns: 2,
   async assertState(page, state, record) {
+    if (state.id === 'composer-bar-v1-image') {
+      const hint = page.locator('[data-generation-mode-hint]')
+      if (await hint.count() !== 1) record(`${state.id} 应有一条现役生成方式说明`)
+      else {
+        const fontSize = await hint.evaluate(element => getComputedStyle(element).fontSize)
+        if (fontSize !== '12px') record(`${state.id} 生成方式说明应为现有caption 12px，实际${fontSize}`)
+      }
+    }
     // ── v1.2 两格：点开之后那一层（用户 2026-09-11 13:00 真机拍板「点好几次」）。
     // 它们证的是两句话，而这两句都不是截图看得出来的：
     //   ① 面板里**一个下拉都没有**——选项本身就是可点的项；
