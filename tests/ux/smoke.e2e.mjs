@@ -4,7 +4,7 @@
 //
 // 用法：pnpm run build && pnpm run test:e2e
 import { launchNomiApp } from "./_launchApp.mjs";
-import { expect, screenshotSettled } from "./_assert.mjs";
+import { expect, screenshotSettled, waitForVisualQuiescence } from "./_assert.mjs";
 import { checkComposerFixedFooter } from "./_composerFixedFooter.mjs";
 import { addCanvasNodeFromRail } from "./_canvasRail.mjs";
 import { panCanvasUntilInside } from "./_canvasHit.mjs";
@@ -16,9 +16,10 @@ import path from "node:path";
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), "nomi-smoke-e2e-"));
 const userDataDir = path.join(tempRoot, "user-data");
 const projectsDir = path.join(tempRoot, "projects");
-const evidenceDir = path.resolve("outputs/canvas-smoke");
+const evidenceDir = path.resolve("outputs/canvas-smoke", path.basename(tempRoot));
 mkdirSync(projectsDir, { recursive: true });
 mkdirSync(evidenceDir, { recursive: true });
+console.log(`SMOKE EVIDENCE: ${evidenceDir}`);
 
 let passed = 0;
 function assert(cond, label) {
@@ -87,9 +88,15 @@ try {
   } else {
     await win.getByText("新建空白项目", { exact: false }).first().click();
   }
-  await win.waitForTimeout(2500);
+  const workbenchToolbarNames = ["创作", "生成", "预览", "去出片"];
+  // A partial toolbar can precede the route's Suspense fallback. Require the whole surface.
+  await expect.poll(async () => {
+    const visible = await Promise.all(workbenchToolbarNames.map((name) =>
+      win.getByRole("button", { name, exact: false }).first().isVisible()));
+    return visible.every(Boolean);
+  }, { message: "工作台工具栏等待路由完成" }).toBe(true);
   // 「导出」在控件层级梳理（U 系列）里拆成诚实的「去出片」跳转钮（预览页隐藏，真导出=预览页「导出 MP4」）
-  for (const name of ["创作", "生成", "预览", "去出片"]) {
+  for (const name of workbenchToolbarNames) {
     assert(await win.getByRole("button", { name, exact: false }).first().isVisible(), `工作台工具栏「${name}」可见`);
   }
   assert(/projectId=/.test(win.url()), "工作台 URL 含 projectId");
@@ -97,7 +104,7 @@ try {
   // 4) 生成画布 composer：超长提示词必须在编辑区内部滚动、底栏生成钮永远可点
   //（回归 2026-07-15：滚动容器无高度上限 → 长 prompt 溢出盖住底栏，提交钮点不到）。
   await win.getByRole("button", { name: "生成", exact: false }).first().click();
-  await win.waitForTimeout(800);
+  await expect(win.locator('button[aria-label="添加图片节点"]').first()).toBeVisible();
   const flowNodeCountBeforeAdd = await win.locator('.react-flow__node[data-id]').count();
   await win.locator('button[aria-label="添加图片节点"]').first().click();
   const flowNode = win.locator('.react-flow__node[data-id]').last();
@@ -137,7 +144,7 @@ try {
   const promptInput = composer.locator(".generation-canvas-v2-node__prompt-input").first();
   await promptInput.click();
   await promptInput.fill(longPrompt);
-  await win.waitForTimeout(500);
+  await waitForVisualQuiescence(win);
   // 浮框钉在节点正下方、被挡就挡（09-25，不再自己躲进视口），伸出窗口那截 elementFromPoint 恒 null。
   // 像用户一样在画布真空白处按住拖，把它整张拉进舞台、停在底部停靠栏之上（共用 panCanvasUntilInside）。
   const composerPan = await panCanvasUntilInside(win, composer);
@@ -169,7 +176,7 @@ try {
   // 面板永远停在「请选择一条轨迹」，用户被迫再去时间轴点一次「轨迹1」行）。
   // 导演台自 2026-09-06「第三档」起住在左缘的「更多」里；点法收口在 _canvasRail，找不到当场抛。
   await addCanvasNodeFromRail(win, "director");
-  await win.waitForTimeout(1200);
+  await expect(win.locator('[data-testid="director-node-open"]').first()).toBeVisible();
   // 新节点落点不定（画布已被上一段平移过），Playwright actionability 可能够不着 → DOM click 兜底
   await win.locator('[data-testid="director-node-open"]').first().click({ timeout: 3000 })
     .catch(() => win.evaluate(() => document.querySelector('[data-testid="director-node-open"]')?.click()));
@@ -204,6 +211,7 @@ try {
   process.exitCode = 0;
 } catch (error) {
   const diagnostic = {
+    evidenceDir,
     error: error?.stack || error?.message || String(error),
     url: win.url(),
     rendererDiagnostics,
