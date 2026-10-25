@@ -1,0 +1,48 @@
+{
+  "schema_version": 3,
+  "id": "2026-10-25-r5-display-ci-owner",
+  "problem_type": "Display imports process-owned validation and erases locale keys into configuration-dependent types",
+  "symptom": "CI at e10258014 rejects the resident-to-electron/ai import and three TS2345 unknown-to-string calls.",
+  "direct_cause": "The resident imports the native Director schema module; three value annotations use ParseKeys rather than retained string keys.",
+  "class_root": "Cross-process strict validation needs a neutral owner, while translation key constraints must not erase concrete value types.",
+  "affected_population": ["Resident creative display", "Native Director tool input", "Structured Director compatibility adapter", "App and test-types configurations"],
+  "scope_paths": ["src/workbench/ai/resident/residentToolDisplay.ts", "electron/shared/vibingDirectorPlan.ts", "electron/shared/agentCapabilities/creativeComponentSchemas.ts", "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts"],
+  "entry_points": ["Resident creative name/summary/detail projection", "Lane native creative tool parsing", "Structured Director canonical parse before legacy migration"],
+  "external_sources": [],
+  "internal_only_reason": "Ownership and value typing are internal contracts. Reuse installed Zod and TypeScript without dependency changes or external APIs.",
+  "invariants": ["One strict canonical schema/parser for renderer and native tools", "No main implementation import from neutral owner", "Display does not gain legacy recovery", "Wire schema fields, descriptions and canonical source messages remain byte-identical", "No execution, project writes, authorization or paid boundary change", "Locale key values remain strings even when ParseKeys is unknown"],
+  "doors": [
+    {"kind":"read","path":"electron/shared/agentCapabilities/creativeComponentSchemas.ts","symbol":"readVibingDirectorParamsSchema"},
+    {"kind":"read","path":"electron/shared/agentCapabilities/creativeComponentSchemas.ts","symbol":"applyVibingDirectorPlanParamsSchema"},
+    {"kind":"read","path":"electron/shared/vibingDirectorPlan.ts","symbol":"canonicalActionSchema"},
+    {"kind":"read","path":"electron/shared/vibingDirectorPlan.ts","symbol":"VibingDirectorPlanRequest"},
+    {"kind":"read","path":"src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts","symbol":"VibingDirectorPlanRequest"},
+    {"kind":"read","path":"src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts","symbol":"VibingDirectorPlanRequest"},
+    {"kind":"write","path":"electron/agentLane/laneCreativeTools.ts","symbol":"parseVibingDirectorPlanRequest"},
+    {"kind":"write","path":"src/workbench/ai/resident/residentToolDisplay.ts","symbol":"parseVibingDirectorPlanRequest"},
+    {"kind":"write","path":"src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorAgentProtocol.ts","symbol":"parseVibingDirectorPlanRequest"}
+  ],
+  "door_reduction": {"before":9,"after":9,"why_not":"Expanded generated map includes schema/type reads as well as the three parser consumer doors. Creative schemas read flat wire rules, the shared owner reads its action/type definitions, structured adapters use the shared plan type, and lane/display/protocol calls remain distinct consumers. Ownership moves but necessary consumers are not deleted. The pure native re-export has no AST use door and is covered by the separate structural-export contract, not a fabricated read door."},
+  "generality_proof": "Move the existing flat wire schema and strict canonical validation to electron/shared, retain native exports, and remove the second canonical declaration from structured compatibility. All strict inputs use the same rules. Derive resident key values from real locale keys, independent of i18next module augmentation.",
+  "shared_boundaries": [
+    {"path":"electron/shared/vibingDirectorPlan.ts","symbol":"parseVibingDirectorPlanRequest","responsibility":"Single strict canonical validation without process, UI or legacy migration dependencies"},
+    {"path":"src/workbench/ai/resident/residentToolDisplay.ts","symbol":"ResidentDisplayKey","responsibility":"Concrete locale-derived string value type for creative display key flow"}
+  ],
+  "same_class_entry_points": [
+    {"path":"electron/shared/agentCapabilities/creativeComponentSchemas.ts","entry_point":"creativeComponentArgumentSchemas","disposition":"enforced","evidence":"Directly imports the neutral flat wire schema, no transitive main schema dependency."},
+    {"path":"src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts","entry_point":"parseCanonicalRequest","disposition":"enforced","evidence":"Existing legacy migration remains local and calls the shared strict canonical parser; display never imports the compatibility parser."},
+    {"path":"electron/agentLane/laneCreativeTools.ts","entry_point":"parseVibingDirectorPlanRequest","disposition":"enforced","evidence":"Existing native module path re-exports the same function identity without a second implementation."}
+  ],
+  "recurrence": {"classification":"recurring","reason":"Additional display consumers and tsconfigs can repeat the same process-bound parser or unknown key erasure.","same_class_scan":["node scripts/door-map.mjs parseVibingDirectorPlanRequest: 2971 production files, three doors/four calls", "rg canonical schema declarations found native and structured copies", "Read creativeComponentSchemas, laneCreativeTools and structured Agent protocol", "git diff 4e2a412 e10258014 on affected display/native/protocol-text/key owners: unchanged"]},
+  "prevention": {"kind":"centralized-boundary","enforcement_path":"electron/shared/vibingDirectorPlan.ts","invariant":"All strict validation shares the same neutral schema owner; creative display keys retain concrete string types.","failure_mode":"Malformed strict requests return null; missing args stay pending; no execution or permissive compatibility parsing is added.","exception_policy":"none","strategy":"Extract rather than copy schema rules, retain native re-exports, remove duplicate canonical declarations and use locale-derived key value types.","artifacts":["electron/shared/vibingDirectorPlan.ts", "electron/ai/vibingDirectorTools.ts", "electron/shared/agentCapabilities/creativeComponentSchemas.ts", "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts", "src/workbench/ai/resident/residentToolDisplay.ts"]},
+  "regression_tests": ["src/workbench/ai/resident/residentToolDisplay.contract.test.ts", "electron/shared/vibingDirectorPlan.test.ts"],
+  "class_regression_tests": ["src/workbench/ai/resident/residentToolDisplay.contract.test.ts", "electron/shared/vibingDirectorPlan.test.ts"],
+  "legacy_paths": {"status":"removed","removed_paths":["electron/ai/vibingDirectorTools.ts", "src/workbench/generationCanvas/nodes/vibingDirector/vibingDirectorStructuredProtocol.ts"],"rationale":"Remove duplicate canonical schema implementations. Native public exports and structured legacy migration remain compatible adapters, not fallback validators for resident display."},
+  "dependency_lifecycle": {"decision":"not-applicable","rationale":"Internal dependency ownership and TypeScript value inference; no library upgrade or external runtime behavior needed.","exit_criteria":[]},
+  "migration": "No persisted data, tool names, wire fields or canonical source messages change. Preserve old native import paths through re-exports. Historical structured migration behavior remains at its prior adapter.",
+  "residual_risks": ["Full app/test typecheck and repository gates deferred to coordinator after screenshots", "No App, screenshot, Provider or outbound validation authorized", "Author cannot provide final independent review"],
+  "invariant_owner_layer": {"layer":"electron/shared","tests":["electron/shared/vibingDirectorPlan.test.ts", "src/workbench/ai/resident/residentToolDisplay.contract.test.ts"]},
+  "rewrite_decision": {"decision":"patch","characterization_test":"electron/shared/vibingDirectorPlan.test.ts"},
+  "detected_by": "ci",
+  "recurrence_check_on": "2026-11-24"
+}

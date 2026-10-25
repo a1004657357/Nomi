@@ -1,6 +1,6 @@
 import { directorProtocolSource } from '../../../../../electron/shared/blenderDirectorProtocolText'
-import { z } from 'zod'
-import { BLENDER_DIRECTOR_STAGE_PRESETS } from '../../../../../electron/shared/blenderDirectorContract'
+import type { BlenderDirectorStagePreset } from '../../../../../electron/shared/blenderDirectorContract'
+import { canonicalActionSchema as actionSchema, parseVibingDirectorPlanRequest as parseStrictRequest } from '../../../../../electron/shared/vibingDirectorPlan'
 import type { VibingDirectorPlan } from './vibingDirectorState'
 
 export type VibingDirectorPlanRequest = {
@@ -8,120 +8,6 @@ export type VibingDirectorPlanRequest = {
   summary: string
   plan: VibingDirectorPlan
 }
-
-const finiteNumber = z.number().finite()
-const vector3Schema = z.tuple([finiteNumber, finiteNumber, finiteNumber])
-const stagePresetSchema = z.enum(BLENDER_DIRECTOR_STAGE_PRESETS)
-const blockingTemplateSchema = z.enum(['coffee_two_person_conversation'])
-const aspectRatioSchema = z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '2.39:1'])
-const cameraFramingSchema = z.enum(['all', 'target', 'fixed'])
-const relationKindSchema = z.enum(['facing', 'distance', 'support', 'offset', 'line_of_sight'])
-const identifierSchema = z.string().min(1).max(160).regex(/^(?!https?:\/\/)(?!file:)[a-zA-Z0-9_\-.:\u4e00-\u9fff ]+$/i)
-
-const actionSchema = z.discriminatedUnion('op', [
-  z.object({ op: z.literal('set_stage'), preset: stagePresetSchema }),
-  z.object({
-    op: z.literal('set_blocking_layout'),
-    template: blockingTemplateSchema,
-    actorAName: z.string().min(1).max(160).optional(),
-    actorBName: z.string().min(1).max(160).optional(),
-  }),
-  z.object({
-    op: z.literal('place_asset'),
-    id: identifierSchema,
-    assetId: identifierSchema,
-    name: z.string().min(1).max(160),
-    position: vector3Schema.optional(),
-    rotation: vector3Schema.optional(),
-    scale: vector3Schema.optional(),
-  }),
-  z.object({
-    op: z.literal('add_marker'),
-    id: identifierSchema,
-    name: z.string().min(1).max(160),
-    role: z.string().max(120).optional(),
-    position: vector3Schema.optional(),
-    rotation: vector3Schema.optional(),
-    scale: vector3Schema.optional(),
-    color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
-  }),
-  z.object({
-    op: z.literal('move_object'),
-    objectRef: identifierSchema,
-    position: vector3Schema.optional(),
-    rotation: vector3Schema.optional(),
-    scale: vector3Schema.optional(),
-    name: z.string().min(1).max(160).optional(),
-  }),
-  z.object({ op: z.literal('remove_object'), objectRef: identifierSchema }),
-  z.object({
-    op: z.literal('set_relation'),
-    id: identifierSchema,
-    kind: relationKindSchema,
-    subjectRef: identifierSchema,
-    targetRef: identifierSchema,
-    distance: finiteNumber.min(0.05).max(1000).optional(),
-    mutual: z.boolean().optional(),
-  }),
-  z.object({ op: z.literal('remove_relation'), relationRef: identifierSchema }),
-  z.object({
-    op: z.literal('set_camera'),
-    cameraRef: identifierSchema.optional(),
-    name: z.string().min(1).max(160).optional(),
-    position: vector3Schema.optional(),
-    lookAt: vector3Schema.optional(),
-    fov: finiteNumber.min(1).max(160).optional(),
-    aspectRatio: aspectRatioSchema.optional(),
-    framing: cameraFramingSchema.optional(),
-    targetRef: identifierSchema.optional(),
-  }),
-  z.object({
-    op: z.literal('set_camera_path'),
-    cameraRef: identifierSchema.optional(),
-    points: z.array(vector3Schema).min(2).max(32),
-    durationSec: finiteNumber.min(0.1).max(300),
-  }),
-  z.object({
-    op: z.literal('set_beat'),
-    id: identifierSchema,
-    title: z.string().min(1).max(160),
-    action: z.string().max(2000).optional(),
-    cameraNote: z.string().max(1000).optional(),
-    dialogue: z.string().max(1000).optional(),
-    notes: z.string().max(1000).optional(),
-    durationSec: finiteNumber.min(0.1).max(120).optional(),
-  }),
-])
-
-const planSchema = z.object({
-  mode: z.enum(['replace', 'amend']),
-  brief: z.string().max(4000).optional(),
-  actions: z.array(actionSchema).min(1).max(24),
-}).superRefine((plan, context) => {
-  plan.actions.forEach((action, index) => {
-    if (action.op === 'move_object' && action.position === undefined && action.rotation === undefined && action.scale === undefined && action.name === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.moveRequiresField(), path: ['actions', index] })
-    }
-    if (action.op === 'set_camera' && action.cameraRef === undefined && action.name === undefined && action.position === undefined && action.lookAt === undefined && action.fov === undefined && action.aspectRatio === undefined && action.framing === undefined && action.targetRef === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.cameraRequiresField(), path: ['actions', index] })
-    }
-    if (action.op === 'set_camera' && action.framing === 'target' && action.targetRef === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.cameraTargetRequired(), path: ['actions', index, 'targetRef'] })
-    }
-    if (action.op === 'set_relation' && action.kind === 'distance' && action.distance === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.distanceRequired(), path: ['actions', index, 'distance'] })
-    }
-    if (action.op === 'set_relation' && action.subjectRef === action.targetRef) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: directorProtocolSource.distinctObjectsRequired(), path: ['actions', index, 'targetRef'] })
-    }
-  })
-})
-
-const requestSchema = z.object({
-  directorNodeId: z.string().min(1).max(200),
-  summary: z.string().min(1).max(600),
-  plan: planSchema,
-})
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -156,7 +42,7 @@ function rotationFromLegacy(raw: Record<string, unknown>): [number, number, numb
   return typeof raw.rotationY === 'number' && Number.isFinite(raw.rotationY) ? [0, raw.rotationY, 0] : undefined
 }
 
-function stageFromLegacy(type: unknown): z.infer<typeof stagePresetSchema> | undefined {
+function stageFromLegacy(type: unknown): BlenderDirectorStagePreset | undefined {
   const value = typeof type === 'string' ? type.toLowerCase() : ''
   if (value === 'empty') return 'empty'
   if (value === 'studio') return 'studio'
@@ -369,9 +255,7 @@ function migrateLegacyRequest(value: unknown): VibingDirectorPlanRequest | null 
 }
 
 function parseCanonicalRequest(value: unknown): VibingDirectorPlanRequest | null {
-  const parsed = requestSchema.safeParse(value)
-  if (!parsed.success) return null
-  return parsed.data as VibingDirectorPlanRequest
+  return parseStrictRequest(value)
 }
 
 export function parseVibingDirectorPlanRequest(value: unknown): VibingDirectorPlanRequest | null {

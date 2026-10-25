@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { applyVibingDirectorPlanParamsSchema, readVibingDirectorParamsSchema } from '../../ai/vibingDirectorTools'
+import { applyVibingDirectorPlanParamsSchema, readVibingDirectorParamsSchema } from '../vibingDirectorPlan'
 
 const capabilityRecipeOutputSchema = z.object({
   id: z.string().min(1).describe('Result ID'),

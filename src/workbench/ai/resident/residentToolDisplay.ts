@@ -3,12 +3,15 @@ import { GENERATION_METHOD_NAMES } from '../../../../electron/shared/agentCapabi
 import { toSemanticInput } from '../../../../electron/shared/agentCapabilities/modelFacingTools'
 import { CREATIVE_COMPONENT_READ_CAPABILITY, CREATIVE_COMPONENT_WRITE_CAPABILITY, type CreativeComponentInput } from '../../../../electron/shared/agentCapabilities/creativeComponent'
 import { DIRECTOR_RENDER_CAPABILITY, GENERATION_BATCH_REQUEST_CAPABILITY } from '../../../../electron/shared/agentCapabilities/localCanvasOperations'
-import { parseVibingDirectorPlanRequest } from '../../../../electron/ai/vibingDirectorTools'
+import { parseVibingDirectorPlanRequest } from '../../../../electron/shared/vibingDirectorPlan'
 import { materializeVibingDirectorPlan } from '../../generationCanvas/nodes/vibingDirector/vibingDirectorState'
 import type { TranslationKey } from '../../../i18n/translationKey'
+import type { zhAgentResident } from '../../../i18n/locales/agentResident'
 import type { ResidentApprovalDetail, ResidentProposalData } from './residentProposalDisplay'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
+// ParseKeys is only a constraint: its value type varies with tsconfig augmentation.
+type ResidentDisplayKey = `agentResident.${keyof typeof zhAgentResident}`
 
 /** 「会造/提交生成」的契约：草稿与付费门。读（context / run.read）与取消（control）不算——它们各有自己的叫法。 */
 const GENERATION_WRITE_CAPABILITIES = new Set(['generation.plan', 'generation.gate', 'generation.resolve'])
@@ -183,9 +186,9 @@ function readableCreativeTool(t: Translate, name: string, rawArgs?: unknown): { 
   const raw = asRecord(rawArgs) ?? {}
   const canonical = canonicalCapabilityId(name, raw) || name
   const fields: ResidentApprovalDetail[] = []
-  let nameKey: TranslationKey
-  let boundaryKey: TranslationKey
-  const add = (label: TranslationKey, value: unknown, kind: ResidentApprovalDetail['kind'] = 'parameters') => {
+  let nameKey: ResidentDisplayKey
+  let boundaryKey: ResidentDisplayKey
+  const add = (label: ResidentDisplayKey, value: unknown, kind: ResidentApprovalDetail['kind'] = 'parameters') => {
     if (value === undefined || value === null || value === '') return
     fields.push({ label: t(label), value: typeof value === 'string' ? value : JSON.stringify(value), kind })
   }

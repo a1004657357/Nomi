@@ -312,7 +312,7 @@
         "electron/agentLane/laneCreativeTools.ts",
         "electron/ai/canvasTools.ts",
         "electron/ai/cinematicDirectorTools.ts",
-        "electron/ai/vibingDirectorTools.ts",
+        "electron/shared/vibingDirectorPlan.ts",
         "electron/capabilityCore/transportFailure.ts",
         "electron/shared/agentLane/laneArgumentFailure.ts",
         "electron/shared/agentLane/laneFailureFromDecision.ts",
