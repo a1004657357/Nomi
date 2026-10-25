@@ -1,0 +1,287 @@
+{
+  "source": {
+    "ledger": "/Volumes/S7/AiWork/Projects/Nomi-main-integration-20261025/artifacts/feel/smoke-984e9cce-c9bf-43f9-93d4-d5e9b40f69e3/contact-sheet.json",
+    "ledgerSha256": "7edb8fe6a32c7d7d75f32d4fa50437faede52c4ace19a6aa4a2a455e3472a331",
+    "recordIndex": 23,
+    "screenshot": "/Volumes/S7/AiWork/Projects/Nomi-main-integration-20261025/artifacts/feel/smoke-984e9cce-c9bf-43f9-93d4-d5e9b40f69e3/14.png",
+    "screenshotSha256": "c5979054bb903cecea0c74cffdfd82ca73942ec011b3ea4f6b73f806976c04db",
+    "failure": "/Volumes/S7/AiWork/Projects/Nomi-main-integration-20261025/outputs/canvas-smoke/nomi-smoke-e2e-rRlQFz/failure.json"
+  },
+  "label": "smoke:waitForFunction",
+  "journey": "smoke",
+  "screenshotName": "waitForFunction.png",
+  "findings": [
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "1/4"
+      ],
+      "rects": [
+        {
+          "x": 1050.75,
+          "y": 17.25,
+          "width": 30.25,
+          "height": 20.5,
+          "top": 17.25,
+          "right": 1081,
+          "bottom": 37.75,
+          "left": 1050.75
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "素材库"
+      ],
+      "rects": [
+        {
+          "x": 13,
+          "y": 98,
+          "width": 33,
+          "height": 11,
+          "top": 98,
+          "right": 46,
+          "bottom": 109,
+          "left": 13
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "分组"
+      ],
+      "rects": [
+        {
+          "x": 18.5,
+          "y": 151,
+          "width": 22,
+          "height": 11,
+          "top": 151,
+          "right": 40.5,
+          "bottom": 162,
+          "left": 18.5
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "提示词"
+      ],
+      "rects": [
+        {
+          "x": 13,
+          "y": 223,
+          "width": 33,
+          "height": 11,
+          "top": 223,
+          "right": 46,
+          "bottom": 234,
+          "left": 13
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "技能"
+      ],
+      "rects": [
+        {
+          "x": 18.5,
+          "y": 276,
+          "width": 22,
+          "height": 11,
+          "top": 276,
+          "right": 40.5,
+          "bottom": 287,
+          "left": 18.5
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "流程"
+      ],
+      "rects": [
+        {
+          "x": 18.5,
+          "y": 329,
+          "width": 22,
+          "height": 11,
+          "top": 329,
+          "right": 40.5,
+          "bottom": 340,
+          "left": 18.5
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "summary"
+      ],
+      "text": [
+        "—"
+      ],
+      "rects": [
+        {
+          "x": 956.25,
+          "y": 81.5,
+          "width": 44.6796875,
+          "height": 22,
+          "top": 81.5,
+          "right": 1000.9296875,
+          "bottom": 103.5,
+          "left": 956.25
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "—"
+      ],
+      "rects": [
+        {
+          "x": 23,
+          "y": 254.375,
+          "width": 6.625,
+          "height": 16.5,
+          "top": 254.375,
+          "right": 29.625,
+          "bottom": 270.875,
+          "left": 23
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "m"
+      ],
+      "rects": [
+        {
+          "x": 1245.359375,
+          "y": 709.25,
+          "width": 9.640625,
+          "height": 16.5,
+          "top": 709.25,
+          "right": 1255,
+          "bottom": 725.75,
+          "left": 1245.359375
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "kbd"
+      ],
+      "text": [
+        "I"
+      ],
+      "rects": [
+        {
+          "x": 1210.375,
+          "y": 879.25,
+          "width": 16.625,
+          "height": 18.5,
+          "top": 879.25,
+          "right": 1227,
+          "bottom": 897.75,
+          "left": 1210.375
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    },
+    {
+      "rule": "font-size",
+      "target": [
+        "span"
+      ],
+      "text": [
+        "在 3D 画布中为角色 / 机位手绘轨迹 (4)，或在左栏点击「+ 添加轨道」"
+      ],
+      "rects": [
+        {
+          "x": 128,
+          "y": 911.75,
+          "width": 346.0546875,
+          "height": 16.5,
+          "top": 911.75,
+          "right": 474.0546875,
+          "bottom": 928.25,
+          "left": 128
+        }
+      ],
+      "fontSizes": [
+        11
+      ]
+    }
+  ],
+  "expectedDrift": [
+    {
+      "rule": "font-size",
+      "actual": 4,
+      "allowed": 0,
+      "kind": "new"
+    }
+  ]
+}

@@ -76,7 +76,7 @@ export function SliderNumberField({ label, value, min, max, step = 1, unit, digi
           disabled={disabled}
           {...draft}
         />
-        {unit ? <span className="text-micro text-nomi-ink-40">{unit}</span> : null}
+        {unit ? <span className="text-caption text-nomi-ink-40">{unit}</span> : null}
       </span>
     </label>
   )

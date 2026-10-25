@@ -115,7 +115,7 @@ export function TimelineHeader({
         >
           <IconPlus size={14} stroke={2} />
           {t('director.timeline.insertKeyframe')}
-          <kbd className="rounded border border-nomi-line bg-nomi-bg px-1 font-nomi-mono text-micro text-nomi-ink-40">{formatHotkey(DIRECTOR_HOTKEYS.insertKeyframe)}</kbd>
+          <kbd className="rounded border border-nomi-line bg-nomi-bg px-1 font-nomi-mono text-caption text-nomi-ink-40">{formatHotkey(DIRECTOR_HOTKEYS.insertKeyframe)}</kbd>
         </WorkbenchButton>
       </span>
       <WorkbenchIconButton

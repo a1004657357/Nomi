@@ -205,7 +205,7 @@ export function PipViewport({ rectRef, canvasHostRef }: { rectRef: React.Mutable
             ) : null}
             <div className="absolute bottom-0 right-0 size-3 cursor-nwse-resize" title={t('director.camera.pipResize')} onPointerDown={beginResize} />
           </div>
-          <div className="flex items-center justify-between gap-2 bg-nomi-paper px-2 py-1 font-nomi-mono text-micro text-nomi-ink-40">
+          <div className="flex items-center justify-between gap-2 bg-nomi-paper px-2 py-1 font-nomi-mono text-caption text-nomi-ink-40">
             <span>{shown ? t('director.camera.pipFov', { fov: shown.fov.toFixed(1), mm: shown.focalLengthMm }) : '—'}</span>
             {shown ? (
               <span title={enterBlockedReason ?? undefined}>
